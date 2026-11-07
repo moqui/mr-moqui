@@ -584,30 +584,121 @@ fn end_user_visit_using(
         .eq("visitId", Value::string(visit_id))
         .one()
         .map_err(Error::from)?;
-    let Some(mut visit) = visit.filter(|row| row.get("userId").and_then(Value::as_str) == Some(user_id.as_str()))
-    else {
+    if !visit.is_some_and(|row| row.get("userId").and_then(Value::as_str) == Some(user_id.as_str())) {
         return Err(Error::new(format!("Session {visit_id} is not one of yours")));
-    };
-    if visit.get("thruDate").is_none_or(Value::is_null) {
-        visit.set("thruDate", super::login::now_value());
-        visit.update(&facade).map_err(Error::from)?;
     }
-    // the sessions of the visit: those this node holds live (an eventual flush may not have written them yet) and the rows
-    let mut ids: BTreeSet<String> = lock_sessions(&factory)
+    end_sessions_using(&factory, &facade, &user_id, Some(&[visit_id.to_string()]), delete)
+}
+
+/// End sessions of the user `user_id` (impl-admin F4, F42; `org.moqui.admin.IdentityServices.revoke#Sessions` and
+/// `revoke#AccountAccess`): those of the visits `visit_ids` that are the user's, or with none every session and open
+/// visit of the user. Each `Visit` gets its `thruDate` and each web session (a live one on this node and its
+/// `HttpSession` row) is ended as [`end_user_visit`] ends one, with the session end published to the cluster. The
+/// current request's own session and visit are kept (a logout ends them). The caller checks who may do this; this
+/// function decides nothing about authority. Returns how many web sessions were ended.
+///
+/// # Errors
+///
+/// Returns an error for an empty user id, with no execution context, or when the visits cannot be read.
+pub fn end_user_sessions(user_id: &str, visit_ids: Option<&[String]>) -> Result<usize, Error> {
+    let user_id = user_id.trim();
+    if user_id.is_empty() {
+        return Err(Error::new("No user whose sessions to end"));
+    }
+    let factory = bound_factory()
+        .or_else(|| ExecutionContext::with_current(|ec| Arc::clone(ec.factory())))
+        .ok_or_else(|| Error::new("no execution context"))?;
+    let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
+    let _authz = without_authz();
+    end_sessions_using(&factory, &facade, user_id, visit_ids, delete_session_row)
+}
+
+fn end_sessions_using(
+    factory: &Arc<ExecutionContextFactory>,
+    facade: &EntityFacade,
+    user_id: &str,
+    visit_ids: Option<&[String]>,
+    delete: impl Fn(&EntityFacade, &str) -> Result<(), Error>,
+) -> Result<usize, Error> {
+    let current_visit = visit_id_now();
+    // the visits to end: the named ones of this user, or every open visit of the user
+    let mut visits = facade
+        .find(VISIT)
+        .map_err(Error::from)?
+        .eq("userId", Value::string(user_id));
+    if let Some(ids) = visit_ids {
+        let wanted: Vec<Value> = ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+            .map(Value::string)
+            .collect();
+        if wanted.is_empty() {
+            return Ok(0);
+        }
+        visits = visits.condition(moqui_db::sql::Condition::is_in("visitId", wanted));
+    }
+    let mut visit_set = BTreeSet::new();
+    for visit in visits.list().map_err(Error::from)?.iter() {
+        let mut visit = visit.clone();
+        let Some(id) = visit.get("visitId").and_then(Value::as_str).map(str::to_string) else {
+            continue;
+        };
+        if current_visit.as_deref() == Some(id.as_str()) {
+            continue;
+        }
+        if visit.get("thruDate").is_none_or(Value::is_null) {
+            visit.set("thruDate", super::login::now_value());
+            if let Err(error) = visit.update(facade) {
+                tracing::error!(visit_id = %id, %error, "could not end visit; continuing");
+            }
+        }
+        visit_set.insert(id);
+    }
+    let every = visit_ids.is_none();
+    // the sessions: those this node holds live (an eventual flush may not have written them yet) and the rows
+    let mut ids: BTreeSet<String> = lock_sessions(factory)
         .sessions
         .iter()
-        .filter(|(_, live)| !live.retired && live.columns.visit_id.as_deref() == Some(visit_id))
+        .filter(|(_, live)| {
+            !live.retired
+                && (live
+                    .columns
+                    .visit_id
+                    .as_deref()
+                    .is_some_and(|visit| visit_set.contains(visit))
+                    || (every && live.columns.user_id.as_deref() == Some(user_id)))
+        })
         .map(|(id, _)| id.clone())
         .collect();
-    for row in facade
-        .find(HTTP_SESSION)
-        .map_err(Error::from)?
-        .eq("visitId", Value::string(visit_id))
-        .list()
-        .map_err(Error::from)?
-        .iter()
-    {
-        if let Some(id) = row.get("sessionId").and_then(Value::as_str) {
+    let mut rows = Vec::new();
+    for visit_id in &visit_set {
+        rows.extend(
+            facade
+                .find(HTTP_SESSION)
+                .map_err(Error::from)?
+                .eq("visitId", Value::string(visit_id))
+                .list()
+                .map_err(Error::from)?
+                .iter()
+                .cloned(),
+        );
+    }
+    if every {
+        rows.extend(
+            facade
+                .find(HTTP_SESSION)
+                .map_err(Error::from)?
+                .eq("userId", Value::string(user_id))
+                .list()
+                .map_err(Error::from)?
+                .iter()
+                .cloned(),
+        );
+    }
+    for row in &rows {
+        let current = row.get("visitId").and_then(Value::as_str) == current_visit.as_deref() && current_visit.is_some();
+        if let (Some(id), false) = (row.get("sessionId").and_then(Value::as_str), current) {
             ids.insert(id.to_string());
         }
     }
@@ -615,17 +706,17 @@ fn end_user_visit_using(
     let mut ended_ids = Vec::new();
     for id in ids.iter().filter(|id| Some(id.as_str()) != bound.as_deref()) {
         // a flush of the session under way would write the row back after the delete
-        let _claim = FlushClaim::wait(&factory, id);
-        if let Err(error) = delete(&facade, id) {
-            tracing::error!(session_id = %id, visit_id = %visit_id, %error, "could not end session; continuing");
+        let _claim = FlushClaim::wait(factory, id);
+        if let Err(error) = delete(facade, id) {
+            tracing::error!(session_id = %id, user_id = %user_id, %error, "could not end session; continuing");
             continue;
         }
-        retire_old(&factory, id);
+        retire_old(factory, id);
         ended_ids.push(id);
     }
     if !ended_ids.is_empty() {
         // another server may hold one of them live, and would go on serving it (and write its row back)
-        publish_session_end(&facade, &ended_ids);
+        publish_session_end(facade, &ended_ids);
     }
     Ok(ended_ids.len())
 }
@@ -1596,7 +1687,8 @@ fn refresh_from_account() -> Result<(), Error> {
         .get("hasLoggedOut")
         .and_then(Value::as_str)
         .is_some_and(|flag| flag == "Y");
-    if logged_out {
+    // a logout elsewhere, or an account disabled for good or past its end date (impl-admin F4, F6): the login ends here
+    if logged_out || super::login::account_closed(&account, super::login::now_millis()) {
         clear_login();
         return Ok(());
     }

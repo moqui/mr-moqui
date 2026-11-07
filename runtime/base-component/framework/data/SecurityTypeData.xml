@@ -114,10 +114,12 @@ along with this software (see the LICENSE.md file). If not, see
         IdentityServices.check#AdministrationPath, for every signed-in user: each checks ADMIN_ACCESS_VIEW or ADMIN_ACCESS_MANAGE
         itself and writes the security rows through the entity facade with authorization on, so the sealed-permission and
         privileged-group EECAs decide each row (an ALLOW, so an app's deny of a package still applies; inheritable, so the
-        service's own writes are authorized as it) -->
+        service's own writes are authorized as it). Admin P4 adds IdentityServices' sessions and credentials (find#Sessions,
+        revoke#Sessions, get#AccountCredentials, revoke#AccountAccess), each the caller's own or another user's with
+        ADMIN_IDENTITY_VIEW or ADMIN_IDENTITY_MANAGE, checked by the service -->
     <moqui.security.ArtifactGroup artifactGroupId="AdminAccessServices" description="Admin access services"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="AdminAccessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
-            artifactName="org\.moqui\.admin\.(AccessServices\.(find#Groups|get#Group|create#Group|store#Group|store#Membership|end#Membership|preview#Grants|apply#Grants|store#GroupPreference)|IdentityServices\.check#AdministrationPath)"/>
+            artifactName="org\.moqui\.admin\.(AccessServices\.(find#Groups|get#Group|create#Group|store#Group|store#Membership|end#Membership|preview#Grants|apply#Grants|store#GroupPreference|check#GrantProposal|apply#GrantProposal)|IdentityServices\.(check#AdministrationPath|find#Sessions|revoke#Sessions|get#AccountCredentials|revoke#AccountAccess))"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="AdminAccessServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminAccessServices"
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     <!-- The registered purposes of a custom group (optionIndicator Y): CreateGroup offers them, and a group of one of them is a

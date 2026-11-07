@@ -976,7 +976,45 @@ pub(super) fn fill_security_checks<'js>(ctx: &Ctx<'js>, checks: &Object<'js>) ->
         Function::new(ctx.clone(), security_sealed_permissions),
     )?;
     caught(ctx, "sealedPermissions", checks.set("sealedPermissions", function))?;
+    let function = caught(
+        ctx,
+        "endUserSessions",
+        Function::new(ctx.clone(), security_end_user_sessions),
+    )?;
+    caught(ctx, "endUserSessions", checks.set("endUserSessions", function))?;
     Ok(())
+}
+
+/// `UserSecurityChecks.endUserSessions(userId, visitIds)`: end the web sessions of a user, those of the visits named (a
+/// list of visit ids) or with none every session and open visit of the user, on every server of the cluster, keeping the
+/// current request's own (`user::end_user_sessions`); the number of web sessions ended. For
+/// `org.moqui.admin.IdentityServices` (revoke#Sessions, revoke#AccountAccess), which check who may first: this decides
+/// no authority.
+fn security_end_user_sessions<'js>(
+    ctx: Ctx<'js>,
+    user_id: Opt<JsValue<'js>>,
+    visit_ids: Opt<JsValue<'js>>,
+) -> rquickjs::Result<i64> {
+    host_guard(&ctx, || {
+        let user_id = opt_id_text(&ctx, &user_id)?;
+        let visits = match &visit_ids.0 {
+            Some(value) if !value.is_null() && !value.is_undefined() => {
+                let host = js_to_host(&ctx, value)?;
+                let items = super::values::value_items(&host).unwrap_or_default();
+                Some(
+                    items
+                        .iter()
+                        .map(moqui_lib::object::to_plain_string)
+                        .filter(|id| !id.trim().is_empty())
+                        .collect::<Vec<String>>(),
+                )
+            }
+            _ => None,
+        };
+        crate::user::end_user_sessions(&user_id, visits.as_deref())
+            .map(|count| i64::try_from(count).unwrap_or(i64::MAX))
+            .map_err(|err| Exception::throw_message(&ctx, err.message()))
+    })
 }
 
 /// `UserSecurityChecks.privilegedGroups()`: the effective privileged group ids, sorted (the framework's list and every
