@@ -709,6 +709,83 @@ fn a_view_read_sees_the_frames_held_rows_through_shadowed_tables() {
         (vec!["SHA".to_string(), "SHB".to_string(), "SHQ".to_string()], 1)
     );
     assert_eq!(kinds(), distinct, "the same after the commit");
+
+    // Past 16 held rows a shadow goes as arrays, one parameter a column: 40 created rows of a new type, 3 stored rows
+    // moved to it, text that must be quoted in an array, a null, and the same rows after the commit.
+    put(kind, &[("enumTypeId", Value::string("SHBULK"))]);
+    for at in 0..3 {
+        put(
+            enumeration,
+            &[
+                ("enumId", Value::string(&format!("SHS{at}"))),
+                ("enumTypeId", Value::string("SHQ")),
+            ],
+        );
+    }
+    let bulk = || -> (Vec<String>, i64) {
+        let mut rows: Vec<String> = facade
+            .find(view)
+            .unwrap()
+            .eq("enumTypeId", Value::string("SHBULK"))
+            .list()
+            .unwrap()
+            .values()
+            .iter()
+            .map(|row| {
+                let text = |name: &str| {
+                    row.get(name)
+                        .map(moqui_lib::object::to_plain_string)
+                        .unwrap_or_default()
+                };
+                format!("{}|{}", text("enumId"), text("description"))
+            })
+            .collect();
+        rows.sort();
+        let count = facade
+            .find(view)
+            .unwrap()
+            .eq("enumTypeId", Value::string("SHBULK"))
+            .count()
+            .unwrap();
+        (rows, count)
+    };
+    let tricky = r#"a "q" \ b, {c} NULL"#;
+    let before = moqui_core::entity::cache::tx_cache_stats();
+    let held = tx
+        .run(TransactionAttribute::Cache, None, || {
+            for at in 0..40 {
+                let description = if at == 0 {
+                    Value::string(tricky)
+                } else if at == 1 {
+                    Value::Null
+                } else {
+                    Value::string(&format!("d{at}"))
+                };
+                put(
+                    enumeration,
+                    &[
+                        ("enumId", Value::string(&format!("SHB{at:02}"))),
+                        ("enumTypeId", Value::string("SHBULK")),
+                        ("description", description),
+                    ],
+                );
+            }
+            for at in 0..3 {
+                let mut moved = facade.make_value(enumeration)?;
+                moved.set("enumId", Value::string(&format!("SHS{at}")));
+                moved.set("enumTypeId", Value::string("SHBULK"));
+                moved.update(&facade)?;
+            }
+            Ok(bulk())
+        })
+        .unwrap();
+    let stats = moqui_core::entity::cache::tx_cache_stats().since(&before);
+    assert_eq!(stats.early_flush_count(), 0, "{stats:?}");
+    assert_eq!(held.1, 43);
+    assert_eq!(held.0.len(), 43);
+    assert!(held.0.contains(&format!("SHB00|{tricky}")), "{:?}", &held.0[..3]);
+    assert!(held.0.contains(&"SHB01|".to_string()), "a null stays null");
+    assert_eq!(bulk(), held, "the same after the commit");
     drop(facade);
     drop(cluster);
 }

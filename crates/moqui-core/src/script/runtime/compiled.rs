@@ -18,6 +18,10 @@
 //! compiles XML actions and Groovy expressions to classes once; this is the same saving for the
 //! action scripts, conditions, and expressions that run on every request and every form-list row.
 //!
+//! The bytecode is also kept for the process ([`SHARED_BYTECODE`]): an engine that has not compiled a script (another
+//! thread's, a nested script's, one whose own cache let it go, or a new engine installing the host scripts) reads it
+//! (`JS_ReadObject`) instead of parsing the text.
+//!
 //! rquickjs does not wrap these two calls for scripts, so they are made through `rquickjs::qjs`.
 
 use std::ffi::CString;
@@ -138,7 +142,7 @@ where
     let compiled = match saved {
         Some((_, _, saved)) => saved.restore(ctx).map_err(|err| Error::new(err.to_string()))?,
         None => {
-            let compiled = compile_global(ctx, source, strict, file_name)?;
+            let compiled = compile_shared(ctx, source, hash, strict, file_name)?;
             if let Some(engine) = &engine {
                 let text = shared.map_or_else(|| Arc::from(source), Arc::clone);
                 engine.scripts.borrow_mut().insert_sized(
@@ -154,6 +158,97 @@ where
     T::from_js(ctx, value)
         .catch(ctx)
         .map_err(|caught| caught_error(Error::script(caught.to_string()), &caught))
+}
+
+/// The bytecode of compiled global scripts, kept for the whole process: an engine that has not compiled a script
+/// (another thread's, a nested depth's, or one whose own cache let it go) reads its bytecode (`JS_ReadObject`)
+/// instead of parsing the text again. By the same key as an engine's cache; a hit compares the text and file name.
+type SharedBytecode = crate::script::BoundedMap<(u64, bool), (Arc<str>, Arc<str>, Arc<[u8]>)>;
+
+/// The bytecode the process keeps: the Mantle and Mr. Boss scripts are about 10 MB of source, their bytecode about
+/// as much again.
+const MAX_SHARED_BYTECODE_BYTES: usize = 64 * 1024 * 1024;
+
+static SHARED_BYTECODE: std::sync::LazyLock<std::sync::Mutex<SharedBytecode>> = std::sync::LazyLock::new(|| {
+    std::sync::Mutex::new(crate::script::BoundedMap::with_bytes(
+        MAX_COMPILED_SCRIPTS * 4,
+        MAX_SHARED_BYTECODE_BYTES,
+    ))
+});
+
+/// Run `source` once as strict global code through [`SHARED_BYTECODE`] (not kept in the engine): the host scripts an
+/// engine installs when it starts, and other code each engine evaluates the same.
+pub(super) fn eval_shared<'js, T>(ctx: &Ctx<'js>, source: &str) -> Result<T, Error>
+where
+    T: FromJs<'js>,
+{
+    let compiled = compile_shared(ctx, source, hash_text(source), true, "eval_script")?;
+    let value = run_compiled(ctx, &compiled)?;
+    T::from_js(ctx, value)
+        .catch(ctx)
+        .map_err(|caught| caught_error(Error::script(caught.to_string()), &caught))
+}
+
+/// Scripts read from [`SHARED_BYTECODE`] instead of compiled, since the process started.
+static SHARED_BYTECODE_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Scripts an engine read from the process's bytecode instead of compiling them.
+#[cfg(test)]
+pub(crate) fn shared_bytecode_reads() -> u64 {
+    SHARED_BYTECODE_READS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// [`compile_global`] through [`SHARED_BYTECODE`]: read from the bytecode another engine wrote for the same text, or
+/// compiled here and its bytecode kept for the others. A bytecode that does not read is compiled again.
+fn compile_shared<'js>(
+    ctx: &Ctx<'js>,
+    source: &str,
+    hash: u64,
+    strict: bool,
+    file_name: &str,
+) -> Result<JsValue<'js>, Error> {
+    let kept = moqui_lib::sync::lock(&SHARED_BYTECODE)
+        .get(&(hash, strict))
+        .filter(|(text, name, _)| **text == *source && **name == *file_name)
+        .map(|(_, _, bytes)| bytes);
+    if let Some(bytes) = kept {
+        let flags = i32::try_from(qjs::JS_READ_OBJ_BYTECODE).unwrap_or(1);
+        // SAFETY: the context pointer is the live context of `ctx`; `bytes` is bytecode this process's QuickJS wrote
+        // and stays alive for the call.
+        let raw = unsafe { qjs::JS_ReadObject(ctx.as_raw().as_ptr(), bytes.as_ptr(), bytes.len() as _, flags) };
+        if let Ok(read) = owned_or_exception(ctx, raw) {
+            SHARED_BYTECODE_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Ok(read);
+        }
+    }
+    let compiled = compile_global(ctx, source, strict, file_name)?;
+    let mut size: qjs::size_t = 0;
+    let flags = i32::try_from(qjs::JS_WRITE_OBJ_BYTECODE).unwrap_or(1);
+    // SAFETY: `compiled` is a live function bytecode object of this context; the buffer QuickJS returns is its own,
+    // copied here and then freed with the context's allocator.
+    let written = unsafe {
+        let ptr = qjs::JS_WriteObject(ctx.as_raw().as_ptr(), &mut size, compiled.as_raw(), flags);
+        if ptr.is_null() {
+            None
+        } else {
+            let bytes: Arc<[u8]> = Arc::from(std::slice::from_raw_parts(ptr, size as usize));
+            qjs::js_free(ctx.as_raw().as_ptr(), ptr.cast());
+            Some(bytes)
+        }
+    };
+    match written {
+        Some(bytes) => {
+            let weight = bytes.len() + source.len() + file_name.len();
+            moqui_lib::sync::lock(&SHARED_BYTECODE).insert_sized(
+                (hash, strict),
+                (Arc::from(source), Arc::from(file_name), bytes),
+                weight,
+            );
+        }
+        // nothing kept: an exception the write left pending is cleared
+        None => drop(ctx.catch()),
+    }
+    Ok(compiled)
 }
 
 fn compile_global<'js>(ctx: &Ctx<'js>, source: &str, strict: bool, file_name: &str) -> Result<JsValue<'js>, Error> {

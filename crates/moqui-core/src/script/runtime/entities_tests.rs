@@ -595,3 +595,43 @@ fn a_template_loop_reads_fields_by_dot() {
     .unwrap();
     assert_eq!(text, "E1=first (Type 1);E2=second (Type 1);E3=third (Type 1);");
 }
+
+/// The engine counts its heap's live bytes as it allocates (`CountingAllocator`), close to what QuickJS's own walk
+/// of the heap reports.
+#[test]
+fn the_engine_counts_its_heap_as_quickjs_does() {
+    let context = enumerations();
+    let _entered = context.enter();
+    run_script("globalThis.big = []; for (let i = 0; i < 20000; i++) globalThis.big.push('x' + i)").unwrap();
+    let engine = super::super::ENGINES
+        .with(|engines| engines.borrow().first().cloned())
+        .expect("a started engine");
+    engine.runtime.run_gc();
+    let counted = i64::try_from(engine.heap_bytes.get()).unwrap();
+    let walked = engine.runtime.memory_usage().malloc_size;
+    assert!(
+        counted > walked / 2 && counted < walked * 2,
+        "counted {counted} against QuickJS's {walked}"
+    );
+}
+
+/// A script one thread's engine compiled is read from the process's bytecode by another thread's engine, not parsed
+/// again, and runs the same.
+#[test]
+fn another_threads_engine_reads_a_compiled_script_s_bytecode() {
+    let source = "(function () { let total = 0; for (let i = 1; i <= 10; i++) total += i; return 'sum ' + total })() /* shared bytecode test */";
+    let run = move || {
+        let context = enumerations();
+        let _entered = context.enter();
+        super::super::eval_value(source).unwrap()
+    };
+    let first = std::thread::spawn(run).join().unwrap();
+    let before = super::compiled::shared_bytecode_reads();
+    let second = std::thread::spawn(run).join().unwrap();
+    assert_eq!(first, Value::string("sum 55"));
+    assert_eq!(second, first);
+    assert!(
+        super::compiled::shared_bytecode_reads() > before,
+        "the second engine read the bytecode"
+    );
+}

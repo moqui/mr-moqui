@@ -93,7 +93,8 @@ design and the numbers are in [plans/TX-Cache.md](../../plans/TX-Cache.md); the 
 off everywhere, each `cache` service then running as `use` does.
 
 **Which service to mark.** The service an operation starts with (a screen transition's, a REST call's, a job's), not an
-inner service many callers share: a `cache` call that joins its caller's transaction turns holding on for the rest of
+inner service many callers share (with the `screen_tx_cache` property `true`, a transition's own transaction holds,
+as `cache`; off by default while a case where it reads stale is looked into): a `cache` call that joins its caller's transaction turns holding on for the rest of
 that transaction, as Java's `initTransactionCache` does, so a shared inner service would change its callers. A
 `transaction` attribute on a `service-call` decides the cache for that call, as in Java: `force-new` (or `use`) there
 runs a `cache` service without it, so call one in a transaction of its own with `transaction="force-cache"`.

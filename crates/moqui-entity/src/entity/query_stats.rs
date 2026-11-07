@@ -125,6 +125,31 @@ pub fn statement_key(sql: &str) -> String {
     key
 }
 
+/// Statement keys this thread made, by the SQL text, so a statement that runs again (most do) is not normalized again.
+/// Cleared whole past [`KEYS_KEPT`].
+const KEYS_KEPT: usize = 2048;
+
+thread_local! {
+    static KEYS: std::cell::RefCell<HashMap<Box<str>, std::sync::Arc<str>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// [`statement_key`] of `sql`, from this thread's [`KEYS`] when it made it before.
+fn cached_statement_key(sql: &str) -> std::sync::Arc<str> {
+    KEYS.with(|keys| {
+        if let Some(key) = keys.borrow().get(sql) {
+            return std::sync::Arc::clone(key);
+        }
+        let key: std::sync::Arc<str> = statement_key(sql).into();
+        let mut keys = keys.borrow_mut();
+        if keys.len() >= KEYS_KEPT {
+            keys.clear();
+        }
+        keys.insert(sql.into(), std::sync::Arc::clone(&key));
+        key
+    })
+}
+
 /// The statements of one instance, bounded and sharded. The process has one ([`registry`]); the tests make their own.
 pub(crate) struct Registry {
     shards: Vec<Mutex<HashMap<String, Stat>>>,
@@ -149,10 +174,11 @@ impl Registry {
     }
 
     pub(crate) fn record(&self, sql: &str, elapsed: Duration, error: bool, at: crate::hooks::StatementArtifact) {
-        let key = statement_key(sql);
+        let key = cached_statement_key(sql);
+        let key: &str = &key;
         let nanos = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
-        let mut map = lock(self.shard_of(&key));
-        let stat = if let Some(stat) = map.get_mut(&key) {
+        let mut map = lock(self.shard_of(key));
+        let stat = if let Some(stat) = map.get_mut(key) {
             stat
         } else {
             // Reserve a row; past the bound the statement counts in the other row, in its own shard.
@@ -165,7 +191,7 @@ impl Registry {
                 count(other, nanos, error, at.artifact);
                 return;
             }
-            map.entry(key).or_insert_with(|| Stat {
+            map.entry(key.to_string()).or_insert_with(|| Stat {
                 entity: at.entity.clone(),
                 ..Stat::default()
             })

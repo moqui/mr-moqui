@@ -1331,6 +1331,62 @@ Next:
 3. The next services of the ranking, and screen transitions' and REST calls' own transactions (the service each
    starts with is often not marked, and holds nothing).
 
+## Round 27: large shadows as arrays, a profile of the Mantle operations, and the script engine's compile and heap check
+
+Round 26's next steps.
+
+1. **A shadow of more than 16 rows goes to Postgres as arrays**, one parameter a column: `(k1, k2) NOT IN (SELECT *
+   FROM unnest(CAST(? AS type[]), ...))` for the hidden keys and `UNION ALL SELECT * FROM unnest(...)` for the rows
+   (`statement::write_table`, the values as their text parameters are sent, quoted in an array literal). The statement's
+   text and parameter count no longer grow with the rows, so the shadow takes up to 10,000 held rows (it was 500, against
+   Postgres's 65,535 parameters), and a bulk frame such as `get#DuplicatePairs`' 2,032 updates is read without writing
+   first. Tested on the embedded Postgres with 43 held rows, quotes, a backslash, braces and a null.
+2. **A CPU profile of the Mantle operations** (`perf record -g` of a frame-pointer release build running
+   `AccountingSettlement`, `AccountingPaymentLifecycle`, `WarehouseShipping` and `OrderToCashBasicFlow`; samples under a
+   service call): the time a held call spends beyond its round trips is the script engine's, not the cache's.
+   - `JS_ComputeMemoryUsage` 4.0%: the check of the engine's heap against the cache-pressure limit walked every object
+     of the heap, every 16th script. An engine now runs QuickJS on a `CountingAllocator` (rquickjs's `RustAllocator`,
+     its live bytes counted), so the check reads a number, on every script.
+   - Compiling JS 15.5%: an engine keeps its compiled scripts, but each nesting depth and thread has its own engine, and
+     the 9.7 MB of Mantle and Mr. Boss JS is more than one engine's 4 MiB cache, so the same modules were parsed again
+     and again. The bytecode of a compiled script is kept for the process now (`compiled::SHARED_BYTECODE`, 64 MiB):
+     another engine reads it (`JS_ReadObject`) instead of parsing, the host scripts an engine installs when it starts
+     included (`eval_js`).
+   - SQL redaction 1.6%, twice a statement (the query stats' key and a traced span's text): kept per thread by the text.
+   The same specs after: 8,729 samples under service calls against 10,196 (14% less CPU), compiling 9.8% (it was
+   15.5%; most of what is left is new engines' first scripts), `JS_ComputeMemoryUsage` and the redaction gone. The
+   moqui-core unit tests run in 33 s (42 s).
+3. **Screen transitions on the cache, tried and left off**: `screen_tx_cache` (new) makes a transition's transaction,
+   and a screen's with `begin-transaction`, begin as `cache`. With it on, Mr. Boss's `WarehouseReceivingWalk` (Finish
+   receipt) fails every time in the client suite: the receipt page after `closeRemainder` shows the shipment still open,
+   though the transition's message says it was delivered. It passes alone and with the setting off, so the default
+   is `false` until that is understood. The census does not run the client walks, so it did not see this.
+
+The Mantle operations against the Postgres 200 µs away, as in Round 26 (median ms a call):
+
+| Service | Calls | ms off | Round 26 | Round 27 | Faster than off |
+|---|---:|---:|---:|---:|---:|
+| `order.OrderServices.place#Order` | 26 | 29.6 | 22.0 | 21.7 | 27% |
+| `order.OrderServices.approve#Order` | 26 | 24.1 | 17.4 | 17.3 | 28% |
+| `order.OrderServices.add#OrderProductQuantity` | 32 | 26.6 | 17.5 | 17.6 | 34% |
+| `account.InvoiceServices.change#InvoiceState` | 2 | 33.8 | 25.9 | 23.6 | 30% |
+| `account.PaymentServices.create#Payment` | 11 | 37.3 | 24.6 | 23.5 | 37% |
+| `account.PaymentServices.apply#Settlement` | 8 | 77.0 | 60.4 | 51.1 | 34% |
+| `shipment.ShipmentServices.pack#Shipment` | 16 | 68.3 | 44.9 | 45.0 | 34% |
+| `account.PaymentServices.get#PaymentFinanceDetail` | 24 | 18.9 | 15.5 | 13.7 | 27% |
+| `account.InvoiceServices.approve#Payable` | 6 | 44.9 | 30.3 | 31.7 | 29% |
+
+All of them: 6037 ms off, 4126 ms in Round 26, 3954 ms now (35% less than off).
+
+Next:
+1. Why the receiving walk reads a stale shipment with transitions held (`close#ReceiptRemainder` under a held
+   transition: its nested `force-new` work against the transition's held writes of the same rows), then the
+   transitions on the cache by default; and the census over the client walks too.
+2. The rest of the profile: SipHash 5% (the compiled scripts' text hash, the telemetry histogram's attribute hash,
+   the statement cache's key), allocation 12% (`malloc` and `free`), `memcmp` 3% (script text compared on a cache hit).
+3. `WorkCenters`' load of a released operation, which failed once in a full `./moq test-apps` (and once under the
+   census in Round 22) and passes alone and in the full mr-mantle run.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
@@ -1359,6 +1415,8 @@ Next:
 - A view built in code (a data document, a REST query view) read in a transaction-cache frame reads the held rows in place (Postgres) instead of writing them first.
 - `entity_tx_cache` (default true) turns the transaction cache off everywhere when false.
 - 13 more Mantle services are `transaction="cache"` (Round 26's list); `complete#ShipmentPack` calls `pack#Shipment`, and Customer 360 its service, with `transaction="force-cache"`.
+- A script engine's QuickJS heap is allocated through Rust's allocator (rquickjs `RustAllocator`, counted), not QuickJS's malloc functions; compiled script bytecode is shared by the process's engines.
+- `screen_tx_cache` (default false): true makes screen transitions' and `begin-transaction` screens' transactions hold, as `cache`.
 - SMTP-delivered Inbox mail and its account rules commit together when no email ECA is installed; a failure there stores the message alone and runs the rules after.
 - Mail stored by IMAP and POP3 sync, SMTP delivery and import, and the IMAP flag sync, run in transaction-cache frames; `react#Message`, `edit#Message`, `redact#Message`, `vote#Poll`, `mark#AllRead` and `mark#NotificationsViewed` are `transaction="cache"`, and a redacted message leaves the search index after its commit.
 - `no-tx-cache` turns a frame to read-through (writes go to the database, reads still kept), and a later `cache` call that joins it no longer turns holding back on.

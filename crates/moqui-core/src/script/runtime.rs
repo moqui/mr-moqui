@@ -31,8 +31,8 @@ use std::time::{Duration, Instant};
 
 use moqui_lib::context_stack::{ContextStack, Lookup};
 use moqui_lib::object::{HostObject, Value};
+use rquickjs::allocator::{Allocator, RustAllocator};
 use rquickjs::class::Trace;
-use rquickjs::context::EvalOptions;
 use rquickjs::function::{Opt, Rest, This};
 use rquickjs::object::Property;
 use rquickjs::Error as JsError;
@@ -404,7 +404,8 @@ fn stack_budget(depth: usize) -> Result<usize, Error> {
 
 /// Persistents drop before the context, and the context drops before the runtime.
 struct Engine {
-    cache_pressure_check: Cell<u8>,
+    /// The live bytes of this engine's heap, kept by its [`CountingAllocator`].
+    heap_bytes: Rc<Cell<usize>>,
     /// Lists, maps and decimals a running script read by bare name. The script mutates the lists and maps, so
     /// they are written back to the stack at the end of the run and before a host call, when changed.
     tracked: RefCell<HashMap<String, Persistent<JsValue<'static>>>>,
@@ -438,13 +439,62 @@ struct Engine {
     runtime: Runtime,
 }
 
+/// QuickJS's heap on Rust's allocator ([`RustAllocator`]), its live bytes counted, so the engine knows its heap size
+/// without `JS_ComputeMemoryUsage`, which walks every object (4% of a Mantle service call's time when it ran every 16th
+/// script).
+struct CountingAllocator(Rc<Cell<usize>>);
+
+// SAFETY: every call goes to `RustAllocator`, which meets the trait's contract; the count only reads the sizes it gives.
+unsafe impl Allocator for CountingAllocator {
+    fn alloc(&mut self, size: usize) -> *mut u8 {
+        let ptr = RustAllocator.alloc(size);
+        if !ptr.is_null() {
+            // SAFETY: `ptr` was just allocated by `RustAllocator`.
+            self.0.set(self.0.get() + unsafe { RustAllocator::usable_size(ptr) });
+        }
+        ptr
+    }
+
+    fn calloc(&mut self, count: usize, size: usize) -> *mut u8 {
+        let ptr = RustAllocator.calloc(count, size);
+        if !ptr.is_null() {
+            // SAFETY: `ptr` was just allocated by `RustAllocator`.
+            self.0.set(self.0.get() + unsafe { RustAllocator::usable_size(ptr) });
+        }
+        ptr
+    }
+
+    unsafe fn dealloc(&mut self, ptr: *mut u8) {
+        // SAFETY: the caller hands back a pointer this allocator gave, which `RustAllocator` made.
+        let size = unsafe { RustAllocator::usable_size(ptr) };
+        self.0.set(self.0.get().saturating_sub(size));
+        // SAFETY: as above.
+        unsafe { RustAllocator.dealloc(ptr) };
+    }
+
+    unsafe fn realloc(&mut self, ptr: *mut u8, new_size: usize) -> *mut u8 {
+        // SAFETY: the caller hands back a pointer this allocator gave, which `RustAllocator` made.
+        let old = unsafe { RustAllocator::usable_size(ptr) };
+        // SAFETY: as above.
+        let moved = unsafe { RustAllocator.realloc(ptr, new_size) };
+        if !moved.is_null() {
+            // SAFETY: `moved` was just allocated by `RustAllocator`.
+            let new = unsafe { RustAllocator::usable_size(moved) };
+            self.0.set((self.0.get() + new).saturating_sub(old));
+        }
+        moved
+    }
+
+    unsafe fn usable_size(ptr: *mut u8) -> usize {
+        // SAFETY: the caller hands a pointer this allocator gave, which `RustAllocator` made.
+        unsafe { RustAllocator::usable_size(ptr) }
+    }
+}
+
 impl Engine {
     /// Reclaim cached code before the hard heap limit interrupts a valid script. Live user values remain rooted.
     fn reclaim_cache_pressure(&self) -> bool {
-        let used = || {
-            let usage = self.runtime.memory_usage();
-            usage.malloc_size.max(usage.memory_used_size)
-        };
+        let used = || i64::try_from(self.heap_bytes.get()).unwrap_or(i64::MAX);
         if used() < CACHE_HEAP_PRESSURE {
             return false;
         }
@@ -802,13 +852,9 @@ fn with_context<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Err
             started
         }
     };
-    // Computing heap usage walks the heap; do it periodically, not for every field expression. The soft limit leaves
-    // 16 MiB for code and values made between checks. The hard limit and its existing error recovery still apply.
-    let check = engine.cache_pressure_check.get();
-    engine.cache_pressure_check.set((check + 1) % 16);
-    if check == 0 {
-        engine.reclaim_cache_pressure();
-    }
+    // The heap's live bytes are counted as it allocates ([`CountingAllocator`]), so every entry checks them. The hard
+    // limit and its error recovery still apply.
+    engine.reclaim_cache_pressure();
     engine.runtime.set_max_stack_size(stack);
     let _limit = (depth == 0).then(ScriptLimit::arm);
     DEPTH.with(|current| current.set(depth + 1));
@@ -1009,7 +1055,8 @@ fn current_engine() -> Option<Rc<Engine>> {
 
 impl Engine {
     fn start() -> Result<Self, Error> {
-        let runtime = Runtime::new().map_err(js_error)?;
+        let heap_bytes = Rc::new(Cell::new(0));
+        let runtime = Runtime::new_with_alloc(CountingAllocator(Rc::clone(&heap_bytes))).map_err(js_error)?;
         runtime.set_memory_limit(MEMORY_LIMIT);
         runtime.set_interrupt_handler(Some(Box::new(|| {
             DEADLINE
@@ -1019,7 +1066,7 @@ impl Engine {
         let context = Context::full(&runtime).map_err(js_error)?;
         let helpers = context.with(|ctx| install_context(&ctx))?;
         Ok(Self {
-            cache_pressure_check: Cell::new(0),
+            heap_bytes,
             tracked: RefCell::new(HashMap::new()),
             released: RefCell::new(HashMap::new()),
             templates: RefCell::new(super::bounded::BoundedMap::with_bytes(
@@ -1528,12 +1575,8 @@ fn eval_js<'js, T>(ctx: &Ctx<'js>, source: &str) -> Result<T, Error>
 where
     T: FromJs<'js>,
 {
-    let mut options = EvalOptions::default();
-    options.strict = true;
-    options.global = true;
-    ctx.eval_with_options::<T, _>(source, options)
-        .catch(ctx)
-        .map_err(|caught| Error::new(caught.to_string()))
+    // Compiled once for the process: each engine that starts installs the same host scripts.
+    compiled::eval_shared::<T>(ctx, source).map_err(|err| Error::new(err.message().to_string()))
 }
 
 fn expand_in(ctx: &Ctx<'_>, template: &str) -> Result<String, Error> {

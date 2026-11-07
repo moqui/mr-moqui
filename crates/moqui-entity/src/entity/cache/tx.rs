@@ -884,7 +884,7 @@ fn showing_members(
 }
 
 /// Held rows of a view's members past which a view read writes them first instead of shadowing them.
-const SHADOW_ROWS_MAX: usize = 500;
+const SHADOW_ROWS_MAX: usize = 10_000;
 
 /// Before a find or count of a view entity in a frame that holds rows of a member that may be in its result: the
 /// shadows of those members' tables (`TableShadow`), so the read sees the held rows with none of them written. Where

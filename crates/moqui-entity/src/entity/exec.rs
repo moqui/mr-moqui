@@ -376,7 +376,23 @@ fn trace<T>(sql: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Err
 
 /// Literal values are never exported, including SQL outside the parameterized entity paths. At most about 4 KiB.
 pub fn redact_sql(sql: &str) -> String {
-    redact_sql_to(sql, 4096)
+    thread_local! {
+        /// This thread's redactions by SQL text: a statement traced again is not scanned again. Cleared past 1,024.
+        static REDACTED: std::cell::RefCell<std::collections::HashMap<Box<str>, Box<str>>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    REDACTED.with(|kept| {
+        if let Some(redacted) = kept.borrow().get(sql) {
+            return redacted.to_string();
+        }
+        let redacted = redact_sql_to(sql, 4096);
+        let mut kept = kept.borrow_mut();
+        if kept.len() >= 1024 {
+            kept.clear();
+        }
+        kept.insert(sql.into(), redacted.as_str().into());
+        redacted
+    })
 }
 
 /// [`redact_sql`] of the whole text: the key of the query stats (`query_stats::statement_key`).
