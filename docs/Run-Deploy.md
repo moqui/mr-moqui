@@ -24,7 +24,8 @@ and the build packages are in [Build-Test](Build-Test.md).
 
 ### Develop on your machine
 
-You need Rust 1.98 or newer (`rustc --version`), git and bash, on Linux or macOS.
+You need Rust 1.99 or newer (`rustc --version`; quickjs-oxide declares 1.99, and `rust-toolchain.toml` pins 1.99.0),
+git and bash, on Linux or macOS.
 
 ```sh
 git clone https://github.com/moqui/mr-moqui.git

@@ -90,6 +90,7 @@ These are the feature flags the resolve used. The unsafe defaults are called out
 | `totp-rs` 6 | `default-features = false`, `std`, `otpauth`, `gen_secret` | `qr` |
 | `rquickjs` 0.14 | defaults | |
 | `rquickjs` 0.14 on `wasm32-unknown-emscripten` | defaults plus `bindgen` (moqui-core target dependency) | No bindings ship for this target, so `rquickjs-sys` generates them at build with `bindgen` (BSD-3-Clause, build only, not linked) against the emsdk sysroot. |
+| `quickjs-oxide` 0.4.1 | git `https://github.com/moqui/quickjs-oxide` at an exact `rev`, `default-features = false` (moqui-core, all targets). Added 2026-11-07. | `test262-host`, `test-support`, `gc-stress`, `ic-stats`, `register-stress`. No `[patch]` to `../quickjs-oxide` in a committed file. |
 | `rusqlite` 0.38 | `bundled` (moqui-browser only) | `0.40`: `servo-net` (behind `pdf-servo`) pins 0.38, and two `libsqlite3-sys` versions cannot both link `sqlite3`. No `bundled-sqlcipher`, `loadable_extension`, or `serde_json` feature. |
 | `pulldown-cmark` | the Rust crate | `comrak` is BSD-2-Clause and is an acceptable alternate. Re-check it if a C regex backend is turned on. |
 | `pdf-servo` | absent from the default graph | The `servo` crate 0.7.0 is MPL-2.0. See below. |
@@ -125,6 +126,8 @@ Versions are what `cargo` locked on 2026-10-11 for the feature set above. "Stati
 | Crate | Version | License | Role | Linkage | Verdict |
 |---|---|---|---|---|---|
 | `rquickjs` | 0.14.0 | MIT | Script and template engine | Static. The C engine is QuickJS-NG, also MIT, compiled in through `rquickjs-sys`. | OK. Retain the MIT notice. |
+| `quickjs-oxide` | 0.4.1 (git, the moqui fork) | MIT | The Rust script engine that replaces `rquickjs` (plans/Script-Engine-Oxide.md). Linked, not called yet. | Static. No C. Its NOTICE: the Unicode identifier, case-conversion and normalization tables derive from QuickJS 2026-06-04 (MIT, `LICENSES/QuickJS-MIT.txt`) and from Unicode 17.0.0 UCD data (`LICENSES/Unicode-3.0.txt`). | OK. Added 2026-11-07. Retain the MIT notice, the NOTICE, and both files under `LICENSES/`. |
+| `quickjs-oxide-core`, `quickjs-oxide-regexp` | 0.4.1 (same git revision) | MIT; `quickjs-oxide-regexp` is MIT AND Unicode-3.0 | The engine's core and its regular-expression engine and Unicode tables | Static, through `quickjs-oxide`. Each carries the same NOTICE and `LICENSES/` files. Its other dependencies, `num-bigint` 0.5.1 and `num-traits` 0.2.19 (MIT OR Apache-2.0), were already in the lock (`num-bigint` through `oxc_ecmascript`, `num-traits` through `image`, `ipp` and others). | OK. Added 2026-11-07. Retain the notices as for `quickjs-oxide`. |
 | `postgresql_embedded` | 0.21.0 | (Apache-2.0 OR MIT) AND PostgreSQL | Start and stop the postmaster | Static for the crate. The server archive is a payload. | OK. Strip `psql` from the payload. Keep `COPYRIGHT`. |
 | `postgresql_archive`, `postgresql_commands` | 0.21.0 | (Apache-2.0 OR MIT) AND PostgreSQL | Download, bundle, and invoke the archive | Static | OK, same payload rule. |
 | `sqlx`, `sqlx-core`, `sqlx-postgres` | 0.9.0 | MIT OR Apache-2.0 | Used inside `postgresql_embedded` | Static | OK. Not the entity SQL path. |
@@ -202,6 +205,7 @@ Versions are what `cargo` locked on 2026-10-11 for the feature set above. "Stati
 |---|---|
 | Unicode-3.0 | `icu_collections`, `icu_locale_core`, `icu_normalizer`, `icu_normalizer_data`, `icu_properties`, `icu_properties_data`, `icu_provider`, `litemap`, `potential_utf`, `tinystr`, `writeable`, `yoke`, `yoke-derive`, `zerofrom`, `zerofrom-derive`, `zerotrie`, `zerovec`, `zerovec-derive` |
 | (MIT OR Apache-2.0) AND Unicode-3.0 | `unicode-ident` |
+| MIT AND Unicode-3.0 | `quickjs-oxide-regexp` (added 2026-11-07) |
 | Unlicense OR MIT | `aho-corasick`, `byteorder`, `jiff`, `jiff-core`, `memchr`, `termcolor` |
 | Unlicense OR MIT (`csv` spelling) | `csv`, `csv-core` |
 | Apache-2.0 OR ISC OR MIT | `hyper-rustls`, `rustls`, `rustls-native-certs`, `rustls-pemfile` |

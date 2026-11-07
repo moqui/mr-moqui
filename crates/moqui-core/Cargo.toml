@@ -30,6 +30,8 @@ opentelemetry-proto = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 getrandom = { workspace = true }
 rquickjs = { workspace = true, features = ["macro"] }
+# Not called yet (plans/Script-Engine-Oxide.md phase 0).
+quickjs-oxide = { workspace = true }
 md-5 = { workspace = true }
 sha2 = { workspace = true }
 memchr = { workspace = true }
