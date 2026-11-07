@@ -80,13 +80,13 @@ fn levels_group_filter_and_lateral_sum() {
     ), "{level}");
     assert!(
         level.contains(
-            "count(*) FILTER (WHERE COALESCE(COALESCE(\"f_itemTypeEnumId\" = ?, (body -> 'itemTypeEnumId') @> jsonb_build_array(?::text)), FALSE)) AS c0"
+            "count(*) FILTER (WHERE (\"f_itemTypeEnumId\" = ? OR (\"f_itemTypeEnumId\" IS NULL AND ((body -> 'itemTypeEnumId') @> jsonb_build_array(?::text))))) AS c0"
         ),
         "{level}"
     );
     assert!(
         level.contains(
-            "COALESCE(sum(s1.v) FILTER (WHERE COALESCE(COALESCE(\"f_itemTypeEnumId\" = ?, (body -> 'itemTypeEnumId') @> jsonb_build_array(?::text)), FALSE)), 0) AS c1"
+            "COALESCE(sum(s1.v) FILTER (WHERE (\"f_itemTypeEnumId\" = ? OR (\"f_itemTypeEnumId\" IS NULL AND ((body -> 'itemTypeEnumId') @> jsonb_build_array(?::text))))), 0) AS c1"
         ),
         "{level}"
     );
