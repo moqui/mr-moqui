@@ -1424,6 +1424,14 @@ along with this software (see the LICENSE.md file). If not, see
                     One that fails is logged and left out. Merged by service.</xs:documentation></xs:annotation>
                 <xs:attribute name="service" type="xs:string" use="required"/>
             </xs:complexType></xs:element>
+            <xs:element name="constitution-provider" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
+                <xs:annotation><xs:documentation>A service that gives the Constitution of a user's internal organization
+                    (docs/ai/Constitution.md): an implementation of
+                    org.moqui.admin.ConstitutionServices.get#ScopedConstitution, called with reads only. The first that
+                    answers for an organization decides; one that fails is logged and the global document is used with
+                    a diagnostic. Merged by service.</xs:documentation></xs:annotation>
+                <xs:attribute name="service" type="xs:string" use="required"/>
+            </xs:complexType></xs:element>
             <xs:element name="ai-task" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
                 <xs:annotation><xs:documentation>A typed AI task a component adds to the registry of
                     org.moqui.agent.AiTaskServices (beside summarize, classify, extract, translate and generate): the

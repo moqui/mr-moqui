@@ -30,6 +30,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tracing = { workspace = true }
+# The Constitution's reference URLs and trusted origins (src/constitution).
+url = { workspace = true }
 
 [dev-dependencies]
 # moqui_core::testing, the in-memory entity facade the tests open; telemetry for the gen_ai spans test.

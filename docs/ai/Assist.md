@@ -777,6 +777,11 @@ follows there. They are acceptance tests of the framework, run by `./moq accept-
 - **Panes**: Memory (the memories with add, edit and forget, "Assist may remember what I ask" with "only for this
   conversation", and the user's lessons with their status and Delete for a proposed one) and My skills (open and edit,
   retire, share for review), from the header menu, which also toggles the permanent memory gate.
+- **Constitution / Rules** (header menu, `m-assist-constitution` in `js/WebrootConstitution.js`): the rules of the
+  active run, labeled as such, else the rules that apply now, with a reading language, references in the reference
+  dialog and Back to conversation. A link in an answer that is exactly one of its run's trusted references opens in the
+  same dialog. It reads `GET /assist/constitution` and `GET /assist/constitutionReference`, which need a signed-in user,
+  not `AgentUse` ([Constitution](Constitution.md)).
 - **Inline text actions**: `m-rich-text` offers Rewrite, Shorten, Translate and Fix grammar in its toolbar when
   `moqui.assist.textActionsOn()` (not on a shared, co-edited document); the selection's text, or the field's as plain
   text, goes to `POST textAction`, and the proposal shows under the toolbar with Replace, Insert below and Discard. Only

@@ -424,6 +424,7 @@ fn merge_llm_facade(base: &MNode, over: &MNode) {
     base_node.merge_children_by_keys(&over_node, "bind", &["feature"], None);
     base_node.merge_children_by_keys(&over_node, "data-entity", &["package", "entity"], None);
     base_node.merge_children_by_keys(&over_node, "user-facts", &["service"], None);
+    base_node.merge_children_by_keys(&over_node, "constitution-provider", &["service"], None);
     base_node.merge_children_by_keys(&over_node, "ai-task", &["name"], None);
     for name in ["limits", "content-log", "screen-sessions", "mcp", "gateway"] {
         base_node.merge_single_child(&over_node, name);

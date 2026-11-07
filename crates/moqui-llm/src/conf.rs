@@ -654,6 +654,9 @@ pub struct LlmConf {
     /// The services that add facts about a user to a conversation's prefix (`user-facts`, in order), each an
     /// implementation of `org.moqui.agent.AgentServices.get#UserFacts` ([`crate::facts`]).
     pub user_fact_services: Vec<String>,
+    /// The services that give the Constitution of a user's organization (`constitution-provider`, in order), each an
+    /// implementation of `org.moqui.admin.ConstitutionServices.get#ScopedConstitution` ([`crate::constitution`]).
+    pub constitution_providers: Vec<String>,
     /// The AI tasks components add (`ai-task`, by name).
     pub ai_tasks: Vec<AiTaskConf>,
     pub a2a: A2aConf,
@@ -800,6 +803,14 @@ impl LlmConf {
                 None => problems.push("llm-facade user-facts needs a service".to_string()),
             }
         }
+        let mut constitution_providers: Vec<String> = Vec::new();
+        for element in node.map(|node| node.children_named("constitution-provider")).unwrap_or_default() {
+            match attr(&element, "service") {
+                Some(service) if !constitution_providers.contains(&service) => constitution_providers.push(service),
+                Some(_) => {}
+                None => problems.push("llm-facade constitution-provider needs a service".to_string()),
+            }
+        }
         let mut ai_tasks: Vec<AiTaskConf> = Vec::new();
         for element in node.map(|node| node.children_named("ai-task")).unwrap_or_default() {
             match (attr(&element, "name"), attr(&element, "service")) {
@@ -943,6 +954,7 @@ impl LlmConf {
             screen_sessions,
             data_entities,
             user_fact_services,
+            constitution_providers,
             ai_tasks,
             a2a,
             mcp,

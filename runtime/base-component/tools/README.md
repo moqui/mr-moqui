@@ -25,6 +25,12 @@ runs on a worker as the `DatabaseLoadWrap` ServiceJob (`service/moqui/tools/Data
 The Data, SQL, Schema, ETL and Database screens take a `db` parameter, `group:<groupName>` (or `ext:<connectionId>` where an external database may be used), kept as the user
 preference `database.selected`; `template/DatabaseParts.xml` has the picker.
 
+## System
+
+`screen/System.xml`: its screens are the files of `screen/System/`. **Constitution** (`System/Constitution/`) reads and
+edits the instance's Constitution, previews its agent prompt section and manages the trusted reference origins
+([docs/ai/Constitution.md](../../../docs/ai/Constitution.md)); its shared parts are `template/ConstitutionParts.xml`.
+
 ## Tests
 
 ```sh

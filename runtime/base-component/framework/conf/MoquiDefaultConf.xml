@@ -832,7 +832,7 @@
             receive#IncomingSystemMessage (SystemMessageServices) as a remote system. sealed-permissions: UserGroupPermission
             create/update/delete for these IDs is allowed only if the caller already has that permission. -->
         <authz privileged-groups="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"
-                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,DATABASE_ADMIN,DATABASE_EXTERNAL"/>
+                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL"/>
     </user-facade>
 
     <transaction-facade use-transaction-cache="${entity_tx_cache}" use-connection-stash="true" use-lock-track="${entity_lock_track}" use-statement-timeout="${entity_statement_timeout}">

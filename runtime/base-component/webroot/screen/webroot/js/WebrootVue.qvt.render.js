@@ -2018,7 +2018,7 @@
               ]))
             }
         } },
-        "m-assist-thread": { hash: "e838e650", make: function (Vue) {
+        "m-assist-thread": { hash: "26a73d40", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock, createElementVNode: _createElementVNode, withModifiers: _withModifiers, withKeys: _withKeys } = Vue
 
             return function render(_ctx, _cache) {
@@ -2189,8 +2189,9 @@
                               text: row.text,
                               invented: row.invented,
                               chips: row.chips,
-                              streaming: row.streaming
-                            }, null, 8, ["text", "invented", "chips", "streaming"]),
+                              streaming: row.streaming,
+                              "run-id": row.runId ? String(row.runId) : null
+                            }, null, 8, ["text", "invented", "chips", "streaming", "run-id"]),
                             (!row.streaming && row.messageId && row.text)
                               ? (_openBlock(), _createElementBlock("div", {
                                   key: 0,
@@ -7998,7 +7999,7 @@
               ], 8, ["type"]))
             }
         } },
-        "m-shell-assist": { hash: "e37ed5d1", make: function (Vue) {
+        "m-shell-assist": { hash: "f608e595", make: function (Vue) {
             const { openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, createBlock: _createBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode } = Vue
 
             return function render(_ctx, _cache) {
@@ -8023,9 +8024,11 @@
               const _component_m_assist_memory = _resolveComponent("m-assist-memory")
               const _component_m_assist_skills = _resolveComponent("m-assist-skills")
               const _component_m_assist_skill_editor = _resolveComponent("m-assist-skill-editor")
+              const _component_m_assist_constitution = _resolveComponent("m-assist-constitution")
               const _component_m_assist_thread = _resolveComponent("m-assist-thread")
               const _component_m_assist_card = _resolveComponent("m-assist-card")
               const _component_m_assist_composer = _resolveComponent("m-assist-composer")
+              const _component_m_reference_dialog = _resolveComponent("m-reference-dialog")
               const _component_q_drawer = _resolveComponent("q-drawer")
               const _directive_close_popup = _resolveDirective("close-popup")
 
@@ -8337,6 +8340,27 @@
                                           }, 8, ["active", "onClick"])), [
                                             [_directive_close_popup]
                                           ])
+                                        : _createCommentVNode("", true),
+                                      (_ctx.constitutionOn)
+                                        ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                            key: 3,
+                                            clickable: "",
+                                            id: "m-assist-constitution-item",
+                                            active: _ctx.s.pane === 'constitution',
+                                            onClick: $event => (_ctx.pane('constitution'))
+                                          }, {
+                                            default: _withCtx(() => [
+                                              _createVNode(_component_q_item_section, null, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.labels.constitution), 1)
+                                                ]),
+                                                _: 1
+                                              })
+                                            ]),
+                                            _: 1
+                                          }, 8, ["active", "onClick"])), [
+                                            [_directive_close_popup]
+                                          ])
                                         : _createCommentVNode("", true)
                                     ]),
                                     _: 1
@@ -8481,31 +8505,42 @@
                                       key: 7,
                                       class: "col"
                                     }))
-                                  : (_openBlock(), _createElementBlock(_Fragment, { key: 8 }, [
-                                      _createVNode(_component_m_assist_thread, { class: "col" }),
-                                      (_ctx.handoffs.length || _ctx.approvals.length || _ctx.questions.length)
-                                        ? (_openBlock(), _createElementBlock("div", {
-                                            key: 0,
-                                            class: "m-assist-cards q-px-sm q-pt-xs"
-                                          }, [
-                                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.handoffs, (card) => {
-                                              return (_openBlock(), _createBlock(_component_m_assist_card, {
-                                                key: 'h' + card.handoffId,
-                                                kind: "handoff",
-                                                card: card
-                                              }, null, 8, ["card"]))
-                                            }), 128)),
-                                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.questions, (card) => {
-                                              return (_openBlock(), _createBlock(_component_m_assist_card, {
-                                                key: 'q' + card.questionId,
-                                                kind: "question",
-                                                card: card
-                                              }, null, 8, ["card"]))
-                                            }), 128))
-                                          ]))
-                                        : _createCommentVNode("", true),
-                                      _createVNode(_component_m_assist_composer)
-                                    ], 64)),
+                                  : (_ctx.s.pane === 'constitution' && _ctx.constitutionOn)
+                                    ? (_openBlock(), _createBlock(_component_m_assist_constitution, {
+                                        key: 8,
+                                        class: "col"
+                                      }))
+                                    : (_openBlock(), _createElementBlock(_Fragment, { key: 9 }, [
+                                        _createVNode(_component_m_assist_thread, { class: "col" }),
+                                        (_ctx.handoffs.length || _ctx.approvals.length || _ctx.questions.length)
+                                          ? (_openBlock(), _createElementBlock("div", {
+                                              key: 0,
+                                              class: "m-assist-cards q-px-sm q-pt-xs"
+                                            }, [
+                                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.handoffs, (card) => {
+                                                return (_openBlock(), _createBlock(_component_m_assist_card, {
+                                                  key: 'h' + card.handoffId,
+                                                  kind: "handoff",
+                                                  card: card
+                                                }, null, 8, ["card"]))
+                                              }), 128)),
+                                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.questions, (card) => {
+                                                return (_openBlock(), _createBlock(_component_m_assist_card, {
+                                                  key: 'q' + card.questionId,
+                                                  kind: "question",
+                                                  card: card
+                                                }, null, 8, ["card"]))
+                                              }), 128))
+                                            ]))
+                                          : _createCommentVNode("", true),
+                                        _createVNode(_component_m_assist_composer)
+                                      ], 64)),
+                        (_ctx.constitutionDialog)
+                          ? (_openBlock(), _createBlock(_component_m_reference_dialog, {
+                              key: 10,
+                              dialog: _ctx.constitutionDialog
+                            }, null, 8, ["dialog"]))
+                          : _createCommentVNode("", true),
                         _createElementVNode("div", {
                           class: "m-assist-announce",
                           "aria-live": "polite",

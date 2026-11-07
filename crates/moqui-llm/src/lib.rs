@@ -31,6 +31,7 @@ pub mod approval;
 pub mod assist;
 pub mod chat;
 pub mod conf;
+pub mod constitution;
 pub mod embed;
 pub mod facts;
 pub mod gateway;

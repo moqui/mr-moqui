@@ -30,6 +30,42 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'bootstrap').disableAuthz().call()</script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- The Constitution for reading (docs/ai/Constitution.md): a run's (runId, "Rules used for this run") or the one that applies
+        now, and a reference resolved for the reference dialog at each open. For any signed-in user (the services check), not
+        only Assist users: System › Constitution and the drawer's Rules pane both read them. -->
+    <transition name="constitution" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            let out = {}
+            if (!ec.user.userId) out = {errors: 'Sign in to read the Constitution'}
+            else {
+                const service = context.runId ? 'get#ConstitutionSnapshot' : 'get#Constitution'
+                const params = context.runId ? {runId: context.runId, locale: context.locale || null}
+                    : {locale: context.locale || null, organizationPartyId: context.organizationPartyId || null}
+                out = ec.service.sync().name('org.moqui.admin.ConstitutionServices.' + service).parameters(params).call() || {}
+                // a reader never gets the agent instructions here
+                delete out.instructions; delete out.documentText
+                if (ec.message.hasError()) out = {errors: ec.message.errorsString}
+            }
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(out)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="constitutionReference" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            let out = {}
+            if (!ec.user.userId) out = {allowed: 'N', message: 'Sign in to read the Constitution'}
+            else {
+                out = ec.service.sync().name('org.moqui.admin.ConstitutionServices.resolve#ConstitutionReference').parameters({
+                    referenceId: context.referenceId || '', runId: context.runId || null,
+                    organizationPartyId: context.organizationPartyId || null, locale: context.locale || null}).call() || {}
+                if (ec.message.hasError()) out = {allowed: 'N', message: ec.message.errorsString}
+            }
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(out)
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="conversations" method="get" read-only="true" begin-transaction="false">
         <actions><script>ec.service.sync().name('org.moqui.agent.AssistServices.call#Drawer').parameter('call', 'conversations').disableAuthz().call()</script></actions>
         <default-response type="none"/>
