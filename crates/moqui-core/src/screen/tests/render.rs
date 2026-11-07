@@ -1639,3 +1639,185 @@ fn a_timestamp_from_a_path_or_formatted_without_a_pattern_shows_formatted() {
     assert!(text.contains("N[1234567890]"), "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Commerce F72: a screen's actions and widget expressions cannot reach `runAsSystem`, even when a service renders the
+/// screen (the render began after the service's frame, so what runs is the screen's, not the service's own code).
+#[test]
+fn a_screen_rendered_by_a_service_cannot_run_as_system() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-system-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let attempt = "(function () { try { return ec.artifactExecution.runAsSystem(() => 'allowed') } \
+                   catch (e) { return 'refused' } })()";
+    std::fs::write(
+        dir.join("Root.xml"),
+        format!(
+            r#"<screen require-authentication="false">
+                <actions><script>fromActions = {attempt}</script></actions>
+                <widgets><label text="actions:${{fromActions}} widget:${{{attempt}}}"/></widgets>
+            </screen>"#
+        ),
+    )
+    .unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    context.push("AT_SERVICE", "test.Services.render#Page", "view");
+    let output = make_render(context.factory())
+        .root_screen(&root)
+        .render_mode("text")
+        .render()
+        .unwrap();
+    context.pop().unwrap();
+    let text = output.body_text();
+    assert!(text.contains("actions:refused widget:refused"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Shop F72: the `.qvue` of a public island (a screen `server-static` for qvue, or one that declines its session) is a
+/// cacheable asset for a cookieless visitor, so it sends no cookie and keeps no session. A request with a session of its
+/// own, a signed-in user, and a screen that is neither all get `private, no-store`, and their sessions are kept.
+#[test]
+fn a_public_islands_component_makes_no_session() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-island-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
+    write(
+        "Root.xml",
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    );
+    let island = |attributes: &str, actions: &str| {
+        format!(
+            r#"<screen require-authentication="false" render-modes="html,qvue" {attributes}>{actions}
+                <widgets><render-mode><text type="qvue" template="false"><![CDATA[<template><p>island</p></template>
+<script>module.exports = {{}}</script>]]></text></render-mode></widgets></screen>"#
+        )
+    };
+    write("Root/Static.xml", &island(r#"server-static="qvue""#, ""));
+    write(
+        "Root/Declined.xml",
+        &island("", "<actions><script>ec.web.declineSession()</script></actions>"),
+    );
+    write("Root/Plain.xml", &island("", ""));
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    world.user("ann", None);
+    let sessions = |world: &World| {
+        crate::user::session::flush_dirty(&world.factory).unwrap();
+        world
+            .facade
+            .find("moqui.server.HttpSession")
+            .unwrap()
+            .list()
+            .unwrap()
+            .len()
+    };
+    let cache_control = |response: &crate::web::WebResponse| {
+        response
+            .headers
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("cache-control"))
+            .map(|(_, value)| value.clone())
+            .collect::<Vec<_>>()
+    };
+    let cookie = |response: &crate::web::WebResponse| super::header_value(response, "Set-Cookie");
+    let before = sessions(&world);
+    for path in ["/Static.qvue", "/Declined.qvue"] {
+        let response = serve_at(&world.factory, request("GET", path), &root);
+        assert_eq!(response.status, 200, "{path}: {}", response.body_text());
+        assert!(response.body_text().contains("<p>island</p>"), "{path}");
+        assert_eq!(cookie(&response), None, "{path}");
+        assert_eq!(super::header_value(&response, "moquiSessionToken"), None, "{path}");
+        let cache = cache_control(&response);
+        assert!(cache.len() == 1 && cache[0].contains("public"), "{path}: {cache:?}");
+    }
+    assert_eq!(sessions(&world), before, "no session row for a public island");
+
+    // a screen that is neither: private, and a session starts
+    let response = serve_at(&world.factory, request("GET", "/Plain.qvue"), &root);
+    assert_eq!(cache_control(&response), ["private, no-store"]);
+    let session = cookie(&response).expect("a session cookie");
+    let session = session.split(';').next().unwrap().to_string();
+    // a request with its own session: private, and the session is kept
+    let mut with_session = request("GET", "/Static.qvue");
+    with_session.set_header("cookie", &session);
+    let response = serve_at(&world.factory, with_session, &root);
+    assert_eq!(response.status, 200);
+    assert_eq!(cache_control(&response), ["private, no-store"]);
+    assert_eq!(sessions(&world), before + 1);
+    // a signed-in user: private
+    let mut signed_in = request("GET", "/Static.qvue");
+    signed_in.set_header("authorization", super::basic("ann"));
+    let response = serve_at(&world.factory, signed_in, &root);
+    assert_eq!(response.status, 200, "{}", response.body_text());
+    assert_eq!(cache_control(&response), ["private, no-store"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Commerce F87: a `<public-site>` with a `host-check-service` that answers `restricted` for its host keeps the framework
+/// routes off that host (404), but not the static ones a page there loads; another host keeps them, and a check that
+/// fails refuses the route.
+#[test]
+fn a_restricted_host_refuses_the_framework_routes_but_not_the_static_ones() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-preview-host-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
+    write(
+        "Root.xml",
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    );
+    for name in ["apps", "libs"] {
+        write(
+            &format!("Root/{name}.xml"),
+            &format!(
+                r#"<screen require-authentication="false"><widgets><label text="{name} here"/></widgets></screen>"#
+            ),
+        );
+    }
+    write(
+        "HostServices.xml",
+        r#"<services><service verb="check" noun="PreviewHost" authenticate="anonymous-all">
+            <in-parameters><parameter name="siteId"/><parameter name="hostname"/><parameter name="path"/></in-parameters>
+            <out-parameters><parameter name="restricted" type="Boolean"/></out-parameters>
+            <actions><script>if (hostname === 'fail.test') throw new Error('the check is down')
+                restricted = siteId === 'SHOP' &amp;&amp; hostname === 'preview.test'</script></actions>
+        </service></services>"#,
+    );
+    let site = |host: &str| {
+        format!(
+            r#"<public-site host="{host}" site-id="SHOP" screen-location="component://none/Shop.xml"
+                host-check-service="check#PreviewHost"><mount path="/" screen="Shop"/></public-site>"#
+        )
+    };
+    let world = World::open(&format!(
+        r#"<moqui-conf><webapp-list><webapp name="webroot">{}{}{}</webapp></webapp-list></moqui-conf>"#,
+        site("preview.test"),
+        site("shop.test"),
+        site("fail.test")
+    ));
+    {
+        let context = world.factory.new_context();
+        let _entered = context.enter();
+        let failures = crate::service::lint(&[dir.join("HostServices.xml")]).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+    }
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let get = |host: &str, path: &str| {
+        let mut on = request("GET", path);
+        on.set_header("host", host);
+        serve_at(&world.factory, on, &root)
+    };
+    let preview = get("preview.test", "/apps");
+    assert_eq!(preview.status, 404, "{}", preview.body_text());
+    assert!(!preview.body_text().contains("apps here"));
+    let static_file = get("preview.test", "/libs");
+    assert_eq!(static_file.status, 200, "{}", static_file.body_text());
+    assert!(static_file.body_text().contains("libs here"));
+    let live = get("shop.test:8443", "/apps");
+    assert_eq!(live.status, 200, "{}", live.body_text());
+    assert!(live.body_text().contains("apps here"));
+    assert_eq!(get("fail.test", "/apps").status, 404, "a failed check refuses");
+    let _ = std::fs::remove_dir_all(&dir);
+}

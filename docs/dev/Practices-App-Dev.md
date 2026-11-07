@@ -164,6 +164,14 @@ Each component is its own git repository. Commit in each repository that a chang
   service as a one-line `<script>` into a module of 1,000 to 1,600 lines, most of it entity and service calls.
 - **No authorization by caller.** A service does not read `ec.artifactExecution.getStackNameString()` to decide whether
   its caller may write; it checks permissions. Status rules are `StatusFlowTransition` data that `update#` checks.
+- **A change reason is the audit row's.** Pass `<field>_changeReason` with an entity-auto `create#`, `update#` or
+  `store#` (implicit or declared) and the audit row of that field (`enable-audit-log`) records it; no `changeReason`
+  field of the app's own. A message staged until someone commits it is `SmsgStaged` (the framework's, with Consuming
+  and Cancelled), so no consume job takes it.
+- **Writing as the system.** A service that has checked its caller and must write what the caller may not (a page
+  space with `restrictUpdate`) uses `ec.artifactExecution.runAsSystem(() => ...)`: no user, authorization off, the
+  same transaction. Only a service's own code may call it ([The system
+  scope](../security/Attack-Surface.md#the-system-scope)); never grant the user a row for the write.
 - **No EECA guarding an entity that only its own module writes**, and no EECA or SECA on a hot path (every `Payment` or
   `AcctgTrans` write, a framework entity, `service=".*"`) without a narrow `<condition>`.
 - **Nothing for tests in production files.** Test entities, services, SECAs and scripts under `test/` are not loaded by

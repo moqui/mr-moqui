@@ -52,6 +52,10 @@ const FRAMEWORK_ROUTES: [&str; 29] = [
     "WebPush",
 ];
 
+/// The framework routes a restricted host still serves (`host-check-service`, Commerce F87): the static files a page
+/// there loads (the preview frame's scripts, styles and libraries).
+const STATIC_ROUTES: [&str; 6] = ["js", "css", "libs", "images", "static", "assets"];
+
 fn normalize_host(host: &str) -> String {
     host.trim().trim_end_matches('.').to_ascii_lowercase()
 }
@@ -76,6 +80,87 @@ pub fn hosts(factory: &ExecutionContextFactory) -> Vec<String> {
     hosts
 }
 
+/// Whether a request for a framework route (a [`FRAMEWORK_ROUTES`] path that is not one of the [`STATIC_ROUTES`]) is
+/// refused on its host: a `<public-site>` of the host names a `host-check-service`, which is called with the site,
+/// host and path and answers `restricted` true (a site's theme preview host, Commerce F87). Such a host serves its site
+/// and static files only, so nobody signs in to the framework or reaches its apps, REST, token routes or servlets on
+/// it. A service that fails refuses the route (the error is logged): the check guards a security boundary.
+pub(super) fn refuses_framework_route(factory: &ExecutionContextFactory, request: &WebRequest) -> bool {
+    let first = request.path.trim_start_matches('/').split('/').next().unwrap_or("");
+    if !FRAMEWORK_ROUTES.contains(&first) || STATIC_ROUTES.contains(&first) {
+        return false;
+    }
+    match MNode::parse_shared("moqui-conf", &factory.conf_text()) {
+        Ok(conf) => host_restricted(&conf, request),
+        Err(err) => {
+            tracing::error!(
+                "Public site host check of {}: the conf did not parse: {err}",
+                request.path
+            );
+            true
+        }
+    }
+}
+
+/// [`refuses_framework_route`] for a framework route on the request's host, over `conf`.
+fn host_restricted(conf: &MNode, request: &WebRequest) -> bool {
+    let Some(list) = conf.first_named("webapp-list") else {
+        return false;
+    };
+    let host = request_host(request);
+    for webapp in list
+        .named_iter("webapp")
+        .filter(|webapp| webapp.attribute_is("name", "webroot"))
+    {
+        for route in webapp.named_iter("public-site") {
+            if route.attribute("host").map(|h| normalize_host(&h)).as_deref() != Some(host.as_str()) {
+                continue;
+            }
+            let Some(service) = route.attribute("host-check-service").filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            let input = std::collections::BTreeMap::from([
+                (
+                    "siteId".to_string(),
+                    Value::string(route.attribute("site-id").unwrap_or_default()),
+                ),
+                ("hostname".to_string(), Value::string(&host)),
+                ("path".to_string(), Value::string(&request.path)),
+            ]);
+            let options = crate::service::call::CallOptions {
+                throw_on_error: true,
+                ..Default::default()
+            };
+            match crate::service::call::sync_checked(&service, &input, &options) {
+                Ok(output) => {
+                    let restricted = output.get("restricted").is_some_and(|value| match value {
+                        Value::Bool(flag) => *flag,
+                        other => matches!(moqui_lib::object::to_plain_string(other).as_str(), "true" | "Y"),
+                    });
+                    if restricted {
+                        return true;
+                    }
+                }
+                Err(err) => {
+                    tracing::error!("Public site host check {service} for {host}{}: {err}", request.path);
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// The request's host, normalized, without its port.
+fn request_host(request: &WebRequest) -> String {
+    // "Forum.Test.:8080" and "forum.test" name the same host.
+    request
+        .headers
+        .get("host")
+        .map(|h| normalize_host(h.split(':').next().unwrap_or("")))
+        .unwrap_or_default()
+}
+
 pub(super) fn resolve(
     factory: &ExecutionContextFactory,
     request: &WebRequest,
@@ -89,13 +174,9 @@ fn resolve_conf(conf: &MNode, request: &WebRequest, current_root: &str) -> Resul
     let Some(list) = conf.first_named("webapp-list") else {
         return Ok(None);
     };
-    // "Forum.Test.:8080" and "forum.test" name the same host.
-    let host = request
-        .headers
-        .get("host")
-        .map(|h| normalize_host(h.split(':').next().unwrap_or("")))
-        .unwrap_or_default();
-    // Authentication, API, libraries and token routes keep their framework handlers on every host.
+    let host = request_host(request);
+    // Authentication, API, libraries and token routes keep their framework handlers on every host but one whose
+    // `host-check-service` restricts it (`refuses_framework_route`, checked before any servlet or token route runs).
     let first = request.path.trim_start_matches('/').split('/').next().unwrap_or("");
     if FRAMEWORK_ROUTES.contains(&first) {
         return Ok(None);

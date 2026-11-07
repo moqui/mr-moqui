@@ -86,6 +86,7 @@ pub use pdf::{
     PdfPreview, PdfPreviewRequest, PdfRenderer, PDFJS_LOCATION, PDFJS_WORKER_LOCATION, PDF_UNAVAILABLE,
     PREVIEW_UNSUPPORTED,
 };
+pub(crate) use render::active_depth;
 pub use render::{
     make_render, save_screen_last_info, send_redirect_and_stop_render, with_current_render, RenderOutput, RenderState,
     ScreenRender,
@@ -320,6 +321,10 @@ fn run_request(
 ) -> Result<WebResponse, Error> {
     if scripts.has_listeners() {
         scripts.fire("requestInitialized", Value::Null);
+    }
+    // a restricted host (a site's theme preview host) serves its site and static files, no framework route (F87)
+    if public_site::refuses_framework_route(factory, request) {
+        return Ok(web::json_error(404, "Not found"));
     }
     scripts.run_actions("before-request", parameters)?;
     let Some(found) = scripts.match_servlet(&request.path) else {

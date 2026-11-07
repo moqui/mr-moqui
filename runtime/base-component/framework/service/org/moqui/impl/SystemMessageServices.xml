@@ -54,7 +54,7 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="['SmsgSending', 'SmsgSent', 'SmsgConsuming', 'SmsgConsumed', 'SmsgConfirmed'].includes(systemMessage.get('statusId'))">
                 <return error="true" message="Cannot cancel SystemMessage ${systemMessageId} in status ${systemMessage.get('statusId')}"/>
             </if>
-            <!-- at this point statusId should be in 'SmsgProduced', 'SmsgReceived', 'SmsgError', 'SmsgRejected' -->
+            <!-- at this point statusId should be in 'SmsgProduced', 'SmsgStaged', 'SmsgReceived', 'SmsgError', 'SmsgRejected' -->
 
             <script>systemMessage.set('statusId', 'SmsgCancelled')</script>
             <entity-update value-field="systemMessage"/>

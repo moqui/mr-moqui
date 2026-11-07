@@ -38,6 +38,8 @@ struct Frame {
     hit: HitDetail,
     /// The context's errors when the frame was pushed: an error added since marks the frame's span.
     errors: ErrorsAtPush,
+    /// The screen renders in progress on the thread when the frame was pushed ([`crate::screen::active_depth`]).
+    render_depth: usize,
 }
 
 /// What a frame needs to tell whether an error was added while it was on the stack, and which one came first.
@@ -156,6 +158,7 @@ impl ArtifactStack {
             started: Instant::now(),
             hit: HitDetail::default(),
             errors,
+            render_depth: crate::screen::active_depth(),
         });
     }
 
@@ -215,6 +218,14 @@ impl ArtifactStack {
             .map(|frame| frame.name.as_str())
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    /// Whether the top frame is a service's and no screen render began since it was pushed: code running now is that
+    /// service's own, not a widget expression of a render (`runAsSystem`'s rule, docs/security/Attack-Surface.md).
+    pub(super) fn top_is_service_body(&self) -> bool {
+        self.frames.last().is_some_and(|frame| {
+            frame.artifact_type == "AT_SERVICE" && frame.render_depth == crate::screen::active_depth()
+        })
     }
 
     pub(super) fn top_info_mut(&mut self) -> Option<&mut AuthInfo> {

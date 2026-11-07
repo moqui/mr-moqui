@@ -803,6 +803,8 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
         // body() as the current user, with authorization on whatever disabled it (a ServiceJob, an async call): the
         // screen at location checked for all actions and pushed under it, as a request to it would be
         runAsUser: (location, body) => host.runAsUser(String(location), body),
+        // body() with no user and authorization off, sharing the transaction; only from a service's own code
+        runAsSystem: (body) => host.runAsSystem(body),
         // whether authorization is disabled now, changing nothing (disableAuthz to ask would hold a guard of its own)
         authzDisabled: host.authzDisabled,
         // Java's: disable returns whether tarpit counting was already disabled; it stays so until enable
@@ -2599,6 +2601,21 @@ fn run_as_user<'js>(ctx: Ctx<'js>, location: String, body: Function<'js>) -> rqu
     result
 }
 
+/// `ec.artifactExecution.runAsSystem(body)`: `body()` with no user and authorization off, in a fresh execution context
+/// that shares the caller's transaction ([`crate::user::as_system`]); the caller's user, authorization and artifact
+/// stack come back when `body` returns or throws. Only a service's own code may call it
+/// ([`crate::user::system_scope_allowed`]): a screen's widget expressions, actions and transitions, a REST resource and
+/// a web script are refused (docs/security/Attack-Surface.md, Commerce F72).
+fn run_as_system<'js>(ctx: Ctx<'js>, body: Function<'js>) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        crate::user::system_scope_allowed().map_err(|err| Exception::throw_message(&ctx, err.message()))
+    })?;
+    match crate::user::as_system(|| body.call::<_, JsValue<'js>>(())) {
+        Ok(result) => result,
+        Err(err) => Err(Exception::throw_message(&ctx, err.message())),
+    }
+}
+
 /// `ec.artifactExecution.disableAuthz()`: authorization is not checked for this execution context until
 /// `enableAuthz()`. Returns whether it was already disabled, as Java.
 fn disable_authz(ctx: Ctx<'_>) -> rquickjs::Result<bool> {
@@ -2897,6 +2914,7 @@ pub(super) fn install<'js>(
     method!("getRuntimePath", get_runtime_path);
     method!("getInstanceId", get_instance_id);
     method!("runAsUser", run_as_user);
+    method!("runAsSystem", run_as_system);
     method!("getThreadList", get_thread_list);
     method!("waitWorkerPoolEmpty", wait_worker_pool_empty);
     method!("getRequestDetails", get_request_details);
