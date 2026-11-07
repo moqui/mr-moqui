@@ -361,6 +361,27 @@ proceed in parallel and land in the order the phases need them.
   the bindings' per-call cost (allocations: 0 → 4 for `a`, 11 → 53 for a new map) and compile time for new text, F4's
   work and Phase 3's.
 
+### Phase 3: engine differences
+
+What `oxide` still shows differently from QuickJS, found by the generation comparison
+(`screen::generate::tests`) and kept on purpose or left to the fork:
+
+- **Stack columns.** quickjs-oxide places a call's column at its `(`, QuickJS at the callee's name
+  (`eval_script:3:48` against `3:43`); the lines agree. The generation tests compare stacks without columns. Fork.
+- **Native messages.** `stack overflow` where QuickJS says `Maximum call stack size exceeded`, `cannot convert to
+  object` where it says `Cannot convert undefined or null to object`. Fork; not worked around.
+- **Out of memory.** oxide's `InternalError: out of memory` is one preallocated error with no stack, where QuickJS's
+  has the frame that ran out (`Error: out of memory\n    at hungry (eval_script:4:87)`).
+- **A thrown value that is not an error** (`throw "x"`, `throw {a: 1}`): oxide prints the value (`"x"`, `{ a: 1 }`),
+  QuickJS rquickjs's Debug form (`String(Ok("x"))`, `Object(0x…)`, an address). Kept: oxide's is the readable one.
+- **Type names in conversion errors** (`Error converting from js '<type>' into type 'string'`): oxide names them as
+  rquickjs does, from the engine (`errors::rquickjs_type_name`), with two gaps. A whole number held as a float
+  (`1.5 * 2`) may be `float` on one engine and `int` on the other. A Proxy is `proxy` only where the walker's runtime
+  noted it; an element literal's attribute that is a Proxy is `object` on oxide.
+- **RegExp is not interruptible.** The fork's RegExp exec passes no interrupt (`builtins/regexp.rs`, `run`), so a
+  backtracking pattern runs past the script deadline; `script::theme::tests::each_budget` hangs under
+  `script_engine=oxide`. Fork.
+
 ## 8. Testing
 
 - **Unit tests for the bindings.** The tests in `script/` that check binding behaviour (conversions, tracked values,
