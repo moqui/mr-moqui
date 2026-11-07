@@ -1271,6 +1271,16 @@ fn install_context(ctx: &Ctx<'_>) -> Result<Helpers, Error> {
     install_ec(ctx)?;
     install_helpers(ctx)?;
     bind::install_shims(ctx, &string_utilities, &collection_utilities, &web_utilities)?;
+    freeze_helpers(
+        ctx,
+        [
+            &object_utilities,
+            &collection_utilities,
+            &string_utilities,
+            &web_utilities,
+            &user_security_checks,
+        ],
+    )?;
     install_entity_prototypes(ctx)?;
     freeze_host_globals(ctx, builtins)?;
     install_proxy(ctx)?;
@@ -1307,6 +1317,23 @@ const FREEZE_HOST_GLOBALS: &str = r#"(function (builtins) {
         });
     }
 })"#;
+
+/// Freeze the helper objects, the functions on them and `System` (`host::globals::FREEZE_HELPERS_JS`), once the shims
+/// have filled them, so one script cannot replace a helper, a `UserSecurityChecks` check among them, for the later
+/// scripts on the thread.
+fn freeze_helpers<'js>(ctx: &Ctx<'js>, helpers: [&Object<'js>; 5]) -> Result<(), Error> {
+    let objects = rquickjs::Array::new(ctx.clone()).map_err(js_error)?;
+    for (index, helper) in helpers.into_iter().enumerate() {
+        objects.set(index, helper.clone()).map_err(js_error)?;
+    }
+    let system: JsValue = ctx.globals().get("System").map_err(js_error)?;
+    objects.set(helpers.len(), system).map_err(js_error)?;
+    let freeze: Function = eval_js(ctx, crate::script::host::globals::FREEZE_HELPERS_JS)?;
+    freeze
+        .call::<_, ()>((objects,))
+        .catch(ctx)
+        .map_err(|caught| Error::new(format!("helper objects: {caught}")))
+}
 
 fn freeze_host_globals<'js>(ctx: &Ctx<'js>, builtins: JsValue<'js>) -> Result<(), Error> {
     let freeze: Function = eval_js(ctx, FREEZE_HOST_GLOBALS)?;

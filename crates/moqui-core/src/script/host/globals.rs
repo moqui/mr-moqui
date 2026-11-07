@@ -16,7 +16,9 @@
 //! (`runtime/helpers.rs`, `runtime/ec_extra.rs`'s `fill_helpers`, `System` in `runtime.rs`): `compare`,
 //! `numberToWords`, `numberToWordsWithDecimal`, `orderMapList`, `filterMapList`, `filterMapListByDate`,
 //! `elasticQueryAutoWildcard`, `System.getProperty`, and the functions of `StringUtilities`, `WebUtilities` and
-//! `CollectionUtilities` whose arguments and results are host values.
+//! `CollectionUtilities` whose arguments and results are host values, and `UserSecurityChecks`, the checks
+//! `Security.eecas.xml` runs. The helper objects, their functions and `System` are frozen ([`FREEZE_HELPERS_JS`]), so a
+//! script cannot replace a check, or any helper, for the later scripts on the thread.
 //!
 //! [`SHIM`] is not a path of the table: the oxide engine installs it itself (`oxide::engine`), and QuickJS keeps its own
 //! until Phase 4 removes it, when this shim takes their place.
@@ -27,7 +29,30 @@ use moqui_lib::object::Value;
 
 use super::{method, Call, HostError, Ret, Shim};
 
-const GLOBALS_JS: &str = r#"(function (global, hidden, helpers) {
+/// The function that freezes the helper objects and the functions on them, once every shim has filled them: a check
+/// of `UserSecurityChecks` replaced by one script would otherwise stand for every later script on the thread. A frozen
+/// object's assignment throws in strict code and does nothing in sloppy code. A value behind a getter is not read.
+macro_rules! freeze_helpers_js {
+    () => {
+        r#"function freezeHelpers(objects) {
+    for (const object of objects) {
+        if (object === null || typeof object !== "object") continue;
+        for (const name of Object.getOwnPropertyNames(object)) {
+            const held = Object.getOwnPropertyDescriptor(object, name);
+            if (typeof held.value === "function") Object.freeze(held.value);
+        }
+        Object.freeze(object);
+    }
+}"#
+    };
+}
+
+/// [`freeze_helpers_js`] as an expression, for QuickJS's engine (`runtime.rs`, `install_context`), which fills its
+/// helper objects itself; the oxide engine's are frozen at the end of [`GLOBALS_JS`].
+pub(crate) const FREEZE_HELPERS_JS: &str = concat!("(", freeze_helpers_js!(), ")");
+
+const GLOBALS_JS: &str = concat!(
+    r#"(function (global, hidden, helpers) {
     "use strict";
     for (const name of ["compare", "numberToWords", "numberToWordsWithDecimal", "__compareOrder", "__inDateRange"]) {
         global[name] = hidden[name];
@@ -70,7 +95,13 @@ const GLOBALS_JS: &str = r#"(function (global, hidden, helpers) {
     const resource = ec.resource || (ec.resource = {});
     for (const name of ["code128Svg", "barcodeSvg", "parseGs1", "isValidGs1CheckDigit", "template",
         "getTemplateRendererExtensionSet"]) resource[name] = hidden[name];
-})"#;
+    // the last shim to fill them (`oxide::engine`, `finish_start`), so nothing writes them after this
+    ("#,
+    freeze_helpers_js!(),
+    r#")([helpers.CollectionUtilities, helpers.StringUtilities, helpers.WebUtilities,
+        helpers.UserSecurityChecks, global.System]);
+})"#
+);
 
 /// The shim; its JavaScript after it is QuickJS's own (`runtime/helpers.rs`'s `HELPERS_JS`), run by the engine.
 pub(crate) static SHIM: Shim = Shim {

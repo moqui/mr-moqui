@@ -944,3 +944,38 @@ fn the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one() -> Result
     );
     Ok(())
 }
+
+/// A script cannot replace a helper for the later scripts on the thread: the helper objects, `System` and their
+/// functions are frozen on each engine, so an assignment does nothing in sloppy code and throws in strict code. A
+/// `UserSecurityChecks` check replaced by one script would otherwise let a non-member's later write of an admin group
+/// membership through.
+#[test]
+fn the_helper_objects_and_their_functions_are_frozen() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let held = "[CollectionUtilities, StringUtilities, WebUtilities, UserSecurityChecks, System]\
+                .every(Object.isFrozen) && Object.isFrozen(UserSecurityChecks.assertPrivilegedGroupMembership) \
+                && UserSecurityChecks.assertSealedPermissionGrant.extra === undefined \
+                && typeof StringUtilities.base64Encode === 'function' && typeof WebUtilities.encodeHtml === 'function' \
+                && typeof System.getProperty === 'function' && CollectionUtilities.added === undefined";
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::SmallOxide, ScriptEngine::Oxide] {
+        with_script_engine(engine, || -> Result<(), Error> {
+            clear_context_stack();
+            run_script(
+                "UserSecurityChecks.assertPrivilegedGroupMembership = function () {};
+                 UserSecurityChecks.assertSealedPermissionGrant.extra = 1;
+                 StringUtilities.base64Encode = null; WebUtilities.encodeHtml = null;
+                 CollectionUtilities.added = 1; System.getProperty = null;",
+            )?;
+            assert!(eval_condition(held)?, "under {}", engine.name());
+            let err = run_script(
+                "(function () { 'use strict'; UserSecurityChecks.assertPrivilegedGroupMembership = function () {}; })()",
+            )
+            .expect_err("a strict assignment throws");
+            let text = err.to_string();
+            assert!(text.contains("read-only") || text.contains("TypeError"), "under {}: {text}", engine.name());
+            assert!(eval_condition(held)?, "under {}", engine.name());
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
