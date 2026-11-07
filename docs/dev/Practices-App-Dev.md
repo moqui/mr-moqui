@@ -171,7 +171,8 @@ Each component is its own git repository. Commit in each repository that a chang
 - **Writing as the system.** A service that has checked its caller and must write what the caller may not (a page
   space with `restrictUpdate`) uses `ec.artifactExecution.runAsSystem(() => ...)`: no user, authorization off, the
   same transaction. Only a service's own code may call it ([The system
-  scope](../security/Attack-Surface.md#the-system-scope)); never grant the user a row for the write.
+  scope](../security/Attack-Surface.md#the-system-scope)); never grant the user a row for the write. Records written
+  inside have no user, so pass the acting user where the write takes one (`update#WikiPage` `historyUserId`).
 - **No EECA guarding an entity that only its own module writes**, and no EECA or SECA on a hot path (every `Payment` or
   `AcctgTrans` write, a framework entity, `service=".*"`) without a narrow `<condition>`.
 - **Nothing for tests in production files.** Test entities, services, SECAs and scripts under `test/` are not loaded by
