@@ -26,13 +26,16 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use quickjs_oxide::engine::api::core::{
-    CallableRef, CompileOptions, Context, FunctionBytecodeRef, JsString, ObjectRef, Runtime, RuntimeError, Value,
+    CallableRef, CompileOptions, Context, FunctionBytecodeRef, HeapLimits, Host, JsString, ObjectRef, Runtime,
+    RuntimeError, RuntimeOptions, Value,
 };
 
 use super::convert::key;
 use super::errors::runtime_error;
 use crate::context::Error;
+use crate::script::bounded::BoundedMap;
 use crate::script::engine::{script_engine, ScriptEngine};
+use crate::script::run::{self, ScriptLimit, DEADLINE};
 
 /// Whether generation runs on quickjs-oxide: under `script_engine=oxide` only.
 pub(crate) fn on_oxide() -> bool {
@@ -142,13 +145,33 @@ const MACROS_FILE: &str = "eval_script";
 const OPTIONS_JS: &str =
     "(function (support, debug, mode) { support.options.debug = debug; support.options.mode = mode; })";
 
+/// The generator runtime's heap cap, as the QuickJS engine's memory limit the walker runs in on QuickJS.
+const HEAP_CAP: usize = 64 * 1024 * 1024;
+
+/// The macro sources kept compiled on a thread, and their text's bytes at most: the built-in modes and their support
+/// files are about 750 KB, and a mode file a developer edits is compiled again for each text it has had.
+const MAX_COMPILED: usize = 32;
+const MAX_COMPILED_BYTES: usize = 4 * 1024 * 1024;
+
+/// The generator runtime's host: the thread's script deadline stops a walk, as the QuickJS interrupt handler stops one
+/// on QuickJS.
+struct GeneratorHost;
+
+impl Host for GeneratorHost {
+    fn interrupt(&mut self) -> bool {
+        DEADLINE
+            .with(std::cell::Cell::get)
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+    }
+}
+
 /// The thread's generator runtime: the walker, and the macro chains loaded on it by their key.
 struct Generator {
     walk: CallableRef,
     options: CallableRef,
     chains: RefCell<HashMap<String, Rc<Vec<ObjectRef>>>>,
-    /// The macro sources compiled on the thread, by their hash.
-    compiled: RefCell<HashMap<u64, Compiled>>,
+    /// The macro sources compiled on the thread, by their hash, the least recently used dropped past the bounds.
+    compiled: RefCell<BoundedMap<u64, Compiled>>,
     context: Context,
     // the context is the runtime's; kept so the runtime lives as long as the handles
     _runtime: Runtime,
@@ -192,14 +215,18 @@ fn generator() -> Result<Rc<Generator>, Error> {
     if let Some(found) = GENERATOR.with(|cell| cell.borrow().clone()) {
         return Ok(found);
     }
-    let runtime = Runtime::new();
+    let options = RuntimeOptions {
+        heap: HeapLimits { max_bytes: HEAP_CAP },
+        ..RuntimeOptions::default()
+    };
+    let runtime = Runtime::with_host(GeneratorHost, options);
     let context = runtime.context();
     let started = (|| -> Result<Generator, RuntimeError> {
         Ok(Generator {
             walk: walk_function(&context)?,
             options: callable(&context, OPTIONS_JS)?,
             chains: RefCell::new(HashMap::new()),
-            compiled: RefCell::new(HashMap::new()),
+            compiled: RefCell::new(BoundedMap::with_bytes(MAX_COMPILED, MAX_COMPILED_BYTES)),
             context: context.clone(),
             _runtime: runtime,
         })
@@ -210,7 +237,18 @@ fn generator() -> Result<Rc<Generator>, Error> {
     Ok(started)
 }
 
+/// `body` with the thread's default script limit armed when no script is running, as the QuickJS walker's entry arms
+/// it ([`crate::script::walker_context`]); inside a script the script's deadline applies.
+fn limited<R>(body: impl FnOnce() -> Result<R, Error>) -> Result<R, Error> {
+    let _limit = (run::depth() == 0).then(ScriptLimit::arm);
+    body()
+}
+
 fn failed(context: &Context, err: RuntimeError) -> Error {
+    if matches!(err, RuntimeError::OutOfMemory) {
+        // a runtime that ran out of heap is not used again: the next generation on the thread starts a new one
+        GENERATOR.with(|cell| cell.borrow_mut().take());
+    }
     let mut context = context.clone();
     runtime_error(&mut context, err)
 }
@@ -266,7 +304,7 @@ fn evaluate(generator: &Generator, source: &str) -> Result<Value, Error> {
     let hash = crate::script::text::hash_text(source);
     let kept = generator
         .compiled
-        .borrow()
+        .borrow_mut()
         .get(&hash)
         .filter(|(text, _)| **text == *source)
         .map(|(_, compiled)| compiled.clone());
@@ -279,7 +317,7 @@ fn evaluate(generator: &Generator, source: &str) -> Result<Value, Error> {
             generator
                 .compiled
                 .borrow_mut()
-                .insert(hash, (Rc::from(source), compiled.clone()));
+                .insert_sized(hash, (Rc::from(source), compiled.clone()), source.len());
             compiled
         }
     };
@@ -397,6 +435,15 @@ pub(crate) fn generate_actions(
     actions: &str,
     debug: bool,
 ) -> Result<String, Error> {
+    limited(|| actions_on_generator(root, support, actions, debug))
+}
+
+fn actions_on_generator(
+    root: &moqui_lib::node::MNode,
+    support: &str,
+    actions: &str,
+    debug: bool,
+) -> Result<String, Error> {
     let generator = generator()?;
     let name = if debug { "xml-actions-debug" } else { "xml-actions" };
     let loaded = chain(&generator, Some(name), support, &[actions], debug, "")?;
@@ -405,6 +452,12 @@ pub(crate) fn generate_actions(
     #[cfg(test)]
     moqui_lib::sync::lock(&GENERATED_ACTIONS).push(tree.clone());
     walk(&generator, macros, &tree, "XML action macro", None)
+}
+
+/// The macro sources kept compiled on this thread's generator. For tests.
+#[cfg(test)]
+pub(crate) fn compiled_count() -> usize {
+    GENERATOR.with(|cell| cell.borrow().as_ref().map_or(0, |generator| generator.compiled.borrow().len()))
 }
 
 /// The trees of the XML actions generated here, for a test that asks which engine generated a text.
@@ -421,6 +474,9 @@ pub(crate) fn generated_actions_with(marker: &str) -> bool {
 
 /// A screen macro module loaded on the thread's generator: `screen::generate`'s `ModeModule` on quickjs-oxide.
 pub(crate) struct ScreenModule {
+    /// The runtime the module was loaded on, whose objects its are: a runtime that ran out of heap is replaced for the
+    /// loads after, not under a module already loaded.
+    generator: Rc<Generator>,
     support: ObjectRef,
     macros: ObjectRef,
     pub(crate) opaque: HashSet<String>,
@@ -442,6 +498,16 @@ pub(crate) fn screen_module(
     mode: &str,
     debug: bool,
 ) -> Result<ScreenModule, Error> {
+    limited(|| screen_module_on_generator(support, screen_support, source, mode, debug))
+}
+
+fn screen_module_on_generator(
+    support: &str,
+    screen_support: &str,
+    source: &str,
+    mode: &str,
+    debug: bool,
+) -> Result<ScreenModule, Error> {
     let generator = generator()?;
     let loaded = chain(&generator, None, support, &[screen_support, source], debug, mode)?;
     let (Some(module), Some(support)) = (loaded.last(), loaded.get(loaded.len().wrapping_sub(2))) else {
@@ -453,6 +519,7 @@ pub(crate) fn screen_module(
     let opaque = strings(context, &property(context, module, "opaque")?)
         .map_err(|_| Error::new(format!("macro module for {mode} has no opaque list")))?;
     Ok(ScreenModule {
+        generator: Rc::clone(&generator),
         support: support.clone(),
         macros,
         opaque: opaque.into_iter().collect(),
@@ -465,7 +532,7 @@ pub(crate) fn screen_module(
 impl ScreenModule {
     /// The names of the module's macros.
     pub(crate) fn macro_names(&self) -> Result<HashSet<String>, Error> {
-        let generator = generator()?;
+        let generator = &self.generator;
         let context = &generator.context;
         let keys = context
             .own_property_keys(&self.macros)
@@ -486,7 +553,11 @@ impl ScreenModule {
     ///
     /// A macro that throws.
     pub(crate) fn generate(&self, tree: &str, mode: &str, lits: bool) -> Result<(String, Vec<String>), Error> {
-        let generator = generator()?;
+        limited(|| self.generate_on_generator(tree, mode, lits))
+    }
+
+    fn generate_on_generator(&self, tree: &str, mode: &str, lits: bool) -> Result<(String, Vec<String>), Error> {
+        let generator = &self.generator;
         let context = &generator.context;
         let mut ctx = context.clone();
         let call = |ctx: &mut Context, name: &str| -> Result<Value, Error> {
@@ -506,7 +577,7 @@ impl ScreenModule {
             call(&mut ctx, "beginLits").map_err(screen_macros)?;
         }
         let missing = format!("screen macro in {mode}, element");
-        let walked = walk(&generator, &self.macros, tree, &missing, Some("@element"));
+        let walked = walk(generator, &self.macros, tree, &missing, Some("@element"));
         let collected = if lits {
             Some(call(&mut ctx, "endLits").map_err(screen_macros))
         } else {

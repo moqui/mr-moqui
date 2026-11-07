@@ -911,4 +911,53 @@ mod tests {
             assert!(failed.message().starts_with("screen macros: "), "{engine:?}: {}", failed.message());
         }
     }
+
+    /// A macro that loops for ever stops at the thread's script deadline on both engines, and one that fills the heap
+    /// stops at the cap; generation on the thread goes on afterwards.
+    #[test]
+    fn a_runaway_macro_stops_at_the_deadline_and_the_heap_cap() {
+        const MODULE: &str = r#"(function (T, S) {
+            const macros = {
+                "widgets": (node, children) => children,
+                "spin": () => { for (;;) {} },
+                "hungry": () => { const held = []; for (;;) held.push("x".repeat(1 << 20) + held.length); },
+                "fine": () => "sri.write('fine');\n",
+            };
+            return { macros, opaque: [] };
+        })"#;
+        let started = std::time::Instant::now();
+        let (quickjs, oxide) = {
+            let _deadline = crate::script::DeadlineGuard::new(Some(std::time::Duration::from_millis(200)));
+            on_both(MODULE, "<widgets><spin/></widgets>")
+        };
+        assert!(started.elapsed() < std::time::Duration::from_secs(10), "{:?}", started.elapsed());
+        assert!(quickjs.unwrap_err().message().contains("interrupted"));
+        let oxide = oxide.unwrap_err();
+        assert!(oxide.message().contains("interrupted"), "{}", oxide.message());
+        let (_, oxide) = on_both(MODULE, "<widgets><hungry/></widgets>");
+        let oxide = oxide.unwrap_err();
+        assert!(oxide.message().contains("out of memory"), "{}", oxide.message());
+        let (quickjs, oxide) = on_both(MODULE, "<widgets><fine/></widgets>");
+        assert_eq!(quickjs.unwrap(), "sri.write('fine');\n");
+        assert_eq!(oxide.unwrap(), "sri.write('fine');\n");
+    }
+
+    /// The macro sources compiled on a thread's oxide generator are bounded: a mode file edited again and again does not
+    /// grow them.
+    #[test]
+    fn the_compiled_macro_sources_are_bounded() {
+        use crate::script::engine::{with_script_engine, ScriptEngine};
+        for edit in 0..80 {
+            let module = format!(
+                "(function (T, S) {{ /* edit {edit} */ return {{ macros: {{ \"widgets\": (n, c) => c }}, opaque: [] }}; }})"
+            );
+            let generated = with_script_engine(ScriptEngine::Oxide, || {
+                let root = MNode::parse_text("fixture", "<widgets/>")?;
+                with_module(&module, "html", false, |module| generate_body(module, &root, None, "html"))
+            });
+            assert_eq!(generated.unwrap(), "");
+            let kept = crate::script::oxide::walker::compiled_count();
+            assert!(kept <= 32, "{kept} after {edit}");
+        }
+    }
 }
