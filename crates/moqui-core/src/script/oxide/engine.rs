@@ -78,7 +78,7 @@ const TO_NUMBER_JS: &str = r#"Object.defineProperty(globalThis, "toNumber", {
         if (typeof value === "number") return value;
         return toDecimal(value).toNumber();
     },
-    writable: false, enumerable: true, configurable: false
+    writable: true, enumerable: true, configurable: true
 })"#;
 
 /// The host globals made read-only once the shims have run, as QuickJS's `FREEZE_HOST_GLOBALS` (`runtime.rs`) makes
@@ -962,8 +962,13 @@ pub(super) fn with_run<T>(
     let _not_starting = StartSetAside::enter();
     let _limit = (depth == 0).then(ScriptLimit::arm);
     let _depth = run::enter_depth(depth);
-    let state = RunState::enter(&engine, nested);
     let mut context = engine.context.clone();
+    if nested {
+        // the outer run's tracked values written back and released first, as a QuickJS script nested here has them
+        // (`release_for_quickjs`): a host function that lends need not be the binder's, which flushed already
+        super::tracked::flush(&mut context, Flush::Release).map_err(|conv| conv_outcome(&mut context, conv))?;
+    }
+    let state = RunState::enter(&engine, nested);
     let mut poisoned = false;
     let mut out_of_memory = false;
     let mut note = |err: &RuntimeError| {

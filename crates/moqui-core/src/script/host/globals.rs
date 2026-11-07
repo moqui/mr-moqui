@@ -36,9 +36,22 @@ const GLOBALS_JS: &str = r#"(function (global, hidden, helpers) {
     const web = helpers.WebUtilities, string = helpers.StringUtilities, collection = helpers.CollectionUtilities;
     for (const name of ["encodeHtml", "encodeHtmlJsSafe", "fieldValuesEncodeHtmlJsSafe", "ipMatches",
         "isSafeSinglePathSegment", "isSameOriginRedirect", "lastPathSegment"]) web[name] = hidden[name];
-    for (const name of ["encodeForXmlAttribute", "base64UrlEncode", "base64UrlDecode", "cleanHtml",
+    for (const name of ["encodeForXmlAttribute", "base64UrlEncode", "base64UrlDecode", "base64Encode", "base64Decode",
+        "cleanHtml",
         "urlEncodeIfNeeded"]) string[name] = hidden[name];
     collection.flattenNestedMap = hidden.flattenNestedMap;
+    collection.getMapArrayListValues = hidden.getMapArrayListValues;
+    // the page values go on the map passed too, as Java's does
+    collection.paginateParameters = function paginateParameters(size, name, context) {
+        const out = hidden.paginateParameters(size, name, context);
+        if (context !== null && typeof context === "object") {
+            for (const suffix of ["Count", "PageIndex", "PageSize", "PageMaxIndex", "PageRangeLow", "PageRangeHigh"]) {
+                const key = name + suffix;
+                if (out !== null && key in out) context[key] = out[key];
+            }
+        }
+        return out;
+    };
     const ec = global.ec;
     const factory = ec.factory || (ec.factory = {});
     factory.moquiVersion = hidden.moquiVersion();
@@ -167,6 +180,10 @@ pub(crate) static SHIM: Shim = Shim {
             leaf,
             flatten_nested_map
         ),
+        method!("StringUtilities", "base64Encode", [OptValue], None, leaf, base64_encode),
+        method!("StringUtilities", "base64Decode", [OptText], None, leaf, base64_decode),
+        method!("CollectionUtilities", "getMapArrayListValues", [Value, Text, OptBool], None, leaf, map_list_values),
+        method!("CollectionUtilities", "paginateParameters", [Int, Text, Value], None, leaf, paginate_parameters),
         method!("ec.resource", "code128Svg", [Value, OptValue], None, leaf, code128_svg),
         method!("ec.resource", "barcodeSvg", [Text, Value, OptValue], None, leaf, barcode_svg),
         method!("ec.resource", "parseGs1", [Text], None, leaf, parse_gs1),
@@ -454,6 +471,58 @@ fn template(call: &mut Call<'_>) -> Result<Ret, HostError> {
 fn template_extensions(_: &mut Call<'_>) -> Result<Ret, HostError> {
     let factory = super::factory()?;
     Ok(crate::script::template::TemplateRegistry::of(&factory).extensions().into())
+}
+
+/// `StringUtilities.base64Encode(value)`: base64 of text (its UTF-8) or of bytes as they are; empty for null.
+fn base64_encode(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    use base64::Engine;
+    let bytes = match call.value(0) {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Bytes(bytes)) => bytes.clone(),
+        Some(other) => moqui_lib::object::to_plain_string(other).into_bytes(),
+    };
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes).into())
+}
+
+/// `StringUtilities.base64Decode(text)`: the bytes (a `Uint8Array`), white space skipped and the padding optional.
+fn base64_decode(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    use base64::Engine;
+    let compact: String = call
+        .opt_text(0)
+        .unwrap_or_default()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    let bytes = base64::engine::general_purpose::STANDARD_NO_PAD
+        .decode(compact.trim_end_matches('='))
+        .map_err(|err| HostError::message(format!("not base64 text: {err}")))?;
+    Ok(Ret::Value(Value::Bytes(bytes)))
+}
+
+fn map_list_values(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let Value::List(items) = value(call, 0) else {
+        return Ok(Ret::Value(Value::Null));
+    };
+    let maps: Vec<indexmap::IndexMap<String, Value>> = items
+        .into_iter()
+        .filter_map(|item| match item {
+            Value::Map(map) => Some(map),
+            _ => None,
+        })
+        .collect();
+    let key = call.text_or_empty(1);
+    let values = moqui_lib::collection::get_map_list_values(&maps, &key, call.bool(2).unwrap_or(false));
+    Ok(Ret::Value(Value::List(values)))
+}
+
+fn paginate_parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let mut entries = match value(call, 2) {
+        Value::Map(entries) => entries,
+        _ => indexmap::IndexMap::new(),
+    };
+    let size = call.int(0).unwrap_or(0);
+    moqui_lib::collection::paginate_parameters(size, &call.text_or_empty(1), &mut entries).map_err(lib)?;
+    Ok(Ret::Value(Value::Map(entries)))
 }
 
 fn moqui_version(_: &mut Call<'_>) -> Result<Ret, HostError> {
