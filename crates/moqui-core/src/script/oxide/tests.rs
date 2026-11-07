@@ -456,6 +456,11 @@ fn a_tools_map_from_a_host_call_reads_its_members() -> Result<(), Error> {
 /// Behind the static check: no function reaches `Function` by a computed key, and the legacy accessor definers are gone.
 #[test]
 fn the_runtime_cuts_the_ways_to_function_and_shared_accessors() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    with_script_engine(ScriptEngine::SmallOxide, cut_runtime)
+}
+
+fn cut_runtime() -> Result<(), Error> {
     clear_context_stack();
     push_context_frame();
     set_context_name("key", Value::string("constructor"))?;
@@ -473,6 +478,29 @@ fn the_runtime_cuts_the_ways_to_function_and_shared_accessors() -> Result<(), Er
     }
     assert_eq!(value("typeof ({}).__defineGetter__")?, Value::string("undefined"));
     Ok(())
+}
+
+/// Under `script_engine=oxide` the runtime runs whole scripts, as QuickJS's main context does: `Function` and the rest
+/// are whole, and the thread's runtime is started again when its setting changes between scripts.
+#[test]
+fn the_oxide_setting_runs_a_whole_runtime() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    clear_context_stack();
+    push_context_frame();
+    with_script_engine(ScriptEngine::Oxide, || {
+        assert_eq!(value("Function('return 6 * 7')()")?, Value::I32(42));
+        assert_eq!(
+            value("[typeof Promise, typeof Symbol(), typeof Reflect.ownKeys, typeof new Proxy({}, {})].join()")?,
+            Value::string("function,symbol,function,object")
+        );
+        assert_eq!(value("typeof sri.encodeHtml")?, Value::string("function"));
+        assert_eq!(value("(sri = 1, typeof sri)")?, Value::string("object"), "sri is read-only");
+        Ok::<_, Error>(())
+    })?;
+    with_script_engine(ScriptEngine::SmallOxide, || {
+        assert!(value("(() => 1)['constructor']('return 1')()").is_err());
+        Ok(())
+    })
 }
 
 /// The debug safety net: a list an oxide run changed in place (here past the check, run directly) is logged.

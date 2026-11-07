@@ -13,8 +13,7 @@
  */
 
 //! Screen units on QuickJS: the [`Runner`] a render runs its units with, and the conversion of the element literals a
-//! unit passes to `sri`. The global `sri` itself is in the host table (`script/host/sri.rs`); [`sri_object`] makes the
-//! empty object its shim fills.
+//! unit passes to `sri`. The global `sri` itself is the host table's `sri` shim (`script/host/sri.rs`).
 
 use rquickjs::Array;
 
@@ -155,11 +154,6 @@ fn lit_in<'js>(ctx: &Ctx<'_>, value: &JsValue<'js>, path: &mut Vec<JsValue<'js>>
     }
     path.pop();
     Ok(node)
-}
-
-/// The global `sri`, empty: the host table's `sri` shim (`script/host/sri.rs`) fills it.
-pub(super) fn sri_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
-    caught(ctx, "sri", Object::new(ctx.clone()))
 }
 
 #[cfg(test)]

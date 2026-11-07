@@ -51,10 +51,13 @@ const MIN_HEAP: usize = 512 * 1024;
 const HEAP_SAMPLE_RUNS: u64 = 32;
 const HEAP_SAMPLE_EVERY: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// What the runtime cuts when it starts, behind the static check (`script::check`): a computed key it cannot read
+/// What the runtime cuts when it starts for small scripts (`rquickjs` and `small-oxide`), behind the static check
+/// (`script::check`): a computed key it cannot read
 /// (`row[name]`) may still name `constructor` at run time, so no function's `constructor` reaches `Function` (or its
 /// generator and async kinds), and the legacy accessor definers, which would leave a function on a shared prototype,
-/// are gone. Expressions use neither.
+/// are gone. Expressions use neither. Under `script_engine=oxide` the runtime runs every script, as QuickJS's main
+/// context does, with `Function`, `Promise`, `Symbol`, `Reflect` and `Proxy` whole, so it is not cut there
+/// ([`hardened_for_setting`]).
 const HARDEN_JS: &str = r#"(function () {
     const refuse = function () { throw new TypeError("Function is not available to an expression"); };
     const kinds = [function () {}];
@@ -81,13 +84,18 @@ const TO_NUMBER_JS: &str = r#"Object.defineProperty(globalThis, "toNumber", {
 /// The host globals made read-only once the shims have run, as QuickJS's `FREEZE_HOST_GLOBALS` (`runtime.rs`) makes
 /// them: every global the runtime did not have at its start (`builtins`) becomes a getter of its value with a setter
 /// that throws, in sloppy code too, so one script's assignment does not change it for the later scripts on the thread.
-/// A global defined read-only already (`ec`, `sri`, `toNumber`) is left as it is.
+/// A global defined read-only already (`ec`, `toNumber`) is left as it is, and `sri` (the `sri` shim's, read on every
+/// statement of a screen unit) is a plain read-only value, as on QuickJS.
 const FREEZE_HOST_GLOBALS_JS: &str = r#"(function (builtins) {
     const known = new Set(builtins);
     for (const name of Object.getOwnPropertyNames(globalThis)) {
         if (known.has(name) || name === "ec") continue;
         const held = Object.getOwnPropertyDescriptor(globalThis, name);
         if (!held.configurable) continue;
+        if (name === "sri") {
+            Object.defineProperty(globalThis, name, { writable: false, configurable: false });
+            continue;
+        }
         const value = globalThis[name];
         Object.defineProperty(globalThis, name, {
             get() { return value; },
@@ -98,17 +106,16 @@ const FREEZE_HOST_GLOBALS_JS: &str = r#"(function (builtins) {
     }
 })"#;
 
-/// What QuickJS's engine puts under `ec` and on the global object outside the host table, which the host table's shims
-/// extend (`runtime.rs`, `install_ec` and `install_context`): `ec.context`, the context stack's `get` and the two names
-/// a form reads, and the global `sri`, to which the URL shim adds its functions. A text that names either goes to
-/// QuickJS (the static check allows neither), so they are what the shims need, not the whole QuickJS objects.
+/// What QuickJS's engine puts under `ec` outside the host table, which the host table's shims extend (`runtime.rs`,
+/// `install_ec`): `ec.context`, the context stack's `get` and the two names a form reads. A small text that names it
+/// goes to QuickJS (the static check does not allow it), so it is what the shims need, not the whole QuickJS object.
+/// The global `sri` is the `sri` shim's own.
 const EC_EXTRAS_JS: &str = r#"(function (ec, context) {
     const made = { get: (name) => context.get(String(name)) };
     for (const name of ["formListFindId", "orderByField"]) {
         Object.defineProperty(made, name, { get: () => context[name], enumerable: true });
     }
     ec.context = made;
-    Object.defineProperty(globalThis, "sri", { value: {}, writable: false, enumerable: true, configurable: false });
 })"#;
 
 /// Why an oxide run gave no result.
@@ -146,6 +153,8 @@ pub(super) struct Protos {
 
 pub(super) struct OxideEngine {
     runtime: quickjs_oxide::engine::api::core::Runtime,
+    /// Whether the start cut the ways to `Function` ([`HARDEN_JS`]): for small scripts, not under `oxide`.
+    hardened: bool,
     context: Context,
     pub(super) protos: Protos,
     compiled: RefCell<Compiled>,
@@ -380,7 +389,11 @@ pub(super) fn current() -> Option<Rc<OxideEngine>> {
 /// ([`START_BACKOFF`]) and logged once for the process; nothing of a script has run then, so its caller falls back.
 fn engine() -> Result<Rc<OxideEngine>, Error> {
     if let Some(engine) = current() {
-        return Ok(engine);
+        // a thread whose setting changed (a test, `js_speed`) starts the runtime its setting needs, between scripts
+        if engine.hardened == hardened_for_setting() || run::is_running(EngineTag::Oxide) {
+            return Ok(engine);
+        }
+        ENGINE.with(|current| *current.borrow_mut() = None);
     }
     if start_failed_recently() {
         return Err(Error::new(DID_NOT_START));
@@ -417,6 +430,12 @@ fn engine() -> Result<Rc<OxideEngine>, Error> {
             Err(Error::new(format!("{DID_NOT_START}: {err}")))
         }
     }
+}
+
+/// Whether the runtime this thread's setting needs is cut for small scripts ([`HARDEN_JS`]): under every setting but
+/// `oxide`, where it runs whole scripts as QuickJS's main context does.
+fn hardened_for_setting() -> bool {
+    crate::script::engine::script_engine() != crate::script::engine::ScriptEngine::Oxide
 }
 
 fn start_engine() -> Result<Rc<OxideEngine>, RuntimeError> {
@@ -533,6 +552,7 @@ impl OxideEngine {
         counts::LIVE_MAX.fetch_max(live, Relaxed);
         Ok((Self {
             runtime,
+            hardened: hardened_for_setting(),
             context,
             protos,
             compiled: RefCell::new(Compiled::new()),
@@ -549,7 +569,7 @@ impl OxideEngine {
 
     /// The rest of the start, once the runtime is the thread's, in QuickJS's order (`runtime.rs`, `install_context`): the
     /// host table's shims over `ec`, `sri` and the helper objects (each tried; any failure fails the start), then the
-    /// lockdown, which no shim's code needs, then the bare names last, so a global a shim makes (`EdiHandler`,
+    /// lockdown for small scripts, which no shim's code needs, then the bare names last, so a global a shim makes (`EdiHandler`,
     /// `__moquiWrap`) is the global object's own rather than a write to the context stack.
     fn finish_start(&self, builtins: &ObjectRef) -> Result<(), RuntimeError> {
         let mut context = self.context.clone();
@@ -570,7 +590,9 @@ impl OxideEngine {
         }
         .ok_or(RuntimeError::Invariant("the host globals' freeze"))?;
         context.call(&freeze, Value::Undefined, &[Value::Object(builtins.clone())])?;
-        context.eval(HARDEN_JS)?;
+        if self.hardened {
+            context.eval(HARDEN_JS)?;
+        }
         super::names::install_names(&context)
     }
 
