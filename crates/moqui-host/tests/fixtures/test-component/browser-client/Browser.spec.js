@@ -184,5 +184,11 @@ feature("reduced motion and a page with its own scripts off", {
         page.goto("/qapps/gallery/Dialog")
         page.evaluate(() => typeof window.moqui) == "object"
         page.text().includes("Comparison operators")
+        // when the kept sign-in has ended, a page with its scripts off signs in again with them on, then goes on without
+        page.goto("/Login/logout")
+        const again = browser.newPage({ user: "john.doe", javaScript: false })
+        again.goto("/qapps/gallery/Dialog").status == 200
+        !/\/Login/.test(again.url())
+        again.evaluate(() => typeof window.moqui) == "undefined"
     },
 })

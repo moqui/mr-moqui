@@ -75,6 +75,8 @@ struct Page {
     reused: Option<(String, String)>,
     /// The media features it emulates.
     media: Media,
+    /// Whether its own scripts are off (`javaScript: false`).
+    scripts_off: bool,
 }
 
 /// The media features a page emulates (`newPage`, `page.setEmulation`); `None` is the browser's own.
@@ -707,6 +709,7 @@ impl At<'_> {
         self.driver.use_tab(&self.page.session);
         self.driver
             .call("Emulation.setScriptExecutionDisabled", json!({ "value": !enabled }))?;
+        self.page.scripts_off = !enabled;
         Ok(())
     }
 }
@@ -887,6 +890,7 @@ impl SpecBrowser {
             reported: HashSet::new(),
             reused: None,
             media: Media::default(),
+            scripts_off: false,
         };
         self.pages.insert(id, page);
         let opened = self.set_up(id, server, args);
@@ -948,7 +952,16 @@ impl SpecBrowser {
         if !landed.starts_with("/Login") || text_field(args, "path").starts_with("/Login") {
             return Ok(went);
         }
-        at.login(server, &user, &password)?;
+        // the form at /Login signs in with the page's scripts on, as at newPage
+        let scripts_off = at.page.scripts_off;
+        if scripts_off {
+            at.set_scripts(true)?;
+        }
+        let signed_in = at.login(server, &user, &password);
+        if scripts_off {
+            at.set_scripts(false)?;
+        }
+        signed_in?;
         at.gather();
         at.page.problems.clear();
         let cookies = at.cookies()?;
