@@ -88,6 +88,10 @@ const SERVICES: &str = r#"<services>
                 result = {file: {filename: 'big.bin'}}
                 download = {location: input.location, contentType: 'image/png', filename: 'big.png', disposition: 'inline',
                     cacheControl: input.cacheControl}
+            } else if (operation === 'getShopThemeAsset') {
+                result = {file: {filename: 'hero.png'}}
+                download = {location: input.location, contentType: 'image/png', filename: 'hero.png', disposition: 'inline',
+                    cacheControl: input.cacheControl}
             } else if (operation === 'stageAttachment') {
                 result = {size: file.size, name: file.name, contentType: file.contentType, purpose: input.purpose}
             } else {
@@ -397,20 +401,28 @@ fn round_trips(gate: &Gate, endpoint: &str, client_id: &str, big: &str) -> Strin
         (whole["acceptRanges"].as_str(), whole["contentRange"].as_str()),
         (Some("bytes"), Some(""))
     );
-    // a public image's Cache-Control is forwarded (Shop F118), only that exact value
-    let image = |cache_control: &str| {
+    // a public image's Cache-Control is forwarded (Shop F118), only that exact value; a theme asset's immutable one (F55)
+    // only on the theme asset download
+    let cached = |operation: &str, cache_control: &str| {
         client(
             gate,
             endpoint,
             "download",
-            "getShopProductImage",
+            operation,
             serde_json::json!({"location": "runtime://pass-test/big.bin", "cacheControl": cache_control}),
             "",
         )["cacheControl"]
             .clone()
     };
-    assert_eq!(image("public, max-age=60"), "public, max-age=60");
-    assert_eq!(image("public, max-age=31536000"), "no-store");
+    let immutable = "public, max-age=31536000, immutable";
+    assert_eq!(
+        cached("getShopProductImage", "public, max-age=60"),
+        "public, max-age=60"
+    );
+    assert_eq!(cached("getShopProductImage", "public, max-age=31536000"), "no-store");
+    assert_eq!(cached("getShopProductImage", immutable), "no-store");
+    assert_eq!(cached("getShopThemeAsset", immutable), immutable);
+    assert_eq!(cached("getShopThemeAsset", "public, max-age=31536000"), "no-store");
     assert_eq!(download["cacheControl"], "no-store");
 
     let staged = upload(endpoint, vec![b'x'; 150_000]).unwrap();

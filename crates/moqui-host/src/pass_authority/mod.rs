@@ -354,9 +354,9 @@ fn meta_message(meta: &core::DownloadMeta) -> DownloadMeta {
     message
 }
 
-/// A download's metadata as it arrived: a range only as a status and bounds that agree, a `Cache-Control` only as
-/// [`core::PUBLIC_IMAGE_CACHE`].
-pub(crate) fn meta_from(meta: DownloadMeta) -> core::DownloadMeta {
+/// A download of `operation`'s metadata as it arrived: a range only as a status and bounds that agree, a `Cache-Control`
+/// only as an exact value the operation may carry ([`core::download_cache_control`]).
+pub(crate) fn meta_from(meta: DownloadMeta, operation: &str) -> core::DownloadMeta {
     let ranged = meta.ranged.then_some(match meta.status {
         206 if meta.range_start <= meta.range_end && meta.range_end < meta.complete_length => core::Ranged::Part {
             start: meta.range_start,
@@ -377,7 +377,7 @@ pub(crate) fn meta_from(meta: DownloadMeta) -> core::DownloadMeta {
         },
         disposition: meta.disposition,
         ranged,
-        cache_control: (meta.cache_control == core::PUBLIC_IMAGE_CACHE).then_some(meta.cache_control),
+        cache_control: core::download_cache_control(operation, &meta.cache_control).map(str::to_string),
     }
 }
 

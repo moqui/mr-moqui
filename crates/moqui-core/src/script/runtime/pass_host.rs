@@ -24,7 +24,8 @@
 //!                                the server, or the error envelope as a JSON body with its status; .error is set then.
 //!                                A file that takes byte ranges (the call's input asked one) answers 200, 206 or 416
 //!                                with Accept-Ranges and Content-Range; a public image may carry the authority's
-//!                                `public, max-age=60` in place of no-store
+//!                                `public, max-age=60` in place of no-store, and a theme asset by digest
+//!                                (`getShopThemeAsset`) `public, max-age=31536000, immutable`
 //! ```
 //!
 //! With no gRPC in the host (Lite, Dev) `passAuthority` throws "gRPC not built into this host", which mr-pass's
@@ -229,11 +230,12 @@ fn pass_open<'js>(ctx: Ctx<'js>, endpoint: String, call: JsValue<'js>) -> rquick
                 } else {
                     meta.content_type.clone()
                 };
-                // only a public product image may be kept by a shared cache (Shop F118); the sender passes no other value
+                // only a public product image (Shop F118) or a theme asset by digest (F55) may be kept by a shared cache;
+                // the sender passes no other value
                 let cache_control = meta
                     .cache_control
                     .as_deref()
-                    .filter(|value| *value == pass_authority::PUBLIC_IMAGE_CACHE)
+                    .and_then(|value| pass_authority::download_cache_control(&call.operation, value))
                     .unwrap_or("no-store");
                 let mut headers = vec![
                     ("Content-Type".to_string(), content_type),

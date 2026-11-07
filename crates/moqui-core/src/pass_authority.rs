@@ -200,9 +200,29 @@ pub struct UploadFile {
     pub bytes: Vec<u8>,
 }
 
-/// The only `Cache-Control` a download may carry instead of `no-store`: a public product image of the current generation
-/// (Shop P8, F75 and F118). The authority names it; any other value is sent as `no-store`.
+/// A `Cache-Control` a download may carry instead of `no-store`: a public product image of the current generation
+/// (Shop P8, F75 and F118). The authority names it; any other value is sent as `no-store` ([`download_cache_control`]).
 pub const PUBLIC_IMAGE_CACHE: &str = "public, max-age=60";
+
+/// The other `Cache-Control` a download may carry: a theme release's binary asset, read by its digest, whose bytes never
+/// change (Shop F55). Only [`THEME_ASSET_OPERATION`] may carry it.
+pub const THEME_ASSET_CACHE: &str = "public, max-age=31536000, immutable";
+
+/// The download operation of a theme release's binary asset by digest, the only one that may carry [`THEME_ASSET_CACHE`].
+pub const THEME_ASSET_OPERATION: &str = "getShopThemeAsset";
+
+/// The `Cache-Control` a download of `operation` answers with in place of `no-store`, given the value the authority named:
+/// exact values only, [`PUBLIC_IMAGE_CACHE`] for any download and [`THEME_ASSET_CACHE`] for a theme asset; anything else
+/// is none (`no-store`).
+pub fn download_cache_control(operation: &str, value: &str) -> Option<&'static str> {
+    if value == PUBLIC_IMAGE_CACHE {
+        Some(PUBLIC_IMAGE_CACHE)
+    } else if value == THEME_ASSET_CACHE && operation == THEME_ASSET_OPERATION {
+        Some(THEME_ASSET_CACHE)
+    } else {
+        None
+    }
+}
 
 /// What a downloaded file is.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -215,7 +235,8 @@ pub struct DownloadMeta {
     pub disposition: String,
     /// For a file that takes byte ranges (a granted Shop download, F88): what of it is sent.
     pub ranged: Option<Ranged>,
-    /// [`PUBLIC_IMAGE_CACHE`] when the authority allows it, else none (`no-store`).
+    /// [`PUBLIC_IMAGE_CACHE`] or [`THEME_ASSET_CACHE`] when the authority allows it ([`download_cache_control`]), else
+    /// none (`no-store`).
     pub cache_control: Option<String>,
 }
 
@@ -486,7 +507,7 @@ pub fn serve_download(
                 _ => "attachment".to_string(),
             },
             ranged,
-            cache_control: (text("cacheControl") == PUBLIC_IMAGE_CACHE).then(|| PUBLIC_IMAGE_CACHE.to_string()),
+            cache_control: download_cache_control(&call.operation, &text("cacheControl")).map(str::to_string),
         },
         source: opened.source,
         start,
@@ -497,7 +518,7 @@ pub fn serve_download(
 struct Outcome {
     result: Result<serde_json::Value, PassError>,
     /// A file to send: `{location, contentType, filename, disposition}`, with `size` and `range` (`{start, end}`,
-    /// `{unsatisfiable}` or null) for a file that takes byte ranges and `cacheControl` for a public image.
+    /// `{unsatisfiable}` or null) for a file that takes byte ranges and `cacheControl` for a public image or theme asset.
     download: Option<serde_json::Value>,
     session_handle: String,
 }

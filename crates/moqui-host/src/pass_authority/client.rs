@@ -257,6 +257,7 @@ impl PassSender for Sender {
     fn download(&self, endpoint: &str, mut call: Call) -> Result<Result<Download, PassError>, Error> {
         let endpoint = parse_endpoint(endpoint)?;
         let direct = Arc::clone(&self.direct);
+        let operation = call.operation.clone();
         let opened = crate::edge::block_on(async move {
             call.client_id = direct_client_id(&endpoint);
             let mut client = Sender::client(direct, &endpoint).await?;
@@ -298,7 +299,7 @@ impl PassSender for Sender {
             }
         });
         Ok(Ok(Download {
-            meta: super::meta_from(meta),
+            meta: super::meta_from(meta, &operation),
             reader: Box::new(ChannelReader {
                 receiver,
                 current: Bytes::new(),

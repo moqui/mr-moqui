@@ -65,6 +65,14 @@ at most 128 letters, digits and `+/=_:-`; one that does not check is left out wi
 the bytes and serves them by that digest; `Package::binary_asset(path)` gives the reference back. `true` in place of a
 reference only names the file, and an image given as text (an earlier release's base64) is read as before.
 
+Mantle's releases do this (Shop F55): publish pins a binary file by the SHA-256 of its bytes at its version, the
+frontend's file read (`getShopThemeFiles`) answers it as `{path, digest, size, contentType}`, and the bytes are a separate
+download by release, path and digest (`getShopThemeAsset`), which PASS serves under `theme/{manifest digest}/` as
+`public, max-age=31536000, immutable`. A PASS download over gRPC carries that Cache-Control only for `getShopThemeAsset`
+(`pass_authority::download_cache_control`: two exact values, the other a public image's `public, max-age=60`; anything
+else is `no-store`). A draft and a release export keep binaries as base64 text, and a release published before (pinned
+by the digest of its base64 text) is read and served as before.
+
 Anything else, `.liquid` included, is refused. Ids and names are letters, digits, `-` and `_`. A JSON object with a key
 given twice is an error. Without `order` a template has at most one section.
 
