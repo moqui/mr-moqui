@@ -4,4 +4,9 @@
         serviceName="org.moqui.report.ReportServices.evaluate#Alerts" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
     <moqui.security.user.NotificationTopic topic="ReportAlert" inboxEnumId="NinUpdates" description="Report alert"
         typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"/>
+    <!-- Business dataset scope policies (crates/moqui-report/src/business.rs): each a rowFilterService (enumCode) a domain
+        component registers as an Enumeration of this type, which a business dataset must name to be admitted -->
+    <moqui.basic.EnumerationType enumTypeId="ReportScopePolicy" description="Business dataset scope policy (a row-filter service)"/>
+    <moqui.basic.Enumeration enumId="ReportUserGroups" enumTypeId="ReportScopePolicy"
+            enumCode="org.moqui.report.ReportServices.get#UserGroupRowFilter" description="the viewer's user groups"/>
 </entity-facade-xml>

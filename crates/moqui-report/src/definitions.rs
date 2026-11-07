@@ -236,6 +236,50 @@ fn references(value: &Json, out: &mut BTreeSet<String>) {
 pub(super) fn save_pulled(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Error> {
     save(ec, definition, note)
 }
+/// Save a definition as the viewer, with the owner, reference and dataset-save checks of `save#Definition`: a business
+/// dataset made or revised by its steward (business.rs).
+pub(super) fn save_owned(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Error> {
+    save(ec, definition, note)
+}
+
+/// Every definition that references `id`, shipped or saved, whoever may read it, as its id and body: what a change to a
+/// business dataset's fields would break (business.rs). Reads with authorization off and returns no owner or group.
+pub(super) fn all_referencing(ec: &ExecutionContext, id: &str) -> Result<Vec<(String, Json)>, Error> {
+    let mut out = Vec::new();
+    for definition in shipped(ec).iter() {
+        let mut refs = BTreeSet::new();
+        references(&definition["body"], &mut refs);
+        if refs.contains(id) {
+            out.push((text(definition, "id", "").to_owned(), definition["body"].clone()));
+        }
+    }
+    let referencing = internal(ec, || {
+        entity(ec)?
+            .find(REFERENCE)?
+            .eq("referencedId", Value::string(id))
+            .list()
+    })?;
+    for reference in referencing.iter() {
+        let Some(definition_id) = reference.get("definitionId").and_then(Value::as_str) else {
+            continue;
+        };
+        let row = internal(ec, || {
+            entity(ec)?
+                .find(ENTITY)?
+                .eq("definitionId", Value::string(definition_id))
+                .one()
+        })?;
+        if let Some(row) = row {
+            match row_json(&row) {
+                Ok(definition) => out.push((definition_id.to_owned(), definition["body"].clone())),
+                Err(error) => {
+                    tracing::error!(definition = definition_id, %error, "invalid report definition, continuing")
+                }
+            }
+        }
+    }
+    Ok(out)
+}
 
 fn save(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Error> {
     let current = viewer()?;

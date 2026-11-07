@@ -1,5 +1,5 @@
 //! Authorized report queries and shared columnar results. No telemetry SDK types cross this API. Beside them, the report
-//! definitions ([`definitions`]), dashboard alerts ([`alert`]), annotations and releases ([`annotations`]), scheduled
+//! definitions ([`definitions`]), business datasets' admission and stewardship ([`business`]), dashboard alerts ([`alert`]), annotations and releases ([`annotations`]), scheduled
 //! delivery ([`schedule`]), the monitoring sources' keys ([`monitor`]) and Monitor › Settings ([`settings`]).
 //!
 //! This crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it through the [`moqui_core::extension`]
@@ -37,6 +37,7 @@ moqui_core::extension::submit! {
 pub mod alert;
 pub mod annotations;
 pub mod browser;
+pub mod business;
 pub mod definitions;
 pub mod frame;
 pub mod git_sync;
@@ -221,6 +222,8 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
         return Err(fail(format!("{id} is not a dataset")));
     }
     let body = &definition["body"];
+    // a business dataset is read once admitted, or by its steward (business.rs)
+    business::check_admitted(ec, id, body)?;
     if let Some(service) = body["serviceName"].as_str() {
         moqui_core::user::authorize_own("AT_SERVICE", service, "view").map_err(fail)?;
         return Ok(Dataset {
@@ -304,9 +307,21 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
             .map_err(fail)?
             .filter(|user| !user.is_empty())
             .ok_or_else(|| fail("a row-filter service requires an authenticated viewer"))?;
+        // the dataset's id and its rowFilterParameters beside the viewer, so one policy serves every dataset by naming the
+        // field that carries its scope (BOSS impl-insights F5)
+        let mut policy_parameters = Parameters::from([
+            ("userId".into(), Value::string(user)),
+            ("datasetId".into(), Value::string(id)),
+        ]);
+        if let Some(parameters) = body.get("rowFilterParameters").filter(|value| value.is_object()) {
+            policy_parameters.insert("rowFilterParameters".into(), moqui_lib::json::from_json(parameters));
+        }
+        // a registered scope policy is the engine's own reviewed code, computed from the signed-in viewer, so the viewer
+        // needs no grant of the service; any other row-filter service is called with the viewer's authorization
+        let _policy = business::registered_policy(ec, service)?.then(|| ec.disable_authz());
         let result = moqui_core::service::call::sync_checked(
             service,
-            &Parameters::from([("userId".into(), Value::string(user))]),
+            &policy_parameters,
             &moqui_core::service::call::CallOptions {
                 ignore_previous_error: true,
                 no_remember_parameters: true,
@@ -2787,6 +2802,16 @@ pub fn register(registry: &mut moqui_core::native::NativeRegistry) -> Result<(),
         ("push_git_sync", git_sync::push_sync),
         ("pull_git_sync", git_sync::pull_sync),
         ("pull_git_syncs", git_sync::pull_repository),
+        ("find_business_datasets", business::find_business_datasets),
+        ("validate_business_dataset", business::validate_business_dataset),
+        ("create_business_dataset", business::create_business_dataset),
+        ("store_business_dataset", business::store_business_dataset),
+        ("index_business_dataset", business::index_business_dataset),
+        ("store_business_dataset_fields", business::store_business_dataset_fields),
+        (
+            "store_business_dataset_conditions",
+            business::store_business_dataset_conditions,
+        ),
     ] {
         registry.service_function(&format!("moqui_core::report::{name}"), function)?;
     }
