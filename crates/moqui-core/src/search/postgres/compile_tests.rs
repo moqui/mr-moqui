@@ -93,7 +93,7 @@ fn dotted_field_is_any_element() {
         .unwrap();
     assert_eq!(
         sql.text,
-        "EXISTS (SELECT 1 FROM jsonb_array_elements(body -> 'roles') AS e0 WHERE COALESCE((e0 ->> 'roleTypeId') = ?, FALSE))"
+        "EXISTS (SELECT 1 FROM jsonb_array_elements(body -> 'roles') AS e0 WHERE (e0 ->> 'roleTypeId') = ?)"
     );
     assert_eq!(sql.params, vec![Value::string("Customer")]);
 }
@@ -122,7 +122,7 @@ fn child_query_binds_one_element() {
         .starts_with("EXISTS (SELECT 1 FROM jsonb_array_elements(body -> 'classifications') AS e0 WHERE ("));
     assert!(
         sql.text
-            .contains("COALESCE((e0 ->> 'partyClassificationId') = ?, FALSE)"),
+            .contains("(e0 ->> 'partyClassificationId') = ?"),
         "{}",
         sql.text
     );
@@ -147,6 +147,17 @@ fn a_child_date_text_is_epoch_millis_a_bare_date_or_a_time() {
     );
 }
 
+// Only a negation (and a count of matches) turns a null leaf into false, so a positive leaf stays an index condition.
+#[test]
+fn only_a_negation_wraps_its_leaf() {
+    let mapping = party();
+    let compiler = Compiler::new(&mapping);
+    let sql = compiler.where_sql(&parse_query_string("combinedName:*mit* AND NOT partyId:AB*").unwrap()).unwrap();
+    assert_eq!(sql.text, "(\"f_combinedName\" ILIKE ? AND NOT COALESCE(\"f_partyId\" LIKE ?, FALSE))");
+    let sql = compiler.where_sql(&parse_query_string("-partyId:AB*").unwrap()).unwrap();
+    assert_eq!(sql.text, "(NOT COALESCE(\"f_partyId\" LIKE ?, FALSE))");
+}
+
 #[test]
 fn text_kinds_and_missing_fields() {
     let mapping = party();
@@ -157,9 +168,9 @@ fn text_kinds_and_missing_fields() {
     let sql = compiler
         .where_sql(&parse_query_string("combinedName:*mit*").unwrap())
         .unwrap();
-    assert_eq!(sql.text, "COALESCE(\"f_combinedName\" ILIKE ?, FALSE)");
+    assert_eq!(sql.text, "\"f_combinedName\" ILIKE ?");
     let sql = compiler.where_sql(&parse_query_string("partyId:AB*").unwrap()).unwrap();
-    assert_eq!(sql.text, "COALESCE(\"f_partyId\" LIKE ?, FALSE)");
+    assert_eq!(sql.text, "\"f_partyId\" LIKE ?");
     assert_eq!(sql.params, vec![Value::string("AB%")]);
     let sql = compiler.where_sql(&parse_query_string("nothere:x").unwrap()).unwrap();
     assert_eq!(sql.text, "FALSE");
@@ -177,7 +188,7 @@ fn a_term_on_a_root_keyword_field_also_matches_an_element_of_a_list_there() {
         .unwrap();
     assert_eq!(
         sql.text,
-        "COALESCE(COALESCE(\"f_partyId\" = ?, (body -> 'partyId') @> jsonb_build_array(?::text)), FALSE)"
+        "(\"f_partyId\" = ? OR (\"f_partyId\" IS NULL AND ((body -> 'partyId') @> jsonb_build_array(?::text))))"
     );
     assert_eq!(sql.params, vec![Value::string("T1"), Value::string("T1")]);
     let sql = Compiler::new(&mapping)
@@ -185,8 +196,8 @@ fn a_term_on_a_root_keyword_field_also_matches_an_element_of_a_list_there() {
         .unwrap();
     assert_eq!(
         sql.text,
-        "COALESCE(COALESCE(\"f_partyId\" IN (?, ?), (body -> 'partyId') @> jsonb_build_array(?::text) OR \
-             (body -> 'partyId') @> jsonb_build_array(?::text)), FALSE)"
+        "(\"f_partyId\" IN (?, ?) OR (\"f_partyId\" IS NULL AND ((body -> 'partyId') @> jsonb_build_array(?::text) OR \
+             (body -> 'partyId') @> jsonb_build_array(?::text))))"
     );
     assert_eq!(sql.params.len(), 4);
     // a dotted field is already any element of its child array; a range is not a term
@@ -204,7 +215,7 @@ fn should_only_bool_needs_one() {
         .unwrap();
     assert_eq!(
         sql.text,
-        "((COALESCE(\"f_partyId\" = ?, FALSE) OR COALESCE(\"f_partyId\" = ?, FALSE)))"
+        "((\"f_partyId\" = ? OR \"f_partyId\" = ?))"
     );
 }
 
