@@ -2088,6 +2088,10 @@ fn temporal_at_path(expression: &str) -> Option<Value> {
 
 /// Run a script once, not kept, named `file_name` in stack traces, and return its value as a host value. The test
 /// harness runs a spec file with it, so an error names the spec file and line.
+///
+/// For the test harnesses only (moqui-devkit's spec engine, moqui-llm's agent specs): it runs in the thread's spec
+/// engine, whose globals (`call`, `login`, ...) are the harness's, apart from the scripts of services and screens.
+/// Application code runs scripts through [`run_script`] and the other entries.
 pub fn eval_named_value(source: &str, file_name: &str) -> Result<Value, Error> {
     if source.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
@@ -2103,7 +2107,8 @@ pub fn eval_named_value(source: &str, file_name: &str) -> Result<Value, Error> {
 }
 
 /// Define the global `name` in the thread's spec engine as an object of the host table's `class`, writable and
-/// configurable (the test harness's `__moquiTestHost`). A plain set of a global would go to the context stack.
+/// configurable (the test harness's `__moquiTestHost`). A plain set of a global would go to the context stack. For
+/// the test harnesses only, as [`eval_named_value`].
 pub fn install_spec_global(name: &str, class: &'static crate::script::host::HostClass) -> Result<(), Error> {
     if crate::script::engine::script_engine() == crate::script::engine::ScriptEngine::Oxide {
         return crate::script::oxide::spec::install_global(name, class);

@@ -384,12 +384,18 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
 - **No `with`, and `eval` is always indirect** (the fork's deviation ledger): a direct `eval` does not see the
   calling function's names. The test harness's `runInContext` (testkit/server.js) keeps its `with` form on QuickJS;
   on oxide it runs the source as the body of a function whose parameters are the sandbox's own names
-  (`parse::completion_body` returns its last expression) and writes back what it assigned to them. A function the
-  source made sees the names as they were passed, and its later assignments to them stay in it, where `with` would
-  reach the sandbox.
-- **`settle`** (`assert.rejects`) attaches its handlers and runs jobs until they run (`EngineOps::run_pending_job`),
-  on both engines; QuickJS's form read the promise's state directly, so it now runs one more job for a promise
-  already settled.
+  (`testkit/sandbox.rs` keeps eval's completion value) and writes back the names whose value the source changed. A
+  known limit: a function the source made sees the names as they were passed, and its later assignments to them
+  stay in it, where `with` would reach the sandbox; a write through `globalThis` is the sandbox's at once but a bare
+  read of the same name in the source still sees the passed value. A `"use strict"` directive stays first, so it
+  applies.
+- **`settle`** (`assert.rejects`) attaches its handlers and runs the queue's jobs, oldest first, until they run
+  (`EngineOps::run_pending_job`), on both engines. QuickJS's form read the promise's state directly and returned at
+  once for a promise already settled; now every job queued before the handlers' runs first, unrelated ones too, and
+  a promise already settled costs one more job.
+- **`runInContext`'s `with` form on QuickJS** is now compiled by an indirect `eval` at global scope (so that
+  quickjs-oxide, which refuses `with`, can load server.js), not written in the prelude's function: it no longer
+  closes over the prelude's names, which it did not use.
 
 ### Phase 3: the spec engine, moqui-llm and the devkit
 
