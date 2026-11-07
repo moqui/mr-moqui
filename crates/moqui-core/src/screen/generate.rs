@@ -741,37 +741,201 @@ mod tests {
         assert!(generated.unit("text|loc|S|widgets").is_some());
     }
 
-    /// Generation is a function of the text alone: the widgets of a sample of the framework's and components' screens, forms
-    /// as written, generate the same unit in each built-in mode on QuickJS and on quickjs-oxide.
-    #[test]
-    fn screen_widgets_generate_the_same_on_both_engines() {
-        use crate::script::engine::{with_script_engine, ScriptEngine};
-        let mut compared = 0;
-        // every eighth screen file, so the test stays quick in a debug build
-        for file in crate::script::walker::test_files::component_xml_files("screen").into_iter().step_by(8) {
+    /// The render modes with a built-in macro module, and the module's file.
+    const MODES: [(&str, &str); 10] = [
+        ("html", "ScreenHtml.js"),
+        ("qvt", "ScreenQvt.js"),
+        ("tui", "ScreenTui.js"),
+        ("csv", "ScreenCsv.js"),
+        ("xlsx", "ScreenXlsx.js"),
+        ("xml", "ScreenXml.js"),
+        ("text", "ScreenText.js"),
+        ("qjs", "ScreenPlain.js"),
+        ("html-print", "ScreenHtmlPrint.js"),
+        ("qvt-static", "ScreenQvtStatic.js"),
+    ];
+
+    fn built_in(file: &str) -> &'static str {
+        MODE_MODULES
+            .iter()
+            .find(|(name, _)| *name == file)
+            .map(|(_, source)| *source)
+            .unwrap()
+    }
+
+    /// The `widgets` and `fail-widgets` of the framework's screen files, each with its file's name.
+    fn screen_widgets() -> Vec<(String, MNode)> {
+        let mut out = Vec::new();
+        for file in crate::script::walker::test_files::component_xml_files("screen") {
             let Ok(root) = MNode::parse_file(&file) else {
                 continue;
             };
             let mut widgets = Vec::new();
             crate::script::walker::test_files::named(&root, "widgets", &mut widgets);
-            for node in widgets {
-                let xml = node.write_string();
-                for mode in ["html", "qvt", "tui"] {
-                    let quickjs = with_script_engine(ScriptEngine::Rquickjs, || generate_unit_source(mode, &xml));
-                    let oxide = with_script_engine(ScriptEngine::Oxide, || generate_unit_source(mode, &xml));
-                    match (&quickjs, &oxide) {
-                        (Ok(quickjs), Ok(oxide)) => assert_eq!(quickjs, oxide, "{} {mode}", file.display()),
-                        (Err(_), Err(_)) => {}
-                        _ => panic!("{} {mode}: {quickjs:?} against {oxide:?}", file.display()),
-                    }
-                }
-                compared += 1;
+            crate::script::walker::test_files::named(&root, "fail-widgets", &mut widgets);
+            let name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            out.extend(widgets.into_iter().map(|node| (name.clone(), node)));
+        }
+        out
+    }
+
+    fn element_names(node: &MNode, out: &mut HashSet<String>) {
+        out.insert(node.name());
+        for child in node.child_iter() {
+            element_names(&child, out);
+        }
+    }
+
+    /// A copy of `node` with every element stamped (`mq-src`) as a dev instance stamps a screen's widgets.
+    fn stamped(file: &str, node: &MNode) -> MNode {
+        fn stamp(node: &MNode, file: &str, count: &mut usize) {
+            *count += 1;
+            node.set_attribute(crate::screen::stamp::ATTRIBUTE, format!("component://test/screen/{file}:{count}:1"));
+            for child in node.child_iter() {
+                stamp(&child, file, count);
             }
         }
-        assert!(compared > 20, "{compared}");
-        let quickjs = with_script_engine(ScriptEngine::Rquickjs, widget_vocabulary).unwrap();
-        let oxide = with_script_engine(ScriptEngine::Oxide, widget_vocabulary).unwrap();
-        assert_eq!(quickjs, oxide);
+        let copy = MNode::parse_text(file, &node.write_string()).unwrap();
+        stamp(&copy, file, &mut 0);
+        copy
+    }
+
+    /// A resolve for the comparison, as `unit_for`'s replaces elements: a form is marked assembled, a form-list that
+    /// lets the user choose columns is wrapped in `form-list-user-columns`, and an include in the static mode becomes
+    /// what it includes.
+    fn test_resolve(mode: &str) -> impl Fn(&MNode) -> Result<Option<MNode>, Error> + '_ {
+        move |node: &MNode| {
+            let name = node.name();
+            if mode == super::super::statics::UNIT_MODE && (name == "section-include" || name == "include-screen") {
+                let included = MNode::new("container");
+                let label = MNode::new("label");
+                label.set_attribute("text", format!("included {}", node.attribute("name").unwrap_or_default()));
+                included.append_node(label);
+                return Ok(Some(included));
+            }
+            if (name != "form-single" && name != "form-list") || node.has_attribute("mq-assembled") {
+                return Ok(None);
+            }
+            let assembled = MNode::parse_text("assembled", &node.write_string())?;
+            assembled.set_attribute("mq-assembled", "true");
+            if name == "form-list" && assembled.attribute_is("select-columns", "true") {
+                let wrapper = MNode::new("form-list-user-columns");
+                wrapper.set_attribute("name", node.attribute("name").unwrap_or_default());
+                wrapper.append_node(assembled);
+                return Ok(Some(wrapper));
+            }
+            Ok(Some(assembled))
+        }
+    }
+
+    /// The unit each of `trees` generates in `mode` on `engine`, the module loaded once and the trees walked in order
+    /// (both engines walk the same order, so the counters a mode keeps agree); a failure as its text, columns cut from
+    /// the stack lines (quickjs-oxide places a call's column at its `(`, QuickJS at the callee's name).
+    fn units_on(engine: crate::script::engine::ScriptEngine, mode: &str, file: &str, trees: &[MNode]) -> Vec<String> {
+        let columns = regex::Regex::new(r":(\d+):\d+\)").unwrap();
+        crate::script::engine::with_script_engine(engine, || {
+            with_module(built_in(file), mode, false, |module| {
+                let resolve = test_resolve(mode);
+                Ok(trees
+                    .iter()
+                    .map(|root| {
+                        match generate_unit_body(module, root, Some(&resolve), mode).and_then(|body| make_unit(module, body)) {
+                            Ok(unit) => unit.source,
+                            Err(err) => format!("ERROR {}", columns.replace_all(err.message(), ":$1)")),
+                        }
+                    })
+                    .collect())
+            })
+        })
+        .unwrap()
+    }
+
+    /// `trees` generate the same units in every built-in mode on QuickJS and on quickjs-oxide.
+    fn assert_same_on_both_engines(trees: &[(String, MNode)]) {
+        use crate::script::engine::ScriptEngine;
+        let roots: Vec<MNode> = trees.iter().map(|(_, root)| root.clone()).collect();
+        for (mode, file) in MODES {
+            let quickjs = units_on(ScriptEngine::Rquickjs, mode, file, &roots);
+            let oxide = units_on(ScriptEngine::Oxide, mode, file, &roots);
+            for (((name, root), quickjs), oxide) in trees.iter().zip(&quickjs).zip(&oxide) {
+                assert_eq!(quickjs, oxide, "{name} in {mode}: {}", root.write_string());
+            }
+            // most generate: the comparison is of code, not only of failures
+            let failed = quickjs.iter().filter(|unit| unit.starts_with("ERROR ")).count();
+            if mode == "html" {
+                assert!(quickjs.iter().any(|unit| unit.contains("sri.stamp(")), "no stamped element");
+            }
+            assert!(failed * 4 < quickjs.len(), "{mode}: {failed} of {} failed", quickjs.len());
+        }
+    }
+
+    /// The macro names of every built-in mode.
+    fn macro_names() -> HashSet<String> {
+        let mut names = HashSet::new();
+        for (mode, file) in MODES {
+            let found = crate::script::engine::with_script_engine(crate::script::engine::ScriptEngine::Rquickjs, || {
+                with_module(built_in(file), mode, false, |module| match &module.engine {
+                    ModeEngine::QuickJs { macros, .. } => macros
+                        .keys::<String>()
+                        .collect::<Result<HashSet<String>, _>>()
+                        .map_err(|err| Error::new(err.to_string())),
+                    ModeEngine::Oxide(oxide) => oxide.macro_names(),
+                })
+            })
+            .unwrap();
+            names.extend(found);
+        }
+        names
+    }
+
+    /// Generation is a function of the text alone: every element name, those of the framework's screens and those a
+    /// built-in mode has a macro for, generates the same unit in every built-in mode on QuickJS and on quickjs-oxide,
+    /// its elements stamped and its forms resolved. Each name is generated in the first `widgets` that has it, and a
+    /// name no screen has is generated alone; a failure must fail with the same text. The full sweep of every screen's
+    /// widgets is `every_screens_widgets_generate_the_same_on_both_engines`.
+    #[test]
+    fn every_element_name_generates_the_same_on_both_engines() {
+        let mut covered = HashSet::new();
+        let mut trees = Vec::new();
+        for (file, widgets) in screen_widgets() {
+            let mut names = HashSet::new();
+            element_names(&widgets, &mut names);
+            if !names.is_subset(&covered) {
+                covered.extend(names);
+                trees.push((file.clone(), stamped(&file, &widgets)));
+            }
+        }
+        let mut alone: Vec<String> = macro_names()
+            .into_iter()
+            .filter(|name| !name.starts_with('@') && !covered.contains(name))
+            .collect();
+        alone.sort();
+        for name in &alone {
+            let fixture = MNode::parse_text("alone", &format!("<widgets><{name}/></widgets>")).unwrap();
+            trees.push((format!("<{name}/> alone"), stamped("alone.xml", &fixture)));
+            covered.insert(name.clone());
+        }
+        assert!(covered.len() > 120, "{}", covered.len());
+        assert_same_on_both_engines(&trees);
+        let quickjs = crate::script::engine::with_script_engine(crate::script::engine::ScriptEngine::Rquickjs, widget_vocabulary);
+        let oxide = crate::script::engine::with_script_engine(crate::script::engine::ScriptEngine::Oxide, widget_vocabulary);
+        assert_eq!(quickjs.unwrap(), oxide.unwrap());
+    }
+
+    /// Every `widgets` of every framework screen generates the same unit in every built-in mode on both engines, stamped
+    /// and with its forms resolved. Too long for the regression suite in a debug build: `cargo test-slow` runs it.
+    #[test]
+    #[ignore = "a sweep of every screen's widgets in every mode: acceptance (cargo test-slow)"]
+    fn every_screens_widgets_generate_the_same_on_both_engines() {
+        let trees: Vec<(String, MNode)> = screen_widgets()
+            .into_iter()
+            .map(|(file, widgets)| {
+                let stamped = stamped(&file, &widgets);
+                (file, stamped)
+            })
+            .collect();
+        assert!(trees.len() > 100, "{}", trees.len());
+        assert_same_on_both_engines(&trees);
     }
 
     /// `xml` generated in html with the macro module `module` (a source as a mode file is), on QuickJS and on
