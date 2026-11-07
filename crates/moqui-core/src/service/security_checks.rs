@@ -30,7 +30,7 @@ use crate::entity::{EntityFacade, EntityValue};
 
 const DEFAULT_PRIVILEGED_GROUPS: &str = "ADMIN,ADMIN_ADV,SYSMSG_RECEIVE";
 const DEFAULT_SEALED_PERMISSIONS: &str =
-    "GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL";
+    "GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD";
 
 /// How many times `UserSecurityChecks` ran on this thread, for a load report to show the ECAs fired.
 pub fn security_checks_run() -> u64 {
@@ -132,27 +132,35 @@ pub(crate) fn assert_document_expression(facade: &EntityFacade, field_path: &str
 }
 
 fn privileged_groups() -> BTreeSet<String> {
-    csv_ids("privileged-groups", DEFAULT_PRIVILEGED_GROUPS)
+    conf_ids("privileged-groups", "privileged-group", DEFAULT_PRIVILEGED_GROUPS)
 }
 
 fn sealed_permissions() -> BTreeSet<String> {
-    csv_ids("sealed-permissions", DEFAULT_SEALED_PERMISSIONS)
+    conf_ids("sealed-permissions", "sealed-permission", DEFAULT_SEALED_PERMISSIONS)
 }
 
-/// The ids in the `user-facade` `authz` attribute `name` of the current factory's conf, or in `default_ids` when it is
-/// empty or there is no current context.
-fn csv_ids(name: &str, default_ids: &str) -> BTreeSet<String> {
-    let loaded = ExecutionContext::with_current(|ctx| ctx.factory().user_facade_attr("authz", name))
-        .flatten()
-        .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
-        .unwrap_or_default();
-    let source = if loaded.is_empty() {
-        default_ids
-    } else {
-        loaded.as_str()
-    };
+/// The ids of the current factory's conf: the `user-facade` `authz` attribute `attribute` (or `default_ids` when it is
+/// empty or there is no current context) joined with the `name` of every `authz` child named `element`, which the
+/// components add.
+fn conf_ids(attribute: &str, element: &str, default_ids: &str) -> BTreeSet<String> {
+    let (loaded, added) = ExecutionContext::with_current(|ctx| {
+        let factory = ctx.factory();
+        (
+            factory.user_facade_attr("authz", attribute),
+            factory.authz_names(element),
+        )
+    })
+    .unwrap_or_default();
+    let loaded = loaded.map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw));
+    join_ids(loaded.as_deref(), default_ids, &added)
+}
+
+/// The comma separated `listed` ids, or `default_ids` when `listed` is missing or empty, with every id of `added`.
+fn join_ids(listed: Option<&str>, default_ids: &str, added: &[String]) -> BTreeSet<String> {
+    let source = listed.filter(|text| !text.trim().is_empty()).unwrap_or(default_ids);
     source
         .split(',')
+        .chain(added.iter().map(String::as_str))
         .map(str::trim)
         .filter(|id| !id.is_empty())
         .map(str::to_string)
@@ -275,7 +283,37 @@ fn row_text(row: &EntityValue, field: &str) -> String {
 mod tests {
     use moqui_lib::object::Value;
 
-    use super::membership_open;
+    use super::{join_ids, membership_open, DEFAULT_SEALED_PERMISSIONS};
+
+    #[test]
+    fn the_listed_ids_or_the_defaults_are_joined_with_every_added_id() {
+        let added = ["APP_ADMIN".to_string(), " APP_BACKUP ".to_string()];
+        let ids = join_ids(None, "ADMIN,ADMIN_ADV", &added);
+        assert_eq!(
+            ids.into_iter().collect::<Vec<_>>(),
+            ["ADMIN", "ADMIN_ADV", "APP_ADMIN", "APP_BACKUP"]
+        );
+        // an attribute a component still sets replaces the defaults, as before; the added ids still apply
+        let ids = join_ids(Some("X"), "ADMIN,ADMIN_ADV", &added);
+        assert_eq!(ids.into_iter().collect::<Vec<_>>(), ["APP_ADMIN", "APP_BACKUP", "X"]);
+        assert_eq!(
+            join_ids(Some(" "), "ADMIN", &[]).into_iter().collect::<Vec<_>>(),
+            ["ADMIN"]
+        );
+    }
+
+    #[test]
+    fn the_framework_seals_the_admin_grants_that_widen_access() {
+        let sealed = join_ids(None, DEFAULT_SEALED_PERMISSIONS, &[]);
+        for permission in [
+            "ADMIN_IDENTITY_GLOBAL",
+            "ADMIN_ACCESS_MANAGE",
+            "ADMIN_BACKUP_DOWNLOAD",
+            "ADMIN_CONSTITUTION_GLOBAL",
+        ] {
+            assert!(sealed.contains(permission), "{permission}");
+        }
+    }
 
     #[test]
     fn a_missing_date_leaves_that_end_open_as_filter_by_date() {

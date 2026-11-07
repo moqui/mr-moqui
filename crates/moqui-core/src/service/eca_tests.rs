@@ -57,8 +57,14 @@ fn sealed_permission_create_is_denied_without_the_permission() {
         Some("plain"),
         "current_username cannot see the logged-in user"
     );
-    // LlmGatewayUse too: the gateway's permission, sealed by that name
-    for permission in ["ADMIN_PASSWORD", "LlmGatewayUse"] {
+    // LlmGatewayUse too: the gateway's permission, sealed by that name; and the Admin grants that widen access
+    for permission in [
+        "ADMIN_PASSWORD",
+        "LlmGatewayUse",
+        "ADMIN_IDENTITY_GLOBAL",
+        "ADMIN_ACCESS_MANAGE",
+        "ADMIN_BACKUP_DOWNLOAD",
+    ] {
         reset_sealed_grant();
         let err = permission_row(&facade, "ADMIN", permission)
             .create(&facade)
@@ -295,6 +301,44 @@ fn privileged_group_membership_is_denied_to_a_non_member() {
 }
 
 #[test]
+fn a_group_and_a_permission_a_conf_adds_by_element_are_guarded_beside_the_defaults() {
+    let (facade, context, _runtime) = boot_security_with_conf(Some(
+        r#"<moqui-conf><user-facade><authz>
+            <privileged-group name="APP_ADMIN"/><sealed-permission name="APP_GLOBAL"/>
+        </authz></user-facade></moqui-conf>"#,
+    ));
+    let _entered = context.enter();
+    {
+        let _authz = context.disable_authz();
+        seed_entity_allow(&facade);
+        seed_user(&facade, "plain", "Secret-12");
+    }
+    login_user("plain", "Secret-12").expect("login");
+    for group in ["APP_ADMIN", "ADMIN"] {
+        let mut row = facade.make_value("moqui.security.UserGroupMember").unwrap();
+        row.set("userGroupId", Value::string(group));
+        row.set("userId", Value::string("U1"));
+        row.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
+        let err = row.create(&facade).expect_err("privileged group");
+        assert!(
+            err.to_string().contains(&format!("membership of group {group}")),
+            "{err}"
+        );
+    }
+    for permission in ["APP_GLOBAL", "ADMIN_PASSWORD"] {
+        let err = permission_row(&facade, "ADMIN", permission)
+            .create(&facade)
+            .expect_err("sealed permission");
+        assert!(err.to_string().contains(permission), "{err}");
+        assert_eq!(permission_count(&facade, "ADMIN", permission), 0);
+    }
+    // a group the conf does not name stays open to an entity-authorized writer
+    permission_row(&facade, "APP_OTHER", "APP_VIEW")
+        .create(&facade)
+        .expect("an unsealed grant");
+}
+
+#[test]
 fn an_eeca_condition_checks_only_its_first_child() {
     let facade = crate::testing::open_with(
         &crate::testing::framework_dir(),
@@ -367,7 +411,15 @@ fn a_permission_granted_to_all_users_counts_only_with_a_membership_row() {
 }
 
 fn boot_security() -> (EntityFacade, crate::context::ExecutionContext, TempDir) {
+    boot_security_with_conf(None)
+}
+
+/// [`boot_security`] with a runtime `MoquiConf.xml` of `conf`, merged over the framework's as a component's is.
+fn boot_security_with_conf(conf: Option<&str>) -> (EntityFacade, crate::context::ExecutionContext, TempDir) {
     let runtime = temp_dir("seca-runtime");
+    if let Some(conf) = conf {
+        std::fs::write(runtime.path().join("MoquiConf.xml"), conf).unwrap();
+    }
     let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
     let factory = {
         let _lock = crate::user::session::cookie_property_lock();
