@@ -16,11 +16,12 @@
 //! Spock tests on the script engine (`plans/archive/TestHarness.md`).
 //!
 //! A component's specs, in `test` or a subdirectory of it, run in the order of its `test/suite.js`
-//! (`suite(["SpecA", "SpecB"])`), then the other `*.spec.js` files by name. Components run in the order they load. `--spec` picks specs by name and adds the specs
-//! their `dependsOn` names, in suite order. Each spec runs in its own execution context. A `dependsOn` name a spec's
-//! component lacks comes from the run's other components. Each component's `test/MoquiConf.xml` merges after its
-//! `MoquiConf.xml` in a test run, and `--serve` then serves the scratch database (`serve.rs`,
-//! plans/archive/ClientTestHarness.md 6).
+//! (`suite(["SpecA", "SpecB"])`), then the other `*.spec.js` files by name. Components run in the order they load, and
+//! a spec waits for the specs its `dependsOn` names, wherever they are in the run ([`run_order`]). `--spec` picks specs
+//! by name and adds the specs their `dependsOn` names, from any component, which joins the run. Each spec runs in its
+//! own execution context. A `dependsOn` name a spec's component lacks comes from the run's other components. Each
+//! component's `test/MoquiConf.xml` merges after its `MoquiConf.xml` in a test run, and `--serve` then serves the
+//! scratch database (`serve.rs`, plans/archive/ClientTestHarness.md 6).
 //!
 //! Discovery, argument parsing, factory boot and `run_spec` are in every build. `--db none` boots the factory and
 //! leaves the entity facade unset. `fixture::open`, `--serve`, coverage and `--agents` need `embedded-postgres`.
@@ -555,6 +556,40 @@ pub(crate) fn select_across(components: &[TestComponent], names: &[String]) -> R
         .collect())
 }
 
+/// The `--spec` names of a run that names components: an unqualified name becomes `component/Spec` for each named
+/// component that has it, so a spec of that name elsewhere in the pool is not picked; a name none of them has is an
+/// error. With no component named, or a name already qualified, the names stay as they are.
+pub(crate) fn qualify_spec_names(
+    components: &[TestComponent],
+    named: &[String],
+    specs: &[String],
+) -> Result<Vec<String>, Error> {
+    if named.is_empty() {
+        return Ok(specs.to_vec());
+    }
+    let mut out = Vec::new();
+    for name in specs {
+        if name.contains('/') {
+            out.push(name.clone());
+            continue;
+        }
+        let owners: Vec<&TestComponent> = components
+            .iter()
+            .filter(|component| {
+                named.contains(&component.name) && component.specs.iter().any(|spec| &spec.name == name)
+            })
+            .collect();
+        if owners.is_empty() {
+            return Err(Error::new(format!(
+                "none of the components named ({}) has a spec {name}",
+                named.join(", ")
+            )));
+        }
+        out.extend(owners.iter().map(|component| format!("{}/{name}", component.name)));
+    }
+    Ok(out)
+}
+
 /// The specs of a component that its own client suites (`test/client/suite.js`, `acceptance/client/suite.js`) name in
 /// `server.specs`: fixtures that `moqui test-client --serve` runs on its server.
 fn served_fixture_names(component: &TestComponent) -> Vec<String> {
@@ -685,6 +720,34 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
             }
         }
     }
+    // --spec: the specs named, in the components named (or in any), and what their dependsOn reaches in the whole pool,
+    // which brings the components it reaches into the run.
+    let picked = if args.specs.is_empty() {
+        None
+    } else {
+        let names = qualify_spec_names(&components, &args.components, &args.specs)?;
+        let picked = select_across(&components, &names)?;
+        for name in &names {
+            let (only, spec_name) = match name.split_once('/') {
+                Some((component, spec)) => (Some(component), spec),
+                None => (None, name.as_str()),
+            };
+            if !picked.iter().any(|component| {
+                only.is_none_or(|only| only == component.name)
+                    && component.specs.iter().any(|spec| spec.name == spec_name)
+            }) {
+                return Err(Error::new(format!("no component has a spec {name}")));
+            }
+        }
+        if !wanted.is_empty() {
+            for component in &picked {
+                if !wanted.contains(&component.name) {
+                    wanted.push(component.name.clone());
+                }
+            }
+        }
+        Some(picked)
+    };
     // With --serve a named component may have no specs: it is there for the server, and it must load.
     let mut serve_only: Vec<String> = Vec::new();
     if !wanted.is_empty() {
@@ -698,20 +761,7 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
         }
         components.retain(|component| wanted.contains(&component.name));
     }
-    if !args.specs.is_empty() {
-        let picked = select_across(&components, &args.specs)?;
-        for name in &args.specs {
-            let (only, spec_name) = match name.split_once('/') {
-                Some((component, spec)) => (Some(component), spec),
-                None => (None, name.as_str()),
-            };
-            if !picked.iter().any(|component| {
-                only.is_none_or(|only| only == component.name)
-                    && component.specs.iter().any(|spec| spec.name == spec_name)
-            }) {
-                return Err(Error::new(format!("no component has a spec {name}")));
-            }
-        }
+    if let Some(picked) = picked {
         components = picked;
     }
     // A fixture runs where a served suite names it, not again in a plain run (plans/archive/Test-Reduction.md,
@@ -868,7 +918,7 @@ fn run_without_database(
     }
     order_by_load(components, &factory);
     let mut results = Vec::new();
-    run_component_specs(&factory, components, args, &mut results);
+    run_component_specs(&factory, components, args, &mut results)?;
     finish_report(args, log_dir, &results, started, false)
 }
 
@@ -915,7 +965,7 @@ fn run_with_database(
     if args.coverage {
         moqui_core::service::coverage::enable();
     }
-    run_component_specs(&fixture.factory, components, args, &mut results);
+    run_component_specs(&fixture.factory, components, args, &mut results)?;
     if args.coverage {
         print_coverage(components, args, &moqui_core::service::coverage::finish())?;
     }
@@ -935,54 +985,105 @@ fn not_loaded(name: &str) -> Error {
     ))
 }
 
+/// The order a run takes its specs, as `(component index, spec index)`: the components' order and each component's
+/// own, except that a spec runs after the specs its `dependsOn` names, wherever they are in the run. A stable
+/// topological sort: of the specs whose dependencies have run, the one first in the components' order goes next, so a
+/// spec moves only to follow what it depends on. A `dependsOn` name resolves as in [`select_across`] (the spec's own
+/// component first, then the others in order); a name not in the run orders nothing. A cycle is an error naming its
+/// specs.
+pub(crate) fn run_order(components: &[TestComponent]) -> Result<Vec<(usize, usize)>, Error> {
+    let nodes: Vec<(usize, usize)> = components
+        .iter()
+        .enumerate()
+        .flat_map(|(c, component)| (0..component.specs.len()).map(move |s| (c, s)))
+        .collect();
+    // for each node, the nodes it depends on
+    let mut depends: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    for (at, &(c, s)) in nodes.iter().enumerate() {
+        for name in spec_depends_on(&components[c].specs[s].source) {
+            let owner = std::iter::once(c)
+                .chain((0..components.len()).filter(|other| *other != c))
+                .find_map(|other| {
+                    let found = components[other].specs.iter().position(|spec| spec.name == name)?;
+                    nodes.iter().position(|node| *node == (other, found))
+                });
+            if let Some(owner) = owner {
+                if !depends[at].contains(&owner) {
+                    depends[at].push(owner);
+                }
+            }
+        }
+    }
+    let mut done = vec![false; nodes.len()];
+    let mut order = Vec::with_capacity(nodes.len());
+    while order.len() < nodes.len() {
+        let next = (0..nodes.len()).find(|at| !done[*at] && depends[*at].iter().all(|dep| done[*dep]));
+        let Some(next) = next else {
+            let waiting: Vec<String> = (0..nodes.len())
+                .filter(|at| !done[*at])
+                .map(|at| {
+                    format!(
+                        "{}/{}",
+                        components[nodes[at].0].name, components[nodes[at].0].specs[nodes[at].1].name
+                    )
+                })
+                .collect();
+            return Err(Error::new(format!(
+                "the dependsOn of these specs make a cycle (or wait on one), so none of them can run first: {}",
+                waiting.join(", ")
+            )));
+        };
+        done[next] = true;
+        order.push(nodes[next]);
+    }
+    Ok(order)
+}
+
 fn run_component_specs(
     factory: &Arc<ExecutionContextFactory>,
     components: &[TestComponent],
     args: &TestArgs,
     results: &mut Vec<report::ComponentSpec>,
-) {
+) -> Result<(), Error> {
     let options = RunOptions {
         feature_filter: args.feature.clone(),
         ..RunOptions::default()
     };
-    for component in components {
-        for spec in &component.specs {
-            let missing = spec_missing_features(&spec.source);
-            let not_run = if !missing.is_empty() {
-                Some(skipped_spec(spec, &missing))
-            } else {
-                None
-            };
-            if let Some(result) = not_run {
-                for case in &result.cases {
-                    println!("{}", report::case_line(&spec.name, case));
-                }
-                results.push(report::ComponentSpec {
-                    component: component.name.clone(),
-                    result,
-                });
-                continue;
-            }
-            let context = factory.new_context();
-            let entered = context.enter();
-            let result = run_spec(spec, &options, &mut |case| {
+    for (c, s) in run_order(components)? {
+        let component = &components[c];
+        let spec = &component.specs[s];
+        let missing = spec_missing_features(&spec.source);
+        if !missing.is_empty() {
+            let result = skipped_spec(spec, &missing);
+            for case in &result.cases {
                 println!("{}", report::case_line(&spec.name, case));
-            });
-            drop(entered);
-            drop(context);
-            if let Some(failure) = &result.setup_failure {
-                println!(
-                    "{} setup FAILED: {}",
-                    spec.name,
-                    failure.message.lines().next().unwrap_or("")
-                );
             }
             results.push(report::ComponentSpec {
                 component: component.name.clone(),
                 result,
             });
+            continue;
         }
+        let context = factory.new_context();
+        let entered = context.enter();
+        let result = run_spec(spec, &options, &mut |case| {
+            println!("{}", report::case_line(&spec.name, case));
+        });
+        drop(entered);
+        drop(context);
+        if let Some(failure) = &result.setup_failure {
+            println!(
+                "{} setup FAILED: {}",
+                spec.name,
+                failure.message.lines().next().unwrap_or("")
+            );
+        }
+        results.push(report::ComponentSpec {
+            component: component.name.clone(),
+            result,
+        });
     }
+    Ok(())
 }
 
 fn finish_report(
