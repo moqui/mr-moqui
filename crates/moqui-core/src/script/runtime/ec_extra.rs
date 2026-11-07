@@ -954,7 +954,42 @@ pub(super) fn fill_security_checks<'js>(ctx: &Ctx<'js>, checks: &Object<'js>) ->
         "assertDocumentExpression",
         checks.set("assertDocumentExpression", function),
     )?;
+    let function = caught(
+        ctx,
+        "privilegedGroups",
+        Function::new(ctx.clone(), security_privileged_groups),
+    )?;
+    caught(ctx, "privilegedGroups", checks.set("privilegedGroups", function))?;
+    let function = caught(
+        ctx,
+        "sealedPermissions",
+        Function::new(ctx.clone(), security_sealed_permissions),
+    )?;
+    caught(ctx, "sealedPermissions", checks.set("sealedPermissions", function))?;
     Ok(())
+}
+
+/// `UserSecurityChecks.privilegedGroups()`: the effective privileged group ids, sorted (the framework's list and every
+/// component's `privileged-group` element), so a screen marks a group and a service names why a membership is refused.
+fn security_privileged_groups(ctx: Ctx<'_>) -> rquickjs::Result<JsValue<'_>> {
+    host_guard(&ctx, || {
+        let ids = crate::service::privileged_groups()
+            .into_iter()
+            .map(Value::String)
+            .collect();
+        host_to_js(&ctx, Value::List(ids))
+    })
+}
+
+/// `UserSecurityChecks.sealedPermissions()`: the effective sealed permission ids, sorted, as `privilegedGroups`.
+fn security_sealed_permissions(ctx: Ctx<'_>) -> rquickjs::Result<JsValue<'_>> {
+    host_guard(&ctx, || {
+        let ids = crate::service::sealed_permissions()
+            .into_iter()
+            .map(Value::String)
+            .collect();
+        host_to_js(&ctx, Value::List(ids))
+    })
 }
 
 fn security_assert_document_expression<'js>(ctx: Ctx<'js>, field_path: Opt<JsValue<'js>>) -> rquickjs::Result<()> {

@@ -336,6 +336,17 @@ fn a_group_and_a_permission_a_conf_adds_by_element_are_guarded_beside_the_defaul
     permission_row(&facade, "APP_OTHER", "APP_VIEW")
         .create(&facade)
         .expect("an unsealed grant");
+    // the effective lists Admin's access services read (UserSecurityChecks.privilegedGroups and sealedPermissions)
+    let groups = crate::service::privileged_groups();
+    assert!(
+        groups.contains("APP_ADMIN") && groups.contains("ADMIN") && !groups.contains("APP_OTHER"),
+        "{groups:?}"
+    );
+    let sealed = crate::service::sealed_permissions();
+    assert!(
+        sealed.contains("APP_GLOBAL") && sealed.contains("ADMIN_ACCESS_MANAGE"),
+        "{sealed:?}"
+    );
 }
 
 #[test]

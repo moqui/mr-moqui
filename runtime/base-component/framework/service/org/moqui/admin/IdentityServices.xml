@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The generic identity guards (mr-boss plan/design-admin.md §17.2; impl-admin P3, F41): no dependency on Mantle or an app.
+    check#AdministrationPath is called by every grant, membership and group-flag change (AccessServices) and, from later phases,
+    by every provider, factor and lifecycle change. The bodies are Identity.js. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="check" noun="AdministrationPath" allow-remote="false">
+        <description>Whether a proposed change keeps a usable instance administration path: an account that, after the change, now
+            and at each later date it names, is a date-valid member of ADMIN, not permanently disabled, not terminated, able to
+            authenticate (a password, or an external identity with an enabled sign-in flow), holding a date-valid factor where
+            any of its groups requires one, and admitted by the account's and its groups' ipAllowed from the acting
+            administrator's address; counted from the database with authorization off. The answer is a reason, never an error:
+            allowed, or ADMINISTRATION_PATH with the reason; the paths before and after are counts only. A change on an
+            instance with no path is not refused for it. Needs ADMIN_ACCESS_VIEW or ADMIN_IDENTITY_VIEW.</description>
+        <in-parameters>
+            <parameter name="proposed" type="Map"><description>memberships: a List of {userGroupId, userId, fromDate, thruDate} rows replacing the stored row of the
+                same key or added; groups: {userGroupId: {requireAuthcFactor, ipAllowed}}; accounts: {userId: {disabled,
+                disabledDateTime, terminateDate}}</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="allowed" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="pathsBefore" type="Integer"/>
+            <parameter name="pathsAfter" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').execute('checkPath', context))</script></actions>
+    </service>
+</services>

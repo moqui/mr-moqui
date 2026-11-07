@@ -131,11 +131,15 @@ pub(crate) fn assert_document_expression(facade: &EntityFacade, field_path: &str
     .into())
 }
 
-fn privileged_groups() -> BTreeSet<String> {
+/// The effective privileged groups: the `user-facade` `authz` `privileged-groups` list (or the framework's default) joined with
+/// every component's `privileged-group` element. Only a member of one changes its membership. Admin's access services read it to
+/// mark a group and to answer a refusal with its reason before the EECA refuses the write.
+pub(crate) fn privileged_groups() -> BTreeSet<String> {
     conf_ids("privileged-groups", "privileged-group", DEFAULT_PRIVILEGED_GROUPS)
 }
 
-fn sealed_permissions() -> BTreeSet<String> {
+/// The effective sealed permissions, as [`privileged_groups`]: only a holder of one grants it.
+pub(crate) fn sealed_permissions() -> BTreeSet<String> {
     conf_ids("sealed-permissions", "sealed-permission", DEFAULT_SEALED_PERMISSIONS)
 }
 
