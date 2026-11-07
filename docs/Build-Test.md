@@ -557,7 +557,8 @@ With no component, every component that has `test/*.spec.js` runs, in load order
 `suite.js` order and then by name; a spec whose `dependsOn` names a spec later in that order (in its own component or
 another) waits for it, with the specs after it in its `suite.js` chain, and the rest keep their places. A `dependsOn`
 cycle fails the run before any spec runs. So a spec's name need not sort after its fixture's: name the fixture in
-`dependsOn`. A run with no `--spec` leaves out each fixture spec that a served client suite of its component names in `server.specs` (`test/client/suite.js`,
+`dependsOn`. `moqui test-client` orders its specs the same way, its components after their `component.xml`
+`depends-on` ([Client-Testing](dev/Client-Testing.md#files-and-order)). A run with no `--spec` leaves out each fixture spec that a served client suite of its component names in `server.specs` (`test/client/suite.js`,
 `acceptance/client/suite.js`), unless a spec that runs depends on it: `moqui test-client --serve` runs it on its
 server, so a plain run would make the same data twice. `./moq test --debug` uses the debug
 binary.

@@ -985,14 +985,14 @@ fn not_loaded(name: &str) -> Error {
     ))
 }
 
-/// The `suite.js` chains of a component in a run, `test/suite.js` and in an acceptance run `acceptance/suite.js`, each
-/// as the indexes of the specs it lists that the component has, in its order. A suite.js that cannot be read lists
-/// nothing (discovery has already read it).
-pub(crate) fn suite_chains(component: &TestComponent, acceptance: bool) -> Vec<Vec<usize>> {
+/// The `suite.js` chains of a component in a run, `test/suite.js` and in an acceptance run `acceptance/suite.js` (with
+/// `client`, those of `test/client` and `acceptance/client`), each as the indexes of the specs it lists that the
+/// component has, in its order. A suite.js that cannot be read lists nothing (discovery has already read it).
+pub(crate) fn suite_chains(component: &TestComponent, acceptance: bool, client: bool) -> Vec<Vec<usize>> {
     let trees: &[&str] = if acceptance {
-        &[suite_tree(false, false), suite_tree(true, false)]
+        &[suite_tree(false, client), suite_tree(true, client)]
     } else {
-        &[suite_tree(false, false)]
+        &[suite_tree(false, client)]
     };
     trees
         .iter()
@@ -1013,8 +1013,13 @@ pub(crate) fn suite_chains(component: &TestComponent, acceptance: bool) -> Vec<V
 /// spec moves only to follow what it depends on. A `dependsOn` name resolves as in [`select_across`] (the spec's own
 /// component first, then the others in order); a name not in the run orders nothing. The specs a `suite.js` lists
 /// keep its order among themselves, so a spec that waits holds back the ones after it in its chain, as a chain shares
-/// data (a worker unit, `workers.rs`). A cycle is an error naming its specs.
-pub(crate) fn run_order(components: &[TestComponent], acceptance: bool) -> Result<Vec<(usize, usize)>, Error> {
+/// data (a worker unit, `workers.rs`). A cycle is an error naming its specs. `moqui test-client` orders its run the
+/// same way, with `client` for the suite.js chains of `test/client` (and `acceptance/client`).
+pub(crate) fn run_order(
+    components: &[TestComponent],
+    acceptance: bool,
+    client: bool,
+) -> Result<Vec<(usize, usize)>, Error> {
     let nodes: Vec<(usize, usize)> = components
         .iter()
         .enumerate()
@@ -1038,7 +1043,7 @@ pub(crate) fn run_order(components: &[TestComponent], acceptance: bool) -> Resul
         }
     }
     for (c, component) in components.iter().enumerate() {
-        for chain in suite_chains(component, acceptance) {
+        for chain in suite_chains(component, acceptance, client) {
             for pair in chain.windows(2) {
                 let (Some(before), Some(after)) = (
                     nodes.iter().position(|node| *node == (c, pair[0])),
@@ -1087,7 +1092,7 @@ fn run_component_specs(
         feature_filter: args.feature.clone(),
         ..RunOptions::default()
     };
-    for (c, s) in run_order(components, args.acceptance)? {
+    for (c, s) in run_order(components, args.acceptance, false)? {
         let component = &components[c];
         let spec = &component.specs[s];
         let missing = spec_missing_features(&spec.source);

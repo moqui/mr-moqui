@@ -64,7 +64,7 @@ pub(crate) fn units(components: &[TestComponent], acceptance: bool) -> Vec<Unit>
     };
     for (c, component) in components.iter().enumerate() {
         // the suite.js chain: the specs it lists share a unit
-        let chain: Vec<usize> = super::suite_chains(component, acceptance)
+        let chain: Vec<usize> = super::suite_chains(component, acceptance, false)
             .into_iter()
             .flatten()
             .map(|s| index_of(c, s))

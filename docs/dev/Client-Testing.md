@@ -173,8 +173,12 @@ and `--fail-on-skip` makes that a failure.
 
 A client spec is `<component>/test/client/<Name>.spec.js`. `moqui test` reads only the top level of `test/`, so the two
 sets never mix, and a component can have both. `test/client/suite.js`, `suite(["SpecA", "SpecB"], { server })`, gives
-the order; the other spec files run after it, by name. Each spec gets a default session, and its sessions, sockets,
-pages and browser are closed after `cleanupSpec`.
+the order; the other spec files run after it, by name. Components run after the components their `component.xml`
+`depends-on` names. A run then takes the order of `moqui test`: a spec whose `dependsOn` names a spec later in that
+order (in its own component or another) waits for it, with the specs after it in its `suite.js` chain, and the rest
+keep their places; a `dependsOn` cycle fails the run before any spec runs. With `--serve` this holds among the specs of
+each server, and the servers run in the order of their first components. Each spec gets a default session, and its
+sessions, sockets, pages and browser are closed after `cleanupSpec`.
 
 A process spec, `<component>/test/client/process/<businessProcessId>.spec.js`, tells one business process as a story
 (Chisel's Process Story Diff records it with `--video`). It runs only when named: by `--spec <businessProcessId>` with

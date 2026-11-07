@@ -48,8 +48,8 @@ use moqui_lib::sync::lock;
 use serde_json::{json, Value};
 
 use crate::test_cmd::{
-    acceptance_only, component_name, component_specs, discover, discover_suite, report, select_across, select_specs,
-    skipped_spec, suite_tree, TestComponent,
+    acceptance_only, component_name, component_specs, discover, discover_suite, report, run_order, select_across,
+    select_specs, skipped_spec, suite_tree, TestComponent,
 };
 use http::{Ask, Server, Session};
 
@@ -216,6 +216,8 @@ pub fn run(args: &ClientArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> 
         Some(Server::parse(&server_text, args.allow_http)?)
     };
     let components = select(&runtime, args)?;
+    // a cycle in the dependsOn of the run is an error before any server starts
+    run_order(&components, args.acceptance, true)?;
     let out_dir = args.out.clone().unwrap_or_else(|| default_out_dir(&runtime));
     let started = Instant::now();
     let results = match server {
@@ -262,7 +264,8 @@ pub fn run(args: &ClientArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> 
 }
 
 /// Run the specs of `components` against `server`, once it answers (within `wait` seconds when given), each line of
-/// the report to `print`.
+/// the report to `print`. The specs run in the order of `moqui test` ([`run_order`]): the components' order and each
+/// one's own, except that a spec runs after the specs its `dependsOn` names, in any of the components.
 fn run_against(
     args: &ClientArgs,
     server: Server,
@@ -321,57 +324,57 @@ fn run_against(
         host: Some(host_dyn),
     };
     let mut results = Vec::new();
-    for component in components {
+    for (c, s) in run_order(components, args.acceptance, true)? {
+        let component = &components[c];
+        let spec = &component.specs[s];
         *lock(&host.component_dir) = component.dir.clone();
-        for spec in &component.specs {
-            *lock(&host.current) = (component.name.clone(), spec.name.clone());
-            *lock(&host.offline) = spec_offline(&spec.source);
-            if args.video {
-                *lock(&host.recording) = Some(video::Recorder::new(&spec.name, out_dir, encode_video));
-            }
-            let note_case = |case: &moqui_devkit::testkit::CaseResult| {
-                if let Some(recorder) = lock(&host.recording).as_mut() {
-                    recorder.case(case);
-                }
-            };
-            let missing = spec_missing_features(&spec.source);
-            let not_run = if !missing.is_empty() {
-                Some(skipped_spec(spec, &missing))
-            } else {
-                None
-            };
-            let result = if let Some(result) = not_run {
-                for case in &result.cases {
-                    note_case(case);
-                    print(&report::case_line(&spec.name, case));
-                }
-                result
-            } else {
-                let result = run_spec(spec, &options, &mut |case| {
-                    note_case(case);
-                    print(&report::case_line(&spec.name, case));
-                    for line in report::output_lines(case) {
-                        print(&line);
-                    }
-                });
-                if let Some(failure) = &result.setup_failure {
-                    print(&format!(
-                        "{} setup FAILED: {}",
-                        spec.name,
-                        failure.message.lines().next().unwrap_or("")
-                    ));
-                }
-                result
-            };
-            let recorder = lock(&host.recording).take();
-            if let Some(path) = recorder.and_then(video::Recorder::finish) {
-                print(&format!("{} video: {}", spec.name, path.display()));
-            }
-            results.push(report::ComponentSpec {
-                component: component.name.clone(),
-                result,
-            });
+        *lock(&host.current) = (component.name.clone(), spec.name.clone());
+        *lock(&host.offline) = spec_offline(&spec.source);
+        if args.video {
+            *lock(&host.recording) = Some(video::Recorder::new(&spec.name, out_dir, encode_video));
         }
+        let note_case = |case: &moqui_devkit::testkit::CaseResult| {
+            if let Some(recorder) = lock(&host.recording).as_mut() {
+                recorder.case(case);
+            }
+        };
+        let missing = spec_missing_features(&spec.source);
+        let not_run = if !missing.is_empty() {
+            Some(skipped_spec(spec, &missing))
+        } else {
+            None
+        };
+        let result = if let Some(result) = not_run {
+            for case in &result.cases {
+                note_case(case);
+                print(&report::case_line(&spec.name, case));
+            }
+            result
+        } else {
+            let result = run_spec(spec, &options, &mut |case| {
+                note_case(case);
+                print(&report::case_line(&spec.name, case));
+                for line in report::output_lines(case) {
+                    print(&line);
+                }
+            });
+            if let Some(failure) = &result.setup_failure {
+                print(&format!(
+                    "{} setup FAILED: {}",
+                    spec.name,
+                    failure.message.lines().next().unwrap_or("")
+                ));
+            }
+            result
+        };
+        let recorder = lock(&host.recording).take();
+        if let Some(path) = recorder.and_then(video::Recorder::finish) {
+            print(&format!("{} video: {}", spec.name, path.display()));
+        }
+        results.push(report::ComponentSpec {
+            component: component.name.clone(),
+            result,
+        });
     }
     Ok(results)
 }
@@ -1591,6 +1594,76 @@ mod tests {
         let names: Vec<&str> = components.iter().map(|component| component.name.as_str()).collect();
         assert_eq!(names, vec!["b", "c", "a"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A client run takes the order of `moqui test` (Commerce F106): a spec named before its dependsOn in a later
+    /// component runs after it, holding back the rest of its test/client/suite.js chain; with no dependsOn the order
+    /// is the components' (component.xml depends-on), then suite.js, then name, as before; a cycle is an error.
+    #[test]
+    fn a_client_run_orders_specs_after_their_depends_on() {
+        let runtime = std::env::temp_dir().join(format!("moqui-test-client-run-order-{}", std::process::id()));
+        let write = |path: &str, text: &str| {
+            let path = runtime.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        let layout = |orders_depend: &str| {
+            write("component/boss/component.xml", r#"<component name="boss"/>"#);
+            write(
+                "component/pass/component.xml",
+                r#"<component name="pass"><depends-on name="boss"/></component>"#,
+            );
+            write(
+                "component/boss/test/client/suite.js",
+                r#"suite(["Walk", "CommerceOrders", "After"])"#,
+            );
+            write("component/boss/test/client/Walk.spec.js", "spec({})");
+            write("component/boss/test/client/CommerceOrders.spec.js", orders_depend);
+            write("component/boss/test/client/After.spec.js", "spec({})");
+            write("component/boss/test/client/Other.spec.js", "spec({})");
+            write("component/pass/test/client/ShopOrders.spec.js", "spec({})");
+            write("component/pass/test/client/Theme.spec.js", "spec({})");
+        };
+        let ordered = || -> Vec<String> {
+            let components = select(&runtime, &ClientArgs::default()).unwrap();
+            run_order(&components, false, true)
+                .unwrap()
+                .into_iter()
+                .map(|(c, s)| format!("{}/{}", components[c].name, components[c].specs[s].name))
+                .collect()
+        };
+        layout("spec({})");
+        assert_eq!(
+            ordered(),
+            vec![
+                "boss/Walk",
+                "boss/CommerceOrders",
+                "boss/After",
+                "boss/Other",
+                "pass/ShopOrders",
+                "pass/Theme"
+            ]
+        );
+        layout("spec({ dependsOn: ['ShopOrders'] })");
+        assert_eq!(
+            ordered(),
+            vec![
+                "boss/Walk",
+                "boss/Other",
+                "pass/ShopOrders",
+                "boss/CommerceOrders",
+                "boss/After",
+                "pass/Theme"
+            ]
+        );
+        write(
+            "component/pass/test/client/ShopOrders.spec.js",
+            "spec({ dependsOn: ['CommerceOrders'] })",
+        );
+        let components = select(&runtime, &ClientArgs::default()).unwrap();
+        let err = run_order(&components, false, true).unwrap_err().to_string();
+        assert!(err.contains("cycle") && err.contains("boss/CommerceOrders"), "{err}");
+        let _ = std::fs::remove_dir_all(&runtime);
     }
 
     #[test]

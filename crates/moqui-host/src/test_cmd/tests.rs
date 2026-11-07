@@ -221,7 +221,7 @@ fn a_run_orders_specs_after_their_depends_on() {
             ],
         ),
     ];
-    let order: Vec<String> = run_order(&components, false)
+    let order: Vec<String> = run_order(&components, false, false)
         .unwrap()
         .into_iter()
         .map(|(c, s)| format!("{}/{}", components[c].name, components[c].specs[s].name))
@@ -246,7 +246,7 @@ fn a_run_orders_specs_after_their_depends_on() {
             spec("B", "spec({ dependsOn: ['A'] })"),
         ],
     )];
-    let err = run_order(&cycle, false).unwrap_err().to_string();
+    let err = run_order(&cycle, false, false).unwrap_err().to_string();
     assert!(
         err.contains("cycle") && err.contains("c/A, c/B") && !err.contains("Free"),
         "{err}"
@@ -277,7 +277,7 @@ fn a_waiting_spec_holds_back_its_suite_chain() {
             specs: vec![spec("Fixtures", "spec({})")],
         },
     ];
-    let order: Vec<String> = run_order(&components, false)
+    let order: Vec<String> = run_order(&components, false, false)
         .unwrap()
         .into_iter()
         .map(|(c, s)| components[c].specs[s].name.clone())
