@@ -256,9 +256,9 @@ fn census_path() -> &'static str {
 }
 
 /// A frame ended with the census file set, in census mode or not: a census line with the service that ended it, its
-/// cache mode, its waited round trips and what its cache did, so a run with the cache everywhere and one without give
+/// cache mode, its waited round trips, its time from begin to the end of its commit, and what its cache did, so a run with the cache everywhere and one without give
 /// per service what the cache saves and whether it held cleanly.
-pub(crate) fn census_frame(mode: &str, stats: Option<&TxCacheStats>, committed: bool, round_trips: u64) {
+pub(crate) fn census_frame(mode: &str, stats: Option<&TxCacheStats>, committed: bool, round_trips: u64, micros: u64) {
     let service = (crate::hooks::get().artifact_name)().artifact.unwrap_or_default();
     let none = TxCacheStats::default();
     let stats = stats.unwrap_or(&none);
@@ -266,7 +266,7 @@ pub(crate) fn census_frame(mode: &str, stats: Option<&TxCacheStats>, committed: 
         "{{\"kind\":\"frame\",\"service\":\"{service}\",\"mode\":\"{mode}\",\"committed\":{committed},\
          \"creates\":{},\"updates\":{},\"deletes\":{},\"upserts\":{},\"memory_reads\":{},\"db_reads\":{},\
          \"early_flushes\":{},\"shadowed_reads\":{},\"batch_statements\":{},\"batch_rows\":{},\
-         \"round_trips\":{round_trips}}}",
+         \"round_trips\":{round_trips},\"micros\":{micros}}}",
         stats.held_creates,
         stats.held_updates,
         stats.held_deletes,

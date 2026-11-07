@@ -1063,18 +1063,19 @@ fn shadows_of(
     Ok(Some(shadows))
 }
 
-/// Before a read of a view built in code (a data document, a REST query): when the frame holds a row of one of its
-/// `members`, write every held row now, as a view read that cannot be shadowed does ([`view_shadows`]), with no condition to judge by.
-pub(crate) fn flush_for_members(facade: &EntityFacade, members: &[String], view: &str) -> Result<(), Error> {
+/// Before a read of a view built in code (a data document, a REST query): the shadows of its `members` the frame holds
+/// rows of, as [`view_shadows`] gives a view entity's, with no condition to judge by (every member with a held row is
+/// shadowed). Where a shadow cannot be made every held row is written now instead. Empty when none is held.
+pub(crate) fn member_shadows(facade: &EntityFacade, members: &[String], view: &str) -> Result<Vec<TableShadow>, Error> {
     if TX_HOLD.with(|slot| slot.borrow().is_empty()) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let Some(first) = members.first() else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let tx = facade.transactions_for(first)?;
     let Some(token) = tx.frame_token() else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     // a member that is a view stands for the entities under it
     let full_names: Vec<String> = facade
@@ -1089,15 +1090,29 @@ pub(crate) fn flush_for_members(facade: &EntityFacade, members: &[String], view:
                 .collect())
         })
         .unwrap_or_else(|_| members.to_vec());
-    let holds = TX_HOLD.with(|slot| {
-        slot.borrow()
-            .get(&token)
-            .is_some_and(|frame| full_names.iter().any(|name| frame.holds_entity(name)))
+    let mut held: Vec<String> = Vec::new();
+    TX_HOLD.with(|slot| {
+        if let Some(frame) = slot.borrow().get(&token) {
+            for name in &full_names {
+                if frame.holds_entity(name) && !held.contains(name) {
+                    held.push(name.clone());
+                }
+            }
+        }
     });
-    if holds {
-        flush_early(facade, &tx, token, FlushCause::View, view)?;
+    if held.is_empty() {
+        return Ok(Vec::new());
     }
-    Ok(())
+    match shadows_of(facade, first, token, &held)? {
+        Some(shadows) => {
+            stats::note_shadowed(token);
+            Ok(shadows)
+        }
+        None => {
+            flush_early(facade, &tx, token, FlushCause::View, view)?;
+            Ok(Vec::new())
+        }
+    }
 }
 
 /// A member entity of a view read, by full name, with the view's aliases of its fields (alias, field); `None` for an

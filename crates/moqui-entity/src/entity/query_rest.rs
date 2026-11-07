@@ -26,7 +26,7 @@ use base64::Engine as _;
 use moqui_db::model::{
     AliasAll, EntityDefinition, FieldAlias, KeyMap, MasterDefinition, MasterDetail, MemberEntity, PqAlias, Relationship,
 };
-use moqui_db::sql::{select_view, Condition, FieldRef, LimitOffset, OrderBy};
+use moqui_db::sql::{select_view_with, Condition, FieldRef, LimitOffset, OrderBy, SelectOptions};
 use moqui_lib::error::Error;
 use moqui_lib::object::{basic_convert, is_empty, to_plain_string, Value};
 
@@ -1382,13 +1382,14 @@ fn run_view(facade: &EntityFacade, built: &BuiltView, authorize: bool) -> Result
         model.complete_view(&mut view)?;
         Ok((view, tx.clone()))
     })?;
-    // As a view entity's read: the frame's held rows of a member go to the database first (plans/TX-Cache.md D5).
+    // As a view entity's read: the frame's held rows of its members are read through shadowed tables, or written first
+    // (plans/TX-Cache.md D5).
     let members: Vec<String> = view
         .member_entities
         .iter()
         .map(|member| member.entity_name.clone())
         .collect();
-    super::cache::flush_for_members(facade, &members, &view.entity_name)?;
+    let shadows = super::cache::member_shadows(facade, &members, &view.entity_name)?;
     let mut condition = built.condition.clone();
     let mut artifacts = Vec::new();
     if authorize {
@@ -1399,7 +1400,7 @@ fn run_view(facade: &EntityFacade, built: &BuiltView, authorize: bool) -> Result
         }
     }
     let statement = facade.with_group(&anchor, |_, dialect, model, _| {
-        select_view(
+        select_view_with(
             &view,
             model,
             dialect,
@@ -1407,6 +1408,10 @@ fn run_view(facade: &EntityFacade, built: &BuiltView, authorize: bool) -> Result
             condition.as_ref(),
             &built.order,
             page,
+            &SelectOptions {
+                shadows: shadows.clone(),
+                ..SelectOptions::default()
+            },
         )
     })?;
     let columns = view_columns(&view);

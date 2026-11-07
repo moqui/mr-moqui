@@ -89,11 +89,14 @@ the `COMMIT` sent behind them, one wait for it all (an update that must change a
 fails the transaction rather than holding the `COMMIT` back).
 While it holds them its finds see them, and a row it has read or written is not read from the database again. The
 design and the numbers are in [plans/TX-Cache.md](../../plans/TX-Cache.md); the code is `moqui-entity`
-`entity/cache/tx.rs`, `hold.rs` and `batch.rs`.
+`entity/cache/tx.rs`, `hold.rs` and `batch.rs`. The `entity_tx_cache` property (default true; `-Dentity_tx_cache=false`) turns it
+off everywhere, each `cache` service then running as `use` does.
 
 **Which service to mark.** The service an operation starts with (a screen transition's, a REST call's, a job's), not an
 inner service many callers share: a `cache` call that joins its caller's transaction turns holding on for the rest of
-that transaction, as Java's `initTransactionCache` does, so a shared inner service would change its callers.
+that transaction, as Java's `initTransactionCache` does, so a shared inner service would change its callers. A
+`transaction` attribute on a `service-call` decides the cache for that call, as in Java: `force-new` (or `use`) there
+runs a `cache` service without it, so call one in a transaction of its own with `transaction="force-cache"`.
 
 **What reads see.** Within the transaction, the rows it holds and every row it has read, kept as first read: a row
 another transaction commits a change to after this one read it is not seen again until this one ends (between
@@ -119,13 +122,12 @@ cache.
 **Views.** A find or count of a view entity sees the transaction's held rows of its members without writing them: on
 Postgres each member table it holds rows of that may be in the result is read as a sub-select of the table's other rows
 and the held ones (`UNION ALL` of their values), so the database joins, filters, groups and counts what the transaction
-would see. A `distinct` or `having` find or count of an entity the transaction holds rows of reads that entity's table
-so too.
+would see. A view built in code (a data document, a REST query view) reads its members so too, and a `distinct` or
+`having` find or count of an entity the transaction holds rows of reads that entity's table so.
 
 **What writes the held rows early** (an early flush, which costs a batch of its own): a view read that cannot be
 shadowed so (another database, a member with a full-text field or an encrypted key, more than 500 held rows of its members),
-and a find or count of a view built in code (a data document, a REST query view), when a held row of a member may be
-in its result; a `distinct` or `having` find of an entity that cannot be shadowed so (the held writes up to that
+a `distinct` or `having` find of an entity that cannot be shadowed so (the held writes up to that
 entity's last); raw SQL (`run_sql`); a `no-tx-cache` service joining (after which the transaction writes
 through and keeps what it read); more than 10,000 held writes. Do work that reads a document of the rows a service
 wrote (a search index) after the commit (`registerOnCommit`).

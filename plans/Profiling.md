@@ -1281,6 +1281,56 @@ Next:
 3. The external-Postgres timing of the Mantle operations (`place#Order`, `apply#Settlement`) with 200 µs of delay, for
    the time a call saves rather than its round trips.
 
+## Round 26: views built in code shadowed, 13 more services, the Mantle operations timed with 200 µs to the database
+
+Round 25's next steps, after the last Commerce and Shop merges of mr-moqui, mr-boss, mr-pass and mr-mantle.
+
+1. **A view built in code** (a data document, a REST query view: `query_rest::run_view`) reads the frame's held rows
+   of its members through shadows (`tx::member_shadows`), as a view entity does, instead of writing them first.
+   Census 9, every component's specs with the cache everywhere: 152,290 transactions, 42 early flushes, 5,706 reads
+   shadowed, no commit batch failing. The 42: 27 transactions past the 10,000 held writes of the size cap (data
+   loads, no service), and the 15 `PartyDetail` reads of `get#DuplicatePairs`' frame of 2,032 updates (past the 500 a
+   shadow takes). No view built in code flushes now.
+2. **13 more services on the cache**, the next of Census 9's ranking that hold cleanly: six no service calls
+   (`add#CartItem`, `attach#Cart`, `record#ReturnSettlement`, `apply#InboundDocument`, `approve#Payable`,
+   `convert#PurchaseSourcingGroup`) and seven whose one caller is an operation itself (`issue#ProductionMaterial` and
+   `receive#ProductionOutput` from `receive#SubcontractOutput`, `execute#PaymentGatewayAction` and
+   `refund#ReviewedPayment` from `confirm#PaymentReview`, `receive#ShipmentStock` from `receive#ExpectedShipment`,
+   `get#PaymentFinanceDetail` from a payment screen service, `release#ProductionOrder` from a demo loader).
+3. **A `service-call` with `transaction="force-new"` runs a `cache` service without the cache**: the XML actions
+   template writes `.useTransactionCache(false)` for any `transaction` but `cache` and `force-cache`, as Java's did.
+   Half of `pack#Shipment`'s calls came so, from `complete#ShipmentPack`; it and Mr. Boss's Customer 360 screen call
+   now say `force-cache` (a transaction of its own, with the cache). The guide says so.
+4. **The Mantle operations timed against an external Postgres with 200 µs of added delay** (the docker server of
+   round 5, the network delay by `tc netem`): every component's data loaded into a database there, copied per run
+   from it as a template, and the order, accounting and warehouse specs of mr-mantle run on it with `--db existing`
+   (`OrderToCashBasicFlow`, `OrderProcureToPayBasicFlow`, `AccountingSettlement`, `AccountingPaymentLifecycle`,
+   `AssetReservationMisc`, `WarehouseShipping`, `AccountingPayables`, `InvoiceOrderApply`; 111 features, all passing
+   both ways), once with `-Dentity_tx_cache=false` (new: the transaction cache off everywhere) and once with it on.
+   Each transaction's time is in its census line now (`micros`, begin to the end of the commit). Median per call:
+
+| Service | Calls | ms off | ms on | Faster | Round trips off | On |
+|---|---:|---:|---:|---:|---:|---:|
+| `shipment.ShipmentServices.pack#Shipment` | 16 | 68.3 | 44.9 | 34% | 263 | 138 |
+| `account.PaymentServices.apply#Settlement` | 8 | 77.0 | 60.4 | 22% | 311 | 154 |
+| `account.InvoiceServices.approve#Payable` | 6 | 44.9 | 30.3 | 33% | 106 | 64 |
+| `account.PaymentServices.create#Payment` | 11 | 37.3 | 24.6 | 34% | 111 | 66 |
+| `order.OrderServices.add#OrderProductQuantity` | 32 | 26.6 | 17.5 | 34% | 98 | 59 |
+| `account.InvoiceServices.change#InvoiceState` | 2 | 33.8 | 25.9 | 23% | 118 | 79 |
+| `order.OrderServices.place#Order` | 26 | 29.6 | 22.0 | 26% | 107 | 71 |
+| `order.OrderServices.approve#Order` | 26 | 24.1 | 17.4 | 28% | 79 | 53 |
+| `account.PaymentServices.get#PaymentFinanceDetail` | 24 | 18.9 | 15.5 | 18% | 74 | 38 |
+
+Time in these 9 services' transactions: 6037 ms off, 4126 ms on (32% less).
+
+Next:
+1. The bulk operations past the shadow's 500 held rows (`get#DuplicatePairs`): a larger cap, or a shadow sent as
+   a temporary table, for a frame that holds thousands.
+2. The time of a held call that is not its round trips: `pack#Shipment` and `apply#Settlement` spend 45-60 ms with 138
+   and 154 round trips (28-31 ms of the delay), so the rest is local work; a profile of them on the external server.
+3. The next services of the ranking, and screen transitions' and REST calls' own transactions (the service each
+   starts with is often not marked, and holds nothing).
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
@@ -1306,6 +1356,9 @@ Next:
 - Mantle's asset reservation, issuance, receipt and physical inventory services, and `cancel#OrderItem` and `reject#OrderItem`, are no longer `no-tx-cache`.
 - A `distinct` or `having` find or count in a transaction-cache frame of an entity it holds rows of reads them in place (Postgres) instead of writing them first; so does a view read of a member with an encrypted field.
 - `create#Payment`, `apply#Settlement`, `pack#Shipment` and `ship#OrderPart` are `transaction="cache"`: `create#Payment` called in another service's transaction turns holding on for the rest of it.
+- A view built in code (a data document, a REST query view) read in a transaction-cache frame reads the held rows in place (Postgres) instead of writing them first.
+- `entity_tx_cache` (default true) turns the transaction cache off everywhere when false.
+- 13 more Mantle services are `transaction="cache"` (Round 26's list); `complete#ShipmentPack` calls `pack#Shipment`, and Customer 360 its service, with `transaction="force-cache"`.
 - SMTP-delivered Inbox mail and its account rules commit together when no email ECA is installed; a failure there stores the message alone and runs the rules after.
 - Mail stored by IMAP and POP3 sync, SMTP delivery and import, and the IMAP flag sync, run in transaction-cache frames; `react#Message`, `edit#Message`, `redact#Message`, `vote#Poll`, `mark#AllRead` and `mark#NotificationsViewed` are `transaction="cache"`, and a redacted message leaves the search index after its commit.
 - `no-tx-cache` turns a frame to read-through (writes go to the database, reads still kept), and a later `cache` call that joins it no longer turns holding back on.

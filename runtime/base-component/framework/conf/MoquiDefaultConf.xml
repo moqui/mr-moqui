@@ -471,6 +471,9 @@
     <default-property name="entity_add_missing_startup" value="true"/>
     <default-property name="entity_lock_track" value="false"/>
     <default-property name="entity_statement_timeout" value="false"/>
+    <!-- The transaction cache (services marked transaction="cache" or "force-cache" hold their writes to the commit):
+        false turns it off everywhere, those services running as transaction="use" does. -->
+    <default-property name="entity_tx_cache" value="true"/>
     <default-property name="entity_empty_db_load" value="seed,seed-initial,install"/>
     <default-property name="entity_on_start_load_types" value="none"/>
     <default-property name="entity_on_start_load_components" value=""/>
@@ -826,7 +829,7 @@
                 sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,DATABASE_ADMIN,DATABASE_EXTERNAL"/>
     </user-facade>
 
-    <transaction-facade use-transaction-cache="true" use-connection-stash="true" use-lock-track="${entity_lock_track}" use-statement-timeout="${entity_statement_timeout}">
+    <transaction-facade use-transaction-cache="${entity_tx_cache}" use-connection-stash="true" use-lock-track="${entity_lock_track}" use-statement-timeout="${entity_statement_timeout}">
         <!-- Use this for the internal transaction manager (not through JNDI) -->
         <transaction-internal class="org.moqui.impl.context.TransactionInternalBitronix"/>
 
