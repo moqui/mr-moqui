@@ -956,6 +956,16 @@ pub(super) fn fill_security_checks<'js>(ctx: &Ctx<'js>, checks: &Object<'js>) ->
     )?;
     let function = caught(
         ctx,
+        "assertSealedGroupMembership",
+        Function::new(ctx.clone(), security_assert_sealed_group_membership),
+    )?;
+    caught(
+        ctx,
+        "assertSealedGroupMembership",
+        checks.set("assertSealedGroupMembership", function),
+    )?;
+    let function = caught(
+        ctx,
         "privilegedGroups",
         Function::new(ctx.clone(), security_privileged_groups),
     )?;
@@ -1018,6 +1028,32 @@ fn security_assert_sealed_permission_grant<'js>(
     host_guard(&ctx, || {
         let facade = facade_of(&ctx)?;
         crate::service::assert_sealed_permission_grant(&facade, &opt_id_text(&ctx, &user_permission_id)?)
+            .map_err(|err| throw_lib(&ctx, &err))
+    })
+}
+
+/// `UserSecurityChecks.assertSealedGroupMembership(userGroupId, thruDate, hasStored, storedThruDate)`: the
+/// `UserGroupMemberSealed` rule's check (`Security.eecas.xml`); `hasStored` is true for an update that found the stored
+/// row, whose end is `storedThruDate`, so a change that only ends the membership sooner passes.
+fn security_assert_sealed_group_membership<'js>(
+    ctx: Ctx<'js>,
+    user_group_id: Opt<JsValue<'js>>,
+    thru_date: Opt<JsValue<'js>>,
+    has_stored: Opt<JsValue<'js>>,
+    stored_thru_date: Opt<JsValue<'js>>,
+) -> rquickjs::Result<()> {
+    host_guard(&ctx, || {
+        let facade = facade_of(&ctx)?;
+        let host = |value: &Opt<JsValue<'js>>| -> rquickjs::Result<Value> {
+            match &value.0 {
+                Some(value) if !value.is_null() && !value.is_undefined() => js_to_host(&ctx, value),
+                _ => Ok(Value::Null),
+            }
+        };
+        let stored = host(&stored_thru_date)?;
+        let has_stored = has_stored.0.as_ref().and_then(JsValue::as_bool).unwrap_or(false);
+        let ends_sooner = crate::service::membership_ends_sooner(&host(&thru_date)?, has_stored.then_some(&stored));
+        crate::service::assert_sealed_group_membership(&facade, &opt_id_text(&ctx, &user_group_id)?, ends_sooner)
             .map_err(|err| throw_lib(&ctx, &err))
     })
 }

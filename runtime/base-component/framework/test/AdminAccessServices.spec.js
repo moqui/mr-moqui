@@ -90,6 +90,12 @@ spec({
             userPermissionId: "ADMIN_PASSWORD",
             capabilityKindEnumId: "CpkSensitive"
         })
+        // a permission only the privileged ADMIN_ADV's bundle offers: granted from it only by a member of ADMIN_ADV
+        make("moqui.security.CapabilityBundlePermission", {
+            userGroupId: "ADMIN_ADV",
+            userPermissionId: "SPEC_ACC_ADV_RUN",
+            capabilityKindEnumId: "CpkEdit"
+        })
         make("moqui.security.CapabilityBundleArtifact", {
             userGroupId: bundleId,
             artifactGroupId: appGroupId,
@@ -182,6 +188,10 @@ feature("grants come only from a registered bundle, a sealed one only from its h
                 userGroupId: teamId,
                 grantList: [{action: "add", userPermissionId: "SPEC_ACC_OTHER"}]
             })
+            const privileged = invoke(S + "preview#Grants", {
+                userGroupId: teamId,
+                grantList: [{action: "add", userPermissionId: "SPEC_ACC_ADV_RUN"}]
+            })
             const plain = invoke(S + "preview#Grants", {userGroupId: teamId, grantList: plainGrant})
             const stale = invoke(S + "apply#Grants", {userGroupId: teamId, grantList: plainGrant, expectedRevision: "stale"})
             const applied = invoke(S + "apply#Grants", {
@@ -190,13 +200,17 @@ feature("grants come only from a registered bundle, a sealed one only from its h
                 expectedRevision: plain.revision,
                 reason: "Spec team reads"
             })
-            return {preview, sealed, unregistered, stale, applied}
+            return {preview, sealed, unregistered, privileged, stale, applied}
         })
         // john.doe holds ADMIN_PASSWORD (ADMIN): the sealed grant is his to give, and to end
         const holder = as("john.doe", () => {
             const grant = [{action: "add", userPermissionId: "ADMIN_PASSWORD"}]
             const preview = invoke(S + "preview#Grants", {userGroupId: teamId, grantList: grant})
-            const added = invoke(S + "apply#Grants", {userGroupId: teamId, grantList: grant, expectedRevision: preview.revision})
+            const added = invoke(S + "apply#Grants", {
+                userGroupId: teamId,
+                grantList: grant,
+                expectedRevision: preview.revision
+            })
             const end = [{action: "end", userPermissionId: "ADMIN_PASSWORD"}]
             const ended = invoke(S + "apply#Grants", {userGroupId: teamId, grantList: end, expectedRevision: added.revision})
             return {added, ended}
@@ -208,12 +222,14 @@ feature("grants come only from a registered bundle, a sealed one only from its h
             audit: audits("moqui.security.UserGroupPermission", "fromDate", teamId)
         })
     },
-    then({preview, sealed, unregistered, stale, applied, added, ended, grants, authz, audit}) {
+    then({preview, sealed, unregistered, privileged, stale, applied, added, ended, grants, authz, audit}) {
         preview.allowed == false
         preview.changeList.find(c => c.id === "ADMIN_PASSWORD").reasonCode == "SEALED_PERMISSION"
         preview.changeList.find(c => c.id === viewPermission).allowed == true
         sealed.applied == false && sealed.reasonCode == "SEALED_PERMISSION"
         unregistered.reasonCode == "UNREGISTERED_GRANT"
+        // a privileged group's bundle is not granted from by a non-member
+        privileged.reasonCode == "UNREGISTERED_GRANT"
         stale.reasonCode == "REVISION_CHANGED"
         applied.applied == true && applied.added == 2
         authz.length == 1

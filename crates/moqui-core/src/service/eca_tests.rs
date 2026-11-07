@@ -350,6 +350,83 @@ fn a_group_and_a_permission_a_conf_adds_by_element_are_guarded_beside_the_defaul
 }
 
 #[test]
+fn a_membership_in_a_group_granting_a_sealed_permission_needs_its_holder() {
+    let (facade, context, _runtime) = boot_security();
+    let _entered = context.enter();
+    let stamp = |millis: i64| basic_convert(&Value::I64(millis), "java.sql.Timestamp").value;
+    {
+        let _authz = context.disable_authz();
+        seed_entity_allow(&facade);
+        seed_user(&facade, "plain", "Secret-12");
+        // a group that is not privileged but grants a sealed permission, with a member; and one whose sealed grant ended
+        permission_row(&facade, "CUSTOM_BACKUP", "ADMIN_BACKUP_DOWNLOAD")
+            .create(&facade)
+            .unwrap();
+        member_row(&facade, "CUSTOM_BACKUP", "U2").create(&facade).unwrap();
+        let mut ended = permission_row(&facade, "CUSTOM_ENDED", "ADMIN_PASSWORD");
+        ended.set("thruDate", stamp(1_000));
+        ended.create(&facade).unwrap();
+    }
+    login_user("plain", "Secret-12").expect("login");
+    let err = member_row(&facade, "CUSTOM_BACKUP", "U1")
+        .create(&facade)
+        .expect_err("a sealed grant passed on through a membership");
+    assert!(
+        err.to_string()
+            .contains("grants the sealed permission ADMIN_BACKUP_DOWNLOAD"),
+        "{err}"
+    );
+    assert_eq!(member_count(&facade, "CUSTOM_BACKUP"), 1);
+    // an ended sealed grant is not carried
+    member_row(&facade, "CUSTOM_ENDED", "U1")
+        .create(&facade)
+        .expect("an ended sealed grant");
+    // ending a member's membership passes; reopening it does not
+    let mut ending = member_row(&facade, "CUSTOM_BACKUP", "U2");
+    ending.set("thruDate", crate::service::util::now_stamp());
+    ending.update(&facade).expect("ending a membership");
+    let mut reopening = member_row(&facade, "CUSTOM_BACKUP", "U2");
+    reopening.set("thruDate", Value::Null);
+    let err = reopening.update(&facade).expect_err("reopening a membership");
+    assert!(err.to_string().contains("ADMIN_BACKUP_DOWNLOAD"), "{err}");
+    // a holder of the sealed permission gives the membership
+    {
+        let _authz = context.disable_authz();
+        permission_row(&facade, "HOLDERS", "ADMIN_BACKUP_DOWNLOAD")
+            .create(&facade)
+            .unwrap();
+        member_row(&facade, "HOLDERS", "U1").create(&facade).unwrap();
+    }
+    member_row(&facade, "CUSTOM_BACKUP", "U3")
+        .create(&facade)
+        .expect("a holder gives the membership");
+    assert_eq!(member_count(&facade, "CUSTOM_BACKUP"), 2);
+}
+
+#[test]
+fn a_membership_ends_sooner_only_by_an_update_to_an_earlier_set_end() {
+    use crate::service::membership_ends_sooner;
+    let stamp = |millis: i64| basic_convert(&Value::I64(millis), "java.sql.Timestamp").value;
+    assert!(!membership_ends_sooner(&stamp(1_000), None), "a create");
+    assert!(
+        membership_ends_sooner(&stamp(1_000), Some(&Value::Null)),
+        "an open end set"
+    );
+    assert!(membership_ends_sooner(&stamp(1_000), Some(&stamp(2_000))));
+    assert!(membership_ends_sooner(&stamp(2_000), Some(&stamp(2_000))));
+    assert!(
+        !membership_ends_sooner(&stamp(3_000), Some(&stamp(2_000))),
+        "a later end"
+    );
+    assert!(!membership_ends_sooner(&Value::Null, Some(&stamp(2_000))), "reopened");
+    assert!(!membership_ends_sooner(&Value::Null, Some(&Value::Null)));
+    assert!(!membership_ends_sooner(
+        &Value::string("not a date"),
+        Some(&Value::Null)
+    ));
+}
+
+#[test]
 fn an_eeca_condition_checks_only_its_first_child() {
     let facade = crate::testing::open_with(
         &crate::testing::framework_dir(),
@@ -493,6 +570,25 @@ fn permission_row(facade: &EntityFacade, group_id: &str, permission_id: &str) ->
     row.set("userPermissionId", Value::string(permission_id));
     row.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
     row
+}
+
+fn member_row(facade: &EntityFacade, group_id: &str, user_id: &str) -> EntityValue {
+    let mut row = facade.make_value("moqui.security.UserGroupMember").unwrap();
+    row.set("userGroupId", Value::string(group_id));
+    row.set("userId", Value::string(user_id));
+    row.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
+    row
+}
+
+fn member_count(facade: &EntityFacade, group_id: &str) -> usize {
+    let _authz = crate::context::ExecutionContext::with_current(|ctx| ctx.disable_authz());
+    facade
+        .find("moqui.security.UserGroupMember")
+        .unwrap()
+        .eq("userGroupId", Value::string(group_id))
+        .list()
+        .unwrap()
+        .len()
 }
 
 fn permission_count(facade: &EntityFacade, group_id: &str, permission_id: &str) -> usize {

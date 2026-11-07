@@ -8,10 +8,11 @@
 // Bounded delegation (design §1.1): reading needs ADMIN_ACCESS_VIEW and every change ADMIN_ACCESS_MANAGE (sealed, so only a
 // holder grants it), checked with ec.user.hasPermission, never a group name. A membership is given only in a registered bundle
 // (moqui.security.CapabilityBundle) or a custom group an access administrator created (a registered purpose); a grant only from
-// a registered bundle's permissions and artifact bindings; a bundle naming a delegable permission needs it too. A sealed
-// permission is granted or ended only by a holder, a membership in a group that grants one given only by a holder (so no sealed
-// grant is smuggled through a group), and a privileged group changed only by a member, refused here with the reason
-// before the EECA would refuse the write. Every change names the revision it read (a row's or group's lastUpdatedStamp; for
+// a registered bundle's permissions and artifact bindings; a bundle naming a delegable permission needs it too, and a privileged
+// group's bundle membership of that group (so its powers are not copied to another group). A sealed permission is granted or
+// ended only by a holder, a membership in a group that grants one given only by a holder (so no sealed grant is smuggled
+// through a group; the framework's UserGroupMemberSealed EECA refuses it too), and a privileged group changed only by a member,
+// refused here with the reason before the EECA would refuse the write. Every change names the revision it read (a row's or group's lastUpdatedStamp; for
 // grants the group's grant revision from preview#Grants) and is refused naming the current one when stale; every membership,
 // group-flag and grant change keeps the administration path (IdentityServices.check#AdministrationPath). A refusal is answered
 // as a reason (applied false, reasonCode, reason), never written; a malformed request is an error. The audit log keeps before
@@ -93,7 +94,12 @@ function bundles() {
     }
     return found
 }
-const delegable = bundle => !bundle.delegablePermissionId || ec.user.hasPermission(bundle.delegablePermissionId)
+// A bundle the actor may assign or grant from: one naming a delegable permission only by its holders, and a privileged
+// group's bundle only by a member of it, so a privileged group's permissions and bindings are not granted to another group by
+// a non-member (a custom group given BOSS_ADMIN_BACKUP's permissions would be BOSS_ADMIN_BACKUP without its membership rule).
+const delegable = (bundle, privileged = privilegedIds()) =>
+    (!bundle.delegablePermissionId || ec.user.hasPermission(bundle.delegablePermissionId)) &&
+    (!privileged.has(bundle.userGroupId) || ec.user.isInGroup(bundle.userGroupId))
 // A custom group: one an access administrator created, of a registered purpose (a UserGroupType with optionIndicator Y).
 function purposes() {
     return rows("moqui.basic.Enumeration", {enumTypeId: "UserGroupType", optionIndicator: "Y"}).sort(
@@ -114,7 +120,7 @@ function groupRefusal(group, registry = bundles(), privileged = privilegedIds())
             reason: groupId + " is a privileged group: only a member of it may change it or its members"
         }
     const bundle = registry.get(groupId)
-    if (bundle && !delegable(bundle))
+    if (bundle && !delegable(bundle, privileged))
         return {reasonCode: "NOT_DELEGABLE", reason: groupId + " is assigned only by holders of " + bundle.delegablePermissionId}
     if (!bundle && !isCustom(group) && !(privileged.has(groupId) && ec.user.isInGroup(groupId)))
         return {
@@ -345,7 +351,7 @@ function bundleOptions(context = listContext()) {
             bundleGroupId: bundle.userGroupId,
             appName: bundle.appName || "",
             description: bundle.description || one(GROUP, {userGroupId: bundle.userGroupId})?.description || "",
-            delegable: delegable(bundle),
+            delegable: delegable(bundle, context.privileged),
             privileged: context.privileged.has(bundle.userGroupId),
             permissions: (permissions.get(bundle.userGroupId) || []).map(row => ({
                 userPermissionId: row.userPermissionId,
@@ -353,7 +359,7 @@ function bundleOptions(context = listContext()) {
                 capabilityKindEnumId: row.capabilityKindEnumId || null,
                 sealed: context.sealed.has(row.userPermissionId),
                 grantable:
-                    delegable(bundle) &&
+                    delegable(bundle, context.privileged) &&
                     (!context.sealed.has(row.userPermissionId) || ec.user.hasPermission(row.userPermissionId))
             })),
             artifacts: (artifacts.get(bundle.userGroupId) || []).map(row => ({
@@ -609,7 +615,8 @@ function evaluate(group, changes) {
     const registry = bundles()
     const sealed = sealedIds()
     const at = nowMs()
-    const delegableBundles = Array.from(registry.values()).filter(delegable)
+    const privileged = privilegedIds()
+    const delegableBundles = Array.from(registry.values()).filter(bundle => delegable(bundle, privileged))
     const registeredPermission = (permissionId, bundleGroupId) =>
         rows(BUNDLE_PERMISSION, {userPermissionId: permissionId}).find(
             row =>
