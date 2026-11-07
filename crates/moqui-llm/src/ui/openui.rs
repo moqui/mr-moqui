@@ -425,9 +425,11 @@ thread_local! {
     static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
+/// The texts and the engine the setting picks (a thread's setting may change, in the tests).
 fn key_of(sources: &Sources) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    moqui_core::script::script_engine().name().hash(&mut hasher);
     sources.bundle.hash(&mut hasher);
     sources.spec.hash(&mut hasher);
     hasher.finish()

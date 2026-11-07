@@ -971,9 +971,11 @@ fn script_error(script: &str) -> Option<String> {
         }
     };
     let source = serde_json::to_string(script).ok()?;
+    // the message alone: QuickJS gives a syntax error no line, and quickjs-oxide's `lineNumber` counts the two lines
+    // `new Function` puts before the body
     let check = format!(
         "(function () {{ try {{ new Function('module', 'exports', {source}); return ''; }} \
-         catch (e) {{ return String((e && e.message) || e) + (e && e.lineNumber ? ' (line ' + e.lineNumber + ')' : ''); }} }})()"
+         catch (e) {{ return String((e && e.message) || e); }} }})()"
     );
     match js.text(&check) {
         Ok(text) if text.is_empty() => None,
