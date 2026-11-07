@@ -221,7 +221,7 @@ fn a_run_orders_specs_after_their_depends_on() {
             ],
         ),
     ];
-    let order: Vec<String> = run_order(&components)
+    let order: Vec<String> = run_order(&components, false)
         .unwrap()
         .into_iter()
         .map(|(c, s)| format!("{}/{}", components[c].name, components[c].specs[s].name))
@@ -246,11 +246,44 @@ fn a_run_orders_specs_after_their_depends_on() {
             spec("B", "spec({ dependsOn: ['A'] })"),
         ],
     )];
-    let err = run_order(&cycle).unwrap_err().to_string();
+    let err = run_order(&cycle, false).unwrap_err().to_string();
     assert!(
         err.contains("cycle") && err.contains("c/A, c/B") && !err.contains("Free"),
         "{err}"
     );
+}
+
+/// A spec of a suite.js chain that waits for its dependsOn holds back the specs after it in the chain, which may rely on
+/// its data; the specs outside the chain keep their place.
+#[test]
+fn a_waiting_spec_holds_back_its_suite_chain() {
+    let dir = std::env::temp_dir().join(format!("moqui-test-run-order-chain-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("test")).unwrap();
+    std::fs::write(dir.join("test/suite.js"), r#"suite(["A", "B", "C"])"#).unwrap();
+    let components = vec![
+        TestComponent {
+            name: "app".to_string(),
+            dir: dir.clone(),
+            specs: vec![
+                spec("A", "spec({})"),
+                spec("B", "spec({ dependsOn: ['Fixtures'] })"),
+                spec("C", "spec({})"),
+                spec("Other", "spec({})"),
+            ],
+        },
+        TestComponent {
+            name: "base".to_string(),
+            dir: PathBuf::from("base"),
+            specs: vec![spec("Fixtures", "spec({})")],
+        },
+    ];
+    let order: Vec<String> = run_order(&components, false)
+        .unwrap()
+        .into_iter()
+        .map(|(c, s)| components[c].specs[s].name.clone())
+        .collect();
+    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(order, vec!["A", "Other", "Fixtures", "B", "C"]);
 }
 
 /// `--spec` with components named: an unqualified name is that of the named components only, and its dependsOn may

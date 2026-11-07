@@ -985,13 +985,36 @@ fn not_loaded(name: &str) -> Error {
     ))
 }
 
+/// The `suite.js` chains of a component in a run, `test/suite.js` and in an acceptance run `acceptance/suite.js`, each
+/// as the indexes of the specs it lists that the component has, in its order. A suite.js that cannot be read lists
+/// nothing (discovery has already read it).
+pub(crate) fn suite_chains(component: &TestComponent, acceptance: bool) -> Vec<Vec<usize>> {
+    let trees: &[&str] = if acceptance {
+        &[suite_tree(false, false), suite_tree(true, false)]
+    } else {
+        &[suite_tree(false, false)]
+    };
+    trees
+        .iter()
+        .filter_map(|tree| std::fs::read_to_string(component.dir.join(tree).join("suite.js")).ok())
+        .map(|text| {
+            suite_order(&text)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|name| component.specs.iter().position(|spec| &spec.name == name))
+                .collect()
+        })
+        .collect()
+}
+
 /// The order a run takes its specs, as `(component index, spec index)`: the components' order and each component's
 /// own, except that a spec runs after the specs its `dependsOn` names, wherever they are in the run. A stable
 /// topological sort: of the specs whose dependencies have run, the one first in the components' order goes next, so a
 /// spec moves only to follow what it depends on. A `dependsOn` name resolves as in [`select_across`] (the spec's own
-/// component first, then the others in order); a name not in the run orders nothing. A cycle is an error naming its
-/// specs.
-pub(crate) fn run_order(components: &[TestComponent]) -> Result<Vec<(usize, usize)>, Error> {
+/// component first, then the others in order); a name not in the run orders nothing. The specs a `suite.js` lists
+/// keep its order among themselves, so a spec that waits holds back the ones after it in its chain, as a chain shares
+/// data (a worker unit, `workers.rs`). A cycle is an error naming its specs.
+pub(crate) fn run_order(components: &[TestComponent], acceptance: bool) -> Result<Vec<(usize, usize)>, Error> {
     let nodes: Vec<(usize, usize)> = components
         .iter()
         .enumerate()
@@ -1010,6 +1033,21 @@ pub(crate) fn run_order(components: &[TestComponent]) -> Result<Vec<(usize, usiz
             if let Some(owner) = owner {
                 if !depends[at].contains(&owner) {
                     depends[at].push(owner);
+                }
+            }
+        }
+    }
+    for (c, component) in components.iter().enumerate() {
+        for chain in suite_chains(component, acceptance) {
+            for pair in chain.windows(2) {
+                let (Some(before), Some(after)) = (
+                    nodes.iter().position(|node| *node == (c, pair[0])),
+                    nodes.iter().position(|node| *node == (c, pair[1])),
+                ) else {
+                    continue;
+                };
+                if !depends[after].contains(&before) {
+                    depends[after].push(before);
                 }
             }
         }
@@ -1049,7 +1087,7 @@ fn run_component_specs(
         feature_filter: args.feature.clone(),
         ..RunOptions::default()
     };
-    for (c, s) in run_order(components)? {
+    for (c, s) in run_order(components, args.acceptance)? {
         let component = &components[c];
         let spec = &component.specs[s];
         let missing = spec_missing_features(&spec.source);
