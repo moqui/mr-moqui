@@ -37,8 +37,9 @@
 //! either name is replaced. The screen still checks the token in each service it calls (the public-share services do).
 //!
 //! The named screen is the root of its render, and its links, form actions and redirects to a screen start with
-//! `/<name>/<token>` (`web::set_link_prefix`), so a form posts to `/<name>/<token>/<transition>`. The token is the
-//! route's credential: what the server records of a path or URL ([`redact_url`]) has `/<name>/:token/...` instead.
+//! `/<name>/<token>` (`web::set_link_prefix`), so a form posts to `/<name>/<token>/<transition>`; a server-static
+//! template, cached for every visitor, is made without it. The token is the route's credential: what the server records
+//! of a path or URL ([`redact_url`], [`redact_json`]) has `/<name>/:token/...` instead.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -233,6 +234,56 @@ pub fn redact_url<'a>(routes: &[TokenRoute], text: &'a str) -> std::borrow::Cow<
 /// [`redact_url`] with this factory's token routes: what the request log and a log line record of a path or URL.
 pub fn redact<'a>(factory: &ExecutionContextFactory, text: &'a str) -> std::borrow::Cow<'a, str> {
     redact_url(&routes(factory).0, text)
+}
+
+/// [`redact_url`] for each path or URL within free text (a span name `GET /i/{token}`, a log body, a message), the words
+/// being split at white space, quotes, brackets and parentheses; the separators are kept.
+pub fn redact_text<'a>(routes: &[TokenRoute], text: &'a str) -> std::borrow::Cow<'a, str> {
+    use std::borrow::Cow;
+    if routes.is_empty() || !text.contains('/') {
+        return Cow::Borrowed(text);
+    }
+    let separator = |ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | '`' | '<' | '>' | '(' | ')' | '[' | ']');
+    let mut out: Option<String> = None;
+    let mut start = 0;
+    for (at, ch) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+        if !separator(ch) {
+            continue;
+        }
+        let word = &text[start..at];
+        if let Cow::Owned(redacted) = redact_url(routes, word) {
+            let out = out.get_or_insert_with(|| text[..start].to_string());
+            out.push_str(&redacted);
+        } else if let Some(out) = out.as_mut() {
+            out.push_str(word);
+        }
+        if let Some(out) = out.as_mut() {
+            if at < text.len() {
+                out.push(ch);
+            }
+        }
+        start = at + ch.len_utf8();
+    }
+    out.map_or(Cow::Borrowed(text), Cow::Owned)
+}
+
+/// Every string in `json` with [`redact_text`] applied: what a browser sends (`/rum/*` OTLP records, a replay's rrweb
+/// events, whose snapshot holds the page's links) before it is stored. Object keys are left as they are.
+pub fn redact_json(routes: &[TokenRoute], json: &mut serde_json::Value) {
+    use serde_json::Value as Json;
+    if routes.is_empty() {
+        return;
+    }
+    match json {
+        Json::String(text) => {
+            if let std::borrow::Cow::Owned(redacted) = redact_text(routes, text) {
+                *text = redacted;
+            }
+        }
+        Json::Array(items) => items.iter_mut().for_each(|item| redact_json(routes, item)),
+        Json::Object(map) => map.values_mut().for_each(|item| redact_json(routes, item)),
+        _ => {}
+    }
 }
 
 /// The route of a request path in this factory's conf.
@@ -436,5 +487,39 @@ mod tests {
         assert_eq!(url("//staff.example.com/i/abcDEF12345"), "//staff.example.com/i/:token");
         assert_eq!(url("plain text"), "plain text");
         assert_eq!(redact_url(&[], "/i/abcDEF12345"), "/i/abcDEF12345");
+    }
+
+    #[test]
+    fn a_routes_token_is_redacted_within_text_and_json() {
+        let routes = [route("i"), route("tk")];
+        let text = |text: &str| redact_text(&routes, text).into_owned();
+        assert_eq!(text("GET /i/abcDEF12345/accept"), "GET /i/:token/accept");
+        assert_eq!(
+            text("from (https://h.example.com/tk/abcDEF12345?x=1) and [/i/abcDEF12345]"),
+            "from (https://h.example.com/tk/:token?x=1) and [/i/:token]"
+        );
+        assert_eq!(
+            text("GET /apps/i/abcDEF12345"),
+            "GET /apps/i/abcDEF12345",
+            "not under a route"
+        );
+        assert_eq!(text("caf\u{e9} /i/abcDEF12345\n"), "caf\u{e9} /i/:token\n");
+        assert!(matches!(
+            redact_text(&routes, "no path here"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        let mut json = serde_json::json!({
+            "name": "GET /tk/abcDEF12345.qvt",
+            "attributes": [{"key": "url.full", "value": {"stringValue": "https://h/i/abcDEF12345/factor"}}],
+            "events": [{"type": 2, "data": {"attributes": {"href": "/tk/abcDEF12345/files"}}}, 4, null]
+        });
+        redact_json(&routes, &mut json);
+        let shown = json.to_string();
+        assert!(!shown.contains("abcDEF12345"), "{shown}");
+        assert_eq!(
+            json["attributes"][0]["value"]["stringValue"],
+            "https://h/i/:token/factor"
+        );
+        assert_eq!(json["events"][0]["data"]["attributes"]["href"], "/tk/:token/files");
     }
 }

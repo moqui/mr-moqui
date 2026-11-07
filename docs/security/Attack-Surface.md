@@ -334,13 +334,20 @@ They apply when per-client web protection is on.
 A route's token is its credential, so it is kept out of what the server records. The request log (each request's SERVER
 span) has `/i/:token/...` for `url.path`, and for a path or URL under a token route in the `Referer` header and in a
 query value such as a sign-in step's `returnTo` (`screen::token_route::redact_url`). The log lines that name a request
-path (a refused origin, the public-site host check) are redacted the same way. The route name and the rest of the path
-stay (`/u/:token/oneClick`). `http.route` is the screen's location, which holds no token.
+path (a refused origin, the public-site host check) are redacted the same way, and so are a Visit's `initialRequest`
+and `initialReferrer`. Browser telemetry (`/rum/traces`, `/rum/logs`, `/rum/replay`) has every string redacted before
+it is stored, a replay's `url` and the links its rrweb snapshot holds included (`token_route::redact_json`). The routes
+are read per conf generation, so a route a conf reload adds is redacted from then on. The route name and the rest of
+the path stay (`/u/:token/oneClick`). `http.route` is the screen's location, which holds no token. The session keeps a
+sign-in step's `returnTo` with its token (it is where the user goes next); a session is not a record.
 
 While a token route's screen renders it is the root of its links (`web::set_link_prefix`): a form's action, a link and a
 transition's redirect to a screen go to `/<name>/<token>/...`, not to `/<transition>` outside the route. A plain URL
-(`/Login`) is not prefixed. A server-static qvt template is cached for every visitor and has no token, so its paths are
-still from the screen.
+(`/Login`) is not prefixed, and no request parameter or header sets the prefix: only the token route's dispatch does,
+after its token check. A server-static qvt template is cached for every visitor, so it is made with no prefix
+(`screen::statics::serve_template`) and its paths, an alias transition's target included, are still from the screen; a
+token route's screen that needs links under the route should not be server-static. A `screen-last` path the session
+saves (the page before a login) is from the screen as well.
 
 `/call/<token>` is a call link's guest page. Its token is 32 random characters; only its hash is stored. The token is
 refused once the link is revoked or expired. The page's transitions are `joinGuest`, `guestState` and `leaveGuest`,
