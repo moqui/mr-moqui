@@ -378,9 +378,9 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
   rquickjs does, from the engine (`errors::rquickjs_type_name`), with two gaps. A whole number held as a float
   (`1.5 * 2`) may be `float` on one engine and `int` on the other. A Proxy is `proxy` only where the walker's runtime
   noted it; an element literal's attribute that is a Proxy is `object` on oxide.
-- **RegExp is not interruptible.** The fork's RegExp exec passes no interrupt (`builtins/regexp.rs`, `run`), so a
-  backtracking pattern runs past the script deadline; `script::theme::tests::each_budget` hangs under
-  `script_engine=oxide`. Fork.
+- **RegExp interrupt, until the fork rev with f4-regexp-interrupt** (integ/moqui-3): before it, the fork's RegExp
+  exec polls no interrupt, so a backtracking pattern runs past the script deadline and
+  `script::theme::tests::each_budget` hangs under `script_engine=oxide`.
 
 ## 8. Testing
 
