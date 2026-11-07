@@ -668,16 +668,72 @@ fn compile(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> 
             }
         }
     }
-    let live = format!("(function(){{\n{PRELUDE}{declared}{body}return $o.join(\"\");\n}})");
-    // `with` is not legal in the strict parse, so the snapshot form is checked as the live form.
-    super::check_program(&live).map_err(|err| Error::new(format!("template does not compile: {}", err.message())))?;
     let text = match scope {
-        Scope::Live => live,
+        Scope::Live => format!("(function(){{\n{PRELUDE}{declared}{body}return $o.join(\"\");\n}})"),
+        // The live form's shape over the snapshot: each name the body reads or writes is a variable of the function's
+        // own frame, read once from the snapshot by `$scope`'s reader (plans/Script-Engine-Oxide.md section 5.4). A
+        // name the body does not name is not reached: code a template makes at run time (`Function`, indirect `eval`)
+        // sees only the frozen globals.
         Scope::Snapshot => {
-            format!("(function($data){{\n{PRELUDE}with ($scope($data)) {{\n{body}}}\nreturn $o.join(\"\");\n}})")
+            let mut names = String::new();
+            for name in snapshot_names(&body) {
+                names.push_str(&format!("var {name} = $n({});\n", js_string(&name)));
+            }
+            format!(
+                "(function($data){{\nconst $n = $scope($data);\n{PRELUDE}{names}{body}return $o.join(\"\");\n}})"
+            )
         }
     };
+    super::check_program(&text).map_err(|err| Error::new(format!("template does not compile: {}", err.message())))?;
     Ok(text)
+}
+
+/// The names a snapshot template's body uses as variables, each once in the order first seen: every identifier of
+/// the parsed body but a member's or property's name and a label. A name the body binds itself (a list variable, an
+/// arrow's parameter) may be among them; it is shadowed where it is bound. Names that start with `$`, the prelude's
+/// `html`, `raw` and `cssString`, `arguments` and `eval` are left to the function and the global object.
+fn snapshot_names(body: &str) -> Vec<String> {
+    use serde_json::Value as Json;
+    fn walk(node: &Json, names: &mut Vec<String>) {
+        match node {
+            Json::Array(items) => items.iter().for_each(|item| walk(item, names)),
+            Json::Object(fields) => {
+                let kind = fields.get("type").and_then(Json::as_str).unwrap_or("");
+                if kind == "Identifier" {
+                    if let Some(name) = fields.get("name").and_then(Json::as_str) {
+                        let kept = !name.starts_with('$')
+                            && !matches!(name, "html" | "raw" | "cssString" | "arguments" | "eval")
+                            && !names.iter().any(|seen| seen == name);
+                        if kept {
+                            names.push(name.to_string());
+                        }
+                    }
+                    return;
+                }
+                let computed = fields.get("computed").and_then(Json::as_bool) == Some(true);
+                for (field, child) in fields {
+                    let skipped = match field.as_str() {
+                        "property" => kind == "MetaProperty" || (kind == "MemberExpression" && !computed),
+                        "key" => !computed,
+                        "label" | "meta" => true,
+                        _ => false,
+                    };
+                    if !skipped {
+                        walk(child, names);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    super::parse::with_arena(|allocator| {
+        let parsed = oxc_parser::Parser::new(allocator, body, oxc_span::SourceType::default()).parse();
+        let mut names = Vec::new();
+        if let Ok(tree) = serde_json::from_str::<Json>(&parsed.program.to_estree_json(false, false)) {
+            walk(&tree, &mut names);
+        }
+        names
+    })
 }
 
 pub(crate) fn line_of(source: &str, offset: usize) -> usize {
@@ -1035,13 +1091,14 @@ pub fn unwrap_json(value: &Value) -> serde_json::Value {
 
 // ---- locked-down context ----
 
+/// `$scope(json)` is the reader of one render's snapshot names: a name of the global object is that global, any other
+/// is the snapshot's value, and a name the snapshot does not have is null.
 const SANDBOX_PRELUDE: &str = r#"
-const $reserved = new Set(["html", "raw", "cssString"]);
-globalThis.$scope = (data) => new Proxy(JSON.parse(data), {
-    has: (t, k) => typeof k === "string" && !k.startsWith("$") && !$reserved.has(k) && !(k in globalThis),
-    get: (t, k) => k === Symbol.unscopables ? undefined : (t[k] === undefined ? null : t[k]),
-    set: (t, k, v) => { t[k] = v; return true; },
-});
+globalThis.$scope = (data) => {
+    const d = JSON.parse(data);
+    if (d === null || typeof d !== "object") throw new TypeError("a template snapshot is not an object");
+    return (k) => k in globalThis ? globalThis[k] : (d[k] === undefined ? null : d[k]);
+};
 "#;
 
 /// Freeze the global object, every object reachable from it, and the built-ins that no global names (the iterator,

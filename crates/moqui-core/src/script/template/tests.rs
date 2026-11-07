@@ -125,6 +125,23 @@ fn trusted_reads_the_live_context_and_locked_down_cannot_reach_ec() {
     );
 }
 
+/// The snapshot form has no `with`: each name the template uses is a variable of its function, from the snapshot, so
+/// an arrow sees it, an assignment changes it for the rest of the render, and code made at run time does not see it.
+#[test]
+fn locked_down_names_are_variables_of_the_template_function() {
+    let compiled = compiled("${price}", Escape::None, Scope::Snapshot).unwrap();
+    assert!(!compiled.contains("with ("), "{compiled}");
+    let data = moqui_lib::json::from_json(&serde_json::json!({"price": 2, "toString": "data"}));
+    let out = render_locked_with(
+        "${(() => price * 2)()}|${price = 5}${price}|<#assign total = price + 1>${total}|\
+         ${Function('return typeof price')()}|${typeof toString}|${missing}${typeof missing}",
+        Escape::None,
+        &data,
+    )
+    .unwrap();
+    assert_eq!(out, "4|55|6|undefined|function|object");
+}
+
 #[test]
 fn locked_down_sees_plain_values_and_decimals_as_strings() {
     use std::str::FromStr;
