@@ -188,11 +188,12 @@ fn the_whole_runtimes_share_their_globals() {
         clear_context_stack();
         install_global("probeNested", &NESTED).expect("install");
         let names = "[typeof System.getProperty, typeof StringUtilities.base64Encode, typeof \
-                     CollectionUtilities.flattenNestedMap, typeof WebUtilities.encodeHtml, typeof compare].join()";
+                     CollectionUtilities.flattenNestedMap, typeof WebUtilities.encodeHtml, typeof compare, typeof \
+                     UserSecurityChecks.assertPrivilegedGroupMembership].join()";
         let main = spec(&format!("probeNested.main({names:?})"));
         assert_eq!(
             main,
-            Value::String("function,function,function,function,function".to_string())
+            Value::String("function,function,function,function,function,function".to_string())
         );
         assert_eq!(spec(names), main);
     });

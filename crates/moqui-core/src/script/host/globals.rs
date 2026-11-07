@@ -39,6 +39,12 @@ const GLOBALS_JS: &str = r#"(function (global, hidden, helpers) {
     for (const name of ["encodeForXmlAttribute", "base64UrlEncode", "base64UrlDecode", "base64Encode", "base64Decode",
         "cleanHtml",
         "urlEncodeIfNeeded"]) string[name] = hidden[name];
+    // the checks Security.eecas.xml runs, a global of a whole runtime (`oxide::engine`) as the helpers are
+    helpers.UserSecurityChecks = {
+        assertPrivilegedGroupMembership: hidden.assertPrivilegedGroupMembership,
+        assertSealedPermissionGrant: hidden.assertSealedPermissionGrant,
+        assertDocumentExpression: hidden.assertDocumentExpression
+    };
     collection.flattenNestedMap = hidden.flattenNestedMap;
     collection.getMapArrayListValues = hidden.getMapArrayListValues;
     // the page values go on the map passed too, as Java's does
@@ -201,8 +207,36 @@ pub(crate) static SHIM: Shim = Shim {
             leaf,
             transaction_cache_active
         ),
+        // they read the entities, so not leaves
+        method!("UserSecurityChecks", "assertPrivilegedGroupMembership", [OptValue], None, assert_privileged_group),
+        method!("UserSecurityChecks", "assertSealedPermissionGrant", [OptValue], None, assert_sealed_grant),
+        method!("UserSecurityChecks", "assertDocumentExpression", [OptValue], None, assert_document_expression),
     ]],
 };
+
+/// An id argument as text, empty when missing, null or undefined (`runtime/ec_extra.rs` `opt_id_text`).
+fn id_text(call: &Call<'_>, index: usize) -> String {
+    call.opt_text(index).unwrap_or_default()
+}
+
+/// `UserSecurityChecks.assertPrivilegedGroupMembership(userGroupId)`, `Security.eecas.xml`'s check before a write of
+/// a group membership: a denied check throws, so the write fails.
+fn assert_privileged_group(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::service::assert_privileged_group_membership(&super::entity_facade()?, &id_text(call, 0)).map_err(lib)?;
+    Ok(Ret::Undefined)
+}
+
+/// `UserSecurityChecks.assertSealedPermissionGrant(userPermissionId)`.
+fn assert_sealed_grant(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::service::assert_sealed_permission_grant(&super::entity_facade()?, &id_text(call, 0)).map_err(lib)?;
+    Ok(Ret::Undefined)
+}
+
+/// `UserSecurityChecks.assertDocumentExpression(fieldPath)`.
+fn assert_document_expression(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::service::assert_document_expression(&super::entity_facade()?, &id_text(call, 0)).map_err(lib)?;
+    Ok(Ret::Undefined)
+}
 
 fn value(call: &Call<'_>, index: usize) -> Value {
     call.value_or_null(index)
