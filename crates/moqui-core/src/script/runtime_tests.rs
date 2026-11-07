@@ -980,3 +980,30 @@ fn the_helper_objects_and_their_functions_are_frozen() -> Result<(), Error> {
     }
     Ok(())
 }
+
+/// `ResourceReference` is a global of a whole runtime on each engine, as the tools shim makes it on QuickJS's main
+/// context: its one static, `isTextFilename`, by the file name's content type, and the global read-only.
+#[test]
+fn resource_reference_is_a_global_of_each_whole_runtime() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        with_script_engine(engine, || -> Result<(), Error> {
+            clear_context_stack();
+            push_context_frame();
+            run_script(
+                "seen = [typeof ResourceReference, Object.keys(ResourceReference).join(), \
+                 ResourceReference.isTextFilename('A.JSON'), ResourceReference.isTextFilename('a.png'), \
+                 (() => { try { ResourceReference = 1; return 'assigned' } catch (e) { return 'read-only' } })(), \
+                 typeof ResourceReference].join('|')",
+            )?;
+            assert_eq!(
+                context_value("seen"),
+                Some(Value::string("object|isTextFilename|true|false|read-only|object")),
+                "under {}",
+                engine.name()
+            );
+            Ok(())
+        })?;
+    }
+    Ok(())
+}

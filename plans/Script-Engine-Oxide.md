@@ -422,8 +422,10 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
 
 - `ec.context` on oxide is only `{get, formListFindId, orderByField}`, the members the shims and forms read, as
   QuickJS's object is. The helper objects (`ObjectUtilities`, `CollectionUtilities`, `StringUtilities`, `WebUtilities`,
-  `UserSecurityChecks`) and `System` are globals of a whole oxide runtime, from `host::globals`; a text that reaches for
-  `ResourceReference` finds nothing on oxide yet. On both engines the helper objects, `System` and the functions on them
+  `UserSecurityChecks`) and `System` are globals of a whole oxide runtime, from `host::globals`. `ResourceReference`
+  (`{isTextFilename}`) is the tools shim's global on both engines' whole runtimes, read-only on each
+  (`resource_reference_is_a_global_of_each_whole_runtime`); the small scripts' static check still sends a text naming it
+  to QuickJS under `small-oxide`. On both engines the helper objects, `System` and the functions on them
   are frozen, so a script cannot replace one (a `UserSecurityChecks` check among them) for the later scripts on the
   thread.
 - A bare assignment to a helper's name (`StringUtilities = x`) writes the context stack on QuickJS; on oxide the name is
