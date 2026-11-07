@@ -605,7 +605,11 @@ fn panel_view(frame: &Value, panel: &Value, width: u16, table: bool) -> Vec<Line
         .max()
         .unwrap_or(0);
     if count == 0 {
-        lines.push(vec![Span::new("No data in this time range", Role::Muted)]);
+        // A panel that could not be read (a dataset the viewer may not read, a failed query) says so, never "no data".
+        match unavailable_notice(panel) {
+            Some(message) => lines.push(vec![Span::new(format!("Not available: {message}"), Role::Negative)]),
+            None => lines.push(vec![Span::new("No data in this time range", Role::Muted)]),
+        }
         return lines;
     }
     for annotation in panel["annotations"].as_array().into_iter().flatten().take(20) {
@@ -941,8 +945,11 @@ fn table_key(
                 next["filters"] = Value::Array(filters);
                 return Some(vec![Act::Follow(dashboard_url(&next, "", None, None))]);
             }
+            let Some(explore) = app_link(panel, "explore", "Explore") else {
+                return Some(vec![Act::Message("Explore is not available here".into())]);
+            };
             return Some(vec![Act::Follow(format!(
-                "/apps/dashboards/Explore?datasetId={}&filtersJson={}",
+                "{explore}?datasetId={}&filtersJson={}",
                 encoded(bucket["datasetId"].as_str().unwrap_or("")),
                 encoded(&Value::Array(vec![pill]).to_string())
             ))]);
@@ -992,6 +999,35 @@ fn selection_line(frame: &Value, panel: &Value, state: &ComponentState) -> Line 
         Role::Muted,
     )]
 }
+/// The path of a report screen where the app that renders the dashboard mounts it: `appLinks` (Dashboard.xml, on a
+/// dashboard or a standalone panel) maps `definition`, `panel`, `explore`, `alertRule` and `dashboard` to server paths,
+/// and a link the app leaves out or sets to null is not offered (None). Without `appLinks` it is Tools' Dashboards
+/// screen (`tools`).
+fn app_link(owner: &Value, key: &str, tools: &str) -> Option<String> {
+    let Some(links) = owner["appLinks"].as_object() else {
+        return Some(format!("/apps/dashboards/{tools}"));
+    };
+    links
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|path| path.starts_with('/') && !path.starts_with("//") && !path.contains(['?', '#']))
+        .map(str::to_owned)
+}
+
+/// The message of a panel's first error notice that left it incomplete, when it has no rows to show.
+fn unavailable_notice(panel: &Value) -> Option<String> {
+    panel["notices"]
+        .as_array()?
+        .iter()
+        .find(|notice| notice["level"] == "error" && notice["complete"] == false)
+        .map(|notice| {
+            notice["message"]
+                .as_str()
+                .unwrap_or("this panel could not be read")
+                .to_owned()
+        })
+}
+
 fn dashboard_url(dashboard: &Value, action: &str, panel_id: Option<&str>, mode: Option<&str>) -> String {
     let mut pairs = vec![("definitionId".to_string(), text_of(dashboard.get("definitionId")))];
     if dashboard["filters"].is_array() {
@@ -1103,12 +1139,18 @@ const QUICK_RANGES: [(&str, &str, &str); 22] = [
 
 /// The panel menu's items for a panel, as the web panel menu has them: an id and its label.
 fn panel_menu(dashboard: &Value, panel: &Value) -> Vec<(&'static str, &'static str)> {
-    let mut items = vec![("view", "View"), ("edit", "Edit"), ("share", "Share")];
-    if panel["queries"].as_array().is_some_and(|queries| !queries.is_empty()) {
+    let mut items = vec![("view", "View")];
+    if app_link(dashboard, "definition", "Definition").is_some() {
+        items.push(("edit", "Edit"));
+    }
+    items.push(("share", "Share"));
+    if panel["queries"].as_array().is_some_and(|queries| !queries.is_empty())
+        && app_link(dashboard, "explore", "Explore").is_some()
+    {
         items.push(("explore", "Explore"));
     }
     items.push(("inspect", "Inspect"));
-    if dashboard["editable"] == true {
+    if dashboard["editable"] == true && app_link(dashboard, "dashboard", "Dashboard").is_some() {
         items.push(("duplicate", "Duplicate"));
         items.push(("remove", "Remove"));
     }
@@ -1119,7 +1161,7 @@ fn panel_menu(dashboard: &Value, panel: &Value) -> Vec<(&'static str, &'static s
             .flatten()
             .any(|aggregation| aggregation["role"] == "metric")
     });
-    if alerting {
+    if alerting && app_link(dashboard, "alertRule", "AlertRule").is_some() {
         items.push(("alert", "New alert rule"));
     }
     items
@@ -1152,8 +1194,9 @@ fn explore_url(dashboard: &Value, panel: &Value) -> Option<String> {
             .cloned(),
     );
     pills.truncate(32);
+    let explore = app_link(dashboard, "explore", "Explore")?;
     let mut url = format!(
-        "/apps/dashboards/Explore?datasetId={}&filtersJson={}",
+        "{explore}?datasetId={}&filtersJson={}",
         encoded(dataset),
         encoded(&Value::Array(pills).to_string())
     );
@@ -1174,11 +1217,13 @@ fn panel_menu_act(item: &str, dashboard: &Value, id: &str, panel: &Value, state:
     let definition = dashboard["definitionId"].as_str().unwrap_or("");
     match item {
         "view" => vec![Act::Follow(dashboard_url(dashboard, "", Some(id), None))],
-        "edit" => vec![Act::Follow(format!(
-            "/apps/dashboards/Definition?definitionId={}&panelId={}",
-            encoded(definition),
-            encoded(source)
-        ))],
+        "edit" => app_link(dashboard, "definition", "Definition").map_or_else(Vec::new, |editor| {
+            vec![Act::Follow(format!(
+                "{editor}?definitionId={}&panelId={}",
+                encoded(definition),
+                encoded(source)
+            ))]
+        }),
         "share" => vec![Act::Message(format!(
             "Link to this panel with the time made absolute: {}",
             dashboard_url(dashboard, "", Some(id), None)
@@ -1198,9 +1243,12 @@ fn panel_menu_act(item: &str, dashboard: &Value, id: &str, panel: &Value, state:
                 )];
             }
             state.local["confirmRemove"] = Value::Null;
+            let Some(screen) = app_link(dashboard, "dashboard", "Dashboard") else {
+                return Vec::new();
+            };
             vec![Act::Post {
                 url: format!(
-                    "/apps/dashboards/Dashboard/{}",
+                    "{screen}/{}",
                     if item == "remove" {
                         "removePanel"
                     } else {
@@ -1213,11 +1261,13 @@ fn panel_menu_act(item: &str, dashboard: &Value, id: &str, panel: &Value, state:
                 ]),
             }]
         }
-        "alert" => vec![Act::Follow(format!(
-            "/apps/dashboards/AlertRule?dashboardId={}&panelId={}",
-            encoded(definition),
-            encoded(id)
-        ))],
+        "alert" => app_link(dashboard, "alertRule", "AlertRule").map_or_else(Vec::new, |rule| {
+            vec![Act::Follow(format!(
+                "{rule}?dashboardId={}&panelId={}",
+                encoded(definition),
+                encoded(id)
+            ))]
+        }),
         _ => Vec::new(),
     }
 }
@@ -1544,8 +1594,11 @@ impl Component for ReportDashboard {
                     return Some(Vec::new());
                 }
                 Key::Char('e') => {
+                    let Some(editor) = app_link(dashboard, "definition", "Definition") else {
+                        return Some(vec![Act::Message("Editing is not available here".into())]);
+                    };
                     return Some(vec![Act::Follow(format!(
-                        "/apps/dashboards/Definition?definitionId={}",
+                        "{editor}?definitionId={}",
                         encoded(dashboard["definitionId"].as_str().unwrap_or(""))
                     ))]);
                 }

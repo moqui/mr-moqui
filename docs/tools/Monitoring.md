@@ -355,6 +355,42 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   a preview of several CSVs downloads as a zip. Preview, Send now and Pause are on Dashboards › Reports. An empty report is skipped. Saving to a server
   location needs `REPORT_SAVE_LOCATION`.
 
+### Mounting the report screens
+
+An app mounts the Dashboards screens under its own root (BOSS Insights does: impl-insights P2) with a screen of its own
+per Tools screen that includes it (`include-screen share-scope="true"`) and takes in its transitions
+(`transition-include`): Home (the list, with `definitionType` set), Dashboard, Definition, Panels, Explore, Split and
+Playlist. The screens run under the app's authorization; using them needs no `DASHBOARDS_APP` or
+`REPORT_DATASETS_ADMIN`, only the ReportServices operations a capability uses and each dataset's own artifact.
+
+The app's root sets, in its `always-actions` so that the transitions read them too:
+
+| Context | What it does |
+|---|---|
+| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns) and `share`. Without the map the screens keep Tools' own (`//apps/dashboards/...`); a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and the editor's save keeps the saved group, whatever group is posted |
+| `reportFixedVariables` | Dashboard variables the app fixes, such as the organization in scope: a viewer's `var-` parameter, carried value or panel export and inspect variables never replace one, and it is shown as a constant (set by the Dashboard screen's own `always-actions` when it depends on the request) |
+| `reportHiddenComponents` | Components whose shipped definitions the list leaves out (Insights: `tools`, the telemetry dashboards) |
+| `reportDefinitionTypes` | Set by an editor's screen in its `always-actions`: the definition types it offers, and the only ones its save and copy take |
+
+Dashboard sends the links to the browser and the terminal as the dashboard's `appLinks`, server paths beside
+`screenUrl` (`definition`, `panel`, `explore`, `alertRule`, `dashboard`), and Explore's count over time carries its own
+`explore`; the panel menu, the `e` key, Explore from a panel, a filter outside a dashboard and the duplicate and remove
+posts use them, and a dashboard without them uses Tools' screens. Under a mount the editor's dataset choices are the
+datasets the author may read (`list#Datasets`, each dataset's artifact), a new panel starts on the first of them, and
+Explore and Split open on one of them. A panel the viewer may not read (a dataset refused, a failed query) says "Not
+available" with the reason, never "No data". Saving a definition still checks every dataset it references as the
+author, so a copy of a dashboard over a dataset the author may not read is refused until the dataset is granted.
+
+Request parameters are names in a screen's context, so these names are set only by screens: Tools' Dashboards and
+Monitor roots set them to null, and a mount sets each in `always-actions` of the screen that reads it.
+
+The mount's root grant is inherited by the screens it mounts (impl-admin F34): deny, on the screens of an area only some
+groups use, the root's groups and grant the others there, and take in only the transitions the area needs. An
+inheritable `AUTHZT_ALWAYS` on a screen passes every deny below it, including the engine operations' own, so grant such
+an area with `inheritAuthz="N"` on the screen and on its transitions by name (`AT_XML_SCREEN_TRANS`, `<screen>/<transition>`,
+as BOSS Insights' editors): a transition not named is refused, and each engine operation is checked by its own grant. The regression
+spec is `tools/test/ReportMounts.spec.js`, over the test mount `tools/test/screen/ReportMount.xml`.
+
 ## Regressions and incidents
 
 The `detect_Regressions_5min` job (`detect#Regressions`) compares each service version that served requests in the
