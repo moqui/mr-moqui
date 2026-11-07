@@ -61,12 +61,6 @@ impl Runner for OxideRunner {
     }
 
     fn run(&self, unit: &Unit) -> Result<(), Error> {
-        // the widget check's wrapper of `ec` is QuickJS's only: a unit is refused under it rather than run unchecked
-        if crate::script::runtime::widget_wrap_on() {
-            return Err(Error::new(
-                "script_engine=oxide: a screen unit under the server-static widget check does not run on quickjs-oxide yet",
-            ));
-        }
         // nested in a run of the main runtime; a run of the spec runtime alone is another runtime's
         if let Some(engine) = super::engine::Active::main_running() {
             // the main runtime's own lend, as `with_run` checks it: the innermost runtime may be the spec runtime's

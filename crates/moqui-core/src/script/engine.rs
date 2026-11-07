@@ -429,12 +429,6 @@ fn choose(
                     kind.name()
                 )));
             }
-            if widget {
-                return Err(Error::new(format!(
-                    "script_engine=oxide: {} under the server-static widget check does not run on quickjs-oxide yet",
-                    kind.name()
-                )));
-            }
             if nested {
                 return Err(Error::new(format!(
                     "script_engine=oxide: a {} nested in a running quickjs-oxide script needs the re-entry handle (F3a)",

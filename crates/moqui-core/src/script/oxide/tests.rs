@@ -1063,8 +1063,9 @@ fn a_top_level_render_is_one_run() -> Result<(), Error> {
 }
 
 /// Review fixes: a Proxy in a tracked value is compared with the stack free; `ec.resource.expression` and `condition`
-/// run strict, as on QuickJS; under the server-static widget check the `ec.resource` texts and screen units are
-/// refused, not run unchecked.
+/// run strict, as on QuickJS. Under the server-static widget check a widget expression runs with the wrapped `ec`
+/// (`oxide::widget`): an allowed member is the real one, any other throws, and the real `ec` is back after; a screen
+/// unit runs with the real `ec`, and an `ec.resource.expression` it calls runs wrapped, its violation `null`.
 #[test]
 fn oxide_proxies_strict_expressions_and_the_widget_check() -> Result<(), Error> {
     use crate::screen::sri::Runner;
@@ -1085,19 +1086,44 @@ fn oxide_proxies_strict_expressions_and_the_widget_check() -> Result<(), Error> 
             value("ec.resource.condition('(function () { return this === undefined })()')")?,
             Value::Bool(true)
         );
-        let _wrap = crate::script::WidgetWrap::set(true);
-        for call in ["ec.resource.condition('true')", "ec.resource.expand('${1}')", "ec.resource.expression('1')"] {
-            let text = value(&format!("(() => {{ try {{ {call}; return 'ran' }} catch (e) {{ return String(e) }} }})()"))?;
-            assert!(moqui_lib::object::to_plain_string(&text).contains("widget check"), "{call}: {text:?}");
+        let wrap = crate::script::WidgetWrap::set(true);
+        let tried = |call: &str| {
+            value(&format!("(() => {{ try {{ return String({call}) }} catch (e) {{ return String(e) }} }})()"))
+                .map(|text| moqui_lib::object::to_plain_string(&text))
+        };
+        assert_eq!(tried("ec.resource.expand('${1}')")?, "1");
+        assert_eq!(tried("typeof ec.user.getPreference")?, "function");
+        for call in ["ec.resource.condition('true')", "ec.entity", "ec.l10n.getAvailableLocales"] {
+            let text = tried(call)?;
+            assert!(text.contains("is not available in a server-static qvt screen"), "{call}: {text}");
         }
         let unit = crate::screen::generate::Unit {
             id: u64::MAX,
-            source: "(function ($depth) {})".to_string(),
+            source: "(function ($depth) { unitSaw = String(ec.resource.expression('ec.entity')) + '|' + typeof ec.entity })"
+                .to_string(),
             runtime: Arc::from(""),
             runtime_id: 0,
         };
-        let err = super::units::RUNNER.run(&unit).unwrap_err();
-        assert!(err.message().contains("widget check"), "{}", err.message());
+        super::units::RUNNER.run(&unit)?;
+        assert_eq!(crate::script::context_value("unitSaw"), Some(Value::string("null|object")));
+        // a script a widget expression's host call runs is a run of its own, with the real `ec`
+        let context = super::engine::context_for_tests();
+        let global = context.global_object().unwrap();
+        context
+            .define_function(&global, "nestedRead", 0, |scope: &mut quickjs_oxide::engine::api::core::Scope<'_>| {
+                let read = scope.lend(|| crate::script::eval_value("typeof ec.entity"));
+                let text = read.map_or_else(|err| err.to_string(), |value| moqui_lib::object::to_plain_string(&value));
+                Ok(quickjs_oxide::engine::api::core::Value::String(
+                    quickjs_oxide::engine::api::core::JsString::try_from_utf8(&text).unwrap(),
+                ))
+            })
+            .unwrap();
+        assert_eq!(
+            value("nestedRead() + '|' + (() => { try { ec.entity; return 'real' } catch (e) { return 'wrapped' } })()")?,
+            Value::string("object|wrapped")
+        );
+        drop(wrap);
+        assert_eq!(value("typeof ec.entity")?, Value::string("object"), "the real ec is back");
         Ok(())
     })
 }

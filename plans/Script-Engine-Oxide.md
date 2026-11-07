@@ -432,9 +432,13 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
   wins. On QuickJS a check so hidden fails closed: the stack's value is not callable (a function does not convert to
   the stack), so the write the check guards fails while the value is on the stack (`service/eca_tests.rs`,
   `the_security_checks_run_on_each_engine`).
-- The server-static widget check's wrapper of `ec` is QuickJS's only: under it, a screen unit and
-  `ec.resource.script`, `expand`, `expression` and `condition` are refused on oxide, so the check reports a failed render
-  rather than passing a screen unchecked.
+- The server-static widget check's wrapper of `ec` (`runtime::WRAPPED_EC`) is on both engines (`oxide/widget.rs`): a
+  widget expression, template, `ec.resource.expand`, `expression` or `condition` runs with it, a screen unit and
+  `ec.resource.script` with the real `ec`, as on QuickJS. A run nested in a wrapped expression (a host call that runs a
+  script) gets the real `ec` for its run on both engines; on QuickJS that had been lost since Round 28 put nested runs
+  in the one engine (`the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one`). Under `oxide` the expression
+  a violation names is set at the entry point (`note_widget_expression`), since oxide sees only the text as it runs. The
+  error's stack names `wrapped_ec` on oxide where QuickJS names `eval_script`.
 - A Set the stack holds is a live JavaScript `Set` under `oxide`, tracked and written back; `small-oxide` still runs such
   a text on QuickJS.
 - Error columns: oxide places a call at its `(`, QuickJS at the callee's name.

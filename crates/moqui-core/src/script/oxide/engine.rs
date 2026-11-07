@@ -1201,7 +1201,10 @@ fn run<T>(
             }
             compiled => compiled,
         };
-        match compiled.and_then(|compiled| context.execute(&compiled)) {
+        // the widget check's wrapper of `ec` around the expression ([`super::widget`])
+        let ran = compiled
+            .and_then(|compiled| super::widget::with_widget_ec(engine, None, || context.execute(&compiled)));
+        match ran {
             Ok(value) => finish(context, engine, value).map_err(|conv| {
                 if let Conv::Js(err) = &conv {
                     note(err);
@@ -1253,6 +1256,7 @@ pub(super) fn with_run<T>(
     // the outer run would lose them (`setup#UserOrganizationInfo`'s `userOrgIds.push` across an entity find). The
     // binder flushes before a method that reads or changes the stack, before the call changes it.
     let state = RunState::enter(&engine, nested);
+    let _real_ec = nested.then(|| super::widget::RealEcForNested::enter(&engine));
     let _render = super::units::set_aside_render_body();
     let mut poisoned = false;
     let mut out_of_memory = false;

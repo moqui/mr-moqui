@@ -41,6 +41,7 @@ mod tracked;
 pub(crate) mod units;
 pub(crate) mod web;
 pub(crate) mod walker;
+mod widget;
 
 pub(crate) use engine::{
     start_failed_recently, DID_NOT_START,

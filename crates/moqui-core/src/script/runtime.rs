@@ -123,6 +123,9 @@ pub(crate) const VALUE_OF_MESSAGE: &str =
 thread_local! {
     /// While true, an expression of a widget runs with the `ec` of the server-static browser host: the compatibility report's full check.
     static WIDGET_WRAP: Cell<bool> = const { Cell::new(false) };
+    /// The real `ec` while a widget expression runs with the wrapper in its place ([`with_widget_ec`]), for a script it
+    /// calls into ([`RealEcForNested`]).
+    static WRAPPED_REAL: RefCell<Option<Persistent<JsValue<'static>>>> = const { RefCell::new(None) };
     /// This thread's engines: the main one ([`EngineKind::Main`]) and, for the test harness, the spec one.
     static ENGINES: RefCell<Vec<(EngineKind, Rc<Engine>)>> = const { RefCell::new(Vec::new()) };
     /// The QuickJS engine of each running QuickJS script, innermost last. [`crate::script::run`] has the engine of
@@ -188,11 +191,54 @@ pub(crate) fn with_real_ec<T>(body: impl FnOnce() -> T) -> T {
 struct RealEc<'js> {
     ctx: Ctx<'js>,
     real: JsValue<'js>,
+    /// What [`WRAPPED_REAL`] held before.
+    previous: Option<Persistent<JsValue<'static>>>,
+}
+
+impl<'js> RealEc<'js> {
+    fn hold(ctx: &Ctx<'js>, real: JsValue<'js>) -> Self {
+        let saved = Persistent::save(ctx, real.clone());
+        Self {
+            ctx: ctx.clone(),
+            real,
+            previous: WRAPPED_REAL.with(|held| held.replace(Some(saved))),
+        }
+    }
 }
 
 impl Drop for RealEc<'_> {
     fn drop(&mut self) {
         let _ = set_ec(&self.ctx, self.real.clone());
+        let previous = self.previous.take();
+        WRAPPED_REAL.with(|held| *held.borrow_mut() = previous);
+    }
+}
+
+/// A script a widget expression calls into (a host function that runs one, [`with_nested_context`]) runs in the same
+/// engine, so it gets the real `ec` for its run, not the wrapper: it is not the screen's widget expression. What
+/// `globalThis.ec` was is put back when it ends.
+struct RealEcForNested<'js> {
+    ctx: Ctx<'js>,
+    outer: Option<JsValue<'js>>,
+}
+
+impl<'js> RealEcForNested<'js> {
+    fn enter(ctx: &Ctx<'js>) -> Self {
+        let real = WRAPPED_REAL.with(|held| held.borrow().clone()).and_then(|real| real.restore(ctx).ok());
+        let outer = real.and_then(|real| {
+            let outer: JsValue = ctx.globals().get("ec").ok()?;
+            set_ec(ctx, real).ok()?;
+            Some(outer)
+        });
+        Self { ctx: ctx.clone(), outer }
+    }
+}
+
+impl Drop for RealEcForNested<'_> {
+    fn drop(&mut self) {
+        if let Some(outer) = self.outer.take() {
+            let _ = set_ec(&self.ctx, outer);
+        }
     }
 }
 
@@ -208,7 +254,7 @@ fn set_ec<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> rquickjs::Result<()> {
 /// `Symbol.toPrimitive`) and the probes of a plain object (`toString`, `valueOf` and the other `Object.prototype`
 /// members a template's coercion or a check reads; `then` and `toJSON`, undefined there) are as on a plain object, not
 /// violations.
-const WRAPPED_EC: &str = r#"(function (real, deny) {
+pub(crate) const WRAPPED_EC: &str = r#"(function (real, deny) {
     const has = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
     const guard = (target, prefix) => new Proxy(target, {
         get(target, key) {
@@ -231,6 +277,14 @@ const WRAPPED_EC: &str = r#"(function (real, deny) {
         resource: area("resource", ["expand", "expandNoL10n"])
     }, "");
 })"#;
+
+/// Note `expression` as the one a widget check records against, when the check is on: quickjs-oxide's wrapper
+/// (`oxide::widget`) sees the text only as it runs (`as_expression`'s form, a template literal).
+pub(crate) fn note_widget_expression(expression: &str) {
+    if WIDGET_WRAP.with(Cell::get) {
+        crate::screen::statics::set_expression(expression);
+    }
+}
 
 /// Run `body`, a widget expression, with the wrapped `ec` when a widget check is on. A violation is recorded when the expression
 /// touches an area outside the host, and the error is the caller's: `fallback` turns it into a value so a render goes on.
@@ -258,7 +312,7 @@ fn with_widget_ec<'js, R>(
         .catch(ctx)
         .map_err(|caught| Error::new(caught.to_string()))?;
     set_ec(ctx, wrapper).map_err(js_error)?;
-    let _real = RealEc { ctx: ctx.clone(), real };
+    let _real = RealEc::hold(ctx, real);
     // The expression may call back into the host (expand inside an expression): that is not checked twice.
     let _unchecked = WidgetWrap::set(false);
     body()
@@ -782,6 +836,7 @@ pub fn eval_condition(expression: &str) -> Result<bool, Error> {
         return Err(Error::new("script source contains a null byte"));
     }
     let source = as_expression(expression);
+    note_widget_expression(expression);
     let quickjs = || {
         with_kind(EntryKind::Condition, |ctx| {
             with_widget_ec(ctx, expression, || {
@@ -804,6 +859,7 @@ pub fn expand(template: &str) -> Result<String, Error> {
     if crate::script::engine::may_route() {
         // on quickjs-oxide the template literal itself, run as an expression: the same text QuickJS's function returns
         let literal = template_literal(template);
+        note_widget_expression(template);
         let quickjs = || with_kind(EntryKind::Expand, |ctx| expand_in(ctx, template));
         return crate::script::engine::small_script(EntryKind::Expand, &literal, crate::script::oxide::eval_text, quickjs);
     }
@@ -983,7 +1039,9 @@ fn with_nested_context<R>(
         flushing: engine.flushing.replace(false),
     };
     let guard = crate::script::run::enter_depth(depth);
+    let real_ec = RealEcForNested::enter(&ctx);
     let result = body(&ctx);
+    drop(real_ec);
     let flushed = flush_tracked(&ctx, engine, Flush::End);
     drop(guard);
     drop(outer);
@@ -2083,6 +2141,7 @@ fn eval_value_as(kind: EntryKind, expression: &str) -> Result<Value, Error> {
         return Err(Error::new("script source contains a null byte"));
     }
     let source = as_expression(expression);
+    note_widget_expression(expression);
     let quickjs = || {
         with_kind(kind, |ctx| {
             with_widget_ec(ctx, expression, || {
@@ -2175,6 +2234,7 @@ pub fn eval_map(expression: &str) -> Result<std::collections::BTreeMap<String, V
         return Err(Error::new("script source contains a null byte"));
     }
     let source = as_expression(expression);
+    note_widget_expression(expression);
     let quickjs = || {
         with_kind(EntryKind::Map, |ctx| {
             with_widget_ec(ctx, expression, || {
