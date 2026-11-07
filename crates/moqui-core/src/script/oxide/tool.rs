@@ -83,6 +83,7 @@ impl ToolClass {
                 }
             }
             // a panic in the tool's own code is an error the script catches, as the trampoline's
+            super::release_before_lend(scope)?;
             let called = scope.lend(|| {
                 super::caught_panic(|| crate::script::host::with_ec(|ec| tool.0.call(ec, &method, &args)))
             });
@@ -133,6 +134,7 @@ impl ExoticClass for ToolClass {
             let conv = crate::script::oxide::convert::Conv::Unsupported(super::FELL_BACK);
             return Err(crate::script::oxide::engine::host_error(scope, conv));
         }
+        super::release_before_lend(scope)?;
         let read = scope.lend(|| {
             super::caught_panic(|| crate::script::host::with_ec(|ec| tool.0.property(ec, &name)))
         });

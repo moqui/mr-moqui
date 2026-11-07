@@ -373,9 +373,20 @@ pub(super) fn host_body<T>(
     }
 }
 
+/// Before a lend outside the table's methods (a tool's call, an entity value's relationship or computed field, the
+/// engine's own host functions): the running script's tracked values written back and released, while its own frame is
+/// the stack's top, as `engine::release_for_quickjs` does for a QuickJS script nested there. A script nested in the lend
+/// then reads what the outer one changed, whichever engine it runs on, and a value it assigns is not written over at
+/// the outer run's end.
+pub(super) fn release_before_lend<J: Js>(js: &mut J) -> JsResult<()> {
+    super::tracked::flush(js, super::tracked::Flush::Release).map_err(|conv| super::engine::host_error(js, conv))
+}
+
 /// Lend the engine to `body`, as a non-leaf table method's lend does ([`OxideOps::lend`]): a panic in the body's own
-/// code is thrown as an `Error`, one through a nested run goes on.
+/// code is thrown as an `Error`, one through a nested run goes on. The running script's tracked values are released
+/// first ([`release_before_lend`]).
 pub(super) fn lend<R>(scope: &mut Scope<'_>, body: impl FnOnce() -> JsResult<R>) -> JsResult<R> {
+    release_before_lend(scope)?;
     let lent = {
         let _engine = EngineCall;
         scope.lend(|| caught_panic(body))

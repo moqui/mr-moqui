@@ -326,6 +326,7 @@ pub(crate) fn engine_memory(collect: bool) -> OxideMemory {
 /// One line of this thread's oxide runtimes' heaps (the main one and the spec runtime), after a collection, for a
 /// per-spec heap log (`MOQUI_SCRIPT_HEAP_LOG`). Empty while a script runs on the thread.
 pub(crate) fn heap_line() -> String {
+    use std::fmt::Write;
     if run::is_running(EngineTag::Oxide) {
         return String::new();
     }
@@ -335,7 +336,6 @@ pub(crate) fn heap_line() -> String {
         let Some(engine) = engine else { continue };
         let _ = engine.runtime.run_gc();
         let Ok(report) = engine.runtime.memory_report() else { continue };
-        use std::fmt::Write;
         let _ = write!(
             line,
             "{name}: reserved={} live={} dyncode={} atoms={} pinned={} ic={} tables={} compiled={:?} units={}/{} modules={} keys={} entities={} |",
@@ -516,6 +516,11 @@ impl Active {
         ENGINE
             .with(|engine| engine.borrow().clone())
             .filter(Self::holds)
+    }
+
+    /// Whether a runtime's start ([`Active::starting`]) is on this thread's stack.
+    fn starting_on_stack() -> bool {
+        ACTIVE.with(|active| active.borrow().iter().any(|(_, run)| !run))
     }
 
     /// Whether a runtime other than `engine` has a run in progress on this thread.
@@ -975,10 +980,12 @@ impl OxideEngine {
         Some(reserved)
     }
 
-    /// At the end of an outermost run: the cache pressure check ([`PRESSURE_BYTES`]) on the last sample, or at once
-    /// after the run ran out of memory. Whether the runtime is still past it with its caches gone, so is to be dropped.
-    fn relieve(&self, out_of_memory: bool) -> bool {
-        if !out_of_memory && self.heap.get() < PRESSURE_BYTES {
+    /// At the end of an outermost run: the cache pressure check ([`PRESSURE_BYTES`]) on the last sample, or on a sample
+    /// taken now when `sample_now` (an error whose text names `out of memory`, which may be a script's own throw or a
+    /// database's message), or with the caches let go at once after the run ran out of memory. Whether the runtime is
+    /// still past it with its caches gone, so is to be dropped.
+    fn relieve(&self, out_of_memory: bool, sample_now: bool) -> bool {
+        if !out_of_memory && !sample_now && self.heap.get() < PRESSURE_BYTES {
             return false;
         }
         if !out_of_memory {
@@ -1254,8 +1261,10 @@ pub(super) fn with_run<T>(
         out_of_memory |= matches!(err, RuntimeError::OutOfMemory);
     };
     let mut outcome = body(&engine, &mut context, &mut note);
-    // a script that caught the engine's `out of memory` and threw it on, or a screen unit's error, ran out too
-    out_of_memory |= matches!(&outcome, Err(Outcome::Error(err)) if err.message().contains("out of memory"));
+    // a script that caught the engine's `out of memory` and threw it on, or a screen unit's error, may have run out
+    // too; the text alone may also be a script's own throw or a database's message, so it only samples the heap now
+    let names_out_of_memory = !out_of_memory
+        && matches!(&outcome, Err(Outcome::Error(err)) if err.message().contains("out of memory"));
     if FALLBACK.with(Cell::get).is_none() && !poisoned {
         if writes {
             // as QuickJS does at a script's end, whether it ended well or not
@@ -1282,16 +1291,21 @@ pub(super) fn with_run<T>(
         }
         engine.sample_heap();
         // the pressure check of the outermost run: a runtime its caches' going leaves past it starts again
-        if !nested && engine.relieve(out_of_memory) {
-            tracing::info!(script = %what, "the quickjs-oxide runtime's heap stays near its cap with its caches gone; it is dropped and restarts on the next script");
-            counts::RESTARTED.fetch_add(1, Relaxed);
-            engine.restarting.set(true);
-            ENGINE.with(|current| {
+        // (not while a runtime's start is on the stack: its shims' host calls run scripts on it)
+        if !nested && !Active::starting_on_stack() && engine.relieve(out_of_memory, names_out_of_memory) {
+            let dropped = ENGINE.with(|current| {
                 let mut current = current.borrow_mut();
-                if current.as_ref().is_some_and(|held| Rc::ptr_eq(held, &engine)) {
+                let held = current.as_ref().is_some_and(|held| Rc::ptr_eq(held, &engine));
+                if held {
                     *current = None;
                 }
+                held
             });
+            if dropped {
+                tracing::info!(script = %what, "the quickjs-oxide runtime's heap stays near its cap with its caches gone; it is dropped and restarts on the next script");
+                counts::RESTARTED.fetch_add(1, Relaxed);
+                engine.restarting.set(true);
+            }
         }
     }
     match fallback {

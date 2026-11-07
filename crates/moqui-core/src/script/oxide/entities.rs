@@ -226,6 +226,7 @@ pub(crate) fn field(scope: &mut ExoticScope<'_>, cell: &Arc<EntityCell>, name: &
     if !host_entities::entity_field_reads(cell, name) {
         return Ok(host_entities::entity_field(cell, name));
     }
+    super::release_before_lend(scope)?;
     let read = scope.lend(|| super::caught_panic(|| host_entities::entity_field(cell, name)));
     read.map_err(|message| super::plain_error(scope, &message))
 }
@@ -275,6 +276,7 @@ pub(crate) fn is_value_method(name: &str) -> bool {
 
 /// The related value or list of a relationship name, read with the engine lent (a find may run nested scripts).
 pub(crate) fn relationship(scope: &mut ExoticScope<'_>, cell: &Arc<EntityCell>, name: &str) -> JsResult<Hook<Value>> {
+    super::release_before_lend(scope)?;
     let read = scope.lend(|| {
         super::caught_panic(|| host_entities::relationship_value(cell, name))
             .unwrap_or_else(|message| Err(moqui_lib::error::Error::new(message)))

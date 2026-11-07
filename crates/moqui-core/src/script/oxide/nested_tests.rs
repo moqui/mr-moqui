@@ -72,3 +72,38 @@ fn a_nested_run_leaves_the_outer_runs_values_to_its_frame() -> Result<(), Error>
     );
     Ok(())
 }
+
+/// A lend outside the table's methods (here the engine's own, `bind::lend`) whose nested script runs in the same frame
+/// reads what the outer run changed in place, as a QuickJS script nested there does, and a value the nested script
+/// assigns is not written over at the outer run's end.
+#[test]
+fn a_nested_run_in_the_same_frame_reads_the_outer_runs_changes() -> Result<(), Error> {
+    use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
+    clear_context_stack();
+    push_context_frame();
+    crate::script::set_context_name("items", Value::List(vec![Value::I32(1)]))?;
+    let context = with_script_engine(ScriptEngine::Oxide, super::engine::context_for_tests);
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "sameFrame", 0, |scope: &mut Scope<'_>| -> Result<JsValue, _> {
+            let ran = super::bind::lend(scope, || {
+                Ok(crate::script::run_script("seen = items.length; items = [9]"))
+            })?;
+            match ran {
+                Ok(()) => Ok(JsValue::Undefined),
+                Err(err) => {
+                    Err(scope.throw_error(quickjs_oxide::engine::api::core::NativeErrorKind::Type, err.message()))
+                }
+            }
+        })
+        .unwrap();
+    with_script_engine(ScriptEngine::Oxide, || {
+        crate::script::run_script("items.push(5); sameFrame()")
+    })?;
+    assert_eq!(crate::script::context_value("seen"), Some(Value::I32(2)));
+    assert_eq!(
+        crate::script::context_value("items"),
+        Some(Value::List(vec![Value::I32(9)]))
+    );
+    Ok(())
+}
