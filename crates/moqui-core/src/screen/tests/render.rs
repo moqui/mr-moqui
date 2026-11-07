@@ -1746,6 +1746,17 @@ fn a_public_islands_component_makes_no_session() {
     assert_eq!(response.status, 200);
     assert_eq!(cache_control(&response), ["private, no-store"]);
     assert_eq!(sessions(&world), before + 1);
+    // a signed cookie naming a session that is gone: public, and the new session's cookie is not sent with it (a cache
+    // would hand it to everyone)
+    let gone = crate::user::session::format_session_cookie("0123456789abcdef0123456789abcdef01234567", false).unwrap();
+    let mut stale = request("GET", "/Static.qvue");
+    stale.set_header("cookie", gone.split(';').next().unwrap());
+    let response = serve_at(&world.factory, stale, &root);
+    assert_eq!(response.status, 200);
+    let cache = cache_control(&response);
+    assert!(cache.len() == 1 && cache[0].contains("public"), "{cache:?}");
+    assert_eq!(cookie(&response), None);
+    assert_eq!(sessions(&world), before + 1);
     // a signed-in user: private
     let mut signed_in = request("GET", "/Static.qvue");
     signed_in.set_header("authorization", super::basic("ann"));
@@ -1819,5 +1830,12 @@ fn a_restricted_host_refuses_the_framework_routes_but_not_the_static_ones() {
     assert_eq!(live.status, 200, "{}", live.body_text());
     assert!(live.body_text().contains("apps here"));
     assert_eq!(get("fail.test", "/apps").status, 404, "a failed check refuses");
+    // a static first name counts only while the screen path stays under it; another servlet's path is refused
+    for path in ["/libs/../apps", "/libs/x/../../apps", "/libs/..", "/fop/apps"] {
+        let response = get("preview.test", path);
+        assert_eq!(response.status, 404, "{path}: {}", response.body_text());
+        assert_eq!(super::header_value(&response, "Set-Cookie"), None, "{path}: the refusal makes no session");
+    }
+    assert_eq!(get("preview.test", "/libs/x/../.").status, 200, "still the libs");
     let _ = std::fs::remove_dir_all(&dir);
 }

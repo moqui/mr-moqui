@@ -80,14 +80,23 @@ pub fn hosts(factory: &ExecutionContextFactory) -> Vec<String> {
     hosts
 }
 
-/// Whether a request for a framework route (a [`FRAMEWORK_ROUTES`] path that is not one of the [`STATIC_ROUTES`]) is
-/// refused on its host: a `<public-site>` of the host names a `host-check-service`, which is called with the site,
-/// host and path and answers `restricted` true (a site's theme preview host, Commerce F87). Such a host serves its site
-/// and static files only, so nobody signs in to the framework or reaches its apps, REST, token routes or servlets on
-/// it. A service that fails refuses the route (the error is logged): the check guards a security boundary.
-pub(super) fn refuses_framework_route(factory: &ExecutionContextFactory, request: &WebRequest) -> bool {
+/// Whether a request for a framework route (a [`FRAMEWORK_ROUTES`] path that is not one of the [`STATIC_ROUTES`], or a
+/// path a servlet other than the screens' takes, `servlet_route`) is refused on its host: a `<public-site>` of the host
+/// names a `host-check-service`, which is called with the site, host and path and answers `restricted` true (a site's
+/// theme preview host, Commerce F87). Such a host serves its site and static files only, so nobody signs in to the
+/// framework or reaches its apps, REST, token routes or servlets on it. A static route counts only when the screen path
+/// stays under it: `/libs/../apps` is the apps. A service that fails refuses the route (the error is logged): the check
+/// guards a security boundary.
+pub(super) fn refuses_framework_route(
+    factory: &ExecutionContextFactory,
+    request: &WebRequest,
+    servlet_route: bool,
+) -> bool {
     let first = request.path.trim_start_matches('/').split('/').next().unwrap_or("");
-    if !FRAMEWORK_ROUTES.contains(&first) || STATIC_ROUTES.contains(&first) {
+    if !servlet_route && !FRAMEWORK_ROUTES.contains(&first) {
+        return false;
+    }
+    if !servlet_route && STATIC_ROUTES.contains(&first) && screen_path_first(&request.path) == first {
         return false;
     }
     match MNode::parse_shared("moqui-conf", &factory.conf_text()) {
@@ -100,6 +109,23 @@ pub(super) fn refuses_framework_route(factory: &ExecutionContextFactory, request
             true
         }
     }
+}
+
+/// The first name of the screen path a request path resolves to, as the screen URL reads it
+/// (`url::cleanup_path_names`, Java's `cleanupPathNameList`): empty names, `.` and `~name=value` drop, `..` pops.
+fn screen_path_first(path: &str) -> String {
+    let mut names: Vec<&str> = Vec::new();
+    for name in path.split('/') {
+        match name {
+            "" | "." => {}
+            ".." => {
+                names.pop();
+            }
+            _ if name.starts_with('~') => {}
+            _ => names.push(name),
+        }
+    }
+    names.first().map_or_else(String::new, |name| (*name).to_string())
 }
 
 /// [`refuses_framework_route`] for a framework route on the request's host, over `conf`.
