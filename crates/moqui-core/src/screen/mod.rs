@@ -86,6 +86,7 @@ pub use pdf::{
     PdfPreview, PdfPreviewRequest, PdfRenderer, PDFJS_LOCATION, PDFJS_WORKER_LOCATION, PDF_UNAVAILABLE,
     PREVIEW_UNSUPPORTED,
 };
+pub(crate) use render::active_depth;
 pub use render::{
     make_render, save_screen_last_info, send_redirect_and_stop_render, with_current_render, RenderOutput, RenderState,
     ScreenRender,
@@ -262,15 +263,17 @@ fn handle(
         scripts.fire("requestDestroyed", Value::Null);
     }
     scripts.run_actions_logged("after-request", parameters);
-    // A page a shared cache may keep, for a visitor with no session and nobody signed in, gets no session: no cookie or
-    // token is sent and the session made for the request is not kept (impl-shop F42). A screen that declined a session
-    // (`ec.web.declineSession()`, impl-commerce F86) gets the same whatever its caching, and a session the request
-    // brought is kept but sent nothing new; either way the Visit the request started is taken back.
+    // A page a shared cache may keep, for a visitor with no live session and nobody signed in, gets no session: no
+    // cookie or token is sent and the session made for the request is not kept (impl-shop F42). A signed cookie naming
+    // a session that is gone counts as none, so a public response never carries a new session's cookie for a cache to
+    // hand to others. A screen that declined a session (`ec.web.declineSession()`, impl-commerce F86) gets the same
+    // whatever its caching, and a session the request brought is kept but sent nothing new; either way the Visit the
+    // request started is taken back.
     let declined = user::session::session_declined();
     let anonymous = user::session::current_user_id()?.is_none();
     let discard = anonymous
-        && ((presented.is_none() && matches!(&outcome, Ok(response) if is_public(response)))
-            || (declined && new_session));
+        && new_session
+        && (declined || matches!(&outcome, Ok(response) if is_public(response)));
     if declined {
         user::session::take_back_request_visit();
     }
@@ -320,6 +323,15 @@ fn run_request(
 ) -> Result<WebResponse, Error> {
     if scripts.has_listeners() {
         scripts.fire("requestInitialized", Value::Null);
+    }
+    // a restricted host (a site's theme preview host) serves its site and static files, no framework route or servlet
+    // (F87); the refusal makes no session
+    let servlet_route = scripts
+        .match_servlet(&request.path)
+        .is_some_and(|found| !matches!(found.servlet.handler, crate::web::servlet::Handler::Screen));
+    if public_site::refuses_framework_route(factory, request, servlet_route) {
+        user::session::decline_session();
+        return Ok(web::json_error(404, "Not found"));
     }
     scripts.run_actions("before-request", parameters)?;
     let Some(found) = scripts.match_servlet(&request.path) else {

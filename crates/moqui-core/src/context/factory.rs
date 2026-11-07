@@ -1411,6 +1411,13 @@ impl ExecutionContext {
         self.state.artifacts.borrow().tarpit_disabled()
     }
 
+    /// Whether what runs now is a service's own code: the top artifact frame is a service's, and no screen render began
+    /// on this thread since it was pushed. False with no frame, under a screen, transition or REST frame, and in a widget
+    /// expression of a render a service started.
+    pub(crate) fn in_service_body(&self) -> bool {
+        self.state.artifacts.borrow().top_is_service_body()
+    }
+
     /// Java's `getStackNameString`: the names on the artifact stack, top first.
     pub fn artifact_stack_names(&self) -> String {
         self.state.artifacts.borrow().name_string()

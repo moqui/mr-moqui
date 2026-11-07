@@ -456,6 +456,12 @@ along with this software (see the LICENSE.md file). If not, see
                             of the same name; siteId, resolvedSiteId and the Forum's three are bound after them). A mount at
                             "/" claims only this host; a path under any other mount is concealed on hosts no public-site
                             names.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="host-check-service" type="xs:string">
+                        <xs:annotation><xs:documentation>A service called with siteId, hostname and path for a request to a
+                            framework route on this host (/apps, /qapps, /rest, /Login, the token routes, the servlets...);
+                            when it answers restricted true the route is 404 on this host, so nobody signs in to the
+                            framework there (a site's theme preview host). The static routes (/js, /css, /libs, /images,
+                            /static, /assets) are not checked. A service that fails refuses the route.</xs:documentation></xs:annotation></xs:attribute>
                     </xs:complexType>
                 </xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="token-route">

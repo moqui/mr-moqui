@@ -231,6 +231,9 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.StatusItem description="Sending" sequenceNum="11" statusId="SmsgSending" statusTypeId="SystemMessage"/>
             <moqui.basic.StatusItem description="Sent" sequenceNum="12" statusId="SmsgSent" statusTypeId="SystemMessage"/>
 
+            <!-- Staged: an incoming message held until someone commits it (an import batch prepared, then confirmed);
+                no framework job consumes it, as consume#ReceivedSystemMessage takes only SmsgReceived -->
+            <moqui.basic.StatusItem description="Staged" sequenceNum="19" statusId="SmsgStaged" statusTypeId="SystemMessage"/>
             <moqui.basic.StatusItem description="Received" sequenceNum="20" statusId="SmsgReceived" statusTypeId="SystemMessage"/>
             <moqui.basic.StatusItem description="Consuming" sequenceNum="21" statusId="SmsgConsuming" statusTypeId="SystemMessage"/>
             <moqui.basic.StatusItem description="Consumed" sequenceNum="22" statusId="SmsgConsumed" statusTypeId="SystemMessage"/>
@@ -251,6 +254,8 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgSent" toStatusId="SmsgConfirmed" transitionName="Confirm"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgSent" toStatusId="SmsgRejected" transitionName="Reject"/>
 
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgStaged" toStatusId="SmsgConsuming" transitionName="Consuming"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgConsuming" toStatusId="SmsgStaged" transitionName="Back to Staged"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgReceived" toStatusId="SmsgConsuming" transitionName="Consuming"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgConsuming" toStatusId="SmsgConsumed" transitionName="Consume"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgConsuming" toStatusId="SmsgReceived" transitionName="Back to Received"/>
@@ -275,6 +280,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgProduced" toStatusId="SmsgCancelled" transitionName="Cancel"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgSending" toStatusId="SmsgCancelled" transitionName="Cancel"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgSent" toStatusId="SmsgCancelled" transitionName="Cancel"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgStaged" toStatusId="SmsgCancelled" transitionName="Cancel"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgReceived" toStatusId="SmsgCancelled" transitionName="Cancel"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgConsuming" toStatusId="SmsgCancelled" transitionName="Cancel"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="SmsgConsumed" toStatusId="SmsgCancelled" transitionName="Cancel"/>
