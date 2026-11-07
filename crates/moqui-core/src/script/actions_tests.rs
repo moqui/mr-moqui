@@ -821,3 +821,22 @@ fn actions_generated_apart_keep_the_callers_engine() {
     assert!(generated_actions_with("apartOnOxide"));
     assert!(!generated_actions_with("apartOnQuickJs"));
 }
+
+/// Text generated apart from a running script is bounded by the caller's script deadline, on the generator thread, on
+/// either engine.
+#[test]
+fn actions_generated_apart_keep_the_callers_deadline() {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let sets: String = (0..2000).map(|index| format!("<set field=\"f{index}\" value=\"{index}\"/>")).collect();
+    let xml = format!("<actions>{sets}</actions>");
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        let late = {
+            let _deadline = crate::script::DeadlineGuard::new(Some(std::time::Duration::ZERO));
+            with_script_engine(engine, || generate_apart(&xml, false))
+        };
+        let late = late.unwrap_err();
+        assert!(late.message().contains("interrupted"), "{engine:?}: {}", late.message());
+        let in_time = with_script_engine(engine, || generate_apart(&xml, false)).unwrap();
+        assert!(in_time.contains("f1999"), "{engine:?}");
+    }
+}

@@ -16,6 +16,7 @@
 
 use std::collections::HashSet;
 use std::sync::{mpsc, Mutex, OnceLock};
+use std::time::Instant;
 
 use moqui_lib::node::MNode;
 use moqui_lib::sync::lock;
@@ -23,6 +24,7 @@ use rquickjs::{Ctx, Object};
 
 use super::runtime::ScriptText;
 use super::engine::{script_engine, with_script_engine, ScriptEngine};
+use super::run::{DeadlineGuard, DEADLINE};
 use super::walker::{self, Walk};
 use crate::context::Error;
 
@@ -212,9 +214,16 @@ fn generate_with(xml: &str, debug: bool) -> Result<String, Error> {
 /// The stack of the thread that generates for a running script, as much as the outermost script on a worker has.
 const GENERATOR_STACK: usize = 2 * 1024 * 1024;
 
-/// The text, `debug`, the engine the caller generates on (its `with_script_engine` choice too), and where the result
-/// goes.
-type Job = (String, bool, ScriptEngine, mpsc::Sender<Result<String, Error>>);
+/// A generation for the generator thread: the text and `debug`, as the caller would generate it.
+struct Job {
+    xml: String,
+    debug: bool,
+    /// The engine the caller generates on (its `with_script_engine` choice too).
+    engine: ScriptEngine,
+    /// The caller's script deadline, which bounds the generation as it would on the caller's thread.
+    deadline: Option<Instant>,
+    reply: mpsc::Sender<Result<String, Error>>,
+}
 
 /// Generate on a thread of its own. Text first generated inside a script, as the actions of a screen whose definition
 /// loads while a template renders a link to it, would otherwise get only what is left of that script's stack, and the
@@ -228,8 +237,12 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
             .name("xml-actions-generator".into())
             .stack_size(GENERATOR_STACK)
             .spawn(move || {
-                for (xml, debug, engine, reply) in jobs {
-                    let _ = reply.send(with_script_engine(engine, || generate_with(&xml, debug)));
+                for job in jobs {
+                    let _deadline = job
+                        .deadline
+                        .map(|at| DeadlineGuard::new(Some(at.saturating_duration_since(Instant::now()))));
+                    let generated = with_script_engine(job.engine, || generate_with(&job.xml, job.debug));
+                    let _ = job.reply.send(generated);
                 }
             });
         if let Err(err) = started {
@@ -238,7 +251,14 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
         Mutex::new(sender)
     });
     let (reply, result) = mpsc::channel();
-    let sent = lock(sender).send((xml.to_string(), debug, script_engine(), reply));
+    let job = Job {
+        xml: xml.to_string(),
+        debug,
+        engine: script_engine(),
+        deadline: DEADLINE.with(std::cell::Cell::get),
+        reply,
+    };
+    let sent = lock(sender).send(job);
     match sent {
         Ok(()) => result
             .recv()
