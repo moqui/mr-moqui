@@ -25,13 +25,13 @@
 //! rquickjs does not wrap these two calls for scripts, so they are made through `rquickjs::qjs`.
 
 use std::ffi::CString;
-use std::hash::{Hash, Hasher};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use rquickjs::{qjs, CatchResultExt, Ctx, FromJs, Persistent, Value as JsValue};
 
 use super::{caught_error, current_engine, panic_message, Error};
+use crate::script::text::{hash_of, hash_text, ScriptText};
 
 /// Compiled scripts kept per engine, and the source text they may add up to.
 pub(super) const MAX_COMPILED_SCRIPTS: usize = 4096;
@@ -40,62 +40,6 @@ pub(super) const MAX_COMPILED_SCRIPT_BYTES: usize = 4 * 1024 * 1024;
 /// Compiled scripts by the hash of their text and filename, plus strictness. Hits compare both text and filename.
 pub(super) type CompiledScripts =
     crate::script::BoundedMap<(u64, bool), (Arc<str>, Arc<str>, Persistent<JsValue<'static>>)>;
-
-/// A script's text with the hash its compiled form is kept by, made once for a text that runs many times.
-#[derive(Clone)]
-pub(crate) struct ScriptText {
-    text: Arc<str>,
-    file_name: Arc<str>,
-    hash: u64,
-}
-
-impl ScriptText {
-    pub(crate) fn new(text: impl Into<Arc<str>>) -> Self {
-        let text = text.into();
-        Self::named(text, "eval_script")
-    }
-
-    pub(crate) fn named(text: impl Into<Arc<str>>, file_name: impl Into<Arc<str>>) -> Self {
-        let text = text.into();
-        let file_name = file_name.into();
-        Self {
-            hash: hash_text(&text),
-            text,
-            file_name,
-        }
-    }
-
-    pub(crate) fn with_file_name(&self, file_name: &str) -> Self {
-        Self {
-            text: Arc::clone(&self.text),
-            file_name: Arc::from(file_name),
-            hash: self.hash,
-        }
-    }
-
-    pub(crate) fn text(&self) -> &str {
-        &self.text
-    }
-
-    /// The text, shared.
-    pub(crate) fn shared_text(&self) -> &Arc<str> {
-        &self.text
-    }
-}
-
-fn hash_text(text: &str) -> u64 {
-    use std::hash::BuildHasher as _;
-    // foldhash: a script's text is hashed at each lookup that has no kept hash, and SipHash of it showed in profiles
-    foldhash::fast::FixedState::default().hash_one(text)
-}
-
-fn hash_of(text_hash: u64, file_name: &str) -> u64 {
-    use std::hash::BuildHasher as _;
-    let mut hasher = foldhash::fast::FixedState::default().build_hasher();
-    text_hash.hash(&mut hasher);
-    file_name.hash(&mut hasher);
-    hasher.finish()
-}
 
 /// Run `source` as global code, compiled on first use and kept by its text and strictness.
 pub(super) fn eval_compiled<'js, T>(ctx: &Ctx<'js>, source: &str, strict: bool) -> Result<T, Error>
@@ -119,11 +63,11 @@ where
 {
     eval_keyed(
         ctx,
-        &script.text,
-        Some(&script.text),
-        hash_of(script.hash, &script.file_name),
+        script.shared_text(),
+        Some(script.shared_text()),
+        hash_of(script.hash(), script.file_name()),
         strict,
-        &script.file_name,
+        script.file_name(),
     )
 }
 

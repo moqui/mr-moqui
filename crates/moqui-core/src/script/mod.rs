@@ -16,11 +16,21 @@
 
 mod actions;
 pub mod bounded;
+pub(crate) mod census;
+pub(crate) mod check;
+pub mod engine;
+pub(crate) mod host;
+pub(crate) mod oxide;
 pub mod parse;
+pub(crate) mod run;
 mod runtime;
 pub mod template;
+pub(crate) mod text;
 pub mod theme;
 pub(crate) mod walker;
+
+pub use census::write_census;
+pub use engine::{script_engine, set_thread_script_engine, with_script_engine, ScriptEngine};
 
 pub(crate) use actions::run_actions_at;
 pub use actions::{check_actions, eval_condition_element, eval_condition_group, generated_source, run_actions};

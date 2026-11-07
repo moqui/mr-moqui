@@ -1,6 +1,8 @@
 # Script engine: quickjs-oxide beside rquickjs
 
-Status 2026-11-07: plan, nothing built. Server JavaScript runs on QuickJS through rquickjs (`crates/moqui-core/src/script`).
+Status 2026-11-07: Phases 0 and 1 built. quickjs-oxide is a dependency at the fork's revision with F2 and F3a
+(§6); `script_engine` routes conditions and values (§3) in `small-oxide`; the default is still `rquickjs`. The
+expression rows miss Phase 1's speed gate (§7, Phase 1 result).
 This plan adds [quickjs-oxide](https://github.com/pocket-nexus/quickjs-oxide), a QuickJS-compatible engine in safe Rust,
 first for expressions and other small scripts, then for everything, and then removes rquickjs. It also changes our fork
 of quickjs-oxide so compiled code is shared by all threads of the process, as compiled Groovy was in Java. The
@@ -259,6 +261,16 @@ Acceptance: 1000 bare-name reads and writes through the prototype cost no more t
 today (Round 11's 464 µs for 1000 adds to a bare name, on the M1 Pro); Test262 and upstream's Proxy corpus are
 unchanged.
 
+### F3a. Re-entry from deep Rust
+
+On upstream, a `Context` or `Runtime` call made while a host function runs returns `Reentered`; only the host
+function's own `Scope` re-enters. Moqui's nested runs (a script calls a service that runs a script) and the spec
+engine's promise jobs are reached from Rust code that holds no `Scope`. `Scope::lend(f)` (and `ExoticScope::lend`)
+hands the engine to `f`: while it runs, `Context` operations and the runtime's job operations work above the host
+function's frames, and lends nest. A lend costs about 0.2 µs, so the bindings lend only around host methods that may
+nest (service calls, entity operations), not around every host call. Until a binding lends, the router sends a nested
+small script to QuickJS.
+
 ### F3. Compiling and running from a host function
 
 Today, inside a host function, `compile` and `eval` make transient code (5% more instructions across V8 v7, 15% on
@@ -306,6 +318,26 @@ proceed in parallel and land in the order the phases need them.
 | 2. More small kinds, F1 steps 1 and 2, F2 | `expand`, `eval_map` and the subset of generated actions; the exotic global names and entity values (F2); the process-wide image and shared bodies (F1). The default moves to `small-oxide`. | Both suites pass under `small-oxide` and `rquickjs`. `service_speed`'s `echo#Data` and `js_speed`'s actions rows are no slower. The full mr-mantle run's JS heap at its peak is no more than Round 28's. |
 | 3. Everything on quickjs-oxide | Bindings for script files, services, templates (§5.4 first), screen units, `ec.resource.script` modules, the spec engine, moqui-llm and the devkit's test kit; F1 step 3, F3 and F4. | Both suites and the client suite pass under `script_engine=oxide`. `js_speed`'s screen rows are within 10% of QuickJS. The Mantle operations against the Postgres 200 µs away (Round 26's table) are no slower. The full mr-mantle run's JS heap at its peak is under half of Round 28's. |
 | 4. rquickjs removed | `oxide` becomes the only engine; `script/runtime/`'s QuickJS bindings, the setting and the rquickjs dependency go; the browser build loses `bindgen` and the emsdk sysroot's QuickJS needs; docs and `Parity-Diffs` updated. | `./moq test-all`, the browser build and the packages pass with no C in the script engine's build. |
+
+### Phase 1 result (2026-11-07)
+
+- **Built:** the seam (`script/engine.rs`, `check.rs`, `census.rs`, `run.rs`, `text.rs`), the engine-neutral host
+  table (`script/host/`) with a binder for each engine, and the oxide core (`script/oxide/`). `ec.message`,
+  `ec.logger`, `ec.cache`, `ec.user`, `ec.l10n` are on the table.
+- **Census** (release, mr-mantle specs): 86% of condition and value runs went to oxide, with no fallbacks. The largest
+  QuickJS shares were `toNumber`, `sort` (refused as a mutator) and `ec.user.userAccount`.
+- **Speed gate missed.** `js_speed` expression rows, µs a call, QuickJS → oxide: `a` 0.40 → 0.68, `a + b * 2`
+  0.55 → 1.02, `item.name` 1.18 → 1.66, a new map 1.93 → 3.29, condition 0.60 → 1.21, new text each call 0.64 → 1.19.
+  The cost is the global Proxy's traps on every bare name and a fresh copy of lists and maps on each read; Phase 2's
+  exotic global names (F2) and tracked values address both.
+- **What the static check refuses**, beyond §3: mutating methods whatever the receiver (`push`, `sort`, `splice`,
+  `assign`, ...), since oxide does not yet write converted values back; `constructor`, `__proto__`, `prototype`, the
+  legacy accessor definers and `then`; `Reflect`, `Proxy`, `Promise`, `Symbol`, `Function`, `eval`, `globalThis`;
+  arrow functions except as the argument of a fixed list of array methods. A text that falls back twice on a thread
+  goes to QuickJS directly. The oxide runtime's lockdown for these (throwing function constructors) is for small
+  scripts only; `oxide` mode needs a runtime without it.
+- **Differences found:** oxide's error wording (`'x' is not defined`) and columns differ from QuickJS's; its
+  default host is UTC, so `MoquiHost` gives local time.
 
 ## 8. Testing
 

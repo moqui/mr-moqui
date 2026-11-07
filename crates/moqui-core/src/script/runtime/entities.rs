@@ -1061,7 +1061,7 @@ pub(super) struct HostEntity {
 }
 
 /// An entity value a script and the context stack share by reference.
-pub(super) type EntityCell = Mutex<EntityValue>;
+pub(crate) type EntityCell = Mutex<EntityValue>;
 
 impl HostEntity {
     pub(super) fn new(value: EntityValue) -> Self {
@@ -1213,6 +1213,28 @@ impl HostEntity {
 }
 
 exotic_module!(__impl_exotic_HostEntity__, HostEntity);
+
+/// What reading `name` of an entity value finds, without an engine (for quickjs-oxide's entity values).
+pub(crate) enum EntityField {
+    /// The field's value as a script reads it ([`HostEntity::held_value`]).
+    Value(Value),
+    /// A field the entity defines that the value does not hold.
+    Null,
+    /// A relationship, or a name that is not a field, or no entity definition to tell.
+    Other,
+}
+
+/// [`EntityField`] of `name` on the value in `cell`, as [`HostEntity::read_member`] reads a field.
+pub(crate) fn entity_field(cell: &Arc<EntityCell>, name: &str) -> EntityField {
+    let host = HostEntity::of(Arc::clone(cell));
+    if let Some(value) = host.held_value(name) {
+        return EntityField::Value(value);
+    }
+    match host.member(name) {
+        Some(Member::Field) => EntityField::Null,
+        _ => EntityField::Other,
+    }
+}
 
 /// What a name that is not a method stands for on an entity value.
 enum Member {

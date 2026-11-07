@@ -1,0 +1,508 @@
+/*
+ * This software is in the public domain under CC0 1.0 Universal plus a
+ * Grant of Patent License.
+ *
+ * To the extent possible under law, the author(s) have dedicated all
+ * copyright and related and neighboring rights to this software to the
+ * public domain worldwide. This software is distributed without any
+ * warranty.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication
+ * along with this software (see the LICENSE.md file). If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ */
+
+//! The quickjs-oxide binder of the host table (`script/host`), the counterpart of `script/runtime/bind.rs`
+//! (plans/Script-Engine-Oxide.md section 5): each [`HostClass`] is one prototype of host functions, made on first use and
+//! kept for the runtime, and each object of it a host object holding an [`OxideHost`].
+//!
+//! The engine calls [`install_ec`] once, after it made `ec`:
+//!
+//! ```ignore
+//! bind::install_ec(&mut context, &ec, Rc::new(MyHooks))?;
+//! ```
+//!
+//! [`OxideHooks`] is what the binder needs of the engine: value conversion (host values and oxide values, as
+//! `oxide::convert` makes them, `oxide::engine::EngineHooks`) and the flush of the engine's tracked values. The tests
+//! have a minimal one for a bare runtime.
+//!
+//! A call behaves as on QuickJS: too few arguments throw `TypeError: Error calling function with N argument(s) while M
+//! where expected`; a wrong argument type throws `TypeError: Error converting from js 'int' into type 'string'`; a
+//! [`HostError`] throws the same `Error` with the same `message`, `stack` detail, `moquiErrorKind` and
+//! `moquiRetryAfter`; a panic is caught and thrown as an `Error` of its message, so it does not poison the runtime.
+
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
+use std::rc::Rc;
+
+use moqui_lib::object::{HostObject, Value};
+use quickjs_oxide::engine::api::core::{
+    AccessorValue, CallableRef, DescriptorField, FunctionOptions, Js, JsResult, JsString, NativeErrorKind, ObjectRef,
+    OrdinaryPropertyDescriptor, PropertyKey, RuntimeError, Scope, Value as JsValue,
+};
+
+use crate::script::host::{
+    self, Arg, ArgKind, Args, Call, EngineOps, FlushBefore, HostClass, HostError, Method, Path, Ret,
+};
+
+/// What the binder needs of the oxide engine.
+pub(crate) trait OxideHooks {
+    /// A script value as a host value; a value it cannot convert throws.
+    fn to_host(&self, scope: &mut Scope<'_>, value: &JsValue) -> JsResult<Value>;
+    /// A host value as a script value.
+    fn to_js(&self, scope: &mut Scope<'_>, value: Value) -> JsResult<JsValue>;
+    /// Write the engine's tracked values back to the context stack before a method that reads it. None are tracked in
+    /// Phase 1.
+    fn flush(&self, _scope: &mut Scope<'_>, _mode: FlushBefore) -> JsResult<()> {
+        Ok(())
+    }
+}
+
+/// The state of a host object on this engine: the table's state and its class.
+pub(crate) struct OxideHost {
+    pub(crate) obj: HostObject,
+    #[allow(dead_code)] // not read on this engine yet; the QuickJS binder reads its own
+    pub(crate) class: &'static HostClass,
+}
+
+/// The binder of one runtime: the hooks and the prototypes made so far, by class name.
+struct Binder {
+    hooks: Rc<dyn OxideHooks>,
+    prototypes: RefCell<HashMap<&'static str, ObjectRef>>,
+}
+
+/// The global property that marks a runtime the host table is installed in.
+const INSTALLED: &str = "__moquiHostTable";
+
+/// Install every path of the host table under `ec` (`ec.l10n` as `ec`'s `l10n`), each an object of its class.
+pub(crate) fn install_ec(js: &mut impl Js, ec: &ObjectRef, hooks: Rc<dyn OxideHooks>) -> JsResult<()> {
+    install_paths(js, ec, host::all_paths(), hooks)
+}
+
+/// [`install_ec`] of the given paths.
+pub(crate) fn install_paths(
+    js: &mut impl Js,
+    ec: &ObjectRef,
+    paths: &[&'static Path],
+    hooks: Rc<dyn OxideHooks>,
+) -> JsResult<()> {
+    // One binder per runtime: a second install would make a second set of prototypes and objects.
+    let global = js.global_object()?;
+    let marker = key(INSTALLED)?;
+    if js.get_own_property(&global, &marker)?.is_some() {
+        return Err(js.throw_error(
+            NativeErrorKind::Type,
+            "the host table is already installed in this runtime",
+        ));
+    }
+    js.define_own_property(
+        &global,
+        &marker,
+        &OrdinaryPropertyDescriptor::data(JsValue::Bool(true), false, false, false),
+    )?;
+    let binder = Rc::new(Binder {
+        hooks,
+        prototypes: RefCell::new(HashMap::new()),
+    });
+    for entry in paths.iter() {
+        let Some(rest) = entry.path.strip_prefix("ec.") else {
+            tracing::error!(
+                "The host table path {} is not under ec; it is not installed",
+                entry.path
+            );
+            continue;
+        };
+        let mut target = ec.clone();
+        let mut names: Vec<&str> = rest.split('.').collect();
+        let Some(last) = names.pop() else {
+            continue;
+        };
+        for name in names {
+            let key = key(name)?;
+            target = match js.get_property(&target, &key)? {
+                JsValue::Object(found) => found,
+                _ => {
+                    let made = js.new_object()?;
+                    js.set_property(&target, &key, JsValue::Object(made.clone()))?;
+                    made
+                }
+            };
+        }
+        let object = instance(js, &binder, HostObject::new(()), entry.class)?;
+        js.set_property(&target, &key(last)?, JsValue::Object(object))?;
+    }
+    Ok(())
+}
+
+fn key(name: &str) -> JsResult<PropertyKey> {
+    Ok(PropertyKey::from_js_string(JsString::try_from_utf8(name)?))
+}
+
+fn text(value: &str) -> JsResult<JsValue> {
+    Ok(JsValue::String(JsString::try_from_utf8(value)?))
+}
+
+/// A new object of `class` over `obj`.
+fn instance(js: &mut impl Js, binder: &Rc<Binder>, obj: HostObject, class: &'static HostClass) -> JsResult<ObjectRef> {
+    let proto = prototype(js, binder, class)?;
+    js.new_host_object(OxideHost { obj, class }, Some(&proto))
+}
+
+fn prototype(js: &mut impl Js, binder: &Rc<Binder>, class: &'static HostClass) -> JsResult<ObjectRef> {
+    if let Some(found) = binder.prototypes.borrow().get(class.name) {
+        return Ok(found.clone());
+    }
+    let proto = js.new_object()?;
+    for method in class.methods {
+        let made = function(js, binder, method)?;
+        js.set_property(&proto, &key(method.name)?, JsValue::Object(made.into_object()))?;
+    }
+    for getter in class.getters {
+        let made = function(js, binder, getter)?;
+        let descriptor = OrdinaryPropertyDescriptor {
+            get: DescriptorField::Present(AccessorValue::Callable(made)),
+            set: DescriptorField::Present(AccessorValue::Undefined),
+            enumerable: DescriptorField::Present(false),
+            configurable: DescriptorField::Present(true),
+            ..OrdinaryPropertyDescriptor::default()
+        };
+        js.define_own_property(&proto, &key(getter.name)?, &descriptor)?;
+    }
+    if let Some(shim) = class.shim_js {
+        let hidden = js.new_object()?;
+        for method in class.hidden {
+            let made = function(js, binder, method)?;
+            js.set_property(&hidden, &key(method.name)?, JsValue::Object(made.into_object()))?;
+        }
+        let install = js.eval(shim)?;
+        let install = match &install {
+            JsValue::Object(object) => js.as_callable(object)?,
+            _ => None,
+        };
+        let Some(install) = install else {
+            return Err(js.throw_error(NativeErrorKind::Type, "a host class shim is not a function"));
+        };
+        js.call(
+            &install,
+            JsValue::Undefined,
+            &[JsValue::Object(proto.clone()), JsValue::Object(hidden)],
+        )?;
+    }
+    binder.prototypes.borrow_mut().insert(class.name, proto.clone());
+    Ok(proto)
+}
+
+/// The host function of a method, named and with the `length` of its required arguments.
+fn function(js: &mut impl Js, binder: &Rc<Binder>, method: &'static Method) -> JsResult<CallableRef> {
+    let binder = Rc::clone(binder);
+    let length = u32::try_from(method.required()).unwrap_or(u32::MAX);
+    js.new_function(
+        FunctionOptions::new(method.name).length(length),
+        move |scope: &mut Scope<'_>| trampoline(&binder, method, scope),
+    )
+}
+
+/// One call: the arguments by kind, the flush, the body, with a panic caught and a failure thrown as on QuickJS.
+fn trampoline(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'_>) -> JsResult<JsValue> {
+    host::note_path(method.path);
+    let required = method.required();
+    let given = scope.argc();
+    if given < required {
+        let message = format!("Error calling function with {given} argument(s) while {required} where expected");
+        return Err(scope.throw_error(NativeErrorKind::Type, &message));
+    }
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| call_method(binder, method, scope)));
+    match outcome {
+        Ok(result) => result,
+        // A panic that unwound through the engine (a nested call, a conversion) left it inconsistent and poisoned: it
+        // goes on to the embedder's call, as quickjs-oxide passes a host function's panic, rather than becoming an
+        // error the script could catch and go on from.
+        Err(payload) if UNWOUND.with(|unwound| unwound.replace(false)) => std::panic::resume_unwind(payload),
+        Err(payload) => Err(plain_error(scope, &host::panic_message(payload.as_ref()))),
+    }
+}
+
+thread_local! {
+    /// Set when a panic unwinds out of an engine operation a trampoline made ([`EngineCall`]).
+    static UNWOUND: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Marks an engine operation a trampoline makes outside the body: a panic that unwinds through it came through the
+/// engine, so the runtime cannot go on. A panic in the body's own code does not pass one.
+struct EngineCall;
+
+impl Drop for EngineCall {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            UNWOUND.with(|unwound| unwound.set(true));
+        }
+    }
+}
+
+/// What a body's call ended with: its result, a failure to throw, or an engine error passed on.
+enum Outcome {
+    Done(Ret),
+    Failed(HostError, Option<RuntimeError>),
+}
+
+fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'_>) -> JsResult<JsValue> {
+    let mut callbacks = Vec::new();
+    let engine = EngineCall;
+    let args = convert_args(binder, scope, method.args, &mut callbacks)?;
+    let this = scope.this();
+    let state = scope.this_host_data::<OxideHost>()?;
+    drop(engine);
+    let outcome = {
+        let mut ops = OxideOps {
+            scope: &mut *scope,
+            binder,
+            callbacks,
+            thrown: None,
+        };
+        let flushed = match method.flush {
+            FlushBefore::None => Ok(()),
+            mode => ops.flush(mode),
+        };
+        let result = flushed.and_then(|()| {
+            let mut call = Call {
+                this: state.as_ref().map(|held| &held.obj),
+                args,
+                ops: &mut ops,
+            };
+            (method.f)(&mut call)
+        });
+        match result {
+            Ok(ret) => Outcome::Done(ret),
+            Err(err) => Outcome::Failed(err, ops.thrown.take()),
+        }
+    };
+    let _engine = EngineCall;
+    match outcome {
+        Outcome::Done(Ret::Value(value)) => binder.hooks.to_js(scope, value),
+        Outcome::Done(Ret::This) => Ok(this),
+        Outcome::Done(Ret::Undefined) => Ok(JsValue::Undefined),
+        Outcome::Done(Ret::Object(obj, class)) => Ok(JsValue::Object(instance(scope, binder, obj, class)?)),
+        Outcome::Failed(err, thrown) => Err(throw(scope, err, thrown)),
+    }
+}
+
+/// The type name QuickJS gives `value` in a conversion error.
+fn type_name(scope: &mut Scope<'_>, value: &JsValue) -> JsResult<&'static str> {
+    Ok(match value {
+        JsValue::Undefined => "undefined",
+        JsValue::Null => "null",
+        JsValue::Bool(_) => "bool",
+        JsValue::Int(_) => "int",
+        JsValue::Float(_) => "float",
+        JsValue::BigInt(_) => "big_int",
+        JsValue::String(_) => "string",
+        JsValue::Symbol(_) => "symbol",
+        JsValue::Object(object) => {
+            if scope.is_array_object(object)? {
+                "array"
+            } else if scope.is_constructor(object)? {
+                "constructor"
+            } else if scope.as_callable(object)?.is_some() {
+                "function"
+            } else if scope.is_error_object(object)? {
+                "exception"
+            } else {
+                "object"
+            }
+        }
+    })
+}
+
+/// A `TypeError` for an argument of the wrong type, worded as QuickJS's.
+fn wrong_type(scope: &mut Scope<'_>, value: &JsValue, kind: ArgKind) -> RuntimeError {
+    let from = match type_name(scope, value) {
+        Ok(from) => from,
+        Err(err) => return err,
+    };
+    let message = format!("Error converting from js '{from}' into type '{}'", kind.type_name());
+    scope.throw_error(NativeErrorKind::Type, &message)
+}
+
+fn convert_args(
+    binder: &Binder,
+    scope: &mut Scope<'_>,
+    kinds: &[ArgKind],
+    callbacks: &mut Vec<CallableRef>,
+) -> JsResult<Args> {
+    let given = scope.argc();
+    let mut converted = Args::new();
+    for (index, kind) in kinds.iter().copied().enumerate() {
+        if index >= given {
+            converted.push(Arg::Missing);
+            continue;
+        }
+        let value = scope.arg(index);
+        let void = matches!(value, JsValue::Undefined | JsValue::Null);
+        converted.push(match (kind, &value) {
+            (ArgKind::Value, _) => Arg::Value(binder.hooks.to_host(scope, &value)?),
+            (ArgKind::OptValue, JsValue::Undefined) => Arg::Undefined,
+            (ArgKind::OptValue, _) => Arg::Value(binder.hooks.to_host(scope, &value)?),
+            (ArgKind::NullableText | ArgKind::OptNullableText, _) if void => Arg::Undefined,
+            (
+                ArgKind::Text | ArgKind::OptText | ArgKind::NullableText | ArgKind::OptNullableText,
+                JsValue::String(text),
+            ) => Arg::Text(text.to_utf8_lossy()),
+            (ArgKind::Bool | ArgKind::OptBool, JsValue::Bool(flag)) => Arg::Bool(*flag),
+            (ArgKind::Int | ArgKind::OptInt, JsValue::Int(number)) => Arg::Int(*number),
+            #[allow(clippy::cast_possible_truncation)] // a fraction truncated, as QuickJS's `i32` conversion
+            (ArgKind::Int | ArgKind::OptInt, JsValue::Float(number)) => Arg::Int(*number as i32),
+            (ArgKind::OptNumber, JsValue::Int(number)) => Arg::Number(f64::from(*number)),
+            (ArgKind::OptNumber, JsValue::Float(number)) => Arg::Number(*number),
+            (ArgKind::Callback, JsValue::Object(object)) => match scope.as_callable(object)? {
+                Some(callable) => {
+                    callbacks.push(callable);
+                    Arg::Callback(callbacks.len() - 1)
+                }
+                None => return Err(wrong_type(scope, &value, kind)),
+            },
+            (ArgKind::Context, JsValue::Object(_)) => {
+                Arg::Context(crate::script::value_map(&binder.hooks.to_host(scope, &value)?))
+            }
+            (ArgKind::Context, _) => Arg::Context(None),
+            (ArgKind::Thrown, _) => thrown_text(scope, &value)?.map_or(Arg::Missing, Arg::Text),
+            _ => return Err(wrong_type(scope, &value, kind)),
+        });
+    }
+    Ok(converted)
+}
+
+/// The text a log call gives its exception: `name: message` of an error object, its `message` alone, or a string.
+fn thrown_text(scope: &mut Scope<'_>, value: &JsValue) -> JsResult<Option<String>> {
+    Ok(match value {
+        JsValue::Undefined | JsValue::Null => None,
+        JsValue::Object(object) => {
+            let name = scope.get_property(object, &key("name")?).ok();
+            let detail = scope.get_property(object, &key("message")?).ok();
+            let as_text = |value: Option<JsValue>| match value {
+                Some(JsValue::String(text)) => Some(text.to_utf8_lossy()),
+                _ => None,
+            };
+            Some(match (as_text(name), as_text(detail)) {
+                (Some(name), Some(detail)) => format!("{name}: {detail}"),
+                (_, Some(detail)) => detail,
+                _ => String::from("(exception)"),
+            })
+        }
+        JsValue::String(text) => Some(text.to_utf8_lossy()),
+        _ => Some(String::new()),
+    })
+}
+
+/// `new Error(message)`, as QuickJS's `Exception::throw_message` makes it, thrown.
+fn plain_error(scope: &mut Scope<'_>, message: &str) -> RuntimeError {
+    match new_error(scope, message) {
+        Ok(error) => RuntimeError::Exception(JsValue::Object(error)),
+        Err(err) => err,
+    }
+}
+
+fn new_error(scope: &mut Scope<'_>, message: &str) -> JsResult<ObjectRef> {
+    let global = scope.global_object()?;
+    let constructor = match scope.get_property(&global, &key("Error")?)? {
+        JsValue::Object(object) => scope.as_callable(&object)?,
+        _ => None,
+    };
+    let Some(constructor) = constructor else {
+        return Err(scope.throw_error(NativeErrorKind::Type, "Error is not a constructor"));
+    };
+    match scope.construct(&constructor, &[text(message)?])? {
+        JsValue::Object(error) => Ok(error),
+        _ => Err(scope.throw_error(NativeErrorKind::Type, "Error made no object")),
+    }
+}
+
+/// Throw `err` as the QuickJS binder throws it.
+fn throw(scope: &mut Scope<'_>, err: HostError, thrown: Option<RuntimeError>) -> RuntimeError {
+    if let Some(marked) = err.marked() {
+        return match marked_error(scope, &marked) {
+            Ok(error) => RuntimeError::Exception(JsValue::Object(error)),
+            Err(err) => err,
+        };
+    }
+    match err {
+        HostError::Message(message) => plain_error(scope, &message),
+        HostError::Type(message) => scope.throw_error(NativeErrorKind::Type, &message),
+        HostError::Thrown => thrown.unwrap_or_else(|| plain_error(scope, "a host call failed")),
+        HostError::Lib(_) | HostError::Context(_) => plain_error(scope, "a host call failed"),
+    }
+}
+
+/// An `Error` of the message with the diagnostic after its stack and the kind and retry seconds marked, as runtime.rs's
+/// `throw_diagnostic`.
+fn marked_error(scope: &mut Scope<'_>, marked: &host::Thrown<'_>) -> JsResult<ObjectRef> {
+    let error = new_error(scope, marked.message)?;
+    let detail = marked
+        .diagnostic
+        .strip_prefix(marked.message)
+        .unwrap_or(&marked.diagnostic);
+    if !detail.is_empty() {
+        let stack_key = key("stack")?;
+        let stack = match scope.get_property(&error, &stack_key)? {
+            JsValue::String(stack) => stack.to_utf8_lossy(),
+            _ => String::new(),
+        };
+        scope.set_property(&error, &stack_key, text(&format!("{stack}{detail}\n"))?)?;
+    }
+    if let Some(kind) = marked.kind {
+        scope.set_property(&error, &key(host::KIND_PROPERTY)?, text(kind)?)?;
+    }
+    if let Some(seconds) = marked.retry_after {
+        #[allow(clippy::cast_precision_loss)] // retry seconds are small
+        let seconds = JsValue::number(seconds as f64);
+        scope.set_property(&error, &key(host::RETRY_AFTER_PROPERTY)?, seconds)?;
+    }
+    Ok(error)
+}
+
+/// [`EngineOps`] of one call on quickjs-oxide.
+struct OxideOps<'s, 'a> {
+    scope: &'s mut Scope<'a>,
+    binder: &'s Binder,
+    callbacks: Vec<CallableRef>,
+    thrown: Option<RuntimeError>,
+}
+
+impl OxideOps<'_, '_> {
+    fn failed(&mut self, err: RuntimeError) -> HostError {
+        self.thrown = Some(err);
+        HostError::Thrown
+    }
+}
+
+impl EngineOps for OxideOps<'_, '_> {
+    fn call_back(&mut self, index: usize, args: Vec<Value>) -> Result<Value, HostError> {
+        let Some(function) = self.callbacks.get(index).cloned() else {
+            return Err(HostError::message("no such callback"));
+        };
+        let hooks = Rc::clone(&self.binder.hooks);
+        let _engine = EngineCall;
+        let called = (|| {
+            let mut values = Vec::with_capacity(args.len());
+            for arg in args {
+                values.push(hooks.to_js(self.scope, arg)?);
+            }
+            let result = self.scope.call(&function, JsValue::Undefined, &values)?;
+            hooks.to_host(self.scope, &result)
+        })();
+        called.map_err(|err| self.failed(err))
+    }
+
+    fn flush(&mut self, mode: FlushBefore) -> Result<(), HostError> {
+        if mode == FlushBefore::None {
+            return Ok(());
+        }
+        let hooks = Rc::clone(&self.binder.hooks);
+        let _engine = EngineCall;
+        hooks.flush(self.scope, mode).map_err(|err| self.failed(err))
+    }
+}
+
+#[cfg(test)]
+#[path = "bind_tests.rs"]
+mod tests;

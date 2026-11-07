@@ -6505,7 +6505,7 @@ dependencies = [
 [[package]]
 name = "quickjs-oxide"
 version = "0.4.1"
-source = "git+https://github.com/moqui/quickjs-oxide?rev=3a9ceb9664dadcb2c8128f444a6530ab796dd146#3a9ceb9664dadcb2c8128f444a6530ab796dd146"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=dd26f7ae81aeecaf408dcb591d4b82978cf799ef#dd26f7ae81aeecaf408dcb591d4b82978cf799ef"
 dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
@@ -6516,7 +6516,7 @@ dependencies = [
 [[package]]
 name = "quickjs-oxide-core"
 version = "0.4.1"
-source = "git+https://github.com/moqui/quickjs-oxide?rev=3a9ceb9664dadcb2c8128f444a6530ab796dd146#3a9ceb9664dadcb2c8128f444a6530ab796dd146"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=dd26f7ae81aeecaf408dcb591d4b82978cf799ef#dd26f7ae81aeecaf408dcb591d4b82978cf799ef"
 dependencies = [
  "quickjs-oxide-regexp",
 ]
@@ -6524,7 +6524,7 @@ dependencies = [
 [[package]]
 name = "quickjs-oxide-regexp"
 version = "0.4.1"
-source = "git+https://github.com/moqui/quickjs-oxide?rev=3a9ceb9664dadcb2c8128f444a6530ab796dd146#3a9ceb9664dadcb2c8128f444a6530ab796dd146"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=dd26f7ae81aeecaf408dcb591d4b82978cf799ef#dd26f7ae81aeecaf408dcb591d4b82978cf799ef"
 
 [[package]]
 name = "quinn"
@@ -8366,7 +8366,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

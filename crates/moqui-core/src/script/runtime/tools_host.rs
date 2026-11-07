@@ -993,20 +993,6 @@ fn clear_all_caches(ctx: Ctx<'_>) -> rquickjs::Result<()> {
     })
 }
 
-/// Clear a cache that is not a conf cache: the screen definitions or an entity list. `false` when there is none.
-pub(super) fn clear_other_cache(name: &str) -> Result<bool, moqui_lib::error::Error> {
-    let Some(factory) = ExecutionContext::with_current(|ec| Arc::clone(ec.factory())) else {
-        return Ok(false);
-    };
-    if crate::screen::ScreenFacade::of(&factory).clear_named(name) {
-        return Ok(true);
-    }
-    match factory.entity() {
-        Some(facade) => crate::entity::cache::clear_list_cache(&facade, name),
-        None => Ok(false),
-    }
-}
-
 fn get_all_caches_info<'js>(
     ctx: Ctx<'js>,
     order_by: Opt<JsValue<'js>>,

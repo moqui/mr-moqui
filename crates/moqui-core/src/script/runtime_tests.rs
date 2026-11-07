@@ -19,6 +19,7 @@ use super::{
     STACK,
 };
 use crate::context::{Error, ExecutionContextFactory};
+use crate::script::engine::on_both_engines;
 use moqui_lib::object::{basic_convert, Value};
 use rquickjs::Ctx;
 
@@ -30,93 +31,137 @@ fn decimal(text: &str) -> Value {
     converted.value
 }
 
+/// Under `small-oxide` a condition and a value that pass the static check run on quickjs-oxide, inside a running
+/// QuickJS script too (its tracked values flushed first), and one that fails it runs on QuickJS.
+#[test]
+fn small_oxide_runs_conditions_and_values_on_oxide() -> Result<(), Error> {
+    use crate::script::engine::{scripts_by_kind, with_script_engine, ScriptEngine};
+    let oxide_runs = |kind: &str| {
+        scripts_by_kind()
+            .into_iter()
+            .find(|(name, _, _)| *name == kind)
+            .map_or(0, |(_, _, oxide)| oxide)
+    };
+    with_script_engine(ScriptEngine::SmallOxide, || {
+        clear_context_stack();
+        set_context_name("n", Value::I32(3))?;
+        let conditions = oxide_runs("eval_condition");
+        assert!(eval_condition("n > 2")?);
+        assert!(oxide_runs("eval_condition") > conditions);
+        let values = oxide_runs("eval_value");
+        assert_eq!(eval_value("n * 2")?, Value::I32(6));
+        assert!(oxide_runs("eval_value") > values);
+        let fields = oxide_runs("eval_field_value");
+        assert_eq!(crate::script::eval_field_value("n")?, Value::I32(3));
+        assert!(oxide_runs("eval_field_value") > fields);
+        // a list the QuickJS script changed in place is on the stack when the oxide condition reads it
+        run_script("items = [1]")?;
+        with_ctx(|ctx| {
+            let _: rquickjs::Value = eval_source(ctx, "items.push(2)")?;
+            assert!(eval_condition("items.length === 2")?);
+            Ok(())
+        })?;
+        Ok(())
+    })
+}
+
 #[test]
 fn unset_bare_name_is_null() -> Result<(), Error> {
-    clear_context_stack();
-    assert!(!eval_condition("unsetBareName")?);
-    assert!(eval_condition("unsetBareName === null")?);
-    assert!(eval_condition("typeof unsetBareName === \"object\"")?);
-    assert!(!eval_condition("0")?);
-    assert!(!eval_condition("false")?);
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        assert!(!eval_condition("unsetBareName")?);
+        assert!(eval_condition("unsetBareName === null")?);
+        assert!(eval_condition("typeof unsetBareName === \"object\"")?);
+        assert!(!eval_condition("0")?);
+        assert!(!eval_condition("false")?);
+        Ok(())
+    })
 }
 
 #[test]
 fn stack_name_evaluates_to_its_value() -> Result<(), Error> {
-    clear_context_stack();
-    set_context_name("orderId", Value::string("1000"))?;
-    push_context_frame();
-    set_context_name("orderId", Value::string("2000"))?;
-    assert!(eval_condition("orderId === \"2000\"")?);
-    assert!(eval_condition("(assignedName = \"x\") === \"x\"")?);
-    set_context_name("assignedName", Value::string("y"))?;
-    assert!(eval_condition("assignedName === \"y\"")?);
-    set_context_name("Array", Value::string("hidden"))?;
-    assert!(eval_condition("typeof Array === \"function\"")?);
-    set_context_name("ObjectUtilities", Value::string("mine"))?;
-    assert!(eval_condition("ObjectUtilities === \"mine\"")?);
-    clear_context_stack();
-    assert!(eval_condition(
-        "typeof ObjectUtilities === \"object\" && ObjectUtilities !== null"
-    )?);
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        set_context_name("orderId", Value::string("1000"))?;
+        push_context_frame();
+        set_context_name("orderId", Value::string("2000"))?;
+        assert!(eval_condition("orderId === \"2000\"")?);
+        assert!(eval_condition("(assignedName = \"x\") === \"x\"")?);
+        set_context_name("assignedName", Value::string("y"))?;
+        assert!(eval_condition("assignedName === \"y\"")?);
+        set_context_name("Array", Value::string("hidden"))?;
+        assert!(eval_condition("typeof Array === \"function\"")?);
+        set_context_name("ObjectUtilities", Value::string("mine"))?;
+        assert!(eval_condition("ObjectUtilities === \"mine\"")?);
+        clear_context_stack();
+        assert!(eval_condition(
+            "typeof ObjectUtilities === \"object\" && ObjectUtilities !== null"
+        )?);
+        Ok(())
+    })
 }
 
 #[test]
 fn decimal_overflow_is_a_js_exception() -> Result<(), Error> {
-    clear_context_stack();
-    set_context_name("big", decimal(MAX_COEFFICIENT))?;
-    set_context_name("zero", decimal("0"))?;
-    assert!(eval_condition("zero")?);
-    assert!(eval_condition("zero.isZero()")?);
-    assert!(!eval_condition("big.isZero()")?);
-    // `==` compares objects, not values: a name read twice in a script is one object, another name is another.
-    set_context_name("big2", decimal(MAX_COEFFICIENT))?;
-    assert!(eval_condition("big == big")?);
-    assert!(!eval_condition("big == big2")?);
-    assert!(eval_condition("big.eq(big2)")?);
-    let overflow = eval_condition("big.add(big)").expect_err("overflow");
-    assert!(overflow.to_string().contains("overflow"), "{overflow}");
-    let value_of = eval_condition("big + 1").expect_err("valueOf");
-    assert!(value_of.to_string().contains("valueOf"), "{value_of}");
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        set_context_name("big", decimal(MAX_COEFFICIENT))?;
+        set_context_name("zero", decimal("0"))?;
+        assert!(eval_condition("zero")?);
+        assert!(eval_condition("zero.isZero()")?);
+        assert!(!eval_condition("big.isZero()")?);
+        // `==` compares objects, not values: a name read twice in a script is one object, another name is another.
+        set_context_name("big2", decimal(MAX_COEFFICIENT))?;
+        assert!(eval_condition("big == big")?);
+        assert!(!eval_condition("big == big2")?);
+        assert!(eval_condition("big.eq(big2)")?);
+        let overflow = eval_condition("big.add(big)").expect_err("overflow");
+        assert!(overflow.to_string().contains("overflow"), "{overflow}");
+        let value_of = eval_condition("big + 1").expect_err("valueOf");
+        assert!(value_of.to_string().contains("valueOf"), "{value_of}");
+        Ok(())
+    })
 }
 
 #[test]
 fn decimal_methods_take_numbers_and_text_and_to_number_is_explicit() -> Result<(), Error> {
-    clear_context_stack();
-    set_context_name("price", decimal("10.25"))?;
-    holds("price.add(1).eq('11.25')");
-    holds("price.subtract(0.25).eq(10)");
-    holds("price.multiply('2').toString() === '20.50'");
-    holds("price.compare(70) === -1 && price.compare('10.250') === 0");
-    holds("price.toNumber() === 10.25 && Number(price.toString()) === 10.25");
-    holds("toDecimal(3).add(price).eq('13.25') && toDecimal('0.1').add(toDecimal('0.2')).eq('0.3')");
-    let nan = eval_condition("price.add(NaN)").expect_err("not finite");
-    assert!(nan.to_string().contains("a decimal method takes"), "{nan}");
-    let text = eval_condition("price.add('abc')").expect_err("not numeric");
-    assert!(text.to_string().contains("abc"), "{text}");
-    let null = eval_condition("toDecimal(null)").expect_err("null");
-    assert!(null.to_string().contains("toDecimal"), "{null}");
-    let number = eval_condition("Number(price) > 1").expect_err("valueOf still throws");
-    assert!(number.to_string().contains("toNumber"), "{number}");
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        set_context_name("price", decimal("10.25"))?;
+        holds("price.add(1).eq('11.25')");
+        holds("price.subtract(0.25).eq(10)");
+        holds("price.multiply('2').toString() === '20.50'");
+        holds("price.compare(70) === -1 && price.compare('10.250') === 0");
+        holds("price.toNumber() === 10.25 && Number(price.toString()) === 10.25");
+        holds("toDecimal(3).add(price).eq('13.25') && toDecimal('0.1').add(toDecimal('0.2')).eq('0.3')");
+        let nan = eval_condition("price.add(NaN)").expect_err("not finite");
+        assert!(nan.to_string().contains("a decimal method takes"), "{nan}");
+        let text = eval_condition("price.add('abc')").expect_err("not numeric");
+        assert!(text.to_string().contains("abc"), "{text}");
+        let null = eval_condition("toDecimal(null)").expect_err("null");
+        assert!(null.to_string().contains("toDecimal"), "{null}");
+        let number = eval_condition("Number(price) > 1").expect_err("valueOf still throws");
+        assert!(number.to_string().contains("toNumber"), "{number}");
+        Ok(())
+    })
 }
 
 /// `JSON.stringify` writes a decimal as a JSON number, as Java's JSON writers write a `BigDecimal`: one a JavaScript
 /// number holds exactly as that number, any other with all its digits.
 #[test]
 fn json_stringify_writes_a_decimal_as_a_number() -> Result<(), Error> {
-    clear_context_stack();
-    set_context_name("price", decimal("10.25"))?;
-    set_context_name("big", decimal("12345678901234567.89"))?;
-    holds("JSON.stringify(price) === '10.25'");
-    holds("JSON.stringify({price, list: [toDecimal('0.1'), toDecimal(-3)]}) === '{\"price\":10.25,\"list\":[0.1,-3]}'");
-    holds("JSON.parse(JSON.stringify({price})).price === 10.25");
-    holds("JSON.stringify(big) === '12345678901234567.89'");
-    holds("JSON.stringify([big]) === '[12345678901234567.89]'");
-    holds("typeof JSON.parse(JSON.stringify(big)) === 'number'");
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        set_context_name("price", decimal("10.25"))?;
+        set_context_name("big", decimal("12345678901234567.89"))?;
+        holds("JSON.stringify(price) === '10.25'");
+        holds("JSON.stringify({price, list: [toDecimal('0.1'), toDecimal(-3)]}) === '{\"price\":10.25,\"list\":[0.1,-3]}'");
+        holds("JSON.parse(JSON.stringify({price})).price === 10.25");
+        holds("JSON.stringify(big) === '12345678901234567.89'");
+        holds("JSON.stringify([big]) === '[12345678901234567.89]'");
+        holds("typeof JSON.parse(JSON.stringify(big)) === 'number'");
+        Ok(())
+    })
 }
 
 #[test]
@@ -291,51 +336,57 @@ fn too_deep(outcome: Result<impl std::fmt::Debug, Error>) {
 
 #[test]
 fn a_cyclic_or_too_deep_value_is_an_error() -> Result<(), Error> {
-    clear_context_stack();
-    too_deep(run_script("var a = {}; a.self = a; result = a;"));
-    too_deep(eval_value("(() => { var a = []; a.push(a); return a; })()"));
-    too_deep(eval_value("(() => { var s = new Set(); s.add([s]); return s; })()"));
-    too_deep(eval_value(
-        "(() => { var a = []; for (var i = 0; i < 100000; i++) a = [a]; return a; })()",
-    ));
-    too_deep(run_script("items = []; items.push(items);"));
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        too_deep(run_script("var a = {}; a.self = a; result = a;"));
+        too_deep(eval_value("(() => { var a = []; a.push(a); return a; })()"));
+        too_deep(eval_value("(() => { var s = new Set(); s.add([s]); return s; })()"));
+        too_deep(eval_value(
+            "(() => { var a = []; for (var i = 0; i < 100000; i++) a = [a]; return a; })()",
+        ));
+        too_deep(run_script("items = []; items.push(items);"));
+        Ok(())
+    })
 }
 
 #[test]
 fn a_shared_value_converts_once_for_each_place() -> Result<(), Error> {
-    clear_context_stack();
-    let value = eval_value("(() => { var s = {x: 1}; return {a: s, b: [s, s], c: new Set([s])}; })()")?;
-    let Value::Map(map) = value else {
-        panic!("expected a map, got {value:?}")
-    };
-    let Some(Value::List(both)) = map.get("b") else {
-        panic!("expected a list, got {map:?}")
-    };
-    assert_eq!(map.get("a"), both.get(1));
-    assert!(matches!(map.get("a"), Some(Value::Map(shared)) if shared.get("x") == Some(&Value::I32(1))));
-    let deepest = format!("(() => {{ var a = []; for (var i = 1; i < {MAX_NESTING}; i++) a = [a]; return a; }})()");
-    set_context_name("deep", eval_value(&deepest)?)?;
-    assert!(eval_condition("deep.length === 1 && deep[0][0].length === 1")?);
-    too_deep(run_script("wrapped = [deep];"));
-    let mut host = Value::List(Vec::new());
-    for _ in 0..1000 {
-        host = Value::List(vec![host]);
-    }
-    set_context_name("hostDeep", host)?;
-    too_deep(eval_condition("hostDeep.length === 1"));
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        let value = eval_value("(() => { var s = {x: 1}; return {a: s, b: [s, s], c: new Set([s])}; })()")?;
+        let Value::Map(map) = value else {
+            panic!("expected a map, got {value:?}")
+        };
+        let Some(Value::List(both)) = map.get("b") else {
+            panic!("expected a list, got {map:?}")
+        };
+        assert_eq!(map.get("a"), both.get(1));
+        assert!(matches!(map.get("a"), Some(Value::Map(shared)) if shared.get("x") == Some(&Value::I32(1))));
+        let deepest = format!("(() => {{ var a = []; for (var i = 1; i < {MAX_NESTING}; i++) a = [a]; return a; }})()");
+        set_context_name("deep", eval_value(&deepest)?)?;
+        assert!(eval_condition("deep.length === 1 && deep[0][0].length === 1")?);
+        too_deep(run_script("wrapped = [deep];"));
+        let mut host = Value::List(Vec::new());
+        for _ in 0..1000 {
+            host = Value::List(vec![host]);
+        }
+        set_context_name("hostDeep", host)?;
+        too_deep(eval_condition("hostDeep.length === 1"));
+        Ok(())
+    })
 }
 
 #[test]
 fn an_integer_past_the_safe_range_is_an_error() -> Result<(), Error> {
-    clear_context_stack();
-    set_context_name("smallest", Value::I64(i64::MIN))?;
-    let err = eval_condition("smallest < 0").expect_err("i64::MIN is not exact");
-    assert!(err.message().contains("too large"), "{}", err.message());
-    set_context_name("safe", Value::I64(-9_007_199_254_740_991))?;
-    assert!(eval_condition("safe === -Number.MAX_SAFE_INTEGER")?);
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        set_context_name("smallest", Value::I64(i64::MIN))?;
+        let err = eval_condition("smallest < 0").expect_err("i64::MIN is not exact");
+        assert!(err.message().contains("too large"), "{}", err.message());
+        set_context_name("safe", Value::I64(-9_007_199_254_740_991))?;
+        assert!(eval_condition("safe === -Number.MAX_SAFE_INTEGER")?);
+        Ok(())
+    })
 }
 
 fn plain(name: &str) -> Option<String> {
@@ -737,7 +788,9 @@ fn request_scripts_have_room_for_nested_app_templates() {
 fn heap_pressure_releases_cached_code_without_losing_live_values() {
     // A fresh thread has its own engine pool. Keep a real JS allocation alive across cache reclamation, below the
     // hard limit, and verify the next script can still read it. No retry of a possibly side-effectful script occurs.
+    // The QuickJS engine's own caches: the conditions run there whatever the process's script_engine.
     std::thread::spawn(|| -> Result<(), Error> {
+        let _quickjs = crate::script::set_thread_script_engine(Some(crate::script::ScriptEngine::Rquickjs));
         assert!(eval_condition("1 + 1 === 2")?);
         let engine = super::ENGINES.with(|engines| engines.borrow()[0].1.clone());
         assert!(!engine.reclaim_cache_pressure());
@@ -772,6 +825,12 @@ fn heap_pressure_releases_cached_code_without_losing_live_values() {
 
 #[test]
 fn running_out_of_memory_frees_the_engine_caches() -> Result<(), Error> {
+    use crate::script::{with_script_engine, ScriptEngine};
+    with_script_engine(ScriptEngine::Rquickjs, running_out_of_memory_on_quickjs)
+}
+
+/// The QuickJS engine's own caches: the conditions run there whatever the process's script_engine.
+fn running_out_of_memory_on_quickjs() -> Result<(), Error> {
     clear_context_stack();
     assert!(eval_condition("1 + 1 === 2")?);
     let cached = || super::ENGINES.with(|engines| engines.borrow()[0].1.scripts.borrow().len());

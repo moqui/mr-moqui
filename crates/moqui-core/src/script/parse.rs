@@ -51,7 +51,7 @@ thread_local! {
 }
 
 /// `body` with the thread's arena, empty. A parse inside another parse's body gets an arena of its own.
-fn with_arena<R>(body: impl FnOnce(&Allocator) -> R) -> R {
+pub(crate) fn with_arena<R>(body: impl FnOnce(&Allocator) -> R) -> R {
     ARENA.with(|arena| match arena.try_borrow_mut() {
         Ok(mut arena) => {
             let out = body(&arena);

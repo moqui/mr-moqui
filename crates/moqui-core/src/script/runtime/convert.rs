@@ -19,7 +19,7 @@ use super::*;
 /// How deep a script value may nest, in arrays, objects and Sets, when it becomes a host value.
 /// Context data rarely nests past a few levels and parsed JSON stops at 128; the limit keeps a
 /// deep or cyclic value from overflowing the native stack.
-pub(super) const MAX_NESTING: usize = 200;
+pub(crate) const MAX_NESTING: usize = 200;
 
 /// How deep a host value may nest when it becomes a script value. A host value cannot be cyclic;
 /// this is a little above [`MAX_NESTING`] so a value a script stored still reads back inside the
@@ -59,7 +59,7 @@ fn host_to_js_at<'js>(ctx: &Ctx<'js>, value: &Value, depth: usize) -> rquickjs::
 
 /// Dates reach a script as text, as Java `toString` would give. Assigning one back stores the text,
 /// and the entity layer converts it to the field type on write.
-pub(super) fn temporal_text(value: &Value) -> String {
+pub(crate) fn temporal_text(value: &Value) -> String {
     let text = moqui_lib::object::basic_convert(value, "String").value;
     match text.as_str() {
         Some(text) => text.to_string(),
@@ -107,7 +107,7 @@ pub(super) fn object_to_js<'js>(ctx: &Ctx<'js>, object: &HostObject) -> rquickjs
 }
 
 /// Largest integer a JavaScript number holds exactly.
-pub(super) const SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+pub(crate) const SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 
 pub(super) fn i64_to_js<'js>(ctx: &Ctx<'js>, number: i64) -> rquickjs::Result<JsValue<'js>> {
     if let Ok(small) = i32::try_from(number) {
@@ -255,7 +255,7 @@ pub(super) fn js_bytes(object: &Object<'_>) -> Option<Vec<u8>> {
 }
 
 /// The error for a value deeper than [`MAX_NESTING`], which a cyclic value always is.
-pub(super) const TOO_DEEP: &str = "value is cyclic or nested too deeply";
+pub(crate) const TOO_DEEP: &str = "value is cyclic or nested too deeply";
 
 /// Step into `value` on the way down a walk of nested script values. `path` holds the arrays,
 /// objects and Sets above it: a value already there is a cycle. A value shared by two branches
@@ -500,10 +500,10 @@ pub(super) fn converts_with_script(value: &Value) -> bool {
 
 /// A script `Set` is held on the context stack as a one-key map holding its items, so a Set one
 /// action block makes in a context name is a Set again in the next block.
-pub(super) const SET_KEY: &str = "__set__";
+pub(crate) const SET_KEY: &str = "__set__";
 
 /// The key of a map whose JavaScript form is a tools object: the name of the wrapper that adds its methods.
-pub(super) const WRAP_KEY: &str = "__wrap";
+pub(crate) const WRAP_KEY: &str = "__wrap";
 
 /// A script `Set`, or a subclass of one: an instance of this context's own `Set`, not an object that only names
 /// itself one through `constructor.name`.

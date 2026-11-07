@@ -158,7 +158,7 @@ pub fn check_actions(xml: &str) -> Result<(), Error> {
 ///
 /// Returns an error when the XML does not parse or does not generate.
 pub fn generated_source(xml: &str, debug: bool) -> Result<String, Error> {
-    if super::runtime::in_script() {
+    if super::run::in_script() {
         generate_apart(xml, debug)
     } else {
         generate_with(xml, debug)
@@ -180,7 +180,7 @@ fn generated(xml: &str) -> Result<ScriptText, Error> {
 
 fn generate(xml: &str) -> Result<String, Error> {
     let debug = std::env::var_os(DEBUG_ENV);
-    let source = if super::runtime::in_script() {
+    let source = if super::run::in_script() {
         generate_apart(xml, debug.is_some())?
     } else {
         generate_with(xml, debug.is_some())?
