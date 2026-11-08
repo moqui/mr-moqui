@@ -1599,6 +1599,86 @@ Next (plans/Script-Engine-Oxide.md §11 has the files and commands):
    - arenas that give back their interior free space.
 4. **Then Script-Engine-Oxide Phase 4:** `oxide` the default, and rquickjs removed.
 
+## Round 33: the bindings' first cuts, and a profile of every layer
+
+The first round after [Script-Engine-Oxide](Script-Engine-Oxide.md) Phase 3, on `script_engine=oxide`, with no fork
+change. Six changes, each measured on its own from one release build: each was behind a temporary switch
+(`MOQUI_OXIDE_OFF`), and every row ran with all of them on, all off, and each one off in turn, two runs of each, with
+nothing else running. The switches are gone from the commit. The raw logs, the profiles' split and the scripts are in
+`../oxide-bench/round33/`.
+
+**The changes:**
+- **`leaf`.** The pure `ec.user` getters are leaves: `nowTimestamp`, `username`, `userId`, `visitId`, `getVisitId` and
+  `machineTimeZone`. A call no longer lends the engine.
+- **`entity`.** The entity value objects of a run are found by their cell in a map, where a scan of every value the
+  run made was O(N²) over a run's rows. The entity value and list prototypes are kept on the engine.
+- **`this`.** A host method lifts its receiver once; it was twice. A decimal method borrows the other decimal's value
+  rather than cloning it.
+- **`keys`.**
+  - The literal keys the bindings read often are made once a thread: `length`, the node literals' fields and the host
+    table's marker.
+  - A list's `length` and index keys are read without `String`s.
+  - The entity value methods are a set.
+  - The map-key cache hashes with foldhash.
+- **`flush`.** The write-back's comparison checks names and texts by code unit, with no `String` each.
+- **`now`.** `nowTimestamp` makes its time stamp from the millis, without the conversion's text. This one is on both
+  engines.
+
+**The new `js_speed` rows** (script section): an entity list of 100 cached rows walked by index, 100 cache gets (a host
+method with a text argument), and 10 noop service calls with and without `itemList` tracked.
+
+Each change's own effect is all on against that one off. The table gives µs a call, with allocations a call in brackets:
+
+| Row | Before (all off) | After (all on) | Mostly from |
+|---|---:|---:|---|
+| 100 `ec.user.nowTimestamp` | 66.7 (802) | 41.1 (702) | `leaf` −21 µs; `this` −1.7 µs and −100 allocations; `now` −1.8 µs (QuickJS 32.2 → 30.7) |
+| walk an entity list, 100 cached rows | 226.7 (3966) | 191.0 (2654) | `entity` −24 µs; `keys` −12 µs |
+| walk itemList, 100 context maps | 193.3 (4123) | 184.2 (3620) | `flush` −8 µs and −500 allocations |
+| 10 noop service calls, itemList tracked | 402.4 (7869) | 383.1 (6824) | `flush` −17 µs |
+| 10 cached entity finds | 61.9 (826) | 58.9 (716) | `entity`, `this` |
+| 100 cache gets | 36.8 (711) | 34.7 (610) | `this` |
+| trusted template | 92.9 (1059) | 90.8 (956) | `flush` |
+| screen Single, html | 479 (5407) | 469 (4950) | `flush`, `this` |
+| screen Single.qvt | 824 (9394) | 805 (8597) | `flush`, `this`, `keys` |
+| screen List, html, 100 rows | 10978 (117274) | 10721 (107828) | `this` −2.3%, `keys` |
+| screen List.qvt, 100 rows | 16465 (141727) | 16248 (131253) | `this`, `keys` |
+| screen List, text, 100 rows | 3137 (44641) | 3051 (40959) | `this`, `keys` |
+
+Rows that do not cross the boundary did not move: plain JavaScript, JSON, string concatenation and decimals.
+
+**The Mantle operations** against the Postgres 200 µs away (Round 32's nine services, two runs of each engine):
+- 3472 ms on QuickJS and 3550 ms on oxide, +2.2% in all (Round 32: +3.9%). The round trips are the same.
+- What is left is mostly `apply#Settlement` (×1.12) and `get#PaymentFinanceDetail` (×1.10).
+
+**The profile** (`perf record -F 4000` of the rows on the binary with every change; self time by layer, the fork's
+symbols included):
+
+| Row | Engine core | Fork API | Bindings | Framework | Allocator |
+|---|---:|---:|---:|---:|---:|
+| walk itemList | 36% | 16% | 5% | 5% | 23% |
+| 100 `nowTimestamp` | 25% | 8% | 10% | 8% | 9% |
+| walk an entity list | 23% | 12% | 8% | 17% | 19% |
+
+It found:
+- **The heap cap's check on every allocation.** Under a cap (Moqui sets one), each allocation's safepoint takes the
+  slow path, which sums `Heap::bytes()` over 14 arenas and tables and `growth_bytes()` over 10. That is 2 to 5% of
+  every row.
+- **The fork's API re-interns each key.** `View::key` collects a `Vec<u16>`, then `AtomTable::find` and `intern_repr`
+  run, on every `get_property` and `set_property`.
+- **The flush of a tracked list.** It clones the stack's value before comparing: about 29 µs a flush of a 100-map list
+  (10 service calls cost 383 µs with `itemList` tracked and 93 µs without). Comparing in place needs to know, without
+  running code, that an object is ordinary (no Proxy, no exotic hooks). No API says so, so this moved to the fork.
+- **The lend around a localized field.** It is about 11% of the entity-list walk (`lend` and `NativeCx::restore`) for
+  `Enumeration.description`.
+
+Next (Round 34, the fork's embedding API and the bindings on it), by what the profile shows:
+1. **The cap's headroom kept at the slow path**, so a capped heap's allocation takes the fast path.
+2. **Keys interned without a copy.** `View::key` on the Latin-1 path, keys the embedder makes once kept as atoms, and
+   an index key read as a number.
+3. **`is_ordinary_object`,** then the flush compared in place, with no clone.
+4. **Arguments and receivers without a handle**, strings in one copy, and the released-handle buffer kept.
+5. **A localized field read from the l10n cache without the lend.**
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.

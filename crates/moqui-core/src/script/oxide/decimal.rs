@@ -226,17 +226,34 @@ fn decimal(scope: &mut Scope<'_>, inner: HostValue) -> Result<Value, Conv> {
     ))
 }
 
+/// A decimal method's other side: a decimal object's own value, or one converted.
+enum Operand {
+    Held(std::rc::Rc<OxDecimal>),
+    Made(HostValue),
+}
+
+impl std::ops::Deref for Operand {
+    type Target = HostValue;
+
+    fn deref(&self) -> &HostValue {
+        match self {
+            Operand::Held(decimal) => &decimal.inner,
+            Operand::Made(value) => value,
+        }
+    }
+}
+
 /// The other side of a decimal method: a decimal, or a number or numeric text converted as `basicConvert(x,
 /// 'BigDecimal')` does.
-fn operand(scope: &mut Scope<'_>, index: usize) -> Result<HostValue, Conv> {
+fn operand(scope: &mut Scope<'_>, index: usize) -> Result<Operand, Conv> {
     let value = scope.arg(index);
     if let Value::Object(object) = &value {
         if let Some(decimal) = scope.host_data::<OxDecimal>(object)? {
-            return Ok(decimal.inner.clone());
+            return Ok(Operand::Held(decimal));
         }
     }
     let host = host_of(scope, &value)?;
-    decimal_of(&host).ok_or_else(|| {
+    decimal_of(&host).map(Operand::Made).ok_or_else(|| {
         Conv::Error(format!(
             "a decimal method takes a decimal, a number or a numeric string, not {}",
             moqui_lib::object::to_plain_string(&host)

@@ -59,6 +59,27 @@ pub(super) fn key(name: &str) -> Result<PropertyKey, Conv> {
     Ok(PropertyKey::from_js_string(JsString::try_from_utf8(name)?))
 }
 
+/// The property key of a literal name the bindings read often (`length`, a node literal's fields), made once per
+/// thread: a key is the engine API's own string, not a runtime's.
+pub(super) fn static_key(name: &'static str) -> Result<PropertyKey, quickjs_oxide::engine::api::core::JsStringError> {
+    thread_local! {
+        static KEYS: std::cell::RefCell<Vec<(&'static str, PropertyKey)>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    KEYS.with(|keys| {
+        if let Some((_, found)) = keys.borrow().iter().find(|(kept, _)| *kept == name) {
+            return Ok(found.clone());
+        }
+        let made = PropertyKey::from_js_string(JsString::try_from_utf8(name)?);
+        keys.borrow_mut().push((name, made.clone()));
+        Ok(made)
+    })
+}
+
+/// Whether `text` is `name`, compared by code unit with no copy.
+pub(super) fn text_is(text: &JsString, name: &str) -> bool {
+    text.utf16_units().eq(name.encode_utf16())
+}
+
 /// The text of a string, for a bare name or a field name an exotic hook reads: a short one without an allocation.
 pub(super) struct KeyText {
     inline: [u8; 64],
@@ -275,7 +296,7 @@ fn to_host_in<J: Js>(
     }
     if js.is_array_object(object)? {
         enter(path, object)?;
-        let length = js.get_property(object, &key("length")?)?;
+        let length = js.get_property(object, &static_key("length")?)?;
         let length = js.to_number(&length)?;
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let length = length as u32;

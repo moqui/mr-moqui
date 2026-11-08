@@ -341,7 +341,7 @@ pub(super) fn kept_matches<J: Js>(
     };
     match held {
         HostValue::List(items) => {
-            let length = js.get_property(object, &key("length")?)?;
+            let length = js.get_property(object, &super::convert::static_key("length")?)?;
             if !js.is_array_object(object)? || js.to_number(&length)? != items.len() as f64 {
                 return Ok(false);
             }
@@ -411,7 +411,7 @@ fn matches_host<J: Js>(
             if !js.is_array_object(object)? {
                 return Ok(false);
             }
-            let length = js.get_property(object, &key("length")?)?;
+            let length = js.get_property(object, &super::convert::static_key("length")?)?;
             if js.to_number(&length)? != items.len() as f64 {
                 return Ok(false);
             }
@@ -462,7 +462,7 @@ fn matches_host<J: Js>(
                 let Some((held_name, held_item)) = expected.next() else {
                     return Ok(false);
                 };
-                if name.to_utf8_lossy() != *held_name || !matches_host(js, engine, &item, held_item, depth + 1)? {
+                if !super::convert::text_is(&name, held_name) || !matches_host(js, engine, &item, held_item, depth + 1)? {
                     return Ok(false);
                 }
             }
@@ -474,7 +474,7 @@ fn matches_host<J: Js>(
 
 fn text_is(value: &Value, text: &str) -> bool {
     match value {
-        Value::String(found) => found.to_utf8_lossy() == text,
+        Value::String(found) => super::convert::text_is(found, text),
         _ => false,
     }
 }

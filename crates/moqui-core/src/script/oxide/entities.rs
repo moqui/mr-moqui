@@ -43,13 +43,21 @@ pub(crate) struct ListValues;
 
 /// The index a property name stands for, when it is one of the list's.
 fn index_of(list: &ListState, key: &PropertyKey) -> Option<usize> {
-    let name = key.to_js_string()?.to_utf8_lossy();
-    let index: usize = name.parse().ok()?;
-    (index < list.list.len() && index.to_string() == name).then_some(index)
+    // a key in an index's canonical form: digits, no leading zero (the engine makes such a key an index already)
+    let name = key.to_js_string()?;
+    let mut index: usize = 0;
+    for (at, unit) in name.utf16_units().enumerate() {
+        let digit = unit.checked_sub(u16::from(b'0')).filter(|digit| *digit < 10)?;
+        if at > 0 && index == 0 {
+            return None;
+        }
+        index = index.checked_mul(10)?.checked_add(usize::from(digit))?;
+    }
+    (!name.is_empty() && index < list.list.len()).then_some(index)
 }
 
 fn is_length(key: &PropertyKey) -> bool {
-    key.to_js_string().is_some_and(|name| name.to_utf8_lossy() == "length")
+    super::super::convert::static_key("length").is_ok_and(|length| *key == length)
 }
 
 fn length(list: &ListState) -> Value {
@@ -195,7 +203,7 @@ pub(in crate::script::oxide) fn object_to_js<J: Js>(
     } else {
         return Ok(None);
     };
-    let prototype = super::class_prototype(js, &host_entities::LIST)?;
+    let prototype = engine.entity_prototype(js, &host_entities::LIST)?;
     let made = js.new_host_exotic(
         ListTarget(Arc::new(ListState::of(list))),
         &engine.protos.lists,
@@ -216,7 +224,7 @@ fn entity_to_js<J: Js>(js: &mut J, engine: &OxideEngine, cell: Arc<EntityCell>) 
 
 /// A new entity value object over `cell`, with the table's prototype.
 fn entity_object<J: Js>(js: &mut J, engine: &OxideEngine, cell: Arc<EntityCell>) -> JsResult<ObjectRef> {
-    let prototype = super::class_prototype(js, &host_entities::ENTITY_VALUE)?;
+    let prototype = engine.entity_prototype(js, &host_entities::ENTITY_VALUE)?;
     js.new_host_exotic(
         super::super::names::EntityTarget(cell),
         &engine.protos.entities,
@@ -279,8 +287,22 @@ pub(crate) fn receiver_state<J: Js>(js: &mut J, this: &Value) -> JsResult<Option
 /// Whether `name` is a member of the entity value prototype (a table method or one the shim adds): on QuickJS a method
 /// wins over a field of the same name, so such a name reads from the prototype.
 pub(crate) fn is_value_method(name: &str) -> bool {
-    let class = &host_entities::ENTITY_VALUE;
-    class.methods.iter().any(|method| method.name == name) || class.shim_members.contains(&name)
+    value_methods().contains(name)
+}
+
+/// The names of [`is_value_method`], made once.
+fn value_methods() -> &'static std::collections::HashSet<&'static str, foldhash::fast::FixedState> {
+    static NAMES: std::sync::OnceLock<std::collections::HashSet<&'static str, foldhash::fast::FixedState>> =
+        std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let class = &host_entities::ENTITY_VALUE;
+        class
+            .methods
+            .iter()
+            .map(|method| method.name)
+            .chain(class.shim_members.iter().copied())
+            .collect()
+    })
 }
 
 /// The related value or list of a relationship name, read with the engine lent (a find may run nested scripts).

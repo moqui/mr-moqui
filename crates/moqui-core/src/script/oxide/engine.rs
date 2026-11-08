@@ -178,7 +178,10 @@ pub(super) struct OxideEngine {
     /// The values this run read or assigned by name ([`super::tracked`]). Emptied when the run ends.
     run: RefCell<super::tracked::RunValues>,
     /// The entity values this run made, with their cells, so one converts back to its cell.
-    entities: RefCell<Vec<(ObjectRef, Arc<EntityCell>)>>,
+    entities: RefCell<EntityObjects>,
+    /// The entity value and list prototypes, kept once made ([`OxideEngine::entity_prototype`]).
+    entity_proto: std::cell::OnceCell<ObjectRef>,
+    list_proto: std::cell::OnceCell<ObjectRef>,
     /// The reserved bytes last sampled, counted in [`counts::HEAP`], and the most sampled.
     heap: Cell<usize>,
     heap_peak: Cell<usize>,
@@ -199,7 +202,9 @@ pub(super) struct OxideEngine {
     /// (`ec.resource.script`, [`super::resource`]); emptied when the outermost run ends.
     modules: RefCell<std::collections::HashMap<String, (Arc<str>, Value)>>,
     /// Property keys of the map keys converted ([`OxideEngine::key`]): a key made once interns once.
-    keys: RefCell<std::collections::HashMap<Box<str>, quickjs_oxide::engine::api::core::PropertyKey>>,
+    keys: RefCell<
+        std::collections::HashMap<Box<str>, quickjs_oxide::engine::api::core::PropertyKey, foldhash::fast::RandomState>,
+    >,
     /// Set when the runtime is dropped to start again on the same thread ([`PRESSURE_BYTES`]): the thread's peak stays.
     restarting: Cell<bool>,
     /// Set when anything in the outermost run ran out of heap ([`OxideEngine::note_out_of_memory`]), a screen unit's
@@ -354,7 +359,7 @@ pub(crate) fn heap_line() -> String {
             engine.units.borrow().bytes(),
             engine.modules.borrow().len(),
             engine.keys.borrow().len(),
-            engine.entities.borrow().len(),
+            engine.entities.borrow().list.len(),
         );
         for (arena, held) in report.arenas() {
             let _ = write!(line, " {arena}={}/{}/{}", held.live, held.used_bytes, held.reserved_bytes);
@@ -788,7 +793,9 @@ impl OxideEngine {
             protos,
             compiled: RefCell::new(Compiled::new()),
             run: RefCell::default(),
-            entities: RefCell::new(Vec::new()),
+            entities: RefCell::new(EntityObjects::default()),
+            entity_proto: std::cell::OnceCell::new(),
+            list_proto: std::cell::OnceCell::new(),
             heap: Cell::new(0),
             heap_peak: Cell::new(0),
             runs: Cell::new(0),
@@ -942,15 +949,37 @@ impl OxideEngine {
 
     /// The entity value object this run made for a cell.
     pub(super) fn entity_proxy(&self, cell: &Arc<EntityCell>) -> Option<ObjectRef> {
-        self.entities
-            .borrow()
-            .iter()
-            .find(|(_, kept)| Arc::ptr_eq(kept, cell))
-            .map(|(proxy, _)| proxy.clone())
+        let entities = self.entities.borrow();
+        entities.by_cell.get(&cell_key(cell)).map(|&at| entities.list[at].0.clone())
     }
 
     pub(super) fn keep_entity(&self, proxy: ObjectRef, cell: Arc<EntityCell>) {
-        self.entities.borrow_mut().push((proxy, cell));
+        let mut entities = self.entities.borrow_mut();
+        let at = entities.list.len();
+        entities.by_cell.insert(cell_key(&cell), at);
+        entities.list.push((proxy, cell));
+    }
+
+    /// The prototype of `class` (the entity value's or the list's), kept on the engine once made; another class's
+    /// is the binder's.
+    pub(super) fn entity_prototype(
+        &self,
+        js: &mut impl quickjs_oxide::engine::api::core::Js,
+        class: &'static crate::script::host::HostClass,
+    ) -> quickjs_oxide::engine::api::core::JsResult<ObjectRef> {
+        let kept = if std::ptr::eq(class, &crate::script::host::entities::ENTITY_VALUE) {
+            &self.entity_proto
+        } else if std::ptr::eq(class, &crate::script::host::entities::LIST) {
+            &self.list_proto
+        } else {
+            return super::bind::class_prototype(js, class);
+        };
+        if let Some(found) = kept.get() {
+            return Ok(found.clone());
+        }
+        let made = super::bind::class_prototype(js, class)?;
+        let _ = kept.set(made.clone());
+        Ok(made)
     }
 
     /// Sample the reserved bytes for the stats: at the first run, then at most every [`HEAP_SAMPLE_EVERY`], looked at
@@ -1138,12 +1167,24 @@ pub(super) struct RunState<'a> {
     outer: Option<Outer>,
 }
 
+/// The entity value objects a run made, with their cells, so one converts back to its cell; by the cell's address
+/// too, which the kept cell keeps from being reused.
+#[derive(Default)]
+pub(super) struct EntityObjects {
+    list: Vec<(ObjectRef, Arc<EntityCell>)>,
+    by_cell: std::collections::HashMap<usize, usize, foldhash::fast::RandomState>,
+}
+
+fn cell_key(cell: &Arc<EntityCell>) -> usize {
+    Arc::as_ptr(cell) as *const () as usize
+}
+
 /// What a nested run set aside of the run around it.
 struct Outer {
     values: super::tracked::RunValues,
     /// The screen unit depth of the outer run: a render the nested run makes starts afresh, as on QuickJS.
     unit_depth: u32,
-    entities: Vec<(ObjectRef, Arc<EntityCell>)>,
+    entities: EntityObjects,
     fallback: Option<&'static str>,
 }
 
@@ -1184,7 +1225,7 @@ impl Drop for RunState<'_> {
                     modules.clear();
                 }
                 if let Ok(mut entities) = self.engine.entities.try_borrow_mut() {
-                    entities.clear();
+                    *entities = EntityObjects::default();
                 }
                 FALLBACK.with(|fallback| fallback.set(None));
             }

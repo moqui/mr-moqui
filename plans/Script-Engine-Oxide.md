@@ -697,6 +697,22 @@ causes remain, both in the fork:
 A fork change goes on a branch of its own, gets a review, and runs the Sweep in a quiet window before it merges to
 the fork's `main` (`../oxide-bench/README.md`).
 
+**Round 33 (Profiling) is done:** the bindings' changes that need no fork change.
+- `nowTimestamp` is 67 → 41 µs a 100 reads (QuickJS 31).
+- The entity-list walk is −16%.
+- The screen rows are −2 to −3%.
+
+Its profile of every layer sets **Round 34**, in the fork with the bindings on it:
+- the heap cap's check on every allocation;
+- keys interned without a copy;
+- `is_ordinary_object` for an in-place flush;
+- arguments without handles;
+- localized reads without the lend.
+
+**Measuring a round.** Each change of a round goes behind a temporary switch (`MOQUI_OXIDE_OFF`, a module of the
+bindings), so one release build measures every change on its own. The switches come out before the commit. Use
+`../oxide-bench/round33/run-variants.sh` and `table.py`.
+
 ### Next: Phase 4 (rquickjs removed)
 
 Before the removal:

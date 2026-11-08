@@ -377,6 +377,31 @@ fn scripts(rows: &mut Rows, calls: usize) {
     );
     run(
         rows,
+        "walk an entity list, 100 cached rows",
+        "(function () { const l = ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', 'JS_SPEED') \
+         .useCache(true).list(); let n = 0; for (let i = 0; i < l.length; i++) n += l[i].description.length; \
+         return n })()",
+    );
+    run(
+        rows,
+        "100 cache gets (a host method, a text argument)",
+        "(function () { const c = ec.cache.getCache('js.speed'); let n = 0; for (let i = 0; i < 100; i++) \
+         if (c.get('k') == null) n++; return n })()",
+    );
+    run(
+        rows,
+        "10 noop service calls",
+        "(function () { for (let i = 0; i < 10; i++) \
+         ec.service.sync().name('jsspeed.JsSpeedServices.noop#Inline').call(); return 0 })()",
+    );
+    run(
+        rows,
+        "10 noop service calls, itemList tracked",
+        "(function () { const n = itemList.length; for (let i = 0; i < 10; i++) \
+         ec.service.sync().name('jsspeed.JsSpeedServices.noop#Inline').call(); return n })()",
+    );
+    run(
+        rows,
         "1000 string concatenations",
         "(function () { let s = ''; for (let i = 0; i < 1000; i++) s += 'x' + i; return s.length })()",
     );
@@ -692,6 +717,18 @@ fn seed(facade: &EntityFacade) {
     row.set("enumTypeId", Value::string("_NA_"));
     row.set("description", Value::string("Not Applicable"));
     row.create(facade).expect("create enum");
+    // the rows `walk an entity list` reads
+    let mut kind = facade.make_value("moqui.basic.EnumerationType").expect("type");
+    kind.set("enumTypeId", Value::string("JS_SPEED"));
+    kind.set("description", Value::string("js_speed rows"));
+    kind.create(facade).expect("create type");
+    for index in 0..100 {
+        let mut row = facade.make_value(ENUM).expect("enum");
+        row.set("enumId", Value::string(format!("JS_SPEED_{index:03}")));
+        row.set("enumTypeId", Value::string("JS_SPEED"));
+        row.set("description", Value::string(format!("Speed row {index}")));
+        row.create(facade).expect("create enum");
+    }
     facade.commit(ENUM).expect("commit seed");
 }
 

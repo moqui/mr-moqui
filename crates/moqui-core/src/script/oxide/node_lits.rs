@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use quickjs_oxide::engine::api::core::{Js, JsResult, NativeErrorKind, ObjectRef, PropertyKey, Value as JsValue};
 
-use super::{key, plain_error, OxideHost};
+use super::{plain_error, OxideHost};
 use crate::screen::sri::NodeLit;
 use crate::script::runtime::{MAX_NESTING, TOO_DEEP};
 
@@ -32,7 +32,7 @@ const HELD_LIT: &str = "$nodeLit";
 /// `expected an element object`.
 pub(crate) fn lit_of(js: &mut impl Js, value: &JsValue) -> JsResult<Arc<NodeLit>> {
     if let JsValue::Object(object) = value {
-        if let JsValue::Object(held) = js.get_property(object, &key(HELD_LIT)?)? {
+        if let JsValue::Object(held) = js.get_property(object, &super::super::convert::static_key(HELD_LIT)?)? {
             if let Some(node) = js
                 .host_data::<OxideHost>(&held)?
                 .and_then(|held| held.obj().and_then(|obj| obj.downcast::<NodeLit>()))
@@ -54,13 +54,13 @@ fn lit_in(js: &mut impl Js, value: &JsValue, path: &mut Vec<ObjectRef>) -> JsRes
     }
     path.push(object.clone());
     let mut node = NodeLit::default();
-    if let JsValue::String(name) = js.get_property(object, &key("name")?)? {
+    if let JsValue::String(name) = js.get_property(object, &super::super::convert::static_key("name")?)? {
         node.name = name.to_utf8_lossy();
     }
-    if let JsValue::String(text) = js.get_property(object, &key("text")?)? {
+    if let JsValue::String(text) = js.get_property(object, &super::super::convert::static_key("text")?)? {
         node.text = text.to_utf8_lossy();
     }
-    if let JsValue::Object(attrs) = js.get_property(object, &key("attrs")?)? {
+    if let JsValue::Object(attrs) = js.get_property(object, &super::super::convert::static_key("attrs")?)? {
         for property in js.own_property_keys(&attrs)? {
             if property.as_symbol().is_some() {
                 continue;
@@ -79,9 +79,9 @@ fn lit_in(js: &mut impl Js, value: &JsValue, path: &mut Vec<ObjectRef>) -> JsRes
             }
         }
     }
-    if let JsValue::Object(children) = js.get_property(object, &key("children")?)? {
+    if let JsValue::Object(children) = js.get_property(object, &super::super::convert::static_key("children")?)? {
         if js.is_array_object(&children)? {
-            let length = js.get_property(&children, &key("length")?)?;
+            let length = js.get_property(&children, &super::super::convert::static_key("length")?)?;
             let length = js.to_number(&length)?;
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let length = length as u32;
@@ -91,7 +91,7 @@ fn lit_in(js: &mut impl Js, value: &JsValue, path: &mut Vec<ObjectRef>) -> JsRes
             }
         }
     }
-    let parent = js.get_property(object, &key("parent")?)?;
+    let parent = js.get_property(object, &super::super::convert::static_key("parent")?)?;
     if let JsValue::Object(_) = parent {
         node.parent = Some(Box::new(lit_in(js, &parent, path)?));
     }

@@ -298,7 +298,7 @@ struct Installed(Rc<Binder>);
 /// The binder of the runtime `js` is in; an error before [`install_ec`] ran.
 fn installed(js: &mut impl Js) -> JsResult<Rc<Binder>> {
     let global = js.global_object()?;
-    if let JsValue::Object(marker) = js.get_property(&global, &key(INSTALLED)?)? {
+    if let JsValue::Object(marker) = js.get_property(&global, &super::convert::static_key(INSTALLED)?)? {
         if let Some(held) = js.host_data::<Installed>(&marker)? {
             return Ok(Rc::clone(&held.0));
         }
@@ -522,7 +522,12 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
     let engine = EngineCall;
     let args = convert_args(binder, scope, method.args, &mut callbacks)?;
     let this = scope.this();
-    let state = match scope.this_host_data::<OxideHost>()? {
+    // the receiver lifted once: `this_host_data` would lift it again
+    let held = match &this {
+        JsValue::Object(object) => scope.host_data::<OxideHost>(object)?,
+        _ => None,
+    };
+    let state = match held {
         Some(held) => Some(held.held(scope)?),
         // an entity value or list, whose prototype is the table's
         None => entities::receiver_state(scope, &this)?,

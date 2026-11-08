@@ -40,7 +40,7 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "setTimeZone", [OptValue], None, set_time_zone),
         method!("ec.user", "setLocale", [OptValue], None, set_locale),
         method!("ec.user", "setEffectiveTime", [OptValue], set_effective_time),
-        method!("ec.user", "getVisitId", [], visit_id),
+        method!("ec.user", "getVisitId", [], None, leaf, visit_id),
         method!("ec.user", "getVisit", [], None, visit),
         method!("ec.user", "endVisit", [Text], None, end_visit),
         method!("ec.user", "hasPermission", [Value], None, has_permission),
@@ -74,13 +74,13 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "passwordRules", [], password_rules),
         method!("ec.user", "locale", [], locale),
         method!("ec.user", "timeZone", [], time_zone),
-        method!("ec.user", "machineTimeZone", [], machine_time_zone),
+        method!("ec.user", "machineTimeZone", [], None, leaf, machine_time_zone),
         method!("ec.user", "userAccount", [], None, user_account),
-        method!("ec.user", "nowTimestamp", [], now_timestamp),
-        method!("ec.user", "visitId", [], visit_id),
+        method!("ec.user", "nowTimestamp", [], None, leaf, now_timestamp),
+        method!("ec.user", "visitId", [], None, leaf, visit_id),
         method!("ec.user", "visit", [], None, visit),
-        method!("ec.user", "username", [], username),
-        method!("ec.user", "userId", [], user_id),
+        method!("ec.user", "username", [], None, leaf, username),
+        method!("ec.user", "userId", [], None, leaf, user_id),
         method!("ec.user", "loginRules", [], login_rules),
     ],
     hidden: &[
@@ -251,9 +251,12 @@ fn user_account(_: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// The current time. A script sees time stamps as text, so this is the text of the stamp.
 fn now_timestamp(_: &mut Call<'_>) -> Result<Ret, HostError> {
-    Ok(Ret::Value(timestamp_of(&Value::I64(
-        crate::user::now_effective_millis(),
-    ))))
+    let millis = crate::user::now_effective_millis();
+    // a time stamp made from the millis, as the conversion makes it, without its text
+    match jiff::Timestamp::from_millisecond(millis) {
+        Ok(timestamp) => Ok(Ret::Value(Value::Timestamp(timestamp))),
+        Err(_) => Ok(Ret::Value(timestamp_of(&Value::I64(millis)))),
+    }
 }
 
 /// A time stamp from a script's value: epoch millis, a time stamp, or text, which is in the session time zone unless it
