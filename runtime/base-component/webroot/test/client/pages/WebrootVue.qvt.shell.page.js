@@ -652,6 +652,43 @@ test("the theme's appearance: its default scheme and the scheme's fonts, the use
     }
 });
 
+test("the account menu's Theme: shown for two themes the policy leaves open; a pick is posted and the page reloads, the current one does nothing", async () => {
+    const savedConfig = qvt.config, savedRequest = moqui.request, savedReload = moqui.reloadPage;
+    const methods = qvt.rootOptions({ basePath: "/apps", linkBasePath: "/qapps", appRootPath: "" }).methods;
+    const vm = { userId: "john", appRootPath: "", moquiSessionToken: "tok" };
+    Object.keys(methods).forEach((key) => { vm[key] = methods[key].bind(vm); });
+    const posts = [];
+    let reloads = 0;
+    moqui.request = (url, options) => { posts.push([url, options.params]); return Promise.resolve({ status: 200 }); };
+    moqui.reloadPage = () => { reloads++; };
+    const themes = [{ id: "DEFAULT_QUASAR", description: "Default" }, { id: "GREEN_SCREEN_QUASAR", description: "Green Screen" }];
+    try {
+        assert.match(qvt.components["m-qapps-root"].template, /v-if="themeMenuAllowed\(\)" id="m-account-theme"/);
+        qvt.config = { appearance: { screenThemeId: "DEFAULT_QUASAR", themes: themes.slice(0, 1), policy: {} } };
+        assert.ok(!vm.themeMenuAllowed(), "one theme: nothing to choose");
+        qvt.config = { appearance: { screenThemeId: "DEFAULT_QUASAR", themes, policy: { theme: false } } };
+        assert.ok(!vm.themeMenuAllowed(), "the policy locks the choice");
+        qvt.config = { appearance: { screenThemeId: "DEFAULT_QUASAR", themes, policy: { appearance: false } } };
+        assert.ok(!vm.themeMenuAllowed(), "the policy locks all of the appearance");
+        qvt.config = { appearance: { screenThemeId: "DEFAULT_QUASAR", themes, policy: {} } };
+        assert.ok(vm.themeMenuAllowed());
+        assert.ok(!methods.themeMenuAllowed.call(Object.assign({}, vm, { userId: "" })), "no user");
+        assert.deepEqual(vm.appearanceThemes().map((theme) => theme.id), ["DEFAULT_QUASAR", "GREEN_SCREEN_QUASAR"]);
+        assert.equal(vm.currentThemeId(), "DEFAULT_QUASAR");
+        vm.setScreenTheme("DEFAULT_QUASAR");
+        assert.equal(posts.length, 0, "the current theme");
+        vm.setScreenTheme("GREEN_SCREEN_QUASAR");
+        await Promise.resolve();
+        await Promise.resolve();
+        assert.deepEqual(posts, [["/apps/setScreenTheme", { moquiSessionToken: "tok", screenThemeId: "GREEN_SCREEN_QUASAR" }]]);
+        assert.equal(reloads, 1);
+    } finally {
+        qvt.config = savedConfig;
+        moqui.request = savedRequest;
+        moqui.reloadPage = savedReload;
+    }
+});
+
 // The drawer's rows (moqui.drawerRows) from the menu data: the apps root without a row, the open app's top-level screens one
 // level below the apps, a level more for each deeper screen, the saved finds of the last screen, and one current row.
 const appsRoot = (activeName) => ({ name: "apps", title: "Applications", path: "/apps", subscreens: [

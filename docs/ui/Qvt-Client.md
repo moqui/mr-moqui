@@ -46,7 +46,7 @@ inline script and no inline event handler, and the settings are a data block:
 | `userId`, `username`, `userFullName` | the signed-in user |
 | `locale`, `timeZone`, `quasarLang` | `en-US` style tag, zone name, and the key of the language pack in `Quasar.Lang` (`enUS`, `ptBR`, `zhCN`, `de`, ...) |
 | `darkMode`, `leftOpen`, `leftMini` | the preferences `QUASAR_DARK` (`true`, `false` or `"auto"`, which follows the system), `QUASAR_LEFT_OPEN` and `QUASAR_LEFT_MINI` (the drawer as a rail of app icons) |
-| `appearance` | what `org.moqui.impl.ShellServices.get#Appearance` builds (see Appearance): the theme's color schemes (`{id, description, light, dark, custom, version, fonts}`), the fonts (`{id, description, kind, family, stylesheet}`), `defaultSchemeId`, `schemeId` (the scheme shown), `policy`, the user's `THEME_*` values the policy allows, `keys`, `tokens` and the style sheets the page links (`links`) |
+| `appearance` | what `org.moqui.impl.ShellServices.get#Appearance` builds (see Appearance): the theme's color schemes (`{id, description, light, dark, custom, version, fonts}`), the fonts (`{id, description, kind, family, stylesheet}`), the themes the user may choose (`themes`, `{id, description}`; see Themes), `screenThemeId` (the theme shown), `defaultSchemeId`, `schemeId` (the scheme shown), `policy`, the user's `THEME_*` values the policy allows, `keys`, `tokens` and the style sheets the page links (`links`) |
 | `devMarker` | the `webapp_dev_marker_color` conf property: the color of the small square a dev or test instance shows in the corner of the window; empty for none |
 | `density`, `startApp` | `SHELL_DENSITY` (`comfortable` or `compact`) and `SHELL_START_APP`, the app the user may open that `/qapps` with no path opens (empty for the app list) |
 | `notificationEndpoint` | the path of the notification WebSocket, from `webapp_notification_endpoint`. Empty means no socket is opened. |
@@ -379,7 +379,8 @@ latest counts). The header, left to right (IronStone style-guide §2.2, design �
   `email`, `messages` and `notifications` (a number, or a map's `total`); `updates` has no badge. Without a Notifications tab the
   notify-history menu stays. The screen history is the palette's Recent.
 - **Account menu**: the user's avatar with their presence dot as its button; in the menu, the status (`m-user-status-menu`, below) after the user's
-  name, then the `accountMenuItems` of every app. The Chat button has the user's own dot too. The right `q-drawer` slot stays free for Assist (R1).
+  name, then the `accountMenuItems` of every app, Dark/Light, **Theme** (see Themes) and **Appearance…**. The Chat button has the user's own dot
+  too. The right `q-drawer` slot stays free for Assist (R1).
 
 **Tray** (`m-shell-tray`, id `m-tray`): a `q-page-sticky` at the right of the canvas, inside the `q-page-container`, 400 px from 600 px and the
 full width below, over the screen. A tab per tray screen of the theme; each is an `m-dynamic-container` of its link (as `/apps/...`) mounted on
@@ -479,7 +480,8 @@ and token name without its prefix (`primary`, `page-bg`, ...).
   - In dark mode, `panel-bg` and `page-bg` are also `--q-dark` and `--q-dark-page`, which Quasar's dark components use.
   - A name or value with a character that could end its declaration is logged and left out.
 - The scheme's `extraCss` comes after the colors, for what is not a color. An administrator writes it; nothing a user enters goes there.
-- `WebrootQuasarThemeData.xml` seeds Default (no colors), Slate, Forest, Warm and High Contrast for `DEFAULT_QUASAR`.
+- `WebrootQuasarThemeData.xml` seeds Default (no colors), Slate, Forest, Warm and High Contrast for `DEFAULT_QUASAR`, and Phosphor and
+  Amber for `GREEN_SCREEN_QUASAR`, whose list then goes on with the Default's (Themes).
 - The fonts are `ScreenFontOption` rows: a sans, serif or mono kind, a `font-family` stack and an optional style sheet.
 - A scheme names its own fonts in `defaultFontBodyId`, `defaultFontHeadingId` and `defaultFontMonoId`, used for a role the user
   has chosen no font for. Set a scheme's font there, not as `--m-font-*` in its `extraCss`: there its style sheet is never linked.
@@ -490,7 +492,7 @@ and token name without its prefix (`primary`, `page-bg`, ...).
 | Resource | Value |
 |---|---|
 | `STRT_DEFAULT_COLOR_SCHEME` | the scheme of a user who has chosen none; ignored unless it is a scheme of the theme |
-| `STRT_APPEARANCE_POLICY` | JSON of what the user may change. `appearance: false` locks everything. A group set `false` locks its preferences: `mode` (`QUASAR_DARK`), `density` (`SHELL_DENSITY`), `scheme`, `accent` (both accent colors), `colors` (`THEME_COLOR_OVERRIDES`), `fonts`, `sizes`, `motion` (motion, line height, links, corners). `mode` `light`, `dark` or `auto` forces the mode. `lockedKeys` names more keys. No policy allows everything; one that is not a JSON object is logged and locks everything |
+| `STRT_APPEARANCE_POLICY` | JSON of what the user may change. `appearance: false` locks everything, and `theme: false` the choice of another theme (Themes). A group set `false` locks its preferences: `mode` (`QUASAR_DARK`), `density` (`SHELL_DENSITY`), `scheme`, `accent` (both accent colors), `colors` (`THEME_COLOR_OVERRIDES`), `fonts`, `sizes`, `motion` (motion, line height, links, corners). `mode` `light`, `dark` or `auto` forces the mode. `lockedKeys` names more keys. No policy allows everything; one that is not a JSON object is logged and locks everything |
 | `STRT_APPEARANCE_SERVICE` | a service called, in sequence, with `userId`, `screenThemeId` and the `appearance` built so far, answering `appearance`: the next one gets its answer. It may add or remove schemes and fonts, set `defaultSchemeId` or change `policy`, so a component decides by station, tenant or host. Each runs in its own transaction with authorization disabled; one that fails or answers no map is logged and skipped |
 
 After the services, the policy is normalized (its `lockedKeys` is every key it locks), the locked values are left out, `schemeId`
@@ -502,6 +504,44 @@ density is the shell's default, and a forced mode is `config.darkMode`. `moqui.a
 - `includes/QvtConfig.js` (the pre-actions of `qapps.xml` and the `clientConfig` transition) fills `config.appearance` from `get#Appearance`.
 - `WebrootVue.qvt.html.fancy` links the scheme's and fonts' style sheets (`appearance.links`) before the client starts.
 - `moqui.applyAppearanceAll` sets the rest when the shell is created.
+
+## Themes
+
+The `/qapps` shell's theme is a `ScreenTheme` of type `STT_INTERNAL_QUASAR`: its style sheets, scripts, Quasar config, logo, body class,
+tray screens, hook services and the rest of its theme values (`ScreenThemeResource`), its icons and its color schemes. A user's is
+their `UserScreenTheme`, else a group's (`UserGroupScreenTheme`), else the type's `enumCode` (`DEFAULT_QUASAR`), else a theme of the
+type with `DEFAULT` in its id (`crates/moqui-core/src/screen/sri/theme.rs`).
+
+**A theme builds on a parent** (`ScreenTheme.parentScreenThemeId`), so a theme sets only what it changes and keeps what the apps seed
+on `DEFAULT_QUASAR` (BOSS's tray screens, counts service, record and contact hooks, logo):
+- A resource type the theme has any row of is its own: its rows replace the parent's. So a theme's `STRT_STYLESHEET` list replaces the
+  parent's style sheets (list the parent's it keeps), and one empty row hides a parent's value, such as a tray screen.
+- A type it has no row of comes from the parent, and so on up (at most 8 themes; a cycle is logged once and the chain ends there).
+- Its `ScreenThemeIcon` patterns are tried before the parent's, and its color schemes come before the parent's in Appearance.
+  `STRT_DEFAULT_COLOR_SCHEME` may name either.
+- A theme's hook services (`STRT_SHELL_COUNTS_SERVICE`, `STRT_RECORD_VISIBLE_SERVICE`, `STRT_EMAIL_CONTACT_SERVICE`, ...) apply to the
+  users who have it, chosen or not. A theme a user may choose normally leaves them to its parent.
+
+**Choosing one.** The account menu's **Theme** lists `appearance.themes`, the Quasar themes by description, with the current one
+checked. It shows when there are two or more and the policy of the user's theme leaves the choice open (`policy.theme`, false for
+`theme: false` or `appearance: false`; `moqui.themeChoiceAllowed()`). A pick posts `/apps/setScreenTheme`, which calls
+`org.moqui.impl.ShellServices.set#UserScreenTheme`, and reloads the page, since the theme's style sheets, scripts and shell values
+are read when the page is made. The service:
+- refuses (403, nothing written) a theme that is not in `themes` (an appearance service may remove some) or a locked choice;
+- deletes the user's `UserScreenTheme` when the pick is the theme they would get without it (a group's, the default), so a later
+  change of the group's theme reaches them, and writes it otherwise;
+- clears the user's `THEME_COLOR_SCHEME`, so the new theme opens in its own default scheme. The fonts, sizes and other choices stay.
+
+**Green Screen** (`GREEN_SCREEN_QUASAR`, `WebrootQuasarThemeData.xml`) is the framework's second theme and an example for a theme in
+a component. It has `DEFAULT_QUASAR` as parent and sets only:
+- its style sheets: the Default's, then `css/WebrootVue.qvt.green-screen.css` (the mono font on `:root`, square corners, double rules
+  for boxes, menus and dialogs with a block shadow, dashed rules and fields, `[ Label ]` buttons, inverse-video selection);
+- the body class `m-theme-green-screen` and a green Quasar brand;
+- its schemes Phosphor (its default: green on black, green-bar paper in light mode) and Amber.
+
+The style sheet takes its colors only from the tokens, so a Default scheme (Slate, Forest, ...) makes it a modern terminal in that
+scheme's colors. The glow, the scan lines (none under reduced motion or `prefers-contrast: more`) and the paper bands are in the
+Phosphor and Amber `extraCss`.
 
 ## Record panels, rich text, avatars and record cards
 

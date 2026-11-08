@@ -1,0 +1,65 @@
+/* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
+
+/* The Green Screen theme (GREEN_SCREEN_QUASAR, WebrootQuasarThemeData.xml; docs/ui/Qvt-Client.md, Themes): an old terminal, loaded
+   after WebrootVue.qvt.css in that theme only. It draws from the tokens (--q-primary, --m-text, --m-border, ...), so any color scheme
+   recolors it and the style stays: Phosphor and Amber are the tube's colors (their extra CSS adds the glow, scan lines and paper), a
+   Default scheme such as Slate makes it a modern terminal. Only Quasar classes and m-* tokens, nothing of the shell's markup.
+
+   The fonts are on :root, as in WebrootVue.qvt.css, so a font the user chooses in Appearance (set on the html element) still wins. */
+:root { --m-font-body:"Atkinson Hyperlegible Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --m-font-heading:var(--m-font-body); }
+
+/* the shape tokens: square corners, no soft shadows, double rules (the ═ ║ of a box drawn in characters); a scheme's own shape tokens,
+   in its later sheet, still win */
+body.m-theme-green-screen { --m-card-radius:0; --m-btn-radius:0; --m-card-shadow:none; --m-header-shadow:none;
+    --m-card-border:3px double var(--m-border); --m-header-border:3px double var(--m-border);
+    --m-drawer-current-bg:color-mix(in srgb, var(--q-primary) 18%, transparent); --m-drawer-current-fg:var(--m-text);
+    /* the hard block shadow of a window drawn on a text screen */
+    --m-gs-window-shadow:6px 6px 0 color-mix(in srgb, var(--m-page-bg) 40%, black); }
+
+/* boxes: the panels, cards, tables, menus and dialogs are boxes of double rules with square corners. The corners are square only
+   while the user has not asked for more rounded ones in Appearance (m-radius-round), which wins as in WebrootVue.qvt.css. */
+body.m-theme-green-screen:not(.m-radius-round) :is(.m-container-box, .m-number-card, .m-card, .q-table__card, .q-card, .q-menu, .q-tooltip,
+    .q-chip, .q-badge, .q-btn-group, .q-btn-toggle, .q-linear-progress, .q-banner, .q-notification, .q-field__control) { border-radius:0; }
+/* (a pseudo-element cannot be in :is) */
+body.m-theme-green-screen:not(.m-radius-round) .q-field--outlined .q-field__control::before,
+body.m-theme-green-screen:not(.m-radius-round) .q-field--outlined.q-field--focused .q-field__control::after,
+body.m-theme-green-screen:not(.m-radius-round) .q-btn--outline::before { border-radius:0; }
+body.m-theme-green-screen :is(.m-container-box, .m-number-card, .m-card, .q-table__card) { border:3px double var(--m-border); }
+body.m-theme-green-screen :is(.q-menu, .q-dialog .q-card, .q-tooltip) { border:3px double var(--m-border); box-shadow:var(--m-gs-window-shadow); }
+body.m-theme-green-screen .q-tooltip { background:var(--m-panel-bg); color:var(--m-text); border-width:1px; border-style:solid; }
+body.m-theme-green-screen .q-layout .q-drawer--left { border-right:3px double var(--m-border); }
+body.m-theme-green-screen .q-layout .q-drawer--right { border-left:3px double var(--m-border); }
+
+/* single rules: separators and table lines dashed, as rows of ─ - characters */
+body.m-theme-green-screen .q-separator--horizontal { height:0; background:none; border-top:1px dashed var(--m-border); }
+body.m-theme-green-screen .q-separator--vertical { width:0; background:none; border-left:1px dashed var(--m-border); }
+body.m-theme-green-screen .q-table :is(th, td) { border-bottom-style:dashed; }
+body.m-theme-green-screen .q-table thead th { text-transform:uppercase; letter-spacing:.06em; }
+
+/* fields: the outline dashed until focused, the caret a block in the primary color where the browser draws one */
+body.m-theme-green-screen .q-field--outlined .q-field__control:before { border-style:dashed; }
+body.m-theme-green-screen .q-field--standard .q-field__control:before { border-bottom-style:dashed; }
+body.m-theme-green-screen :is(input, textarea, [contenteditable="true"]) { caret-color:var(--q-primary); caret-shape:block; }
+
+/* buttons with a label read as [ Label ]; round, icon-only and grouped buttons, and the ones of the toolbar, tabs, pickers and
+   pagination keep their own look */
+body.m-theme-green-screen .q-btn--rectangle:not(.q-btn--round):has(> .q-btn__content > .block) > .q-btn__content::before {
+    content:"["; margin-right:.4em; opacity:.75; }
+body.m-theme-green-screen .q-btn--rectangle:not(.q-btn--round):has(> .q-btn__content > .block) > .q-btn__content::after {
+    content:"]"; margin-left:.4em; opacity:.75; }
+body.m-theme-green-screen :is(.q-toolbar, .q-btn-group, .q-tabs, .q-pagination, .q-date, .q-time, .q-field, .q-table__bottom)
+    .q-btn__content::before,
+body.m-theme-green-screen :is(.q-toolbar, .q-btn-group, .q-tabs, .q-pagination, .q-date, .q-time, .q-field, .q-table__bottom)
+    .q-btn__content::after { content:none !important; }
+body.m-theme-green-screen .q-btn { text-transform:uppercase; letter-spacing:.04em; }
+
+/* the title bar of the screen, and headings, as a terminal's capitals */
+body.m-theme-green-screen .q-toolbar__title { text-transform:uppercase; letter-spacing:.08em; }
+body.m-theme-green-screen :is(h1, h2, h3, .text-h4, .text-h5, .text-h6) { letter-spacing:.02em; }
+
+/* selection is inverse video; focus a dashed ring; scroll bars in the rule color */
+body.m-theme-green-screen ::selection { background:var(--q-primary); color:var(--m-page-bg); text-shadow:none; }
+body.m-theme-green-screen :focus-visible { outline:1px dashed var(--q-primary); outline-offset:2px; }
+body.m-theme-green-screen, body.m-theme-green-screen * { scrollbar-color:var(--m-border) transparent; }
+body.m-theme-green-screen a:hover { text-decoration:underline dashed; }

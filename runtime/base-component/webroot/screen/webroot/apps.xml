@@ -27,6 +27,24 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- The account menu's Theme (docs/ui/Qvt-Client.md, Themes): the user's Quasar theme, one the appearance of their theme
+        offers; refused (403) when the theme's policy locks the choice. The page reloads to show it. -->
+    <transition name="setScreenTheme">
+        <parameter name="screenThemeId" required="true"/>
+        <actions><script><![CDATA[
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                let out = null, refused = null
+                try {
+                    out = ec.service.sync().name('org.moqui.impl.ShellServices.set#UserScreenTheme')
+                            .parameter('screenThemeId', screenThemeId).disableAuthz().call()
+                } catch (e) { refused = String(e.message || e) }
+                if (ec.message.hasError()) { refused = ec.message.errorsString; ec.message.clearErrors() }
+                if (refused) ec.web.sendJsonError(403, refused)
+                else ec.web.sendJsonResponse({screenThemeId: out && out.screenThemeId})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="setPrefGoLast" read-only="true">
         <parameter name="preferenceKey"/><parameter name="preferenceValue"/>
         <actions><script><![CDATA[

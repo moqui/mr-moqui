@@ -553,6 +553,8 @@ fn sri_methods_called_from_actions() {
     assert_eq!(hidden.len(), 1);
 }
 
+/// The theme's values and icon classes, with what it does not set from its parent: its own style sheets replace the
+/// parent's, the parent's scripts (a type it has no row of) and icon patterns are used after its own.
 #[test]
 fn theme_values_and_icon_classes_come_from_the_theme_entities() {
     let world = World::open("");
@@ -575,8 +577,41 @@ fn theme_values_and_icon_classes_come_from_the_theme_entities() {
         &[
             ("screenThemeId", Value::string("TEST_THEME")),
             ("screenThemeTypeEnumId", Value::string("STT_INTERNAL")),
+            ("parentScreenThemeId", Value::string("PARENT_THEME")),
         ],
     );
+    create(
+        "moqui.screen.ScreenTheme",
+        &[
+            ("screenThemeId", Value::string("PARENT_THEME")),
+            ("screenThemeTypeEnumId", Value::string("STT_INTERNAL")),
+        ],
+    );
+    for (id, kind, value) in [
+        ("P1", "STRT_STYLESHEET", "/parent.css"),
+        ("P2", "STRT_SCRIPT", "/parent.js"),
+    ] {
+        create(
+            "moqui.screen.ScreenThemeResource",
+            &[
+                ("screenThemeResourceId", Value::string(id)),
+                ("screenThemeId", Value::string("PARENT_THEME")),
+                ("resourceTypeEnumId", Value::string(kind)),
+                ("sequenceNum", Value::I64(1)),
+                ("resourceValue", Value::string(value)),
+            ],
+        );
+    }
+    for (pattern, icon) in [(".*Delete.*", "fa fa-parent-trash"), (".*Archive.*", "fa fa-archive")] {
+        create(
+            "moqui.screen.ScreenThemeIcon",
+            &[
+                ("screenThemeId", Value::string("PARENT_THEME")),
+                ("textPattern", Value::string(pattern)),
+                ("iconClass", Value::string(icon)),
+            ],
+        );
+    }
     for (sequence, value) in [(2, "/second.css"), (1, "/first.css")] {
         create(
             "moqui.screen.ScreenThemeResource",
@@ -606,7 +641,8 @@ fn theme_values_and_icon_classes_come_from_the_theme_entities() {
         &screen,
         r#"<screen require-authentication="false"><actions><script>
             ec.web.sendJsonResponse({styles: sri.getThemeValues('STRT_STYLESHEET'), none: sri.getThemeValues('STRT_OTHER'),
-                trash: sri.getThemeIconClass('Delete it'), plain: sri.getThemeIconClass('Other')})
+                scripts: sri.getThemeValues('STRT_SCRIPT'), trash: sri.getThemeIconClass('Delete it'),
+                archive: sri.getThemeIconClass('Archive it'), plain: sri.getThemeIconClass('Other')})
         </script></actions><widgets/></screen>"#,
     )
     .unwrap();
@@ -624,7 +660,13 @@ fn theme_values_and_icon_classes_come_from_the_theme_entities() {
         "/first.css,/second.css"
     );
     assert_eq!(moqui_lib::object::to_plain_string(&map["none"]), "");
-    assert_eq!(moqui_lib::object::to_plain_string(&map["trash"]), "fa fa-trash");
+    assert_eq!(moqui_lib::object::to_plain_string(&map["scripts"]), "/parent.js");
+    assert_eq!(
+        moqui_lib::object::to_plain_string(&map["trash"]),
+        "fa fa-trash",
+        "the theme's own pattern first"
+    );
+    assert_eq!(moqui_lib::object::to_plain_string(&map["archive"]), "fa fa-archive");
     assert!(map["plain"].is_null());
 }
 
