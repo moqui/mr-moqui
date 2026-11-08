@@ -49,9 +49,9 @@ none, inherit or override, the organization and `documentText`). It runs under t
 | Change | Needs |
 | --- | --- |
 | The instance's document (store, customize, reset) and the trusted reference origins | The sealed `ADMIN_CONSTITUTION_GLOBAL` (framework, granted to `ADMIN`) |
-| An organization's own document | `ORG_CONSTITUTION_EDIT` (Mantle, granted to `ADMIN`) for an organization the user works in, or any internal organization for a holder of `ADMIN_CONSTITUTION_GLOBAL` |
+| An organization's own document | `ORG_CONSTITUTION_EDIT` (Mantle, granted to `ADMIN`) for an organization the user works in, or any internal organization for a holder of `ADMIN_CONSTITUTION_GLOBAL`; called with organization entity filters (as IronStone Admin's screen calls it), for an organization in the filtered find on `mantle.party.InternalOrganization` instead (every one for `ADMIN` with no active organization, the active one otherwise) |
 
-Reading needs only a signed-in user: the global document for anyone, an organization's for its members. `AgentAdmin`
+Reading needs only a signed-in user: the global document for anyone, an organization's for its members, and, under organization entity filters, for an organization in that filtered find. `AgentAdmin`
 grants nothing here. An application that edits (IronStone Admin) adds its own screen checks over these.
 
 ## Services
