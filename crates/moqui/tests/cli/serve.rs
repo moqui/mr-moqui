@@ -286,7 +286,8 @@ fn a_server_that_does_not_start_fails_its_suite_only() {
         out.contains("Probe setup FAILED: the server for moqui-test-fixture exited before it served (exit status: 1)"),
         "{out}"
     );
-    assert!(out.contains("no component has a spec NoSuchSpec"), "{out}");
+    // the child's error, from the end of its log, in the failure report
+    assert!(out.contains("none of the components named (moqui-test-fixture) has a spec NoSuchSpec"), "{out}");
     assert!(out.contains("Probe > the server answers  PASSED"), "{out}");
     assert!(
         out.contains("Probe setup FAILED: moqui-test-undeclared declares no server for --serve"),
