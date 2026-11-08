@@ -1,6 +1,6 @@
 # Script engine: quickjs-oxide beside rquickjs
 
-Status 2026-11-07: Phases 0 to 3 built. quickjs-oxide is a dependency at the fork's revision abcddb2f, with F1, F2,
+Status 2026-11-07: Phases 0 to 3 built. quickjs-oxide is a dependency at the fork's revision 87402031, with F1, F2,
 F3a, F3 and F4 (§6). Under `script_engine=oxide` every kind runs on quickjs-oxide, and both suites and the client
 suite pass; the speed and heap rows miss and are accepted for now (§7, Phase 3 result). The default is still
 `rquickjs`, and rquickjs stays until Phase 4.
@@ -614,8 +614,8 @@ Open, with what decides each:
 ## 11. Resuming
 
 State at the end of Phase 3 (2026-11-07):
-- **mr-moqui:** `master` holds Phases 0 to 3, Profiling Rounds 33 to 36 and the pin to the fork's abcddb2f.
-- **The fork:** its `main` is abcddb2f (Round 36's `perf/key-atoms` merged).
+- **mr-moqui:** `master` holds Phases 0 to 3, Profiling Rounds 33 to 38 and the pin to the fork's 87402031.
+- **The fork:** its `main` is 87402031 (Round 38's `perf/visit-plain-data` merged).
 - **Defaults:** `rquickjs` is the default. `small-oxide` and `oxide` are both whole and pass the suites.
 - **Measurement:** the measurement workspace is `../oxide-bench` (its `README.md`). It has:
   - the fork's Sweep;

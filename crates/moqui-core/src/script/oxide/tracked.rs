@@ -27,7 +27,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use moqui_lib::object::Value as HostValue;
-use quickjs_oxide::engine::api::core::{Js, PropertyKey, Value};
+use quickjs_oxide::engine::api::core::{DataRef, Js, PropertyKey, Value};
 
 use super::convert::{key, to_host, to_js, Conv};
 use super::decimal::OxDecimal;
@@ -538,6 +538,61 @@ fn matches_in_place<J: Js>(
             let Value::Object(object) = value else {
                 return Ok(Some(false));
             };
+            // text compared where it lies; the other values after, as they may be objects to walk
+            let mut verdict = None;
+            let mut lifted = false;
+            let mut deferred = Vec::new();
+            let mut expected = entries.iter();
+            let visited =
+                js.visit_plain_own_data(object, Some(&engine.protos.object_prototype), &mut |property| {
+                    if !property.enumerable || matches!(property.value, DataRef::Callable) {
+                        return true;
+                    }
+                    let Some(name) = property.key.to_js_string() else {
+                        return true;
+                    };
+                    let Some((held_name, held_item)) = expected.next() else {
+                        verdict = Some(false);
+                        return false;
+                    };
+                    if !super::convert::text_is(&name, held_name) {
+                        verdict = Some(false);
+                        return false;
+                    }
+                    match (property.value, held_item) {
+                        (DataRef::Text(text), HostValue::String(held)) => {
+                            if !text.eq_str(held) {
+                                verdict = Some(false);
+                                return false;
+                            }
+                        }
+                        // text against a host value shown as text (a time stamp): compared as before
+                        (DataRef::Text(_), _) => {
+                            lifted = true;
+                            return false;
+                        }
+                        (DataRef::Value(item), held_item) => deferred.push((item, held_item)),
+                        (DataRef::Callable, _) => {}
+                    }
+                    true
+                })?;
+            match visited {
+                None => return matches_in_place_slow(js, engine, value, host, depth),
+                Some(false) if !lifted => return Ok(Some(verdict.unwrap_or(false))),
+                Some(true) => {
+                    if expected.next().is_some() {
+                        return Ok(Some(false));
+                    }
+                    for (item, held_item) in &deferred {
+                        match matches_in_place(js, engine, item, held_item, depth + 1)? {
+                            Some(true) => {}
+                            other => return Ok(other),
+                        }
+                    }
+                    return Ok(Some(true));
+                }
+                Some(false) => {}
+            }
             let Some(properties) = js.plain_own_data(object, Some(&engine.protos.object_prototype))? else {
                 return matches_in_place_slow(js, engine, value, host, depth);
             };

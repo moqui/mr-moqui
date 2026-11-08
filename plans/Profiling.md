@@ -1832,6 +1832,32 @@ The proposal is a `#[global_allocator]` in the server binary (`tikv-jemallocator
 way first). That is a framework decision (a C dependency, and memory behavior under load to check), so it is left for
 you.
 
+## Round 38: a plain object's strings compared and copied where they lie
+
+The fork's `perf/visit-plain-data` merged to its `main`. `Js::visit_plain_own_data` shows a plain object's own data
+properties to a visitor in one crossing:
+- a string as its code units, borrowed from the heap (`TextRef`, with `eq_str` and `to_string_lossy`);
+- a callable as a marker, with no handle;
+- anything else lifted as before.
+
+`plain_own_data` had lifted every string into a `JsString` (two allocations and a copy) only to compare it or copy it
+again. In the bindings:
+- the flush's in-place comparison of a map compares its text with the host's text where it lies, and walks the other
+  values after;
+- `to_host` copies text once, into the host `String`.
+
+A text value whose host value is not a string (a time stamp shown as text) takes the comparison as before.
+
+Against Round 36's binary, two runs each (µs a call, allocations):
+- walk itemList: 77 (1307) → 70 (907);
+- 10 service calls with `itemList` tracked: 213 (3032) → 198 (2232);
+- the trusted template: 64 → 62;
+- Labels: 255 → 246;
+- Single html: 346 → 339;
+- Single.qvt: 561 (4739) → 545 (4104);
+- List.qvt 100: 14186 → 13963;
+- List text: 2666 → 2591.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.

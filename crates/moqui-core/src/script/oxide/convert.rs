@@ -21,7 +21,7 @@
 
 
 use moqui_lib::object::{HostObject, Value as HostValue};
-use quickjs_oxide::engine::api::core::{InitValue, Js, JsString, ObjectRef, PropertyKey, RuntimeError, TypedArrayKind, Value};
+use quickjs_oxide::engine::api::core::{DataRef, InitValue, Js, JsString, ObjectRef, PropertyKey, RuntimeError, TypedArrayKind, Value};
 
 use super::decimal::OxDecimal;
 use super::engine::OxideEngine;
@@ -315,22 +315,35 @@ fn to_host_in<J: Js>(
         path.pop();
         return Ok(HostValue::List(list));
     }
-    if let Some(entries) = js.plain_own_data(object, Some(&engine.protos.object_prototype))? {
+    // text copied once from where it lies; the other values converted after, in their places
+    let mut map = indexmap::IndexMap::new();
+    let mut deferred = Vec::new();
+    let visited = js.visit_plain_own_data(object, Some(&engine.protos.object_prototype), &mut |property| {
+        if !property.enumerable || matches!(property.value, DataRef::Callable) {
+            return true;
+        }
+        let Some(name) = property.key.to_js_string() else {
+            return true;
+        };
+        match property.value {
+            DataRef::Text(text) => {
+                map.insert(name.to_utf8_lossy(), HostValue::String(text.to_string_lossy()));
+            }
+            DataRef::Value(item) => {
+                deferred.push((map.len(), item));
+                map.insert(name.to_utf8_lossy(), HostValue::Null);
+            }
+            DataRef::Callable => {}
+        }
+        true
+    })?;
+    if visited.is_some() {
         enter(path, object)?;
-        let mut map = indexmap::IndexMap::with_capacity(entries.len());
-        for entry in entries {
-            if !entry.enumerable {
-                continue;
+        for (index, item) in &deferred {
+            let converted = to_host_in(js, engine, item, path)?;
+            if let Some((_, slot)) = map.get_index_mut(*index) {
+                *slot = converted;
             }
-            let Some(name) = entry.key.to_js_string() else {
-                continue;
-            };
-            if let Value::Object(inner) = &entry.value {
-                if js.as_callable(inner)?.is_some() {
-                    continue;
-                }
-            }
-            map.insert(name.to_utf8_lossy(), to_host_in(js, engine, &entry.value, path)?);
         }
         path.pop();
         return Ok(HostValue::Map(map));
