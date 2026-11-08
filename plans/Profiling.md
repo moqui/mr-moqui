@@ -1939,6 +1939,24 @@ Against Round 41's binary, on a quiet machine (µs a call, allocations):
 - List.qvt 100: 13237 (85394) → 13134 (83392);
 - Single.qvt: 541 (3672) → 536 (3614).
 
+## Round 43: a RegExp replace joined as bytes (no row moved)
+
+The locked-down template, the row furthest behind QuickJS (81 against 67 µs), showed `String.prototype.replace` with
+a RegExp in its profile, and building and narrowing UTF-16 buffers (`Vec<u16>` collection and
+`StringRepr::from_units`).
+
+The fork's `perf/replace-one-byte` merged to its `main` (7cf1f530). `replace_pristine` had copied the whole subject to UTF-16,
+built the result in UTF-16 and narrowed it at the end. It now joins the result as bytes until a wide unit arrives,
+copying the subject where it lies, and makes the subject's UTF-16 copy only for a `$` substitution.
+
+Checks:
+- The outputs match `main`'s over 1051 cases: Latin-1 and two-byte subjects; literal, `$` and functional
+  replacements; empty, sticky and non-global matches.
+- An escape-style loop in `qjs` runs in 422 ms against 496.
+
+No `js_speed` row moved, the locked-down template included, so its gap is the interpreter on the template's own code.
+The sandbox's setup was checked too: default heap options, and a deadline that only reads the clock.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
