@@ -1803,6 +1803,35 @@ The profile also found that each lend of the engine to a non-leaf host call swap
 `Services` by value, out and back: about 10% of the cached-find row (`lend`, `NativeCx::restore`). A pointer swap
 would need the interpreter to reach the heap through a box, so it is noted, not done.
 
+## Round 37: the allocator (measured; a proposal, nothing changed)
+
+malloc and free are 10 to 15% of every oxide row's profile, and the server uses glibc's malloc (no
+`#[global_allocator]`). The Round 36 binary was run with glibc and with jemalloc (`LD_PRELOAD` of the system's
+`libjemalloc.so.2`), two runs of each, on both engines (µs a call, better run):
+
+| Row | oxide glibc | oxide jemalloc | QuickJS glibc | QuickJS jemalloc |
+|---|---:|---:|---:|---:|
+| walk itemList | 77 | 68 | 61 | 61 |
+| 10 cached entity finds | 52 | 49 | 45 | 43 |
+| 10 noop service calls | 92 | 82 | 86 | 77 |
+| 1000 string concatenations | 94 | 73 | 139 | 115 |
+| locked-down template | 80 | 73 | 67 | 64 |
+| Labels, html | 252 | 237 | 228 | 224 |
+| Single, html | 345 | 318 | 320 | 314 |
+| Single.qvt | 559 | 509 | 522 | 512 |
+| List, html, 100 rows | 9109 | 8054 | 9593 | 9256 |
+| List.qvt, 100 rows | 14063 | 12606 | 13282 | 13040 |
+| List, text, 100 rows | 2639 | 2264 | 2958 | 2743 |
+
+jemalloc takes 5 to 15% off oxide's rows and 1 to 10% off QuickJS's. QuickJS gains less because its own heap uses
+the C library's `malloc` less than oxide's arenas and the bindings do. With jemalloc, oxide is at or below QuickJS on
+every screen row but Labels (×1.06), and ×1.11 on walk itemList. The same runs give today's QuickJS on glibc: the
+Round 32 numbers above came from a quieter machine.
+
+The proposal is a `#[global_allocator]` in the server binary (`tikv-jemallocator`, or `mimalloc`, measured the same
+way first). That is a framework decision (a C dependency, and memory behavior under load to check), so it is left for
+you.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
