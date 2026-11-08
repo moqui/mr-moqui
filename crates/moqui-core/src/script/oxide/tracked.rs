@@ -33,7 +33,7 @@ use super::convert::{key, to_host, to_js, Conv};
 use super::decimal::OxDecimal;
 use super::engine::{current, OxideEngine};
 use crate::script::run::STACK;
-use crate::script::runtime::{converts_with_script, temporal_text, MAX_NESTING, SET_KEY, WRAP_KEY};
+use crate::script::runtime::{converts_with_script, has_special_key, temporal_text, MAX_NESTING, SET_KEY, WRAP_KEY};
 
 /// What a flush does with the tracked values after writing them back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -453,7 +453,7 @@ fn matches_host<J: Js>(
             true
         }
         HostValue::Map(entries) => {
-            if entries.contains_key(SET_KEY) || entries.contains_key(WRAP_KEY) {
+            if has_special_key(entries) && (entries.contains_key(SET_KEY) || entries.contains_key(WRAP_KEY)) {
                 return Ok(false);
             }
             let Value::Object(object) = value else {
@@ -532,7 +532,7 @@ fn matches_in_place<J: Js>(
             true
         }
         HostValue::Map(entries) => {
-            if entries.contains_key(SET_KEY) || entries.contains_key(WRAP_KEY) {
+            if has_special_key(entries) && (entries.contains_key(SET_KEY) || entries.contains_key(WRAP_KEY)) {
                 return Ok(Some(false));
             }
             let Value::Object(object) = value else {
@@ -620,7 +620,7 @@ fn matches_in_place_slow<J: Js>(
             true
         }
         HostValue::Map(entries) => {
-            if entries.contains_key(SET_KEY) || entries.contains_key(WRAP_KEY) {
+            if has_special_key(entries) && (entries.contains_key(SET_KEY) || entries.contains_key(WRAP_KEY)) {
                 return Ok(Some(false));
             }
             let Value::Object(object) = value else {

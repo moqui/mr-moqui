@@ -491,9 +491,17 @@ fn js_text_is(value: &JsValue<'_>, text: &str) -> bool {
 pub(crate) fn converts_with_script(value: &Value) -> bool {
     match value {
         Value::List(items) => items.iter().any(converts_with_script),
-        Value::Map(entries) => entries.contains_key(WRAP_KEY) || entries.values().any(converts_with_script),
+        Value::Map(entries) => {
+            (has_special_key(entries) && entries.contains_key(WRAP_KEY)) || entries.values().any(converts_with_script)
+        }
         _ => false,
     }
+}
+
+/// Whether a map may hold one of the names a conversion treats apart (`__set__`, `__wrap`, `__proto__`): one starting
+/// `__`. A scan of the keys' first bytes, cheaper than a hashed lookup of each name in the small maps a script reads.
+pub(crate) fn has_special_key(entries: &indexmap::IndexMap<String, Value>) -> bool {
+    entries.keys().any(|key| key.as_bytes().starts_with(b"__"))
 }
 
 /// A script `Set` is held on the context stack as a one-key map holding its items, so a Set one

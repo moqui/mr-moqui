@@ -1773,6 +1773,36 @@ Against Round 32's QuickJS:
 The qvt rows' profile is mostly the engine core (`run_at` 11% of Single.qvt and 24% of List.qvt, self time), so the
 binding layer is no longer what they mostly spend.
 
+## Round 36: keys found by identity, names compared as bytes, special keys by a scan
+
+The second iteration of the long run. The fork's `perf/key-atoms` merged to its `main` (abcddb2f):
+- `View::key` finds a key whose string was interned before in a direct-mapped cache, by the string's address. The
+  entry holds the string, so the address is not reused while it is cached, and the cache empties when the collector
+  runs.
+- `JsString::eq_str` compares flat Latin-1 text with ASCII Rust text as bytes.
+
+The bindings:
+- Every map converted or compared looked up `__wrap`, `__set__` and `__proto__`, each by a SipHash lookup in the
+  `IndexMap`, and so did `converts_with_script` for every map a bare name reads. `has_special_key` scans the keys'
+  first bytes first.
+- `text_is` uses `eq_str`.
+
+Measured all on against all off, from one run each, because the run was cut short (µs a call):
+- walk itemList: 88 → 78 (`spk` off 84, `eqs` off 79);
+- 10 service calls with `itemList` tracked: 228 → 214;
+- the trusted template: 68 → 65;
+- Labels: 271 → 255;
+- Single html: 368 → 346;
+- Single.qvt: 591 → 560;
+- List text: 2656 → 2601.
+
+`katom` has no number of its own. From here, each change's own effect is left to the final acceptance, and an
+iteration times only all on.
+
+The profile also found that each lend of the engine to a non-leaf host call swaps the 4.2 KB `Heap` and the
+`Services` by value, out and back: about 10% of the cached-find row (`lend`, `NativeCx::restore`). A pointer swap
+would need the interpreter to reach the heap through a box, so it is noted, not done.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.

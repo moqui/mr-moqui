@@ -25,7 +25,7 @@ use quickjs_oxide::engine::api::core::{InitValue, Js, JsString, ObjectRef, Prope
 
 use super::decimal::OxDecimal;
 use super::engine::OxideEngine;
-use crate::script::runtime::{SAFE_INTEGER, SET_KEY, TOO_DEEP, WRAP_KEY};
+use crate::script::runtime::{has_special_key, SAFE_INTEGER, SET_KEY, TOO_DEEP, WRAP_KEY};
 
 /// How deep a host value may nest when it becomes a script value, and a script value when it becomes a host value
 /// (the QuickJS bindings' limits).
@@ -77,7 +77,7 @@ pub(super) fn static_key(name: &'static str) -> Result<PropertyKey, quickjs_oxid
 
 /// Whether `text` is `name`, compared by code unit with no copy.
 pub(super) fn text_is(text: &JsString, name: &str) -> bool {
-    text.utf16_units().eq(name.encode_utf16())
+    text.eq_str(name)
 }
 
 /// The text of a string, for a bare name or a field name an exotic hook reads: a short one without an allocation.
@@ -171,46 +171,50 @@ fn to_js_at<J: Js>(js: &mut J, engine: &OxideEngine, value: &HostValue, depth: u
             if depth >= MAX_HOST_NESTING {
                 return Err(Conv::Error(TOO_DEEP.to_string()));
             }
-            // A tools object keeps its data on the stack and gets its methods back from the tools shim's wrapper, as on
-            // QuickJS (`runtime/convert.rs`): its entries converted, then `__moquiWrap(name, object)`.
-            if let (Some(HostValue::String(name)), Some(wrap)) = (entries.get(WRAP_KEY), engine.tools_wrap()) {
-                let object = js.new_object()?;
-                for (key, item) in entries {
-                    let item = to_js_at(js, engine, item, depth + 1)?;
-                    js.set_property(&object, &engine.key(key)?, item)?;
+            // the names treated apart all start `__`: a map without one skips their lookups
+            let special = has_special_key(entries);
+            if special {
+                // A tools object keeps its data on the stack and gets its methods back from the tools shim's wrapper, as on
+                // QuickJS (`runtime/convert.rs`): its entries converted, then `__moquiWrap(name, object)`.
+                if let (Some(HostValue::String(name)), Some(wrap)) = (entries.get(WRAP_KEY), engine.tools_wrap()) {
+                    let object = js.new_object()?;
+                    for (key, item) in entries {
+                        let item = to_js_at(js, engine, item, depth + 1)?;
+                        js.set_property(&object, &engine.key(key)?, item)?;
+                    }
+                    return Ok(js.call(wrap, Value::Undefined, &[text(name)?, Value::Object(object)])?);
                 }
-                return Ok(js.call(wrap, Value::Undefined, &[text(name)?, Value::Object(object)])?);
-            }
-            // a `__wrap` that is not a name, or a runtime still starting: it passes through as itself, and a read of
-            // its members falls back
-            if entries.contains_key(WRAP_KEY) {
-                return Ok(Value::Object(js.new_host_exotic(
-                    super::names::OpaqueTarget(HostObject::new(value.clone())),
-                    &engine.protos.opaque,
-                    Some(&engine.protos.object_prototype),
-                )?));
-            }
-            // A Set the stack holds stays QuickJS's for now: its `add` and `delete` change it in place, and an oxide
-            // copy would not be written back (the static check lets `add` through, for decimals).
-            if entries.len() == 1 && entries.contains_key(SET_KEY) {
-                // under `oxide` a Set read by name is tracked as a list or map is, and written back at a flush
-                if !engine.whole() {
-                    return Err(Conv::Unsupported("a Set from the stack"));
+                // a `__wrap` that is not a name, or a runtime still starting: it passes through as itself, and a read of
+                // its members falls back
+                if entries.contains_key(WRAP_KEY) {
+                    return Ok(Value::Object(js.new_host_exotic(
+                        super::names::OpaqueTarget(HostObject::new(value.clone())),
+                        &engine.protos.opaque,
+                        Some(&engine.protos.object_prototype),
+                    )?));
                 }
-                let items = match entries.get(SET_KEY) {
-                    Some(HostValue::List(items)) => items.as_slice(),
-                    _ => &[],
-                };
-                let mut values = Vec::with_capacity(items.len());
-                for item in items {
-                    values.push(to_js_at(js, engine, item, depth + 1)?);
+                // A Set the stack holds stays QuickJS's for now: its `add` and `delete` change it in place, and an oxide
+                // copy would not be written back (the static check lets `add` through, for decimals).
+                if entries.len() == 1 && entries.contains_key(SET_KEY) {
+                    // under `oxide` a Set read by name is tracked as a list or map is, and written back at a flush
+                    if !engine.whole() {
+                        return Err(Conv::Unsupported("a Set from the stack"));
+                    }
+                    let items = match entries.get(SET_KEY) {
+                        Some(HostValue::List(items)) => items.as_slice(),
+                        _ => &[],
+                    };
+                    let mut values = Vec::with_capacity(items.len());
+                    for item in items {
+                        values.push(to_js_at(js, engine, item, depth + 1)?);
+                    }
+                    let array = js.new_array_from_values(values)?;
+                    return Ok(js.construct(&engine.protos.set, &[Value::Object(array)])?);
                 }
-                let array = js.new_array_from_values(values)?;
-                return Ok(js.construct(&engine.protos.set, &[Value::Object(array)])?);
             }
             // made in one step, as an object literal makes its properties; `__proto__` is a name that [[Set]]s the
             // prototype instead
-            if !entries.contains_key("__proto__") {
+            if !special || !entries.contains_key("__proto__") {
                 let mut made = Vec::with_capacity(entries.len());
                 for (name, item) in entries {
                     made.push((engine.key(name)?, to_init(js, engine, item, depth + 1)?));

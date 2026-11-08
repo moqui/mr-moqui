@@ -77,7 +77,7 @@ use entities::{
     atom_name, entity_to_js, install_entity_prototypes, keep_assigned, prototype_has, prototype_member, wrap_find,
     HostEntity, HostList, ScriptList,
 };
-pub(crate) use convert::{converts_with_script, temporal_text, MAX_NESTING, SAFE_INTEGER, SET_KEY, TOO_DEEP, WRAP_KEY};
+pub(crate) use convert::{converts_with_script, has_special_key, temporal_text, MAX_NESTING, SAFE_INTEGER, SET_KEY, TOO_DEEP, WRAP_KEY};
 pub(crate) use crate::script::host::rounding_strategy_named as rounding_named;
 pub(crate) use decimal::{arith, decimal_of, decimals_compare, decimals_equal, Arith};
 pub(crate) use entities::{
