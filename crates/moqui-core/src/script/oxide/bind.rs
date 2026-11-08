@@ -521,16 +521,18 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
     let mut callbacks = Vec::new();
     let engine = EngineCall;
     let args = convert_args(binder, scope, method.args, &mut callbacks)?;
-    let this = scope.this();
-    // the receiver lifted once: `this_host_data` would lift it again
-    let held = match &this {
-        JsValue::Object(object) => scope.host_data::<OxideHost>(object)?,
-        _ => None,
-    };
+    // the receiver's datum read from the call, with no handle; the receiver itself lifted only when used
+    let mut this = None;
+    let held = scope.this_host_data::<OxideHost>()?;
     let state = match held {
         Some(held) => Some(held.held(scope)?),
         // an entity value or list, whose prototype is the table's
-        None => entities::receiver_state(scope, &this)?,
+        None => {
+            let lifted = scope.this();
+            let state = entities::receiver_state(scope, &lifted)?;
+            this = Some(lifted);
+            state
+        }
     };
     drop(engine);
     let outcome = {
@@ -584,7 +586,7 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
     let _engine = EngineCall;
     match outcome {
         Outcome::Done(Ret::Value(value)) => binder.hooks.to_js(scope, value),
-        Outcome::Done(Ret::This) => Ok(this),
+        Outcome::Done(Ret::This) => Ok(this.unwrap_or_else(|| scope.this())),
         Outcome::Done(Ret::Undefined) => Ok(JsValue::Undefined),
         Outcome::Done(Ret::Object(obj, class)) => Ok(JsValue::Object(instance(scope, binder, obj, class)?)),
         Outcome::Failed(err, thrown) => Err(throw(scope, err, thrown)),

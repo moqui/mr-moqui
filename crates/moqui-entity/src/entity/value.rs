@@ -274,6 +274,22 @@ impl LocalizedRead {
         lock(&self.l10n.memo).insert((self.field, self.locale), found);
         out
     }
+
+    /// [`LocalizedRead::run`] when it needs no find and no expression: the facade's memo holds the field. The read
+    /// back when it needs one, to run (it runs no find and no script itself).
+    pub fn run_memoized(self, facade: &EntityFacade) -> Result<Option<Value>, LocalizedRead> {
+        if self.pq.is_some() {
+            return Err(self);
+        }
+        let Some(found) =
+            field_rw::localize_memoized(facade, &self.l10n.targets, &self.fields, &self.field, &self.locale)
+        else {
+            return Err(self);
+        };
+        let out = found.clone().or_else(|| self.fields.get(self.field.as_str()).cloned());
+        lock(&self.l10n.memo).insert((self.field, self.locale), found);
+        Ok(out)
+    }
 }
 
 /// What the `UPDATE` that [`EntityFacade::create_or_update_value`] tries first did.

@@ -696,28 +696,16 @@ pub(crate) fn localize_field(
     column: &str,
     locale: &str,
 ) -> Option<Value> {
-    let target = targets.targets.iter().find(|target| target.column == column)?;
-    if locale.is_empty() {
-        return None;
-    }
-    let pk = target
-        .pk_column
-        .as_ref()
-        .and_then(|column| pk_text(values.get(column.as_str())));
-    let stored = plain_text(values.get(target.column.as_str())).filter(|text| !text.is_empty());
-    if pk.is_none() && stored.is_none() {
-        return None;
-    }
-    let pk = pk.unwrap_or_default();
-    let memo = (!super::cache::sim_entered()).then(|| {
-        let key = format!(
-            "{}\u{0}{}\u{0}{pk}\u{0}{}\u{0}{locale}",
-            target.entity_name,
-            target.field_name,
-            stored.as_deref().unwrap_or("\u{1}")
-        );
-        (key, super::cache::localized_generation(facade))
-    });
+    let lookup = match localize_lookup(facade, targets, values, column, locale) {
+        Ok(lookup) => lookup,
+        Err(known) => return known,
+    };
+    let LocalizeLookup {
+        target,
+        pk,
+        stored,
+        memo,
+    } = lookup;
     if let Some((key, generation)) = &memo {
         if let Some(found) = facade.with_slot_read(LocalizedMemo::default, |memo| memo.get(key, *generation)) {
             return found;
@@ -740,6 +728,73 @@ pub(crate) fn localize_field(
             None
         }
     }
+}
+
+/// [`localize_field`] when it needs no find: the answer is known without a lookup, or the facade's memo holds it.
+/// `None` when the find is needed. It runs no find and no script, so a script engine need not be lent for it.
+pub(crate) fn localize_memoized(
+    facade: &EntityFacade,
+    targets: &L10nTargets,
+    values: &FieldMap,
+    column: &str,
+    locale: &str,
+) -> Option<Option<Value>> {
+    let lookup = match localize_lookup(facade, targets, values, column, locale) {
+        Ok(lookup) => lookup,
+        Err(known) => return Some(known),
+    };
+    let (key, generation) = lookup.memo.as_ref()?;
+    facade.with_slot_read(LocalizedMemo::default, |memo| memo.get(key, *generation))
+}
+
+/// What [`localize_field`] finds with: the target, the record's key and stored text, and the memo's key and
+/// generation (none in a simulation).
+struct LocalizeLookup<'a> {
+    target: &'a LocalTarget,
+    pk: String,
+    stored: Option<String>,
+    memo: Option<(String, u64)>,
+}
+
+/// The lookup [`localize_field`] makes, or its answer when it needs none (`Err`): the column is not localized, there
+/// is no locale, or the record has neither a key nor a stored text.
+fn localize_lookup<'a>(
+    facade: &EntityFacade,
+    targets: &'a L10nTargets,
+    values: &FieldMap,
+    column: &str,
+    locale: &str,
+) -> Result<LocalizeLookup<'a>, Option<Value>> {
+    let Some(target) = targets.targets.iter().find(|target| target.column == column) else {
+        return Err(None);
+    };
+    if locale.is_empty() {
+        return Err(None);
+    }
+    let pk = target
+        .pk_column
+        .as_ref()
+        .and_then(|column| pk_text(values.get(column.as_str())));
+    let stored = plain_text(values.get(target.column.as_str())).filter(|text| !text.is_empty());
+    if pk.is_none() && stored.is_none() {
+        return Err(None);
+    }
+    let pk = pk.unwrap_or_default();
+    let memo = (!super::cache::sim_entered()).then(|| {
+        let key = format!(
+            "{}\u{0}{}\u{0}{pk}\u{0}{}\u{0}{locale}",
+            target.entity_name,
+            target.field_name,
+            stored.as_deref().unwrap_or("\u{1}")
+        );
+        (key, super::cache::localized_generation(facade))
+    });
+    Ok(LocalizeLookup {
+        target,
+        pk,
+        stored,
+        memo,
+    })
 }
 
 /// The localized value of each field read, by entity, field, primary key, stored text and locale, kept with the facade

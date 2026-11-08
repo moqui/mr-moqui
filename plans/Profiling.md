@@ -1679,6 +1679,54 @@ Next (Round 34, the fork's embedding API and the bindings on it), by what the pr
 4. **Arguments and receivers without a handle**, strings in one copy, and the released-handle buffer kept.
 5. **A localized field read from the l10n cache without the lend.**
 
+## Round 34: the fork's embedding API, and the bindings on it
+
+Five changes, two in the fork's engine and API alone and three in the bindings on new fork API. The fork's branches
+merged to its `main` (765afa3f). The bindings' changes were each behind a temporary switch for one release build.
+- **`cap`** (fork, `perf/cap-headroom`): a capped heap keeps the cap's headroom at the slow path, so its allocations
+  take the fast path until the headroom is used.
+- **`key`** (fork, `perf/key-latin1`): `View::key` and `PropertyKey::from_js_string` intern on the Latin-1 path with
+  no copy.
+- **`inplace`** (fork `Js::is_ordinary_object`): a Keep or End flush compares a tracked value with the stack's under
+  the borrow while it finds only ordinary objects and data properties, and clones only when it meets anything else.
+- **`hnd`** (fork `Scope::this_host_data` and `arg_host_data` with no handle; `drain_released` keeps its buffer): a host
+  method's receiver and a decimal's operand are read with no lift.
+- **`loc`**: a localized entity field the facade's memo holds is read without the lend.
+
+µs a call (allocations), each row at its better of two runs. The first five columns are separate binaries; the last
+three are the binary with every change, with that change's switch off:
+
+| Row | Round 33 | `cap` | `key` | all | `inplace` off | `hnd` off | all bindings' off |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| walk itemList, 100 context maps | 188 (3620) | 177 | 157 (2418) | 127 (1711) | 148 (2412) | 127 | 148 |
+| 10 noop service calls, `itemList` tracked | 385 (6824) | 375 | 340 (5020) | 302 (4256) | 329 | 302 | 328 |
+| 100 decimal multiply + add | 94 (1216) | 86 | 93 | 71 (613) | 71 | 78 (814) | 78 |
+| 100 `ec.user.nowTimestamp` | 42 (702) | 39 | 42 | 31 (502) | 32 | 36 (602) | 37 |
+| 100 cache gets | 34 (610) | 35 | 35 | 28 (408) | 28 | 33 (509) | 33 |
+| walk an entity list, 100 cached rows | 188 (2654) | 182 | 188 | 159 (2546) | 159 | 159 | 182 |
+| 1000 string concatenations | 141 | 95 | 141 | 95 | 95 | 95 | 95 |
+| JSON stringify + parse of 100 objects | 110 | 95 | 109 | 95 | 95 | 95 | 95 |
+| trusted template | 93 (956) | 85 | 86 (714) | 74 (569) | 78 (710) | 74 | 78 |
+| Single, html | 471 (4950) | 441 | 435 (3878) | 398 (3460) | 408 | 401 | 410 |
+| Single.qvt | 806 (8597) | 754 | 727 (6424) | 661 (5680) | 683 | 666 | 685 |
+| List, html, 100 rows | 10724 (107828) | 9672 | 10544 | 9502 (94247) | 9505 | 9601 | 9606 |
+| List.qvt, 100 rows | 16210 (131253) | 14522 | 16034 | 14487 (117626) | 14495 | 14630 | 14623 |
+| List, text, 100 rows | 3046 (40959) | 2954 | 2895 | 2753 (34068) | 2764 | 2793 | 2794 |
+
+`loc` had no column of its own: it is the entity-list walk's 159 → 182 µs in "all bindings' off", which the other two
+switches do not move.
+
+Against Round 32's oxide (and QuickJS): walk itemList 196 → 127 (59), nowTimestamp 68 → 31 (30), decimals 96 → 71
+(74), Single.qvt 820 → 661 (510), List.qvt 100 16392 → 14487 (12953).
+
+**Checks.** `cap` and `key` passed the fork's Sweep (V8 v7 instructions ≤ ×1.0000, `run_at` 15251) and `gates.sh`;
+`is_ordinary_object` passed `gates.sh`. `handle-free-reads` and the merged `main` passed the fork's `embedding_api` and
+`host_exotic` tests. On mr-moqui, moqui-core's `script::`, `screen::` and entity tests and moqui-entity's localize
+tests passed. From here a round is proved locally like this, with no Sweep, no Mantle run and no full-suite run.
+
+Next, from the backlog: a Release flush without the copy, strings in one copy, plain objects built in one step,
+`PropertyKey::as_index`, and a bare name in one hook.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.

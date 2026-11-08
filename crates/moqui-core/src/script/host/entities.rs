@@ -1086,6 +1086,34 @@ pub(crate) fn entity_field(cell: &Arc<EntityCell>, name: &str) -> EntityField {
     }
 }
 
+/// [`entity_field`] when the read needs no find and no expression (a localized field the memos hold): `None` when it
+/// does, to be read with the engine lent. It runs no script.
+pub(crate) fn entity_field_memoized(cell: &Arc<EntityCell>, name: &str) -> Option<EntityField> {
+    let value = val(cell);
+    if value.is_pq_alias(name) {
+        return None;
+    }
+    let found = if !value.localizes(name) {
+        value.get(name).cloned()
+    } else {
+        let facade = installed_facade()?;
+        let read = value.read_localized(&facade, name);
+        drop(value);
+        match read {
+            Ok(found) => found,
+            Err(read) => read.run_memoized(&facade).ok()?,
+        }
+    };
+    Some(match found {
+        Some(value) => EntityField::Value(value),
+        None => match member(cell, name) {
+            Some(Member::Field) => EntityField::Null,
+            Some(Member::One | Member::Many) => EntityField::Relationship,
+            Some(Member::Unknown) | None => EntityField::Unknown,
+        },
+    })
+}
+
 /// Whether reading `name` may run a find or an expression (a localized field, a view's `pq-expression` alias), which
 /// may run a nested script: such a read is made with the engine lent.
 pub(crate) fn entity_field_reads(cell: &Arc<EntityCell>, name: &str) -> bool {

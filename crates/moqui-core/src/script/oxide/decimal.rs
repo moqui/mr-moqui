@@ -246,6 +246,9 @@ impl std::ops::Deref for Operand {
 /// The other side of a decimal method: a decimal, or a number or numeric text converted as `basicConvert(x,
 /// 'BigDecimal')` does.
 fn operand(scope: &mut Scope<'_>, index: usize) -> Result<Operand, Conv> {
+    if let Some(decimal) = scope.arg_host_data::<OxDecimal>(index)? {
+        return Ok(Operand::Held(decimal));
+    }
     let value = scope.arg(index);
     if let Value::Object(object) = &value {
         if let Some(decimal) = scope.host_data::<OxDecimal>(object)? {

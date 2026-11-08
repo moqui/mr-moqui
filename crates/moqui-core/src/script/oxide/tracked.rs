@@ -269,8 +269,25 @@ fn flush_values<J: Js>(js: &mut J, engine: &OxideEngine, mode: Flush) -> Result<
     for (name, value) in entries {
         // What the script did not change is on the stack already: no conversion, no write. A release still notes
         // what the stack holds, for `readopt`.
-        // The comparison reads the script's object, which may run script code (a Proxy's traps, a getter) that writes
-        // the stack: it compares a copy, with the stack free.
+        // A value of ordinary objects and data properties only is compared in place, under the stack's borrow: reading
+        // it runs no code. A keep or an end then needs no copy of the stack's value.
+        if mode != Flush::Release {
+            let in_place = STACK.with(|stack| {
+                stack
+                    .borrow()
+                    .with_value(&name, |held| matches_in_place(js, engine, &value, held, 0))
+            });
+            match in_place {
+                Some(Ok(Some(true))) => continue,
+                Some(Err(err)) => {
+                    first.get_or_insert(err);
+                    continue;
+                }
+                Some(Ok(Some(false) | None)) | None => {}
+            }
+        }
+        // Otherwise the comparison reads the script's object, which may run script code (a Proxy's traps, a getter)
+        // that writes the stack: it compares a copy, with the stack free.
         let held = STACK.with(|stack| stack.borrow().with_value(&name, HostValue::clone));
         let unchanged = held.map(|held| {
             matches_host(js, engine, &value, &held, 0)
@@ -470,6 +487,109 @@ fn matches_host<J: Js>(
         }
         HostValue::Bytes(_) | HostValue::Object(_) => false,
     })
+}
+
+/// [`matches_host`] for a value that may be read with the stack borrowed: `None` where the walk meets anything that
+/// could run code (an object that is not ordinary, an accessor, an element read through the prototype), which the
+/// caller then compares as [`matches_host`] does, on a copy.
+fn matches_in_place<J: Js>(
+    js: &mut J,
+    engine: &OxideEngine,
+    value: &Value,
+    host: &HostValue,
+    depth: usize,
+) -> Result<Option<bool>, Conv> {
+    use quickjs_oxide::engine::api::core::CompleteOrdinaryPropertyDescriptor as Descriptor;
+    if depth >= MAX_NESTING {
+        return Ok(None);
+    }
+    let own_data = |js: &mut J, object, key: &PropertyKey| -> Result<Option<Value>, Conv> {
+        Ok(match js.get_own_property(object, key)? {
+            Some(Descriptor::Data { value, .. }) => Some(value),
+            _ => None,
+        })
+    };
+    Ok(Some(match host {
+        HostValue::List(items) => {
+            let Value::Object(object) = value else {
+                return Ok(Some(false));
+            };
+            if !js.is_ordinary_object(object)? {
+                return Ok(None);
+            }
+            if !js.is_array_object(object)? {
+                return Ok(Some(false));
+            }
+            let Some(length) = own_data(js, object, &super::convert::static_key("length")?)? else {
+                return Ok(None);
+            };
+            if !matches!(length, Value::Int(found) if usize::try_from(found).ok() == Some(items.len())) {
+                return Ok(Some(false));
+            }
+            for (index, item) in items.iter().enumerate() {
+                let Ok(index) = u32::try_from(index) else {
+                    return Ok(None);
+                };
+                // a hole reads through the prototype, which may run code
+                let Some(element) = own_data(js, object, &PropertyKey::index(index))? else {
+                    return Ok(None);
+                };
+                match matches_in_place(js, engine, &element, item, depth + 1)? {
+                    Some(true) => {}
+                    other => return Ok(other),
+                }
+            }
+            true
+        }
+        HostValue::Map(entries) => {
+            if entries.contains_key(SET_KEY) || entries.contains_key(WRAP_KEY) {
+                return Ok(Some(false));
+            }
+            let Value::Object(object) = value else {
+                return Ok(Some(false));
+            };
+            if !js.is_ordinary_object(object)? {
+                return Ok(None);
+            }
+            if js.get_prototype_of(object)?.as_ref() != Some(&engine.protos.object_prototype) {
+                return Ok(Some(false));
+            }
+            // the properties in order, as the conversion takes them, functions left out as it leaves them out
+            let mut expected = entries.iter();
+            for property in js.own_property_keys(object)? {
+                let Some(name) = property.to_js_string() else {
+                    continue;
+                };
+                let Some(descriptor) = js.get_own_property(object, &property)? else {
+                    continue;
+                };
+                if !descriptor.enumerable() {
+                    continue;
+                }
+                let Descriptor::Data { value: item, .. } = descriptor else {
+                    return Ok(None);
+                };
+                if let Value::Object(inner) = &item {
+                    if js.as_callable(inner)?.is_some() {
+                        continue;
+                    }
+                }
+                let Some((held_name, held_item)) = expected.next() else {
+                    return Ok(Some(false));
+                };
+                if !super::convert::text_is(&name, held_name) {
+                    return Ok(Some(false));
+                }
+                match matches_in_place(js, engine, &item, held_item, depth + 1)? {
+                    Some(true) => {}
+                    other => return Ok(other),
+                }
+            }
+            expected.next().is_none()
+        }
+        // the rest reads no property (a decimal's host data at most), so runs no code: as `matches_host`
+        _ => matches_host(js, engine, value, host, depth)?,
+    }))
 }
 
 fn text_is(value: &Value, text: &str) -> bool {

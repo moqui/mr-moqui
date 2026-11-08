@@ -238,6 +238,10 @@ pub(crate) fn field(scope: &mut ExoticScope<'_>, cell: &Arc<EntityCell>, name: &
     if !host_entities::entity_field_reads(cell, name) {
         return Ok(host_entities::entity_field(cell, name));
     }
+    // a localized field the memos hold needs no find, so no lend
+    if let Some(found) = host_entities::entity_field_memoized(cell, name) {
+        return Ok(found);
+    }
     super::release_before_lend(scope)?;
     let read = scope.lend(|| super::caught_panic(|| host_entities::entity_field(cell, name)));
     read.map_err(|message| super::plain_error(scope, &message))

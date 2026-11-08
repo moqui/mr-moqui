@@ -1,6 +1,6 @@
 # Script engine: quickjs-oxide beside rquickjs
 
-Status 2026-11-07: Phases 0 to 3 built. quickjs-oxide is a dependency at the fork's revision 8635ecb5, with F1, F2,
+Status 2026-11-07: Phases 0 to 3 built. quickjs-oxide is a dependency at the fork's revision 765afa3f, with F1, F2,
 F3a, F3 and F4 (§6). Under `script_engine=oxide` every kind runs on quickjs-oxide, and both suites and the client
 suite pass; the speed and heap rows miss and are accepted for now (§7, Phase 3 result). The default is still
 `rquickjs`, and rquickjs stays until Phase 4.
@@ -614,8 +614,8 @@ Open, with what decides each:
 ## 11. Resuming
 
 State at the end of Phase 3 (2026-11-07):
-- **mr-moqui:** `master` holds Phases 0 to 3, the merge fixes after them and the pin to the fork's 8635ecb5.
-- **The fork:** its `main`, pushed, is 8635ecb5, with no other branches.
+- **mr-moqui:** `master` holds Phases 0 to 3, Profiling Rounds 33 and 34 and the pin to the fork's 765afa3f.
+- **The fork:** its `main` is 765afa3f (Round 34's four branches merged).
 - **Defaults:** `rquickjs` is the default. `small-oxide` and `oxide` are both whole and pass the suites.
 - **Measurement:** the measurement workspace is `../oxide-bench` (its `README.md`). It has:
   - the fork's Sweep;
@@ -702,16 +702,16 @@ the fork's `main` (`../oxide-bench/README.md`).
 - The entity-list walk is −16%.
 - The screen rows are −2 to −3%.
 
-Its profile of every layer sets **Round 34**, in the fork with the bindings on it:
-- the heap cap's check on every allocation;
-- keys interned without a copy;
-- `is_ordinary_object` for an in-place flush;
-- arguments without handles;
-- localized reads without the lend.
+**Round 34 (Profiling) is done:** the fork's heap cap headroom, keys interned without a copy, an in-place flush on
+`is_ordinary_object`, host data read with no handle, and localized reads without the lend.
+- Walk itemList is 188 → 127 µs (QuickJS 59); Single.qvt 806 → 661 (510); List.qvt 100 16210 → 14487 (12953).
+- Next: a Release flush without the copy, strings in one copy, plain objects in one step, `PropertyKey::as_index`,
+  a bare name in one hook (`../oxide-bench/long-run-plan.md`).
 
 **Measuring a round.** Each change of a round goes behind a temporary switch (`MOQUI_OXIDE_OFF`, a module of the
 bindings), so one release build measures every change on its own. The switches come out before the commit. Use
-`../oxide-bench/round33/run-variants.sh` and `table.py`.
+`../oxide-bench/round33/run-variants.sh` and `table.py`. A round is proved locally (`js_speed`, a profile, the touched
+unit tests and the fork's API tests), with no Sweep, Mantle run or full-suite run.
 
 ### Next: Phase 4 (rquickjs removed)
 

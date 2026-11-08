@@ -1063,6 +1063,30 @@ fn a_top_level_render_is_one_run() -> Result<(), Error> {
     })
 }
 
+/// A tracked list of plain maps is compared with the stack in place at a run's end; one with code in it (an accessor,
+/// a Proxy's trap) is compared on a copy with the stack free, since the code may write the stack.
+#[test]
+fn a_tracked_value_with_code_in_it_is_compared_with_the_stack_free() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let row = |a: i32| Value::Map([("a".to_string(), Value::I32(a))].into_iter().collect());
+    clear_context_stack();
+    push_context_frame();
+    with_script_engine(ScriptEngine::Oxide, || {
+        crate::script::set_context_name("rows", Value::List(vec![row(1), row(2)]))?;
+        crate::script::run_script("n = rows.length")?;
+        assert_eq!(crate::script::context_value("rows"), Some(Value::List(vec![row(1), row(2)])));
+        crate::script::run_script(
+            "Object.defineProperty(rows[0], 'a', {get() { seen = 1; return 1 }, enumerable: true, configurable: true})",
+        )?;
+        assert_eq!(crate::script::context_value("seen"), Some(Value::I32(1)));
+        assert_eq!(crate::script::context_value("rows"), Some(Value::List(vec![row(1), row(2)])));
+        crate::script::run_script("rows[1] = new Proxy({a: 3}, {ownKeys(t) { seen2 = 2; return Reflect.ownKeys(t) }})")?;
+        assert_eq!(crate::script::context_value("seen2"), Some(Value::I32(2)));
+        assert_eq!(crate::script::context_value("rows"), Some(Value::List(vec![row(1), row(3)])));
+        Ok(())
+    })
+}
+
 /// Review fixes: a Proxy in a tracked value is compared with the stack free; `ec.resource.expression` and `condition`
 /// run strict, as on QuickJS. Under the server-static widget check a widget expression runs with the wrapped `ec`
 /// (`oxide::widget`): an allowed member is the real one, any other throws, and the real `ec` is back after; a screen
