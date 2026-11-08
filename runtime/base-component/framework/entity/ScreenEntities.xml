@@ -114,8 +114,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="screenThemeId" type="id" is-pk="true"/>
         <field name="screenThemeTypeEnumId" type="id"/>
         <field name="description" type="text-medium"/>
+        <field name="parentScreenThemeId" type="id"><description>The theme this one builds on: a resource type this theme
+            has no ScreenThemeResource of comes from the parent (a type it has any row of, even an empty one, is its own),
+            its icon patterns are tried after this theme's, and its color schemes follow this theme's (docs/ui/Qvt-Client.md,
+            Themes)</description></field>
         <relationship type="one" title="ScreenThemeType" related="moqui.basic.Enumeration" short-alias="screenThemeTypeEnum">
             <key-map field-name="screenThemeTypeEnumId"/></relationship>
+        <relationship type="one-nofk" title="Parent" related="moqui.screen.ScreenTheme" short-alias="parentScreenTheme">
+            <key-map field-name="parentScreenThemeId" related="screenThemeId"/></relationship>
         <seed-data>
             <!-- Screen Themes -->
             <moqui.basic.EnumerationType description="Screen Theme Type" enumTypeId="ScreenThemeType"/>

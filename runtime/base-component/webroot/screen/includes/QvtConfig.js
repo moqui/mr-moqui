@@ -119,8 +119,8 @@ function build(ec, sri, options) {
             dontClear: ec.l10n.localize("Don't clear"), minutes30: ec.l10n.localize('30 minutes'), hour1: ec.l10n.localize('1 hour'),
             hours4: ec.l10n.localize('4 hours'), thisWeek: ec.l10n.localize('This week'),
             save: ec.l10n.localize('Save'), cancel: ec.l10n.localize('Cancel'),
-            // the Appearance dialog (m-appearance-dialog)
-            appearance: ec.l10n.localize('Appearance'), appearanceMode: ec.l10n.localize('Mode'), modeLight: ec.l10n.localize('Light'),
+            // the account menu's Theme, and the Appearance dialog (m-appearance-dialog)
+            theme: ec.l10n.localize('Theme'), appearance: ec.l10n.localize('Appearance'), appearanceMode: ec.l10n.localize('Mode'), modeLight: ec.l10n.localize('Light'),
             modeDark: ec.l10n.localize('Dark'), modeAuto: ec.l10n.localize('Auto (system)'), colorScheme: ec.l10n.localize('Color scheme'),
             accentColor: ec.l10n.localize('Accent color'), schemeColor: ec.l10n.localize('Scheme color'), fonts: ec.l10n.localize('Fonts'),
             fontBody: ec.l10n.localize('Text'), fontHeading: ec.l10n.localize('Headings'), fontMono: ec.l10n.localize('Code'),

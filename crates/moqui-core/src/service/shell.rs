@@ -31,7 +31,9 @@ use moqui_lib::sync::{lock, wait_timeout};
 
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
 use crate::entity::EntityFacade;
-use crate::screen::sri::{theme_resource_values, user_theme_id, DEFAULT_QUASAR_THEME, QUASAR_THEME_TYPE};
+use crate::screen::sri::{
+    inherited_theme_id, theme_resource_values, user_theme_id, DEFAULT_QUASAR_THEME, QUASAR_THEME_TYPE,
+};
 
 pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
@@ -43,6 +45,7 @@ pub(in crate::service) fn register(
     rust_service!(map, get_appearance)?;
     rust_service!(map, get_appearance_policy)?;
     rust_service!(map, get_color_scheme_css)?;
+    rust_service!(map, set_user_screen_theme)?;
     Ok(())
 }
 
@@ -320,6 +323,75 @@ fn get_color_scheme_css(
         None => String::new(),
     };
     Ok(BTreeMap::from([("css".to_string(), Value::String(css))]))
+}
+
+/// `set#UserScreenTheme`: the current user's Quasar theme (docs/ui/Qvt-Client.md, Themes), one of the `themes` the
+/// appearance of their current theme offers (after its appearance services). Refused, with nothing written, for another
+/// theme or when the current theme's policy locks the choice (`theme: false`). The theme the user would get without a
+/// row of their own (a group's, the type's default) deletes their `UserScreenTheme`, so a later change of the group's
+/// theme reaches them; another is written. A change of theme clears the user's `THEME_COLOR_SCHEME`, so the new theme
+/// opens in its own default scheme; the other appearance choices are kept. In: `screenThemeId`. Out: `screenThemeId`,
+/// the theme now in effect.
+fn set_user_screen_theme(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(user_id) = crate::user::current_user_id()
+        .ok()
+        .flatten()
+        .filter(|id| !id.is_empty())
+    else {
+        return Err(LibError::new("Choosing a theme needs a signed-in user"));
+    };
+    let chosen = text(parameters, "screenThemeId").unwrap_or_default();
+    let current = user_theme_id(Some(&user_id), QUASAR_THEME_TYPE, DEFAULT_QUASAR_THEME);
+    let answer = |theme: &str| Ok(BTreeMap::from([("screenThemeId".to_string(), Value::string(theme))]));
+    if chosen == current {
+        return answer(&current);
+    }
+    let appearance = crate::screen::sri::appearance::build_appearance(Some(&user_id), &current)
+        .map_err(|err| LibError::new(err.to_string()))?;
+    let policy =
+        crate::screen::sri::appearance::AppearancePolicy::from_value(appearance.get("policy").unwrap_or(&Value::Null));
+    if let Some(reason) = policy.theme_denial() {
+        return Err(LibError::new(format!("Cannot choose the theme {chosen}: {reason}")));
+    }
+    let offered = match appearance.get("themes") {
+        Some(Value::List(items)) => items.iter().any(|item| match item {
+            Value::Map(theme) => theme.get("id").map(to_plain_string).as_deref() == Some(chosen.as_str()),
+            _ => false,
+        }),
+        _ => false,
+    };
+    if chosen.is_empty() || !offered {
+        return Err(LibError::new(format!("{chosen} is not a theme you may choose")));
+    }
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let own = facade.find("moqui.security.UserScreenTheme").and_then(|find| {
+        find.eq("userId", Value::string(&user_id))
+            .eq("screenThemeTypeEnumId", Value::string(QUASAR_THEME_TYPE))
+            .one()
+    })?;
+    if chosen == inherited_theme_id(Some(&user_id), QUASAR_THEME_TYPE, DEFAULT_QUASAR_THEME) {
+        if let Some(row) = own {
+            row.delete(facade)?;
+        }
+    } else {
+        let mut row = facade.make_value("moqui.security.UserScreenTheme")?;
+        row.set("userId", Value::string(&user_id));
+        row.set("screenThemeTypeEnumId", Value::string(QUASAR_THEME_TYPE));
+        row.set("screenThemeId", Value::string(&chosen));
+        row.create_or_update(facade)?;
+    }
+    let scheme = facade.find("moqui.security.UserPreference").and_then(|find| {
+        find.eq("userId", Value::string(&user_id))
+            .eq("preferenceKey", Value::string("THEME_COLOR_SCHEME"))
+            .one()
+    })?;
+    if let Some(row) = scheme {
+        row.delete(facade)?;
+    }
+    answer(&chosen)
 }
 
 /// The user ids of `userIdList`: a list, or a comma separated text; without blanks and repeats.

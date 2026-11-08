@@ -173,7 +173,7 @@
         const config = qvt.config || moqui.config || {};
         if (!config.appearance) config.appearance = {};
         const appearance = config.appearance;
-        ["colorSchemes", "fonts"].forEach((name) => { if (!Array.isArray(appearance[name])) appearance[name] = []; });
+        ["colorSchemes", "fonts", "themes"].forEach((name) => { if (!Array.isArray(appearance[name])) appearance[name] = []; });
         if (!moqui.isPlainObject(appearance.values)) appearance.values = {};
         if (!moqui.isPlainObject(appearance.policy)) appearance.policy = {};
         return appearance;
@@ -182,6 +182,16 @@
     moqui.appearanceAllowed = (key) => {
         const locked = appearanceConfig().policy.lockedKeys;
         return !(Array.isArray(locked) && locked.includes(key));
+    };
+    // The themes the user may choose (appearance.themes, the Quasar themes; docs/ui/Qvt-Client.md, Themes) and the one shown. The account
+    // menu's Theme lists them when there are two or more and the theme's policy leaves the choice open (policy.theme, policy.appearance).
+    moqui.appearanceThemes = () => appearanceConfig().themes;
+    // the page made again from the server, as after a change of theme
+    moqui.reloadPage = () => root.location.reload();
+    moqui.currentThemeId = () => appearanceConfig().screenThemeId || "";
+    moqui.themeChoiceAllowed = () => {
+        const appearance = appearanceConfig();
+        return appearance.themes.length > 1 && appearance.policy.theme !== false && appearance.policy.appearance !== false;
     };
     // the scheme shown: the user's when it is one of the theme's, else the theme's default
     moqui.appearanceScheme = () => {
@@ -9306,6 +9316,19 @@
         "                    <q-item-section>{{labels.switchDarkLight}}</q-item-section>\n" +
         "                    <q-item-section side><q-toggle dense :model-value=\"$q.dark.isActive\" @update:model-value=\"switchDarkLight()\"></q-toggle></q-item-section>\n" +
         "                </q-item>\n" +
+        // the Theme: the Quasar themes the user may choose, the current one checked; a choice is saved and the page reloads in it
+        "                <q-item v-if=\"themeMenuAllowed()\" id=\"m-account-theme\" clickable>\n" +
+        "                    <q-item-section avatar><q-icon name=\"style\"></q-icon></q-item-section>\n" +
+        "                    <q-item-section>{{labels.theme}}</q-item-section>\n" +
+        "                    <q-item-section side><q-icon name=\"chevron_right\"></q-icon></q-item-section>\n" +
+        "                    <q-menu anchor=\"top end\" self=\"top start\" id=\"m-account-theme-menu\"><q-list dense style=\"min-width:180px\">\n" +
+        "                        <q-item v-for=\"theme in appearanceThemes()\" :key=\"theme.id\" :id=\"'m-theme-' + theme.id\" clickable v-close-popup=\"2\"\n" +
+        "                                :active=\"theme.id === currentThemeId()\" @click=\"setScreenTheme(theme.id)\">\n" +
+        "                            <q-item-section avatar><q-icon name=\"check\" :class=\"{invisible: theme.id !== currentThemeId()}\"></q-icon></q-item-section>\n" +
+        "                            <q-item-section>{{theme.description}}</q-item-section>\n" +
+        "                        </q-item>\n" +
+        "                    </q-list></q-menu>\n" +
+        "                </q-item>\n" +
         // the Appearance dialog: mode, color scheme, fonts, text sizes and the rest (m-appearance-dialog)
         // shown when the theme's policy leaves the user something to change
         "                <q-item v-if=\"appearanceMenuAllowed()\" id=\"m-account-appearance\" clickable v-close-popup @click=\"appearanceShow = true\">\n" +
@@ -9392,8 +9415,8 @@
         paletteHint: "Search screens, records and actions", paletteEmpty: "Type to search screens, records, people and actions",
         paletteKeys: "↑ ↓ to move, Enter to open, Ctrl+Enter in a new tab", assist: "Assist", askAssist: "Ask Assist",
         expandMenu: "Expand the menu", collapseMenu: "Collapse the menu",
-        // the Appearance dialog
-        appearance: "Appearance", appearanceMode: "Mode", modeLight: "Light", modeDark: "Dark", modeAuto: "Auto (system)", colorScheme: "Color scheme",
+        // the account menu's Theme, and the Appearance dialog
+        theme: "Theme", appearance: "Appearance", appearanceMode: "Mode", modeLight: "Light", modeDark: "Dark", modeAuto: "Auto (system)", colorScheme: "Color scheme",
         accentColor: "Accent color", schemeColor: "Scheme color", fonts: "Fonts",
         fontsRemote: "A font marked with a host, such as (Google), is downloaded from that host's servers once chosen; the others are served from here.",
         fontBody: "Text", fontHeading: "Headings", fontMono: "Code",
@@ -9749,6 +9772,16 @@
                 Promise.all([crypto, push]).then(() => { root.location.href = href; });
             },
             appearanceAllowed(key) { return moqui.appearanceAllowed(key); },
+            themeMenuAllowed() { return !!this.userId && moqui.themeChoiceAllowed(); },
+            appearanceThemes() { return moqui.appearanceThemes(); },
+            currentThemeId() { return moqui.currentThemeId(); },
+            // the user's Quasar theme (/apps/setScreenTheme): the page reloads to load the theme's style sheets, scripts and values
+            setScreenTheme(screenThemeId) {
+                if (!screenThemeId || screenThemeId === moqui.currentThemeId()) return;
+                moqui.request(this.appRootPath + "/apps/setScreenTheme", { method: "POST", params: { moquiSessionToken: this.moquiSessionToken, screenThemeId } })
+                    .then(() => { moqui.reloadPage(); })
+                    .catch(moqui.handleAjaxError);
+            },
             appearanceMenuAllowed() { return ["QUASAR_DARK", "SHELL_DENSITY"].concat(moqui.appearanceKeys).some((key) => moqui.appearanceAllowed(key)); },
             switchDarkLight() {
                 this.$q.dark.toggle();

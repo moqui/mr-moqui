@@ -6005,7 +6005,7 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-qapps-root": { hash: "cb3c98bd", make: function (Vue) {
+        "m-qapps-root": { hash: "9e7cd725", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, withModifiers: _withModifiers, withKeys: _withKeys, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, createElementVNode: _createElementVNode, vShow: _vShow } = Vue
 
             return function render(_ctx, _cache) {
@@ -6774,9 +6774,85 @@
                                               _: 1
                                             }))
                                           : _createCommentVNode("", true),
+                                        (_ctx.themeMenuAllowed())
+                                          ? (_openBlock(), _createBlock(_component_q_item, {
+                                              key: 8,
+                                              id: "m-account-theme",
+                                              clickable: ""
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, { name: "style" })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode(_toDisplayString(_ctx.labels.theme), 1)
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_item_section, { side: "" }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_icon, { name: "chevron_right" })
+                                                  ]),
+                                                  _: 1
+                                                }),
+                                                _createVNode(_component_q_menu, {
+                                                  anchor: "top end",
+                                                  self: "top start",
+                                                  id: "m-account-theme-menu"
+                                                }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_list, {
+                                                      dense: "",
+                                                      style: {"min-width":"180px"}
+                                                    }, {
+                                                      default: _withCtx(() => [
+                                                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.appearanceThemes(), (theme) => {
+                                                          return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                            key: theme.id,
+                                                            id: 'm-theme-' + theme.id,
+                                                            clickable: "",
+                                                            active: theme.id === _ctx.currentThemeId(),
+                                                            onClick: $event => (_ctx.setScreenTheme(theme.id))
+                                                          }, {
+                                                            default: _withCtx(() => [
+                                                              _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                default: _withCtx(() => [
+                                                                  _createVNode(_component_q_icon, {
+                                                                    name: "check",
+                                                                    class: _normalizeClass({invisible: theme.id !== _ctx.currentThemeId()})
+                                                                  }, null, 8, ["class"])
+                                                                ]),
+                                                                _: 2
+                                                              }, 1024),
+                                                              _createVNode(_component_q_item_section, null, {
+                                                                default: _withCtx(() => [
+                                                                  _createTextVNode(_toDisplayString(theme.description), 1)
+                                                                ]),
+                                                                _: 2
+                                                              }, 1024)
+                                                            ]),
+                                                            _: 2
+                                                          }, 1032, ["id", "active", "onClick"])), [
+                                                            [_directive_close_popup, 2]
+                                                          ])
+                                                        }), 128))
+                                                      ]),
+                                                      _: 1
+                                                    })
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }))
+                                          : _createCommentVNode("", true),
                                         (_ctx.appearanceMenuAllowed())
                                           ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                              key: 8,
+                                              key: 9,
                                               id: "m-account-appearance",
                                               clickable: "",
                                               onClick: $event => (_ctx.appearanceShow = true)

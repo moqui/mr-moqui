@@ -18,9 +18,12 @@
 //! - The appearance preferences and the policy group each belongs to ([`APPEARANCE_KEYS`]), and the tokens a scheme sets
 //!   ([`BRAND_TOKENS`], [`SURFACE_TOKENS`], [`SHAPE_TOKENS`]).
 //! - The style sheet of a color scheme ([`color_scheme_css`]): the `colorSchemeCss` transition serves it.
-//! - The theme's user appearance policy (`STRT_APPEARANCE_POLICY`, [`AppearancePolicy`]): what the user may change and the
-//!   mode the theme forces. Absent allows everything. The server refuses a locked preference in
-//!   [`crate::user::set_preference`]; the page hides its control.
+//! - The theme's user appearance policy (`STRT_APPEARANCE_POLICY`, [`AppearancePolicy`]): what the user may change, the
+//!   mode the theme forces and whether the user may choose another theme. Absent allows everything. The server
+//!   refuses a locked preference in [`crate::user::set_preference`] and a locked theme choice in
+//!   `set#UserScreenTheme`; the page hides its control.
+//! - The themes the user may choose (`themes`, the Quasar themes) and the color schemes of a theme: its own, then its
+//!   parent's ([`super::theme::theme_chain`]).
 //! - The extension point: each `STRT_APPEARANCE_SERVICE` of the theme is called with `userId`, `screenThemeId` and the
 //!   `appearance` built so far, and answers `appearance`, so a component decides by station, tenant or host without
 //!   framework code. The locked values, the effective scheme and the style sheets the page links are worked out after it.
@@ -30,7 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use indexmap::IndexMap;
 use moqui_lib::object::{to_plain_string, Value};
 
-use super::theme::{theme_resource_values, user_theme_id, DEFAULT_QUASAR_THEME, QUASAR_THEME_TYPE};
+use super::theme::{theme_chain, theme_resource_values, user_theme_id, DEFAULT_QUASAR_THEME, QUASAR_THEME_TYPE};
 use crate::context::{Error, ExecutionContext};
 
 /// The theme resource that names the theme's default color scheme (a `ScreenColorScheme` id of the theme).
@@ -301,6 +304,8 @@ pub struct AppearancePolicy {
     pub locked_groups: BTreeSet<String>,
     /// More keys the theme (or an appearance service) locks by name.
     pub locked_keys: BTreeSet<String>,
+    /// True when the user may not choose another theme (`theme: false`).
+    pub theme_locked: bool,
 }
 
 impl AppearancePolicy {
@@ -313,8 +318,8 @@ impl AppearancePolicy {
     }
 
     /// The policy of a `STRT_APPEARANCE_POLICY` text: a JSON object of `appearance` (false locks everything), `mode`, a
-    /// `false` per group to lock, and `lockedKeys`. None or blank allows everything; one that is not a JSON object is
-    /// logged and locks everything rather than being trusted.
+    /// `false` per group to lock, `lockedKeys`, and `theme` (false locks the choice of theme). None or blank allows
+    /// everything; one that is not a JSON object is logged and locks everything rather than being trusted.
     pub fn parse(text: Option<&str>) -> Self {
         let Some(text) = text.map(str::trim).filter(|text| !text.is_empty()) else {
             return Self::default();
@@ -358,7 +363,13 @@ impl AppearancePolicy {
                 .map(|group| (*group).to_string())
                 .collect(),
             locked_keys,
+            theme_locked: flag("theme") == Some(false),
         }
+    }
+
+    /// Why the user may not choose another theme, or `None` when the policy allows it.
+    pub fn theme_denial(&self) -> Option<String> {
+        (self.locked || self.theme_locked).then(|| "The theme does not allow choosing another theme".to_string())
     }
 
     /// Every key of [`APPEARANCE_KEYS`] the policy locks, with the extra ones it names.
@@ -386,7 +397,7 @@ impl AppearancePolicy {
     }
 
     /// The policy as the page and an appearance service read it: `appearance`, a flag per group (`mode` may instead
-    /// name a forced mode), and `lockedKeys`, every key it locks.
+    /// name a forced mode), `theme`, and `lockedKeys`, every key it locks.
     pub fn as_value(&self) -> Value {
         let mut map = IndexMap::new();
         map.insert("appearance".to_string(), Value::Bool(!self.locked));
@@ -397,6 +408,7 @@ impl AppearancePolicy {
         if !self.mode.is_empty() {
             map.insert("mode".to_string(), Value::string(&self.mode));
         }
+        map.insert("theme".to_string(), Value::Bool(self.theme_denial().is_none()));
         map.insert(
             "lockedKeys".to_string(),
             Value::List(self.all_locked_keys().into_iter().map(Value::String).collect()),
@@ -409,22 +421,48 @@ fn names(list: &[&str]) -> Value {
     Value::List(list.iter().map(|name| Value::string(*name)).collect())
 }
 
-/// The appearance before the extension point: the theme's schemes, the fonts, the default scheme, the policy, the
-/// user's values and the names the page and an appearance service need.
+/// The appearance before the extension point: the theme's schemes (its own, then its parent's), the fonts, the
+/// themes the user may choose, the default scheme, the policy, the user's values and the names the page and an
+/// appearance service need.
 fn base_appearance(user_id: Option<&str>, theme_id: &str) -> Result<IndexMap<String, Value>, Error> {
     let mut appearance = IndexMap::new();
     let mut schemes = Vec::new();
     let mut fonts = Vec::new();
+    let mut themes = Vec::new();
     if let Some(facade) = entity_facade() {
         let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        for owner in theme_chain(theme_id) {
+            let rows = facade
+                .find("moqui.screen.ScreenColorScheme")?
+                .eq("screenThemeId", Value::string(&owner))
+                .order_by("sequenceNum", false)
+                .use_cache(true)
+                .list()?;
+            for row in rows.iter() {
+                schemes.push(scheme_of(&facade, row)?.as_value());
+            }
+        }
         let rows = facade
-            .find("moqui.screen.ScreenColorScheme")?
-            .eq("screenThemeId", Value::string(theme_id))
-            .order_by("sequenceNum", false)
+            .find("moqui.screen.ScreenTheme")?
+            .eq("screenThemeTypeEnumId", Value::string(QUASAR_THEME_TYPE))
             .use_cache(true)
             .list()?;
-        for row in rows.iter() {
-            schemes.push(scheme_of(&facade, row)?.as_value());
+        let mut found: Vec<(String, String)> = rows
+            .iter()
+            .map(|row| {
+                let id = field(row, "screenThemeId");
+                let description = Some(field(row, "description"))
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| id.clone());
+                (description, id)
+            })
+            .collect();
+        found.sort();
+        for (description, id) in found {
+            themes.push(Value::Map(IndexMap::from([
+                ("id".to_string(), Value::String(id)),
+                ("description".to_string(), Value::String(description)),
+            ])));
         }
         let rows = facade
             .find("moqui.screen.ScreenFontOption")?
@@ -484,6 +522,7 @@ fn base_appearance(user_id: Option<&str>, theme_id: &str) -> Result<IndexMap<Str
     appearance.insert("screenThemeId".to_string(), Value::string(theme_id));
     appearance.insert("colorSchemes".to_string(), Value::List(schemes));
     appearance.insert("fonts".to_string(), Value::List(fonts));
+    appearance.insert("themes".to_string(), Value::List(themes));
     appearance.insert("defaultSchemeId".to_string(), Value::string(first(DEFAULT_COLOR_SCHEME).unwrap_or_default()));
     appearance.insert("policy".to_string(), policy.as_value());
     appearance.insert("values".to_string(), Value::Map(values));
@@ -620,7 +659,8 @@ fn finish_appearance(mut appearance: IndexMap<String, Value>) -> IndexMap<String
 }
 
 /// The appearance of `theme_id` for `user_id` (the module docs): `screenThemeId`, `colorSchemes` (each `id`,
-/// `description`, `light`, `dark`, `custom`, `version`, `fonts`), `fonts`, `defaultSchemeId`, `schemeId`,
+/// `description`, `light`, `dark`, `custom`, `version`, `fonts`), `fonts`, `themes` (each `id`, `description`),
+/// `defaultSchemeId`, `schemeId`,
 /// `policy`, `values`, `keys`, `tokens` and `links`.
 ///
 /// # Errors

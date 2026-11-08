@@ -1562,6 +1562,232 @@ fn the_appearance_policy_and_services_of_the_theme_decide_what_a_user_may_change
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+fn theme(world: &World, id: &str, kind: &str, parent: Option<&str>, description: &str) {
+    let mut fields = vec![
+        ("screenThemeId", Value::string(id)),
+        ("screenThemeTypeEnumId", Value::string(kind)),
+        ("description", Value::string(description)),
+    ];
+    if let Some(parent) = parent {
+        fields.push(("parentScreenThemeId", Value::string(parent)));
+    }
+    row(world, "moqui.screen.ScreenTheme", &fields);
+}
+
+/// A theme with a parent (docs/ui/Qvt-Client.md, Themes): a resource type it has any row of is its own (one empty row
+/// hides the parent's), another comes from the parent; its color schemes come before the parent's and its default may
+/// be one of those. A parent cycle ends the chain and is logged once.
+#[test]
+fn a_theme_takes_what_it_does_not_set_from_its_parent() {
+    let world = World::open("");
+    theme(&world, "BASE_QUASAR", "STT_INTERNAL_QUASAR", None, "Base");
+    theme(
+        &world,
+        "CHILD_QUASAR",
+        "STT_INTERNAL_QUASAR",
+        Some("BASE_QUASAR"),
+        "Child",
+    );
+    theme(&world, "LOOP_A", "STT_LOOP", Some("LOOP_B"), "");
+    theme(&world, "LOOP_B", "STT_LOOP", Some("LOOP_A"), "");
+    theme_value(&world, "BASE_QUASAR", 1, "STRT_STYLESHEET", "/base.css");
+    theme_value(&world, "BASE_QUASAR", 2, "STRT_STYLESHEET", "/shell.css");
+    theme_value(&world, "BASE_QUASAR", 3, "STRT_HEADER_LOGO", "/logo.png");
+    theme_value(&world, "BASE_QUASAR", 4, "STRT_TRAY_CHAT", "BasicComms/Chat");
+    theme_value(&world, "CHILD_QUASAR", 1, "STRT_STYLESHEET", "/shell.css");
+    theme_value(&world, "CHILD_QUASAR", 2, "STRT_STYLESHEET", "/child.css");
+    theme_value(&world, "CHILD_QUASAR", 3, "STRT_TRAY_CHAT", "");
+    theme_value(&world, "CHILD_QUASAR", 4, "STRT_DEFAULT_COLOR_SCHEME", "BASE_SCHEME");
+    for (id, owner) in [("BASE_SCHEME", "BASE_QUASAR"), ("CHILD_SCHEME", "CHILD_QUASAR")] {
+        row(
+            &world,
+            "moqui.screen.ScreenColorScheme",
+            &[
+                ("colorSchemeId", Value::string(id)),
+                ("screenThemeId", Value::string(owner)),
+                ("sequenceNum", Value::I64(1)),
+            ],
+        );
+    }
+    let ctx = world.factory.new_context();
+    let _entered = ctx.enter();
+    let values = |theme: &str, kind: &str| crate::screen::sri::theme_resource_values(theme, kind).unwrap();
+    assert_eq!(
+        values("CHILD_QUASAR", "STRT_STYLESHEET"),
+        ["/shell.css", "/child.css"],
+        "its own replace the parent's"
+    );
+    assert_eq!(
+        values("CHILD_QUASAR", "STRT_HEADER_LOGO"),
+        ["/logo.png"],
+        "from the parent"
+    );
+    assert!(
+        values("CHILD_QUASAR", "STRT_TRAY_CHAT").is_empty(),
+        "an empty row hides the parent's"
+    );
+    assert_eq!(values("BASE_QUASAR", "STRT_TRAY_CHAT"), ["BasicComms/Chat"]);
+
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    tracing::subscriber::with_default(crate::testing::LogSubscriber(Arc::clone(&lines)), || {
+        for _ in 0..3 {
+            assert_eq!(crate::screen::sri::theme_chain("LOOP_A"), ["LOOP_A", "LOOP_B"]);
+        }
+        assert!(values("LOOP_A", "STRT_STYLESHEET").is_empty());
+    });
+    let text = logged(&lines);
+    assert_eq!(text.matches("The parents of theme LOOP_A").count(), 1, "{text}");
+
+    let appearance = crate::screen::sri::appearance::build_appearance(None, "CHILD_QUASAR").unwrap();
+    let appearance = moqui_lib::json::to_json(&Value::Map(appearance));
+    assert_eq!(
+        names(&appearance["colorSchemes"], "id"),
+        ["CHILD_SCHEME", "BASE_SCHEME"],
+        "{appearance}"
+    );
+    assert_eq!(
+        appearance["defaultSchemeId"],
+        json!("BASE_SCHEME"),
+        "a scheme of the parent: {appearance}"
+    );
+    assert_eq!(appearance["schemeId"], json!("BASE_SCHEME"), "{appearance}");
+    assert_eq!(
+        names(&appearance["themes"], "id"),
+        ["BASE_QUASAR", "CHILD_QUASAR"],
+        "the Quasar themes: {appearance}"
+    );
+}
+
+/// The account menu's Theme (`/apps/setScreenTheme`, `set#UserScreenTheme`): a user picks a Quasar theme the appearance
+/// offers. Their own `UserScreenTheme` is written, or deleted when the pick is the theme their groups give them, and
+/// their color scheme is cleared. Refused, with nothing written: a theme of another type, an unknown one, a choice the
+/// current theme's policy locks, and a request with no user.
+#[test]
+fn a_user_chooses_a_quasar_theme_the_appearance_offers() {
+    let world = World::open("");
+    world.user("plain", None);
+    world.user("grouped", Some("STAFF"));
+    load_services(&world, &[shell_services_xml()]);
+    theme(&world, "DEFAULT_QUASAR", "STT_INTERNAL_QUASAR", None, "Default");
+    theme(
+        &world,
+        "GREEN_QUASAR",
+        "STT_INTERNAL_QUASAR",
+        Some("DEFAULT_QUASAR"),
+        "Green",
+    );
+    theme(
+        &world,
+        "LOCKED_QUASAR",
+        "STT_INTERNAL_QUASAR",
+        Some("DEFAULT_QUASAR"),
+        "Locked",
+    );
+    theme(&world, "HTML_THEME", "STT_INTERNAL", None, "Html");
+    theme_value(
+        &world,
+        "LOCKED_QUASAR",
+        1,
+        "STRT_APPEARANCE_POLICY",
+        r#"{"theme": false}"#,
+    );
+    row(
+        &world,
+        "moqui.security.UserGroupScreenTheme",
+        &[
+            ("userGroupId", Value::string("STAFF")),
+            ("screenThemeTypeEnumId", Value::string("STT_INTERNAL_QUASAR")),
+            ("screenThemeId", Value::string("GREEN_QUASAR")),
+            ("sequenceNum", Value::I64(1)),
+        ],
+    );
+
+    let root = super::webroot().to_string_lossy().into_owned();
+    let post = |user: Option<&str>, theme: &str| {
+        let mut post = request("POST", "/apps/setScreenTheme");
+        if let Some(user) = user {
+            post.set_header("authorization", basic(user));
+        }
+        post.set_header("accept", "application/json");
+        post.set_header("content-type", "application/x-www-form-urlencoded");
+        post.body = format!("screenThemeId={theme}").into_bytes();
+        serve_at(&world.factory, post, &root)
+    };
+    let own = |user: &str| {
+        let ctx = world.factory.new_context();
+        let _entered = ctx.enter();
+        let _authz = ctx.disable_authz();
+        world
+            .facade
+            .find("moqui.security.UserScreenTheme")
+            .unwrap()
+            .eq("userId", Value::string(user))
+            .eq("screenThemeTypeEnumId", Value::string("STT_INTERNAL_QUASAR"))
+            .one()
+            .unwrap()
+            .and_then(|row| row.get("screenThemeId").map(moqui_lib::object::to_plain_string))
+    };
+    assert_eq!(post(None, "GREEN_QUASAR").status, 401);
+
+    {
+        let ctx = world.factory.new_context();
+        let _entered = ctx.enter();
+        crate::user::internal_login_user("plain").unwrap();
+        crate::user::set_preference("THEME_COLOR_SCHEME", Some("SLATE")).unwrap();
+        let out = crate::service::sync("org.moqui.impl.ShellServices.get#Appearance", &BTreeMap::new()).unwrap();
+        let appearance = out.get("appearance").map(moqui_lib::json::to_json).unwrap();
+        assert_eq!(appearance["screenThemeId"], json!("DEFAULT_QUASAR"), "{appearance}");
+        assert_eq!(
+            names(&appearance["themes"], "description"),
+            ["Default", "Green", "Locked"],
+            "{appearance}"
+        );
+        assert_eq!(appearance["policy"]["theme"], json!(true), "{appearance}");
+    }
+    for refused in ["HTML_THEME", "NO_SUCH_THEME"] {
+        let response = post(Some("plain"), refused);
+        assert_eq!(response.status, 403, "{refused}: {}", response.body_text());
+        assert_eq!(own("plain"), None, "{refused}");
+    }
+    let response = post(Some("plain"), "GREEN_QUASAR");
+    assert_eq!(response.status, 200, "{}", response.body_text());
+    assert!(
+        response.body_text().contains("GREEN_QUASAR"),
+        "{}",
+        response.body_text()
+    );
+    assert_eq!(own("plain").as_deref(), Some("GREEN_QUASAR"));
+    {
+        let ctx = world.factory.new_context();
+        let _entered = ctx.enter();
+        assert_eq!(
+            crate::user::get_preference_for("THEME_COLOR_SCHEME", Some("plain")).unwrap(),
+            None,
+            "a new theme opens in its own scheme"
+        );
+    }
+    // back to the theme the user gets without a row of their own: the row goes
+    assert_eq!(post(Some("plain"), "DEFAULT_QUASAR").status, 200);
+    assert_eq!(own("plain"), None);
+
+    // a member of a group with a theme: the group's is the one without a row
+    assert_eq!(post(Some("grouped"), "DEFAULT_QUASAR").status, 200);
+    assert_eq!(own("grouped").as_deref(), Some("DEFAULT_QUASAR"));
+    assert_eq!(post(Some("grouped"), "GREEN_QUASAR").status, 200);
+    assert_eq!(own("grouped"), None);
+
+    // a theme whose policy locks the choice: it can be picked, and then not left
+    assert_eq!(post(Some("plain"), "LOCKED_QUASAR").status, 200);
+    let response = post(Some("plain"), "DEFAULT_QUASAR");
+    assert_eq!(response.status, 403, "{}", response.body_text());
+    assert!(
+        response.body_text().contains("does not allow choosing another theme"),
+        "{}",
+        response.body_text()
+    );
+    assert_eq!(own("plain").as_deref(), Some("LOCKED_QUASAR"));
+}
+
 /// One execution context renders several screens, as a spec, a TUI session or an agent's renders do: the shell data
 /// (whose counts service runs with authorization disabled by the framework and takes the Java idiom
 /// `wasDisabled = disableAuthz(); ...; if (!wasDisabled) enableAuthz()`), a screen and a transition under an app whose

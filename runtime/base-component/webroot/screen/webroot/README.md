@@ -14,6 +14,7 @@ a request with a `v` parameter and an hour with revalidation for the rest. The h
 | `js/moqui-html.js` | client of the `html` mode; `js/README.md` lists the data attributes |
 | `js/*.js` (`MoquiLib.js`, `WebrootVue.qvt.js` and the rest) | client of the `qvt` mode and the `/qapps` shell (Vue 3.5, Quasar 2.35); `js/README.md` lists the files, [docs/ui/Qvt-Client.md](../../../../../docs/ui/Qvt-Client.md) is the reference |
 | `css/WebrootVue.qvt.css` | style sheet of the `qvt` shell and widgets: only what Quasar 2.35 has no prop for (tonal buttons, the div-table rules, the container-box accents, print) |
+| `css/WebrootVue.qvt.green-screen.css` | the Green Screen theme's look over that sheet (mono font, square corners, ASCII-style borders), from the tokens so any color scheme recolors it ([Qvt-Client](../../../../../docs/ui/Qvt-Client.md#themes)) |
 | `images/`, `MoquiLogo100.png`, `favicon.ico` | logo and icon |
 | `manifest.webmanifest`, `images/pwa-icon-*` | the `/qapps` web app's manifest and icons (the Moqui logo drawn at 192 and 512, a maskable 512 and an SVG) |
 | `sw.js` | the PWA's service worker: caches only versioned shell assets, shows Web Push notifications; served uncached with `Service-Worker-Allowed: /` ([Qvt-Client](../../../../../docs/ui/Qvt-Client.md#install-and-web-push)) |
