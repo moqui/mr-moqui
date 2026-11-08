@@ -1993,6 +1993,23 @@ On the same spec:
 `js_speed` dropped no runtime (the same allocations on every row), and its times were within the noise of a busy
 machine. What is left of a process's script heap is that per-runtime baseline across many threads.
 
+## Round 45: a runtime's start slack (measured, dropped); the fragmented check confirmed by a collection
+
+A fresh runtime's reserved bytes carry the growth slack of the bindings' start: the shims, helpers and freeze grow
+the arenas again after the core gave its realm's slack back. A fork branch (`feat/shrink-to-fit`, unmerged) added
+`Runtime::shrink_to_fit`, and the bindings called it after a runtime's start.
+
+On `OrderToCashBasicFlow` it did not pay. The runtimes grow the slack back as soon as they run scripts:
+- the spec runtime ended at 1.60 MB against 1.69;
+- the process peak was 45.8 MB against 42.6, within the noise of when the concurrent runtimes peak;
+- only the main runtime's first spec ended smaller, at 0.8 MB against 2.9.
+
+The branch was dropped.
+
+It showed a flaw in Round 44's check. Its first look compared the reserved bytes with the last collection's live
+bytes, which may be a burst's, still live then, and so too high. The check now collects to confirm, for any runtime
+past 8 MiB, at most every 5 seconds a thread, and still drops at most every 30 seconds.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.

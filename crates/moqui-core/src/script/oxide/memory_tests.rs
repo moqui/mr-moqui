@@ -166,12 +166,12 @@ fn a_runtime_its_peak_left_fragmented_starts_fresh() -> Result<(), Error> {
         let before = shed();
         // a burst of objects, one in every thousand kept (on a prototype: the global object's names are the stack's)
         let burst = "Array.prototype.kept = []; (function () { let all = []; \
-                     for (let i = 0; i < 250000; i++) { const o = {a: i}; all.push(o); \
+                     for (let i = 0; i < 450000; i++) { const o = {a: i}; all.push(o); \
                      if (i % 1000 === 999) [].kept.push(o); } return all.length })()";
-        assert_eq!(value(burst)?, Value::I32(250000));
+        assert_eq!(value(burst)?, Value::I32(450000));
         // the next outermost run past the sample interval sees it, collects, and drops the runtime
         std::thread::sleep(std::time::Duration::from_millis(300));
-        assert_eq!(value("[].kept.length")?, Value::I32(250));
+        assert_eq!(value("[].kept.length")?, Value::I32(450));
         assert_eq!(shed(), before + 1, "dropped as fragmented");
         assert_eq!(value("typeof [].marker")?, Value::string("undefined"), "a fresh runtime");
         assert_eq!(value("3 * 3")?, Value::I32(9));

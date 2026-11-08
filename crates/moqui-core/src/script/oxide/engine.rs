@@ -77,9 +77,14 @@ const FRAGMENTED_DIVISOR: usize = 2;
 /// start for every run.
 const FRAGMENTED_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// The least time between two collections that look for a fragmented runtime on a thread.
+const FRAGMENTED_CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+
 thread_local! {
     /// When this thread last dropped a fragmented runtime ([`FRAGMENTED_BYTES`]).
     static LAST_FRAGMENTED_DROP: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+    /// When this thread last collected to look for one.
+    static LAST_FRAGMENTED_CHECK: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
 }
 
 /// What the runtime cuts when it starts for small scripts (`rquickjs` and `small-oxide`), behind the static check
@@ -1092,31 +1097,32 @@ impl OxideEngine {
 
 impl OxideEngine {
     /// At the end of an outermost run, after its pressure check: whether the runtime's reserved bytes are far past its
-    /// live ones ([`FRAGMENTED_BYTES`]), so it is to be dropped and started fresh. Read from the last sample and the last
-    /// collection, then confirmed with a collection, at most every [`FRAGMENTED_EVERY`] on the thread.
+    /// live ones ([`FRAGMENTED_BYTES`]), so it is to be dropped and started fresh. Read from the last sample, then from a
+    /// collection: at most every [`FRAGMENTED_CHECK_EVERY`] on the thread (the last collection's live bytes may be a
+    /// burst's, still live then), and no drop within [`FRAGMENTED_EVERY`] of the last.
     fn fragmented(&self) -> bool {
-        let reserved = self.heap.get();
-        if reserved < FRAGMENTED_BYTES {
-            return false;
-        }
-        let far_past = |reserved: usize, live: usize| reserved * FRAGMENTED_DIVISOR >= live * FRAGMENTED_RATIO;
-        let Ok(report) = self.runtime.memory_report() else {
-            return false;
-        };
-        if !far_past(reserved, report.gc.live_bytes) {
+        if self.heap.get() < FRAGMENTED_BYTES {
             return false;
         }
         let now = std::time::Instant::now();
-        if LAST_FRAGMENTED_DROP.with(|last| last.get().is_some_and(|at| now.duration_since(at) < FRAGMENTED_EVERY)) {
+        let recent = |cell: &std::cell::Cell<Option<std::time::Instant>>, every| {
+            cell.get().is_some_and(|at| now.duration_since(at) < every)
+        };
+        if LAST_FRAGMENTED_DROP.with(|last| recent(last, FRAGMENTED_EVERY))
+            || LAST_FRAGMENTED_CHECK.with(|last| recent(last, FRAGMENTED_CHECK_EVERY))
+        {
             return false;
         }
+        LAST_FRAGMENTED_CHECK.with(|last| last.set(Some(now)));
         let _ = self.runtime.run_gc();
         let Ok(report) = self.runtime.memory_report() else {
             return false;
         };
         let reserved = report.reserved_bytes();
         self.note_heap(reserved);
-        if reserved < FRAGMENTED_BYTES || !far_past(reserved, report.gc.live_bytes) {
+        if reserved < FRAGMENTED_BYTES
+            || reserved * FRAGMENTED_DIVISOR < report.gc.live_bytes * FRAGMENTED_RATIO
+        {
             return false;
         }
         LAST_FRAGMENTED_DROP.with(|last| last.set(Some(now)));
