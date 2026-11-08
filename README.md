@@ -96,3 +96,7 @@ This project is an AI-assisted rebuild of the manually written Moqui Framework i
 LLMs are considered tools used by people. The person using the tool is just as responsible as with a text editor and keyboard. LLMs are the functional and moral equivalent of a hammer: they do not shake themselves, and are not a substitute or replacement for a responsible party.
 
 Don't trust, verify. Use AI to help verify, but remember who is responsible, and who is a who.
+
+## Contributing
+
+Code is accepted from people who have signed [AUTHORS.md](AUTHORS.md), in a commit from the GitHub account that submits the pull request. From an account that has not signed, we may take a pull request's ideas but not its code, which is written again with AI assistance. Each mr-* repository has its own AUTHORS.md, and maintainers follow [Contributions](docs/dev/Contributions.md).

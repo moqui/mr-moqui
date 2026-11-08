@@ -95,3 +95,4 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [Native-Components.md](dev/Native-Components.md) | A component with Rust code: linked services, tools, resource schemes and template renderers |
 | [Client-Testing.md](dev/Client-Testing.md) | Testing a running server from outside with `moqui test-client`: HTTP, WebSocket, Chromium and load |
 | [Moqui-Java-Migration.md](dev/Moqui-Java-Migration.md) | Moving a Moqui Java deployment or component to MR Moqui |
+| [Contributions.md](dev/Contributions.md) | Pull requests and AUTHORS.md: checking a signature, merging, and an unsigned pull request's ideas without its code |
