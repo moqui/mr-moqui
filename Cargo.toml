@@ -223,11 +223,6 @@ argon2 = { version = "0.6", features = ["password-hash"] }
 csv = "1"
 # html only. The default set also links getopts for the crate's CLI.
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
-totp-rs = { version = "6", default-features = false, features = [
-    "std",
-    "otpauth",
-    "gen_secret",
-] }
 tracing = "0.1"
 # The live log filter and telemetry settings read on each span and callsite (plans/archive/Monitor-Settings.md). Already
 # in the graph (MIT OR Apache-2.0).

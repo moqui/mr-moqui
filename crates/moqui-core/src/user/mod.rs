@@ -24,6 +24,7 @@ mod policy;
 mod preference;
 pub mod session;
 mod system;
+mod totp;
 mod visit;
 
 pub use system::as_system;
@@ -40,6 +41,8 @@ pub use factor::{
     send_reauth_code, single_use_hash, totp_code_valid, totp_secret, totp_uri, CodeLogin, SendableFactor,
 };
 pub(crate) use factor::{CODE_NOT_VALID, FACTOR_INFO, SEND_CODE, VALIDATE_CODE};
+#[cfg(test)]
+pub(crate) use factor::totp_code_now;
 pub(crate) use filter::apply_view_filters;
 pub use filter::{apply_entity_filters, find_filters_for_user};
 pub use login::app_password_key;

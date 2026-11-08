@@ -20,7 +20,6 @@
 
 use moqui_db::sql::Condition;
 use moqui_lib::object::Value;
-use totp_rs::{Algorithm, Secret, Totp};
 
 use super::login::{entity_facade, now_value};
 use super::password::simple_hash;
@@ -31,9 +30,6 @@ const AUTHC_FACTOR: &str = "moqui.security.UserAuthcFactor";
 const USER_GROUP: &str = "moqui.security.UserGroup";
 /// The salt Java hashes single-use codes with. The hash type is the conf password default.
 const SINGLE_USE_SALT: &str = "SaltySalt";
-const TOTP_DIGITS: usize = 6;
-const TOTP_STEP: u64 = 30;
-const TOTP_SKEW: u16 = 1;
 
 /// `get#UserAuthcFactorRequired`: the user has a factor in date, or is in a group with
 /// `requireAuthcFactor` set. Login asks this before it sets the user.
@@ -81,38 +77,42 @@ fn date_filter(now: &Value) -> Condition {
 
 /// A new TOTP shared secret, as `DefaultSecretGenerator` makes it: base32 of 20 random bytes.
 pub fn totp_secret() -> String {
-    Secret::generate().to_base32()
+    let mut bytes = [0u8; 20];
+    if let Err(err) = getrandom::fill(&mut bytes) {
+        // no secret is better than a guessable one: an empty secret never matches
+        tracing::error!(error = %err, "no random bytes for a TOTP secret");
+        return String::new();
+    }
+    super::totp::base32(&bytes)
 }
 
 /// True when `code` is the authenticator code for `secret` now, or one period either side.
 ///
 /// A secret that is not base32, or is too short to be a TOTP key, never matches.
 pub fn totp_code_valid(secret: &str, code: &str) -> bool {
-    let Some(totp) = totp(secret, "", None) else {
+    let Some(key) = super::totp::key(secret) else {
         return false;
     };
-    totp.check_current(code.trim()).is_some()
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    super::totp::matches(&key, code.trim(), now)
+}
+
+/// The authenticator code for `secret` now, as an app shows it. For the tests that sign in with one.
+#[cfg(test)]
+pub(crate) fn totp_code_now(secret: &str) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    super::totp::code(&super::totp::key(secret).unwrap_or_default(), now / super::totp::STEP)
 }
 
 /// The `otpauth://totp/` URI an authenticator app scans: the issuer and label, the secret, SHA1,
 /// six digits, and 30 seconds, as `QrData` holds them. `None` when the secret or label is not valid.
 pub fn totp_uri(label: &str, issuer: &str, secret: &str) -> Option<String> {
     let issuer = Some(issuer).filter(|text| !text.is_empty());
-    totp(secret, label, issuer)?.to_url().ok()
-}
-
-fn totp(secret: &str, label: &str, issuer: Option<&str>) -> Option<Totp> {
-    let bytes = Secret::try_from_base32(secret.trim().to_ascii_uppercase()).ok()?;
-    totp_rs::Builder::new()
-        .with_algorithm(Algorithm::SHA1)
-        .with_digits(u8::try_from(TOTP_DIGITS).ok()?)
-        .with_step_duration(TOTP_STEP)
-        .with_skew(TOTP_SKEW)
-        .with_secret(bytes)
-        .with_account_name(label)
-        .with_issuer(issuer)
-        .build()
-        .ok()
+    super::totp::uri(label, issuer, &super::totp::key(secret)?)
 }
 
 /// The stored form of a single-use code: `getSimpleHash(code, 'SaltySalt')`, the conf password
@@ -174,16 +174,16 @@ mod tests {
     #[test]
     fn totp_matches_the_rfc_vector_and_rejects_other_codes() {
         let secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
-        let totp = totp(secret, "", None).unwrap();
-        assert_eq!(totp.generate(59).to_string(), "287082");
-        assert_eq!(totp.generate(1_111_111_109).to_string(), "081804");
-        assert!(totp.check("287082", 59).is_some());
+        let key = super::super::totp::key(secret).unwrap();
+        assert_eq!(super::super::totp::code(&key, 59 / 30), "287082");
+        assert_eq!(super::super::totp::code(&key, 1_111_111_109 / 30), "081804");
+        assert!(super::super::totp::matches(&key, "287082", 59));
         assert!(
-            totp.check("287082", 59 + 30).is_some(),
+            super::super::totp::matches(&key, "287082", 59 + 30),
             "one period of drift is allowed"
         );
-        assert!(totp.check("287082", 59 + 90).is_none());
-        let now = totp.generate_current().to_string();
+        assert!(!super::super::totp::matches(&key, "287082", 59 + 90));
+        let now = totp_code_now(secret);
         assert!(totp_code_valid(&secret.to_ascii_lowercase(), &now));
         assert!(!totp_code_valid(secret, "12345"));
         assert!(!totp_code_valid("not base32!", &now));

@@ -7,9 +7,9 @@ license.workspace = true
 publish.workspace = true
 
 # No direct tokio, axum, postgres, mysql, or postgresql_embedded.
-# moqui-lib http is blocking reqwest. croner, argon2,
-# pulldown-cmark, and totp-rs stay workspace pins. totp-rs is the second
-# factor of phase 11, with qr off as in plans/archive/License-Review.md.
+# moqui-lib http is blocking reqwest. croner, argon2 and
+# pulldown-cmark stay workspace pins. The second factor's TOTP is
+# `user/totp.rs` on hmac and sha1.
 # Mail (lettre, imap) is moqui-mail's (plans/archive/Crate-Split.md).
 
 [dependencies]
@@ -52,7 +52,6 @@ jiff = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rcgen = { workspace = true, optional = true }
-totp-rs = { workspace = true }
 rust_xlsxwriter = { workspace = true, optional = true }
 calamine = { workspace = true, optional = true }
 zip = { workspace = true }

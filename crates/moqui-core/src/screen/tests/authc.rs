@@ -167,13 +167,7 @@ fn json(response: &WebResponse) -> serde_json::Value {
 }
 
 fn current_totp(secret: &str) -> String {
-    let bytes = totp_rs::Secret::try_from_base32(secret).unwrap();
-    totp_rs::Builder::new()
-        .with_secret(bytes)
-        .build()
-        .unwrap()
-        .generate_current()
-        .to_string()
+    crate::user::totp_code_now(secret)
 }
 
 #[test]
