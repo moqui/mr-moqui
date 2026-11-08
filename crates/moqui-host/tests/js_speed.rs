@@ -26,9 +26,9 @@
 //!
 //! `JS_SPEED_CALLS` (default 2000; services 1000, screens 200) and `JS_SPEED_BATCHES` (default 5) size it;
 //! `JS_SPEED_ONLY` (a comma list of `expr`, `script`, `actions`, `service`, `template`, `screen`, `cold`) runs those
-//! sections alone, and `JS_SPEED_ROW` (part of a row name) those rows alone, for a profile. `JS_SPEED_PEEK` prints the
-//! start of each screen's output, and `JS_SPEED_DUMP` (a directory) writes each screen's output there, to compare two
-//! builds' output. See `speed/mod.rs` for the columns. The database is embedded Postgres (or `SPEED_PG_HOST`), for the services and the cached finds; nothing
+//! sections alone, and `JS_SPEED_ROW` (part of a row name) those rows alone, for a profile; the new thread's rows too
+//! (`engine start`). `JS_SPEED_PEEK` prints the start of each screen's output, and `JS_SPEED_DUMP` (a directory) writes
+//! each screen's output there, to compare two builds' output. See `speed/mod.rs` for the columns. The database is embedded Postgres (or `SPEED_PG_HOST`), for the services and the cached finds; nothing
 //! here writes.
 //!
 //! The context is entered with authorization disabled, as in `service_speed`. Names the expressions read are set once
@@ -367,6 +367,58 @@ fn scripts(rows: &mut Rows, calls: usize) {
         "(function () { const l = []; for (let i = 0; i < 100; i++) l.push({id: 'I' + i, qty: i, name: 'Item ' + i}); \
          return JSON.parse(JSON.stringify(l)).length })()",
     );
+    // The rows of Profiling2's Tier 0, each for one path of the engine the templates and screens use.
+    run(rows, "$esc over 100 strings", &esc_source());
+    // The text the locked template's sandbox parses on each render: the snapshot of its row's data.
+    let snapshot =
+        template::unwrap_json(&script::eval_value("({title: title, items: items})").expect("data")).to_string();
+    let literal = serde_json::to_string(&snapshot).expect("snapshot literal");
+    run(
+        rows,
+        "JSON.parse of the locked snapshot",
+        &format!("(function () {{ const d = JSON.parse({literal}); return d.items.length }})()"),
+    );
+    run(
+        rows,
+        "1000 numbers to text",
+        "(function () { let n = 0; for (let i = 0; i < 1000; i++) { \
+         const x = i % 4 === 0 ? i : i % 4 === 1 ? i / 7 : i % 4 === 2 ? i * 0.1 : i * 1000; \
+         n += (i & 1 ? String(x) : '' + x).length } return n })()",
+    );
+    run(
+        rows,
+        "split('') + charAt, 1000 chars",
+        "(function () { const s = 'abcdefghij'.repeat(100); const a = s.split(''); let n = 0; \
+         for (let i = 0; i < s.length; i++) if (s.charAt(i) === a[i]) n++; return n })()",
+    );
+    run(
+        rows,
+        "regexp scan of a 200-line log",
+        "(function () { const t = ('2026-11-08 10:00:01 INFO ServiceRun: 12\\n' + \
+         '2026-11-08 10:00:02 ERROR EntityFind: 404\\n' + '2026-11-08 10:00:03 DEBUG Cache hit for key: 7\\n' + \
+         '2026-11-08 10:00:04 WARN SlowQuery: 1500\\n' + '2026-11-08 10:00:05 ERROR ServiceCall: 500\\n').repeat(40); \
+         let n = 0; for (const m of t.matchAll(/ERROR (\\w+): (\\d+)/g)) n += m[2].length + m[1].length; \
+         return n + t.match(/\\d*:/g).length })()",
+    );
+}
+
+/// `$esc` of the fancy templates' prelude, copied from `PRELUDE` in `moqui-core/src/script/template.rs`.
+const ESC: &str = r#"const $esc = (v) => $String(v).replace(/[&<>"']/g, (c) => c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;");"#;
+
+/// [`ESC`] over 100 literal strings, of which 10 have a character to escape.
+fn esc_source() -> String {
+    let mut list = String::new();
+    for index in 0..100 {
+        if index % 10 == 0 {
+            list.push_str(&format!("'Item <{index}> & \"co\"', "));
+        } else {
+            list.push_str(&format!("'Widget {index} blue, large', "));
+        }
+    }
+    format!(
+        "(function () {{ const $String = String; {ESC} \
+         const l = [{list}]; let n = 0; for (let i = 0; i < l.length; i++) n += $esc(l[i]).length; return n }})()"
+    )
 }
 
 fn actions(rows: &mut Rows, calls: usize) {
@@ -541,8 +593,17 @@ fn render(
     output.body.len()
 }
 
-/// What a new thread pays for its engine: the first script, the first screen render, and the heap each leaves.
+/// What a new thread pays for its engine: the first script, the first screen render, and the heap each leaves. Each
+/// row is one call on each of the threads; `JS_SPEED_ROW` selects them as it does the others (the renders still run
+/// after a first script, which starts the engine).
 fn cold(factory: &Arc<ExecutionContextFactory>, root: &str, sizes: &Sizes) {
+    const START: &str = "engine start (a thread's first script)";
+    const RENDER_FIRST: &str = "then first render, List html 20 rows";
+    const RENDER_SECOND: &str = "then a second screen, Plain html";
+    let renders = row_wanted(RENDER_FIRST) || row_wanted(RENDER_SECOND);
+    if !row_wanted(START) && !renders {
+        return;
+    }
     let threads = (sizes.screens / 10).clamp(5, 50);
     println!("\n== a new thread's first script and first screen, {threads} threads one after another");
     let mut rows = Rows {
@@ -565,28 +626,37 @@ fn cold(factory: &Arc<ExecutionContextFactory>, root: &str, sizes: &Sizes) {
                         [("rowCount".to_string(), Value::string("20"))].into_iter().collect();
                     let first = speed::measure(|| script::run_script(";").expect("first script")).0;
                     let script_memory = script::engine_memory(true);
+                    if !renders {
+                        return (
+                            [Some(first), None, None],
+                            [script_memory, EngineMemory::default(), EngineMemory::default()],
+                        );
+                    }
                     let render_first = speed::measure(|| render(factory, root, "/List", "html", &twenty)).0;
                     let render_memory = script::engine_memory(true);
                     let render_second = speed::measure(|| render(factory, root, "/Plain", "html", &no_parameters)).0;
                     let second_memory = script::engine_memory(true);
                     (
-                        [first, render_first, render_second],
+                        [Some(first), Some(render_first), Some(render_second)],
                         [script_memory, render_memory, second_memory],
                     )
                 })
                 .join()
                 .expect("cold thread")
         });
-        let [first, render_first, render_second] = measured;
-        rows.note("first script on a thread (engine start)", 1, first);
-        rows.note("then first render, List html 20 rows", 1, render_first);
-        rows.note("then a second screen, Plain html", 1, render_second);
+        for (label, measured) in [START, RENDER_FIRST, RENDER_SECOND].into_iter().zip(measured) {
+            if let Some(measured) = measured.filter(|_| row_wanted(label)) {
+                rows.note(label, 1, measured);
+            }
+        }
         [after_script, after_render, after_second] = memory;
     }
     rows.print();
     print_memory("a new thread's engine after its first script", after_script);
-    print_memory("the same after List html", after_render);
-    print_memory("the same after Plain html", after_second);
+    if renders {
+        print_memory("the same after List html", after_render);
+        print_memory("the same after Plain html", after_second);
+    }
 }
 
 /// The process's scripts by kind and its runtimes.
