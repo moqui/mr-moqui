@@ -1290,6 +1290,7 @@ fn write_script_stats() {
             "poisoned": stats.oxide_poisoned,
             "restarted": stats.oxide_restarted,
             "shed_fragmented": stats.oxide_shed_fragmented,
+            "released_idle": stats.oxide_released_idle,
             "images_made": stats.oxide_images_made,
             "image_loads": stats.oxide_image_loads,
             "image_failures": stats.oxide_image_failures,
@@ -1299,6 +1300,13 @@ fn write_script_stats() {
                 .oxide_heap_peaks
                 .iter()
                 .map(|(thread, bytes)| serde_json::json!({"thread": thread, "peak": bytes}))
+                .collect::<Vec<_>>(),
+            "heap_at_max": stats.oxide_heap_at_max.0,
+            "heap_at_max_by_runtime": stats
+                .oxide_heap_at_max
+                .1
+                .iter()
+                .map(|(thread, bytes)| serde_json::json!({"thread": thread, "bytes": bytes}))
                 .collect::<Vec<_>>(),
         },
         "scripts_by_kind": by_kind,

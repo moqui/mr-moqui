@@ -171,3 +171,27 @@ fn a_runtime_its_peak_left_fragmented_starts_fresh() -> Result<(), Error> {
     assert!(memory.reserved_bytes < 8 * MIB, "reserved {}", memory.reserved_bytes);
     Ok(())
 }
+
+/// A thread's runtime let go when no script runs gives its heap back, and the thread's next script starts one again
+/// with the same answers; inside a running script it is kept.
+#[test]
+fn an_idle_threads_runtime_is_let_go_and_starts_again() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    assert_eq!(crate::script::eval_value("6 * 7")?, Value::I32(42));
+    let started = super::engine::stats().engines_started;
+    let released = super::engine::stats().released_idle;
+    assert!(crate::script::release_idle_runtime(), "a runtime was let go");
+    assert!(!crate::script::release_idle_runtime(), "none is left to let go");
+    assert!(super::engine::stats().released_idle > released);
+    assert_eq!(crate::script::eval_value("6 * 7")?, Value::I32(42));
+    assert!(super::engine::stats().engines_started > started, "the next script started one");
+    // a script that tries to let its own runtime go keeps it
+    let kept = std::cell::Cell::new(true);
+    crate::script::with_screen_runner(|_| {
+        kept.set(!crate::script::release_idle_runtime());
+        Ok(())
+    })?;
+    assert!(kept.get(), "the running runtime is kept");
+    Ok(())
+}

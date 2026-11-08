@@ -232,6 +232,7 @@ mod counts {
     pub(super) static POISONED: AtomicU64 = AtomicU64::new(0);
     pub(super) static RESTARTED: AtomicU64 = AtomicU64::new(0);
     pub(super) static SHED_FRAGMENTED: AtomicU64 = AtomicU64::new(0);
+    pub(super) static RELEASED_IDLE: AtomicU64 = AtomicU64::new(0);
 }
 
 /// The most reserved heap bytes each thread's oxide runtime reached, by thread, with the thread's name (or id), for the
@@ -250,6 +251,42 @@ fn note_thread_peak(bytes: usize) {
         (name, 0)
     });
     peak.1 = peak.1.max(bytes);
+}
+
+/// Each live runtime's reserved heap bytes as last sampled, by thread and runtime, with the thread's name: what the
+/// process's total is made of, for [`heap_at_max`].
+type RuntimeHeaps = std::collections::HashMap<(std::thread::ThreadId, usize), (String, usize)>;
+
+static RUNTIME_HEAPS: std::sync::LazyLock<std::sync::Mutex<RuntimeHeaps>> = std::sync::LazyLock::new(Default::default);
+
+/// The runtimes' heaps (by thread name) when the process's total last rose a MiB past the one before: what made the
+/// peak a run's stats report.
+static HEAP_AT_MAX: std::sync::Mutex<(usize, Vec<(String, usize)>)> = std::sync::Mutex::new((0, Vec::new()));
+
+/// Note `bytes` as the runtime at `key`'s heap now, and when the process's `total` is a new high by a MiB, what each
+/// runtime held at it.
+fn note_runtime_heap(key: usize, bytes: usize, total: usize) {
+    let thread = std::thread::current();
+    let mut heaps = moqui_lib::sync::lock(&RUNTIME_HEAPS);
+    let entry = heaps.entry((thread.id(), key)).or_insert_with(|| {
+        let name = thread
+            .name()
+            .map_or_else(|| format!("{:?}", thread.id()), str::to_string);
+        (name, 0)
+    });
+    entry.1 = bytes;
+    let mut at_max = moqui_lib::sync::lock(&HEAP_AT_MAX);
+    if total >= at_max.0 + 1024 * 1024 {
+        let mut held: Vec<(String, usize)> = heaps.values().cloned().collect();
+        held.sort_by_key(|held| std::cmp::Reverse(held.1));
+        *at_max = (total, held);
+    }
+}
+
+/// The process's highest total of reserved runtime heap bytes (to a MiB), and each runtime's share of it by thread
+/// name, the largest first.
+pub(crate) fn heap_at_max() -> (usize, Vec<(String, usize)>) {
+    moqui_lib::sync::lock(&HEAP_AT_MAX).clone()
 }
 
 /// The peak reserved heap bytes of each live thread's oxide runtime, as sampled, by thread name.
@@ -277,6 +314,8 @@ pub(crate) struct OxideStats {
     /// Runtimes dropped and started fresh because their reserved bytes were far past their live ones
     /// ([`FRAGMENTED_BYTES`]).
     pub(crate) shed_fragmented: u64,
+    /// Runtimes let go by a thread that waited for work ([`release_idle`]).
+    pub(crate) released_idle: u64,
     /// The process's code images ([`super::compiled`]).
     pub(crate) images: super::compiled::ImageStats,
 }
@@ -292,6 +331,7 @@ pub(crate) fn stats() -> OxideStats {
         poisoned: counts::POISONED.load(Relaxed),
         restarted: counts::RESTARTED.load(Relaxed),
         shed_fragmented: counts::SHED_FRAGMENTED.load(Relaxed),
+        released_idle: counts::RELEASED_IDLE.load(Relaxed),
         images: super::compiled::image_stats(),
     }
 }
@@ -573,6 +613,26 @@ impl Drop for Active {
 #[cfg(test)]
 pub(super) fn active_depth() -> usize {
     ACTIVE.with(|active| active.borrow().len())
+}
+
+/// Let this thread's runtime go, when no script runs on it: for a worker that has waited for work a while, so the heap
+/// a pool's idle threads hold goes back. Its next script starts a runtime again, from the process's code images.
+/// Whether one was let go.
+pub(crate) fn release_idle() -> bool {
+    if run::is_running(EngineTag::Oxide) {
+        return false;
+    }
+    let Some(engine) = ENGINE.with(|engine| engine.borrow().clone()) else {
+        return false;
+    };
+    if Active::holds(&engine) {
+        return false;
+    }
+    // the thread's peak stays in the stats: the runtime starts again here
+    engine.restarting.set(true);
+    ENGINE.with(|current| *current.borrow_mut() = None);
+    counts::RELEASED_IDLE.fetch_add(1, Relaxed);
+    true
 }
 
 /// This thread's oxide runtime, started if need be. A start that fails is remembered for the thread
@@ -980,6 +1040,7 @@ impl OxideEngine {
             counts::HEAP.fetch_sub(before - now, Relaxed) - (before - now)
         };
         counts::HEAP_MAX.fetch_max(total, Relaxed);
+        note_runtime_heap(std::ptr::from_ref(self) as usize, now, total);
         if now > self.heap_peak.get() {
             self.heap_peak.set(now);
             note_thread_peak(now);
@@ -1066,6 +1127,7 @@ impl Drop for OxideEngine {
     fn drop(&mut self) {
         counts::LIVE.fetch_sub(1, Relaxed);
         counts::HEAP.fetch_sub(self.heap.get(), Relaxed);
+        moqui_lib::sync::lock(&RUNTIME_HEAPS).remove(&(std::thread::current().id(), std::ptr::from_ref(self) as usize));
         // the runtime is dropped on its own thread: its thread's peak goes with it, unless one starts again there
         if !self.restarting.get() {
             moqui_lib::sync::lock(&THREAD_PEAKS).remove(&std::thread::current().id());

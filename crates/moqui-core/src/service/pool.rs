@@ -262,6 +262,8 @@ pub(crate) struct State {
     pub(crate) queue: VecDeque<Work>,
     /// Workers running something now.
     pub(crate) active: usize,
+    /// Workers waiting for work that may still hold a script runtime (they have not let it go in this wait).
+    pub(crate) warm_idle: usize,
     /// Scheduled job runs waiting for a job worker, as Java's separate `jobWorkerPool`.
     pub(crate) jobs: VecDeque<Box<super::jobs::JobRun>>,
     /// Job workers running a job now.
@@ -1039,6 +1041,8 @@ fn worker_loop(shared: Arc<Shared>) {
 /// (nothing queued, nothing active) between the two: `waitWorkerPoolEmpty` would return before the work ran.
 fn next_work(shared: &Shared) -> Option<Work> {
     let mut state = lock(&shared.state);
+    // whether this wait already let the thread's script runtime go
+    let mut released = false;
     loop {
         if state.halt {
             return None;
@@ -1054,9 +1058,29 @@ fn next_work(shared: &Shared) -> Option<Work> {
         if state.stop {
             return None;
         }
-        state = wait(&shared.wake, state);
+        if released {
+            state = wait(&shared.wake, state);
+            continue;
+        }
+        state.warm_idle += 1;
+        let (guard, waited) = wait_timeout(&shared.wake, state, IDLE_RUNTIME);
+        state = guard;
+        state.warm_idle -= 1;
+        // a worker idle while [`KEEP_WARM`] others are too gives back its script runtime's heap; its next script
+        // starts one again. A busy pool's workers are seldom idle that long, and a quiet one keeps a few runtimes warm.
+        if waited.timed_out() && state.queue.is_empty() && !state.stop && !state.halt && state.warm_idle >= KEEP_WARM {
+            drop(state);
+            crate::script::release_idle_runtime();
+            released = true;
+            state = lock(&shared.state);
+        }
     }
 }
+
+/// How long a worker waits for work before it lets its script runtime go, when [`KEEP_WARM`] others are idle too.
+const IDLE_RUNTIME: Duration = Duration::from_secs(1);
+/// The idle workers that keep their script runtime, so a quiet pool's next call does not start one.
+const KEEP_WARM: usize = 2;
 
 /// Run work `next_work` took, which counted it active.
 fn run_work(shared: &Shared, work: Work) {
@@ -1577,7 +1601,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use super::{ServicePools, DEFAULT_CHECK_SECONDS};
+    use super::{ServicePools, DEFAULT_CHECK_SECONDS, IDLE_RUNTIME};
+    use moqui_lib::object::Value;
 
     #[test]
     fn trace_context_crosses_workers_and_does_not_leak() {
@@ -1656,6 +1681,37 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(pools.status().active, 0);
+    }
+
+    /// Three workers that ran a script and then wait more than [`IDLE_RUNTIME`]: one lets its runtime go, and two
+    /// ([`KEEP_WARM`]) keep theirs.
+    #[test]
+    fn an_idle_worker_beyond_the_warm_ones_lets_its_runtime_go() {
+        // three call workers: the job workers come out of the count
+        let pools = ServicePools::bounded(3 + super::DEFAULT_JOB_POOL_CORE, 3);
+        let ctx = crate::context::ExecutionContextFactory::test_context_with("", pools);
+        let factory = Arc::clone(ctx.factory());
+        let together = Arc::new(std::sync::Barrier::new(3));
+        let released = crate::script::engine_stats().oxide_released_idle;
+        let calls: Vec<_> = (0..3)
+            .map(|_| {
+                let factory = Arc::clone(&factory);
+                let together = Arc::clone(&together);
+                std::thread::spawn(move || {
+                    factory.service_pools().call(move || {
+                        // each on a worker of its own: none returns before all three ran a script
+                        let value = crate::script::eval_value("1 + 1");
+                        together.wait();
+                        value
+                    })
+                })
+            })
+            .collect();
+        for call in calls {
+            assert_eq!(call.join().unwrap().unwrap(), Value::I32(2));
+        }
+        std::thread::sleep(IDLE_RUNTIME + Duration::from_millis(600));
+        assert!(crate::script::engine_stats().oxide_released_idle > released, "one let its runtime go");
     }
 
     #[test]

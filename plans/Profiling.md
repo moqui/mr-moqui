@@ -2161,6 +2161,70 @@ The difference check counted no differences, and no run fell back.
 The plain-JavaScript rows (concatenation, JSON, locals) are faster on oxide than on QuickJS. The rows over ×1.10 are
 all at the boundary between host and engine.
 
+## Round 49: the heap after Phase 4, and idle workers' runtimes let go
+
+Phase 4 (rquickjs removed, Script-Engine-Oxide §7) left the heap as Round 48 measured it: the test-apps workers peak
+at 91 to 118 MB of reserved runtime heap, 31 runtimes live at most. This round looks at what the peak is made of.
+
+**What the peak is made of.** A new diagnostic: when the process's total of reserved runtime heap rises a MiB past its
+last high, each runtime's share is kept by thread name (`heap_at_max_by_runtime` in the `MOQUI_SCRIPT_STATS_FILE`
+line). mr-mantle's run, at its peak of 113 MB:
+
+| Threads | Runtimes | Bytes |
+|---|---:|---:|
+| `moqui-worker` (the service pool) | 23 | 86.6 MB, 2.9 to 5.3 MB each |
+| `main` (the test harness and the spec runtime) | 2 | 21.9 MB |
+| `moqui-request` | 3 | 3.0 MB |
+| `moqui-job` | 2 | 1.7 MB |
+
+The peak is the service pool's workers, each holding a runtime of a few MB: a condition variable wakes any worker, so
+the work of a run spreads over all of them. A fresh runtime reserves 0.87 MB (0.41 MB live).
+
+**What a worker's runtime holds** (100 released ones; median and largest): reserved 1.5 and 5.4 MB, live 0.56 and
+1.4 MB. In the largest: strings 1.6 MB (0.9 used; mostly atoms, 11k of them), the tables beside the arenas 1.1 MB (37k
+inline-cache entries and the atoms), the value heap 0.86 MB, objects 0.77 MB. Compiled code is not in these numbers:
+a runtime loads it from the process's images, outside its heap. What is left per runtime is the fork's: its own atoms
+and inline caches, and arenas that give back only their ends (the main runtime's value heap: 6.0 MB reserved for
+0.37 MB used, held by a few live ranges near its end).
+
+**The change: an idle worker lets its runtime go.** A service worker that has waited a second for work, while two
+other workers are idle too (`KEEP_WARM`), drops its script runtime (`script::release_idle_runtime`); its next script
+starts one again from the code images. A busy pool's workers are seldom idle that long, and a quiet one keeps two warm
+runtimes, so its next call starts none. A runtime start costs 8.4 ms (`js_speed`'s first script on a thread, 47k
+allocations), and the first render after it 2.8 ms for List html: the price a quiet instance pays for the memory, which
+on such an instance matters more.
+
+Measured on mr-mantle (one run each, 240 specs):
+
+| Idle release | Peak | Workers' share | Releases | Suite time |
+|---|---:|---:|---:|---:|
+| none | 116.4 MB | 88.6 MB | 0 | 296 s |
+| after 10 s idle | 116.4 MB | 87.8 MB | 0 | 294 s |
+| after 2 s idle | 108.3 MB | 88.4 MB | 23 | 296 s |
+| after 0.5 s idle | 66.6 MB | 38.9 MB | 426 | 293 s |
+| after 1 s idle, two kept warm (the change) | 96.4 MB | 67.7 MB | 104 | 295 s |
+
+The half-second release halves the peak, but a lightly loaded server would start a runtime for most of its requests;
+the change keeps two warm.
+
+**Across the app suites** (`./moq test-apps`, the stats file's eight processes): the processes' peaks are 83, 76, 76,
+59, 44 and 16 MB, against Round 48's 118, 113, 109, 103, 42 and 21 MB; 681 runtimes let go, 951 started (306 before).
+The largest process's peak is now its main thread's two runtimes (37 MB: the test harness and its spec runtime) and 23
+workers (44 MB). Phase 3's gate (under half of 139 MiB, 73 MB) is met by three of the six processes; the other three (76, 76 and
+83 MB) miss it by 3 to 10 MB.
+
+The suites: `./moq test-apps` 3393 of 3394 features (the `SupportAssignment` round robin, as in Round 48);
+`./moq test-framework` all steps but one moqui-git test of `cargo test` ("git updates did not settle"), which passed
+three times of three alone.
+
+**Measured and dropped: a smaller static code cache.** A runtime keeps up to 4 MiB of source compiled as static code
+for good; past it a text is transient. At 2 MiB the peak was 114.5 MB, and at 1 MiB 140.9 MB (the workers 116.6 MB):
+more texts compiled as transient, compiled again and again (12,570 compiles against 5,086), instead of loaded from
+their image. The bound stays.
+
+**Next, in the fork:** the per-runtime atoms (shared, as F1 step 3 shares code), the inline-cache table's capacity
+after its units go, and a compacting value heap.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.

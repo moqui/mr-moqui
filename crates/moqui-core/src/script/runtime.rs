@@ -307,6 +307,9 @@ pub struct EngineStats {
     pub oxide_heap_bytes_max: usize,
     /// The peak reserved heap bytes of each thread's oxide runtime (sampled every 32 runs), by thread.
     pub oxide_heap_peaks: Vec<(String, usize)>,
+    /// The highest total of the runtimes' reserved heap bytes (to a MiB), and each runtime's share of it by thread
+    /// name, the largest first.
+    pub oxide_heap_at_max: (usize, Vec<(String, usize)>),
     /// Texts the oxide runtimes compiled.
     pub oxide_compiled: u64,
     /// Oxide runtimes dropped after a host function panicked.
@@ -315,6 +318,8 @@ pub struct EngineStats {
     pub oxide_restarted: u64,
     /// Oxide runtimes dropped and started fresh because their reserved heap was far past their live bytes.
     pub oxide_shed_fragmented: u64,
+    /// Runtimes let go by a thread that waited for work ([`release_idle_runtime`]).
+    pub oxide_released_idle: u64,
     /// The process's oxide code images: made, loaded by a runtime instead of compiled (each a parse avoided), failed,
     /// and the bytes kept.
     pub oxide_images_made: u64,
@@ -337,16 +342,24 @@ pub fn engine_stats() -> EngineStats {
         oxide_heap_bytes: oxide.heap_bytes,
         oxide_heap_bytes_max: oxide.heap_bytes_max,
         oxide_heap_peaks: crate::script::oxide::thread_heap_peaks(),
+        oxide_heap_at_max: crate::script::oxide::heap_at_max(),
         oxide_compiled: oxide.compiled,
         oxide_poisoned: oxide.poisoned,
         oxide_restarted: oxide.restarted,
         oxide_shed_fragmented: oxide.shed_fragmented,
+        oxide_released_idle: oxide.released_idle,
         oxide_images_made: oxide.images.made,
         oxide_image_loads: oxide.images.loads,
         oxide_image_failures: oxide.images.failed,
         oxide_image_bytes: oxide.images.bytes,
         scripts_by_kind: crate::script::engine::scripts_by_kind(),
     }
+}
+
+/// Let this thread's script runtime go when no script runs on it: a pool worker that waited for work a while gives back
+/// the heap its runtime holds, and its next script starts one again. Whether one was let go.
+pub fn release_idle_runtime() -> bool {
+    crate::script::oxide::release_idle()
 }
 
 /// A script's text with a null byte in it is refused before it reaches the engine.

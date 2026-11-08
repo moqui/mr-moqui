@@ -761,6 +761,8 @@ unit tests and the fork's API tests), with no Sweep, Mantle run or full-suite ru
 
 ### Next: the heap
 
-Phase 4 is done (§7, Phase 4 result). What is left of Phase 3's gates is the heap: test-apps workers peak at 91 to
-118 MB of reserved runtime heap, against a gate of half of 139 MiB. The two causes, about 30 runtimes a process and
-arenas that give back only their ends, are in Profiling's Round 49 onward.
+Phase 4 is done (§7, Phase 4 result). What is left of Phase 3's gates is the heap. Profiling's Round 49 found the
+peak to be the service pool's workers, each holding a runtime of a few MB, and lets an idle worker's runtime go (after
+a second idle, two kept warm): the test-apps processes now peak at 16 to 83 MB (91 to 118 before), three of the six
+under the gate (73 MB), the other three 3 to 10 MB over it. What is left per runtime is the fork's: its own atoms and inline caches, and arenas that give
+back only their ends (Round 49's "Next").
