@@ -68,7 +68,11 @@ const GLOBALS_JS: &str = concat!(
     helpers.UserSecurityChecks = {
         assertPrivilegedGroupMembership: hidden.assertPrivilegedGroupMembership,
         assertSealedPermissionGrant: hidden.assertSealedPermissionGrant,
-        assertDocumentExpression: hidden.assertDocumentExpression
+        assertDocumentExpression: hidden.assertDocumentExpression,
+        assertSealedGroupMembership: hidden.assertSealedGroupMembership,
+        privilegedGroups: hidden.privilegedGroups,
+        sealedPermissions: hidden.sealedPermissions,
+        endUserSessions: hidden.endUserSessions
     };
     collection.flattenNestedMap = hidden.flattenNestedMap;
     collection.getMapArrayListValues = hidden.getMapArrayListValues;
@@ -244,6 +248,16 @@ pub(crate) static SHIM: Shim = Shim {
         method!("UserSecurityChecks", "assertPrivilegedGroupMembership", [OptValue], None, assert_privileged_group),
         method!("UserSecurityChecks", "assertSealedPermissionGrant", [OptValue], None, assert_sealed_grant),
         method!("UserSecurityChecks", "assertDocumentExpression", [OptValue], None, assert_document_expression),
+        method!(
+            "UserSecurityChecks",
+            "assertSealedGroupMembership",
+            [OptValue, OptValue, OptValue, OptValue],
+            None,
+            assert_sealed_group_membership
+        ),
+        method!("UserSecurityChecks", "privilegedGroups", [], None, leaf, privileged_groups),
+        method!("UserSecurityChecks", "sealedPermissions", [], None, leaf, sealed_permissions),
+        method!("UserSecurityChecks", "endUserSessions", [OptValue, OptValue], None, end_user_sessions),
     ]],
 };
 
@@ -269,6 +283,51 @@ fn assert_sealed_grant(call: &mut Call<'_>) -> Result<Ret, HostError> {
 fn assert_document_expression(call: &mut Call<'_>) -> Result<Ret, HostError> {
     crate::service::assert_document_expression(&super::entity_facade()?, &id_text(call, 0)).map_err(lib)?;
     Ok(Ret::Undefined)
+}
+
+/// `UserSecurityChecks.assertSealedGroupMembership(userGroupId, thruDate, hasStored, storedThruDate)`: the
+/// `UserGroupMemberSealed` rule's check (`Security.eecas.xml`); `hasStored` is true for an update that found the stored
+/// row, whose end is `storedThruDate`, so a change that only ends the membership sooner passes.
+fn assert_sealed_group_membership(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let has_stored = matches!(value(call, 2), Value::Bool(true));
+    let stored = value(call, 3);
+    let ends_sooner = crate::service::membership_ends_sooner(&value(call, 1), has_stored.then_some(&stored));
+    crate::service::assert_sealed_group_membership(&super::entity_facade()?, &id_text(call, 0), ends_sooner)
+        .map_err(lib)?;
+    Ok(Ret::Undefined)
+}
+
+/// `UserSecurityChecks.privilegedGroups()`: the effective privileged group ids, sorted.
+fn privileged_groups(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let ids = crate::service::privileged_groups().into_iter().map(Value::String).collect();
+    Ok(Ret::from(Value::List(ids)))
+}
+
+/// `UserSecurityChecks.sealedPermissions()`: the effective sealed permission ids, sorted.
+fn sealed_permissions(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let ids = crate::service::sealed_permissions().into_iter().map(Value::String).collect();
+    Ok(Ret::from(Value::List(ids)))
+}
+
+/// `UserSecurityChecks.endUserSessions(userId, visitIds)`: end the web sessions of a user, those of the visits named
+/// or with none every session and open visit of the user (`user::end_user_sessions`); the number ended. The services
+/// that call it check who may first: this decides no authority.
+fn end_user_sessions(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let visits = match value(call, 1) {
+        Value::Null => None,
+        list => Some(
+            crate::script::runtime::value_items(&list)
+                .unwrap_or_default()
+                .iter()
+                .map(moqui_lib::object::to_plain_string)
+                .filter(|id| !id.trim().is_empty())
+                .collect::<Vec<String>>(),
+        ),
+    };
+    // as QuickJS's binding: the message only, a plain `Error`
+    let count = crate::user::end_user_sessions(&id_text(call, 0), visits.as_deref())
+        .map_err(|err| HostError::Message(err.message().to_string()))?;
+    Ok(Ret::from(Value::I64(i64::try_from(count).unwrap_or(i64::MAX))))
 }
 
 fn value(call: &Call<'_>, index: usize) -> Value {
