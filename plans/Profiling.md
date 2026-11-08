@@ -1957,6 +1957,42 @@ Checks:
 No `js_speed` row moved, the locked-down template included, so its gap is the interpreter on the template's own code.
 The sandbox's setup was checked too: default heap options, and a deadline that only reads the clock.
 
+## Round 44: a fragmented runtime starts fresh
+
+The heap, measured on mr-mantle's `OrderToCashBasicFlow` under `oxide` with `MOQUI_SCRIPT_HEAP_LOG`:
+- 58 runtimes started, at most 25 live, 45 MB reserved across them at the peak;
+- the main thread's runtime ended at 15.0 MB reserved for 5.5 MB live.
+
+That 15.0 MB was:
+- tables: 3.8 MB;
+- dynamic code: 3.0 MB;
+- strings: 2.6 MB;
+- values: 2.3 MB, a quarter of the slots used;
+- objects: 1.5 MB, for 73 KB live;
+- internals: 0.6 MB, for 39 KB live.
+
+**Chunked arenas, measured and dropped.** A temporary probe counted the 1024-slot chunks that hold a live record:
+- objects: 40 of 46;
+- strings: 35 of 36;
+- functions: 11 of 14;
+- internals: 3 of 5.
+
+The survivors of a peak are scattered, so freeing empty chunks would give back 10 to 15% of the arenas. It would also
+cost an indirection on every record access in the interpreter.
+
+**The runtime instead.** At an outermost run's end, a runtime that holds at least 8 MiB reserved and 2.5 times its last
+collection's live bytes is dropped, and starts fresh at the next script (`FRAGMENTED_BYTES`). A collection confirms it
+first, and a thread does this at most every 30 seconds. The stats count it as `shed_fragmented`.
+
+On the same spec:
+- the main runtime ends at 6.2 MB reserved instead of 15.0, and its peak is 11.0 MB instead of 17.1;
+- the process's peak across live runtimes is 42.6 MB instead of 45.2: the other 25 runtimes are each under the 8 MiB
+  floor, at 1 to 1.8 MB each, mostly a fresh realm's builtins and caches;
+- all 42 features pass, in the same time.
+
+`js_speed` dropped no runtime (the same allocations on every row), and its times were within the noise of a busy
+machine. What is left of a process's script heap is that per-runtime baseline across many threads.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.

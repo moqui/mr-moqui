@@ -438,6 +438,8 @@ pub struct EngineStats {
     pub oxide_poisoned: u64,
     /// Runtimes dropped and started again because their heap stayed near the cap with their caches gone.
     pub oxide_restarted: u64,
+    /// Oxide runtimes dropped and started fresh because their reserved heap was far past their live bytes.
+    pub oxide_shed_fragmented: u64,
     /// The process's oxide code images: made, loaded by a runtime instead of compiled (each a parse avoided), failed,
     /// and the bytes kept.
     pub oxide_images_made: u64,
@@ -477,6 +479,7 @@ pub fn engine_stats() -> EngineStats {
         oxide_compiled: oxide.compiled,
         oxide_poisoned: oxide.poisoned,
         oxide_restarted: oxide.restarted,
+        oxide_shed_fragmented: oxide.shed_fragmented,
         oxide_images_made: oxide.images.made,
         oxide_image_loads: oxide.images.loads,
         oxide_image_failures: oxide.images.failed,

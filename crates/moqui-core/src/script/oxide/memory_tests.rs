@@ -152,3 +152,31 @@ fn running_out_of_memory_fails_that_script_alone() -> Result<(), Error> {
         Ok(())
     })
 }
+
+/// A runtime whose peak left its arenas far larger than what lives in them (a few survivors scattered through slots
+/// a burst made) is dropped at an outermost run's end and starts fresh: its reserved bytes go back whole.
+#[test]
+fn a_runtime_its_peak_left_fragmented_starts_fresh() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    with_script_engine(ScriptEngine::Oxide, || {
+        let value = |text: &str| crate::script::eval_value(text);
+        let shed = || super::engine::stats().shed_fragmented;
+        assert_eq!(value("Array.prototype.marker = 1; [].marker")?, Value::I32(1));
+        let before = shed();
+        // a burst of objects, one in every thousand kept (on a prototype: the global object's names are the stack's)
+        let burst = "Array.prototype.kept = []; (function () { let all = []; \
+                     for (let i = 0; i < 250000; i++) { const o = {a: i}; all.push(o); \
+                     if (i % 1000 === 999) [].kept.push(o); } return all.length })()";
+        assert_eq!(value(burst)?, Value::I32(250000));
+        // the next outermost run past the sample interval sees it, collects, and drops the runtime
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(value("[].kept.length")?, Value::I32(250));
+        assert_eq!(shed(), before + 1, "dropped as fragmented");
+        assert_eq!(value("typeof [].marker")?, Value::string("undefined"), "a fresh runtime");
+        assert_eq!(value("3 * 3")?, Value::I32(9));
+        let memory = super::engine_memory(true);
+        assert!(memory.reserved_bytes < 8 * MIB, "reserved {}", memory.reserved_bytes);
+        Ok(())
+    })
+}

@@ -64,6 +64,24 @@ const HEAP_SAMPLE_EVERY: std::time::Duration = std::time::Duration::from_millis(
 /// every later script with `out of memory` at the cap.
 const PRESSURE_BYTES: usize = HEAP_CAP / 2;
 
+/// A runtime holding at least this many reserved bytes, and [`FRAGMENTED_RATIO`] times what its last collection left
+/// live, is dropped at an outermost run's end and starts fresh at the next script: its arenas keep a peak's slots, with
+/// the survivors scattered through them (Profiling Round 44: a main thread's objects in 40 of 46 chunks), and give
+/// back only a trailing free run. Below it a runtime keeps its caches, however fragmented.
+const FRAGMENTED_BYTES: usize = 8 * 1024 * 1024;
+/// See [`FRAGMENTED_BYTES`].
+const FRAGMENTED_RATIO: usize = 5;
+/// Ratios are of halves: 5 halves, 2.5 times live.
+const FRAGMENTED_DIVISOR: usize = 2;
+/// The least time between two such drops on a thread, so a thread whose work keeps rebuilding its peak does not pay a
+/// start for every run.
+const FRAGMENTED_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
+thread_local! {
+    /// When this thread last dropped a fragmented runtime ([`FRAGMENTED_BYTES`]).
+    static LAST_FRAGMENTED_DROP: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+}
+
 /// What the runtime cuts when it starts for small scripts (`rquickjs` and `small-oxide`), behind the static check
 /// (`script::check`): a computed key it cannot read
 /// (`row[name]`) may still name `constructor` at run time, so no function's `constructor` reaches `Function` (or its
@@ -229,6 +247,7 @@ mod counts {
     pub(super) static COMPILED: AtomicU64 = AtomicU64::new(0);
     pub(super) static POISONED: AtomicU64 = AtomicU64::new(0);
     pub(super) static RESTARTED: AtomicU64 = AtomicU64::new(0);
+    pub(super) static SHED_FRAGMENTED: AtomicU64 = AtomicU64::new(0);
 }
 
 /// The most reserved heap bytes each thread's oxide runtime reached, by thread, with the thread's name (or id), for the
@@ -271,6 +290,9 @@ pub(crate) struct OxideStats {
     pub(crate) poisoned: u64,
     /// Runtimes dropped and started again because their heap stayed past [`PRESSURE_BYTES`] with their caches gone.
     pub(crate) restarted: u64,
+    /// Runtimes dropped and started fresh because their reserved bytes were far past their live ones
+    /// ([`FRAGMENTED_BYTES`]).
+    pub(crate) shed_fragmented: u64,
     /// The process's code images ([`super::compiled`]).
     pub(crate) images: super::compiled::ImageStats,
 }
@@ -285,6 +307,7 @@ pub(crate) fn stats() -> OxideStats {
         compiled: counts::COMPILED.load(Relaxed),
         poisoned: counts::POISONED.load(Relaxed),
         restarted: counts::RESTARTED.load(Relaxed),
+        shed_fragmented: counts::SHED_FRAGMENTED.load(Relaxed),
         images: super::compiled::image_stats(),
     }
 }
@@ -1067,6 +1090,40 @@ impl OxideEngine {
     }
 }
 
+impl OxideEngine {
+    /// At the end of an outermost run, after its pressure check: whether the runtime's reserved bytes are far past its
+    /// live ones ([`FRAGMENTED_BYTES`]), so it is to be dropped and started fresh. Read from the last sample and the last
+    /// collection, then confirmed with a collection, at most every [`FRAGMENTED_EVERY`] on the thread.
+    fn fragmented(&self) -> bool {
+        let reserved = self.heap.get();
+        if reserved < FRAGMENTED_BYTES {
+            return false;
+        }
+        let far_past = |reserved: usize, live: usize| reserved * FRAGMENTED_DIVISOR >= live * FRAGMENTED_RATIO;
+        let Ok(report) = self.runtime.memory_report() else {
+            return false;
+        };
+        if !far_past(reserved, report.gc.live_bytes) {
+            return false;
+        }
+        let now = std::time::Instant::now();
+        if LAST_FRAGMENTED_DROP.with(|last| last.get().is_some_and(|at| now.duration_since(at) < FRAGMENTED_EVERY)) {
+            return false;
+        }
+        let _ = self.runtime.run_gc();
+        let Ok(report) = self.runtime.memory_report() else {
+            return false;
+        };
+        let reserved = report.reserved_bytes();
+        self.note_heap(reserved);
+        if reserved < FRAGMENTED_BYTES || !far_past(reserved, report.gc.live_bytes) {
+            return false;
+        }
+        LAST_FRAGMENTED_DROP.with(|last| last.set(Some(now)));
+        true
+    }
+}
+
 impl Drop for OxideEngine {
     fn drop(&mut self) {
         counts::LIVE.fetch_sub(1, Relaxed);
@@ -1431,7 +1488,11 @@ pub(super) fn with_run<T>(
         }
         // the pressure check of the outermost run: a runtime its caches' going leaves past it starts again
         // (not while a runtime's start is on the stack: its shims' host calls run scripts on it)
-        if !nested && !Active::starting_on_stack() && engine.relieve(out_of_memory, names_out_of_memory) {
+        let outermost = !nested && !Active::starting_on_stack();
+        let pressed = outermost && engine.relieve(out_of_memory, names_out_of_memory);
+        // a runtime its peak left far larger than what lives in it starts fresh, its arenas given back whole
+        let fragmented = outermost && !pressed && engine.fragmented();
+        if pressed || fragmented {
             let dropped = ENGINE.with(|current| {
                 let mut current = current.borrow_mut();
                 let held = current.as_ref().is_some_and(|held| Rc::ptr_eq(held, &engine));
@@ -1440,9 +1501,13 @@ pub(super) fn with_run<T>(
                 }
                 held
             });
-            if dropped {
+            if dropped && pressed {
                 tracing::info!(script = %what, "the quickjs-oxide runtime's heap stays near its cap with its caches gone; it is dropped and restarts on the next script");
                 counts::RESTARTED.fetch_add(1, Relaxed);
+                engine.restarting.set(true);
+            } else if dropped {
+                tracing::debug!(script = %what, "the quickjs-oxide runtime's reserved heap is far past its live bytes; it is dropped and starts fresh on the next script");
+                counts::SHED_FRAGMENTED.fetch_add(1, Relaxed);
                 engine.restarting.set(true);
             }
         }

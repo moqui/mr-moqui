@@ -1300,6 +1300,7 @@ fn write_script_stats() {
             "compiled": stats.oxide_compiled,
             "poisoned": stats.oxide_poisoned,
             "restarted": stats.oxide_restarted,
+            "shed_fragmented": stats.oxide_shed_fragmented,
             "images_made": stats.oxide_images_made,
             "image_loads": stats.oxide_image_loads,
             "image_failures": stats.oxide_image_failures,
