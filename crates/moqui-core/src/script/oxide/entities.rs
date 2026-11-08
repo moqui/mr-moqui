@@ -279,16 +279,14 @@ pub(crate) fn object_to_host<J: Js>(js: &mut J, object: &ObjectRef) -> JsResult<
     Ok(None)
 }
 
-/// The receiver state a table method reads from an entity value (its cell) or a list (its rows and cursor).
-pub(crate) fn receiver_state<J: Js>(js: &mut J, this: &Value) -> JsResult<Option<HostObject>> {
-    let Value::Object(object) = this else {
-        return Ok(None);
-    };
-    if let Some(cell) = super::super::names::entity_cell(js, object)? {
-        return Ok(Some(HostObject(cell)));
+
+/// The state of a host call's receiver when it is an entity value or list, read from the call with no handle.
+pub(crate) fn receiver_state(scope: &mut quickjs_oxide::engine::api::core::Scope<'_>) -> JsResult<Option<HostObject>> {
+    if let Some(target) = scope.this_host_data::<super::super::names::EntityTarget>()? {
+        return Ok(Some(HostObject(Arc::clone(&target.0) as _)));
     }
-    Ok(js
-        .host_data::<ListTarget>(object)?
+    Ok(scope
+        .this_host_data::<ListTarget>()?
         .map(|list| HostObject(Arc::clone(&list.0) as _)))
 }
 

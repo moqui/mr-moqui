@@ -1908,6 +1908,21 @@ Against Round 39's binary, on a quiet machine (µs a call, allocations):
 
 The other rows are unchanged.
 
+## Round 41: a host call's receiver read with no handle
+
+Of a List.qvt render's handle slots, most came from one line. A host method whose receiver held no `OxideHost` datum
+(an `ec` object's method, or an entity value's or list's) lifted the receiver into a handle, only to ask
+`receiver_state` whether it was an entity value or a list. `receiver_state` now reads the call's receiver with
+`Scope::this_host_data`, and the receiver is lifted only when a method returns it (`Ret::This`).
+
+Against Round 40's binary (µs a call, allocations; another job ran during it, so the small rows are noise):
+- List html 100: 8883 (74857) → 8535 (68432);
+- List html 20: 1920 → 1844;
+- List.qvt 100: 13520 (91938) → 13178 (85395);
+- List text: 2496 (29310) → 2409 (27190);
+- Single.qvt: 545 → 538;
+- Labels: 246 → 240.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
