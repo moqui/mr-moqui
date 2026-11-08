@@ -529,7 +529,7 @@ impl EntityFind {
         let lookup = self.lookup(condition.as_ref());
         let bypass = self.bypasses_cache();
         // A distinct or having count of rows the frame holds goes to the database once they are written there; any other
-        // count, a for-update or select-field one too, counts the rows the overlay gives (plans/TX-Cache.md G1).
+        // count, a for-update or select-field one too, counts the rows the overlay gives (plans/archive/TX-Cache.md G1).
         let held_count = if self.distinct || !self.having.is_empty() {
             cache::before_selective_count(&self.facade, &self.entity_name)?;
             None

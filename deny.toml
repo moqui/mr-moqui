@@ -82,5 +82,5 @@ unused = "warn"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# quickjs-oxide, the moqui fork (plans/Script-Engine-Oxide.md §6).
+# quickjs-oxide, the moqui fork (plans/archive/Script-Engine-Oxide.md §6).
 allow-git = ["https://github.com/moqui/quickjs-oxide"]

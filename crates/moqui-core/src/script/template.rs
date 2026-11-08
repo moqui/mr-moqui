@@ -667,7 +667,7 @@ fn compile(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> 
             "(function(){{\n{INTRINSICS}return function(){{\n{PRELUDE}{declared}{body}return $o.join(\"\");\n}};\n}})()"
         ),
         // The live form's shape over the snapshot: each name the body reads or writes is a variable of the function's
-        // own frame, read once from the snapshot by `$scope`'s reader (plans/Script-Engine-Oxide.md section 5.4). A
+        // own frame, read once from the snapshot by `$scope`'s reader (plans/archive/Script-Engine-Oxide.md section 5.4). A
         // name the body does not name is not reached: code a template makes at run time (`Function`, indirect `eval`)
         // sees only the frozen globals.
         //

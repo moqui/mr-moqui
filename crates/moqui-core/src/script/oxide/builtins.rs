@@ -18,7 +18,7 @@
 //! (`script_engine=oxide` and the spec runtime) before the runtime's own globals are counted, so they are builtins as
 //! on QuickJS: writable and configurable, not frozen as the host's globals are. What QuickJS shows of each (names,
 //! lengths, descriptors, error names and codes) is what these show; the differences left are in
-//! plans/Script-Engine-Oxide.md (`using` declarations, `performance.timeOrigin`). A small script's static check
+//! plans/archive/Script-Engine-Oxide.md (`using` declarations, `performance.timeOrigin`). A small script's static check
 //! refuses these names, so the small-script runtime does not have them. What they call when they run is taken when
 //! they are made, so a script that later changes a builtin's prototype does not change them or reach their state.
 

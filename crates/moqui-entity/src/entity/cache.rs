@@ -123,7 +123,7 @@ struct ReadMeta {
     cache_never: bool,
     pk_fields: Vec<String>,
     /// Each type-one relationship: the related entity and the key pairs (this field, related field), for a list find
-    /// whose condition pins one to a row the frame created (plans/TX-Cache.md D3).
+    /// whose condition pins one to a row the frame created (plans/archive/TX-Cache.md D3).
     one_keys: Vec<(String, Vec<(String, String)>)>,
 }
 
@@ -513,7 +513,7 @@ const FRAME_WRITES_MAX: usize = 200;
 /// Look up a cached list, or rows held by the active transaction frame or the sim overlay.
 ///
 /// `Some` skips SQL. Plaintext only: `after_find` stored decrypted rows, and held rows were
-/// normalized before `gate_write`. An error of the overlay (a held create of a row the database has, plans/TX-Cache.md
+/// normalized before `gate_write`. An error of the overlay (a held create of a row the database has, plans/archive/TX-Cache.md
 /// G5) or of a view's early flush fails the find: the database alone would answer without the frame's held rows.
 pub fn before_find(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option<EntityList>, Error> {
     let meta = read_meta(facade, &lookup.entity_name)?;
@@ -584,7 +584,7 @@ pub struct Selective {
     pub aggregate: bool,
 }
 
-/// A selective find (plans/TX-Cache.md D4, G1) in a frame that holds rows: a view writes the held rows of its members
+/// A selective find (plans/archive/TX-Cache.md D4, G1) in a frame that holds rows: a view writes the held rows of its members
 /// first, as any view read; a `distinct`, `having` or aggregate find of an entity the frame holds rows of writes the
 /// held writes up to the last of that entity first (an early flush, cause "selective find") and leaves the read to the
 /// database; a `for-update` or select-field find reads whole rows through the overlay (locking them, for update) and
@@ -1241,9 +1241,9 @@ fn build_views_by_member(facade: &EntityFacade) -> HashMap<String, Vec<String>> 
 
 /// Hold the write, or send it to the sim overlay. `Proceed` leaves SQL to the caller. `quiet` is an update that matches
 /// no row, or a create of a row that is there, without an error: `update_if_exists` and `create_if_missing`. `stored` is
-/// the row an update read first, which its audit log compares with (plans/TX-Cache.md G6).
+/// the row an update read first, which its audit log compares with (plans/archive/TX-Cache.md G6).
 ///
-/// A held write checks what the frame knows of its row (plans/TX-Cache.md G4): an update of a row the frame deleted, or
+/// A held write checks what the frame knows of its row (plans/archive/TX-Cache.md G4): an update of a row the frame deleted, or
 /// read as missing, fails now, and a quiet update or create that would write nothing is `Missed`; a quiet one of a row
 /// the frame knows nothing of reads it first.
 pub fn gate_write(
@@ -1323,7 +1323,7 @@ pub fn gate_write(
 }
 
 /// A find or count that queried the database, counted for the active frame of `tx` when it has the transaction
-/// cache on (plans/TX-Cache.md D1).
+/// cache on (plans/archive/TX-Cache.md D1).
 pub(crate) fn note_db_read(tx: &TransactionManager) {
     stats::note_read(tx, false);
 }
@@ -2972,7 +2972,7 @@ fn field_value(fields: &FieldMap, name: &str) -> Value {
 }
 
 /// Whether a row's value equals a condition's as the database would compare them: the same value, or of other types
-/// (a number given as text or as a float, plans/TX-Cache.md) the same by ordering or as text.
+/// (a number given as text or as a float, plans/archive/TX-Cache.md) the same by ordering or as text.
 fn same_value(got: &Value, expected: &Value) -> bool {
     if got == expected {
         return true;

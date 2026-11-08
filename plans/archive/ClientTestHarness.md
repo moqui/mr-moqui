@@ -37,7 +37,7 @@ Reviewed for it:
 - `moqui tui --server`'s HTTP and WebSocket client (`host/tui_remote.rs`);
 - the PDF engine's Chromium (`host/pdf.rs`, `host/pdf/cdp.rs`);
 - the browser test driver (`host-tests/common/cdp.rs`) and `host-tests/gate3_browser.rs`;
-- the speed tests (`host-tests/speed/`, [Profiling](../Profiling.md));
+- the speed tests (`host-tests/speed/`, [Profiling](Profiling.md));
 - the session token, CORS and login code (`core/screen/mod.rs`, `core/screen/render.rs`, `webroot/rest.xml`,
   `webroot/Login.xml`);
 - every file of `MRSS/test/`;
@@ -566,7 +566,7 @@ keeps it from answering 429.
 
 The defaults (4 users, 10 s) make it a smoke test that every `--serve` run includes. A real run is
 `--param users=50 --param duration=120`, against `./moq run` or another server, with the JSON kept for comparison. It
-adds the HTTP-level numbers [Profiling](../Profiling.md) lacks (line 195: the speed tests do not cover screen renders).
+adds the HTTP-level numbers [Profiling](Profiling.md) lacks (line 195: the speed tests do not cover screen renders).
 
 ## 9. mr-marble
 

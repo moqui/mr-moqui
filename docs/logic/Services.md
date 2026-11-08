@@ -88,7 +88,7 @@ statements sent without waiting (an entity's creates joined into multi-row inser
 the `COMMIT` sent behind them, one wait for it all (an update that must change a row is checked by the server, so it
 fails the transaction rather than holding the `COMMIT` back).
 While it holds them its finds see them, and a row it has read or written is not read from the database again. The
-design and the numbers are in [plans/TX-Cache.md](../../plans/TX-Cache.md); the code is `moqui-entity`
+design and the numbers are in [plans/archive/TX-Cache.md](../../plans/archive/TX-Cache.md); the code is `moqui-entity`
 `entity/cache/tx.rs`, `hold.rs` and `batch.rs`. The `entity_tx_cache` property (default true; `-Dentity_tx_cache=false`) turns it
 off everywhere, each `cache` service then running as `use` does.
 

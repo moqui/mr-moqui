@@ -13,7 +13,7 @@
  */
 
 //! The quickjs-oxide binder of the host table (`script/host`), the counterpart of `script/runtime/bind.rs`
-//! (plans/Script-Engine-Oxide.md section 5): each [`HostClass`] is one prototype of host functions, made on first use and
+//! (plans/archive/Script-Engine-Oxide.md section 5): each [`HostClass`] is one prototype of host functions, made on first use and
 //! kept for the runtime, and each object of it a host object holding an [`OxideHost`].
 //!
 //! The engine calls [`install_ec`] once, after it made `ec`:

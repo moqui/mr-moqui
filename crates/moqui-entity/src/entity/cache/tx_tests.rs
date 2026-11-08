@@ -311,7 +311,7 @@ fn a_paged_find_over_held_rows_reads_a_bounded_window() {
 }
 
 /// The held rows keep their order and their collapsing: a create and a delete of one row write nothing, and an update
-/// after a held delete fails, as it would on the database (plans/TX-Cache.md G4), and does not bring the row back.
+/// after a held delete fails, as it would on the database (plans/archive/TX-Cache.md G4), and does not bring the row back.
 #[test]
 fn held_rows_collapse_a_create_and_delete_and_stay_deleted() {
     let tape = Arc::new(Mutex::new(Vec::new()));
@@ -344,14 +344,14 @@ fn held_rows_collapse_a_create_and_delete_and_stay_deleted() {
         .iter()
         .map(|sql| sql.split_whitespace().next().unwrap_or_default())
         .collect();
-    // A delete is not merged with the update before it (plans/TX-Cache.md D6).
+    // A delete is not merged with the update before it (plans/archive/TX-Cache.md D6).
     assert_eq!(kinds, ["UPDATE", "DELETE", "INSERT"], "{flushed:?}");
     assert!(!found(&facade, ENUM, "enumId", "BRIEF"));
     assert!(!found(&facade, ENUM, "enumId", "KEPT"));
     assert!(found(&facade, ENUM, "enumId", "LATER"));
 }
 
-/// plans/TX-Cache.md D1: a frame's held writes, its reads, its early flushes by cause and its commit batch are counted,
+/// plans/archive/TX-Cache.md D1: a frame's held writes, its reads, its early flushes by cause and its commit batch are counted,
 /// and go to this thread's totals when it ends.
 #[test]
 fn a_frame_counts_its_held_writes_reads_early_flushes_and_commit_batch() {
@@ -377,7 +377,7 @@ fn a_frame_counts_its_held_writes_reads_early_flushes_and_commit_batch() {
     assert_eq!((stats.batch_statements, stats.batch_rows), (3, 3));
     assert_eq!(
         stats.batch_round_trips, 0,
-        "the commit batch is answered by the commit's wait (plans/TX-Cache.md D6)"
+        "the commit batch is answered by the commit's wait (plans/archive/TX-Cache.md D6)"
     );
     assert!(crate::driver::thread_round_trips() > trips);
 
@@ -662,7 +662,7 @@ fn a_held_create_of_a_stored_row_fails_at_the_next_find() {
     .unwrap();
 }
 
-/// G7 (plans/TX-Cache.md D2): a find by key of a row the frame created runs no query.
+/// G7 (plans/archive/TX-Cache.md D2): a find by key of a row the frame created runs no query.
 #[test]
 fn a_find_by_key_of_a_created_row_runs_no_query() {
     let tape = Arc::new(Mutex::new(Vec::new()));
@@ -926,7 +926,7 @@ fn an_entity_with_an_encrypted_field_is_shadowed_as_stored() {
 }
 
 /// A frame of its own that commits a write under a cache frame on the same thread (a `force-new` call, a probe) makes
-/// the suspended frame drop what it read of that entity, so its next find reads the database again (plans/TX-Cache.md
+/// the suspended frame drop what it read of that entity, so its next find reads the database again (plans/archive/TX-Cache.md
 /// D2: only another thread's commit stays unseen).
 #[test]
 fn a_nested_commit_drops_what_the_suspended_frame_read_of_its_entity() {

@@ -484,7 +484,7 @@ impl Unanswered {
 }
 
 /// The pending rows in one savepoint, sent without waiting so the driver may join them into multi-row inserts, and one
-/// wait (plans/TX-Cache.md F5): a savepoint per row was three waited round trips a row. A missing table inserts none.
+/// wait (plans/archive/TX-Cache.md F5): a savepoint per row was three waited round trips a row. A missing table inserts none.
 fn insert_rows(conn: &mut dyn DbConnection, sql: &str, rows: Vec<Vec<Value>>, behind: bool) -> Result<(), Error> {
     if rows.is_empty() {
         return Ok(());

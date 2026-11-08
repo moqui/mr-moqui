@@ -13,7 +13,7 @@
  */
 
 //! The transaction cache with an execution context entered: entity ECA rules and the audit log of held writes
-//! (plans/TX-Cache.md G2, G6). The rest of its tests are in `moqui-entity` (`entity/cache/tx_tests.rs`).
+//! (plans/archive/TX-Cache.md G2, G6). The rest of its tests are in `moqui-entity` (`entity/cache/tx_tests.rs`).
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

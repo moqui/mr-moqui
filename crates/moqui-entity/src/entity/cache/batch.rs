@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The commit batch of a transaction-cache frame (plans/TX-Cache.md D6): the held writes of each row merged into one,
+//! The commit batch of a transaction-cache frame (plans/archive/TX-Cache.md D6): the held writes of each row merged into one,
 //! sent without waiting (creates and upserts as rows the driver may join into multi-row statements), and one wait for
 //! them all. A driver that cannot pipeline (MySQL, SQLite) runs each statement as it is sent, as before.
 
@@ -124,7 +124,7 @@ fn sets_key_field(facade: &EntityFacade, key_fields: &mut HashMap<String, HashSe
 /// Send `writes` as the commit batch on `conn` and wait for them once (without `wait`, the next statement that waits
 /// does: the commit). A failure found when sending names its write;
 /// one found by the wait names the batch, and the database's message names the row. An update that changed no row
-/// fails the batch, as a direct update does (plans/TX-Cache.md G4), except on MySQL, which counts an update that leaves
+/// fails the batch, as a direct update does (plans/archive/TX-Cache.md G4), except on MySQL, which counts an update that leaves
 /// the row as it was as none, and except for a row in `locked`, which a locking find of the frame read.
 pub(super) fn flush_writes(
     facade: &EntityFacade,

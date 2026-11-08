@@ -12,11 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The transaction cache candidates of plans/TX-Cache.md, with the cache off and on: the five services (S1 to S5)
+//! The transaction cache candidates of plans/archive/TX-Cache.md, with the cache off and on: the five services (S1 to S5)
 //! called as a user, and the pieces of framework logic outside services (F1, F3, F4, F5) as their callers run them.
 //! Each row is one operation per call, in its own transaction. "on" calls a service with `use_transaction_cache`, or
 //! runs the logic in a `cache` frame. F1 and F3 hold their writes themselves (their own `force-cache` frames), so they
-//! have an "on" row only, to compare with the baseline in plans/TX-Cache.md. F2 (a `ServiceJob` run) runs on the job workers and is not timed here.
+//! have an "on" row only, to compare with the baseline in plans/archive/TX-Cache.md. F2 (a `ServiceJob` run) runs on the job workers and is not timed here.
 //! The factory runs async work inline: what a row's calls queue (the data feed's receive, a chat message's indexing)
 //! runs after the row, outside its time and its counts.
 //!
@@ -252,7 +252,7 @@ fn one_batch(
                 value.update(facade)
             });
         });
-        // N1 to N3 (plans/Profiling.md, Round 19): framework paths the cache was applied to beyond the first set. N1's
+        // N1 to N3 (plans/archive/Profiling.md, Round 19): framework paths the cache was applied to beyond the first set. N1's
         // frame is the code's own (force-cache), so its "off" row turns the cache off for the whole manager.
         let tx = facade
             .transactions_for("moqui.basic.email.EmailMessage")

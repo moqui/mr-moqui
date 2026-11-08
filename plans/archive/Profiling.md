@@ -1,6 +1,8 @@
 # Profiling
 
-Status 2026-10-21: four rounds of profiling and optimization of entity, service, data load and XML/definition work against embedded Postgres, built and committed. Round 5 tested and measured against an external Postgres 18 in Docker ([Round 5](#round-5-external-postgres)), fixed what it found, and sends a data load's rows several to a statement ([Round 6](#round-6-multi-row-data-load-statements)). Round 7, on an M1 Pro (macOS), measured COPY and dropped it, added a multi-threaded benchmark and fixed the lock it showed, and cut what a transaction keeps per write ([Round 7](#round-7-macos-threads-copy-bookkeeping)); what is left leads the [Next steps](#next-steps). Round 10 measured QuickJS and its bindings with a new `js_speed` test and ranked what the profiles show ([Round 10](#round-10-javascript)); Round 11 fixed the five binding costs it found ([Round 11](#round-11-javascript-bindings)), Rounds 12 and 13 the per-row work of the html and qvt form-lists ([Round 12](#round-12-form-list-rows), [Round 13](#round-13-row-frames-and-qvt-row-values)). Companion to [Performance-Summary](Performance-Summary.md), which digests the performance plan; this document records what was measured and changed, how to measure, and what is left.
+Archived 2026-11-08: its live status, what remains and the ideas are in [Profiling2](../Profiling2.md); this file is the record.
+
+Status 2026-10-21: four rounds of profiling and optimization of entity, service, data load and XML/definition work against embedded Postgres, built and committed. Round 5 tested and measured against an external Postgres 18 in Docker ([Round 5](#round-5-external-postgres)), fixed what it found, and sends a data load's rows several to a statement ([Round 6](#round-6-multi-row-data-load-statements)). Round 7, on an M1 Pro (macOS), measured COPY and dropped it, added a multi-threaded benchmark and fixed the lock it showed, and cut what a transaction keeps per write ([Round 7](#round-7-macos-threads-copy-bookkeeping)); what is left leads the [Next steps](#next-steps). Round 10 measured QuickJS and its bindings with a new `js_speed` test and ranked what the profiles show ([Round 10](#round-10-javascript)); Round 11 fixed the five binding costs it found ([Round 11](#round-11-javascript-bindings)), Rounds 12 and 13 the per-row work of the html and qvt form-lists ([Round 12](#round-12-form-list-rows), [Round 13](#round-13-row-frames-and-qvt-row-values)). Companion to [Performance-Summary](../Performance-Summary.md), which digests the performance plan; this document records what was measured and changed, how to measure, and what is left.
 
 ## How to measure
 
@@ -18,7 +20,7 @@ Seven opt-in speed tests in `crates/moqui-host/tests/` (each `test = false` and 
 
 Run one with `CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -- --ignored --nocapture`; each file's header names its size variables. `SPEED_PG_HOST` (with `SPEED_PG_PORT`, `SPEED_PG_USER`, `SPEED_PG_PASSWORD`, `SPEED_PG_SSLMODE`, `SPEED_PG_SSLROOTCERT`) runs the three database tests on a new database of an external server instead, dropped at the end (`speed::SpeedDb`; the role needs `CREATEDB`). The shared harness (`tests/speed/mod.rs`) prints, per call: median time, allocations, bytes allocated, bytes kept after the batch (a cache or a leak), and SQL statements (`entity::statement_stats`, a round-trip count). The allocation columns come from a thread-local counting allocator and do not change from run to run, so they are the steady measure on a busy machine. QuickJS allocates with the C library's `malloc`, which that allocator does not see: `js_speed` adds a `js kept` column from `script::engine_memory` (QuickJS's own `JS_ComputeMemoryUsage`), and its `allocs` and `bytes` are the Rust side of the bindings only.
 
-The speed tests take the conf's telemetry settings: on, at sample ratio 0 since Oct 27 (request and job roots kept, children only for error or slow traces). `MONITOR_SPEED_EXPORT=true` adds a recording exporter and prints the records and bytes produced. Set `telemetry_enabled=false` to time without telemetry, or `telemetry_sample_ratio=1.0` for full sampling; [Monitoring](Monitoring.md#overhead) has the measured cost. Rounds 1–13 predate telemetry.
+The speed tests take the conf's telemetry settings: on, at sample ratio 0 since Oct 27 (request and job roots kept, children only for error or slow traces). `MONITOR_SPEED_EXPORT=true` adds a recording exporter and prints the records and bytes produced. Set `telemetry_enabled=false` to time without telemetry, or `telemetry_sample_ratio=1.0` for full sampling; [Monitoring](../Monitoring.md#overhead) has the measured cost. Rounds 1–13 predate telemetry.
 
 Tools, as used here:
 - **samply** for CPU (`samply record --save-only --unstable-presymbolicate`); needs `/proc/sys/kernel/perf_event_paranoid` at 1 or lower, which resets at reboot.
@@ -1583,7 +1585,7 @@ runs of each engine):
 The raw data and the scripts are in `../oxide-bench`: `round32/` holds the data, and `mantle-pg/` reruns the Mantle
 table (its README).
 
-Next (plans/Script-Engine-Oxide.md §11 has the files and commands):
+Next (plans/archive/Script-Engine-Oxide.md §11 has the files and commands):
 1. **A profile of the rows that lose on oxide**, to find where the bindings spend their time and allocations:
    - a host getter: 100 `ec.user.nowTimestamp`;
    - walking 100 context maps;
@@ -2227,7 +2229,7 @@ after its units go, and a compacting value heap.
 
 ## Behaviour changes to know
 
-- In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
+- In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/archive/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
 - A chat message is indexed for search after its transaction commits, on a worker, not in it.
 - On Postgres a `SAVEPOINT` with nothing unanswered before it, and every `RELEASE SAVEPOINT`, go out with the next request; a failure of either is reported there. A `COMMIT` goes out behind the writes still unanswered unless one has a check made here; a write that fails is then the commit's error, and the server has already ended the transaction (the rollback after it is a no-op).
 - `ec.resource.getLocationReference` reads a reference's size, last-modified time and children when a script first asks for them, not when it is made; a `dbresource` directory reference lists its children then too. An entry of `getDirectoryEntries` is built from the listing and reads its size when asked.

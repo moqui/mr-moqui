@@ -1227,7 +1227,7 @@ fn finish_login(facade: &EntityFacade, account: &EntityValue, plain: Option<&str
         fields.push(("disabledDateTime", Value::Null));
         fields.push(("hasLoggedOut", Value::string("N")));
     }
-    // The account's update and the visit's link to it in one transaction-cache frame (plans/TX-Cache.md F3).
+    // The account's update and the visit's link to it in one transaction-cache frame (plans/archive/TX-Cache.md F3).
     session::in_cache_frame(facade, USER_ACCOUNT, || {
         if !fields.is_empty() {
             update_user(facade, &user_id, &fields)?;

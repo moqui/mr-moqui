@@ -317,7 +317,7 @@ pub(crate) fn in_tx<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<T, E
         .run(TransactionAttribute::UseOrBegin, None, body)
 }
 
-/// [`in_tx`] holding its writes for the commit, in one batch (plans/TX-Cache.md, second set 4): the bookkeeping of a
+/// [`in_tx`] holding its writes for the commit, in one batch (plans/archive/TX-Cache.md, second set 4): the bookkeeping of a
 /// step and of each tool call (the run's lease checked under a lock, a step, calls, a message and its parts, the run's
 /// counts), which a run makes on every model reply and tool result.
 pub(crate) fn in_cache_tx<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {

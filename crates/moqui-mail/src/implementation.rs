@@ -718,7 +718,7 @@ pub(super) fn force_new<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<
     tx.run(TransactionAttribute::ForceNew, None, body)
 }
 
-/// [`force_new`] as a transaction-cache frame (plans/TX-Cache.md): its writes go to the database at the commit, in one
+/// [`force_new`] as a transaction-cache frame (plans/archive/TX-Cache.md): its writes go to the database at the commit, in one
 /// batch, and a row it read or wrote is not read again. For a message stored with its attachments and labels, and the
 /// change rows every one of those writes makes for the users who keep a cursor.
 pub(super) fn force_cache<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<T, LibError>) -> Result<T, LibError> {

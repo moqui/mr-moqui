@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What a script run on this thread shares with every other, whichever engine runs it (plans/Script-Engine-Oxide.md
+//! What a script run on this thread shares with every other, whichever engine runs it (plans/archive/Script-Engine-Oxide.md
 //! section 4): the context stack, the nesting depth, the deadline and the default limit, the stack budget, and the
 //! engine of each running script. QuickJS (`script/runtime.rs`) and quickjs-oxide (`script/oxide/`) both count here,
 //! so a script nested in a script of the other engine is limited as one nested in its own.

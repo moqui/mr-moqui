@@ -1390,7 +1390,7 @@ impl EntityFacade {
         };
         let mut affected = 1;
         // What the run-after rules and the data feed need of the row as it was is read before the write: a held write
-        // (plans/TX-Cache.md G2, G3) hides it from a read after.
+        // (plans/archive/TX-Cache.md G2, G3) hides it from a read after.
         let mut after_values = eca_after.then(|| (*cache_values).clone());
         // An after rule with `get-original-value` on an update or delete gets the row as it was before the write.
         let pre_row = if eca
@@ -1656,7 +1656,7 @@ impl EntityFacade {
             Ok((seq_field, entity.sequence_secondary_padded_length, keys))
         })?;
         // Only the sequence field: a sibling's other fields are not needed, and an entity numbered this way (a page's
-        // versions) has more rows with every write (plans/Profiling.md, Round 15). In a transaction-cache frame the
+        // versions) has more rows with every write (plans/archive/Profiling.md, Round 15). In a transaction-cache frame the
         // find still sees the held rows.
         let mut find = self.find(entity_name)?.select_field(&seq_field);
         for (field, value) in keys {

@@ -1,6 +1,8 @@
 # Transaction cache
 
-Status 2026-11-06: Phases 0 to 6 built, 45 application services on the cache (Round 23), view reads shadowed instead of flushed (Round 24), distinct reads and the shared payment and shipment services (Round 25), 13 more with the Mantle operations timed on an external Postgres (Round 26), and shadows of up to 10,000 rows as arrays (Round 27), Phase 6 as a first profiling pass: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8, D6's commit batch, D2 to D5's reads, S1 to S5 on the cache, a first pass of F1 to F5, and the guide ([Services](../docs/logic/Services.md#transaction-cache)). [Results](#results) has the censuses and the numbers; [Profiling, Rounds 14 to 27](Profiling.md#round-27-large-shadows-as-arrays-a-profile-of-the-mantle-operations-and-the-script-engines-compile-and-heap-check) the profiles and the tuning. Each transaction is an `AT_TRANSACTION` telemetry span with the cache's counts ([Monitoring](../docs/tools/Monitoring.md)).
+Archived 2026-11-08: its live status, what remains and the ideas are in [Profiling2](../Profiling2.md); this file is the record.
+
+Status 2026-11-06: Phases 0 to 6 built, 45 application services on the cache (Round 23), view reads shadowed instead of flushed (Round 24), distinct reads and the shared payment and shipment services (Round 25), 13 more with the Mantle operations timed on an external Postgres (Round 26), and shadows of up to 10,000 rows as arrays (Round 27), Phase 6 as a first profiling pass: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8, D6's commit batch, D2 to D5's reads, S1 to S5 on the cache, a first pass of F1 to F5, and the guide ([Services](../../docs/logic/Services.md#transaction-cache)). [Results](#results) has the censuses and the numbers; [Profiling, Rounds 14 to 27](Profiling.md#round-27-large-shadows-as-arrays-a-profile-of-the-mantle-operations-and-the-script-engines-compile-and-heap-check) the profiles and the tuning. Each transaction is an `AT_TRANSACTION` telemetry span with the cache's counts ([Monitoring](../../docs/tools/Monitoring.md)).
 
 The transaction cache holds a transaction's writes in memory and writes them all at commit; while it holds them, the transaction's reads see them. Done well, it gives a large speedup for high-volume transactional work and a large cut in database load, without refactoring reusable services and without callers keeping records in hand to avoid re-reading them: a service that reads `OrderItem` again, as each of several services in one operation does, gets it from memory. Moqui Java got real gains from this in a few places. Here the framework is ours to change and services can be reviewed in bulk, so the aim is more: make the cache fast and correct enough that a common transactional service runs from its first write to its commit without touching the database for anything it has already read or written, and its writes go out in one batch.
 
@@ -19,14 +21,14 @@ Not in this pass: mr-mantle services, the cache on by default, MySQL multi-row s
 
 ## Terms
 
-- **Frame**: one transaction level ([`transaction/manager.rs`](../crates/moqui-entity/src/transaction/manager.rs)); a `force-new` call runs in its own frame, and a suspended frame's held rows are not seen by the frame above it.
+- **Frame**: one transaction level ([`transaction/manager.rs`](../../crates/moqui-entity/src/transaction/manager.rs)); a `force-new` call runs in its own frame, and a suspended frame's held rows are not seen by the frame above it.
 - **Hold mode**: writes are held in memory (`transaction="cache"` or `force-cache`, `useTransactionCache(true)`).
 - **Read-through mode**: writes go to the database at once, and reads are still kept and answered by the frame (Java's read-only cache). Rust has no such mode yet: `flush_and_disable` turns the cache off.
 - **Early flush**: any write of held rows before the commit. The **commit batch** is the flush at commit.
 
 ## How it works today
 
-**Rust** ([`entity/cache.rs`](../crates/moqui-entity/src/entity/cache.rs), [`entity/cache/hold.rs`](../crates/moqui-entity/src/entity/cache/hold.rs)):
+**Rust** ([`entity/cache.rs`](../../crates/moqui-entity/src/entity/cache.rs), [`entity/cache/hold.rs`](../../crates/moqui-entity/src/entity/cache/hold.rs)):
 - `gate_write` (`cache.rs:1031`) holds each create, update, delete and upsert in the frame's `FrameHold`: kept in write order, indexed by entity and key (HL-034). A create then a delete of the same row collapse to nothing; nothing else is merged.
 - A find of a non-view entity always queries the database; `overlay_rows` (`cache.rs:1843`) applies the held writes to the rows it reads. A find by the whole key with a held write still queries (`cache.rs:1872-1894`), even for a row the frame created. The only rows kept are the stored rows under held updates (`stored_rows`).
 - A find or count of a view first writes every held row if the frame holds rows of a member entity (`flush_for_view`, `cache.rs:2008`), then goes on holding.
@@ -170,7 +172,7 @@ as locks), search index writes (raw SQL), the per-minute mail and git jobs (usua
 Each phase ends with its regression tests passing and `./moq test-framework` before its commit.
 
 0. **Preparation.**
-   - Move the transaction cache code (hold, overlay, stored rows, flush) out of `cache.rs` (2,921 lines) into `entity/cache/tx.rs` beside `hold.rs`, in its own commit, as [Practices-Rust](../docs/dev/Practices-Rust.md) asks of a large file that gets real work.
+   - Move the transaction cache code (hold, overlay, stored rows, flush) out of `cache.rs` (2,921 lines) into `entity/cache/tx.rs` beside `hold.rs`, in its own commit, as [Practices-Rust](../../docs/dev/Practices-Rust.md) asks of a large file that gets real work.
    - D1's counts, strict mode, census mode and the round-trip count.
    - A new opt-in speed test, `tx_cache_speed`, with a row for each of the ten candidates, cache off and (where it runs) on. Record the baseline.
    - The authorization read fix.
@@ -180,7 +182,7 @@ Each phase ends with its regression tests passing and `./moq test-framework` bef
 3. **Reads: D2, D3, D4, D5.** Unit tests counting statements, in the style of `held_updates_read_their_stored_rows_once_per_frame`.
 4. **The five services.** Turn the cache on for each (S1 to S5), run its tests in strict mode, and change it until it commits in one batch with results the same as cache off.
 5. **The five pieces of framework logic** (F1 to F5).
-6. **Profile and tune.** samply and heaptrack on the speed test rows ([Profiling](Profiling.md#how-to-measure)): the overlay, the read cache lookups, the batch's statement building. Record the numbers as a new round in Profiling and a line in [Performance-Summary](Performance-Summary.md). Write a "Transaction cache" section in [docs/logic/Services.md](../docs/logic/Services.md): when to mark a service `cache` (the operation's first service, not a shared inner one), what reads see (the [decisions](#decisions)), that the locks writes take come at commit while `for-update` locks at once, when to run without the cache instead (an interim lock from a write, a very large operation), what makes it flush, and strict and census modes.
+6. **Profile and tune.** samply and heaptrack on the speed test rows ([Profiling](Profiling.md#how-to-measure)): the overlay, the read cache lookups, the batch's statement building. Record the numbers as a new round in Profiling and a line in [Performance-Summary](../Performance-Summary.md). Write a "Transaction cache" section in [docs/logic/Services.md](../../docs/logic/Services.md): when to mark a service `cache` (the operation's first service, not a shared inner one), what reads see (the [decisions](#decisions)), that the locks writes take come at commit while `for-update` locks at once, when to run without the cache instead (an interim lock from a write, a very large operation), what makes it flush, and strict and census modes.
 
 ## Results
 

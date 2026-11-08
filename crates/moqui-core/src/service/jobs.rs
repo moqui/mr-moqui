@@ -991,7 +991,7 @@ fn finish_run(facade: &EntityFacade, job: &JobRun, outcome: &RunOutcome) {
             },
         ),
     ];
-    // The run's end and a queued call's removal in one transaction-cache frame, one commit batch (plans/TX-Cache.md
+    // The run's end and a queued call's removal in one transaction-cache frame, one commit batch (plans/archive/TX-Cache.md
     // F2). Each is history or cleanup on its own: when the batch fails they are done one at a time, each failure logged.
     if let Err(err) = finish_records(facade, job, forget_run, &end_fields) {
         tracing::debug!(job = %job.job_name, run = %job.job_run_id, error = %err, "job run end batch failed; writing each");

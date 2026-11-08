@@ -657,7 +657,7 @@ The rule model follows Grafana's.
 
 ## Implementation plan
 
-Light plan. Each milestone ends with tests and an overhead measurement against the [Profiling](Profiling.md) speed tests (artifact spans sit on the hottest path).
+Light plan. Each milestone ends with tests and an overhead measurement against the [Profiling2](Profiling2.md#2-how-to-measure) speed tests (artifact spans sit on the hottest path).
 
 **M1: foundation and traces**
 - Check the crates with `cargo tree`, add the License-Review row, and add the `telemetry` feature.

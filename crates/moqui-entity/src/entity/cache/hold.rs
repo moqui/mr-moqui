@@ -32,7 +32,7 @@ pub(super) struct Held {
     pub(super) sealed: FieldMap,
     pub(super) pk: String,
     /// The service on the artifact stack when the write was held, for the errors of a later find or of the flush
-    /// (plans/TX-Cache.md G5).
+    /// (plans/archive/TX-Cache.md G5).
     pub(super) service: Option<Arc<str>>,
 }
 
@@ -60,17 +60,17 @@ pub(super) struct FrameHold {
     /// of its row collapsed.
     order: Vec<Option<Rc<Held>>>,
     entities: HashMap<String, EntityHold>,
-    /// Rows kept in `stored` over every entity, up to [`READ_CAP`] (plans/TX-Cache.md D2).
+    /// Rows kept in `stored` over every entity, up to [`READ_CAP`] (plans/archive/TX-Cache.md D2).
     kept: usize,
     /// The rows (entity, primary key text) a locking find of the frame read: no other transaction can delete one before
     /// the commit, so a held update of one needs no check that it changed a row.
     locked: HashSet<(String, String)>,
 }
 
-/// Rows a frame keeps of what it read; past it, nothing more is kept (plans/TX-Cache.md D2). Reaching it is not a flush.
+/// Rows a frame keeps of what it read; past it, nothing more is kept (plans/archive/TX-Cache.md D2). Reaching it is not a flush.
 pub(super) const READ_CAP: usize = 10_000;
 
-/// The rows of a list find as the database gave them, kept by the find's key (plans/TX-Cache.md D3).
+/// The rows of a list find as the database gave them, kept by the find's key (plans/archive/TX-Cache.md D3).
 pub(super) type KeptList = Rc<Vec<Arc<FieldMap>>>;
 
 #[derive(Default)]
@@ -80,12 +80,12 @@ struct EntityHold {
     /// Positions in `order` of each row's writes, by primary key text.
     by_pk: HashMap<String, Vec<usize>>,
     /// Each row of the entity this frame read (by key, under a held update, or in a list), as the database has it;
-    /// `None` when it has no such row (plans/TX-Cache.md D2). The frame's own writes are applied on top when it reads:
+    /// `None` when it has no such row (plans/archive/TX-Cache.md D2). The frame's own writes are applied on top when it reads:
     /// while it holds them they are not on the database, so these rows stay as read. A write of the frame to the
     /// database (an early flush, or any write in read-through mode) drops them.
     stored: HashMap<String, Option<Arc<FieldMap>>>,
     /// List finds of the entity with no limit or offset, by the find's key, as the database answered them
-    /// (plans/TX-Cache.md D3); dropped as `stored` is.
+    /// (plans/archive/TX-Cache.md D3); dropped as `stored` is.
     lists: HashMap<String, KeptList>,
     /// Select-field finds of the entity (no limit, offset, lock or aggregate), by the find's key and fields, as the
     /// database answered them: the rows have those fields only, so no held write can be put on them, and they are
@@ -159,7 +159,7 @@ impl FrameHold {
     }
 
     /// Take the held writes up to and including the last one of `entity`, in order, and keep holding the rest (an
-    /// early flush of a selective find, plans/TX-Cache.md D4). The stored rows are dropped, as the flush changes them.
+    /// early flush of a selective find, plans/archive/TX-Cache.md D4). The stored rows are dropped, as the flush changes them.
     /// `None` when the frame holds no write of `entity`.
     pub(super) fn split_through(&mut self, entity: &str) -> Option<Vec<Rc<Held>>> {
         let last = self
@@ -375,7 +375,7 @@ impl<'h> Overlay<'h> {
     /// of one is its whole row.
     ///
     /// A held create of a row the find loaded from the database, with no held delete of it before, fails here, as
-    /// Java's `checkUpdateValue`, not at the commit (plans/TX-Cache.md G5).
+    /// Java's `checkUpdateValue`, not at the commit (plans/archive/TX-Cache.md G5).
     pub(super) fn apply(mut self, stored: &HashMap<&str, Option<Arc<FieldMap>>>) -> Result<Vec<MemRow>, Error> {
         let loaded = self.rows.len();
         let mut deleted: HashSet<&str> = HashSet::new();

@@ -445,7 +445,7 @@ fn the_entity_method_list_is_the_quickjs_prototypes() -> Result<(), Error> {
     Ok(())
 }
 
-/// A text run twice on one thread leaves its code image for the process (plans/Script-Engine-Oxide.md section 6, F1):
+/// A text run twice on one thread leaves its code image for the process (plans/archive/Script-Engine-Oxide.md section 6, F1):
 /// another thread's first run of it loads the image and parses nothing.
 #[test]
 fn a_second_threads_first_run_of_a_text_does_no_parse() -> Result<(), Error> {

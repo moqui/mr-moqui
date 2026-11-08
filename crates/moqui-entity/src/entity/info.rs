@@ -863,7 +863,7 @@ pub fn run_sql_with(
         .groups
         .get(group)
         .ok_or_else(|| Error::new(format!("no entity group named {group}")))?;
-    // Raw SQL in a transaction-cache frame sees the held rows only once they are written (plans/TX-Cache.md D1).
+    // Raw SQL in a transaction-cache frame sees the held rows only once they are written (plans/archive/TX-Cache.md D1).
     if !options.read_only {
         super::cache::flush_before_sql(facade, &runtime.transactions)?;
     }

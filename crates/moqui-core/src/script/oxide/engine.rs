@@ -43,7 +43,7 @@ use crate::script::runtime::EntityCell;
 /// The runtime's heap cap, as QuickJS's memory limit.
 const HEAP_CAP: usize = 64 * 1024 * 1024;
 /// The collection floor: below it the runtime does not collect. Lower than the fork's 1 MiB default, since every
-/// thread that runs a small script holds a runtime (plans/Script-Engine-Oxide.md section 4).
+/// thread that runs a small script holds a runtime (plans/archive/Script-Engine-Oxide.md section 4).
 const MIN_HEAP: usize = 512 * 1024;
 /// What a collection lets the heap grow by before the next, as a multiple of the live bytes it left: 1 where the fork's
 /// default is 2. Over the mr-mantle suite under `oxide` the runtimes' summed peak fell from 157 MB to 117 MB (the main

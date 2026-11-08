@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Errors of the oxide engine as the QuickJS path makes them (plans/Script-Engine-Oxide.md section 4): the text
+//! Errors of the oxide engine as the QuickJS path makes them (plans/archive/Script-Engine-Oxide.md section 4): the text
 //! `Error: <message>` and the `stack` below it (`    at <eval> (eval_script:1:5)`, the same form on both engines),
 //! the security kind and retry seconds the thrown error carries (`moquiErrorKind`, `moquiRetryAfter`), and a plain
 //! `Error` thrown from a host function.

@@ -29,7 +29,7 @@ opentelemetry_sdk = { workspace = true, optional = true, features = ["experiment
 opentelemetry-proto = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 getrandom = { workspace = true }
-# The script engine, safe Rust (plans/Script-Engine-Oxide.md).
+# The script engine, safe Rust (plans/archive/Script-Engine-Oxide.md).
 quickjs-oxide = { workspace = true }
 md-5 = { workspace = true }
 sha2 = { workspace = true }

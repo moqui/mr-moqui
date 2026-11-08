@@ -13,7 +13,7 @@
  */
 
 //! Bare names and entity fields on quickjs-oxide, as host exotic objects (the fork's F2;
-//! plans/Script-Engine-Oxide.md section 5.2), the same hooks the QuickJS bindings' `HostGlobalNames` and `HostEntity`
+//! plans/archive/Script-Engine-Oxide.md section 5.2), the same hooks the QuickJS bindings' `HostGlobalNames` and `HostEntity`
 //! are.
 //!
 //! The global object's prototype is a [`GlobalNames`] object: a name the global object does not have reaches its `has`

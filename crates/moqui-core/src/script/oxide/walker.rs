@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The macro walker on quickjs-oxide (plans/Script-Engine-Oxide.md, Phase 3): XML actions
+//! The macro walker on quickjs-oxide (plans/archive/Script-Engine-Oxide.md, Phase 3): XML actions
 //! (`TemplateSupport.js`, `XmlActions.js`) and screen macro modules generate their JavaScript here instead of on the
 //! thread's QuickJS engine (`script/walker.rs`).
 //!

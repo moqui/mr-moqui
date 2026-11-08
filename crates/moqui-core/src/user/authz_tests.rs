@@ -772,7 +772,7 @@ fn a_service_over_its_hit_limit_is_locked() {
     assert!(err.retry_after().is_some_and(|seconds| seconds > 0), "{err}");
 }
 
-/// plans/TX-Cache.md: the tarpit's lock rows and the check views are read once, not on every counted hit or every new
+/// plans/archive/TX-Cache.md: the tarpit's lock rows and the check views are read once, not on every counted hit or every new
 /// session (a stateless client starts one per request); a lock written moves the authorization generation, so the next
 /// hit reads the locks again and is refused.
 #[test]

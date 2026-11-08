@@ -131,7 +131,7 @@ pub enum TransactionAttribute {
     ForceCache,
 }
 
-/// What a transaction frame does with the transaction cache (plans/TX-Cache.md D1).
+/// What a transaction frame does with the transaction cache (plans/archive/TX-Cache.md D1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheMode {
     /// No transaction cache: writes go to the database at once and finds read it.
@@ -208,7 +208,7 @@ impl TransactionManager {
         Ok(())
     }
 
-    /// Strict mode (plans/TX-Cache.md D1, tests only): an early flush of a hold frame marks the frame rollback-only, so
+    /// Strict mode (plans/archive/TX-Cache.md D1, tests only): an early flush of a hold frame marks the frame rollback-only, so
     /// a test sees an operation that does not commit in one batch fail. `moqui.tx_cache.strict` (or
     /// `MOQUI_TX_CACHE_STRICT`) sets it when the manager is made or configured.
     pub fn set_tx_cache_strict(&self, value: bool) {
@@ -220,7 +220,7 @@ impl TransactionManager {
         self.inner.tx_cache_strict.load(Ordering::Relaxed)
     }
 
-    /// Census mode (plans/TX-Cache.md D1, dev and test only): every frame a `run` begins or joins holds its writes, so a
+    /// Census mode (plans/archive/TX-Cache.md D1, dev and test only): every frame a `run` begins or joins holds its writes, so a
     /// run of the tests lists each operation that flushes early or fails under the cache. `moqui.tx_cache.everywhere`
     /// (or `MOQUI_TX_CACHE_EVERYWHERE`) sets it when the manager is made or configured.
     pub fn set_tx_cache_everywhere(&self, value: bool) {
@@ -1608,7 +1608,7 @@ fn try_commit(phase: &mut Phase) -> Result<(), Error> {
     Ok(())
 }
 
-/// The end of a frame for its transaction cache counts (plans/TX-Cache.md D1) and its span: what it did, as attributes.
+/// The end of a frame for its transaction cache counts (plans/archive/TX-Cache.md D1) and its span: what it did, as attributes.
 fn end_trace(phase: &mut Phase, committed: bool, census: bool) -> Option<CensusLine> {
     let stats = crate::entity::cache::end_frame_stats(phase.token);
     let mode = match phase.cache_mode {
@@ -1650,7 +1650,7 @@ fn end_trace(phase: &mut Phase, committed: bool, census: bool) -> Option<CensusL
     line
 }
 
-/// A frame's census line (plans/TX-Cache.md D1), written once for the transaction after its frames end.
+/// A frame's census line (plans/archive/TX-Cache.md D1), written once for the transaction after its frames end.
 struct CensusLine {
     mode: &'static str,
     stats: Option<crate::entity::cache::TxCacheStats>,

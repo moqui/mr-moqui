@@ -553,7 +553,7 @@ fn as_timestamp(value: &Value) -> Option<jiff::Timestamp> {
 }
 
 /// ForceNew commits before the caller can roll back; force-cache, so the message and its users go to the database in
-/// one batch at the commit (plans/TX-Cache.md F1).
+/// one batch at the commit (plans/archive/TX-Cache.md F1).
 #[allow(clippy::too_many_arguments)]
 fn persist_rows(
     facade: &EntityFacade,

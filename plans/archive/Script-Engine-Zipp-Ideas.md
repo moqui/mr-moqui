@@ -1,5 +1,7 @@
 # Script engine: ideas from zipp.org for quickjs-oxide
 
+Archived 2026-11-08: its live status, what remains and the ideas are in [Profiling2](../Profiling2.md); this file is the record.
+
 Status 2026-11-08: ideas only, nothing built. The work starts after Phase 4 of
 [Script-Engine-Oxide](Script-Engine-Oxide.md) (rquickjs removed) and the heap work going on now. Each item becomes a
 [Profiling](Profiling.md) round, and a branch of the fork for the fork's items.

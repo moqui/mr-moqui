@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A script's text and the hash both engines keep its compiled form by (plans/Script-Engine-Oxide.md section 5.1).
+//! A script's text and the hash both engines keep its compiled form by (plans/archive/Script-Engine-Oxide.md section 5.1).
 
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;

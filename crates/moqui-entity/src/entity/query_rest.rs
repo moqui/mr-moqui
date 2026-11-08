@@ -1385,7 +1385,7 @@ fn run_view(facade: &EntityFacade, built: &BuiltView, authorize: bool) -> Result
         Ok((view, tx.clone()))
     })?;
     // As a view entity's read: the frame's held rows of its members are read through shadowed tables, or written first
-    // (plans/TX-Cache.md D5).
+    // (plans/archive/TX-Cache.md D5).
     let members: Vec<String> = view
         .member_entities
         .iter()

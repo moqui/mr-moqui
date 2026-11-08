@@ -83,7 +83,7 @@ impl CompiledRegex {
 
 /// Whether the whole of `text` matches `pattern`. Each thread keeps the patterns it compiled, up to
 /// [`COMPILED_CAP`]: an authorization check matches the same artifact name patterns on every request, and parsing a
-/// pattern costs far more than matching it (plans/Profiling.md, Round 15). A bad pattern is not kept.
+/// pattern costs far more than matching it (plans/archive/Profiling.md, Round 15). A bad pattern is not kept.
 pub fn is_full_match(text: &str, pattern: &str) -> Result<bool, Error> {
     let known = COMPILED.with(|compiled| compiled.borrow().get(pattern).cloned());
     let regex = match known {

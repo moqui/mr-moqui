@@ -871,7 +871,7 @@ fn touch_fields_kept() -> Vec<bool> {
     TOUCHES.with(|touches| touches.borrow().values().flatten().map(Touch::keeps_fields).collect())
 }
 
-/// plans/TX-Cache.md G3: the touch of an update held in a transaction-cache frame carries the row as it was, as a
+/// plans/archive/TX-Cache.md G3: the touch of an update held in a transaction-cache frame carries the row as it was, as a
 /// direct update's does, so an update that changes no document field is not fed.
 #[test]
 fn a_held_update_touch_carries_the_old_row() {

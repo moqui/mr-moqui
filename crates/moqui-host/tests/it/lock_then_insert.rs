@@ -18,7 +18,7 @@
 //! `ChatRoom`) all succeed with one member row, one membership event and one chat actor (made with one create-or-update); several first saves of one wiki page
 //! (`WikiServices.update#WikiPage`, which locks the `WikiSpace`) all succeed with one `WikiPage` row. Several first chat
 //! changes of one user at once (`ChatServices.mark#Read`, a transaction-cache service whose `record#UserChange` makes
-//! the user's missing `ChatUserState` in a transaction of its own and then locks it, plans/TX-Cache.md G8) all succeed
+//! the user's missing `ChatUserState` in a transaction of its own and then locks it, plans/archive/TX-Cache.md G8) all succeed
 //! with one counter row.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]

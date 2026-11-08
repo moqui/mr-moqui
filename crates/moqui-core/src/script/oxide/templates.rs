@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Fancy templates on quickjs-oxide (plans/Script-Engine-Oxide.md section 5.4); `script/template.rs` compiles them.
+//! Fancy templates on quickjs-oxide (plans/archive/Script-Engine-Oxide.md section 5.4); `script/template.rs` compiles them.
 //!
 //! - **The live form** (the trusted renderer) is a run on the thread's oxide runtime: the compiled function called at
 //!   once, its bare names on the context stack through the runtime's global names, as the other kinds run there.

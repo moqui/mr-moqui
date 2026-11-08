@@ -82,7 +82,7 @@ thread_local! {
 }
 
 /// A driver calls this each time it waits for the reply to what it has sent: one waited round trip, however many
-/// statements went out before it (plans/TX-Cache.md D1). Statements sent without waiting count when a later call
+/// statements went out before it (plans/archive/TX-Cache.md D1). Statements sent without waiting count when a later call
 /// waits for them.
 pub fn note_round_trip() {
     ROUND_TRIPS.fetch_add(1, Ordering::Relaxed);

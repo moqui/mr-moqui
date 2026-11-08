@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The transaction cache (plans/TX-Cache.md): a `cache` or `force-cache` frame holds its writes in memory
+//! The transaction cache (plans/archive/TX-Cache.md): a `cache` or `force-cache` frame holds its writes in memory
 //! ([`super::hold`]) and writes them at its commit; while it holds them, its finds see them through the overlay.
 
 use std::cell::RefCell;
@@ -147,7 +147,7 @@ pub(super) fn holds_entity(facade: &EntityFacade, entity: &str) -> bool {
 }
 
 /// Write the active frame's held writes up to and including its last of `entity`, and go on holding the rest: the
-/// early flush of a selective find (plans/TX-Cache.md D4).
+/// early flush of a selective find (plans/archive/TX-Cache.md D4).
 pub(super) fn flush_through(facade: &EntityFacade, entity: &str) -> Result<(), Error> {
     let tx = facade.transactions_for(entity)?;
     let Some(token) = tx.frame_token() else {
@@ -181,7 +181,7 @@ pub(super) fn hold(tx: &TransactionManager, facade: &EntityFacade, held: Held) -
     stats::note_held(token, held.operation);
     push_hold(token, held)?;
     // Past the cap the hold is written and the frame goes on holding, so a long batch job does not grow without bound
-    // (plans/TX-Cache.md D6).
+    // (plans/archive/TX-Cache.md D6).
     let held = TX_HOLD.with(|slot| slot.borrow().get(&token).map_or(0, FrameHold::len));
     if held >= HOLD_CAP {
         flush_early(facade, tx, token, FlushCause::Size, "")?;
@@ -267,7 +267,7 @@ pub(super) fn forget_reads_of_others(token: u64, entity: &str) {
     });
 }
 
-/// Drop what the frame `token` read of `entity`, or of every entity (plans/TX-Cache.md D2).
+/// Drop what the frame `token` read of `entity`, or of every entity (plans/archive/TX-Cache.md D2).
 pub(super) fn forget_reads(token: u64, entity: Option<&str>) {
     TX_HOLD.with(|slot| {
         if let Some(frame) = slot.borrow_mut().get_mut(&token) {
@@ -279,7 +279,7 @@ pub(super) fn forget_reads(token: u64, entity: Option<&str>) {
 /// The rows of a find of `meta` in a frame with the transaction cache on, with the frame's held writes on them (and the
 /// sim overlay, in a sim); `None` when the database answers alone, as it does with no such frame.
 ///
-/// In a cache frame (hold or read-through, plans/TX-Cache.md D2, D3) the rows come from what the frame read before when
+/// In a cache frame (hold or read-through, plans/archive/TX-Cache.md D2, D3) the rows come from what the frame read before when
 /// they can: a find by the whole key from the row the frame keeps (or, for a row it created, its held writes alone); a
 /// list find with no page from the list it kept under the key of `list`; a list find whose condition pins a type-one
 /// relationship to a row the frame created from its held creates alone. Otherwise the database answers and the frame
@@ -487,7 +487,7 @@ fn known_in_rows(
 }
 
 /// A find by the whole key in a cache frame: the row the frame keeps, or for a row it created its held writes alone,
-/// or else the row read by its key and kept (plans/TX-Cache.md D2, G7). The rest of the condition is checked in
+/// or else the row read by its key and kept (plans/archive/TX-Cache.md D2, G7). The rest of the condition is checked in
 /// memory.
 fn pinned_row(
     facade: &EntityFacade,
@@ -539,7 +539,7 @@ fn pinned_row(
 
 /// Whether `condition` pins every key field of a type-one relationship of `meta` to a row the frame created, so no row
 /// on the database refers to it and the frame's held creates are all the rows there are (Java's `listGet` shortcut,
-/// plans/TX-Cache.md D3).
+/// plans/archive/TX-Cache.md D3).
 fn pins_created_parent(facade: &EntityFacade, meta: &ReadMeta, token: u64, condition: Option<&Condition>) -> bool {
     if meta.one_keys.is_empty() {
         return false;

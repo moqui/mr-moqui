@@ -13,7 +13,7 @@
  */
 
 //! Bare-name reads and writes of an oxide run over the context stack, and its tracked values: the oxide side of
-//! `runtime.rs`'s `read_name`, `write_name` and `flush_tracked` (plans/Script-Engine-Oxide.md section 4).
+//! `runtime.rs`'s `read_name`, `write_name` and `flush_tracked` (plans/archive/Script-Engine-Oxide.md section 4).
 //!
 //! A list or map a run reads by name is converted once and tracked: the script changes the object, and the changes are
 //! written back to the stack at a flush, when the object no longer matches what the stack holds. A flush is

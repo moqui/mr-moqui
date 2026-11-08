@@ -772,7 +772,7 @@ fn send_web_push(
 }
 
 /// What the pushes came to, written after them: the service holds no transaction across its HTTP calls, and the rows
-/// go in one transaction-cache frame, one batch (plans/TX-Cache.md, second set 8).
+/// go in one transaction-cache frame, one batch (plans/archive/TX-Cache.md, second set 8).
 #[derive(Default)]
 struct Results<'a> {
     outcomes: Vec<(&'a EntityValue, Outcome)>,

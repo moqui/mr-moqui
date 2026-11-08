@@ -634,7 +634,7 @@ along with this software (see the LICENSE.md file). If not, see
 
             // each user's counter, locked in userId order; a missing one is made in a transaction of its own (one row per
             // user, ever), so the lock below waits on another first change of the user even when this one holds its
-            // writes to its commit (plans/TX-Cache.md G8)
+            // writes to its commit (plans/archive/TX-Cache.md G8)
             const lock = () => {
                 const found = {}
                 for (let start = 0; start < users.length; start += 500)
@@ -2485,7 +2485,7 @@ along with this software (see the LICENSE.md file). If not, see
                     authorName: event.senderName || sender, bodyText: ciphertext ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).call()
             }
             // indexed once the transaction commits: the document is read through a view of rows this one may hold to
-            // its commit (plans/TX-Cache.md D5), and a message that rolls back is not indexed
+            // its commit (plans/archive/TX-Cache.md D5), and a message that rolls back is not indexed
             if (!ciphertext) ec.service.special().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).registerOnCommit()
             if (html && !externalActor && !ciphertext) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({chatRoomId: chatRoomId,
                 eventSeq: eventSeq, senderUserId: sender, body: html}).call()
@@ -2680,7 +2680,7 @@ along with this software (see the LICENSE.md file). If not, see
                 chatRoomId: chatRoomId, eventSeq: eventSeq, roomName: room.roomName || event.senderName || chatRoomId, authorUserId: me,
                 authorName: event.senderName || me, bodyText: ciphertext ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).call()
             // indexed once the transaction commits: the document is read through a view of rows this one may hold to
-            // its commit (plans/TX-Cache.md D5), and a message that rolls back is not indexed
+            // its commit (plans/archive/TX-Cache.md D5), and a message that rolls back is not indexed
             if (!ciphertext) ec.service.special().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).registerOnCommit()
             if (!externalActor && !ciphertext && !parse(original.linkPreviewJson).removed) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({
                 chatRoomId: chatRoomId, eventSeq: eventSeq, senderUserId: me, body: html}).call()

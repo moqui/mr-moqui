@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What the transaction cache did, per frame and per thread (plans/TX-Cache.md D1): writes held, finds answered from
+//! What the transaction cache did, per frame and per thread (plans/archive/TX-Cache.md D1): writes held, finds answered from
 //! memory or the database, early flushes by cause, and the commit batch. A frame's counts go to a debug event when it
 //! ends and into this thread's totals ([`tx_cache_stats`]), which tests and the speed test read. An early flush is
 //! logged with its cause, entity and service; in strict mode it marks the frame rollback-only, and in census mode it

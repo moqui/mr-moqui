@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The quickjs-oxide bindings (plans/Script-Engine-Oxide.md section 5): one runtime per thread, started on the
+//! The quickjs-oxide bindings (plans/archive/Script-Engine-Oxide.md section 5): one runtime per thread, started on the
 //! thread's first oxide script, beside the thread's QuickJS engine (`script/runtime.rs`). Phase 1 runs conditions and
 //! values: bare names through an exotic object that is the global object's prototype ([`names`], [`tracked`]), host
 //! values converted on read ([`convert`]), decimals as host objects and entity values as exotic ones ([`decimal`],

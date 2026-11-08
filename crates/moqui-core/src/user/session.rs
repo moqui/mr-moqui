@@ -1732,7 +1732,7 @@ fn ensure_visit(factory: &ExecutionContextFactory, visitor_cookie: Option<&str>)
 }
 
 /// Run `body` in a transaction-cache frame of its own when no transaction is in place, so its writes go to the database
-/// in one batch at its commit (plans/TX-Cache.md F3); inside a transaction it is part of that one, as before.
+/// in one batch at its commit (plans/archive/TX-Cache.md F3); inside a transaction it is part of that one, as before.
 pub(crate) fn in_cache_frame<T>(
     facade: &EntityFacade,
     entity: &str,

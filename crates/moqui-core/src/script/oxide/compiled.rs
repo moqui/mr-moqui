@@ -13,7 +13,7 @@
  */
 
 //! Scripts compiled once per oxide runtime, kept by their text's hash ([`crate::script::text::hash_text`]), and their
-//! code images kept for the process ([`IMAGES`]; the fork's F1 step 1, plans/Script-Engine-Oxide.md section 6): a
+//! code images kept for the process ([`IMAGES`]; the fork's F1 step 1, plans/archive/Script-Engine-Oxide.md section 6): a
 //! runtime that has not compiled a text loads its image (`load_image`, no parse) instead of compiling it.
 //!
 //! quickjs-oxide keeps a script compiled the default way for the runtime's life, in its static code store, where the

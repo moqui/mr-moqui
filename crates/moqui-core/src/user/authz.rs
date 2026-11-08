@@ -720,7 +720,7 @@ fn check_tarpit(artifact_type: &str, name: &str) -> Result<(), Error> {
 
 /// The release times of the user's tarpit locks of one artifact, kept in memory per facade until the authorization
 /// generation moves: a lock write moves it ([`is_authz_entity`]), here or on a cluster peer. A request that the tarpit
-/// counts read the locks every time before (plans/TX-Cache.md, found along the way).
+/// counts read the locks every time before (plans/archive/TX-Cache.md, found along the way).
 #[derive(Default)]
 struct TarpitLocks {
     generation: u64,

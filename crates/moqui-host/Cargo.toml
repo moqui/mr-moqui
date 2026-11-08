@@ -285,7 +285,7 @@ test = false
 name = "service_speed"
 test = false
 
-# Opt-in transaction cache timings: the candidates of plans/TX-Cache.md with the cache off and on. Not linked by a
+# Opt-in transaction cache timings: the candidates of plans/archive/TX-Cache.md with the cache off and on. Not linked by a
 # default `cargo test`.
 # CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test tx_cache_speed -- --ignored --nocapture
 [[test]]

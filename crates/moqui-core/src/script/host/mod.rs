@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The engine-neutral host table (plans/Script-Engine-Oxide.md section 5): the `ec` facades a script calls, written once
+//! The engine-neutral host table (plans/archive/Script-Engine-Oxide.md section 5): the `ec` facades a script calls, written once
 //! over host values, and bound to each engine by its binder (`script/runtime/bind.rs` for QuickJS, `script/oxide/bind.rs`
 //! for quickjs-oxide). Nothing here names an engine type.
 //!

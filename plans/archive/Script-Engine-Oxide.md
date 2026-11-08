@@ -1,5 +1,7 @@
 # Script engine: quickjs-oxide beside rquickjs
 
+Archived 2026-11-08: its live status, what remains and the ideas are in [Profiling2](../Profiling2.md); this file is the record.
+
 Status 2026-11-08: Phases 0 to 4 built. quickjs-oxide is the only script engine, at the fork's revision 7cf1f530, with
 F1, F2, F3a, F3 and F4 (§6); rquickjs, the `script_engine` setting and the routing between engines are gone (§7,
 Phase 4 result). After Profiling Rounds 33 to 47 (accepted in Round 48) the screen rows were within ×1.10 of QuickJS
