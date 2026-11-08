@@ -105,6 +105,7 @@ fn install() {
         framework.join("EmailServices.xml"),
         framework.join("impl/EmailServices.xml"),
         framework.join("impl/EmailClientServices.xml"),
+        framework.join("admin/IdentityServices.xml"),
         framework.join("impl/ShellServices.xml"),
     ];
     let failures = moqui_core::service::lint(&paths).unwrap();

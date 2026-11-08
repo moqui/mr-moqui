@@ -78,6 +78,7 @@ fn install_with(stubs: Option<&std::path::Path>) {
         framework.join("EmailServices.xml"),
         framework.join("impl/EmailServices.xml"),
         framework.join("impl/EmailClientServices.xml"),
+        framework.join("admin/IdentityServices.xml"),
         framework.join("impl/ShellServices.xml"),
     ];
     if let Some(dir) = stubs {
