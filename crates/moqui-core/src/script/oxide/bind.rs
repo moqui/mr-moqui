@@ -650,6 +650,13 @@ fn convert_args(
                 continue;
             }
         }
+        // text for a value read the same way: as a string, it converts to its text and nothing else
+        if matches!(kind, ArgKind::Value | ArgKind::OptValue) {
+            if let Some(text) = scope.arg_text(index) {
+                converted.push(Arg::Value(Value::String(text)));
+                continue;
+            }
+        }
         let value = scope.arg(index);
         let void = matches!(value, JsValue::Undefined | JsValue::Null);
         converted.push(match (kind, &value) {

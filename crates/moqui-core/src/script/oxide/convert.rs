@@ -245,6 +245,21 @@ fn to_init<'a, J: Js>(
     depth: usize,
 ) -> Result<InitValue<'a>, Conv> {
     match value {
+        // a plain list or map nested in another is made in the same crossing, with no handle of its own
+        HostValue::List(items) if depth < MAX_HOST_NESTING => {
+            let mut values = Vec::with_capacity(items.len());
+            for item in items {
+                values.push(to_init(js, engine, item, depth + 1)?);
+            }
+            Ok(InitValue::Array(values))
+        }
+        HostValue::Map(entries) if depth < MAX_HOST_NESTING && !has_special_key(entries) => {
+            let mut made = Vec::with_capacity(entries.len());
+            for (name, item) in entries {
+                made.push((engine.key(name)?, to_init(js, engine, item, depth + 1)?));
+            }
+            Ok(InitValue::Object(made))
+        }
         HostValue::String(text) => {
             if text.len() > JsString::MAX_LEN {
                 // the cap as `JsString::try_from_utf8` checks it, in UTF-16 units

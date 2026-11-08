@@ -1858,6 +1858,28 @@ Against Round 36's binary, two runs each (µs a call, allocations):
 - List.qvt 100: 14186 → 13963;
 - List text: 2666 → 2591.
 
+## Round 39: a tree of plain maps and lists made in one crossing; text values read without a lift
+
+The fork's `perf/init-trees` merged to its `main` (dd3624b9). `InitValue::Object` and `InitValue::Array` make a nested plain
+object or array inside the outermost `new_object_from` or `new_array_from_inits`, in its one view, with no handle of
+its own.
+
+The bindings:
+- A host list or map nested in another, with no special key, is passed as such an init, so a list of 100 maps is one
+  crossing and one handle.
+- A `Value` or `OptValue` argument that is a string is read with `Scope::arg_text`, not lifted to a `JsString` and
+  copied again.
+
+Allocations a call against Round 38's binary:
+- List.qvt 100: 111676 → 103774;
+- List html 100: 87996 → 80154;
+- List text: 32156 → 29310;
+- Single.qvt: 4104 → 4004;
+- walk itemList: 907 → 807.
+
+Times were within the noise. Another checkout's `./moq test` ran during the timing, and three reruns of the same binary
+spread 5 percent. This round's times are left to the final acceptance, on a quiet machine.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
