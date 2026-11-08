@@ -359,10 +359,12 @@ const SIM_SEQ_START: i64 = 0;
 
 /// Java's `TransactionCacheDb.PRODUCTION_ENTITIES`: written to the real database during a sim. The agent's bookkeeping
 /// (a preview runs inside a run: its conversation, run, steps, events, messages, tool calls and approvals, and the
-/// provider calls and their usage, plans/LLM-A2A-Assist.md section 5) and the sequence banks.
+/// provider calls and their usage, plans/LLM-A2A-Assist.md section 5), the Constitution snapshot a run names by its
+/// hash (stored once per hash, never changed), and the sequence banks.
 const SIM_PRODUCTION_ENTITIES: &[&str] = &[
     "moqui.agent.AgentConversation",
     "moqui.agent.AgentRun",
+    "moqui.agent.AgentConstitutionSnapshot",
     "moqui.agent.AgentRunStep",
     "moqui.agent.AgentRunEvent",
     "moqui.agent.AgentMessage",
