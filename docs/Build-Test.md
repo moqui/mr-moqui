@@ -148,8 +148,9 @@ has its own, so the artifacts of one never replace another's and switching packa
 - `lite` (Lite): `release` with `incremental = true` and 256 codegen units for the workspace and path crates
   (Cargo applies `incremental` only to those), so a rebuild after an edit to the framework is quick; the dependencies
   keep the release settings and are built once.
-- `release` (Maximal) and `enterprise`: `panic = "unwind"` (services unwind across the service boundary), otherwise
-  Cargo's release defaults.
+- `release` (Maximal) and `enterprise`: `panic = "unwind"` (services unwind across the service boundary) and one
+  codegen unit for each of the script engine's crates (`quickjs-oxide`, `-core`, `-regexp`), otherwise Cargo's release
+  defaults.
 
 ### Embedded Postgres archive
 

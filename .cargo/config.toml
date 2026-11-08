@@ -38,6 +38,22 @@ debug = "line-tables-only"
 [profile.release]
 panic = "unwind"
 
+# The script engine's three crates in one codegen unit each, so the interpreter's calls inline across what would be
+# unit boundaries. Round 50 (plans/Profiling2.md), js_speed best of two runs against 16 units: all 58 rows x0.994 by
+# geometric mean, the screen rows x0.994, the expression rows up to x0.95, a few rows x1.04 to x1.06 (the locked
+# template, split(''), 100 objects); the same allocations, and the same clean build time (166 s for js_speed), since
+# these crates are not on its longest path. Thin LTO for the whole profile on top of this was x0.988 on the screen
+# rows (under the 1.5% it had to gain); its clean build was quicker (151 s) but a relink after a moqui-core edit 12%
+# slower (102 s against 91 s), so it is not on.
+[profile.release.package.quickjs-oxide]
+codegen-units = 1
+
+[profile.release.package.quickjs-oxide-core]
+codegen-units = 1
+
+[profile.release.package.quickjs-oxide-regexp]
+codegen-units = 1
+
 # The Lite package (`./moq build --lite`): optimized, so it serves and deploys as release does, with incremental builds of
 # the workspace and path crates (cargo applies `incremental` to those only) for a quick rebuild after an edit, and more
 # codegen units for them. Dependencies keep the release settings; they are built once.
