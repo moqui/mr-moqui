@@ -2028,6 +2028,32 @@ malloc and free are about 14% of List.qvt's time on glibc, so all the concatenat
 about 4% of the row there, and less under jemalloc, the server's allocator now. Seven inline bytes would take under
 1%. Fourteen would take about 2% and make every string record 8 bytes larger. It was not built.
 
+## Round 47: the Mantle operations, profiled
+
+The eight mr-mantle specs against Postgres 200 µs away (`../oxide-bench/mantle-pg`), one run of each engine under
+`perf record`, with Rounds 33 to 46 and jemalloc in both. The nine services' median times the calls:
+
+| Service | Calls | QuickJS ms | oxide ms | Ratio |
+|---|---:|---:|---:|---:|
+| `place#Order` | 26 | 21.4 | 20.8 | 0.97 |
+| `approve#Order` | 26 | 16.7 | 16.3 | 0.98 |
+| `add#OrderProductQuantity` | 32 | 16.9 | 16.1 | 0.96 |
+| `change#InvoiceState` | 2 | 24.4 | 25.9 | 1.06 |
+| `create#Payment` | 11 | 24.1 | 23.8 | 0.99 |
+| `apply#Settlement` | 8 | 50.4 | 50.0 | 0.99 |
+| `pack#Shipment` | 16 | 40.5 | 41.2 | 1.02 |
+| `get#PaymentFinanceDetail` | 24 | 14.1 | 13.0 | 0.92 |
+| `approve#Payable` | 6 | 29.5 | 30.8 | 1.04 |
+
+In all, 3413 ms on QuickJS and 3351 ms on oxide (Round 33: 3472 and 3550). `apply#Settlement` and
+`get#PaymentFinanceDetail`, at ×1.12 and ×1.10 in Round 33, are at or below QuickJS. The round trips are the same.
+These are one run of each, so the two-run comparison is left to the acceptance.
+
+In the profile:
+- The server's script layers are 18% of its samples on oxide, spread thin: `run_at` 1.1%, the compiler about 1%, the
+  lend and restore 0.4%, the trampoline 0.3%.
+- About a third of the server's CPU in both runs is Argon2 password hashing, the specs' logins.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
