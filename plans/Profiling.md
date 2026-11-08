@@ -1887,6 +1887,27 @@ Allocations a call against Round 38's binary:
 Times were within the noise. Another checkout's `./moq test` ran during the timing, and three reruns of the same binary
 spread 5 percent. This round's times are left to the final acceptance, on a quiet machine.
 
+## Round 40: the regexp executor's buffers kept between searches
+
+A List.qvt render's allocations were traced with heaptrack, its backtraces summed by their first source line. The top
+sites:
+- the engine's short-string concatenation (`vm/ops.rs`): 21%, one buffer a `+`, as QuickJS's `malloc` makes;
+- the API's handle slots: 9%;
+- the `JsString`s of lifted text: about 18%, which Rounds 38 and 39 cut;
+- the regexp executor: about 11%. Each search made its captures, registers, undo log and backtrack stack anew, and grew
+  the last two a push at a time.
+
+The fork's `perf/regexp-scratch` merged to its `main` (2742f610). A search's buffers go back to a thread slot when its state
+drops, and the next search clears and reuses them. Ones a deep backtrack grew past 4096 entries are let go.
+
+Against Round 39's binary, on a quiet machine (µs a call, allocations):
+- List.qvt 100: 13790 (103772) → 13523 (91939);
+- List html 100: 8914 (80154) → 8816 (74857);
+- List html 20: 1921 → 1899;
+- Single.qvt: 549 (4004) → 546 (3766).
+
+The other rows are unchanged.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
