@@ -2010,6 +2010,24 @@ It showed a flaw in Round 44's check. Its first look compared the reserved bytes
 bytes, which may be a burst's, still live then, and so too high. The check now collects to confirm, for any runtime
 past 8 MiB, at most every 5 seconds a thread, and still drops at most every 30 seconds.
 
+## Round 46: inline small strings (measured, not built)
+
+Short string concatenation (`vm/ops.rs`, a buffer a `+`) is 28% of a List.qvt render's allocations. A string record is
+held to 40 bytes, and its `OneByte` box leaves room for 7 bytes inline. A probe counted List.qvt's short one-byte
+concatenations by the result's length (11.2 million):
+
+| Length | Share | Cumulative |
+|---|---:|---:|
+| up to 7 | 14% | 14% |
+| 8 to 14 | 32% | 46% |
+| 15 to 22 | 16% | 62% |
+| 23 to 30 | 15% | 77% |
+| 31 to 63 | 23% | 100% |
+
+malloc and free are about 14% of List.qvt's time on glibc, so all the concatenations' allocations are worth at most
+about 4% of the row there, and less under jemalloc, the server's allocator now. Seven inline bytes would take under
+1%. Fourteen would take about 2% and make every string record 8 bytes larger. It was not built.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
