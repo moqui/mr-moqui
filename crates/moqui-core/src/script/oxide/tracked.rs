@@ -19,9 +19,9 @@
 //! written back to the stack at a flush, when the object no longer matches what the stack holds. A flush is
 //! [`Flush::Keep`] before a host call that reads the stack, [`Flush::Release`] before one that may change it (the
 //! object is then released: tracked again at its next read by name, or at the end, while the stack still holds what was
-//! written), and [`Flush::End`] at the end of the run. A decimal or an entity value read by name is kept for the run
-//! too, so two reads are one object, but needs no write: a decimal does not change, and an entity value writes its
-//! cell.
+//! written), and [`Flush::End`] at the end of the run. A decimal or an entity value read by name is kept too, until the
+//! next flush that is not [`Flush::Keep`], so two reads between host calls are one object, but needs no write: a
+//! decimal does not change, and an entity value writes its cell.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -245,6 +245,12 @@ pub(super) fn flush<J: Js>(js: &mut J, mode: Flush) -> Result<(), Conv> {
 }
 
 fn flush_values<J: Js>(js: &mut J, engine: &OxideEngine, mode: Flush) -> Result<(), Conv> {
+    // a host call that may change the stack may put another value under a kept name (a form-list's next row, a row
+    // action's find): the next read takes the stack's value again, as QuickJS reads an entity value from the stack
+    // each time and releases a decimal there
+    if mode != Flush::Keep {
+        values(engine).borrow_mut().kept.clear();
+    }
     if mode == Flush::End {
         let names: Vec<String> = values(engine).borrow().released.keys().cloned().collect();
         for name in names {
