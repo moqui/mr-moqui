@@ -148,12 +148,20 @@
     // The shell the page is in (/qapps or /apps). Pages open in it; transition requests keep the server's /apps path.
     report.appRoot=href=>/^\/qapps(?=\/|$)/.test(new root.URL(href || root.location.href).pathname)?'/qapps':'/apps';
     report.appPath=(path,href)=>/^\/apps(?=[/?]|$)/.test(String(path || ''))?report.appRoot(href)+String(path).slice(5):String(path || '');
+    // A report screen where the app that renders the dashboard mounts it: its appLinks (Dashboard.xml, on a dashboard or a standalone
+    // panel) map definition, panel, explore, alertRule and dashboard to server paths, and a link it leaves out or sets to null is not
+    // offered (""). Without appLinks it is Tools' Dashboards screen. serverLink keeps the server path for transition requests;
+    // appLink is the page to open, in the shell the page is in.
+    report.serverLink=(links,key,tools)=>{if(!links || typeof links!=='object')return '/apps/dashboards/'+tools;const path=links[key];return typeof path==='string' && /^\/(?!\/)[^?#]*$/.test(path)?path:'';};
+    report.appLink=(links,key,tools,href)=>{const path=report.serverLink(links,key,tools);return path?report.appPath(path,href):'';};
     // The dashboard of a single-panel view (panelId) with all its panels.
     report.allPanelsUrl=href=>{const url=new root.URL(href || root.location.href);url.searchParams.delete('panelId');return url.href;};
     report.filterUrl=(pill,options,href)=>{const url=new root.URL(href || root.location.href),pills=report.parsePills(options && options.filters || url.searchParams.get('filtersJson'));
         if(pills.length>=32)throw new Error('At most 32 filters');
         if(!pills.some(item=>JSON.stringify([item.datasetId,item.query,!!item.negated])===JSON.stringify([pill.datasetId,pill.query,!!pill.negated])))pills.push(pill);
-        if(!(options && options.dashboardId)){url.pathname=report.appRoot(url.href)+'/dashboards/Explore';url.searchParams.set('datasetId',pill.datasetId);}
+        // outside a dashboard the filter opens Explore: the app's (appLinks), or the Explore page it is on
+        if(!(options && options.dashboardId)){const explore=options && options.appLinks?report.appLink(options.appLinks,'explore','Explore',url.href):/\/Explore$/.test(url.pathname)?url.pathname:report.appLink(null,'explore','Explore',url.href);
+            if(!explore)throw new Error('Explore is not available here');url.pathname=explore;url.searchParams.set('datasetId',pill.datasetId);}
         url.searchParams.set('filtersJson',JSON.stringify(pills));url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');
         if(options && options.range){for(const key of ['from','thru'])if(options.range[key])url.searchParams.set(key,options.range[key]);}
         return url.href;
@@ -657,13 +665,15 @@
     };
     // ---- panel links ----
     // The first query of a panel that reads a dataset (a nested query list is searched in order).
+    // The message of a panel's first error notice that left it incomplete (Dashboard.xml's render#Dashboard), or "".
+    report.unavailable = (panel) => { const notice = (panel && panel.notices || []).find((item) => item && item.level === "error" && item.complete === false); return notice ? String(notice.message || "this panel could not be read") : ""; };
     report.firstQuery = (panel) => { const visit = (queries) => { for (const query of queries || []) { if (query && query.datasetId && !query.queries) return query; const found = query && visit(query.queries); if (found) return found; } return null; }; return visit(panel && panel.queries); };
     // Explore on the panel's first query: its dataset, query string and filters, the dashboard's filters for that dataset, and
     // the absolute range.
     report.exploreUrl = (panel, options, href) => {
-        const query = report.firstQuery(panel);
-        if (!query) return "";
-        const url = new root.URL(report.appRoot(href) + "/dashboards/Explore", href || root.location.href);
+        const query = report.firstQuery(panel), explore = report.appLink(options && options.appLinks, "explore", "Explore", href);
+        if (!query || !explore) return "";
+        const url = new root.URL(explore, href || root.location.href);
         url.searchParams.set("datasetId", query.datasetId);
         if (query.queryString) url.searchParams.set("queryString", query.queryString);
         const pills = [...(query.filters || []).map((item) => item && item.query ? Object.assign({ datasetId: query.datasetId }, item) : { datasetId: query.datasetId, query: item, label: "", negated: false, disabled: false, pinned: false }),
@@ -947,7 +957,9 @@
     };
     components["m-report-definition-editor"] = {
         inject: { mForm: { default: null } },
-        props: { name: { type: String, default: "definitionJson" }, libraries: { type: Array, default: () => [] }, datasets: { type: Array, default: () => [] }, readOnly: Boolean, panelOnly: Boolean, queryOnly:Boolean, heading:String, saveHint:String },
+        props: { name: { type: String, default: "definitionJson" }, libraries: { type: Array, default: () => [] }, datasets: { type: Array, default: () => [] }, readOnly: Boolean, panelOnly: Boolean, queryOnly:Boolean, heading:String, saveHint:String,
+            // the library panel editor where the app mounts it (Definition.xml), at its server path
+            panelEditor: { type: String, default: "/apps/dashboards/Definition" } },
         // The panel chosen first is the one the URL names (panelId, from a panel's Edit menu item).
         data: () => ({ selected: (() => { try { return new root.URL(root.location.href).searchParams.get("panelId") || ""; } catch (_) { return ""; } })(), optionSearch: "", libraryId: "", error: "",queryAt:0,transformScope:"panel",
             previewFrame: null, previewError: "", previewing: false }),
@@ -1112,7 +1124,7 @@
                 (this.panelOnly || this.queryOnly) ? null : h("div", { class: "row items-end q-gutter-sm q-py-sm" }, [
                     E.control("Library panel", this.libraryId, value => { this.libraryId = value; }, "select", [{value:"",text:"Choose a panel"}, ...this.libraries.map(item => ({value:item.id,text:item.title}))], this.readOnly),
                     E.button("Add library reference", () => this.library(false), this.readOnly || !this.libraryId)]),
-                panel.panelRef ? h("p", ["Library panel: " + panel.panelRef + " ", h("a", { href: report.appPath("/apps/dashboards/Definition?definitionId=" + encodeURIComponent(panel.panelRef)) }, "Edit library panel"), " ",
+                panel.panelRef ? h("p", ["Library panel: " + panel.panelRef + " ", h("a", { href: report.appPath(this.panelEditor + "?definitionId=" + encodeURIComponent(panel.panelRef)) }, "Edit library panel"), " ",
                     E.button("Unlink as copy", () => this.library(true), this.readOnly)]) :
                     h("div", [h("label", {class:"m-report-editor-control full-width q-my-sm"}, [h("span", T(this.queryOnly ? "Search query options" : "Search panel options")),
                         h("input", { type: "search", placeholder: T(this.queryOnly ? "Search query options" : "Search panel options"), value: this.optionSearch, onInput: (event) => { this.optionSearch = event.target.value; } })]),
@@ -1324,7 +1336,7 @@
     components["m-report-panel"] = {
         props: { frame: { type: Object, default: () => ({ fields: [] }) }, frames: Array, panel: { type: Object, default: () => ({}) },
             title: String, height: { type: String, default: "300px" }, dashboardId: String, panelId: String, screenUrl: String, range: Object, variables: Object, syncGroup:String,filters:{type:Array,default:()=>[]},
-            editable:Boolean, embedded:Boolean, single:Boolean },
+            editable:Boolean, embedded:Boolean, single:Boolean, appLinks:Object },
         emits:["filter"],
         data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "", menu: false, shared: "", status: "", flameFocus: null, outlineReady: false, outlineError: "" }),
         computed: { themeDark() { return !!(this.$q && this.$q.dark && this.$q.dark.isActive); } },
@@ -1377,14 +1389,16 @@
                 this.outlineRequested = true;
                 report.loadOutline().then(() => { this.outlineReady = true; }).catch((error) => { this.outlineError = String(error && error.message || error); });
             },
-            // The Dashboards app view of this dashboard, for an embed whose page is another screen.
-            dashboardUrl(panelId){const url=new root.URL(report.appRoot()+'/dashboards/Dashboard',root.location.href);url.searchParams.set('definitionId',this.dashboardId);if(panelId)url.searchParams.set('panelId',panelId);if(this.range && this.range.from)url.searchParams.set('from',this.range.from);if(this.range && this.range.thru)url.searchParams.set('thru',this.range.thru);return url.href;},
+            // The app's links: the dashboard's, or a standalone panel's own (Explore's histogram).
+            links(){return this.appLinks || this.panel.appLinks;},
+            // The app's view of this dashboard, for an embed whose page is another screen.
+            dashboardUrl(panelId){const url=new root.URL(report.appLink(this.links(),'dashboard','Dashboard') || root.location.pathname,root.location.href);url.searchParams.set('definitionId',this.dashboardId);if(panelId)url.searchParams.set('panelId',panelId);if(this.range && this.range.from)url.searchParams.set('from',this.range.from);if(this.range && this.range.thru)url.searchParams.set('thru',this.range.thru);return url.href;},
             viewPanel(){this.menu=false;if(this.embedded){report.navigate(this.dashboardUrl(this.panelId));return;}const url=new root.URL(root.location.href);url.searchParams.set('panelId',this.panelId);report.navigate(url.href);},
             // A repeated copy is edited, duplicated and removed as the panel it repeats.
             sourcePanelId(){return this.panel.repeatOf || this.panelId;},
-            editPanel(){this.menu=false;report.navigate(report.appPath('/apps/dashboards/Definition?definitionId='+encodeURIComponent(this.dashboardId)+'&panelId='+encodeURIComponent(this.sourcePanelId())));},
+            editPanel(){this.menu=false;const editor=report.appLink(this.links(),'definition','Definition');if(editor)report.navigate(editor+'?definitionId='+encodeURIComponent(this.dashboardId)+'&panelId='+encodeURIComponent(this.sourcePanelId()));},
             async sharePanel(){this.menu=false;this.shared=report.shareUrl(this.range,this.panelId,this.embedded?this.dashboardUrl():undefined);this.status=await report.copyText(this.shared)?'Link copied, with the time range made absolute.':'Copy this link to share the panel:';},
-            explorePanel(){this.menu=false;const url=report.exploreUrl(this.panel,{filters:this.filters,range:this.range});if(url)report.navigate(url);},
+            explorePanel(){this.menu=false;const url=report.exploreUrl(this.panel,{filters:this.filters,range:this.range,appLinks:this.links()});if(url)report.navigate(url);},
             async changePanel(action){
                 this.menu=false;
                 if(action==='removePanel'){
@@ -1395,7 +1409,9 @@
                 }
                 this.busy=true;this.actionError='';
                 try {
-                    const result=await moqui.request('/apps/dashboards/Dashboard/'+action,{method:'POST',params:{definitionId:this.dashboardId,panelId:this.sourcePanelId(),moquiSessionToken:moqui.sessionToken || ''}});
+                    // the app's Dashboard screen, whose transitions save the changed dashboard, at its server path
+                    const screen=report.serverLink(this.links(),'dashboard','Dashboard');if(!screen)throw new Error('The dashboard cannot be changed here');
+                    const result=await moqui.request(screen+'/'+action,{method:'POST',params:{definitionId:this.dashboardId,panelId:this.sourcePanelId(),moquiSessionToken:moqui.sessionToken || ''}});
                     if(!result.json || result.json.errors || result.json.error)throw new Error(result.json && (result.json.errors || result.json.error) || 'The dashboard was not changed');
                     const url=new root.URL(root.location.href);if(action==='removePanel' && url.searchParams.get('panelId')===this.panelId)url.searchParams.delete('panelId');report.navigate(url.href);
                 } catch(error){this.actionError=String(error && (error.message || (error.json && (error.json.errors || error.json.error)) || error.statusText) || error);}
@@ -1415,7 +1431,7 @@
                 } catch (error) { this.actionError = String(error.message || error); return null; }
                 finally { this.busy = false; }
             },
-            filter(pill){if(!pill)return;if(this.dashboardId)this.$emit('filter',pill);else root.location.assign(report.filterUrl(pill,{range:this.range}));},
+            filter(pill){if(!pill)return;if(this.dashboardId)this.$emit('filter',pill);else root.location.assign(report.filterUrl(pill,{range:this.range,appLinks:this.links()}));},
             async inspect() {
                 this.inspector = !this.inspector;
                 if (this.inspector && this.dashboardId && !this.inspection) this.inspection = await this.panelRequest("inspectPanel");
@@ -1442,18 +1458,20 @@
                 h("button", { type: "button", onClick: this.inspect, disabled: this.busy, class: "q-btn q-pa-xs", "aria-label": T("Inspect {0}", named), "aria-pressed": this.inspector }, T("Inspect")),
                 this.dashboardId && this.panelId ? h("button", { type: "button", class: "q-btn q-pa-xs", "aria-haspopup": "menu", "aria-expanded": this.menu ? "true" : "false", "aria-label": T("Panel menu for {0}", named), onClick: () => { this.menu = !this.menu; } }, T("Menu")) : null]);
             const item = (text, click, show) => show === false ? null : h("button", { type: "button", role: "menuitem", class: "q-btn q-pa-xs", disabled: this.busy, onClick: click }, T(text));
-            const alerting = (this.panel.queries || []).some((query) => (query.aggregations || []).some((agg) => agg.role === "metric"));
+            const alerting = (this.panel.queries || []).some((query) => (query.aggregations || []).some((agg) => agg.role === "metric")), alertRule = report.appLink(this.links(), "alertRule", "AlertRule");
             const menu = this.menu ? h("div", { role: "menu", "aria-label": T("Panel menu for {0}", named), class: "row q-gutter-xs q-py-xs", onKeydown: (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.menu = false; } } }, [
-                item(this.embedded ? "Open in Dashboards" : "View", this.viewPanel, this.embedded || !this.single), item("Edit", this.editPanel), item("Share", this.sharePanel),
-                item("Explore", this.explorePanel, !!report.firstQuery(this.panel)), item("Inspect", () => { this.menu = false; this.inspect(); }),
-                item("Duplicate", () => this.changePanel("duplicatePanel"), this.editable), item("Remove", () => this.changePanel("removePanel"), this.editable),
-                alerting ? h("a", { role: "menuitem", class: "m-report-native q-btn q-pa-xs", href: report.appPath("/apps/dashboards/AlertRule?dashboardId=" + encodeURIComponent(this.dashboardId) + "&panelId=" + encodeURIComponent(this.panelId)) }, T("New alert rule")) : null]) : null;
+                item(this.embedded ? "Open in Dashboards" : "View", this.viewPanel, this.embedded || !this.single), item("Edit", this.editPanel, !!report.serverLink(this.links(), "definition", "Definition")), item("Share", this.sharePanel),
+                item("Explore", this.explorePanel, !!report.firstQuery(this.panel) && !!report.serverLink(this.links(), "explore", "Explore")), item("Inspect", () => { this.menu = false; this.inspect(); }),
+                item("Duplicate", () => this.changePanel("duplicatePanel"), this.editable && !!report.serverLink(this.links(), "dashboard", "Dashboard")), item("Remove", () => this.changePanel("removePanel"), this.editable && !!report.serverLink(this.links(), "dashboard", "Dashboard")),
+                alerting && alertRule ? h("a", { role: "menuitem", class: "m-report-native q-btn q-pa-xs", href: alertRule + "?dashboardId=" + encodeURIComponent(this.dashboardId) + "&panelId=" + encodeURIComponent(this.panelId) }, T("New alert rule")) : null]) : null;
             const shared = this.status ? h("p", { role: "status", class: "q-my-xs" }, [this.status, " ", this.shared ? h("input", { type: "text", readonly: true, value: this.shared, "aria-label": T("Panel link"), style: { width: "min(100%,40rem)" }, onFocus: (event) => event.target.select() }) : null,
                 E.button("Close", () => { this.status = ""; this.shared = ""; })]) : null;
             let content;
             // The print document inlines the outline, so its map is drawn in the first pass.
             if (visual === "geomap" && !report.outline && root.moquiReportGeo) report.loadOutline();
             if (visual === "text") content = h(root.Vue.resolveComponent("m-markdown"), { text: report.substituteVariables(this.panel.text || "", Object.assign({}, this.variables, this.panel.repeatValues), this.range) });
+            // a panel that could not be read (a dataset the viewer may not read, a failed query) says so, never "no data"
+            else if (!rows.length && report.unavailable(this.panel)) content = h("p", { role: "alert", class: "text-negative" }, T("Not available: {0}", report.unavailable(this.panel)));
             else if (!rows.length) content = h("p", { role: "status", class: "text-grey" }, T("No data in this time range."));
             else if (visual === "stat" || visual === "gauge" || visual === "barGauge") {
                 const series=report.chart(frame,this.panel).data.datasets,previousAt=this.panel.compareField?fields.findIndex(field=>field.name===this.panel.compareField):-1;
@@ -1495,7 +1513,7 @@
                     h("div", { style: { margin: "0 auto", width: Math.max(0.5, step.width) + "%", height: "22px", background: report.thresholdColor(step.value, step.field) || report.color(0), borderRadius: "2px" } })])));
             } else if (visual === "nodeGraph" && report.nodeGraph(frame, this.panel)) {
                 const graph = report.nodeGraph(frame, this.panel), ms = (value) => report.format(value, { type: "number", unit: "ns" });
-                const open = (item) => { const query = report.firstQuery(this.panel); if (query) report.navigate(report.filterUrl({ datasetId: query.datasetId, query: { field: { name: "service.name", op: "eq", value: item.id } }, label: "service.name: " + item.id, negated: false, disabled: false, pinned: false }, { range: this.range })); };
+                const open = (item) => { const query = report.firstQuery(this.panel); if (query) report.navigate(report.filterUrl({ datasetId: query.datasetId, query: { field: { name: "service.name", op: "eq", value: item.id } }, label: "service.name: " + item.id, negated: false, disabled: false, pinned: false }, { range: this.range, appLinks: this.links() })); };
                 content = h("div", { class: "scroll" }, [h("svg", { class: "m-report-node-graph", viewBox: "0 0 " + graph.width + " " + graph.height, width: graph.width, height: graph.height, role: "img", "aria-label": "Node graph of " + graph.nodes.length + " nodes and " + graph.edges.length + " edges" }, [
                     h("defs", [h("marker", { id: "m-report-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" }, [h("path", { d: "M0 0L10 5L0 10z", fill: "var(--q-secondary)" })])]),
                     ...graph.edges.map((edge, at) => h("path", { key: "e" + at, d: edge.path, fill: "none", stroke: edge.errors ? "var(--q-negative)" : "var(--q-secondary)", "stroke-width": edge.width, "marker-end": "url(#m-report-arrow)", "data-edge": edge.from + "→" + edge.to },
@@ -1623,7 +1641,8 @@
                 const panels=this.dashboard.panels || {},id=this.selectedPanel || Object.keys(panels)[0];
                 if (event.key==='i' && this.panelRefs[id]) {event.preventDefault();this.panelRefs[id].inspect();}
                 if (event.key==='v' && id && this.dashboard.definitionId) {event.preventDefault();const url=new root.URL(root.location.href);url.searchParams.set('panelId',id);root.location.assign(url.href);}
-                if (event.key==='e' && this.dashboard.definitionId) {event.preventDefault();root.location.assign(report.appPath('/apps/dashboards/Definition?definitionId='+encodeURIComponent(this.dashboard.definitionId)));}
+                const editor=report.appLink(this.dashboard.appLinks,'definition','Definition');
+                if (event.key==='e' && this.dashboard.definitionId && editor) {event.preventDefault();root.location.assign(editor+'?definitionId='+encodeURIComponent(this.dashboard.definitionId));}
             };
             root.document.addEventListener("keydown", this.onKey);
             this.onRange=(event)=>{if(event.detail.group!==this.syncGroup)return;const url=new root.URL(root.location.href);url.searchParams.set('from',event.detail.from);url.searchParams.set('thru',event.detail.thru);url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');root.location.assign(url.href);};
@@ -1657,7 +1676,7 @@
                 this.shareStatus = await report.copyText(this.shareLink) ? "Link copied, with the time range made absolute." : "Copy this link to share the dashboard:";
             },
             openUrl() {
-                const url = new root.URL(report.appRoot() + "/dashboards/Dashboard", root.location.href), time = this.dashboard.absoluteTime || {};
+                const url = new root.URL(report.appLink(this.dashboard.appLinks, "dashboard", "Dashboard") || root.location.pathname, root.location.href), time = this.dashboard.absoluteTime || {};
                 url.searchParams.set("definitionId", this.dashboard.definitionId || "");
                 if (this.dashboard.panelId) url.searchParams.set("panelId", this.dashboard.panelId);
                 if (time.from) url.searchParams.set("from", time.from);
@@ -1670,7 +1689,7 @@
             const entries = Array.isArray(panels) ? panels.map((panel, at) => [panel.id || String(at), panel]) : Object.entries(panels);
             const byId = Object.fromEntries(entries);
             const panel = (id, position) => byId[id] ? h("div", { key: id, style: Object.assign({minWidth:"0"},position),onFocusin:()=>{this.selectedPanel=id;},onMouseenter:()=>{this.selectedPanel=id;} }, [h(components["m-report-panel"], { ref:instance=>{this.panelRefs[id]=instance;},panel: byId[id], frames: this.frames[id] || byId[id].frames,
-                frame: byId[id].frame || { fields: [] }, dashboardId: this.dashboard.definitionId, panelId: id, screenUrl: this.dashboard.screenUrl, range: this.dashboard.absoluteTime, variables: this.dashboard.variableValues, syncGroup:this.syncGroup,filters:this.dashboard.filters || [],onFilter:this.addFilter,
+                frame: byId[id].frame || { fields: [] }, dashboardId: this.dashboard.definitionId, panelId: id, screenUrl: this.dashboard.screenUrl, appLinks: this.dashboard.appLinks, range: this.dashboard.absoluteTime, variables: this.dashboard.variableValues, syncGroup:this.syncGroup,filters:this.dashboard.filters || [],onFilter:this.addFilter,
                 editable: !!this.dashboard.editable && !this.dashboard.embedded, embedded: !!this.dashboard.embedded, single: !!this.dashboard.panelId })]) : h("p", { role: "alert" }, "Panel " + id + " is unavailable");
             const auto = (items) => h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,640px),1fr))", gap: "12px" } }, items);
             const layout = (node, path) => {

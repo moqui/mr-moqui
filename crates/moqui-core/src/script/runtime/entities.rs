@@ -12,628 +12,32 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Entity finds, lists, and values as scripts see them.
-
-use moqui_lib::sync::lock;
+//! Entity lists and values as QuickJS scripts see them: exotic objects whose rows and fields read as properties, with
+//! the host table's classes (`script/host/entities.rs`) as their prototypes. `ec.entity`'s functions and the find
+//! builder are the table's.
 
 use rquickjs::class::{PropertyDescriptor, PropertyName};
 use rquickjs::Atom;
 
 use super::*;
-
-pub(super) fn entity_find<'js>(ctx: Ctx<'js>, name: String) -> rquickjs::Result<Class<'js, HostFind>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let find = facade.find(&name).map_err(|err| throw_lib(&ctx, &err))?;
-        wrap_find(&ctx, find)
-    })
-}
-
-/// `ec.entity.sequencedIdPrimary(seqName, staggerMax, bankSize)`: the next id of a sequence, as text.
-pub(super) fn entity_sequenced_id_primary<'js>(
-    ctx: Ctx<'js>,
-    name: String,
-    stagger: Opt<JsValue<'js>>,
-    bank_size: Opt<JsValue<'js>>,
-) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let number = |value: &Opt<JsValue<'js>>| -> rquickjs::Result<Option<u64>> {
-            match value
-                .0
-                .as_ref()
-                .filter(|value| !value.is_null() && !value.is_undefined())
-            {
-                Some(value) => Ok(u64::try_from(js_i64(&ctx, value)?).ok()),
-                None => Ok(None),
-            }
-        };
-        crate::entity::sequenced_id_primary(&facade, &name, number(&stagger)?, number(&bank_size)?)
-            .map_err(|err| throw_lib(&ctx, &err))
-    })
-}
-
-/// `ec.entity.getDatabaseConfName(entityName)`: the database an entity's group is on, as `postgres`.
-pub(super) fn entity_get_database_conf_name<'js>(ctx: Ctx<'js>, name: String) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        facade.database_conf_name(&name).map_err(|err| throw_lib(&ctx, &err))
-    })
-}
-
-pub(super) fn entity_temp_set_sequenced_id_primary<'js>(
-    ctx: Ctx<'js>,
-    name: String,
-    next: JsValue<'js>,
-    bank_size: JsValue<'js>,
-) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let next = js_i64(&ctx, &next)?;
-        let bank_size = js_i64(&ctx, &bank_size)?;
-        facade.temp_set_sequenced_id_primary(&name, next, bank_size);
-        Ok(())
-    })
-}
-
-pub(super) fn entity_temp_reset_sequenced_id_primary<'js>(ctx: Ctx<'js>, name: String) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        facade_of(&ctx)?.temp_reset_sequenced_id_primary(&name);
-        Ok(())
-    })
-}
-
-pub(super) fn entity_make_value<'js>(ctx: Ctx<'js>, name: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let value = facade.make_value(&name).map_err(|err| throw_lib(&ctx, &err))?;
-        entity_to_js(&ctx, HostEntity::new(value))
-    })
-}
-
-/// `ec.entity.startTxCacheDb(hold)`: enter sim on this thread, as Java's `TransactionCacheDb`.
-/// Only `hold=true` exists; a second start while one is active is refused, as in Java.
-pub(super) fn entity_start_tx_cache_db(ctx: Ctx<'_>, hold: bool) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        if !hold {
-            return Err(Exception::throw_message(
-                &ctx,
-                "A TX cache DB that flushes to production is no longer supported. Use hold=true, which never writes to production.",
-            ));
-        }
-        if crate::entity::cache::sim_entered() {
-            return Err(Exception::throw_message(
-                &ctx,
-                "A TX cache is already active on this ExecutionContext",
-            ));
-        }
-        let facade = facade_of(&ctx)?;
-        crate::entity::cache::enter_sim(&facade).map_err(|err| throw_lib(&ctx, &err))
-    })
-}
-
-/// `ec.entity.stopTxCache()`: drop this thread's sim schema. No active cache is a no-op.
-pub(super) fn entity_stop_tx_cache(ctx: Ctx<'_>) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        if !crate::entity::cache::sim_entered() {
-            return Ok(());
-        }
-        let facade = facade_of(&ctx)?;
-        crate::entity::cache::exit_sim(&facade).map_err(|err| throw_lib(&ctx, &err))
-    })
-}
-
-/// `ec.entity.isTxCacheActive()`.
-pub(super) fn entity_is_tx_cache_active(ctx: Ctx<'_>) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || Ok(crate::entity::cache::sim_entered()))
-}
+use crate::script::host::entities::{self as host_entities, ListState};
+pub(crate) use crate::script::host::entities::{
+    entity_field_names, entity_is_field, entity_set_field, EntityCell, EntityField, ScriptList,
+};
 
 /// An entity value as a script sees it.
 pub(super) fn entity_to_js<'js>(ctx: &Ctx<'js>, host: HostEntity) -> rquickjs::Result<JsValue<'js>> {
     Class::instance(ctx.clone(), host).and_then(|class| class.into_js(ctx))
 }
 
-pub(super) fn wrap_find<'js>(ctx: &Ctx<'js>, find: EntityFind) -> rquickjs::Result<Class<'js, HostFind>> {
-    Class::instance(
-        ctx.clone(),
-        HostFind {
-            query_texts: find.query_texts(),
-            inner: RefCell::new(Some(find)),
-        },
+/// A find builder over `find`, an object of the host table's class.
+pub(super) fn wrap_find<'js>(ctx: &Ctx<'js>, find: EntityFind) -> rquickjs::Result<JsValue<'js>> {
+    bind::running_instance(
+        ctx,
+        HostObject::new(host_entities::FindState::of(find)),
+        &host_entities::FIND,
     )
-}
-
-pub(super) fn take_find(ctx: &Ctx<'_>, slot: &RefCell<Option<EntityFind>>) -> rquickjs::Result<EntityFind> {
-    slot.borrow_mut()
-        .take()
-        .ok_or_else(|| Exception::throw_message(ctx, "entity find was already used"))
-}
-
-/// The integer of a `limit` or `offset` argument, `what`. A number is itself. Text is what an entity-find's
-/// `limit="${expr}"` expands to, read as Java's `as Integer`: trimmed and parsed, a whole number in decimal form too.
-/// Null, undefined, empty text or text that is not a number is `None`, no limit, logged at debug: the find still runs.
-fn find_count(ctx: &Ctx<'_>, what: &str, value: &JsValue<'_>) -> rquickjs::Result<Option<i64>> {
-    if value.is_null() || value.is_undefined() {
-        return Ok(None);
-    }
-    let Some(text) = value.as_string() else {
-        return js_i64(ctx, value).map(Some);
-    };
-    let text = text.to_string()?;
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    if let Ok(number) = trimmed.parse::<i64>() {
-        return Ok(Some(number));
-    }
-    #[allow(clippy::cast_possible_truncation)]
-    match trimmed.parse::<f64>() {
-        Ok(number) if number.fract() == 0.0 && number.abs() < 9_007_199_254_740_992.0 => Ok(Some(number as i64)),
-        _ => {
-            tracing::debug!("entity find {what} {trimmed:?} is not an integer; no {what} applied");
-            Ok(None)
-        }
-    }
-}
-
-pub(super) fn prefixed_field(prefix: &str, field: &str) -> String {
-    if prefix.is_empty() {
-        return field.to_string();
-    }
-    let mut name = String::with_capacity(prefix.len() + field.len());
-    name.push_str(prefix);
-    let mut chars = field.chars();
-    if let Some(first) = chars.next() {
-        name.push(first.to_ascii_uppercase());
-        name.push_str(chars.as_str());
-    }
-    name
-}
-
-pub(super) enum FieldInclude {
-    All,
-    Pk,
-    NonPk,
-}
-
-pub(super) fn field_include(value: &JsValue<'_>) -> FieldInclude {
-    if value.is_null() || value.is_undefined() {
-        return FieldInclude::All;
-    }
-    match value.as_bool() {
-        Some(true) => FieldInclude::Pk,
-        Some(false) => FieldInclude::NonPk,
-        None => FieldInclude::All,
-    }
-}
-
-pub(super) fn field_prefix(ctx: &Ctx<'_>, value: &JsValue<'_>) -> rquickjs::Result<String> {
-    if value.is_null() || value.is_undefined() {
-        return Ok(String::new());
-    }
-    js_string(ctx, value)
-}
-
-/// A find builder. Chain methods take the inner find so a second use fails.
-#[derive(Trace, JsLifetime)]
-#[rquickjs::class]
-pub(super) struct HostFind {
-    #[qjs(skip_trace)]
-    pub(super) inner: RefCell<Option<EntityFind>>,
-    /// The SQL the find ran, shared with its clones, so it can be read after `list()`, `one()` or `count()` used it up.
-    #[qjs(skip_trace)]
-    query_texts: Arc<Mutex<Vec<String>>>,
-}
-
-impl HostFind {
-    /// A clone of the find this object holds, which stays usable.
-    fn peek(&self, ctx: &Ctx<'_>) -> rquickjs::Result<EntityFind> {
-        self.inner
-            .borrow()
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| Exception::throw_message(ctx, "this find was already run"))
-    }
-}
-
-#[rquickjs::methods(rename_all = "camelCase")]
-impl HostFind {
-    fn condition<'js>(
-        &self,
-        ctx: Ctx<'js>,
-        first: JsValue<'js>,
-        second: Opt<JsValue<'js>>,
-        third: Opt<JsValue<'js>>,
-    ) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let mut find = take_find(&ctx, &self.inner)?;
-            // `condition(field, operator, value)`: the operator is a name Java's factory knows, an empty one is equals.
-            if let (Some(operator), Some(value)) = (second.0.as_ref(), third.0.as_ref()) {
-                let field = js_string(&ctx, &first)?;
-                let operator = if operator.is_null() || operator.is_undefined() {
-                    String::new()
-                } else {
-                    js_string(&ctx, operator)?
-                };
-                let host = js_to_host(&ctx, value)?;
-                let condition = comparison(&field, &operator, host).map_err(|err| throw_lib(&ctx, &err))?;
-                return wrap_find(&ctx, find.condition(condition));
-            }
-            if second.0.is_none() {
-                if first.is_null() || first.is_undefined() {
-                    return wrap_find(&ctx, find);
-                }
-                if let Some(condition) = condition_of(&first) {
-                    return wrap_find(&ctx, find.condition(condition));
-                }
-            }
-            if let Some(value) = second.0 {
-                let field = js_string(&ctx, &first)?;
-                let host = js_to_host(&ctx, &value)?;
-                let condition = comparison(&field, "equals", host).map_err(|err| throw_lib(&ctx, &err))?;
-                return wrap_find(&ctx, find.condition(condition));
-            }
-            let Some(object) = first.as_object() else {
-                return Err(Exception::throw_message(
-                    &ctx,
-                    "entity condition needs a field and a value",
-                ));
-            };
-            // A map such as `context` carries names that are not fields. Only fields (a view's aliases) apply.
-            let facade = facade_of(&ctx)?;
-            let known: std::collections::BTreeSet<String> = facade
-                .with_entity(find.entity_name(), |entity, _, _| {
-                    Ok(entity.field_names().into_iter().map(str::to_string).collect())
-                })
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            for key in object.keys::<String>() {
-                let key = key?;
-                if !known.contains(&key) {
-                    continue;
-                }
-                let property: JsValue = object.get(key.as_str())?;
-                let host = js_to_host(&ctx, &property)?;
-                let condition = comparison(&key, "equals", host).map_err(|err| throw_lib(&ctx, &err))?;
-                find = find.condition_from_map(condition);
-            }
-            wrap_find(&ctx, find)
-        })
-    }
-
-    /// Comma separated fields, each with an optional `-` for descending, `+`, or `^` for ignore case.
-    fn order_by<'js>(&self, ctx: Ctx<'js>, field: String) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let mut find = take_find(&ctx, &self.inner)?;
-            for part in field.split(',') {
-                find = find.order_by_text(part);
-            }
-            wrap_find(&ctx, find)
-        })
-    }
-
-    /// `limit(count)`: a number, or the text an expanded `limit="${expr}"` of an entity-find gives (see
-    /// [`find_count`]). Null, empty or not a number leaves the find without a limit.
-    fn limit<'js>(&self, ctx: Ctx<'js>, value: JsValue<'js>) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let find = take_find(&ctx, &self.inner)?;
-            let find = match find_count(&ctx, "limit", &value)? {
-                Some(number) => find.limit(number),
-                None => find,
-            };
-            wrap_find(&ctx, find)
-        })
-    }
-
-    /// `offset(offset)`, or `offset(pageIndex, pageSize)` for the offset `pageIndex * pageSize`, as Java's. The page
-    /// size is not kept: `limit` sets it. The arguments are as `limit` takes them.
-    fn offset<'js>(
-        &self,
-        ctx: Ctx<'js>,
-        value: JsValue<'js>,
-        page_size: Opt<JsValue<'js>>,
-    ) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let find = take_find(&ctx, &self.inner)?;
-            let Some(mut number) = find_count(&ctx, "offset", &value)? else {
-                return wrap_find(&ctx, find);
-            };
-            if let Some(size) = page_size.0.as_ref().filter(|size| !size.is_undefined()) {
-                if let Some(size) = find_count(&ctx, "page size", size)? {
-                    number = number.saturating_mul(size);
-                }
-            }
-            wrap_find(&ctx, find.offset(number))
-        })
-    }
-
-    /// `conditionDate(fromField, thruField, moment)`: the rows in effect at the moment, or now when it is empty.
-    fn condition_date<'js>(
-        &self,
-        ctx: Ctx<'js>,
-        from_field: String,
-        thru_field: String,
-        moment: Opt<JsValue<'js>>,
-    ) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let moment = match moment.0.as_ref() {
-                Some(value) => js_to_host(&ctx, value)?,
-                None => Value::Null,
-            };
-            let mut find = take_find(&ctx, &self.inner)?;
-            if let Some(condition) = date_range_condition(&from_field, &thru_field, moment, false) {
-                find = find.condition(condition);
-            }
-            wrap_find(&ctx, find)
-        })
-    }
-
-    /// `getPageIndex()`: `offset / pageSize`, 0 with no offset.
-    fn get_page_index<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let find = self.peek(&ctx)?;
-            let size = find.limit_value().filter(|limit| *limit != 0).unwrap_or(20);
-            i64_to_js(&ctx, find.offset_value().map_or(0, |offset| offset / size))
-        })
-    }
-
-    /// `getPageSize()`: the limit, 20 with none.
-    fn get_page_size<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || i64_to_js(&ctx, self.peek(&ctx)?.limit_value().unwrap_or(20)))
-    }
-
-    /// `updateAll(fieldsToSet)`: set the fields on each row found and update the ones that change. Returns how many
-    /// rows were updated. The find is not cached, so every row is read and its entity ECA rules run.
-    fn update_all<'js>(&self, ctx: Ctx<'js>, fields: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let Value::Map(fields) = js_to_host(&ctx, &fields)? else {
-                return Err(Exception::throw_message(&ctx, "updateAll needs a map of fields to set"));
-            };
-            let updated = take_find(&ctx, &self.inner)?
-                .update_all(fields)
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            i64_to_js(&ctx, updated)
-        })
-    }
-
-    /// `useCache(flag)`: through the entity cache for any entity not marked `never`, as Java's `EntityFind.useCache`. A
-    /// null or undefined flag leaves the entity's own setting.
-    fn use_cache<'js>(&self, ctx: Ctx<'js>, flag: JsValue<'js>) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let find = take_find(&ctx, &self.inner)?;
-            let find = if flag.is_null() || flag.is_undefined() {
-                find
-            } else {
-                let on = flag.as_bool().unwrap_or_else(|| {
-                    flag.as_string()
-                        .and_then(|text| text.to_string().ok())
-                        .is_some_and(|text| text == "true")
-                });
-                find.use_cache(on)
-            };
-            wrap_find(&ctx, find)
-        })
-    }
-
-    fn for_update<'js>(&self, ctx: Ctx<'js>, flag: JsValue<'js>) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let find = take_find(&ctx, &self.inner)?.for_update(flag.as_bool().unwrap_or(true));
-            wrap_find(&ctx, find)
-        })
-    }
-
-    fn distinct<'js>(&self, ctx: Ctx<'js>, flag: JsValue<'js>) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let find = take_find(&ctx, &self.inner)?.distinct(flag.as_bool().unwrap_or(true));
-            wrap_find(&ctx, find)
-        })
-    }
-
-    fn disable_authz<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || wrap_find(&ctx, take_find(&ctx, &self.inner)?.disable_authz()))
-    }
-
-    /// `useClone(flag)`: read from a clone datasource of the entity's group when one is open.
-    fn use_clone<'js>(&self, ctx: Ctx<'js>, flag: JsValue<'js>) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let on = flag.as_bool().unwrap_or_else(|| {
-                flag.as_string()
-                    .and_then(|text| text.to_string().ok())
-                    .is_some_and(|text| text == "true")
-            });
-            wrap_find(&ctx, take_find(&ctx, &self.inner)?.use_clone(on))
-        })
-    }
-
-    fn select_field<'js>(&self, ctx: Ctx<'js>, field: String) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let find = take_find(&ctx, &self.inner)?.select_field(&field);
-            wrap_find(&ctx, find)
-        })
-    }
-
-    /// The shown and hidden fields of a form-list, for its `entity-find` (generated code only).
-    fn select_form_fields<'js>(&self, ctx: Ctx<'js>, fields: String) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let find = take_find(&ctx, &self.inner)?.select_form_fields(&fields);
-            wrap_find(&ctx, find)
-        })
-    }
-
-    fn list<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Class<'js, HostList>> {
-        host_guard(&ctx, || {
-            let list = take_find(&ctx, &self.inner)?
-                .list()
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            Class::instance(ctx.clone(), HostList::of_list(list))
-        })
-    }
-
-    fn one<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let found = take_find(&ctx, &self.inner)?
-                .one()
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            match found {
-                Some(value) => entity_to_js(&ctx, HostEntity::new(value)),
-                None => Null.into_js(&ctx),
-            }
-        })
-    }
-
-    fn one_master<'js>(&self, ctx: Ctx<'js>, master: Opt<String>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let facade = facade_of(&ctx)?;
-            match take_find(&ctx, &self.inner)?
-                .one()
-                .map_err(|err| throw_lib(&ctx, &err))?
-            {
-                Some(value) => {
-                    let graph = crate::entity::query_rest::master_value(
-                        &facade,
-                        &value,
-                        master.0.as_deref().unwrap_or("default"),
-                    )
-                    .map_err(|err| throw_lib(&ctx, &err))?;
-                    host_to_js(&ctx, graph)
-                }
-                None => Null.into_js(&ctx),
-            }
-        })
-    }
-
-    fn count<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let number = take_find(&ctx, &self.inner)?
-                .count()
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            i64_to_js(&ctx, number)
-        })
-    }
-
-    /// `getQueryTextList()`: the SQL the find ran, without its bound values; there after the find was used up.
-    fn get_query_text_list(&self) -> Vec<String> {
-        lock(&self.query_texts).clone()
-    }
-
-    /// `getLimit()`: the limit of the find, or null. Does not use the find up.
-    fn get_limit<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || match self.peek(&ctx)?.limit_value() {
-            Some(limit) => i64_to_js(&ctx, limit),
-            None => Null.into_js(&ctx),
-        })
-    }
-
-    /// `getOffset()`: the offset of the find, or null. Does not use the find up.
-    fn get_offset<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || match self.peek(&ctx)?.offset_value() {
-            Some(offset) => i64_to_js(&ctx, offset),
-            None => Null.into_js(&ctx),
-        })
-    }
-
-    /// A copy of the find, so a page's `list()` and the `count()` of all rows can both run.
-    fn copy<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let find = self.peek(&ctx)?;
-            wrap_find(&ctx, find)
-        })
-    }
-
-    /// Delete the rows the find matches. Returns how many, as Java's `deleteAll`.
-    fn delete_all<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let deleted = take_find(&ctx, &self.inner)?
-                .delete_all()
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            i64_to_js(&ctx, deleted)
-        })
-    }
-
-    /// `purge(maxSeconds, chunkSize)`: delete the rows the find matches, each chunk of rows by primary key in a
-    /// transaction of its own, a failed chunk logged and passed over, and no chunk begun after `maxSeconds` (none:
-    /// no limit). Returns how many rows the committed chunks deleted. For the cleanup jobs whose backlog may not fit
-    /// one transaction (plans/High-Level-Review.md HL-033).
-    fn purge<'js>(
-        &self,
-        ctx: Ctx<'js>,
-        max_seconds: Opt<JsValue<'js>>,
-        chunk_size: Opt<JsValue<'js>>,
-    ) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let number = |value: &Opt<JsValue<'js>>| value.0.as_ref().and_then(JsValue::as_number);
-            let deadline = number(&max_seconds)
-                .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
-                .map(|seconds| std::time::Instant::now() + std::time::Duration::from_secs_f64(seconds));
-            let mut find = take_find(&ctx, &self.inner)?;
-            if let Some(rows) = number(&chunk_size).filter(|rows| rows.is_finite() && *rows >= 1.0) {
-                // A finite number of at least 1: the cast saturates at most.
-                find = find.bulk_chunk(rows as i64);
-            }
-            let purged = find.purge(deadline).map_err(|err| throw_lib(&ctx, &err))?;
-            i64_to_js(&ctx, purged.deleted)
-        })
-    }
-
-    /// A script reads the whole result. A streaming cursor is the host's `EntityFind::iterator`.
-    fn iterator<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Class<'js, HostList>> {
-        self.list(ctx)
-    }
-
-    /// A condition on an aggregate alias of a view-entity. A null condition is skipped.
-    fn having_condition<'js>(&self, ctx: Ctx<'js>, condition: JsValue<'js>) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let mut find = take_find(&ctx, &self.inner)?;
-            if let Some(condition) = condition_of(&condition) {
-                find = find.having(condition);
-            }
-            wrap_find(&ctx, find)
-        })
-    }
-
-    /// `searchFormMap(inputFields, defaultParameters, skipFields, defaultOrderBy, paginate)`.
-    /// The defaults and `orderByField` it applied are put in the context, so the form shows them.
-    fn search_form_map<'js>(&self, ctx: Ctx<'js>, args: Rest<JsValue<'js>>) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let map_arg = |index: usize| -> rquickjs::Result<std::collections::BTreeMap<String, Value>> {
-                match args.0.get(index) {
-                    Some(value) if !value.is_null() && !value.is_undefined() => match js_to_host(&ctx, value)? {
-                        Value::Map(entries) => Ok(entries.into_iter().collect()),
-                        _ => Err(Exception::throw_message(&ctx, "searchFormMap needs maps of fields")),
-                    },
-                    _ => Ok(std::collections::BTreeMap::new()),
-                }
-            };
-            let text_arg = |index: usize| -> String {
-                args.0
-                    .get(index)
-                    .and_then(|value| js_to_host(&ctx, value).ok())
-                    .map(|value| moqui_lib::object::to_plain_string(&value))
-                    .unwrap_or_default()
-            };
-            let input = map_arg(0)?;
-            let defaults = map_arg(1)?;
-            let paginate = args.0.get(4).and_then(JsValue::as_bool).unwrap_or(false);
-            let found = take_find(&ctx, &self.inner)?
-                .search_form_map(&input, &defaults, &text_arg(2), &text_arg(3), paginate)
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            for (name, value) in found.context {
-                put_name(&ctx, &name, value)?;
-            }
-            wrap_find(&ctx, found.find)
-        })
-    }
-
-    fn require_search_form_parameters<'js>(
-        &self,
-        ctx: Ctx<'js>,
-        require: Opt<bool>,
-    ) -> rquickjs::Result<Class<'js, HostFind>> {
-        host_guard(&ctx, || {
-            let find = take_find(&ctx, &self.inner)?.require_search_form_parameters(require.0.unwrap_or(true));
-            wrap_find(&ctx, find)
-        })
-    }
+    .map(Object::into_value)
 }
 
 /// The exotic methods `#[rquickjs::class(exotic)]` calls, in the module it names `__impl_exotic_<Class>__`, written
@@ -739,98 +143,51 @@ fn define_on_receiver<'js>(atom: Atom<'js>, receiver: &JsValue<'js>, value: JsVa
     result
 }
 
-/// A find result as scripts and the context stack hold it. Each row is its own shared cell, so a field set through
-/// `list[0]`, `get`, `for...of` or an `<iterate>` entry is kept in the list, as on a Java `List` of values. The rows are
-/// copied from the [`EntityList`] the find returned, so the entity cache's list is not changed.
-pub(crate) struct ScriptList {
-    cells: Vec<Arc<EntityCell>>,
-}
-
-impl ScriptList {
-    pub(crate) fn of_list(list: EntityList) -> Self {
-        Self::of_cells(
-            list.into_values()
-                .into_iter()
-                .map(|value| Arc::new(Mutex::new(value)))
-                .collect(),
-        )
-    }
-
-    pub(crate) fn of_cells(cells: Vec<Arc<EntityCell>>) -> Self {
-        Self { cells }
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.cells.len()
-    }
-
-    pub(crate) fn cells(&self) -> &[Arc<EntityCell>] {
-        &self.cells
-    }
-
-    /// The rows as they are now.
-    pub(crate) fn values(&self) -> Vec<EntityValue> {
-        self.cells.iter().map(|cell| lock(cell).clone()).collect()
-    }
-}
-
 /// A find result. `length`, an index and `get` are what iterate and inline scripts use, and it is iterable as a
-/// Java `List` is to Groovy. The methods written in JavaScript are added by [`install_entity_prototypes`].
+/// Java `List` is to Groovy. Its methods are the host table's ([`install_entity_prototypes`]).
 #[derive(Trace, JsLifetime)]
 #[rquickjs::class(exotic)]
 pub(super) struct HostList {
+    /// The rows, and this object's own `EntityListIterator` cursor.
     #[qjs(skip_trace)]
-    pub(super) inner: Arc<ScriptList>,
-    /// The `EntityListIterator` cursor of `iterator()`: the current row's index, -1 before the first.
-    #[qjs(skip_trace)]
-    cursor: std::cell::Cell<i64>,
+    pub(super) state: Arc<ListState>,
 }
 
 impl HostList {
     pub(super) fn of_list(list: EntityList) -> Self {
-        Self {
-            inner: Arc::new(ScriptList::of_list(list)),
-            cursor: std::cell::Cell::new(-1),
-        }
-    }
-
-    fn of_cells(cells: Vec<Arc<EntityCell>>) -> Self {
-        Self::of_shared(Arc::new(ScriptList::of_cells(cells)))
+        Self::of_shared(Arc::new(ScriptList::of_list(list)))
     }
 
     /// A list over rows another list holds too.
     pub(super) fn of_shared(inner: Arc<ScriptList>) -> Self {
         Self {
-            inner,
-            cursor: std::cell::Cell::new(-1),
+            state: Arc::new(ListState::of(inner)),
         }
     }
 
-    /// The row at the cursor after moving it to `index`, or null when `index` is outside the rows (the cursor stops
-    /// before the first or after the last).
-    fn move_to<'js>(&self, ctx: &Ctx<'js>, index: i64) -> rquickjs::Result<JsValue<'js>> {
-        let len = i64::try_from(self.inner.len()).unwrap_or(i64::MAX);
-        let index = index.clamp(-1, len);
-        self.cursor.set(index);
-        if index < 0 || index >= len {
-            return Null.into_js(ctx);
-        }
-        self.item(ctx, usize::try_from(index).unwrap_or(0))
+    /// The rows as a host value.
+    pub(super) fn rows(&self) -> HostObject {
+        HostObject(Arc::clone(&self.state.list) as _)
+    }
+
+    /// The receiver state a host table method reads.
+    pub(super) fn host_state(&self) -> HostObject {
+        HostObject(Arc::clone(&self.state) as _)
     }
 
     fn length(&self, ctx: &Ctx<'_>) -> rquickjs::Result<i32> {
-        i32::try_from(self.inner.len()).map_err(|_| Exception::throw_message(ctx, "list is too long"))
+        i32::try_from(self.state.list.len()).map_err(|_| Exception::throw_message(ctx, "list is too long"))
     }
 
     /// The position a property name stands for, when it is an index in the list.
     fn index_of(&self, name: &str) -> Option<usize> {
         let index: usize = name.parse().ok()?;
-        (index < self.inner.len() && index.to_string() == name).then_some(index)
+        (index < self.state.list.len() && index.to_string() == name).then_some(index)
     }
 
     /// The row itself, not a copy: a field set on it is kept in the list.
     fn item<'js>(&self, ctx: &Ctx<'js>, index: usize) -> rquickjs::Result<JsValue<'js>> {
-        match self.inner.cells().get(index) {
+        match self.state.list.cells().get(index) {
             Some(cell) => entity_to_js(ctx, HostEntity::of(Arc::clone(cell))),
             None => Null.into_js(ctx),
         }
@@ -896,7 +253,7 @@ impl HostList {
     }
 
     fn own_names<'js>(&self, ctx: &Ctx<'js>) -> Result<Vec<PropertyName<'js>>, JsError> {
-        (0..self.inner.len())
+        (0..self.state.list.len())
             .map(|index| {
                 let index = u32::try_from(index).map_err(|_| Exception::throw_message(ctx, "list is too long"))?;
                 Ok(PropertyName {
@@ -908,147 +265,9 @@ impl HostList {
     }
 }
 
-#[rquickjs::methods(rename_all = "camelCase")]
-impl HostList {
-    /// Java's `EntityListIterator.next`: the row after the current one, null past the last.
-    fn next<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || self.move_to(&ctx, self.cursor.get() + 1))
-    }
-
-    fn has_next(&self) -> bool {
-        self.cursor.get() + 1 < i64::try_from(self.inner.len()).unwrap_or(i64::MAX)
-    }
-
-    /// Java's `previous`: the row before the current one, null before the first.
-    fn previous<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || self.move_to(&ctx, self.cursor.get() - 1))
-    }
-
-    fn has_previous(&self) -> bool {
-        self.cursor.get() > 0
-    }
-
-    /// Java's `absolute`, 1-based; from the end when negative; 0 is before the first. True when on a row.
-    fn absolute(&self, row: i32) -> bool {
-        let len = i64::try_from(self.inner.len()).unwrap_or(i64::MAX);
-        let index = match i64::from(row) {
-            0 => -1,
-            row if row > 0 => row - 1,
-            row => len + row,
-        }
-        .clamp(-1, len);
-        self.cursor.set(index);
-        index >= 0 && index < len
-    }
-
-    /// Java's `relative`: move `rows` from the current row. True when on a row.
-    fn relative(&self, rows: i32) -> bool {
-        let len = i64::try_from(self.inner.len()).unwrap_or(i64::MAX);
-        let index = (self.cursor.get() + i64::from(rows)).clamp(-1, len);
-        self.cursor.set(index);
-        index >= 0 && index < len
-    }
-
-    /// Java's `currentIndex`: the current row, 1-based; 0 before the first.
-    fn current_index(&self) -> i64 {
-        self.cursor.get() + 1
-    }
-
-    fn first<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || self.move_to(&ctx, 0))
-    }
-
-    fn last<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let len = i64::try_from(self.inner.len()).unwrap_or(i64::MAX);
-            self.move_to(&ctx, len - 1)
-        })
-    }
-
-    fn before_first(&self) {
-        self.cursor.set(-1);
-    }
-
-    fn after_last(&self) {
-        self.cursor.set(i64::try_from(self.inner.len()).unwrap_or(i64::MAX));
-    }
-
-    /// Java's `getCompleteList`: every row.
-    fn get_complete_list<'js>(&self, ctx: Ctx<'js>, _close_after: Opt<bool>) -> rquickjs::Result<Class<'js, HostList>> {
-        host_guard(&ctx, || {
-            Class::instance(ctx.clone(), HostList::of_cells(self.inner.cells().to_vec()))
-        })
-    }
-
-    /// Java's `setFetchSize` and `close`: the rows are already here.
-    fn set_fetch_size(&self, _rows: i32) {}
-
-    fn close(&self) {}
-
-    fn get<'js>(&self, ctx: Ctx<'js>, index: i32) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            if index < 0 {
-                return Null.into_js(&ctx);
-            }
-            let index =
-                usize::try_from(index).map_err(|_| Exception::throw_message(&ctx, "list index is too large"))?;
-            self.item(&ctx, index)
-        })
-    }
-
-    fn get_partial_list<'js>(
-        &self,
-        ctx: Ctx<'js>,
-        offset: i32,
-        size: i32,
-        _count: Opt<bool>,
-    ) -> rquickjs::Result<Class<'js, HostList>> {
-        host_guard(&ctx, || {
-            let start = usize::try_from(offset.max(0)).unwrap_or(0);
-            let take = usize::try_from(size.max(0)).unwrap_or(0);
-            // The part shares the rows, as a Java sublist shares its elements.
-            let cells = self.inner.cells().iter().skip(start).take(take).cloned().collect();
-            Class::instance(ctx.clone(), HostList::of_cells(cells))
-        })
-    }
-
-    fn filter_by_date<'js>(
-        &self,
-        ctx: Ctx<'js>,
-        from_name: String,
-        thru_name: String,
-        valid: JsValue<'js>,
-        ignore_if_empty: Opt<bool>,
-    ) -> rquickjs::Result<Class<'js, HostList>> {
-        host_guard(&ctx, || {
-            let valid = js_to_host(&ctx, &valid)?;
-            let empty = moqui_lib::object::is_empty(&valid);
-            let cells = if empty && ignore_if_empty.0.unwrap_or(false) {
-                self.inner.cells().to_vec()
-            } else {
-                let valid = if empty { now_timestamp() } else { timestamp_of(&valid) };
-                self.inner
-                    .cells()
-                    .iter()
-                    .filter(|cell| {
-                        let row = lock(cell);
-                        let from = timestamp_of(row.get(&from_name).unwrap_or(&Value::Null));
-                        let thru = timestamp_of(row.get(&thru_name).unwrap_or(&Value::Null));
-                        let started = from.is_null()
-                            || moqui_lib::object::compare_obj(&from, &valid)
-                                .is_ok_and(|ordering| ordering != Ordering::Greater);
-                        let open = thru.is_null()
-                            || moqui_lib::object::compare_obj(&thru, &valid)
-                                .is_ok_and(|ordering| ordering == Ordering::Greater);
-                        started && open
-                    })
-                    .cloned()
-                    .collect()
-            };
-            Class::instance(ctx.clone(), HostList::of_cells(cells))
-        })
-    }
-}
+/// The class's prototype, which [`install_entity_prototypes`] fills with the host table's methods.
+#[rquickjs::methods]
+impl HostList {}
 
 /// One entity value. Field storage stays on this object, not on the context stack.
 ///
@@ -1060,167 +279,27 @@ pub(super) struct HostEntity {
     pub(super) inner: Arc<EntityCell>,
 }
 
-/// An entity value a script and the context stack share by reference.
-pub(super) type EntityCell = Mutex<EntityValue>;
-
 impl HostEntity {
-    pub(super) fn new(value: EntityValue) -> Self {
-        Self::of(Arc::new(Mutex::new(value)))
-    }
-
     pub(super) fn of(inner: Arc<EntityCell>) -> Self {
         Self { inner }
     }
 
-    fn val(&self) -> MutexGuard<'_, EntityValue> {
-        lock(&self.inner)
-    }
-
-    /// A copy of the value, for a write: the write runs entity ECA rules, and a rule that reads this same value
-    /// must not find the cell locked. The writes take the value by reference and set nothing on it.
-    fn snapshot(&self) -> EntityValue {
-        self.val().clone()
-    }
-
-    /// Run `write` on a [`Self::snapshot`]; after it, the value holds what the database does, so a later update writes
-    /// only the fields set after this write.
-    fn write(
-        &self,
-        ctx: &Ctx<'_>,
-        write: impl FnOnce(&EntityValue, &EntityFacade) -> Result<(), moqui_lib::error::Error>,
-    ) -> rquickjs::Result<()> {
-        let facade = facade_of(ctx)?;
-        let written = self.snapshot();
-        write(&written, &facade).map_err(|err| throw_lib(ctx, &err))?;
-        self.val().note_written(&written);
-        Ok(())
-    }
-
-    /// What `name` is on the entity of this value, or None when no entity definition can be reached.
-    fn member(&self, name: &str) -> Option<Member> {
-        let facade = ExecutionContext::with_current(|ec| ec.factory().entity()).flatten()?;
-        let entity_name = self.val().entity_name().to_string();
-        facade
-            .with_entity(&entity_name, |entity, _, _| {
-                if entity.has_field(name) {
-                    return Ok(Member::Field);
-                }
-                Ok(match entity.relationship(name) {
-                    Some(relationship) if relationship.relationship_type.starts_with("one") => Member::One,
-                    Some(_) => Member::Many,
-                    None => Member::Unknown,
-                })
-            })
-            .ok()
-    }
-
-    /// A field as a script reads it, in the user's locale when it is a localized field, and a view's `pq-expression`
-    /// alias evaluated, as Java's `get`. A lookup or an expression runs with the value unlocked: a lookup is a find, and
-    /// an expression may read this same value.
-    fn field_value(&self, name: &str) -> Option<Value> {
-        let value = self.val();
-        if !value.localizes(name) {
-            return value.get(name).cloned();
-        }
-        let Some(facade) = ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() else {
-            return value.get(name).cloned();
-        };
-        let read = value.read_localized(&facade, name);
-        drop(value);
-        match read {
-            Ok(found) => found,
-            Err(read) => read.run(&facade),
-        }
-    }
-
-    /// [`Self::field_value`], except for a `pq-expression` alias with the name of a relationship: as Java's `get`, the
-    /// relationship comes first, so that is None.
-    fn held_value(&self, name: &str) -> Option<Value> {
-        let pq_alias = self.val().is_pq_alias(name);
-        if pq_alias && matches!(self.member(name), Some(Member::One | Member::Many)) {
-            return None;
-        }
-        self.field_value(name)
-    }
-
-    /// The fields as a plain map, the localized ones in the user's locale, with a view's `pq-expression` aliases, as
-    /// Java's `getMap`.
-    fn field_map(&self) -> std::collections::BTreeMap<String, Value> {
-        let value = self.val();
-        if !value.has_l10n() {
-            return crate::entity::string_map(value.fields());
-        }
-        let copy = value.clone();
-        drop(value);
-        match ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() {
-            Some(facade) => crate::entity::string_map(&copy.localized_fields(&facade)),
-            None => crate::entity::string_map(copy.fields()),
-        }
-    }
-
-    /// Whether `name` is a field: one the value holds, or one its entity defines.
-    fn is_field(&self, name: &str) -> bool {
-        self.val().fields().contains_key(name) || matches!(self.member(name), Some(Member::Field))
-    }
-
-    /// Set a field, as `put` in Java: a name that is not a field of the entity is an error. When no entity
-    /// definition can be reached, any name is set.
     fn set_field(&self, ctx: &Ctx<'_>, field: String, value: &JsValue<'_>) -> rquickjs::Result<()> {
         let host = js_to_host(ctx, value)?;
-        let known = self.val().fields().contains_key(field.as_str());
-        if !known
-            && self
-                .member(&field)
-                .is_some_and(|member| !matches!(member, Member::Field))
-        {
-            let entity_name = self.val().entity_name().to_string();
-            return Err(Exception::throw_message(
-                ctx,
-                &format!("The field name {field} is not valid for entity {entity_name}"),
-            ));
-        }
-        self.val().set(field, host);
-        Ok(())
+        entity_set_field(&self.inner, field, host).map_err(|message| Exception::throw_message(ctx, &message))
     }
 
     /// A field value, null for a field the value does not hold, or the related value or list for a relationship
     /// name, as Java `EntityValueBase.get` resolves a name. Undefined for any other name.
     fn read_member<'js>(&self, ctx: &Ctx<'js>, name: &str) -> rquickjs::Result<JsValue<'js>> {
-        let held = self.held_value(name);
-        if let Some(value) = held {
-            return host_to_js(ctx, value);
-        }
-        match self.member(name) {
-            Some(Member::Field) => Null.into_js(ctx),
-            Some(Member::One) => match self
-                .related_find(ctx, name)?
-                .one()
-                .map_err(|err| throw_lib(ctx, &err))?
-            {
-                Some(value) => entity_to_js(ctx, HostEntity::new(value)),
-                None => Null.into_js(ctx),
-            },
-            Some(Member::Many) => {
-                let list = self
-                    .related_find(ctx, name)?
-                    .list()
-                    .map_err(|err| throw_lib(ctx, &err))?;
-                Class::instance(ctx.clone(), HostList::of_list(list)).and_then(|class| class.into_js(ctx))
-            }
-            Some(Member::Unknown) | None => Undefined.into_js(ctx),
+        match host_entities::read_member(&self.inner, name).map_err(|err| throw_lib(ctx, &err))? {
+            Some(value) => host_to_js(ctx, value),
+            None => Undefined.into_js(ctx),
         }
     }
 }
 
 exotic_module!(__impl_exotic_HostEntity__, HostEntity);
-
-/// What a name that is not a method stands for on an entity value.
-enum Member {
-    Field,
-    One,
-    Many,
-    Unknown,
-}
 
 /// Property access on an entity value. A prototype method wins over a field of the same name; a field name reads and
 /// writes the field; a relationship name reads the related value, or list for a `many` relationship. Any other name
@@ -1264,25 +343,24 @@ impl HostEntity {
         if prototype_has::<HostEntity>(ctx, &atom)? {
             return Ok(true);
         }
-        Ok(atom_name(&atom)?.is_some_and(|name| self.is_field(&name)))
+        Ok(atom_name(&atom)?.is_some_and(|name| entity_is_field(&self.inner, &name)))
     }
 
     fn own_property<'js>(&self, ctx: &Ctx<'js>, atom: Atom<'js>) -> Result<Option<PropertyDescriptor<'js>>, JsError> {
         let Some(name) = atom_name(&atom)? else {
             return Ok(None);
         };
-        if !self.is_field(&name) {
+        if !entity_is_field(&self.inner, &name) {
             return Ok(None);
         }
-        let held = self.field_value(&name).unwrap_or(Value::Null);
+        let held = host_entities::field_value(&self.inner, &name).unwrap_or(Value::Null);
         let value = host_to_js(ctx, held)?;
         Ok(Some(PropertyDescriptor::new_value(value, true, true, true)))
     }
 
     /// The fields the value holds, so `Object.keys`, `for...in`, spread and `JSON.stringify` see the field map.
     fn own_names<'js>(&self, ctx: &Ctx<'js>) -> Result<Vec<PropertyName<'js>>, JsError> {
-        let names: Vec<String> = self.val().fields().keys().map(|name| name.to_string()).collect();
-        names
+        entity_field_names(&self.inner)
             .iter()
             .map(|name| {
                 Ok(PropertyName {
@@ -1294,536 +372,9 @@ impl HostEntity {
     }
 }
 
-#[rquickjs::methods(rename_all = "camelCase")]
-impl HostEntity {
-    /// `get(name)`: a field, or as Java's `EntityValue.get` the related value or list for a relationship name.
-    fn get<'js>(&self, ctx: Ctx<'js>, field: String) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            // the held value is cloned so the value is not locked while a relationship find runs
-            let held = self.held_value(&field);
-            if let Some(value) = held {
-                return value_to_js(&ctx, &value);
-            }
-            let found = self.read_member(&ctx, &field)?;
-            if found.is_undefined() {
-                Null.into_js(&ctx)
-            } else {
-                Ok(found)
-            }
-        })
-    }
-
-    fn resolve_entity_name(&self, ctx: Ctx<'_>) -> rquickjs::Result<String> {
-        self.get_entity_name(ctx)
-    }
-
-    fn get_entity_name(&self, ctx: Ctx<'_>) -> rquickjs::Result<String> {
-        host_guard(&ctx, || Ok(self.val().entity_name().to_string()))
-    }
-
-    /// `getEntityNamePretty()` (Java's `resolveEntityNamePretty`): the entity's short name in words, `OrderPart` as
-    /// `Order Part`.
-    #[qjs(rename = "getEntityNamePretty")]
-    fn entity_name_pretty(&self, ctx: Ctx<'_>) -> rquickjs::Result<String> {
-        host_guard(&ctx, || {
-            let facade = facade_of(&ctx)?;
-            let name = self.val().entity_name().to_string();
-            facade
-                .with_entity(&name, |entity, _, _| {
-                    Ok(moqui_lib::string::camel_case_to_pretty(&entity.entity_name))
-                })
-                .map_err(|err| throw_lib(&ctx, &err))
-        })
-    }
-
-    #[qjs(rename = "resolveEntityNamePretty")]
-    fn resolve_entity_name_pretty(&self, ctx: Ctx<'_>) -> rquickjs::Result<String> {
-        self.entity_name_pretty(ctx)
-    }
-
-    /// `refresh()`: read the row of this value's primary key again and replace the fields with it. False, and the
-    /// value as it was, when there is no such row.
-    fn refresh(&self, ctx: Ctx<'_>) -> rquickjs::Result<bool> {
-        host_guard(&ctx, || {
-            let facade = facade_of(&ctx)?;
-            let current = self.snapshot();
-            let keys = facade
-                .pk_map(current.entity_name(), current.fields())
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            match facade
-                .find_by_pk(current.entity_name(), &keys)
-                .map_err(|err| throw_lib(&ctx, &err))?
-            {
-                Some(fresh) => {
-                    *self.val() = fresh;
-                    Ok(true)
-                }
-                None => Ok(false),
-            }
-        })
-    }
-
-    /// `entrySet()`: each field as an entry with `key` and `value`, and `getKey()` and `getValue()`.
-    fn entry_set<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let entries: Vec<(String, Value)> = self.field_map().into_iter().collect();
-            let list = rquickjs::Array::new(ctx.clone())?;
-            for (index, (name, value)) in entries.into_iter().enumerate() {
-                let entry = Object::new(ctx.clone())?;
-                let key = host_to_js(&ctx, Value::string(&name))?;
-                let held = host_to_js(&ctx, value)?;
-                entry.set("key", key.clone())?;
-                entry.set("value", held.clone())?;
-                entry.set("getKey", Function::new(ctx.clone(), move || key.clone()))?;
-                entry.set("getValue", Function::new(ctx.clone(), move || held.clone()))?;
-                list.set(index, entry)?;
-            }
-            Ok(list.into_value())
-        })
-    }
-
-    /// `findRelatedFk(skipEntities)`: every row of the entities that hold a foreign key to this value (a `many`
-    /// relationship whose reverse is a `one` of the related entity), as one list. The names to skip are full names,
-    /// short aliases, or entity names, in an array or a set.
-    fn find_related_fk<'js>(&self, ctx: Ctx<'js>, skip: Opt<JsValue<'js>>) -> rquickjs::Result<Class<'js, HostList>> {
-        host_guard(&ctx, || {
-            let skip: Vec<String> = match skip
-                .0
-                .as_ref()
-                .filter(|value| !value.is_null() && !value.is_undefined())
-            {
-                Some(value) => host_texts(js_to_host(&ctx, value)?),
-                None => Vec::new(),
-            };
-            let facade = facade_of(&ctx)?;
-            let parent = self.val().entity_name().to_string();
-            let names: Vec<String> = facade
-                .with_entity(&parent, |entity, _, model| {
-                    let mut names = Vec::new();
-                    for relationship in &entity.relationships {
-                        let Some(related) = model.entity_full(&relationship.related) else {
-                            continue;
-                        };
-                        // The reverse: a one relationship of the related entity back to this one, with the same title.
-                        let reverse_is_one = related.relationships.iter().any(|back| {
-                            back.relationship_type.starts_with("one")
-                                && back.title == relationship.title
-                                && (back.related == entity.full_name || back.related_entity_name == entity.entity_name)
-                        });
-                        let skipped = skip.iter().any(|name| {
-                            *name == related.full_name
-                                || *name == related.entity_name
-                                || related.short_alias.as_deref() == Some(name.as_str())
-                        });
-                        if reverse_is_one && !skipped {
-                            names.push(relationship.name.clone());
-                        }
-                    }
-                    Ok(names)
-                })
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            let mut rows = Vec::new();
-            for name in names {
-                let list = self
-                    .related_find(&ctx, &name)?
-                    .list()
-                    .map_err(|err| throw_lib(&ctx, &err))?;
-                rows.extend(list.into_values());
-            }
-            Class::instance(ctx.clone(), HostList::of_list(EntityList::new(rows)))
-        })
-    }
-
-    /// `cloneValue()`: a separate value with the same entity and fields, as Java's `EntityValue.cloneValue`. Changes to
-    /// either do not reach the other.
-    fn clone_value<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let copy = self.val().clone();
-            entity_to_js(&ctx, HostEntity::new(copy))
-        })
-    }
-
-    /// `equals(other)`: the same entity with the same field values, as Java's `EntityValueBase.equals`; a script's `==`
-    /// on two values is identity, so a service that asks whether an edit changed anything calls this.
-    fn equals<'js>(&self, ctx: Ctx<'js>, other: JsValue<'js>) -> rquickjs::Result<bool> {
-        host_guard(&ctx, || {
-            let other = js_to_host(&ctx, &other)?;
-            let (Some(name), Some(theirs)) = (
-                super::values::value_entity_name(&other),
-                super::values::value_map_stored(&other),
-            ) else {
-                return Ok(false);
-            };
-            let mine = self.val();
-            if mine.entity_name() != name {
-                return Ok(false);
-            }
-            let fields = mine.fields();
-            let comparable = |value: &Value| -> String {
-                if value.is_null() {
-                    String::new()
-                } else {
-                    moqui_lib::object::to_plain_string(value)
-                }
-            };
-            let same = |name: &str| {
-                comparable(fields.get(name).unwrap_or(&Value::Null))
-                    == comparable(theirs.get(name).unwrap_or(&Value::Null))
-            };
-            Ok(fields.keys().all(|name| same(name)) && theirs.keys().all(|name| same(name)))
-        })
-    }
-
-    /// `getMap()`: the fields as a plain map, the localized ones in the user's locale.
-    fn get_map<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let map: indexmap::IndexMap<String, Value> = self.field_map().into_iter().collect();
-            host_to_js(&ctx, Value::Map(map))
-        })
-    }
-
-    /// `getPlainValueMap(dependentLevels)`: the fields as a plain map, the nulls removed, with `_entity` the
-    /// short-or-full entity name, and when `dependentLevels` is greater than 0 the values of the dependent
-    /// relationships, as Java's `getPlainValueMap`.
-    fn get_plain_value_map<'js>(&self, ctx: Ctx<'js>, dependent_levels: i32) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let facade = facade_of(&ctx)?;
-            let map = plain_value_map(&ctx, &facade, &self.snapshot(), dependent_levels, &[])?;
-            host_to_js(&ctx, Value::Map(map))
-        })
-    }
-
-    fn set(&self, ctx: Ctx<'_>, field: String, value: JsValue<'_>) -> rquickjs::Result<()> {
-        host_guard(&ctx, || self.set_field(&ctx, field, &value))
-    }
-
-    fn set_fields(
-        &self,
-        ctx: Ctx<'_>,
-        map: JsValue<'_>,
-        set_if_empty: Opt<bool>,
-        prefix: JsValue<'_>,
-        include: JsValue<'_>,
-    ) -> rquickjs::Result<()> {
-        host_guard(&ctx, || {
-            let set_empty = set_if_empty.0.unwrap_or(false);
-            let prefix = field_prefix(&ctx, &prefix)?;
-            let include = field_include(&include);
-            let Some(object) = map.as_object() else {
-                return Err(Exception::throw_message(&ctx, "setFields needs an object"));
-            };
-            let facade = facade_of(&ctx)?;
-            let entity_name = self.val().entity_name().to_string();
-            let specs = facade
-                .with_entity(&entity_name, |entity, _, _| {
-                    Ok(entity
-                        .fields
-                        .iter()
-                        .map(|field| (field.name.clone(), field.is_pk))
-                        .collect::<Vec<_>>())
-                })
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            for (name, is_pk) in specs {
-                let keep = match include {
-                    FieldInclude::All => true,
-                    FieldInclude::Pk => is_pk,
-                    FieldInclude::NonPk => !is_pk,
-                };
-                if !keep {
-                    continue;
-                }
-                let key = prefixed_field(&prefix, &name);
-                if !object.contains_key(key.as_str())? {
-                    continue;
-                }
-                let property: JsValue = object.get(key.as_str())?;
-                let host = js_to_host(&ctx, &property)?;
-                let empty = host.is_null() || matches!(&host, Value::String(text) if text.is_empty());
-                if !set_empty && empty {
-                    continue;
-                }
-                // With setIfEmpty an empty text is set as null (EntityJavaUtil.setFieldsEv), so a blank field clears.
-                let host = if empty { Value::Null } else { host };
-                self.val().set(name, host);
-            }
-            Ok(())
-        })
-    }
-
-    fn create(&self, ctx: Ctx<'_>) -> rquickjs::Result<()> {
-        host_guard(&ctx, || self.write(&ctx, |value, facade| value.create(facade)))
-    }
-
-    /// `update()`: write the fields that changed since the value was read or last written, as Java's `update`, so a
-    /// field another transaction changed in between is left as it wrote it.
-    fn update(&self, ctx: Ctx<'_>) -> rquickjs::Result<()> {
-        host_guard(&ctx, || self.write(&ctx, |value, facade| value.update(facade)))
-    }
-
-    fn delete(&self, ctx: Ctx<'_>) -> rquickjs::Result<()> {
-        host_guard(&ctx, || {
-            let facade = facade_of(&ctx)?;
-            self.snapshot().delete(&facade).map_err(|err| throw_lib(&ctx, &err))
-        })
-    }
-
-    fn create_or_update(&self, ctx: Ctx<'_>) -> rquickjs::Result<()> {
-        host_guard(&ctx, || {
-            self.write(&ctx, |value, facade| value.create_or_update(facade))
-        })
-    }
-
-    /// `getPrimaryKeys()`: the primary key fields of the value, as a map.
-    fn get_primary_keys<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let facade = facade_of(&ctx)?;
-            let value = self.val();
-            let names: Vec<String> = facade
-                .with_entity(value.entity_name(), |entity, _, _| {
-                    Ok(entity.pk_field_names().iter().map(|name| (*name).to_string()).collect())
-                })
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            let map: indexmap::IndexMap<String, Value> = names
-                .into_iter()
-                .map(|name| {
-                    let field = value.get(&name).cloned().unwrap_or(Value::Null);
-                    (name, field)
-                })
-                .collect();
-            host_to_js(&ctx, Value::Map(map))
-        })
-    }
-
-    fn set_sequenced_id_primary(&self, ctx: Ctx<'_>) -> rquickjs::Result<()> {
-        host_guard(&ctx, || {
-            let facade = facade_of(&ctx)?;
-            self.val()
-                .set_sequenced_id_primary(&facade)
-                .map_err(|err| throw_lib(&ctx, &err))
-        })
-    }
-
-    fn set_sequenced_id_secondary(&self, ctx: Ctx<'_>) -> rquickjs::Result<()> {
-        host_guard(&ctx, || {
-            let facade = facade_of(&ctx)?;
-            self.val()
-                .set_sequenced_id_secondary(&facade)
-                .map_err(|err| throw_lib(&ctx, &err))
-        })
-    }
-
-    fn find_related<'js>(
-        &self,
-        ctx: Ctx<'js>,
-        name: String,
-        map: Opt<JsValue<'js>>,
-        order: Opt<JsValue<'js>>,
-        _cache: Opt<JsValue<'js>>,
-        for_update: Opt<JsValue<'js>>,
-    ) -> rquickjs::Result<Class<'js, HostList>> {
-        host_guard(&ctx, || {
-            let lock = for_update.0.as_ref().and_then(JsValue::as_bool) == Some(true);
-            let mut find = self.related_find(&ctx, &name)?.for_update(lock);
-            if let Some(Value::Map(entries)) = map.0.as_ref().map(|value| js_to_host(&ctx, value)).transpose()? {
-                for (key, value) in entries {
-                    find = find.eq(&key, value);
-                }
-            }
-            if let Some(Value::List(fields)) = order.0.as_ref().map(|value| js_to_host(&ctx, value)).transpose()? {
-                for field in fields {
-                    find = find.order_by_text(&moqui_lib::object::to_plain_string(&field));
-                }
-            }
-            let list = find.list().map_err(|err| throw_lib(&ctx, &err))?;
-            Class::instance(ctx.clone(), HostList::of_list(list))
-        })
-    }
-
-    fn find_related_one<'js>(
-        &self,
-        ctx: Ctx<'js>,
-        name: String,
-        _cache: Opt<JsValue<'js>>,
-        for_update: Opt<JsValue<'js>>,
-    ) -> rquickjs::Result<JsValue<'js>> {
-        host_guard(&ctx, || {
-            let lock = for_update.0.as_ref().and_then(JsValue::as_bool) == Some(true);
-            let found = self
-                .related_find(&ctx, &name)?
-                .for_update(lock)
-                .one()
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            match found {
-                Some(value) => entity_to_js(&ctx, HostEntity::new(value)),
-                None => Null.into_js(&ctx),
-            }
-        })
-    }
-
-    /// `deleteWithRelated(relationships)`: delete the rows of the named `many` relationships (relationship names or short
-    /// aliases), then this value. When rows of any other entity still hold a foreign key to this value nothing is
-    /// deleted and the result is false, so a caller can report that the value is in use.
-    fn delete_with_related<'js>(&self, ctx: Ctx<'js>, relationships: Opt<JsValue<'js>>) -> rquickjs::Result<bool> {
-        host_guard(&ctx, || {
-            let wanted: Vec<String> = match relationships
-                .0
-                .as_ref()
-                .filter(|value| !value.is_null() && !value.is_undefined())
-            {
-                Some(value) => host_texts(js_to_host(&ctx, value)?),
-                None => Vec::new(),
-            };
-            let facade = facade_of(&ctx)?;
-            let parent = self.val().entity_name().to_string();
-            // The relationships to delete through: the named ones that lead to many rows.
-            let chosen: Vec<(String, String)> = facade
-                .with_entity(&parent, |entity, _, _| {
-                    Ok(entity
-                        .relationships
-                        .iter()
-                        .filter(|relationship| {
-                            relationship.relationship_type.starts_with("many")
-                                && wanted.iter().any(|name| relationship.matches(name))
-                        })
-                        .map(|relationship| (relationship.name.clone(), relationship.related.clone()))
-                        .collect())
-                })
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            let skip = rquickjs::Array::new(ctx.clone())?;
-            for (index, (_, related)) in chosen.iter().enumerate() {
-                skip.set(index, related.clone())?;
-            }
-            let others = self.find_related_fk(ctx.clone(), Opt(Some(skip.into_value())))?;
-            if others.borrow().inner.len() > 0 {
-                return Ok(false);
-            }
-            let finds = chosen
-                .iter()
-                .map(|(name, _)| self.related_find(&ctx, name))
-                .collect::<rquickjs::Result<Vec<_>>>()?;
-            // One transaction around the lot, so a failure part way leaves nothing deleted; it joins the caller's.
-            let parent_value = self.snapshot();
-            facade
-                .transactions_for(&parent)
-                .and_then(|tx| {
-                    tx.run(crate::transaction::TransactionAttribute::UseOrBegin, None, || {
-                        for find in finds {
-                            for value in find.list()?.values() {
-                                value.delete(&facade)?;
-                            }
-                        }
-                        parent_value.delete(&facade)
-                    })
-                })
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            Ok(true)
-        })
-    }
-
-    fn delete_related(&self, ctx: Ctx<'_>, name: String) -> rquickjs::Result<()> {
-        host_guard(&ctx, || {
-            let facade = facade_of(&ctx)?;
-            let list = self
-                .related_find(&ctx, &name)?
-                .list()
-                .map_err(|err| throw_lib(&ctx, &err))?;
-            for value in list.values() {
-                value.delete(&facade).map_err(|err| throw_lib(&ctx, &err))?;
-            }
-            Ok(())
-        })
-    }
-}
-
-/// The value's fields, the nulls and the parent's PK fields removed, with `_entity`, and the values of the
-/// dependent relationships down `levels`, as Java's `internalPlainValueMap`.
-fn plain_value_map(
-    ctx: &Ctx<'_>,
-    facade: &EntityFacade,
-    value: &EntityValue,
-    levels: i32,
-    parent_pks: &[String],
-) -> rquickjs::Result<indexmap::IndexMap<String, Value>> {
-    let mut map = indexmap::IndexMap::new();
-    for (name, field) in crate::entity::string_map(value.fields()) {
-        if field.is_null() || parent_pks.iter().any(|pk| pk == &name) {
-            continue;
-        }
-        map.insert(name, field);
-    }
-    let entity_name = value.entity_name().to_string();
-    let (entity_label, pk_names, relationships) = facade
-        .with_entity(&entity_name, |entity, _, model| {
-            let label = entity.short_alias.clone().unwrap_or_else(|| entity.full_name.clone());
-            let pks = entity
-                .pk_field_names()
-                .iter()
-                .map(|name| (*name).to_string())
-                .collect::<Vec<_>>();
-            let rels = entity
-                .relationships
-                .iter()
-                .filter(|rel| crate::entity::info::is_dependent(model, entity, rel))
-                .map(|rel| {
-                    let entry = rel
-                        .short_alias
-                        .clone()
-                        .filter(|alias| !alias.is_empty())
-                        .unwrap_or_else(|| rel.name.clone());
-                    (entry, rel.name.clone(), rel.relationship_type.clone())
-                })
-                .collect::<Vec<_>>();
-            Ok((label, pks, rels))
-        })
-        .map_err(|err| throw_lib(ctx, &err))?;
-    map.insert("_entity".to_string(), Value::String(entity_label));
-    if levels > 0 {
-        let mut pks = pk_names;
-        pks.extend(parent_pks.iter().cloned());
-        for (entry, rel_name, rel_type) in relationships {
-            let (target, conditions) = crate::service::call::related_conditions(facade, &entity_name, &rel_name, value)
-                .map_err(|err| throw_lib(ctx, &err))?;
-            let mut find = facade.find(&target).map_err(|err| throw_lib(ctx, &err))?;
-            for (field, condition) in conditions {
-                find = find.eq(&field, condition);
-            }
-            if rel_type.starts_with("one") {
-                if let Some(related) = find.one().map_err(|err| throw_lib(ctx, &err))? {
-                    map.insert(
-                        entry,
-                        Value::Map(plain_value_map(ctx, facade, &related, levels - 1, &pks)?),
-                    );
-                }
-            } else {
-                let list = find.list().map_err(|err| throw_lib(ctx, &err))?;
-                let values = list.values();
-                if !values.is_empty() {
-                    let items = values
-                        .iter()
-                        .map(|related| Ok(Value::Map(plain_value_map(ctx, facade, related, levels - 1, &pks)?)))
-                        .collect::<rquickjs::Result<Vec<_>>>()?;
-                    map.insert(entry, Value::List(items));
-                }
-            }
-        }
-    }
-    Ok(map)
-}
-
-impl HostEntity {
-    fn related_find(&self, ctx: &Ctx<'_>, relationship: &str) -> rquickjs::Result<EntityFind> {
-        let facade = facade_of(ctx)?;
-        let record = self.val().clone();
-        let (entity, conditions) =
-            crate::service::call::related_conditions(&facade, record.entity_name(), relationship, &record)
-                .map_err(|err| throw_lib(ctx, &err))?;
-        let mut find = facade.find(&entity).map_err(|err| throw_lib(ctx, &err))?;
-        for (field, value) in conditions {
-            find = find.eq(&field, value);
-        }
-        Ok(find)
-    }
-}
+/// The class's prototype, which [`install_entity_prototypes`] fills with the host table's methods.
+#[rquickjs::methods]
+impl HostEntity {}
 
 /// A member of the class prototype or of `Object.prototype`. An exotic class's own get runs instead of the
 /// prototype lookup, so it looks there itself first.
@@ -1866,33 +417,15 @@ pub(super) fn atom_name<'js>(atom: &Atom<'js>) -> rquickjs::Result<Option<super:
     super::AtomText::of(&atom.to_value()?)
 }
 
-/// Members of an entity list that are simplest in JavaScript: iteration, Groovy's `size()` and `isEmpty()`, and the
-/// array methods the type declarations name. Not enumerable, as the Rust methods are not.
-const LIST_PROTOTYPE_JS: &str = r#"(function (list) {
-    const define = (name, value) => Object.defineProperty(list, name, { value, writable: true, configurable: true });
-    define(Symbol.iterator, function* () { for (let i = 0; i < this.length; i++) yield this.get(i); });
-    define("size", function () { return this.length; });
-    define("isEmpty", function () { return this.length === 0; });
-    define("map", function (callback, self) { return Array.from(this).map(callback, self); });
-    define("filter", function (callback, self) { return Array.from(this).filter(callback, self); });
-    define("forEach", function (callback, self) { Array.from(this).forEach(callback, self); });
-    define("toJSON", function () { return Array.from(this); });
-    // The rest of the Array prototype runs on an array copy of the rows. The rows are the same values, so a field set
-    // on one is kept in the list; a method that reorders (`sort`, `reverse`) returns the reordered copy and leaves the
-    // list as it was.
-    for (const name of ["find", "findIndex", "findLast", "findLastIndex", "some", "every", "reduce", "reduceRight",
-            "sort", "reverse", "includes", "indexOf", "lastIndexOf", "slice", "concat", "join", "flatMap", "flat",
-            "entries", "keys", "values", "at", "toSorted", "toReversed"]) {
-        define(name, function (...args) { return Array.prototype[name].apply(Array.from(this), args); });
-    }
-})"#;
-
-/// Add the JavaScript members of the entity list prototype. Lists made after this share it.
+/// Fill the entity list and value prototypes with the host table's classes (`script/host/entities.rs`): their methods,
+/// and what their shims add. Lists and values made after this share them.
 pub(super) fn install_entity_prototypes(ctx: &Ctx<'_>) -> Result<(), Error> {
     let list = caught(ctx, "entity list prototype", Class::<HostList>::prototype(ctx))?
         .ok_or_else(|| Error::new("entity list has no prototype"))?;
-    let fill: Function = eval_js(ctx, LIST_PROTOTYPE_JS)?;
-    caught(ctx, "entity list prototype", fill.call::<_, ()>((list,)))
+    bind::fill_prototype(ctx, &list, &host_entities::LIST)?;
+    let value = caught(ctx, "entity value prototype", Class::<HostEntity>::prototype(ctx))?
+        .ok_or_else(|| Error::new("entity value has no prototype"))?;
+    bind::fill_prototype(ctx, &value, &host_entities::ENTITY_VALUE)
 }
 
 #[cfg(test)]

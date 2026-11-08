@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The global Constitution for reading: where it comes from, its title and provenance, each rule with its description and
+    references in a chosen language (a reference opens in the app's reference dialog when its origin is trusted). An
+    editor starts the instance's own document here (Customize) or goes back to the shipped one (Reset). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Rules" default-menu-index="1">
+    <parameter name="locale"/>
+
+    <transition name="customize" method="post"><service-call name="org.moqui.admin.ConstitutionServices.create#ConstitutionCustomization"/>
+        <default-response url="."/><error-response url="."/></transition>
+    <transition name="reset" method="post"><service-call name="org.moqui.admin.ConstitutionServices.reset#Constitution"/>
+        <default-response url="."/><error-response url="."/></transition>
+
+    <actions>
+        <service-call name="org.moqui.admin.ConstitutionServices.get#Constitution" out-map="cons"
+                in-map="{scope: 'global', locale: context.locale || null}"/>
+        <set field="locale" from="cons.locale"/>
+        <script><![CDATA[
+            // the human reading view (no agent instructions), for m-constitution-view and the terminal
+            view = {title: cons.title, titleLocale: cons.titleLocale, provenance: cons.provenance, locale: cons.locale,
+                source: cons.source, scopeLabel: cons.customized == 'Y' ? 'This instance' : 'Shipped default',
+                ruleList: (cons.ruleList || []).map((rule) => ({ruleId: rule.ruleId, title: rule.title, titleLocale: rule.titleLocale,
+                    description: rule.description, descriptionLocale: rule.descriptionLocale,
+                    referenceList: (rule.referenceList || []).map((ref) => ({referenceId: ref.referenceId, title: ref.title,
+                        titleLocale: ref.titleLocale, url: ref.url, trusted: ref.trusted, internal: ref.internal}))}))}
+            readingText = (cons.ruleList || []).map((rule) => rule.ruleId + ' — ' + (rule.title || '') + '\n' + (rule.description || '') +
+                (rule.referenceList || []).map((ref) => '\n  • ' + (ref.title || '') + ': ' + ref.url).join('')).join('\n\n')
+        ]]></script>
+    </actions>
+    <widgets>
+        <container-box id="ConstitutionRulesBox"><box-header title="${cons.title || 'Constitution'}"/><box-toolbar>
+            <container-dialog id="CustomizeDialog" button-text="Customize" icon="sym_o_edit" type="primary" width="560"
+                    title="Customize the Constitution" condition="canEdit &amp;&amp; cons.customized != 'Y'">
+                <label text="This instance gets its own copy of the shipped Constitution, which you can then edit. Organizations with their own document keep it." type="p"/>
+                <form-single name="CustomizeForm" transition="customize">
+                    <field name="submitButton"><default-field title="Customize"><submit/></default-field></field></form-single>
+            </container-dialog>
+            <container-dialog id="ResetDialog" button-text="Reset" icon="sym_o_restart_alt" type="danger" width="560"
+                    title="Use the shipped Constitution" condition="canEdit &amp;&amp; cons.customized == 'Y'">
+                <label text="This instance's own Constitution is removed and the shipped one applies to every agent run that starts from now on. The trusted reference origins stay as they are." type="p"/>
+                <form-single name="ResetForm" transition="reset">
+                    <field name="expectedHash" from="cons.globalHash"><default-field><hidden/></default-field></field>
+                    <field name="submitButton"><default-field title="Use the shipped Constitution"><submit type="danger"/></default-field></field></form-single>
+            </container-dialog>
+        </box-toolbar><box-body>
+            <section-include name="ConstitutionSource" location="component://tools/template/ConstitutionParts.xml"/>
+            <section-include name="ConstitutionLanguage" location="component://tools/template/ConstitutionParts.xml"/>
+            <section name="ReadingSection" condition="cons.available == 'Y'"><widgets>
+                <render-mode>
+                    <text type="qvt"><![CDATA[<m-constitution-view :doc="${WebUtilities.encodeHtml(JSON.stringify(view))}"></m-constitution-view>]]></text>
+                    <text type="tui"><![CDATA[${JSON.stringify({t: 'text', id: 'ConstitutionText', style: 'pre', text: (cons.provenance ? cons.provenance + '\n\n' : '') + readingText})}]]></text>
+                    <text type="html,html-print,text"><![CDATA[<pre>${WebUtilities.encodeHtml((cons.provenance ? cons.provenance + '\n\n' : '') + readingText)}</pre>]]></text>
+                </render-mode>
+            </widgets></section>
+        </box-body></container-box>
+    </widgets>
+</screen>

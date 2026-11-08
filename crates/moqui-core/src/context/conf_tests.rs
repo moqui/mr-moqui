@@ -288,3 +288,52 @@ fn the_dev_conf_datasource_overrides_keep_the_default_jdbc_child() {
     // merged in place, none added
     assert_eq!(crate::entity::datasource::datasource_nodes(&base).len(), before);
 }
+
+#[test]
+fn each_component_adds_authz_elements_and_keeps_the_defaults() {
+    let base = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><user-facade><authz privileged-groups="ADMIN,ADMIN_ADV" sealed-permissions="ADMIN_PASSWORD"/>
+            </user-facade></moqui-conf>"#,
+    )
+    .unwrap();
+    let first = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><user-facade><authz><privileged-group name="APP_ADMIN"/><sealed-permission name="APP_GLOBAL"/>
+            </authz></user-facade></moqui-conf>"#,
+    )
+    .unwrap();
+    let second = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><user-facade><authz><privileged-group name="OTHER_ADMIN"/><privileged-group name="APP_ADMIN"/>
+            </authz></user-facade></moqui-conf>"#,
+    )
+    .unwrap();
+    super::merge_conf(&base, &first);
+    super::merge_conf(&base, &second);
+    let authz = base
+        .first_named("user-facade")
+        .and_then(|facade| facade.first_named("authz"))
+        .unwrap();
+    let names = |element: &str| -> Vec<String> {
+        authz
+            .children_named(element)
+            .iter()
+            .filter_map(|child| child.attribute("name"))
+            .collect()
+    };
+    // both components' elements apply, once each, and the defaults stay
+    assert_eq!(names("privileged-group"), ["APP_ADMIN", "OTHER_ADMIN"]);
+    assert_eq!(names("sealed-permission"), ["APP_GLOBAL"]);
+    assert_eq!(authz.attribute("privileged-groups").as_deref(), Some("ADMIN,ADMIN_ADV"));
+    assert_eq!(authz.attribute("sealed-permissions").as_deref(), Some("ADMIN_PASSWORD"));
+    // a component that still sets the attribute replaces it, as before, and the elements stay
+    let replacing = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><user-facade><authz privileged-groups="ADMIN"/></user-facade></moqui-conf>"#,
+    )
+    .unwrap();
+    super::merge_conf(&base, &replacing);
+    assert_eq!(authz.attribute("privileged-groups").as_deref(), Some("ADMIN"));
+    assert_eq!(names("privileged-group"), ["APP_ADMIN", "OTHER_ADMIN"]);
+}

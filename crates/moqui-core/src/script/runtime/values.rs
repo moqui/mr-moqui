@@ -51,25 +51,6 @@ pub fn value_map(value: &Value) -> Option<IndexMap<String, Value>> {
     }
 }
 
-/// The stored fields of a map or an entity value, not localized: what a comparison of values reads.
-pub(crate) fn value_map_stored(value: &Value) -> Option<IndexMap<String, Value>> {
-    match value {
-        Value::Map(entries) => Some(entries.clone()),
-        Value::Object(object) => {
-            let cell = object.downcast::<EntityCell>()?;
-            let guard = lock(&cell);
-            Some(
-                guard
-                    .fields()
-                    .iter()
-                    .map(|(key, item)| (key.to_string(), item.clone()))
-                    .collect(),
-            )
-        }
-        _ => None,
-    }
-}
-
 /// One field of a map or entity value, an entity value's localized field in the user's locale or `pq-expression`
 /// alias. None when the field is not there.
 pub(crate) fn value_field(value: &Value, field: &str) -> Option<Value> {

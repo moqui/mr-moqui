@@ -70,6 +70,7 @@ fn a_sent_message_exports_with_its_files() {
         framework.join("EmailServices.xml"),
         framework.join("impl/EmailServices.xml"),
         framework.join("impl/EmailClientServices.xml"),
+        framework.join("admin/IdentityServices.xml"),
         framework.join("impl/ShellServices.xml"),
     ])
     .unwrap();

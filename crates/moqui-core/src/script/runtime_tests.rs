@@ -19,6 +19,7 @@ use super::{
     STACK,
 };
 use crate::context::{Error, ExecutionContextFactory};
+use crate::script::engine::on_both_engines;
 use moqui_lib::object::{basic_convert, Value};
 use rquickjs::Ctx;
 
@@ -30,106 +31,215 @@ fn decimal(text: &str) -> Value {
     converted.value
 }
 
+/// Under `small-oxide` a condition and a value that pass the static check run on quickjs-oxide, inside a running
+/// QuickJS script too (its tracked values flushed first), and one that fails it runs on QuickJS.
+#[test]
+fn small_oxide_runs_conditions_and_values_on_oxide() -> Result<(), Error> {
+    use crate::script::engine::{scripts_by_kind, with_script_engine, ScriptEngine};
+    let oxide_runs = |kind: &str| {
+        scripts_by_kind()
+            .into_iter()
+            .find(|(name, _, _)| *name == kind)
+            .map_or(0, |(_, _, oxide)| oxide)
+    };
+    with_script_engine(ScriptEngine::SmallOxide, || {
+        clear_context_stack();
+        set_context_name("n", Value::I32(3))?;
+        let conditions = oxide_runs("eval_condition");
+        assert!(eval_condition("n > 2")?);
+        assert!(oxide_runs("eval_condition") > conditions);
+        let values = oxide_runs("eval_value");
+        assert_eq!(eval_value("n * 2")?, Value::I32(6));
+        assert!(oxide_runs("eval_value") > values);
+        let fields = oxide_runs("eval_field_value");
+        assert_eq!(crate::script::eval_field_value("n")?, Value::I32(3));
+        assert!(oxide_runs("eval_field_value") > fields);
+        // `${}` strings and map literals, on oxide too, with the QuickJS forms' answers
+        let expands = oxide_runs("expand");
+        assert_eq!(expand("n is ${n}, \\${not} `ticked`")?, "n is 3, ${not} `ticked`");
+        assert_eq!(crate::script::expand_localized("${n + 1}")?, "4");
+        assert!(oxide_runs("expand") >= expands + 2);
+        let maps = oxide_runs("eval_map");
+        let map = crate::script::eval_map("{a: n, b: [n]}")?;
+        assert_eq!(map.get("a"), Some(&Value::I32(3)));
+        assert!(oxide_runs("eval_map") > maps);
+        let err = crate::script::eval_map("[n]").unwrap_err();
+        assert_eq!(err.message(), "script value is not an object");
+        // a list the QuickJS script changed in place is on the stack when the oxide condition reads it
+        run_script("items = [1]")?;
+        with_ctx(|ctx| {
+            let _: rquickjs::Value = eval_source(ctx, "items.push(2)")?;
+            assert!(eval_condition("items.length === 2")?);
+            // an oxide expression that sorts the list in place: the QuickJS script reads the sorted list after
+            let _: rquickjs::Value = eval_source(ctx, "items.unshift(9)")?;
+            assert_eq!(eval_value("items.sort((a, b) => a - b)[0]")?, Value::I32(1));
+            let first: i32 = eval_source(ctx, "items[0] * 100 + items[2]")?;
+            assert_eq!(first, 109);
+            Ok(())
+        })?;
+        Ok(())
+    })
+}
+
+/// Generated XML actions in the Actions profile (set, if, iterate over the bound values) give the same context on both
+/// engines, and run on quickjs-oxide under small-oxide.
+#[test]
+fn actions_give_the_same_context_on_both_engines() -> Result<(), Error> {
+    use crate::script::engine::{scripts_by_kind, ScriptEngine};
+    const ACTIONS: &str = r#"<actions>
+        <set field="total" from="a + 1"/>
+        <if condition="total &gt; 2"><set field="big" from="true"/><else><set field="big" from="false"/></else></if>
+        <set field="sum" from="0"/>
+        <iterate list="items" entry="item"><set field="sum" from="sum + item.qty"/></iterate>
+        <set field="names" from="items.map(i => i.name)"/>
+        <set field="names2" from="names" set-if-empty="false"/>
+        <set field="price" from="'12.50'" type="BigDecimal"/>
+        <script>items.push({name: 'z', qty: 1})</script>
+    </actions>"#;
+    let mut results = Vec::new();
+    on_both_engines(|engine| {
+        clear_context_stack();
+        set_context_name("a", Value::I32(2))?;
+        let item = |name: &str, qty: i32| {
+            let mut map = indexmap::IndexMap::new();
+            map.insert("name".to_string(), Value::string(name));
+            map.insert("qty".to_string(), Value::I32(qty));
+            Value::Map(map)
+        };
+        set_context_name("items", Value::List(vec![item("x", 2), item("y", 5)]))?;
+        let oxide_before = scripts_by_kind()
+            .into_iter()
+            .find(|(kind, _, _)| *kind == "run_actions")
+            .map_or(0, |(_, _, oxide)| oxide);
+        crate::script::run_actions(ACTIONS)?;
+        let oxide_after = scripts_by_kind()
+            .into_iter()
+            .find(|(kind, _, _)| *kind == "run_actions")
+            .map_or(0, |(_, _, oxide)| oxide);
+        if engine == ScriptEngine::SmallOxide {
+            assert!(oxide_after > oxide_before, "the actions ran on oxide");
+        }
+        let names = ["total", "big", "sum", "names", "names2", "price", "items"];
+        results.push(names.map(context_value));
+        Ok(())
+    })?;
+    assert_eq!(results[0], results[1], "rquickjs, then small-oxide");
+    assert_eq!(results[0][2], Some(Value::I32(7)));
+    Ok(())
+}
+
 #[test]
 fn unset_bare_name_is_null() -> Result<(), Error> {
-    clear_context_stack();
-    assert!(!eval_condition("unsetBareName")?);
-    assert!(eval_condition("unsetBareName === null")?);
-    assert!(eval_condition("typeof unsetBareName === \"object\"")?);
-    assert!(!eval_condition("0")?);
-    assert!(!eval_condition("false")?);
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        assert!(!eval_condition("unsetBareName")?);
+        assert!(eval_condition("unsetBareName === null")?);
+        assert!(eval_condition("typeof unsetBareName === \"object\"")?);
+        assert!(!eval_condition("0")?);
+        assert!(!eval_condition("false")?);
+        Ok(())
+    })
 }
 
 #[test]
 fn stack_name_evaluates_to_its_value() -> Result<(), Error> {
-    clear_context_stack();
-    set_context_name("orderId", Value::string("1000"))?;
-    push_context_frame();
-    set_context_name("orderId", Value::string("2000"))?;
-    assert!(eval_condition("orderId === \"2000\"")?);
-    assert!(eval_condition("(assignedName = \"x\") === \"x\"")?);
-    set_context_name("assignedName", Value::string("y"))?;
-    assert!(eval_condition("assignedName === \"y\"")?);
-    set_context_name("Array", Value::string("hidden"))?;
-    assert!(eval_condition("typeof Array === \"function\"")?);
-    set_context_name("ObjectUtilities", Value::string("mine"))?;
-    assert!(eval_condition("ObjectUtilities === \"mine\"")?);
-    clear_context_stack();
-    assert!(eval_condition(
-        "typeof ObjectUtilities === \"object\" && ObjectUtilities !== null"
-    )?);
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        set_context_name("orderId", Value::string("1000"))?;
+        push_context_frame();
+        set_context_name("orderId", Value::string("2000"))?;
+        assert!(eval_condition("orderId === \"2000\"")?);
+        assert!(eval_condition("(assignedName = \"x\") === \"x\"")?);
+        set_context_name("assignedName", Value::string("y"))?;
+        assert!(eval_condition("assignedName === \"y\"")?);
+        set_context_name("Array", Value::string("hidden"))?;
+        assert!(eval_condition("typeof Array === \"function\"")?);
+        set_context_name("ObjectUtilities", Value::string("mine"))?;
+        assert!(eval_condition("ObjectUtilities === \"mine\"")?);
+        clear_context_stack();
+        assert!(eval_condition(
+            "typeof ObjectUtilities === \"object\" && ObjectUtilities !== null"
+        )?);
+        Ok(())
+    })
 }
 
 #[test]
 fn decimal_overflow_is_a_js_exception() -> Result<(), Error> {
-    clear_context_stack();
-    set_context_name("big", decimal(MAX_COEFFICIENT))?;
-    set_context_name("zero", decimal("0"))?;
-    assert!(eval_condition("zero")?);
-    assert!(eval_condition("zero.isZero()")?);
-    assert!(!eval_condition("big.isZero()")?);
-    // `==` compares objects, not values: a name read twice in a script is one object, another name is another.
-    set_context_name("big2", decimal(MAX_COEFFICIENT))?;
-    assert!(eval_condition("big == big")?);
-    assert!(!eval_condition("big == big2")?);
-    assert!(eval_condition("big.eq(big2)")?);
-    let overflow = eval_condition("big.add(big)").expect_err("overflow");
-    assert!(overflow.to_string().contains("overflow"), "{overflow}");
-    let value_of = eval_condition("big + 1").expect_err("valueOf");
-    assert!(value_of.to_string().contains("valueOf"), "{value_of}");
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        set_context_name("big", decimal(MAX_COEFFICIENT))?;
+        set_context_name("zero", decimal("0"))?;
+        assert!(eval_condition("zero")?);
+        assert!(eval_condition("zero.isZero()")?);
+        assert!(!eval_condition("big.isZero()")?);
+        // `==` compares objects, not values: a name read twice in a script is one object, another name is another.
+        set_context_name("big2", decimal(MAX_COEFFICIENT))?;
+        assert!(eval_condition("big == big")?);
+        assert!(!eval_condition("big == big2")?);
+        assert!(eval_condition("big.eq(big2)")?);
+        let overflow = eval_condition("big.add(big)").expect_err("overflow");
+        assert!(overflow.to_string().contains("overflow"), "{overflow}");
+        let value_of = eval_condition("big + 1").expect_err("valueOf");
+        assert!(value_of.to_string().contains("valueOf"), "{value_of}");
+        Ok(())
+    })
 }
 
 #[test]
 fn decimal_methods_take_numbers_and_text_and_to_number_is_explicit() -> Result<(), Error> {
-    clear_context_stack();
-    set_context_name("price", decimal("10.25"))?;
-    holds("price.add(1).eq('11.25')");
-    holds("price.subtract(0.25).eq(10)");
-    holds("price.multiply('2').toString() === '20.50'");
-    holds("price.compare(70) === -1 && price.compare('10.250') === 0");
-    holds("price.toNumber() === 10.25 && Number(price.toString()) === 10.25");
-    holds("toDecimal(3).add(price).eq('13.25') && toDecimal('0.1').add(toDecimal('0.2')).eq('0.3')");
-    let nan = eval_condition("price.add(NaN)").expect_err("not finite");
-    assert!(nan.to_string().contains("a decimal method takes"), "{nan}");
-    let text = eval_condition("price.add('abc')").expect_err("not numeric");
-    assert!(text.to_string().contains("abc"), "{text}");
-    let null = eval_condition("toDecimal(null)").expect_err("null");
-    assert!(null.to_string().contains("toDecimal"), "{null}");
-    let number = eval_condition("Number(price) > 1").expect_err("valueOf still throws");
-    assert!(number.to_string().contains("toNumber"), "{number}");
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        set_context_name("price", decimal("10.25"))?;
+        holds("price.add(1).eq('11.25')");
+        holds("price.subtract(0.25).eq(10)");
+        holds("price.multiply('2').toString() === '20.50'");
+        holds("price.compare(70) === -1 && price.compare('10.250') === 0");
+        holds("price.toNumber() === 10.25 && Number(price.toString()) === 10.25");
+        holds("toDecimal(3).add(price).eq('13.25') && toDecimal('0.1').add(toDecimal('0.2')).eq('0.3')");
+        let nan = eval_condition("price.add(NaN)").expect_err("not finite");
+        assert!(nan.to_string().contains("a decimal method takes"), "{nan}");
+        let text = eval_condition("price.add('abc')").expect_err("not numeric");
+        assert!(text.to_string().contains("abc"), "{text}");
+        let null = eval_condition("toDecimal(null)").expect_err("null");
+        assert!(null.to_string().contains("toDecimal"), "{null}");
+        let number = eval_condition("Number(price) > 1").expect_err("valueOf still throws");
+        assert!(number.to_string().contains("toNumber"), "{number}");
+        Ok(())
+    })
 }
 
 /// `JSON.stringify` writes a decimal as a JSON number, as Java's JSON writers write a `BigDecimal`: one a JavaScript
 /// number holds exactly as that number, any other with all its digits.
 #[test]
 fn json_stringify_writes_a_decimal_as_a_number() -> Result<(), Error> {
-    clear_context_stack();
-    set_context_name("price", decimal("10.25"))?;
-    set_context_name("big", decimal("12345678901234567.89"))?;
-    holds("JSON.stringify(price) === '10.25'");
-    holds("JSON.stringify({price, list: [toDecimal('0.1'), toDecimal(-3)]}) === '{\"price\":10.25,\"list\":[0.1,-3]}'");
-    holds("JSON.parse(JSON.stringify({price})).price === 10.25");
-    holds("JSON.stringify(big) === '12345678901234567.89'");
-    holds("JSON.stringify([big]) === '[12345678901234567.89]'");
-    holds("typeof JSON.parse(JSON.stringify(big)) === 'number'");
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        set_context_name("price", decimal("10.25"))?;
+        set_context_name("big", decimal("12345678901234567.89"))?;
+        holds("JSON.stringify(price) === '10.25'");
+        holds("JSON.stringify({price, list: [toDecimal('0.1'), toDecimal(-3)]}) === '{\"price\":10.25,\"list\":[0.1,-3]}'");
+        holds("JSON.parse(JSON.stringify({price})).price === 10.25");
+        holds("JSON.stringify(big) === '12345678901234567.89'");
+        holds("JSON.stringify([big]) === '[12345678901234567.89]'");
+        holds("typeof JSON.parse(JSON.stringify(big)) === 'number'");
+        Ok(())
+    })
 }
 
 #[test]
 fn expand_substitutes_a_context_field() -> Result<(), Error> {
-    clear_context_stack();
-    set_context_name("name", Value::string("Ada"))?;
-    set_context_name("big", decimal(MAX_COEFFICIENT))?;
-    assert_eq!(expand("Hello ${name}")?, "Hello Ada");
-    assert_eq!(expand("Hello ${name}")?, "Hello Ada");
-    assert_eq!(expand("no dollars")?, "no dollars");
-    assert_eq!(expand("trailing$")?, "trailing$");
-    assert_eq!(expand("${big}")?, MAX_COEFFICIENT);
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        set_context_name("name", Value::string("Ada"))?;
+        set_context_name("big", decimal(MAX_COEFFICIENT))?;
+        assert_eq!(expand("Hello ${name}")?, "Hello Ada");
+        assert_eq!(expand("Hello ${name}")?, "Hello Ada");
+        assert_eq!(expand("no dollars")?, "no dollars");
+        assert_eq!(expand("trailing$")?, "trailing$");
+        assert_eq!(expand("${big}")?, MAX_COEFFICIENT);
+        Ok(())
+    })
 }
 
 fn holds(expression: &str) {
@@ -176,6 +286,7 @@ fn a_push_of_a_host_call_result_reaches_the_list() -> Result<(), Error> {
 
 #[test]
 fn a_held_list_survives_a_host_call_that_leaves_it() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     set_context_name("keptList", Value::List(vec![Value::I32(1)]))?;
     with_ctx(|ctx| {
@@ -197,6 +308,7 @@ fn a_held_list_survives_a_host_call_that_leaves_it() -> Result<(), Error> {
 
 #[test]
 fn a_host_call_that_changes_a_held_list_wins() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     set_context_name("replacedList", Value::List(vec![Value::I32(1)]))?;
     set_context_name("appendedList", Value::List(vec![Value::I32(1)]))?;
@@ -233,6 +345,7 @@ fn a_host_call_that_changes_a_held_list_wins() -> Result<(), Error> {
 
 #[test]
 fn a_nested_script_that_changes_a_held_list_wins() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     set_context_name("nestedChanged", Value::List(vec![Value::I32(1)]))?;
     set_context_name("nestedRead", Value::List(vec![Value::I32(1)]))?;
@@ -291,51 +404,57 @@ fn too_deep(outcome: Result<impl std::fmt::Debug, Error>) {
 
 #[test]
 fn a_cyclic_or_too_deep_value_is_an_error() -> Result<(), Error> {
-    clear_context_stack();
-    too_deep(run_script("var a = {}; a.self = a; result = a;"));
-    too_deep(eval_value("(() => { var a = []; a.push(a); return a; })()"));
-    too_deep(eval_value("(() => { var s = new Set(); s.add([s]); return s; })()"));
-    too_deep(eval_value(
-        "(() => { var a = []; for (var i = 0; i < 100000; i++) a = [a]; return a; })()",
-    ));
-    too_deep(run_script("items = []; items.push(items);"));
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        too_deep(run_script("var a = {}; a.self = a; result = a;"));
+        too_deep(eval_value("(() => { var a = []; a.push(a); return a; })()"));
+        too_deep(eval_value("(() => { var s = new Set(); s.add([s]); return s; })()"));
+        too_deep(eval_value(
+            "(() => { var a = []; for (var i = 0; i < 100000; i++) a = [a]; return a; })()",
+        ));
+        too_deep(run_script("items = []; items.push(items);"));
+        Ok(())
+    })
 }
 
 #[test]
 fn a_shared_value_converts_once_for_each_place() -> Result<(), Error> {
-    clear_context_stack();
-    let value = eval_value("(() => { var s = {x: 1}; return {a: s, b: [s, s], c: new Set([s])}; })()")?;
-    let Value::Map(map) = value else {
-        panic!("expected a map, got {value:?}")
-    };
-    let Some(Value::List(both)) = map.get("b") else {
-        panic!("expected a list, got {map:?}")
-    };
-    assert_eq!(map.get("a"), both.get(1));
-    assert!(matches!(map.get("a"), Some(Value::Map(shared)) if shared.get("x") == Some(&Value::I32(1))));
-    let deepest = format!("(() => {{ var a = []; for (var i = 1; i < {MAX_NESTING}; i++) a = [a]; return a; }})()");
-    set_context_name("deep", eval_value(&deepest)?)?;
-    assert!(eval_condition("deep.length === 1 && deep[0][0].length === 1")?);
-    too_deep(run_script("wrapped = [deep];"));
-    let mut host = Value::List(Vec::new());
-    for _ in 0..1000 {
-        host = Value::List(vec![host]);
-    }
-    set_context_name("hostDeep", host)?;
-    too_deep(eval_condition("hostDeep.length === 1"));
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        let value = eval_value("(() => { var s = {x: 1}; return {a: s, b: [s, s], c: new Set([s])}; })()")?;
+        let Value::Map(map) = value else {
+            panic!("expected a map, got {value:?}")
+        };
+        let Some(Value::List(both)) = map.get("b") else {
+            panic!("expected a list, got {map:?}")
+        };
+        assert_eq!(map.get("a"), both.get(1));
+        assert!(matches!(map.get("a"), Some(Value::Map(shared)) if shared.get("x") == Some(&Value::I32(1))));
+        let deepest = format!("(() => {{ var a = []; for (var i = 1; i < {MAX_NESTING}; i++) a = [a]; return a; }})()");
+        set_context_name("deep", eval_value(&deepest)?)?;
+        assert!(eval_condition("deep.length === 1 && deep[0][0].length === 1")?);
+        too_deep(run_script("wrapped = [deep];"));
+        let mut host = Value::List(Vec::new());
+        for _ in 0..1000 {
+            host = Value::List(vec![host]);
+        }
+        set_context_name("hostDeep", host)?;
+        too_deep(eval_condition("hostDeep.length === 1"));
+        Ok(())
+    })
 }
 
 #[test]
 fn an_integer_past_the_safe_range_is_an_error() -> Result<(), Error> {
-    clear_context_stack();
-    set_context_name("smallest", Value::I64(i64::MIN))?;
-    let err = eval_condition("smallest < 0").expect_err("i64::MIN is not exact");
-    assert!(err.message().contains("too large"), "{}", err.message());
-    set_context_name("safe", Value::I64(-9_007_199_254_740_991))?;
-    assert!(eval_condition("safe === -Number.MAX_SAFE_INTEGER")?);
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        set_context_name("smallest", Value::I64(i64::MIN))?;
+        let err = eval_condition("smallest < 0").expect_err("i64::MIN is not exact");
+        assert!(err.message().contains("too large"), "{}", err.message());
+        set_context_name("safe", Value::I64(-9_007_199_254_740_991))?;
+        assert!(eval_condition("safe === -Number.MAX_SAFE_INTEGER")?);
+        Ok(())
+    })
 }
 
 fn plain(name: &str) -> Option<String> {
@@ -455,6 +574,7 @@ fn a_tracked_value_the_script_did_not_change_keeps_the_stack_value() -> Result<(
 
 #[test]
 fn context_passed_to_a_host_call_is_the_combined_map() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     set_context_name("outerName", Value::string("outer"))?;
     push_context_frame();
@@ -562,6 +682,7 @@ fn a_script_file_runs_in_names_of_its_own() -> Result<(), Error> {
 
 #[test]
 fn an_error_or_a_panic_out_of_a_run_leaves_no_tracked_values() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     set_context_name("heldRows", Value::List(vec![Value::I32(1)]))?;
     let failed = with_ctx(|ctx| -> Result<(), Error> {
@@ -585,6 +706,7 @@ fn an_error_or_a_panic_out_of_a_run_leaves_no_tracked_values() -> Result<(), Err
 
 #[test]
 fn a_callback_panic_in_a_compiled_script_is_that_scripts_error() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     with_ctx(|ctx| {
         let unguarded =
@@ -638,20 +760,40 @@ fn a_unit_that_throws_after_a_push_leaves_the_stack_as_it_found_it() -> Result<(
 
 #[test]
 fn a_loop_outside_a_transaction_stops_at_the_default_limit() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
     use std::time::{Duration, Instant};
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        with_script_engine(engine, || -> Result<(), Error> {
+            clear_context_stack();
+            // As a `resource-facade` `script-timeout` of 200 ms would set it.
+            super::SCRIPT_LIMIT.with(|limit| limit.set(Some(Some(Duration::from_millis(200)))));
+            let started = Instant::now();
+            let err = run_script("while (true) {}").expect_err("interrupted");
+            assert!(err.message().contains("interrupted"), "under {}: {}", engine.name(), err.message());
+            assert!(started.elapsed() < Duration::from_secs(10), "under {}", engine.name());
+            assert_eq!(
+                super::script_time_remaining(),
+                None,
+                "under {}: the default goes when the script ends",
+                engine.name()
+            );
+            super::SCRIPT_LIMIT.with(|limit| limit.set(Some(None)));
+            assert!(eval_condition("true")?);
+            assert_eq!(super::script_time_remaining(), None);
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// A transaction's own limit replaces the default inside a running script, and the time inside does not count
+/// against it (`with_ctx`, QuickJS's).
+#[test]
+fn a_transaction_limit_replaces_the_default_inside_a_script() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
+    use std::time::Duration;
     clear_context_stack();
-    // As a `resource-facade` `script-timeout` of 200 ms would set it.
     super::SCRIPT_LIMIT.with(|limit| limit.set(Some(Some(Duration::from_millis(200)))));
-    let started = Instant::now();
-    let err = run_script("while (true) {}").expect_err("interrupted");
-    assert!(err.message().contains("interrupted"), "{}", err.message());
-    assert!(started.elapsed() < Duration::from_secs(10));
-    assert_eq!(
-        super::script_time_remaining(),
-        None,
-        "the default goes when the script ends"
-    );
-    // A transaction's own limit replaces the default inside it, and the time inside does not count against it.
     with_ctx(|_| {
         assert!(super::script_time_remaining().is_some_and(|left| left <= Duration::from_millis(200)));
         {
@@ -689,6 +831,8 @@ fn deep_recursion_in_a_nested_script_is_a_script_error() {
     let outcome = std::thread::Builder::new()
         .stack_size(1536 * 1024)
         .spawn(|| {
+            // the setting is the thread's: this one's own
+            let _quickjs = crate::script::engine::quickjs_for_test();
             with_ctx(|ctx| {
                 let most: i64 = eval_source(
                     ctx,
@@ -737,7 +881,9 @@ fn request_scripts_have_room_for_nested_app_templates() {
 fn heap_pressure_releases_cached_code_without_losing_live_values() {
     // A fresh thread has its own engine pool. Keep a real JS allocation alive across cache reclamation, below the
     // hard limit, and verify the next script can still read it. No retry of a possibly side-effectful script occurs.
+    // The QuickJS engine's own caches: the conditions run there whatever the process's script_engine.
     std::thread::spawn(|| -> Result<(), Error> {
+        let _quickjs = crate::script::set_thread_script_engine(Some(crate::script::ScriptEngine::Rquickjs));
         assert!(eval_condition("1 + 1 === 2")?);
         let engine = super::ENGINES.with(|engines| engines.borrow()[0].1.clone());
         assert!(!engine.reclaim_cache_pressure());
@@ -772,6 +918,12 @@ fn heap_pressure_releases_cached_code_without_losing_live_values() {
 
 #[test]
 fn running_out_of_memory_frees_the_engine_caches() -> Result<(), Error> {
+    use crate::script::{with_script_engine, ScriptEngine};
+    with_script_engine(ScriptEngine::Rquickjs, running_out_of_memory_on_quickjs)
+}
+
+/// The QuickJS engine's own caches: the conditions run there whatever the process's script_engine.
+fn running_out_of_memory_on_quickjs() -> Result<(), Error> {
     clear_context_stack();
     assert!(eval_condition("1 + 1 === 2")?);
     let cached = || super::ENGINES.with(|engines| engines.borrow()[0].1.scripts.borrow().len());
@@ -790,6 +942,7 @@ fn running_out_of_memory_frees_the_engine_caches() -> Result<(), Error> {
 /// expression calls into runs on an engine of its own, with the real `ec`.
 #[test]
 fn the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     with_ctx(|ctx| {
         let read = rquickjs::Function::new(ctx.clone(), || -> rquickjs::Result<String> {
@@ -812,11 +965,258 @@ fn the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one() -> Result
     assert!(super::with_real_ec(|| eval_condition(
         "typeof ec.user.context === 'object'"
     ))?);
+    // the value converts inside the wrapper: a getter the conversion runs is checked too
+    let err = super::eval_map("({ get area() { return typeof ec.entity } })").unwrap_err().to_string();
+    assert!(err.contains("ec.entity is not available"), "{err}");
+    // a script run is not a widget expression
+    run_script("scriptSaw = typeof ec.entity")?;
+    assert_eq!(context_value("scriptSaw"), Some(Value::string("object")));
     assert_eq!(
         eval_value(
             "__nestedRead() + '|' + (() => { try { ec.entity; return 'real' } catch (e) { return 'wrapped' } })()"
         )?,
         Value::string("object|wrapped")
     );
+    Ok(())
+}
+
+/// A script cannot replace a helper for the later scripts on the thread: the helper objects, `System` and their
+/// functions are frozen on each engine, so an assignment does nothing in sloppy code and throws in strict code. A
+/// `UserSecurityChecks` check replaced by one script would otherwise let a non-member's later write of an admin group
+/// membership through.
+#[test]
+fn the_helper_objects_and_their_functions_are_frozen() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let held = "[ObjectUtilities, CollectionUtilities, StringUtilities, WebUtilities, UserSecurityChecks, System]\
+                .every(Object.isFrozen) && Object.isFrozen(UserSecurityChecks.assertPrivilegedGroupMembership) \
+                && UserSecurityChecks.assertSealedPermissionGrant.extra === undefined \
+                && typeof StringUtilities.base64Encode === 'function' && typeof WebUtilities.encodeHtml === 'function' \
+                && typeof System.getProperty === 'function' && CollectionUtilities.added === undefined \
+                && ObjectUtilities.added === undefined";
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::SmallOxide, ScriptEngine::Oxide] {
+        with_script_engine(engine, || -> Result<(), Error> {
+            clear_context_stack();
+            run_script(
+                "UserSecurityChecks.assertPrivilegedGroupMembership = function () {};
+                 UserSecurityChecks.assertSealedPermissionGrant.extra = 1;
+                 StringUtilities.base64Encode = null; WebUtilities.encodeHtml = null;
+                 CollectionUtilities.added = 1; ObjectUtilities.added = 1; System.getProperty = null;",
+            )?;
+            assert!(eval_condition(held)?, "under {}", engine.name());
+            let strict = "(function () { 'use strict'; \
+                          UserSecurityChecks.assertPrivilegedGroupMembership = function () {}; })()";
+            let err = run_script(strict)
+            .expect_err("a strict assignment throws");
+            let text = err.to_string();
+            assert!(text.contains("read-only") || text.contains("TypeError"), "under {}: {text}", engine.name());
+            assert!(eval_condition(held)?, "under {}", engine.name());
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// `ResourceReference` is a global of a whole runtime on each engine, as the tools shim makes it on QuickJS's main
+/// context: its one static, `isTextFilename`, by the file name's content type, and the global read-only.
+#[test]
+fn resource_reference_is_a_global_of_each_whole_runtime() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        with_script_engine(engine, || -> Result<(), Error> {
+            clear_context_stack();
+            push_context_frame();
+            run_script(
+                "seen = [typeof ResourceReference, Object.keys(ResourceReference).join(), \
+                 ResourceReference.isTextFilename('A.JSON'), ResourceReference.isTextFilename('a.png'), \
+                 (() => { try { ResourceReference = 1; return 'assigned' } catch (e) { return 'read-only' } })(), \
+                 typeof ResourceReference].join('|')",
+            )?;
+            assert_eq!(
+                context_value("seen"),
+                Some(Value::string("object|isTextFilename|true|false|read-only|object")),
+                "under {}",
+                engine.name()
+            );
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+
+/// The builtins QuickJS's main context has that quickjs-oxide lacks (`queueMicrotask`, `atob`, `btoa`, `performance`,
+/// `DOMException`, `SuppressedError`, `DisposableStack`, `AsyncDisposableStack`, `Symbol.dispose` and
+/// `Symbol.asyncDispose`) are on a whole oxide runtime (`oxide/builtins.rs`), and each answers as QuickJS's does: its
+/// descriptor, length, members, errors and results. A prototype's key order and an error's own `stack` are left out of
+/// the comparison (plans/Script-Engine-Oxide.md, Engine differences).
+#[test]
+fn the_quickjs_builtins_are_on_each_whole_runtime() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    const PROBE: &str = r#"(() => { const out = []; const d = (n) => { try { return n + ': ' + (0, eval)(n) } catch (e) { return n + ' threw ' + e + ' [' + (e && e.name) + ']' } };
+  for (const n of ["queueMicrotask","atob","btoa","performance","DOMException","DisposableStack","AsyncDisposableStack","SuppressedError"]) {
+    const v = globalThis[n]; const desc = Object.getOwnPropertyDescriptor(globalThis, n);
+    if (!desc) { out.push(n + ' MISSING'); continue; }
+    out.push(n + ' ' + typeof v + ' len=' + (v && v.length) + ' w' + desc.writable + 'e' + desc.enumerable + 'c' + desc.configurable + ' own=' + Object.getOwnPropertyNames(v).join() + ' proto=' + (v.prototype ? Object.getOwnPropertyNames(v.prototype).sort().join() + '/' + Object.getOwnPropertySymbols(v.prototype).map(String).join() : '-') + ' tag=' + Object.prototype.toString.call(v));
+  }
+  out.push(d("typeof Symbol.dispose"), d("typeof Symbol.asyncDispose"), d("btoa('hiÿ')"), d("atob('aGk=')"), d("atob('!')"), d("btoa('Ā')"), d("atob(' aG k ')"), d("atob('aGk')"), d("atob('a')"), d("atob(null)"), d("btoa(null)"), d("btoa()"));
+  out.push(d("JSON.stringify(Object.getOwnPropertyNames(performance))"), d("typeof performance.now()"), d("performance.now() < 1e7"), d("Object.prototype.toString.call(performance)"), d("Object.getOwnPropertyNames(Object.getPrototypeOf(performance)).join()"));
+  out.push(d("(() => { const e = new DOMException('m', 'NotFoundError'); return [e.name, e.message, e.code, e instanceof Error, String(e), Object.keys(e).join(), typeof e.stack, Object.getOwnPropertyNames(e).join()].join('|') })()"));
+  out.push(d("(() => { const e = new DOMException(); return [e.name, e.message, e.code].join('|') })()"));
+  out.push(d("(() => { const e = new DOMException('x', 'Bogus'); return [e.name, e.message, e.code, DOMException.NOT_FOUND_ERR, DOMException.prototype.NOT_FOUND_ERR].join('|') })()"));
+  out.push(d("Object.getOwnPropertyNames(DOMException).join()"));
+  out.push(d("(() => { const e = new SuppressedError(1, 2, 'm'); return [e.name, e.message, e.error, e.suppressed, e instanceof Error, Object.getOwnPropertyNames(e).filter(n => n !== 'stack').join(), String(e)].join('|') })()"));
+  out.push(d("(() => { const log = []; const s = new DisposableStack(); s.defer(() => log.push('a')); s.use({[Symbol.dispose]() { log.push('b') }}); s.adopt(1, (v) => log.push('c' + v)); s.dispose(); return log.join() + '|' + s.disposed })()"));
+  out.push(d("(() => { const s = new DisposableStack(); s.defer(() => { throw new Error('one') }); s.defer(() => { throw new Error('two') }); try { s.dispose() } catch (e) { return [e.name, e.error && e.error.message, e.suppressed && e.suppressed.message].join('|') } })()"));
+  out.push(d("(() => { const s = new DisposableStack(); const m = s.move(); return [s.disposed, m.disposed, typeof s[Symbol.dispose], s[Symbol.toStringTag]].join('|') })()"));
+  out.push(d("(() => { const s = new AsyncDisposableStack(); return [typeof s.disposeAsync, typeof s[Symbol.asyncDispose], s[Symbol.toStringTag], String(s.disposeAsync())].join('|') })()"));
+  out.push(d("(() => { let r; queueMicrotask(() => { r = 1 }); return typeof r })()"));
+  out.push(d("(() => { try { queueMicrotask(1) } catch (e) { return String(e) } })()"));
+  out.push(d("(() => { try { new DisposableStack().use(1) } catch (e) { return String(e) } })()"));
+  out.push(d("(() => { try { DisposableStack() } catch (e) { return e.name } })()"));
+  out.push(d("Object.getPrototypeOf(DOMException) === Error"), d("Object.getPrototypeOf(DOMException.prototype) === Error.prototype"),
+    d("['IndexSizeError','DOMStringSizeError','HierarchyRequestError','WrongDocumentError','InvalidCharacterError','NoDataAllowedError','NoModificationAllowedError','NotFoundError','NotSupportedError','InUseAttributeError','InvalidStateError','SyntaxError','InvalidModificationError','NamespaceError','InvalidAccessError','ValidationError','TypeMismatchError','SecurityError','NetworkError','AbortError','URLMismatchError','QuotaExceededError','TimeoutError','InvalidNodeTypeError','DataCloneError','EncodingError','NotReadableError'].map(n => new DOMException('', n).code).join()"),
+    d("JSON.stringify(Object.getOwnPropertyDescriptor(DOMException, 'NOT_FOUND_ERR'))"), d("JSON.stringify(Object.getOwnPropertyDescriptor(DOMException.prototype, 'NOT_FOUND_ERR'))"),
+    d("typeof Object.getOwnPropertyDescriptor(DOMException.prototype, 'name').get"),
+    d("(() => { try { atob('!') } catch (e) { return [e instanceof DOMException, e.code, e.name].join() } })()"),
+    d("(() => { try { DOMException() } catch (e) { return e.name } })()"),
+    d("(() => { const e = SuppressedError(1, 2); return [e instanceof SuppressedError, Object.getOwnPropertyNames(e).filter(n => n !== 'stack').join(), e.message === '', Object.getPrototypeOf(SuppressedError) === Error].join() })()"),
+    d("(() => { const e = new DOMException('m', 'NotFoundError'); const s = Object.getOwnPropertyDescriptor(e, 'stack'); return [typeof s.value, s.writable, s.enumerable, s.configurable].join() })()"),
+    d("JSON.stringify(Object.getOwnPropertyDescriptor(DisposableStack.prototype, 'disposed').get !== undefined)"),
+    d("DisposableStack.prototype[Symbol.dispose] === DisposableStack.prototype.dispose"),
+    d("AsyncDisposableStack.prototype[Symbol.asyncDispose] === AsyncDisposableStack.prototype.disposeAsync"),
+    d("(() => { const s = new DisposableStack(); s.dispose(); try { s.defer(() => 1) } catch (e) { return String(e) } })()"),
+    d("(() => { const s = new DisposableStack(); s.defer(() => { throw new Error('one') }); try { s.dispose() } catch (e) { return String(e) } })()"),
+    d("(() => { const e = new SuppressedError(1, 2); return JSON.stringify(Object.getOwnPropertyDescriptor(e, 'error')) })()"),
+    d("queueMicrotask.name + queueMicrotask.length + atob.name + btoa.name + (typeof queueMicrotask.prototype)"),
+    d("Object.getOwnPropertyNames(Symbol).filter(n => n.includes('ispose')).join()"),
+    d("JSON.stringify(Object.getOwnPropertyDescriptor(Symbol, 'dispose'))"),
+    d("btoa(String.fromCharCode(0,1,2,255))"), d("atob('AAEC/w==').split('').map(c => c.charCodeAt(0)).join()"), d("atob('AAEC/w=')"), d("atob('AA==A')"), d("atob('A===')"),
+    d("[DisposableStack.prototype.dispose.name, DisposableStack.prototype.use.length, DisposableStack.prototype.adopt.length, AsyncDisposableStack.prototype.disposeAsync.name, SuppressedError.prototype.name, DOMException.name, DOMException.length].join()"));
+  return out.join('\n') })()"#;
+    let answer = |engine: ScriptEngine| {
+        with_script_engine(engine, || -> Result<String, Error> {
+            clear_context_stack();
+            Ok(moqui_lib::object::to_plain_string(&eval_value(PROBE)?))
+        })
+    };
+    let quickjs = answer(ScriptEngine::Rquickjs)?;
+    let oxide = answer(ScriptEngine::Oxide)?;
+    assert!(!quickjs.contains("MISSING") && !quickjs.contains("ReferenceError]"), "{quickjs}");
+    for (quickjs, oxide) in quickjs.lines().zip(oxide.lines()) {
+        assert_eq!(oxide, quickjs);
+    }
+    assert_eq!(quickjs.lines().count(), oxide.lines().count());
+    Ok(())
+}
+
+/// Run the pending jobs of the thread's runtime of `engine`'s setting, outside any run.
+fn run_jobs(engine: crate::script::engine::ScriptEngine) -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    if engine == ScriptEngine::Oxide {
+        return crate::script::oxide::run_jobs_for_tests();
+    }
+    with_script_engine(ScriptEngine::Rquickjs, || {
+        with_ctx(|ctx| {
+            while ctx.execute_pending_job() {}
+            Ok(())
+        })
+    })
+}
+
+/// The builtins' jobs and stacks do on each engine what QuickJS's do: a `queueMicrotask` callback runs when the jobs
+/// run, `move()` hands the resources over, and `disposeAsync()` disposes last first (a null `Symbol.asyncDispose`
+/// falling back to `Symbol.dispose`, a null resource awaited), a later error wrapping the earlier one. A script that
+/// changes the builtins they would call changes none of that.
+#[test]
+fn the_builtins_jobs_and_stacks_run_on_each_engine() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    const SCRIPT: &str = r#"
+        micro = "";
+        queueMicrotask(() => { micro = micro + "ran" });
+        const calls = [];
+        const first = new DisposableStack();
+        first.defer(() => calls.push("deferred"));
+        const moved = first.move();
+        first.dispose();
+        const before = calls.length;
+        moved.dispose();
+        movedCalls = before + ":" + calls.join();
+        asyncLog = "";
+        const stack = new AsyncDisposableStack();
+        stack.defer(() => { asyncLog = asyncLog + "1" });
+        stack.use({ [Symbol.asyncDispose]: null, [Symbol.dispose]() { asyncLog = asyncLog + "2" } });
+        stack.use(null);
+        stack.defer(async () => { asyncLog = asyncLog + "3"; throw new Error("three") });
+        stack.defer(() => { asyncLog = asyncLog + "4"; throw new Error("four") });
+        stack.disposeAsync().then(() => { asyncLog = asyncLog + "|ok" },
+            (e) => { asyncLog = asyncLog + "|" + e.name + ":" + e.error.message + ":" + e.suppressed.message });
+    "#;
+    const TAMPER: &str = r#"
+        const saved = { then: Promise.prototype.then, get: WeakMap.prototype.get, set: WeakMap.prototype.set,
+            charCodeAt: String.prototype.charCodeAt };
+        Promise.prototype.then = function () { throw new Error("then tampered") };
+        WeakMap.prototype.get = function () { return { kind: "DisposableStack", disposed: false, resources: [] } };
+        WeakMap.prototype.set = function () { throw new Error("set tampered") };
+        String.prototype.charCodeAt = function () { return 65 };
+        Object.defineProperty(Object.prototype, "get", { value: () => 1, configurable: true, writable: true });
+        Object.defineProperty(Array.prototype, "0", { set() { throw new Error("index tampered") }, configurable: true });
+        let seen;
+        try {
+            const stack = new DisposableStack();
+            stack.defer(() => {});
+            stack.dispose();
+            seen = [btoa("hi"), atob("aGk="), stack.disposed, new DOMException("m", "NotFoundError").code].join("|");
+        } catch (e) {
+            seen = String(e);
+        } finally {
+            Promise.prototype.then = saved.then;
+            WeakMap.prototype.get = saved.get;
+            WeakMap.prototype.set = saved.set;
+            String.prototype.charCodeAt = saved.charCodeAt;
+            delete Object.prototype.get;
+            delete Array.prototype[0];
+        }
+        tampered = seen;
+    "#;
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        with_script_engine(engine, || -> Result<(), Error> {
+            clear_context_stack();
+            push_context_frame();
+            run_script(SCRIPT)?;
+            let name = engine.name();
+            assert_eq!(context_value("movedCalls"), Some(Value::string("0:deferred")), "{name}");
+            assert_eq!(context_value("micro"), Some(Value::string("")), "{name}: not before the jobs run");
+            run_jobs(engine)?;
+            assert_eq!(context_value("micro"), Some(Value::string("ran")), "{name}");
+            assert_eq!(
+                context_value("asyncLog"),
+                Some(Value::string("4321|SuppressedError:three:four")),
+                "{name}"
+            );
+            run_script(TAMPER)?;
+            assert_eq!(context_value("tampered"), Some(Value::string("aGk=|hi|true|8")), "{name}");
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// A live-form template is not a widget expression: under the widget check it runs with the real `ec` on each engine,
+/// as QuickJS's `run_template_function` runs it.
+#[test]
+fn a_template_under_the_widget_check_reads_the_real_ec() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        with_script_engine(engine, || -> Result<(), Error> {
+            clear_context_stack();
+            let _wrap = super::WidgetWrap::set(true);
+            let text = crate::script::template::render_trusted(
+                "${typeof ec.entity}",
+                crate::script::template::Escape::None,
+            )?;
+            assert_eq!(text, "object", "under {}", engine.name());
+            Ok(())
+        })?;
+    }
     Ok(())
 }

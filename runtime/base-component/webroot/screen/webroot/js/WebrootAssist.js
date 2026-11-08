@@ -71,7 +71,7 @@
             open: "Open", answer: "Answer", continueRun: "Continue", stopRun: "Stop", copy: "Copy", image: "Image", unavailable: "Assist is not available",
             empty: "Ask about this page, or tell Assist what to do.", earlier: "Earlier messages", recommended: "recommended", other: "Other",
             commands: "Commands", help: "/new starts a conversation, /tier fast|balanced|thorough picks the tier, /skill <name> asks for a skill, /help shows this.",
-            adminHelp: "Admin: /prompt, /tools, /skills, /context, /usage.", tier: "Tier", agent: "Agent", menu: "More", expired: "Expired",
+            adminHelp: "Admin: /prompt, /tools, /skills, /context, /usage.", tier: "Thinking", agent: "Agent", menu: "More", expired: "Expired",
             approved: "Approved", rejected: "Rejected", executed: "Done", executing: "Running", unknownOutcome: "Outcome unknown", handedOff: "Handed to you", decided: "Decided",
             errorTitle: "Something went wrong", nothingWaiting: "Nothing waiting", up: "Helpful", down: "Not helpful",
             canvas: "Canvas", backToPage: "Back to the page", showCanvas: "Show canvas", closeCanvas: "Close the canvas", loading: "Loading",
@@ -83,7 +83,7 @@
             dictationFailed: "The dictation did not work", edit: "Edit", cancel: "Cancel", save: "Save", canceled: "Canceled",
             contextUsed: "Context used", estimated: "estimated", suggested: "Suggested", download: "Download as Markdown",
             saveSkill: "Save as skill", skill: "Skill", skillSaved: "Saved", drafting: "Drafting", back: "Back", memory: "Memory",
-            mySkills: "My skills", remember: "Assist may remember what I ask", onlyConversation: "Only for this conversation",
+            mySkills: "My skills", constitution: "Constitution / Rules", remember: "Assist may remember what I ask", onlyConversation: "Only for this conversation",
             memoryNote: "Assist still uses what it remembers when this is off.", addMemory: "Add a memory", memoryText: "Remember…",
             memoryDays: "Days (empty: always)", forget: "Forget", remembered: "Remembered", forgotten: "Forgotten", lessonKept: "Lesson kept for", until: "until", lessons: "Lessons", noMemories: "Nothing remembered",
             noSkills: "No skills of your own", retire: "Retire", share: "Share for review", shared: "Shared", noLessons: "No lessons",
@@ -2639,6 +2639,9 @@
             meter() { return assist.contextMeter(this.convo.context); },
             memoryOn() { return assist.featureOn("memory"); },
             skillsOn() { return assist.featureOn("saveSkill") && !st().off.skills; },
+            // the Constitution / Rules pane and the reference dialog of the chat's links (js/WebrootConstitution.js)
+            constitutionOn() { return !!moqui.constitution; },
+            constitutionDialog() { return moqui.constitution ? moqui.constitution.chatDialog() : null; },
             memoryGate() { return assist.memoryGate(); },
             // the page, its record and the agent: the suggested prompts follow them
             promptKey() {
@@ -2682,7 +2685,7 @@
             // Esc returns focus to the page; a second Esc closes
             onKey(event) {
                 if (event.key !== "Escape" || event.defaultPrevented) return;
-                if (root.document.querySelector(".q-menu")) return;
+                if (root.document.querySelector(".q-menu") || root.document.querySelector(".q-dialog")) return;
                 event.stopPropagation();
                 if (this.escArmed) { this.escArmed = false; assist.closeDrawer(); return; }
                 this.escArmed = true;
@@ -2711,7 +2714,7 @@
                         '<q-select v-if="agentOptions.length > 1" :model-value="convo.agentId || s.agentId" @update:model-value="setAgent" :options="agentOptions" emit-value map-options dense borderless options-dense class="m-assist-agent" for="m-assist-agent" :aria-label="labels.agent"></q-select>' +
                         '<div v-else class="text-subtitle2 text-weight-medium ellipsis">{{agent.name || labels.assist}}</div>' +
                         '<q-space></q-space>' +
-                        '<q-btn-toggle v-if="tierOptions.length > 1" :model-value="s.tier || tiers[0]" @update:model-value="setTier" :options="tierOptions" dense flat no-caps size="sm" toggle-color="primary" class="m-assist-tier" id="m-assist-tier"></q-btn-toggle>' +
+                        '<q-select v-if="tierOptions.length > 1" :model-value="s.tier || tiers[0]" @update:model-value="setTier" :options="tierOptions" emit-value map-options dense borderless options-dense class="m-assist-tier" id="m-assist-tier" :aria-label="labels.tier"><q-tooltip>{{labels.tier}}</q-tooltip></q-select>' +
                         '<div v-if="meter" class="m-assist-context q-mx-xs" id="m-assist-context" tabindex="0" :data-assist-context-level="meter.level" :data-percent="meter.percent" :aria-label="meter.tooltip">' +
                             '<q-circular-progress :value="meter.value" size="24px" :thickness="0.2" :color="meter.level === \'warning\' ? \'warning\' : \'primary\'" track-color="grey-5" show-value font-size="8px">{{meter.percent}}</q-circular-progress>' +
                             '<q-tooltip>{{meter.tooltip}}</q-tooltip></div>' +
@@ -2728,6 +2731,7 @@
                                 '<q-item-section side><q-toggle dense :model-value="memoryGate.preference" @update:model-value="setRemember"></q-toggle></q-item-section></q-item>' +
                             '<q-item v-if="memoryOn" clickable v-close-popup id="m-assist-memory" :active="s.pane === \'memory\'" @click="pane(\'memory\')"><q-item-section>{{labels.memory}}</q-item-section></q-item>' +
                             '<q-item v-if="skillsOn" clickable v-close-popup id="m-assist-skills" :active="s.pane === \'skills\'" @click="pane(\'skills\')"><q-item-section>{{labels.mySkills}}</q-item-section></q-item>' +
+                            '<q-item v-if="constitutionOn" clickable v-close-popup id="m-assist-constitution-item" :active="s.pane === \'constitution\'" @click="pane(\'constitution\')"><q-item-section>{{labels.constitution}}</q-item-section></q-item>' +
                         '</q-list></q-menu></q-btn>' +
                         '<q-btn flat round dense icon="sym_o_close" id="m-assist-close" :aria-label="labels.close" @click="close"></q-btn>' +
                     '</div>' +
@@ -2748,6 +2752,7 @@
                     '<m-assist-memory v-else-if="s.pane === \'memory\'" class="col"></m-assist-memory>' +
                     '<m-assist-skills v-else-if="s.pane === \'skills\'" class="col"></m-assist-skills>' +
                     '<m-assist-skill-editor v-else-if="s.pane === \'skill\' && s.skillEditor" class="col"></m-assist-skill-editor>' +
+                    '<m-assist-constitution v-else-if="s.pane === \'constitution\' && constitutionOn" class="col"></m-assist-constitution>' +
                     '<template v-else>' +
                         '<m-assist-thread class="col"></m-assist-thread>' +
                         '<div v-if="handoffs.length || approvals.length || questions.length" class="m-assist-cards q-px-sm q-pt-xs">' +
@@ -2756,6 +2761,7 @@
                         '</div>' +
                         '<m-assist-composer></m-assist-composer>' +
                     '</template>' +
+                    '<m-reference-dialog v-if="constitutionDialog" :dialog="constitutionDialog"></m-reference-dialog>' +
                     '<div class="m-assist-announce" aria-live="polite" role="status">{{s.announce}}</div>' +
                 '</div>' +
             '</q-drawer>'
@@ -2840,10 +2846,23 @@
             scrollKey() { const last = this.rows[this.rows.length - 1]; return this.rows.length + ":" + (last && last.text ? last.text.length : 0) + ":" + this.loose.length; }
         },
         watch: { scrollKey() { this.$nextTick(() => { if (this.pinned && this.$el && this.$el.scrollTo) this.$el.scrollTop = this.$el.scrollHeight; }); } },
+        // another pane (History, the Rules) unmounts the thread: back on it, it is where the user left it
+        mounted() {
+            const kept = assist.threadScroll;
+            this.$nextTick(() => {
+                if (!this.$el) return;
+                if (kept && !kept.pinned) { this.pinned = false; this.$el.scrollTop = kept.top; }
+                else this.$el.scrollTop = this.$el.scrollHeight;
+            });
+        },
         methods: {
             // the agent kept a fact: Forget takes it back (the user's own row)
             forgetRemembered(row) { assist.memoryOp("forget", { memoryId: row.memoryId }).then((ok) => { if (ok) row.forgotten = true; }); },
-            onScroll() { const el = this.$el; this.pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 40; },
+            onScroll() {
+                const el = this.$el;
+                this.pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+                assist.threadScroll = { top: el.scrollTop, pinned: this.pinned };
+            },
             toggleStep(key) { this.openSteps = Object.assign({}, this.openSteps, { [key]: !this.openSteps[key] }); },
             stepIcon(status) { return status === "done" ? "sym_o_check_circle" : status === "failed" ? "sym_o_error" : status === "denied" ? "sym_o_block" : status === "running" ? "sym_o_pending" :
                 status === "waiting" ? "sym_o_pending_actions" : "sym_o_help"; },
@@ -2893,7 +2912,7 @@
                             '<q-btn flat dense no-caps size="sm" :label="labels.retry" data-assist-action="resend" @click="resend(row)"></q-btn><q-btn flat dense round size="sm" icon="sym_o_close" @click="drop(row)"></q-btn></div>' +
                     '</div>' +
                     '<div v-else-if="row.kind === \'text\'" class="m-assist-answer q-mb-sm" data-assist-item="assistant" :data-message-id="row.messageId">' +
-                        '<m-assist-markdown :text="row.text" :invented="row.invented" :chips="row.chips" :streaming="row.streaming"></m-assist-markdown>' +
+                        '<m-assist-markdown :text="row.text" :invented="row.invented" :chips="row.chips" :streaming="row.streaming" :run-id="row.runId ? String(row.runId) : null"></m-assist-markdown>' +
                         '<div v-if="!row.streaming && row.messageId && row.text" class="row items-center no-wrap m-assist-actions">' +
                             '<q-btn flat round dense size="xs" icon="sym_o_content_copy" :aria-label="labels.copy" @click="copy(row.text)"></q-btn>' +
                             '<q-btn flat round dense size="xs" icon="sym_o_thumb_up" :color="row.feedback && row.feedback.rating === \'up\' ? \'primary\' : undefined" :aria-label="labels.up" @click="rate(row, \'up\')"></q-btn>' +
@@ -2956,7 +2975,8 @@
     components["m-assist-markdown"] = {
         name: "mAssistMarkdown",
         // strict: a canvas's Markdown (no external link, no image of any kind)
-        props: { text: String, invented: Array, chips: Object, streaming: Boolean, strict: Boolean },
+        // runId: the run of the message, whose Constitution references a link may be (opened in the reference dialog)
+        props: { text: String, invented: Array, chips: Object, streaming: Boolean, strict: Boolean, runId: String },
         data() { return { html: "", failed: false, frame: null }; },
         template: '<div class="m-assist-markdown m-markdown" @click="onClick"><div v-if="failed" class="m-assist-pre">{{text}}</div><div v-else class="m-markdown-body" v-html="html"></div></div>',
         watch: { text() { this.schedule(); }, invented() { this.schedule(); } },
@@ -2975,11 +2995,22 @@
                         strict: this.strict });
                     this.html = assist.sanitize(root.DOMPurify, html, null, this.strict);
                     this.failed = false;
+                    // a run's references are read once, so a click on one of them can open the dialog at once
+                    if (this.runId && !this.strict && moqui.constitution && /https:\/\//.test(text)) moqui.constitution.runReferences(this.runId);
                 }, () => { this.failed = true; });
             },
             onClick(event) {
                 const anchor = event.target && event.target.closest ? event.target.closest("a[href]") : null;
-                if (!anchor || !anchor.hasAttribute("data-md-link") || event.ctrlKey || event.metaKey || event.shiftKey || event.button) return;
+                if (!anchor || event.ctrlKey || event.metaKey || event.shiftKey || event.button) return;
+                // a link that is exactly one of this run's trusted Constitution references opens in the reference dialog
+                const reference = !anchor.hasAttribute("data-md-link") && this.runId && moqui.constitution
+                    ? moqui.constitution.knownReference(this.runId, anchor.getAttribute("href")) : null;
+                if (reference) {
+                    event.preventDefault();
+                    moqui.constitution.openReference(moqui.constitution.chatDialog(), { referenceId: reference.referenceId, runId: this.runId, title: reference.title }, anchor);
+                    return;
+                }
+                if (!anchor.hasAttribute("data-md-link")) return;
                 event.preventDefault();
                 const checked = assist.safePath(anchor.getAttribute("href"), null, { linkBase: this.$root.linkBasePath || "/qapps" });
                 if (checked.ok) this.$root.setUrl(checked.url);

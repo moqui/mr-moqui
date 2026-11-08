@@ -434,6 +434,66 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <!-- A drive's owner (mr-boss plan/impl-admin.md P6, F31): a shared drive moves to a new owner when its owner leaves, through
+        the owned-resource contract of org.moqui.admin.IdentityServices. A personal drive, a records drive and a mirror stay as
+        they are. -->
+    <service verb="find" noun="OwnedDrives" allow-remote="false">
+        <description>The shared drives userId owns (not archived; personal, records and mirror drives are not transferred), each
+            {resourceId (the driveId), resourceName, resourceKind drive, transferable, note (its current member count)}; names
+            only. The caller's own, or another user's with DRIVE_OWNER_CHANGE.</description>
+        <implements service="org.moqui.admin.IdentityServices.define#OwnedResourceLookup"/>
+        <actions><script><![CDATA[
+            resourceList = []
+            if (!ec.user.userId) { ec.message.addError('Sign in to see owned drives'); return }
+            if (userId !== ec.user.userId && !ec.user.hasPermission('DRIVE_OWNER_CHANGE')) {
+                ec.message.addError('DRIVE_OWNER_CHANGE is required for another user\'s drives'); return }
+            for (const row of ec.entity.find('moqui.resource.ResourceDrive').condition('ownerUserId', userId)
+                    .condition('driveKindEnumId', 'RdkShared').condition('archivedDate', null).orderBy('driveName').disableAuthz().list()) {
+                const members = ec.entity.find('moqui.resource.ResourceDriveMember').condition('driveId', row.driveId)
+                        .conditionDate('fromDate', 'thruDate', null).disableAuthz().count()
+                resourceList.push({resourceId: row.driveId, resourceName: row.driveName || row.driveId, resourceKind: 'drive',
+                    transferable: true, note: members + ' member(s)'})
+            }
+        ]]></script></actions>
+    </service>
+    <service verb="transfer" noun="DriveOwner" allow-remote="false">
+        <description>A shared drive's owner changed from fromUserId to toUserId: by its owner, or with DRIVE_OWNER_CHANGE. The new
+            owner must be an enabled account, not ended and not an external user (EXTERNAL_USER); a current member row of the new
+            owner ends, as the owner manages; the former owner keeps no access of their own. A personal drive, a records drive,
+            a mirror and an archived drive are refused. Logged with the reason.</description>
+        <implements service="org.moqui.admin.IdentityServices.define#OwnedResourceTransfer"/>
+        <in-parameters><parameter name="driveId" required="true"/></in-parameters>
+        <actions><script><![CDATA[
+            transferred = false
+            const me = ec.user.userId
+            if (!me) { ec.message.addError('Sign in to change a drive\'s owner'); return }
+            const row = ec.entity.find('moqui.resource.ResourceDrive').condition('driveId', driveId).disableAuthz().one()
+            if (row == null || row.ownerUserId !== fromUserId) { ec.message.addError(`Drive ${driveId} is not owned by ${fromUserId}`); return }
+            if (fromUserId !== me && !ec.user.hasPermission('DRIVE_OWNER_CHANGE')) {
+                ec.message.addError('DRIVE_OWNER_CHANGE is required to change another user\'s drive'); return }
+            if (row.driveKindEnumId !== 'RdkShared' || row.archivedDate != null) {
+                ec.message.addError(`Drive ${row.driveName || driveId} is not a shared drive in use: its owner is not changed`); return }
+            if (toUserId === fromUserId) { ec.message.addError('The new owner is the current owner'); return }
+            const account = ec.entity.find('moqui.security.UserAccount').condition('userId', toUserId).disableAuthz().one()
+            const now = Number(ec.user.nowTimestamp)
+            const ended = (value) => value != null && (value instanceof Date ? value.getTime() : Number(value) || Date.parse(String(value))) <= now
+            if (account == null || (account.disabled === 'Y' && account.disabledDateTime == null) || ended(account.terminateDate)) {
+                ec.message.addError(`User ${toUserId} cannot own a drive: the account is not enabled`); return }
+            if (ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', [toUserId])
+                    .disableAuthz().call()?.anyExternal !== false) {
+                ec.message.addError(`User ${toUserId} cannot own a drive: an external user`); return }
+            for (const member of ec.entity.find('moqui.resource.ResourceDriveMember').condition('driveId', driveId)
+                    .condition('userId', toUserId).conditionDate('fromDate', 'thruDate', null).disableAuthz().list()) {
+                member.thruDate = ec.user.nowTimestamp
+                member.update()
+            }
+            row.ownerUserId = toUserId
+            row.update()
+            transferred = true
+            ec.logger.info(`Drive ${driveId} owner ${fromUserId} -> ${toUserId} by ${ec.user.username}${reason ? ': ' + reason : ''}`)
+        ]]></script></actions>
+    </service>
+
     <service verb="add" noun="DriveMember">
         <description>Let a user or a user group open a drive with RdpView, RdpEdit or RdpManage; a current member row of
             the same user or group gets the new permission. Manage permission; not on a personal drive.</description>

@@ -128,3 +128,46 @@ fn a_nested_raw_read_restores_the_outer_flag() {
     }
     assert!(!raw_read());
 }
+
+/// An update of an audited entity reads the stored row by its primary key converted to the fields' types, as the write
+/// binds it: a date-time key given as epoch milliseconds (a service caller's `fromDate: 0`) finds the row, so the
+/// update is written and audited, as it is with no audit log (Postgres refused the unconverted number).
+#[test]
+fn an_audited_update_finds_the_row_by_a_numeric_date_time_key() {
+    let facade = audit_facade();
+    let mut grant = facade.make_value("moqui.security.UserGroupPermission").unwrap();
+    grant.set("userGroupId", Value::string("AUDIT_GROUP"));
+    grant.set("userPermissionId", Value::string("AUDIT_PERM"));
+    grant.set("fromDate", Value::I64(0));
+    grant.create(&facade).unwrap();
+
+    let mut ended = facade.make_value("moqui.security.UserGroupPermission").unwrap();
+    ended.set("userGroupId", Value::string("AUDIT_GROUP"));
+    ended.set("userPermissionId", Value::string("AUDIT_PERM"));
+    ended.set("fromDate", Value::I64(0));
+    ended.set("thruDate", Value::I64(1_000));
+    ended.update(&facade).unwrap();
+
+    let rows = facade
+        .find("moqui.security.UserGroupPermission")
+        .unwrap()
+        .eq("userGroupId", Value::string("AUDIT_GROUP"))
+        .list()
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(rows
+        .iter()
+        .all(|row| row.get("thruDate").is_some_and(|value| !value.is_null())));
+    let audits = facade
+        .find("moqui.entity.EntityAuditLog")
+        .unwrap()
+        .eq("changedEntityName", Value::string("moqui.security.UserGroupPermission"))
+        .eq("changedFieldName", Value::string("thruDate"))
+        .list()
+        .unwrap();
+    assert_eq!(audits.len(), 1);
+    assert!(audits
+        .iter()
+        .all(|row| row.get("oldValueText").is_none_or(Value::is_null)
+            && row.get("newValueText").is_some_and(|value| !value.is_null())));
+}

@@ -226,7 +226,7 @@ fn semantic_sql_ranks_by_cosine_distance_per_type_with_the_filter() {
         sql.text,
         "SELECT * FROM ((SELECT 'TestDoc' AS document_id, 'test_doc' AS index_name, doc_id, body::text AS body, \
              (1 - (embedding <=> ?::halfvec(3)))::float8 AS score FROM \"search\".\"test_doc\" WHERE embedding IS NOT NULL \
-             AND embedding_model = ? AND COALESCE(COALESCE(\"f_severity_text\" = ?, (body -> 'severity_text') @> jsonb_build_array(?::text)), FALSE) \
+             AND embedding_model = ? AND (\"f_severity_text\" = ? OR (\"f_severity_text\" IS NULL AND ((body -> 'severity_text') @> jsonb_build_array(?::text)))) \
              ORDER BY embedding <=> ?::halfvec(3) LIMIT 10)) AS s \
              ORDER BY score DESC, document_id ASC, doc_id ASC LIMIT 10"
     );

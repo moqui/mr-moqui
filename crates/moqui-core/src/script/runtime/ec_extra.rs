@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `ec.resource` expansion, `ec.l10n`, `ec.context`, `ec.screen`, and the static helpers the screen
+//! `ec.resource` expansion, `ec.context`, and the static helpers the screen
 //! macros call (`WebUtilities`, `StringUtilities`, `CollectionUtilities`).
 
 use moqui_lib::object::to_plain_string;
@@ -48,7 +48,7 @@ fn with_additional<'js, T>(
     result
 }
 
-fn localized(template: &str) -> Result<String, Error> {
+pub(crate) fn localized(template: &str) -> Result<String, Error> {
     if template.chars().count() < LOCALIZE_LIMIT {
         l10n::localize(template).map_err(|err| Error::new(err.message()))
     } else {
@@ -184,12 +184,6 @@ pub(super) fn add_resource_functions<'js>(ctx: &Ctx<'js>, resource: &Object<'js>
         Function::new(ctx.clone(), resource_condition),
     )?;
     caught(ctx, "resource.condition", resource.set("condition", condition))?;
-    let xsl_fo = caught(
-        ctx,
-        "resource.xslFoTransform",
-        Function::new(ctx.clone(), super::ec_screen::resource_xsl_fo_transform),
-    )?;
-    caught(ctx, "resource.xslFoTransform", resource.set("xslFoTransform", xsl_fo))?;
     let code128 = caught(
         ctx,
         "resource.code128Svg",
@@ -226,8 +220,7 @@ pub(super) fn add_resource_functions<'js>(ctx: &Ctx<'js>, resource: &Object<'js>
         "resource.getTemplateRendererExtensionSet",
         resource.set("getTemplateRendererExtensionSet", extensions),
     )?;
-    // the theme composition adapter, ec.resource.theme (theme_host.rs)
-    super::theme_host::add_theme(ctx, resource)
+    Ok(())
 }
 
 /// `ec.resource.getTemplateRendererExtensionSet()`: the file extensions a template renderer is configured for (`md`,
@@ -266,7 +259,7 @@ fn resource_code128_svg(ctx: Ctx<'_>, text: JsValue<'_>, options: Opt<JsValue<'_
 }
 
 /// The SVG options of a `code128Svg` options map.
-fn code128_options(value: &Value) -> Result<moqui_lib::barcode::SvgOptions, String> {
+pub(crate) fn code128_options(value: &Value) -> Result<moqui_lib::barcode::SvgOptions, String> {
     let Value::Map(map) = value else {
         return Err("the options are not an object".to_string());
     };
@@ -321,248 +314,6 @@ fn resource_template(ctx: Ctx<'_>, location: String, data: Opt<JsValue<'_>>) -> 
     })
 }
 
-// ---- ec.l10n ----
-
-/// `localize(original, locale)`: in the given locale, else the session's.
-fn l10n_localize(ctx: Ctx<'_>, original: JsValue<'_>, locale: Opt<JsValue<'_>>) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        let text = moqui_lib::object::to_plain_string(&js_to_host(&ctx, &original)?);
-        let localized = match optional_text(&ctx, locale.0.as_ref())?.filter(|locale| !locale.is_empty()) {
-            Some(locale) => l10n::localize_in(&text, &locale.replace('-', "_")),
-            None => l10n::localize(&text),
-        };
-        localized.map_err(|err| throw_error(&ctx, &Error::new(err.message())))
-    })
-}
-
-/// `ec.l10n.format(value, pattern)`, and Java's `format(value, pattern, locale, timeZone)`: a time stamp in the named
-/// zone (an IANA name; empty or null is the session's), as the call handling schedules read a local time.
-fn l10n_format(
-    ctx: Ctx<'_>,
-    value: JsValue<'_>,
-    pattern: Opt<JsValue<'_>>,
-    _locale: Opt<JsValue<'_>>,
-    zone: Opt<JsValue<'_>>,
-) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        let host = js_to_host(&ctx, &value)?;
-        let pattern = match pattern.0.as_ref() {
-            Some(found) if !found.is_null() && !found.is_undefined() => {
-                Some(moqui_lib::object::to_plain_string(&js_to_host(&ctx, found)?))
-            }
-            _ => None,
-        };
-        let host = match pattern.as_deref() {
-            // Any date pattern (`h:mm a` as well as `yyyy-MM-dd`), as `l10n::is_date_pattern` reads one.
-            Some(pattern) if l10n::is_date_pattern(pattern) => epoch_millis_timestamp(&host).unwrap_or(host),
-            // No pattern: a time stamp is epoch millis text in a script (`temporal_text`), so such text is formatted as
-            // the time stamp, `yyyy-MM-dd HH:mm`, as Java formats the `Timestamp` it holds.
-            Some("") | None => match &host {
-                Value::String(text) => l10n::epoch_millis_text(text)
-                    .and_then(|millis| epoch_millis_timestamp(&Value::I64(millis)))
-                    .unwrap_or(host),
-                _ => host,
-            },
-            _ => host,
-        };
-        let zone = optional_text(&ctx, zone.0.as_ref())?.filter(|zone| !zone.trim().is_empty());
-        if let (Some(zone), Value::Timestamp(stamp)) = (zone.as_deref(), &host) {
-            let zone = jiff::tz::TimeZone::get(zone.trim())
-                .map_err(|_| throw_error(&ctx, &Error::new(format!("Time zone {zone} is not known"))))?;
-            let pattern = pattern
-                .as_deref()
-                .filter(|p| !p.is_empty())
-                .unwrap_or("yyyy-MM-dd HH:mm");
-            return moqui_lib::format::format_timestamp(*stamp, Some(pattern), &zone)
-                .map_err(|err| throw_error(&ctx, &Error::new(err.message())));
-        }
-        l10n::format_value(&host, pattern.as_deref()).map_err(|err| throw_error(&ctx, &Error::new(err.message())))
-    })
-}
-
-/// A date or timestamp reaches a script as epoch millis, so a whole number formatted with a date pattern is a
-/// timestamp.
-fn epoch_millis_timestamp(value: &Value) -> Option<Value> {
-    let millis = match value {
-        Value::I64(millis) => *millis,
-        Value::I32(millis) => i64::from(*millis),
-        Value::F64(millis) if millis.fract() == 0.0 => *millis as i64,
-        Value::String(text) => match text.trim().parse::<i64>() {
-            Ok(millis) => millis,
-            // A script holds a date as text such as `2026-10-16` or `2026-10-16 08:30:00`, which the date pattern formats.
-            Err(_) if is_date_text(text) => {
-                // Date only text is a Date, which has no time zone to shift it.
-                let java_type = if text.trim().len() == 10 {
-                    "java.sql.Date"
-                } else {
-                    "java.sql.Timestamp"
-                };
-                // In the session time zone, which the pattern formats it in, so the text shows as written.
-                let converted = crate::l10n::basic_convert(value, java_type);
-                return (!matches!(converted.value, Value::Null | Value::String(_))).then_some(converted.value);
-            }
-            Err(_) => return None,
-        },
-        _ => return None,
-    };
-    Some(moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value)
-}
-
-/// Text that begins `yyyy-MM-dd`.
-fn is_date_text(text: &str) -> bool {
-    let bytes = text.trim().as_bytes();
-    bytes.len() >= 10
-        && bytes[..4].iter().all(u8::is_ascii_digit)
-        && bytes[4] == b'-'
-        && bytes[5..7].iter().all(u8::is_ascii_digit)
-        && bytes[7] == b'-'
-        && bytes[8..10].iter().all(u8::is_ascii_digit)
-}
-
-fn currency(
-    ctx: &Ctx<'_>,
-    amount: &JsValue<'_>,
-    uom_id: &Opt<JsValue<'_>>,
-    digits: &Opt<JsValue<'_>>,
-    hide_symbol: bool,
-) -> rquickjs::Result<String> {
-    let amount = js_to_host(ctx, amount)?;
-    let uom = match uom_id.0.as_ref() {
-        Some(found) if !found.is_null() && !found.is_undefined() => {
-            Some(moqui_lib::object::to_plain_string(&js_to_host(ctx, found)?))
-        }
-        _ => None,
-    };
-    let digits = match digits.0.as_ref() {
-        Some(found) if !found.is_null() && !found.is_undefined() => {
-            moqui_lib::object::to_plain_string(&js_to_host(ctx, found)?)
-                .parse::<usize>()
-                .ok()
-        }
-        _ => None,
-    };
-    l10n::format_currency(&amount, uom.as_deref(), digits, hide_symbol)
-        .map_err(|err| throw_error(ctx, &Error::new(err.message())))
-}
-
-fn l10n_format_currency(
-    ctx: Ctx<'_>,
-    amount: JsValue<'_>,
-    uom_id: Opt<JsValue<'_>>,
-    digits: Opt<JsValue<'_>>,
-) -> rquickjs::Result<String> {
-    host_guard(&ctx, || currency(&ctx, &amount, &uom_id, &digits, false))
-}
-
-fn l10n_format_currency_no_symbol(
-    ctx: Ctx<'_>,
-    amount: JsValue<'_>,
-    uom_id: Opt<JsValue<'_>>,
-    digits: Opt<JsValue<'_>>,
-) -> rquickjs::Result<String> {
-    host_guard(&ctx, || currency(&ctx, &amount, &uom_id, &digits, true))
-}
-
-fn parsed_or_null<'js>(ctx: &Ctx<'js>, value: Option<Value>) -> rquickjs::Result<JsValue<'js>> {
-    match value {
-        Some(value) => host_to_js(ctx, value),
-        None => Null.into_js(ctx),
-    }
-}
-
-fn l10n_parse_timestamp<'js>(
-    ctx: Ctx<'js>,
-    input: JsValue<'js>,
-    format: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let input = moqui_lib::object::to_plain_string(&js_to_host(&ctx, &input)?);
-        let format = optional_text(&ctx, format.0.as_ref())?;
-        parsed_or_null(&ctx, l10n::parse_timestamp_format(&input, format.as_deref()))
-    })
-}
-
-fn l10n_parse_date<'js>(
-    ctx: Ctx<'js>,
-    input: JsValue<'js>,
-    format: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let input = moqui_lib::object::to_plain_string(&js_to_host(&ctx, &input)?);
-        let format = optional_text(&ctx, format.0.as_ref())?;
-        parsed_or_null(&ctx, l10n::parse_date_format(&input, format.as_deref()))
-    })
-}
-
-fn l10n_parse_time<'js>(
-    ctx: Ctx<'js>,
-    input: JsValue<'js>,
-    format: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let input = moqui_lib::object::to_plain_string(&js_to_host(&ctx, &input)?);
-        let format = optional_text(&ctx, format.0.as_ref())?;
-        parsed_or_null(&ctx, l10n::parse_time_format(&input, format.as_deref()))
-    })
-}
-
-fn l10n_parse_number<'js>(
-    ctx: Ctx<'js>,
-    input: JsValue<'js>,
-    _format: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let input = moqui_lib::object::to_plain_string(&js_to_host(&ctx, &input)?);
-        parsed_or_null(&ctx, l10n::parse_number(&input))
-    })
-}
-
-fn l10n_round_currency<'js>(
-    ctx: Ctx<'js>,
-    amount: JsValue<'js>,
-    uom_id: Opt<JsValue<'js>>,
-    precise: Opt<JsValue<'js>>,
-    mode: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let amount = js_to_host(&ctx, &amount)?;
-        let uom = optional_text(&ctx, uom_id.0.as_ref())?.unwrap_or_else(|| "USD".to_string());
-        let precise = precise.0.as_ref().and_then(JsValue::as_bool).unwrap_or(false);
-        // The fourth argument is a `RoundingMode` name or an old `ROUND_*` number; none is HALF_UP, as Java.
-        let strategy = match mode.0.as_ref().filter(|mode| !mode.is_null() && !mode.is_undefined()) {
-            Some(mode) => super::decimal::rounding_strategy(&ctx, Some(mode))?
-                .ok_or_else(|| Exception::throw_message(&ctx, "rounding necessary"))?,
-            None => moqui_lib::format::RoundingStrategy::MidpointAwayFromZero,
-        };
-        let rounded =
-            l10n::round_currency_with(&amount, &uom, precise, strategy).map_err(|err| throw_error(&ctx, &err))?;
-        host_to_js(&ctx, rounded)
-    })
-}
-
-fn l10n_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
-    let l10n = caught(ctx, "l10n", Object::new(ctx.clone()))?;
-    macro_rules! method {
-        ($name:literal, $function:expr) => {
-            let function = caught(ctx, $name, Function::new(ctx.clone(), $function))?;
-            caught(ctx, $name, l10n.set($name, function))?;
-        };
-    }
-    method!("localize", l10n_localize);
-    method!("format", l10n_format);
-    method!("formatCurrency", l10n_format_currency);
-    method!("formatCurrencyNoSymbol", l10n_format_currency_no_symbol);
-    method!("parseTimestamp", l10n_parse_timestamp);
-    method!("parseDate", l10n_parse_date);
-    method!("parseTime", l10n_parse_time);
-    method!("parseNumber", l10n_parse_number);
-    method!("roundCurrency", l10n_round_currency);
-    // `formatNumber(n, format)` and `formatValue` are `format` for a number, as in Java.
-    method!("formatNumber", l10n_format);
-    method!("formatValue", l10n_format);
-    Ok(l10n)
-}
-
 // ---- ec.context and ec.screen ----
 
 /// `ec.context.get(name)`: the same list or map a bare `name` reads, so a write to it reaches the stack.
@@ -615,29 +366,9 @@ fn context_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     Ok(context)
 }
 
-fn screen_is_render_mode_valid(ctx: Ctx<'_>, mode: String) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        with_ec(&ctx, |ec| {
-            crate::screen::ScreenFacade::of(ec.factory()).is_render_mode_valid(&mode)
-        })
-    })
-}
-
-fn screen_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
-    let screen = caught(ctx, "screen", Object::new(ctx.clone()))?;
-    let valid = caught(
-        ctx,
-        "screen.isRenderModeValid",
-        Function::new(ctx.clone(), screen_is_render_mode_valid),
-    )?;
-    caught(ctx, "screen.isRenderModeValid", screen.set("isRenderModeValid", valid))?;
-    super::ec_screen::install(ctx, &screen)?;
-    Ok(screen)
-}
-
 // ---- static helpers ----
 
-fn url_safe_chars(name: &str) -> bool {
+pub(crate) fn url_safe_chars(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
@@ -688,7 +419,7 @@ fn js_safe_object(value: &Value) -> String {
     }
 }
 
-fn js_safe_map(entries: &indexmap::IndexMap<String, Value>) -> String {
+pub(crate) fn js_safe_map(entries: &indexmap::IndexMap<String, Value>) -> String {
     let parts: Vec<String> = entries
         .iter()
         .map(|(key, value)| format!("'{}':{}", encode_html_js_safe(key), js_safe_object(value)))
@@ -893,7 +624,9 @@ fn collection_get_map_array_list_values<'js>(
 
 /// Java's `CollectionUtilities.flattenNestedMap`: the entries of a map, an entity value's fields among them, with each
 /// nested map's entries, and those of the maps in a nested list, put in its place. A later key replaces an earlier one.
-fn collection_flatten_nested_map<'js>(ctx: Ctx<'js>, map: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
+/// `CollectionUtilities.flattenNestedMap(map)`: the leaves of nested maps and lists in one map; null for a value that
+/// is not a map.
+pub(crate) fn flatten_nested_map(value: &Value) -> Value {
     fn flatten(value: &Value, out: &mut indexmap::IndexMap<String, Value>) {
         let Some(entries) = super::values::value_map(value) else {
             return;
@@ -910,14 +643,18 @@ fn collection_flatten_nested_map<'js>(ctx: Ctx<'js>, map: JsValue<'js>) -> rquic
             }
         }
     }
-    host_guard(&ctx, || {
-        let value = js_to_host(&ctx, &map)?;
-        if super::values::value_map(&value).is_none() {
-            return Null.into_js(&ctx);
-        }
-        let mut out = indexmap::IndexMap::new();
-        flatten(&value, &mut out);
-        collection_to_js(&ctx, Value::Map(out))
+    if super::values::value_map(value).is_none() {
+        return Value::Null;
+    }
+    let mut out = indexmap::IndexMap::new();
+    flatten(value, &mut out);
+    Value::Map(out)
+}
+
+fn collection_flatten_nested_map<'js>(ctx: Ctx<'js>, map: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || match flatten_nested_map(&js_to_host(&ctx, &map)?) {
+        Value::Null => Null.into_js(&ctx),
+        flat => collection_to_js(&ctx, flat),
     })
 }
 
@@ -954,7 +691,90 @@ pub(super) fn fill_security_checks<'js>(ctx: &Ctx<'js>, checks: &Object<'js>) ->
         "assertDocumentExpression",
         checks.set("assertDocumentExpression", function),
     )?;
+    let function = caught(
+        ctx,
+        "assertSealedGroupMembership",
+        Function::new(ctx.clone(), security_assert_sealed_group_membership),
+    )?;
+    caught(
+        ctx,
+        "assertSealedGroupMembership",
+        checks.set("assertSealedGroupMembership", function),
+    )?;
+    let function = caught(
+        ctx,
+        "privilegedGroups",
+        Function::new(ctx.clone(), security_privileged_groups),
+    )?;
+    caught(ctx, "privilegedGroups", checks.set("privilegedGroups", function))?;
+    let function = caught(
+        ctx,
+        "sealedPermissions",
+        Function::new(ctx.clone(), security_sealed_permissions),
+    )?;
+    caught(ctx, "sealedPermissions", checks.set("sealedPermissions", function))?;
+    let function = caught(
+        ctx,
+        "endUserSessions",
+        Function::new(ctx.clone(), security_end_user_sessions),
+    )?;
+    caught(ctx, "endUserSessions", checks.set("endUserSessions", function))?;
     Ok(())
+}
+
+/// `UserSecurityChecks.endUserSessions(userId, visitIds)`: end the web sessions of a user, those of the visits named (a
+/// list of visit ids) or with none every session and open visit of the user, on every server of the cluster, keeping the
+/// current request's own (`user::end_user_sessions`); the number of web sessions ended. For
+/// `org.moqui.admin.IdentityServices` (revoke#Sessions, revoke#AccountAccess), which check who may first: this decides
+/// no authority.
+fn security_end_user_sessions<'js>(
+    ctx: Ctx<'js>,
+    user_id: Opt<JsValue<'js>>,
+    visit_ids: Opt<JsValue<'js>>,
+) -> rquickjs::Result<i64> {
+    host_guard(&ctx, || {
+        let user_id = opt_id_text(&ctx, &user_id)?;
+        let visits = match &visit_ids.0 {
+            Some(value) if !value.is_null() && !value.is_undefined() => {
+                let host = js_to_host(&ctx, value)?;
+                let items = super::values::value_items(&host).unwrap_or_default();
+                Some(
+                    items
+                        .iter()
+                        .map(moqui_lib::object::to_plain_string)
+                        .filter(|id| !id.trim().is_empty())
+                        .collect::<Vec<String>>(),
+                )
+            }
+            _ => None,
+        };
+        crate::user::end_user_sessions(&user_id, visits.as_deref())
+            .map(|count| i64::try_from(count).unwrap_or(i64::MAX))
+            .map_err(|err| Exception::throw_message(&ctx, err.message()))
+    })
+}
+
+/// `UserSecurityChecks.privilegedGroups()`: the effective privileged group ids, sorted (the framework's list and every
+/// component's `privileged-group` element), so a screen marks a group and a service names why a membership is refused.
+fn security_privileged_groups(ctx: Ctx<'_>) -> rquickjs::Result<JsValue<'_>> {
+    host_guard(&ctx, || {
+        let ids = crate::service::privileged_groups()
+            .into_iter()
+            .map(Value::String)
+            .collect();
+        host_to_js(&ctx, Value::List(ids))
+    })
+}
+
+/// `UserSecurityChecks.sealedPermissions()`: the effective sealed permission ids, sorted, as `privilegedGroups`.
+fn security_sealed_permissions(ctx: Ctx<'_>) -> rquickjs::Result<JsValue<'_>> {
+    host_guard(&ctx, || {
+        let ids = crate::service::sealed_permissions()
+            .into_iter()
+            .map(Value::String)
+            .collect();
+        host_to_js(&ctx, Value::List(ids))
+    })
 }
 
 fn security_assert_document_expression<'js>(ctx: Ctx<'js>, field_path: Opt<JsValue<'js>>) -> rquickjs::Result<()> {
@@ -983,6 +803,32 @@ fn security_assert_sealed_permission_grant<'js>(
     host_guard(&ctx, || {
         let facade = facade_of(&ctx)?;
         crate::service::assert_sealed_permission_grant(&facade, &opt_id_text(&ctx, &user_permission_id)?)
+            .map_err(|err| throw_lib(&ctx, &err))
+    })
+}
+
+/// `UserSecurityChecks.assertSealedGroupMembership(userGroupId, thruDate, hasStored, storedThruDate)`: the
+/// `UserGroupMemberSealed` rule's check (`Security.eecas.xml`); `hasStored` is true for an update that found the stored
+/// row, whose end is `storedThruDate`, so a change that only ends the membership sooner passes.
+fn security_assert_sealed_group_membership<'js>(
+    ctx: Ctx<'js>,
+    user_group_id: Opt<JsValue<'js>>,
+    thru_date: Opt<JsValue<'js>>,
+    has_stored: Opt<JsValue<'js>>,
+    stored_thru_date: Opt<JsValue<'js>>,
+) -> rquickjs::Result<()> {
+    host_guard(&ctx, || {
+        let facade = facade_of(&ctx)?;
+        let host = |value: &Opt<JsValue<'js>>| -> rquickjs::Result<Value> {
+            match &value.0 {
+                Some(value) if !value.is_null() && !value.is_undefined() => js_to_host(&ctx, value),
+                _ => Ok(Value::Null),
+            }
+        };
+        let stored = host(&stored_thru_date)?;
+        let has_stored = has_stored.0.as_ref().and_then(JsValue::as_bool).unwrap_or(false);
+        let ends_sooner = crate::service::membership_ends_sooner(&host(&thru_date)?, has_stored.then_some(&stored));
+        crate::service::assert_sealed_group_membership(&facade, &opt_id_text(&ctx, &user_group_id)?, ends_sooner)
             .map_err(|err| throw_lib(&ctx, &err))
     })
 }
@@ -1050,7 +896,6 @@ pub(super) fn fill_helpers<'js>(
 }
 
 pub(super) fn install_ec_extras<'js>(ctx: &Ctx<'js>, ec: &Object<'js>) -> Result<(), Error> {
-    caught(ctx, "ec.l10n", ec.set("l10n", l10n_object(ctx)?))?;
     caught(ctx, "ec.context", ec.set("context", context_object(ctx)?))?;
     // `ec.factory.moquiVersion`, which the footer items of the default theme show.
     let factory = caught(ctx, "ec.factory", Object::new(ctx.clone()))?;
@@ -1067,9 +912,8 @@ pub(super) fn install_ec_extras<'js>(ctx: &Ctx<'js>, ec: &Object<'js>) -> Result
         Function::new(ctx.clone(), |name: String| crate::build_info::has_feature(&name)),
     )?;
     caught(ctx, "ec.factory.hasFeature", factory.set("hasFeature", has_feature))?;
-    super::native_tools::install(ctx, ec, &factory)?;
-    caught(ctx, "ec.factory", ec.set("factory", factory))?;
-    caught(ctx, "ec.screen", ec.set("screen", screen_object(ctx)?))
+    // getTool and getToolFactory are the host table's (script/host/native_tools.rs)
+    caught(ctx, "ec.factory", ec.set("factory", factory))
 }
 
 #[cfg(test)]

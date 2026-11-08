@@ -35,6 +35,9 @@ pub(super) struct ConfCache {
     artifact: HashMap<String, HashMap<String, bool>>,
     /// `user-facade` child attributes: `(child, attribute)` to the non-empty value.
     user_facade: HashMap<(String, String), String>,
+    /// The `name`s of the `user-facade` `authz` children, by element (`sealed-permission`, `privileged-group`), in conf
+    /// order: what the components add to the attribute lists.
+    authz_names: HashMap<String, Vec<String>>,
     /// `webapp` attributes: `(webapp name, attribute)` to the raw value, `${}` not yet expanded.
     webapp: HashMap<(String, String), String>,
     /// `web-protection` attributes of a `webapp`: `(webapp name, child, attribute)` to the raw value, the child empty
@@ -81,6 +84,17 @@ impl ConfCache {
                 for (name, value) in child.attributes() {
                     if !value.is_empty() {
                         cache.user_facade.entry((child.name(), name)).or_insert(value);
+                    }
+                }
+            }
+            if let Some(authz) = facade.first_named("authz") {
+                for child in authz.child_iter() {
+                    if let Some(name) = child.attribute("name").filter(|name| !name.trim().is_empty()) {
+                        cache
+                            .authz_names
+                            .entry(child.name())
+                            .or_default()
+                            .push(name.trim().to_string());
                     }
                 }
             }
@@ -155,6 +169,11 @@ impl ConfCache {
         self.user_facade.get(&(child.to_string(), name.to_string())).cloned()
     }
 
+    /// The `name`s of the `user-facade` `authz` children named `element`, empty when there are none.
+    pub(super) fn authz_names(&self, element: &str) -> Vec<String> {
+        self.authz_names.get(element).cloned().unwrap_or_default()
+    }
+
     pub(super) fn webapp_attr(&self, webapp: &str, name: &str) -> Option<String> {
         self.webapp.get(&(webapp.to_string(), name.to_string())).cloned()
     }
@@ -203,6 +222,23 @@ fn record_elements(elements: &mut HashMap<String, HashMap<String, String>>, node
 #[cfg(test)]
 mod tests {
     use super::ConfCache;
+
+    #[test]
+    fn authz_children_are_listed_by_element_beside_the_attributes() {
+        let cache = ConfCache::parse(
+            r#"<moqui-conf><user-facade><authz privileged-groups="ADMIN">
+                    <privileged-group name="APP_ADMIN"/><sealed-permission name="APP_GLOBAL"/>
+                    <privileged-group name="APP_BACKUP"/><privileged-group name=" "/>
+                </authz></user-facade></moqui-conf>"#,
+        );
+        assert_eq!(
+            cache.user_facade_attr("authz", "privileged-groups").as_deref(),
+            Some("ADMIN")
+        );
+        assert_eq!(cache.authz_names("privileged-group"), ["APP_ADMIN", "APP_BACKUP"]);
+        assert_eq!(cache.authz_names("sealed-permission"), ["APP_GLOBAL"]);
+        assert!(cache.authz_names("other").is_empty());
+    }
 
     #[test]
     fn elements_by_path_and_webapp_children_by_name_or_endpoint_path() {

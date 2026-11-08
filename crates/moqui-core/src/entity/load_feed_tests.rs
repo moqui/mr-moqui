@@ -103,12 +103,16 @@ fn open_with(driver: Arc<dyn DbDriver>) -> EntityFacade {
         },
     )
     .unwrap();
-    EntityFacade::open(
+    let facade = EntityFacade::open(
         &framework_dir(),
         "transactional",
         vec![EntityGroup::new("transactional", "postgres", transactions)],
     )
-    .unwrap()
+    .unwrap();
+    // As `moqui_entity::testing::open`: an audited field (a UserGroupPermission's dates) would take an EntityAuditLog id
+    // from the sequence, whose upsert answers no row on a driver that answers nothing.
+    facade.set_disable_audit_log(true);
+    facade
 }
 
 fn open_empty() -> EntityFacade {

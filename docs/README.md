@@ -63,6 +63,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 | Guide | What it covers |
 |---|---|
 | [Assist.md](ai/Assist.md) | The Assist drawer and its server: the agent runtime, tools, approvals, skills and canvases |
+| [Constitution.md](ai/Constitution.md) | The Constitution: shared guidance for people and agent runs, its sources, editing, prompt section and references |
 | [A2A.md](ai/A2A.md) | The agent-to-agent server and client (A2A 1.0) |
 | [MCP.md](ai/MCP.md) | The MCP tool server for AI agents and coding assistants, and the MCP client |
 | [Gateway.md](ai/Gateway.md) | The OpenAI-compatible LLM gateway at `/llm/v1`, and the LLM embedder |
@@ -94,3 +95,4 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [Native-Components.md](dev/Native-Components.md) | A component with Rust code: linked services, tools, resource schemes and template renderers |
 | [Client-Testing.md](dev/Client-Testing.md) | Testing a running server from outside with `moqui test-client`: HTTP, WebSocket, Chromium and load |
 | [Moqui-Java-Migration.md](dev/Moqui-Java-Migration.md) | Moving a Moqui Java deployment or component to MR Moqui |
+| [Contributions.md](dev/Contributions.md) | Pull requests and AUTHORS.md: checking a signature, merging, and an unsigned pull request's ideas without its code |

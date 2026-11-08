@@ -113,6 +113,9 @@ impl TemplateRenderer for FancyRenderer {
         if let Some(Value::Map(entries)) = data {
             super::put_context_all(entries);
         }
+        if super::oxide::templates::on_oxide() {
+            return super::oxide::templates::run_live(&compiled);
+        }
         super::runtime::run_template_function(&compiled)
     }
 
@@ -379,6 +382,9 @@ pub fn render_locked_with(source: &str, escape: Escape, data: &Value) -> Result<
 /// Render `source` as a trusted fancy template on the context of a running host call.
 pub(crate) fn render_trusted_here(ctx: &Ctx<'_>, source: &str, escape: Escape) -> Result<String, Error> {
     let compiled = compiled(source, escape, Scope::Live)?;
+    if super::oxide::templates::on_oxide() {
+        return super::oxide::templates::run_live(&compiled);
+    }
     super::runtime::run_template_function_here(ctx, &compiled)
 }
 
@@ -639,14 +645,18 @@ impl Token {
     }
 }
 
-const PRELUDE: &str = r#"const $esc = (v) => String(v).replace(/[&<>"']/g, (c) => c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;");
+/// The globals the prelude calls, taken before the template function is made, so a template that assigns one of their
+/// names (`<#assign String = ...>`, a `var` of the function) does not change its escaping or its lists.
+const INTRINSICS: &str = "const $String = String, $Array = Array, $Object = Object, $Symbol = Symbol;\n";
+
+const PRELUDE: &str = r#"const $esc = (v) => $String(v).replace(/[&<>"']/g, (c) => c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;");
 class $Raw { constructor(s) { this.s = s; } }
-const $s = (v) => v instanceof $Raw ? v.s : v == null ? "" : String(v);
+const $s = (v) => v instanceof $Raw ? v.s : v == null ? "" : $String(v);
 const $h = (v) => v instanceof $Raw ? v.s : v == null ? "" : $esc(v);
 const html = (v) => new $Raw($h(v));
 const raw = (v) => new $Raw($s(v));
 const cssString = (v) => new $Raw('"' + $s(v).replace(/[\\"<>\r\n]/g, (c) => c === "\n" ? "\\A " : "\\" + c.charCodeAt(0).toString(16).toUpperCase() + " ") + '"');
-const $list = (v) => v == null ? [] : Array.isArray(v) ? v : typeof v === "string" ? [v] : typeof v[Symbol.iterator] === "function" ? Array.from(v) : typeof v.length === "number" ? Array.from({length: v.length}, (_, i) => v[i]) : Object.values(v);
+const $list = (v) => v == null ? [] : $Array.isArray(v) ? v : typeof v === "string" ? [v] : typeof v[$Symbol.iterator] === "function" ? $Array.from(v) : typeof v.length === "number" ? $Array.from({length: v.length}, (_, i) => v[i]) : $Object.values(v);
 const $o = [];
 "#;
 
@@ -668,16 +678,97 @@ fn compile(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> 
             }
         }
     }
-    let live = format!("(function(){{\n{PRELUDE}{declared}{body}return $o.join(\"\");\n}})");
-    // `with` is not legal in the strict parse, so the snapshot form is checked as the live form.
-    super::check_program(&live).map_err(|err| Error::new(format!("template does not compile: {}", err.message())))?;
     let text = match scope {
-        Scope::Live => live,
+        Scope::Live => format!(
+            "(function(){{\n{INTRINSICS}return function(){{\n{PRELUDE}{declared}{body}return $o.join(\"\");\n}};\n}})()"
+        ),
+        // The live form's shape over the snapshot: each name the body reads or writes is a variable of the function's
+        // own frame, read once from the snapshot by `$scope`'s reader (plans/Script-Engine-Oxide.md section 5.4). A
+        // name the body does not name is not reached: code a template makes at run time (`Function`, indirect `eval`)
+        // sees only the frozen globals.
+        //
+        // The function is kept and called for every render on the thread, so nothing of it may carry a value from one
+        // render to the next: it is strict (no `arguments.callee`, `this` is undefined, an assignment to a frozen
+        // global's property throws), and it and its prototype are frozen.
         Scope::Snapshot => {
-            format!("(function($data){{\n{PRELUDE}with ($scope($data)) {{\n{body}}}\nreturn $o.join(\"\");\n}})")
+            let mut names = String::new();
+            for name in snapshot_names(&body) {
+                names.push_str(&format!("var {name} = $n({});\n", js_string(&name)));
+            }
+            format!(
+                "(function(){{\n\"use strict\";\n{INTRINSICS}const $t = function($data){{\nconst $n = $scope($data);\n\
+                 {PRELUDE}{names}{body}return $o.join(\"\");\n}};\n$Object.freeze($t.prototype);\nreturn $Object.freeze($t);\n}})()"
+            )
         }
     };
+    super::check_program(&text).map_err(|err| Error::new(format!("template does not compile: {}", err.message())))?;
     Ok(text)
+}
+
+/// The names a snapshot template's body uses as variables, each once in the order first seen: every identifier of
+/// the parsed body but a member's or property's name and a label. A name the body binds itself (a list variable, an
+/// arrow's parameter) may be among them; it is shadowed where it is bound. Names that start with `$`, the prelude's
+/// `html`, `raw` and `cssString`, `arguments` and `eval`, and the words strict code reserves are left to the function
+/// and the global object.
+fn snapshot_names(body: &str) -> Vec<String> {
+    use serde_json::Value as Json;
+    fn walk(node: &Json, names: &mut Vec<String>) {
+        match node {
+            Json::Array(items) => items.iter().for_each(|item| walk(item, names)),
+            Json::Object(fields) => {
+                let kind = fields.get("type").and_then(Json::as_str).unwrap_or("");
+                if kind == "Identifier" {
+                    if let Some(name) = fields.get("name").and_then(Json::as_str) {
+                        let kept = !name.starts_with('$')
+                            && !matches!(
+                                name,
+                                "html"
+                                    | "raw"
+                                    | "cssString"
+                                    | "arguments"
+                                    | "eval"
+                                    | "implements"
+                                    | "interface"
+                                    | "let"
+                                    | "package"
+                                    | "private"
+                                    | "protected"
+                                    | "public"
+                                    | "static"
+                                    | "yield"
+                                    | "await"
+                            )
+                            && !names.iter().any(|seen| seen == name);
+                        if kept {
+                            names.push(name.to_string());
+                        }
+                    }
+                    return;
+                }
+                let computed = fields.get("computed").and_then(Json::as_bool) == Some(true);
+                for (field, child) in fields {
+                    let skipped = match field.as_str() {
+                        "property" => kind == "MetaProperty" || (kind == "MemberExpression" && !computed),
+                        "key" => !computed,
+                        "label" | "meta" => true,
+                        _ => false,
+                    };
+                    if !skipped {
+                        walk(child, names);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    super::parse::with_arena(|allocator| {
+        let parsed = oxc_parser::Parser::new(allocator, body, oxc_span::SourceType::default()).parse();
+        let mut names = Vec::new();
+        if let Ok(tree) = serde_json::from_str::<Json>(&parsed.program.to_estree_json(false, false)) {
+            walk(&tree, &mut names);
+        }
+        names
+    })
 }
 
 pub(crate) fn line_of(source: &str, offset: usize) -> usize {
@@ -1035,18 +1126,19 @@ pub fn unwrap_json(value: &Value) -> serde_json::Value {
 
 // ---- locked-down context ----
 
-const SANDBOX_PRELUDE: &str = r#"
-const $reserved = new Set(["html", "raw", "cssString"]);
-globalThis.$scope = (data) => new Proxy(JSON.parse(data), {
-    has: (t, k) => typeof k === "string" && !k.startsWith("$") && !$reserved.has(k) && !(k in globalThis),
-    get: (t, k) => k === Symbol.unscopables ? undefined : (t[k] === undefined ? null : t[k]),
-    set: (t, k, v) => { t[k] = v; return true; },
-});
+/// `$scope(json)` is the reader of one render's snapshot names: a name of the global object is that global, any other
+/// is the snapshot's value, and a name the snapshot does not have is null.
+pub(super) const SANDBOX_PRELUDE: &str = r#"
+globalThis.$scope = (data) => {
+    const d = JSON.parse(data);
+    if (d === null || typeof d !== "object") throw new TypeError("a template snapshot is not an object");
+    return (k) => k in globalThis ? globalThis[k] : (d[k] === undefined ? null : d[k]);
+};
 "#;
 
 /// Freeze the global object, every object reachable from it, and the built-ins that no global names (the iterator,
 /// generator and async function prototypes, `%TypedArray%`).
-const SANDBOX_LOCKDOWN: &str = r#"
+pub(super) const SANDBOX_LOCKDOWN: &str = r#"
 (() => {
     const seen = new Set();
     const freeze = (o) => {
@@ -1062,12 +1154,21 @@ const SANDBOX_LOCKDOWN: &str = r#"
         }
         freeze(Object.getPrototypeOf(o));
     };
+    // An engine without one of these (iterator helpers, `Iterator.from`) leaves it out.
     const hidden = [
-        [][Symbol.iterator](), new Map().entries(), new Set().values(), ""[Symbol.iterator](), /a/[Symbol.matchAll]("a"),
-        function* () {}, async function () {}, async function* () {}, (function* () {})(), Int8Array,
+        () => [][Symbol.iterator](), () => new Map().entries(), () => new Set().values(), () => ""[Symbol.iterator](),
+        () => /a/[Symbol.matchAll]("a"), () => function* () {}, () => async function () {}, () => async function* () {},
+        () => (function* () {})(), () => (async function* () {})(), () => Int8Array,
+        () => [].values().map((x) => x), () => Iterator.from({ next() {} }),
+        () => Object.getOwnPropertyDescriptor(Function.prototype, "caller").get,
+        () => (function () { "use strict"; return Object.getOwnPropertyDescriptor(arguments, "callee").get; })(),
     ];
     freeze(globalThis);
-    for (const item of hidden) freeze(item);
+    for (const make of hidden) {
+        let item;
+        try { item = make(); } catch (e) { continue; }
+        freeze(item);
+    }
 })();
 "#;
 
@@ -1130,11 +1231,27 @@ impl Sandbox {
 
 fn locked_format(ctx: Ctx<'_>, value: JsValue<'_>, pattern: Opt<String>) -> rquickjs::Result<String> {
     let host = if let Some(text) = value.as_string() {
-        let text = text.to_string()?;
+        Value::String(text.to_string()?)
+    } else if let Some(number) = value.as_int() {
+        Value::I64(i64::from(number))
+    } else if let Some(number) = value.as_float() {
+        Value::F64(number)
+    } else if let Some(flag) = value.as_bool() {
+        Value::Bool(flag)
+    } else {
+        Value::Null
+    };
+    format_snapshot_value(host, pattern.0.as_deref()).map_err(|err| Exception::throw_message(&ctx, err.message()))
+}
+
+/// The locked renderers' `format(value, pattern)` on either engine: `value` is the snapshot's text, number or flag
+/// (anything else is null).
+pub(super) fn format_snapshot_value(value: Value, pattern: Option<&str>) -> Result<String, Error> {
+    let host = match value {
         // The snapshot sends decimals and dates as text, so the pattern says which it is: a date pattern reads a
         // date or time stamp, a number pattern a number. (Digits alone are also epoch milliseconds to the date
         // parser, so trying it first would print a quantity as a date.)
-        match pattern.0.as_deref().filter(|pattern| !pattern.is_empty()) {
+        Value::String(text) => match pattern.filter(|pattern| !pattern.is_empty()) {
             // A date alone (`yyyy-MM-dd`) is a date, formatted with no time zone shift, as Java formats a Date.
             Some(pattern) if crate::l10n::is_date_pattern(pattern) => {
                 let trimmed = text.trim();
@@ -1154,37 +1271,37 @@ fn locked_format(ctx: Ctx<'_>, value: JsValue<'_>, pattern: Opt<String>) -> rqui
             None => crate::l10n::epoch_millis_text(&text)
                 .map(|millis| moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value)
                 .unwrap_or(Value::String(text)),
-        }
-    } else if let Some(number) = value.as_int() {
-        Value::I64(i64::from(number))
-    } else if let Some(number) = value.as_float() {
-        Value::F64(number)
-    } else if let Some(flag) = value.as_bool() {
-        Value::Bool(flag)
-    } else {
-        Value::Null
+        },
+        other => other,
     };
-    crate::l10n::format_value(&host, pattern.0.as_deref()).map_err(|err| Exception::throw_message(&ctx, err.message()))
+    crate::l10n::format_value(&host, pattern)
 }
 
 fn locked_localize(ctx: Ctx<'_>, text: String) -> rquickjs::Result<String> {
     crate::l10n::localize(&text).map_err(|err| Exception::throw_message(&ctx, err.message()))
 }
 
-/// `t(key)`: the render's text for `key`, or the key itself when the theme has none (so a missing text shows, as the
-/// key, rather than nothing).
 fn locked_text(key: JsValue<'_>) -> rquickjs::Result<String> {
     let key = match key.as_string() {
-        Some(key) => key.to_string()?,
-        None => return Ok(String::new()),
+        Some(key) => Some(key.to_string()?),
+        None => None,
     };
-    Ok(LOCKED_TEXTS.with(|texts| {
+    Ok(snapshot_text(key))
+}
+
+/// `t(key)` on either engine: the render's text for `key`, or the key itself when the theme has none (so a missing
+/// text shows, as the key, rather than nothing); empty for a key that is not a string (`None`).
+pub(super) fn snapshot_text(key: Option<String>) -> String {
+    let Some(key) = key else {
+        return String::new();
+    };
+    LOCKED_TEXTS.with(|texts| {
         texts
             .borrow()
             .as_ref()
             .and_then(|texts| texts.get(&key).cloned())
             .unwrap_or(key)
-    }))
+    })
 }
 
 fn render_locked(compiled: &str, json: &str) -> Result<String, Error> {
@@ -1234,6 +1351,9 @@ impl Drop for TextsSet {
 }
 
 fn render_locked_until(compiled: &str, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {
+    if super::oxide::templates::on_oxide() {
+        return super::oxide::templates::render_locked(compiled, json, deadline, memory);
+    }
     SANDBOX.with(|cell| {
         if cell.borrow().is_none() {
             *cell.borrow_mut() = Some(Sandbox::start()?);

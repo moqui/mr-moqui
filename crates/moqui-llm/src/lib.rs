@@ -31,6 +31,7 @@ pub mod approval;
 pub mod assist;
 pub mod chat;
 pub mod conf;
+pub mod constitution;
 pub mod embed;
 pub mod facts;
 pub mod gateway;
@@ -67,7 +68,7 @@ moqui_core::llm_hooks::submit! {
         register_services,
         canvas_overlay: ui::screen_xml::canvas_overlay,
         sync_skills,
-        script_object: script::llm_object,
+        script_paths: script::PATHS,
         transcribe: speech::transcribe,
         speech_provider: speech::provider,
     }

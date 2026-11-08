@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Native group, membership and grant governance for delegated access administration (mr-boss plan/design-admin.md §5, §17.2;
+    impl-admin P3). Each service checks ADMIN_ACCESS_VIEW (reads) or ADMIN_ACCESS_MANAGE (changes) itself, with
+    ec.user.hasPermission; each change rechecks delegation (registered bundles only, moqui.security.CapabilityBundle; a sealed
+    permission only by a holder and a privileged group only by a member, refused here with the reason before the EECAs of
+    Security.eecas.xml would refuse the write) and the revision it read, keeps the administration path
+    (IdentityServices.check#AdministrationPath), writes the native rows through the entity facade with authorization on, so the
+    EECAs decide each row and the authorization caches move here and on every live cluster member, and leaves before and after
+    in the audit log. A refusal is answered (applied false, reasonCode, reason), never written; a malformed request is an error.
+    The bodies are Access.js. ALL_USERS may call them (data/SecurityTypeData.xml AdminAccessServices): each refuses without its
+    permission. No dependency on Mantle or an app. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="find" noun="Groups" allow-remote="false">
+        <description>The groups, each with its kind (registered: a capability bundle; custom: a group of a registered purpose an access
+            administrator created; other), app, purpose, current member and permission counts, its app gates (artifact groups),
+            and the markers that explain a refusal before it happens: privileged (in the effective privileged-group list) and
+            the sealed permissions it grants (from the effective sealed-permission list). Narrowed by text (id or description,
+            ignoring case), app, kind (registered, custom, other or supported), a permission it grants now and privilegedOnly.
+            Needs ADMIN_ACCESS_VIEW.</description>
+        <in-parameters>
+            <parameter name="text"/>
+            <parameter name="appName"/>
+            <parameter name="kind"/>
+            <parameter name="userPermissionId"/>
+            <parameter name="privilegedOnly" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="groupList" type="List"/>
+            <parameter name="appNames" type="List"/>
+            <parameter name="purposeOptions" type="List"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('findGroups', context))</script></actions>
+    </service>
+    <service verb="get" noun="Group" allow-remote="false">
+        <description>One group: its profile and markers, its memberships (current, future and ended, each with its revision), its
+            permission grants (sealed and registered marked), its artifact bindings with their filter sets, its preferences and
+            the registered preference keys, its grant revision (what preview#Grants and apply#Grants compare), and whether the
+            actor may change it and why not; with includeOptions the registered bundles a grant may come from. Needs
+            ADMIN_ACCESS_VIEW.</description>
+        <in-parameters>
+            <parameter name="userGroupId" required="true"/>
+            <parameter name="includeOptions" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="group" type="Map"/>
+            <parameter name="bundle" type="Map"/>
+            <parameter name="members" type="List"/>
+            <parameter name="grants" type="List"/>
+            <parameter name="artifacts" type="List"/>
+            <parameter name="preferences" type="List"/>
+            <parameter name="preferenceKeys" type="List"/>
+            <parameter name="grantRevision"/>
+            <parameter name="canManage" type="Boolean"/>
+            <parameter name="manageReasonCode"/>
+            <parameter name="manageReason"/>
+            <parameter name="purposeOptions" type="List"/>
+            <parameter name="bundleOptions" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('getGroup', context))</script></actions>
+    </service>
+    <service verb="create" noun="Group" allow-remote="false">
+        <description>A custom group of a registered purpose (a UserGroupType with optionIndicator Y), with no members or grants: never
+            privileged (a privileged or reserved id is refused) and never an existing id. Needs ADMIN_ACCESS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="userGroupId" required="true"><description>3 to 60 capital letters, digits or underscores, starting with a letter</description></parameter>
+            <parameter name="description" required="true"/>
+            <parameter name="groupTypeEnumId" required="true"><description>The registered purpose</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="userGroupId"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('createGroup', context))</script></actions>
+    </service>
+    <service verb="store" noun="Group" allow-remote="false">
+        <description>A group's safe profile (description; a custom group's purpose) and sign-in policy (requireAuthcFactor, ipAllowed,
+            comma separated patterns as login reads them), for a registered bundle, a custom group or a privileged group the
+            actor is a member of; refused when stale (expectedRevision, the group's lastUpdatedStamp as get#Group gives it) or
+            when the policy would leave no administration path. The factor and IP flags are audit-logged with the reason.
+            Needs ADMIN_ACCESS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="userGroupId" required="true"/>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="description"/>
+            <parameter name="groupTypeEnumId"/>
+            <parameter name="requireAuthcFactor"/>
+            <parameter name="ipAllowed"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="userGroupId"/>
+            <parameter name="revision"/>
+            <parameter name="pathsAfter" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('storeGroup', context))</script></actions>
+    </service>
+    <service verb="store" noun="Membership" allow-remote="false">
+        <description>A dated membership of a user in a registered bundle or a custom group, from fromDate (now when empty) to thruDate;
+            with the fromDate of an existing membership and its revision, a change of its end date. Refused for an unregistered
+            group (UNREGISTERED_BUNDLE), a bundle whose delegable permission the actor lacks, a privileged group the actor is not
+            in (PRIVILEGED_GROUP, before the EECA would refuse it), an overlapping membership, a stale revision or a change that
+            would leave no administration path. The dates are audit-logged with the reason; ended memberships are kept. Needs
+            ADMIN_ACCESS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="userGroupId" required="true"/>
+            <parameter name="userId" required="true"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="userGroupId"/>
+            <parameter name="userId"/>
+            <parameter name="fromDate"/>
+            <parameter name="thruDate"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('storeMembership', context))</script></actions>
+    </service>
+    <service verb="end" noun="Membership" allow-remote="false">
+        <description>Ends a membership at thruDate (now when empty), keeping the row, in any group: a privileged group's only by a
+            member, and never the last administration path. Needs ADMIN_ACCESS_MANAGE and the membership's revision.</description>
+        <in-parameters>
+            <parameter name="userGroupId" required="true"/>
+            <parameter name="userId" required="true"/>
+            <parameter name="fromDate" type="Timestamp" required="true"/>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="userGroupId"/>
+            <parameter name="userId"/>
+            <parameter name="fromDate"/>
+            <parameter name="thruDate"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('endMembership', context))</script></actions>
+    </service>
+    <service verb="preview" noun="Grants" allow-remote="false">
+        <description>The effective change of a grant request on a group, nothing written: each permission or artifact binding added or
+            ended, before and after, the kind and bundle it comes from, whether the actor may make it and why not
+            (UNREGISTERED_GRANT, SEALED_PERMISSION, a group refusal), the current members it reaches, and the grant revision
+            apply#Grants expects. Needs ADMIN_ACCESS_VIEW.</description>
+        <in-parameters>
+            <parameter name="userGroupId" required="true"/>
+            <parameter name="grantList" type="List" required="true"><description>Each a Map: action add or end, and
+                userPermissionId, artifactGroupId or bundleGroupId alone (each of the bundle's permissions and bindings); bundleGroupId
+                beside a permission or artifact group names the bundle it comes from; fromDate and thruDate optional</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="changeList" type="List"/>
+            <parameter name="memberCount" type="Integer"/>
+            <parameter name="allowed" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="revision"/>
+            <parameter name="summary"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('previewGrants', context))</script></actions>
+    </service>
+    <service verb="apply" noun="Grants" allow-remote="false">
+        <description>The previewed grant change: dated UserGroupPermission rows added or ended (never deleted) and registered artifact
+            bindings added (ArtifactAuthz with the bundle's filter sets) or removed (recorded in the audit log); refused as a
+            whole when any part is refused or the grants changed since the preview (expectedRevision). Needs
+            ADMIN_ACCESS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="userGroupId" required="true"/>
+            <parameter name="grantList" type="List" required="true"><description>Each a Map: action add or end, and
+                userPermissionId, artifactGroupId or bundleGroupId alone (each of the bundle's permissions and bindings); bundleGroupId
+                beside a permission or artifact group names the bundle it comes from; fromDate and thruDate optional</description></parameter>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="added" type="Integer"/>
+            <parameter name="ended" type="Integer"/>
+            <parameter name="revision"/>
+            <parameter name="changeList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('applyGrants', context))</script></actions>
+    </service>
+    <service verb="store" noun="GroupPreference" allow-remote="false">
+        <description>A group's default for a registered preference key (a UserPreferenceKey Enumeration; its optionValue types the
+            value: indicator, boolean, number or text), with its priority; an empty value removes the default. For a group the
+            actor may change, with the existing row's revision. Audit-logged with the reason. Needs ADMIN_ACCESS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="userGroupId" required="true"/>
+            <parameter name="preferenceKey" required="true"/>
+            <parameter name="preferenceValue" allow-html="any"/>
+            <parameter name="groupPriority" type="Integer"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('storeGroupPreference', context))</script></actions>
+    </service>
+    <service verb="check" noun="GrantProposal" allow-remote="false">
+        <description>A grant proposal (impl-admin §4, F11): the registered bundles an app supplies for an account it provisions,
+            each allowed or refused with its reason by the delegation rules of store#Membership for the actor (registered only,
+            its delegable permission, a privileged group only by a member, no sealed grant carried to a non-holder); nothing
+            written. Needs ADMIN_ACCESS_VIEW or ADMIN_IDENTITY_VIEW.</description>
+        <in-parameters><parameter name="bundleGroupIdList" type="List" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="allowed" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="bundleList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('checkGrantProposal', context))</script></actions>
+    </service>
+    <service verb="apply" noun="GrantProposal" allow-remote="false">
+        <description>The memberships of a grant proposal for one account (a staff account Mantle creates, later an accepted
+            invitation), each a dated row from fromDate (now when empty) written with authorization on, so the sealed and
+            privileged EECAs decide it; refused whole, nothing written, when any bundle is refused (check#GrantProposal); a bundle
+            the account is already in is left. The dates are audit-logged with the reason. The framework knows no
+            organization: the caller scopes the account. Needs ADMIN_ACCESS_MANAGE or ADMIN_IDENTITY_MANAGE.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="bundleGroupIdList" type="List" required="true"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="addedGroupIds" type="List"/>
+            <parameter name="bundleList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('applyGrantProposal', context))</script></actions>
+    </service>
+</services>

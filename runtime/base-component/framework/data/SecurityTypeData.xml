@@ -69,6 +69,85 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserPermission userPermissionId="EXTERNAL_USER" description="External user (no record rooms, records drive, others' presence or agents)"/>
     <moqui.security.UserPermission userPermissionId="ADMIN_PASSWORD" description="Admin Password Update"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_PASSWORD" fromDate="0"/>
+    <!-- Delegated administration (the org.moqui.admin services and an app's Admin screens): a view and a write permission
+        per responsibility, each granted to ADMIN; an app grants them to its own groups. ADMIN_IDENTITY_GLOBAL (an
+        account-wide change of an identity that works for several organizations), ADMIN_ACCESS_MANAGE (grants and
+        memberships) and ADMIN_BACKUP_DOWNLOAD (a backup archive, the whole instance's data) are sealed (MoquiDefaultConf
+        authz sealed-permissions), so only a holder grants them. -->
+    <moqui.security.UserPermission userPermissionId="ADMIN_OVERVIEW_VIEW" description="Admin: setup and health summaries"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_IDENTITY_VIEW" description="Admin: view user accounts and memberships"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_IDENTITY_MANAGE" description="Admin: manage user accounts and memberships"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_IDENTITY_GLOBAL" description="Admin: change an account across all its organizations"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_ACCESS_VIEW" description="Admin: view groups and grants"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_ACCESS_MANAGE" description="Admin: manage group grants and memberships"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_SETTINGS_VIEW" description="Admin: view instance and organization settings"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_SETTINGS_MANAGE" description="Admin: manage instance and organization settings"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_CONNECTION_VIEW" description="Admin: view connections and their readiness"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_CONNECTION_MANAGE" description="Admin: manage connections and replace credentials"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_OPERATION_VIEW" description="Admin: view jobs, queues and recovery"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_OPERATION_MANAGE" description="Admin: run jobs and recovery actions"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_TRANSFER_VIEW" description="Admin: view imports and exports"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_TRANSFER_RUN" description="Admin: run imports and exports"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_AUDIT_VIEW" description="Admin: view change and access evidence"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_BACKUP_VIEW" description="Admin: view backup coverage"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_BACKUP_RUN" description="Admin: request a backup"/>
+    <moqui.security.UserPermission userPermissionId="ADMIN_BACKUP_DOWNLOAD" description="Admin: download a backup archive"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_OVERVIEW_VIEW" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_IDENTITY_VIEW" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_IDENTITY_MANAGE" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_IDENTITY_GLOBAL" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_ACCESS_VIEW" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_ACCESS_MANAGE" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_SETTINGS_VIEW" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_SETTINGS_MANAGE" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_CONNECTION_VIEW" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_CONNECTION_MANAGE" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_OPERATION_VIEW" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_OPERATION_MANAGE" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_TRANSFER_VIEW" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_TRANSFER_RUN" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_AUDIT_VIEW" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_BACKUP_VIEW" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_BACKUP_RUN" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="ADMIN_BACKUP_DOWNLOAD" fromDate="0"/>
+    <!-- Admin P3 (mr-boss plan/impl-admin.md P3): the access administration services, org.moqui.admin.AccessServices and
+        IdentityServices.check#AdministrationPath, for every signed-in user: each checks ADMIN_ACCESS_VIEW or ADMIN_ACCESS_MANAGE
+        itself and writes the security rows through the entity facade with authorization on, so the sealed-permission and
+        privileged-group EECAs decide each row (an ALLOW, so an app's deny of a package still applies; inheritable, so the
+        service's own writes are authorized as it). Admin P4 adds IdentityServices' sessions and credentials (find#Sessions,
+        revoke#Sessions, get#AccountCredentials, revoke#AccountAccess), each the caller's own or another user's with
+        ADMIN_IDENTITY_VIEW or ADMIN_IDENTITY_MANAGE, checked by the service -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminAccessServices" description="Admin access services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminAccessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.(AccessServices\.(find#Groups|get#Group|create#Group|store#Group|store#Membership|end#Membership|preview#Grants|apply#Grants|store#GroupPreference|check#GrantProposal|apply#GrantProposal)|IdentityServices\.(check#AdministrationPath|find#Sessions|revoke#Sessions|get#AccountCredentials|revoke#AccountAccess))"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminAccessServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminAccessServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- Admin P6 (mr-boss plan/impl-admin.md P6, F31): the owner change of a shared drive and of a shared mail account, which an
+        account's lifecycle uses when the owner leaves (the owned-resource contract of org.moqui.admin.IdentityServices). Their
+        owner may hand them over; another user's need these permissions, granted to ADMIN (an app grants them to its identity
+        operators). The services check the permission and the new owner themselves, so ALL_USERS may call them. -->
+    <moqui.security.UserPermission userPermissionId="DRIVE_OWNER_CHANGE" description="Drives: change the owner of another user's shared drive"/>
+    <moqui.security.UserPermission userPermissionId="EMAIL_ACCOUNT_OWNER_CHANGE" description="Mail: change the owner of another user's shared mail account"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="DRIVE_OWNER_CHANGE" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="EMAIL_ACCOUNT_OWNER_CHANGE" fromDate="0"/>
+    <moqui.security.ArtifactGroup artifactGroupId="ResourceOwnerServices" description="Owned resource lookup and owner change"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="ResourceOwnerServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.impl\.(FileServices\.(find#OwnedDrives|transfer#DriveOwner)|EmailClientServices\.(find#OwnedEmailAccounts|transfer#EmailAccountOwner))"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="ResourceOwnerServicesALL" userGroupId="ALL_USERS" artifactGroupId="ResourceOwnerServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- A coordinator's call of a stored step's owner service (IdentityServices.call#OwnedResourceService; impl-admin P6 review,
+        F-P6-1): not inheritable, so the coordinator's own inheritable ALLOW (Mantle's identity services') stops here and the owner
+        service is authorized on its own records, as a direct call would be -->
+    <moqui.security.ArtifactGroup artifactGroupId="OwnedResourceCall" description="Owned resource step call"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="OwnedResourceCall" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="N"
+            artifactName="org.moqui.admin.IdentityServices.call#OwnedResourceService"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="OwnedResourceCallALL" userGroupId="ALL_USERS" artifactGroupId="OwnedResourceCall"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- The registered purposes of a custom group (optionIndicator Y): CreateGroup offers them, and a group of one of them is a
+        custom group an access administrator created, never privileged. A component adds its own. -->
+    <moqui.basic.Enumeration description="Team" enumId="UgtCustomTeam" enumTypeId="UserGroupType" optionIndicator="Y" sequenceNum="10"/>
+    <moqui.basic.Enumeration description="Job role" enumId="UgtCustomRole" enumTypeId="UserGroupType" optionIndicator="Y" sequenceNum="11"/>
+    <moqui.basic.Enumeration description="Project or initiative" enumId="UgtCustomProject" enumTypeId="UserGroupType" optionIndicator="Y" sequenceNum="12"/>
 
     <moqui.security.UserPermission userPermissionId="ADMIN_LOGIN_AS" description="Admin Login As User"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="ADMIN_LOGIN_AS" fromDate="0"/>

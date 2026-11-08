@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The instance's Constitution (docs/ai/Constitution.md): the shared guidance for people and every agent run, one
+    localized JSON document. Read its rules and references, edit them per language, preview the agent prompt section,
+    edit the whole JSON, and manage the origins trusted for reading references in the app. Changes need the sealed
+    ADMIN_CONSTITUTION_GLOBAL permission (the services check it); an organization's own document is edited in its
+    application, which extends this screen's parts (template/ConstitutionParts.xml) for organization scope. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Constitution" default-menu-index="11" menu-image="sym_o_gavel" menu-image-type="icon">
+    <always-actions>
+        <set field="constitutionBuilt" from="!!ec.service.getServiceDefinition('org.moqui.admin.ConstitutionServices.get#Constitution')"/>
+        <set field="canEdit" from="ec.user.hasPermission('ADMIN_CONSTITUTION_GLOBAL')"/>
+    </always-actions>
+    <subscreens default-item="Rules"/>
+    <widgets>
+        <section name="BuiltSection" condition="constitutionBuilt"><widgets>
+            <subscreens-panel id="ConstitutionPanel" type="tab"/>
+        </widgets><fail-widgets>
+            <label text="The Constitution is not available in this build: it comes with the agents (the llm feature)." type="p" style="text-warning"/>
+        </fail-widgets></section>
+    </widgets>
+</screen>

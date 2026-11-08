@@ -47,6 +47,7 @@ fn install() {
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
         framework.join("impl/FileServices.xml"),
+        framework.join("admin/IdentityServices.xml"),
         framework.join("impl/GitServices.xml"),
     ];
     let failures = moqui_core::service::lint(&paths).unwrap();
@@ -1446,6 +1447,7 @@ fn install_with_record_hook() -> std::path::PathBuf {
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
         framework.join("impl/FileServices.xml"),
+        framework.join("admin/IdentityServices.xml"),
         framework.join("impl/GitServices.xml"),
         framework.join("impl/ChatServices.xml"),
         dir.join("service/test/DriveStub.xml"),
@@ -2663,6 +2665,7 @@ fn an_external_user_reaches_no_records_drive() {
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let failures = moqui_core::service::lint(&[
         framework.join("impl/FileServices.xml"),
+        framework.join("admin/IdentityServices.xml"),
         framework.join("impl/GitServices.xml"),
         framework.join("impl/ChatServices.xml"),
         dir.join("service/test/DriveStub.xml"),

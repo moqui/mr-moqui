@@ -28,6 +28,23 @@
         <relationship type="one" related="moqui.report.Definition"/>
         <index name="REPORT_REF_TARGET"><index-field name="referencedId"/></index>
     </entity>
+    <!-- A business dataset's admission (BOSS impl-insights P3, INS-03; crates/moqui-report/src/business.rs): a dataset
+        definition with signal "business" is read only once admitted here (admittedDate set, retiredDate not), except by its
+        steward (the dataset's update artifact). Admission needs the document in a registered DataFeed, its index built and a
+        rowFilterService registered as a ReportScopePolicy enumeration; the last index build and the last field or condition
+        change are kept for the dataset's freshness. -->
+    <entity entity-name="BusinessDataset" package="moqui.report" use="configuration" cache="never">
+        <field name="datasetId" type="id-long" is-pk="true"/>
+        <field name="admittedDate" type="date-time"/>
+        <field name="admittedByUserId" type="id"/>
+        <field name="retiredDate" type="date-time"/>
+        <field name="stewardUserId" type="id"/>
+        <field name="lastIndexedDate" type="date-time"/>
+        <field name="lastIndexedCount" type="number-integer"/>
+        <field name="lastIndexedByUserId" type="id"/>
+        <field name="fieldsChangedDate" type="date-time"/>
+        <field name="versionNumber" type="number-integer"/>
+    </entity>
     <!-- A definition folder (body.folder) kept in a directory of a git repository, one JSON file per definition: a save
         pushes its file, and a push or fetch to the repository pulls (report/git_sync.rs). Runs as userId. -->
     <entity entity-name="DefinitionGitSync" package="moqui.report" use="configuration" cache="never">

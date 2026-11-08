@@ -1508,6 +1508,97 @@ Next:
    kept a binary older than its sources.
 2. Allocation (still the largest: `malloc` and `free`) and `memcmp` in the service calls.
 
+## Round 31: quickjs-oxide for small scripts (Script-Engine-Oxide Phases 1 and 2)
+
+[Script-Engine-Oxide](Script-Engine-Oxide.md) runs conditions, values, `${}` text, maps and the subset of XML actions
+on quickjs-oxide under `script_engine=small-oxide`. Measured on a quiet machine with release builds; the default stays
+`rquickjs` because the speed gate missed.
+
+| Row (µs a call) | QuickJS | oxide |
+|---|---|---|
+| `service_speed` `echo#Data` | 11.5–11.8 | 13.7–14.1 |
+| `js_speed` value `a` | 0.39 | 0.43 |
+| value `a + b * 2` | 0.56 | 0.65 |
+| value `item.name` | 1.23 | 1.37 |
+| value `{x: a, y: item.name}` | 1.98 | 3.12 |
+| value `price.multiply(dqty)` | 1.31 | 1.63 |
+| value `itemList.length` (100 maps) | 57.4 | 76.9 |
+| condition | 0.59 | 0.85 |
+| expand `Item ${...}: ${...}` | 1.34 | 1.81 |
+| value `a + N`, new text each call | 0.55 | 1.23 |
+
+- The bindings allocate on each call where QuickJS's do not (4 allocations for `a`, 53 for a new map, 1,319 for 100
+  maps' length) and a new text costs a check and an oxide compile. Those are the next work (F4 in the fork, and
+  conversions that keep a value's wrapper).
+- Heap: the full `./moq test-apps` run peaked at 138.4 MB of JS heap under `small-oxide` (44.0 MB of it oxide) and
+  139.6 MB under `rquickjs`, against Round 28's 139 MiB.
+
+## Round 32: everything on quickjs-oxide (Script-Engine-Oxide Phase 3)
+
+[Script-Engine-Oxide](Script-Engine-Oxide.md) Phase 3 runs every kind of script on quickjs-oxide under
+`script_engine=oxide`. The fork is at 28aede7d (8635ecb5 since, with one error-path fix), with its F4 speed work. Release builds on a quiet machine; the default
+is still `rquickjs`.
+
+| `js_speed` row (µs a call) | QuickJS | oxide | ratio |
+|---|---|---|---|
+| empty script | 0.20 | 0.16 | 0.80 |
+| 1000 adds to a local | 35.9 | 8.0 | 0.22 |
+| 1000 adds to a bare name | 415 | 376 | 0.91 |
+| walk itemList, 100 context maps | 59.4 | 195.5 | 3.29 |
+| 100 `ec.user.nowTimestamp` | 30.4 | 67.6 | 2.23 |
+| 10 cached entity finds | 43.4 | 60.2 | 1.39 |
+| template, trusted | 59.3 | 95.8 | 1.62 |
+| template, locked down | 66.6 | 89.4 | 1.34 |
+| screen Plain, html | 27.9 | 28.6 | 1.03 |
+| screen Labels, html | 224 | 307 | 1.37 |
+| screen Single, html | 315 | 474 | 1.50 |
+| screen Single.qvt | 510 | 815 | 1.60 |
+| screen List, html, 100 rows | 9268 | 10846 | 1.17 |
+| screen List.qvt, 100 rows | 12953 | 16277 | 1.26 |
+| screen List, text, 100 rows | 2876 | 3121 | 1.09 |
+
+The Mantle operations against the Postgres 200 µs away, as in Round 26 (median ms a call, transaction cache on, two
+runs of each engine):
+
+| Service | Calls | QuickJS | oxide | Ratio | Round trips |
+|---|---:|---:|---:|---:|---:|
+| `order.OrderServices.place#Order` | 26 | 21.5 | 22.1 | 1.030 | 66 |
+| `order.OrderServices.approve#Order` | 26 | 16.8 | 16.9 | 1.006 | 54 |
+| `order.OrderServices.add#OrderProductQuantity` | 32 | 16.9 | 17.7 | 1.051 | 52 |
+| `account.InvoiceServices.change#InvoiceState` | 2 | 23.5 | 23.6 | 1.006 | 79 |
+| `account.PaymentServices.create#Payment` | 11 | 23.5 | 24.4 | 1.038 | 77 |
+| `account.PaymentServices.apply#Settlement` | 8 | 49.0 | 54.5 | 1.112 | 121 |
+| `shipment.ShipmentServices.pack#Shipment` | 16 | 45.1 | 45.4 | 1.006 | 118 |
+| `account.PaymentServices.get#PaymentFinanceDetail` | 24 | 13.5 | 14.4 | 1.062 | 27.5 |
+| `account.InvoiceServices.approve#Payable` | 6 | 30.1 | 32.0 | 1.061 | 84 |
+
+- **The Mantle operations:** median × calls is 3458 ms on QuickJS and 3594 ms on oxide (+3.9%). Round 27 was 3954 ms
+  on QuickJS.
+- **The cost is in the bindings, not the engine:** plain JavaScript is faster on oxide. The rows that lose are host
+  calls and context reads, which allocate 4 to 10 times what QuickJS's bindings do. Narrowing that, with the fork's
+  API grown to fit, is the next work.
+- **Heap:** the peak of each `./moq test-apps` worker's script heaps is 91 to 118 MB under `oxide` and 126 to 140 MB
+  under `rquickjs`.
+
+The raw data and the scripts are in `../oxide-bench`: `round32/` holds the data, and `mantle-pg/` reruns the Mantle
+table (its README).
+
+Next (plans/Script-Engine-Oxide.md §11 has the files and commands):
+1. **A profile of the rows that lose on oxide**, to find where the bindings spend their time and allocations:
+   - a host getter: 100 `ec.user.nowTimestamp`;
+   - walking 100 context maps;
+   - decimals;
+   - cached entity finds;
+   - the trusted template;
+   - form-single html and qvt;
+   - `apply#Settlement` among the Mantle operations.
+2. **Conversions that keep a value's wrapper**, and host calls with fewer allocations. Grow the fork's embedding API
+   where the bindings need it.
+3. **The heap of many runtimes:**
+   - caches and atoms shared across runtimes (F1 step 3, further);
+   - arenas that give back their interior free space.
+4. **Then Script-Engine-Oxide Phase 4:** `oxide` the default, and rquickjs removed.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.

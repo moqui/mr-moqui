@@ -375,6 +375,31 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     ],
     licenseFiles: ['LICENSE'],
   },
+  // The default fonts of the qvt shell, served from here so a page makes no request to a font host: Atkinson Hyperlegible Next
+  // for text and Atkinson Hyperlegible Mono for code (Braille Institute, OFL). The variable woff2 files only (weights 200 to 800,
+  // normal and italic); the @font-face rules are in css/WebrootVue.qvt.css. Pinned Nov 7, 2026; 5.3.0 was published Jul 19, 2026.
+  {
+    id: 'atkinson-next', name: 'Atkinson Hyperlegible Next (variable, latin and latin-ext)', npm: '@fontsource-variable/atkinson-hyperlegible-next',
+    version: '5.3.0', license: 'OFL-1.1',
+    copy: [
+      ['files/atkinson-hyperlegible-next-latin-wght-normal.woff2', 'atkinson-next/atkinson-hyperlegible-next-latin-wght-normal.woff2'],
+      ['files/atkinson-hyperlegible-next-latin-wght-italic.woff2', 'atkinson-next/atkinson-hyperlegible-next-latin-wght-italic.woff2'],
+      ['files/atkinson-hyperlegible-next-latin-ext-wght-normal.woff2', 'atkinson-next/atkinson-hyperlegible-next-latin-ext-wght-normal.woff2'],
+      ['files/atkinson-hyperlegible-next-latin-ext-wght-italic.woff2', 'atkinson-next/atkinson-hyperlegible-next-latin-ext-wght-italic.woff2'],
+    ],
+    licenseFiles: ['LICENSE'],
+  },
+  {
+    id: 'atkinson-mono', name: 'Atkinson Hyperlegible Mono (variable, latin and latin-ext)', npm: '@fontsource-variable/atkinson-hyperlegible-mono',
+    version: '5.3.0', license: 'OFL-1.1',
+    copy: [
+      ['files/atkinson-hyperlegible-mono-latin-wght-normal.woff2', 'atkinson-mono/atkinson-hyperlegible-mono-latin-wght-normal.woff2'],
+      ['files/atkinson-hyperlegible-mono-latin-wght-italic.woff2', 'atkinson-mono/atkinson-hyperlegible-mono-latin-wght-italic.woff2'],
+      ['files/atkinson-hyperlegible-mono-latin-ext-wght-normal.woff2', 'atkinson-mono/atkinson-hyperlegible-mono-latin-ext-wght-normal.woff2'],
+      ['files/atkinson-hyperlegible-mono-latin-ext-wght-italic.woff2', 'atkinson-mono/atkinson-hyperlegible-mono-latin-ext-wght-italic.woff2'],
+    ],
+    licenseFiles: ['LICENSE'],
+  },
   {
     id: 'chartjs', name: 'Chart.js', npm: 'chart.js', version: '4.5.1', license: 'MIT',
     copy: [['dist/chart.umd.min.js', 'chartjs/chart.umd.min.js']],

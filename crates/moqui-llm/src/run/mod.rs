@@ -352,6 +352,8 @@ pub struct RunRow {
     pub active_seconds: i64,
     /// The tier the client chose; the agent's own tier wins.
     pub tier: Option<Tier>,
+    /// The Constitution the run uses, resolved when it started ([`crate::constitution::snapshot`]).
+    pub constitution: Option<crate::constitution::snapshot::RunConstitution>,
 }
 
 impl RunRow {
@@ -400,6 +402,7 @@ impl RunRow {
             },
             active_seconds: int_of(row, "activeSeconds").unwrap_or(0),
             tier: text_of(row, "tier").and_then(|tier| Tier::parse(&tier)),
+            constitution: crate::constitution::snapshot::RunConstitution::of_run(row),
         }
     }
 
@@ -503,6 +506,19 @@ pub fn start_run(factory: &Arc<ExecutionContextFactory>, request: &StartRequest)
     } else {
         request.agent_id.as_str()
     };
+    // the Constitution of a new run (plans/LLM-A2A-Assist.md 7.10): resolved now, kept for the run's whole life
+    let constitution_user = if request.run_as_agent_user {
+        AgentDef::load(&facade, agent_id).ok().flatten().and_then(|agent| agent.run_as_user_id)
+    } else {
+        None
+    }
+    .unwrap_or_else(|| request.user_id.clone());
+    let (constitution, _) = crate::constitution::snapshot::pick(
+        factory,
+        &facade,
+        crate::constitution::snapshot::scope_for(request.surface, request.run_as_agent_user, &request.user_id),
+        &constitution_user,
+    );
     let started = quietly(|| -> Result<Started, Error> {
         let agent = AgentDef::load(&facade, agent_id)?
             .filter(|agent| !agent.disabled)
@@ -602,6 +618,7 @@ pub fn start_run(factory: &Arc<ExecutionContextFactory>, request: &StartRequest)
                     quota.exceeded.as_deref(),
                     lease::lease_millis(factory),
                     mentions.as_ref(),
+                    &constitution,
                 )
             })?;
             match outcome {
@@ -727,6 +744,7 @@ fn begin_run(
     over_quota: Option<&str>,
     lease: i64,
     mentions: Option<&crate::skills::SkillIndex>,
+    constitution: &crate::constitution::snapshot::RunConstitution,
 ) -> Result<Begun, Error> {
     let now = now_millis();
     let conversation_id = match &request.conversation_id {
@@ -811,6 +829,7 @@ fn begin_run(
     ] {
         run.set(field, value);
     }
+    constitution.set_on(&mut run);
     // a job's tools run as the agent's run-as user, only when an internal caller asks for it
     if request.run_as_agent_user {
         if let Some(run_as) = &agent.run_as_user_id {

@@ -120,6 +120,14 @@ pub trait Runner {
     ///
     /// Returns the error the code raised.
     fn run(&self, unit: &Unit) -> Result<(), Error>;
+
+    /// Render a `<text template="true">` body (`sri.renderInlineText`) as a trusted fancy template on the render's
+    /// runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the template does not compile or throws.
+    fn render_inline_text(&self, body: &str) -> Result<String, Error>;
 }
 
 /// An element as the generated code passes it: name, attributes, text, children, and the chain of parents.

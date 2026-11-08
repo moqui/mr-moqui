@@ -40,6 +40,9 @@ pub struct UrlInstance {
     /// Path names as given, without the defaults.
     pub minimal_names: Vec<String>,
     pub base: String,
+    /// The path a screen path starts with under the root: a token route's `/<name>/<token>` ([`web::link_prefix`]),
+    /// else empty. Not part of a plain URL.
+    pub prefix: String,
     /// A url-type plain URL, used as is.
     pub plain: Option<String>,
     pub parameters: IndexMap<String, String>,
@@ -72,7 +75,7 @@ impl UrlInstance {
         }
         match &self.plain {
             Some(_) => String::new(),
-            None => encode_path(&self.names),
+            None => format!("{}{}", self.prefix, encode_path(&self.names)),
         }
     }
 
@@ -84,7 +87,12 @@ impl UrlInstance {
         }
         match &self.plain {
             Some(plain) => plain.clone(),
-            None => format!("{}{}", self.base.trim_end_matches('/'), encode_path(&self.names)),
+            None => format!(
+                "{}{}{}",
+                self.base.trim_end_matches('/'),
+                self.prefix,
+                encode_path(&self.names)
+            ),
         }
     }
 
@@ -95,8 +103,8 @@ impl UrlInstance {
         }
         match (&self.plain, &self.info) {
             (Some(plain), _) => plain.clone(),
-            (None, Some(info)) => encode_path(&info.pre_transition_path),
-            (None, None) => encode_path(&self.names),
+            (None, Some(info)) => format!("{}{}", self.prefix, encode_path(&info.pre_transition_path)),
+            (None, None) => format!("{}{}", self.prefix, encode_path(&self.names)),
         }
     }
 
@@ -107,8 +115,9 @@ impl UrlInstance {
         match &self.plain {
             Some(_) => self.url(),
             None => format!(
-                "{}{}",
+                "{}{}{}",
                 self.base.trim_end_matches('/'),
+                self.prefix,
                 encode_path(&self.minimal_names)
             ),
         }
@@ -423,6 +432,7 @@ pub(super) fn resolve_names_at(
         minimal_names: names.clone(),
         names,
         base: web::base_url(),
+        prefix: web::link_prefix(),
         exists: true,
         read_only: true,
         ..UrlInstance::default()

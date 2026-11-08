@@ -51,7 +51,7 @@ thread_local! {
 }
 
 /// `body` with the thread's arena, empty. A parse inside another parse's body gets an arena of its own.
-fn with_arena<R>(body: impl FnOnce(&Allocator) -> R) -> R {
+pub(crate) fn with_arena<R>(body: impl FnOnce(&Allocator) -> R) -> R {
     ARENA.with(|arena| match arena.try_borrow_mut() {
         Ok(mut arena) => {
             let out = body(&arena);
@@ -294,6 +294,16 @@ pub(crate) fn module_not_inert(source: &str) -> Option<String> {
 /// script with its value, and a last expression statement is returned, as Groovy returns the last expression. The
 /// wrapper opens on the file's first line, so a line number in an error is the file's.
 pub(crate) fn file_function(source: &str) -> String {
+    let mut out = String::with_capacity(source.len() + 32);
+    out.push_str("(function(){");
+    out.push_str(&completion_body(source));
+    out.push_str("\n})()");
+    out
+}
+
+/// A script as a function body that returns the script's value: its last statement, when that is an expression
+/// statement, gets a `return` (a script that does not parse is left as it is, for the engine to report).
+fn completion_body(source: &str) -> String {
     let options = ParseOptions {
         allow_return_outside_function: true,
         ..ParseOptions::default()
@@ -313,18 +323,10 @@ pub(crate) fn file_function(source: &str) -> String {
             }
         }
     });
-    let mut out = String::with_capacity(source.len() + 32);
-    out.push_str("(function(){");
     match last.and_then(|at| source.split_at_checked(at)) {
-        Some((before, last)) => {
-            out.push_str(before);
-            out.push_str("return ");
-            out.push_str(last);
-        }
-        None => out.push_str(source),
+        Some((before, last)) => format!("{before}return {last}"),
+        None => source.to_string(),
     }
-    out.push_str("\n})()");
-    out
 }
 
 /// Why a failed parse looks like Groovy, to make the message useful. It never decides a parse.

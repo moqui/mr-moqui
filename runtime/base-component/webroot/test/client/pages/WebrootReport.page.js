@@ -963,3 +963,32 @@ test('a repeated copy shows its own variable value and edits the panel it repeat
         assert.equal(visited[0].endsWith('definitionId=shop&panelId=sales'),true,visited[0]);
     } finally {app.unmount();target.remove();report.navigate=navigate;}
 });
+test('a dashboard mounted under another app links its screens, offers no screen it leaves out, and an unreadable panel says so',async()=>{
+    // An app that mounts the report screens (BOSS Insights) sends appLinks: Edit, Explore and the panel posts go to its screens; a
+    // screen it sets to null (no alert rules there) is not offered.
+    const target=document.createElement('div');document.body.appendChild(target);
+    const navigate=report.navigate,request=moqui.request,visited=[],posts=[];
+    report.navigate=href=>visited.push(href);moqui.request=async(url,options)=>{posts.push({url,options});return {ok:true,json:{panelId:'orders-copy'}};};
+    const appLinks={definition:'/apps/Insights/DashboardEditor',panel:'/apps/Insights/PanelDetail',explore:'/apps/Insights/ReportBuilder/Explore',dashboard:'/apps/Insights/Dashboard',alertRule:null};
+    const panel={title:'Orders',visualization:'timeSeries',queries:[{datasetId:'orders',aggregations:[{id:'time',type:'date_histogram',role:'x-axis'},{id:'n',type:'sum',role:'metric'}]}]};
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{dashboardId:'store',panelId:'orders',panel,appLinks,editable:true,range:{from:'2026-01-01T00:00:00Z',thru:'2026-01-02T00:00:00Z'},
+        frame:{fields:[{name:'time',type:'time',values:[1000]},{name:'n',type:'number',values:[2]}]}});
+    try {
+        app.mount(target);await Vue.nextTick();
+        const toggle=target.querySelector('button[aria-label="Panel menu for Orders"]');toggle.click();await Vue.nextTick();
+        assert.deepEqual(Array.from(target.querySelectorAll('[role="menuitem"]')).map(node=>node.textContent),['View','Edit','Share','Explore','Inspect','Duplicate','Remove']);
+        reportButton(target,'Edit').click();assert.equal(visited[0],report.appPath('/apps/Insights/DashboardEditor?definitionId=store&panelId=orders'));
+        toggle.click();await Vue.nextTick();reportButton(target,'Explore').click();
+        assert.equal(new URL(visited[1],location.href).pathname,report.appPath('/apps/Insights/ReportBuilder/Explore'));
+        toggle.click();await Vue.nextTick();reportButton(target,'Duplicate').click();await new Promise(resolve=>setTimeout(resolve,0));
+        assert.equal(posts[0].url,'/apps/Insights/Dashboard/duplicatePanel');
+    } finally {app.unmount();target.remove();report.navigate=navigate;moqui.request=request;}
+    // A panel over a dataset the viewer may not read: not available, never "no data".
+    const denied=document.createElement('div');document.body.appendChild(denied);
+    const view=Vue.createApp(moqui.qvtComponents['m-report-panel'],{dashboardId:'store',panelId:'sales',appLinks,
+        panel:{title:'Sales',queries:[{datasetId:'sales'}],notices:[{level:'error',complete:false,message:'viewer may not read dataset sales'}]},frame:{fields:[]}});
+    try {view.mount(denied);await Vue.nextTick();
+        assert.equal(denied.textContent.includes('Not available: viewer may not read dataset sales'),true,denied.textContent);
+        assert.equal(denied.textContent.includes('No data'),false);}
+    finally {view.unmount();denied.remove();}
+});

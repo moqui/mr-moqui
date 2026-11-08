@@ -8,7 +8,7 @@
 ./moq run     # Start moqui; logs to console, ctrl-c to stop; default ports 8080 and 8443
 ```
 
-It needs Rust 1.98 or newer and bash, on Linux, macOS, or Windows ([Build](docs/Build-Test.md#build)). On Windows, use the MSVC toolchain (`x86_64-pc-windows-msvc`), Visual Studio Build Tools with the "Desktop development with C++" workload (aws-lc and QuickJS compile C), and Git for Windows. The first build that needs it downloads NASM 3.02 to `%USERPROFILE%\.moqui\nasm` (aws-lc assembles with it); set `MOQUI_NASM` to an existing directory or `nasm.exe` to skip that download. A `cargo build` that does not go through `moq` still needs NASM on `PATH`. `moq.cmd` runs the same script from PowerShell or cmd, and the binary is `target\release\moqui.exe`. This builds the release binary (target/release/moqui, the Maximal package: every feature, embedded Postgres and the dev tools, including SSH/SFTP, OAuth2/OIDC, SMTP/IMAP/POP, Git, XLSX and image processing) and uses it to load data and run. To deploy to a server, a container or a cluster, see [Run and Deploy](docs/Run-Deploy.md).
+It needs Rust 1.99 or newer and bash, on Linux, macOS, or Windows ([Build](docs/Build-Test.md#build)). On Windows, use the MSVC toolchain (`x86_64-pc-windows-msvc`), Visual Studio Build Tools with the "Desktop development with C++" workload (aws-lc and QuickJS compile C), and Git for Windows. The first build that needs it downloads NASM 3.02 to `%USERPROFILE%\.moqui\nasm` (aws-lc assembles with it); set `MOQUI_NASM` to an existing directory or `nasm.exe` to skip that download. A `cargo build` that does not go through `moq` still needs NASM on `PATH`. `moq.cmd` runs the same script from PowerShell or cmd, and the binary is `target\release\moqui.exe`. This builds the release binary (target/release/moqui, the Maximal package: every feature, embedded Postgres and the dev tools, including SSH/SFTP, OAuth2/OIDC, SMTP/IMAP/POP, Git, XLSX and image processing) and uses it to load data and run. To deploy to a server, a container or a cluster, see [Run and Deploy](docs/Run-Deploy.md).
 
 ## Status
 
@@ -96,3 +96,7 @@ This project is an AI-assisted rebuild of the manually written Moqui Framework i
 LLMs are considered tools used by people. The person using the tool is just as responsible as with a text editor and keyboard. LLMs are the functional and moral equivalent of a hammer: they do not shake themselves, and are not a substitute or replacement for a responsible party.
 
 Don't trust, verify. Use AI to help verify, but remember who is responsible, and who is a who.
+
+## Contributing
+
+Code is accepted from people who have signed [AUTHORS.md](AUTHORS.md), in a commit from the GitHub account that submits the pull request. From an account that has not signed, we may take a pull request's ideas but not its code, which is written again with AI assistance. Each mr-* repository has its own AUTHORS.md, and maintainers follow [Contributions](docs/dev/Contributions.md).

@@ -131,6 +131,11 @@ fn encode_html_is_null_safe() {
     holds(r#"!WebUtilities.ipMatches("10.1.*.*,192.168.0.1-5", "192.168.0.9")"#);
     holds(r#"WebUtilities.ipMatches("10.0.0.1", "::ffff:10.0.0.1") && WebUtilities.ipMatches("::1", "::1")"#);
     holds(r#"WebUtilities.ipMatches("", "1.2.3.4") && !WebUtilities.ipMatches("1.2.3.4", "")"#);
+    // the effective seal lists, the framework's defaults with no conf
+    holds(
+        r#"UserSecurityChecks.privilegedGroups().includes("ADMIN") && !UserSecurityChecks.privilegedGroups().includes("ADMIN_PASSWORD")"#,
+    );
+    holds(r#"UserSecurityChecks.sealedPermissions().includes("ADMIN_ACCESS_MANAGE")"#);
     holds(r#"WebUtilities.isSafeSinglePathSegment("a.zip") && !WebUtilities.isSafeSinglePathSegment("../x")"#);
     holds(r#"!WebUtilities.isSafeSinglePathSegment("a/b") && !WebUtilities.isSafeSinglePathSegment("")"#);
     holds(r#"WebUtilities.isSameOriginRedirect("/x") && !WebUtilities.isSameOriginRedirect("//evil/x")"#);

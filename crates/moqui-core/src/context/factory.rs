@@ -728,6 +728,12 @@ impl ExecutionContextFactory {
         self.conf().user_facade_attr(child, name)
     }
 
+    /// The `name`s of the `user-facade` `authz` children named `element` (`sealed-permission`, `privileged-group`),
+    /// which components add to the lists of the attributes.
+    pub fn authz_names(&self, element: &str) -> Vec<String> {
+        self.conf().authz_names(element)
+    }
+
     /// The root URL of a conf `webapp` for a render with no request: Java's `makeWebappHost` with no
     /// web facade. `https://` and the https host and port when `https-enabled` is `true`, else `http://` and
     /// the http ones; an empty host is `localhost`, and the default port is left out. Empty when the

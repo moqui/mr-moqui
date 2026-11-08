@@ -16,18 +16,29 @@
 
 mod actions;
 pub mod bounded;
+pub(crate) mod census;
+pub(crate) mod check;
+pub mod engine;
+pub mod host;
+pub(crate) mod oxide;
 pub mod parse;
+pub(crate) mod run;
 mod runtime;
 pub mod template;
+pub(crate) mod text;
 pub mod theme;
 pub(crate) mod walker;
+
+pub use census::write_census;
+pub use engine::{script_engine, set_thread_script_engine, with_script_engine, ScriptEngine};
+pub use run::ReleaseScope;
 
 pub(crate) use actions::run_actions_at;
 pub use actions::{check_actions, eval_condition_element, eval_condition_group, generated_source, run_actions};
 pub(crate) use bounded::BoundedMap;
 pub(crate) use parse::check_program;
 pub use parse::parse_js;
-pub use runtime::forget_scripts;
+pub use runtime::{forget_scripts, oxide_heap_line};
 #[cfg(test)]
 pub(crate) use runtime::script_time_remaining;
 pub(crate) use runtime::with_ctx as walker_context;
@@ -46,7 +57,7 @@ pub use runtime::{
 };
 pub use runtime::{text_upload_to_js, with_ctx, with_spec_ctx};
 // for host callbacks outside this crate: moqui-llm's ec.llm
-pub use runtime::{eval_named_value, value_items, value_map};
+pub use runtime::{eval_named_value, install_spec_global, value_items, value_map};
 pub use runtime::{facade_of, host_guard, host_to_js, js_error, js_to_host, throw_lib, with_ec};
 
 #[cfg(test)]

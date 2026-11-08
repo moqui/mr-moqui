@@ -190,6 +190,43 @@ fn large_files_are_spooled_with_their_hash_and_removed_when_dropped() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The request owns its spool files: when it ends they go, though a copy of the upload, a source and a stream of it
+/// are still held, and each of those then fails to read.
+#[test]
+fn a_request_end_removes_its_spool_files_while_copies_are_held() {
+    let dir = std::env::temp_dir().join(format!("moqui-spool-end-{}", std::process::id()));
+    let spool = Spool {
+        dir: dir.clone(),
+        memory_limit: 100,
+        field_limit: 100,
+    };
+    let large = vec![b'z'; 5000];
+    let data = body(&[(
+        "Content-Disposition: form-data; name=\"large\"; filename=\"l.bin\"",
+        &large,
+    )]);
+    let parsed = std::sync::Arc::new(fed(&data, 1000, Some(spool)).unwrap());
+    let copy = parsed.files[0].clone();
+    let source = copy.source().unwrap();
+    let mut reader = copy.reader().unwrap();
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    drop(ReleaseAtEnd(Some(std::sync::Arc::clone(&parsed))));
+    assert_eq!(
+        std::fs::read_dir(&dir).unwrap().count(),
+        0,
+        "the request's end removed the file"
+    );
+    let gone = "the upload l.bin is no longer available: its request has ended";
+    assert_eq!(copy.read_bytes().unwrap_err().message(), gone);
+    assert_eq!(source.read_at(0, 10).unwrap_err().message(), gone);
+    assert!(copy.source().is_err() && copy.reader().is_err());
+    let mut read = Vec::new();
+    assert_eq!(reader.read_to_end(&mut read).unwrap_err().to_string(), gone);
+    assert_eq!(copy.size(), 5000, "what was taken as it arrived stays");
+    drop((parsed, copy, source, reader));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn the_boundary_is_read_with_or_without_quotes() {
     assert_eq!(boundary_of("multipart/form-data; boundary=abc").as_deref(), Some("abc"));

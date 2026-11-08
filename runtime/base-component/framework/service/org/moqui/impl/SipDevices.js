@@ -232,6 +232,24 @@ function revoke(p) {
   return { sipDeviceId: device.sipDeviceId }
 }
 
+/** Every active phone of a user (or the one named) revoked, for an administrator's revocation of the user's access
+ * (org.moqui.admin.IdentityServices.revoke#AccountAccess, which checks who may; impl-admin F42): each ends as revoke ends
+ * one, its verifiers gone and each live SIP engine told to drop it. Not a service: the caller decides the authority. */
+function revokeUserDevices(p) {
+  if (blank(p.userId)) throw new Error('userId is required')
+  const conditions = { userId: String(p.userId), statusId: 'SdsActive' }
+  if (!blank(p.sipDeviceId)) conditions.sipDeviceId = String(p.sipDeviceId)
+  let revokedCount = 0
+  for (const device of rows(DEVICE, conditions)) {
+    device.setFields({ statusId: 'SdsRevoked', revokedDate: ec.user.nowTimestamp }, true, null, null)
+    device.update()
+    for (const v of rows(VERIFIER, { sipDeviceId: device.sipDeviceId })) v.delete()
+    endRegistrations(device)
+    revokedCount++
+  }
+  return { revokedCount }
+}
+
 function findDevices(p) {
   const me = ec.user.userId
   if (!me) return refuse('notSignedIn', 'Sign in to see your phones')
@@ -467,7 +485,7 @@ function receiveDeviceCall(p) {
 }
 
 const operations = {
-  create, rotate, revoke, findDevices, deviceAuth, checkDigest, storeRegistration, expireRegistrations, ringDevices, receiveDeviceCall,
+  create, rotate, revoke, revokeUserDevices, findDevices, deviceAuth, checkDigest, storeRegistration, expireRegistrations, ringDevices, receiveDeviceCall,
 }
 
 function execute(op, parameters) {

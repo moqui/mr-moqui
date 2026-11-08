@@ -26,7 +26,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use moqui_lib::context_stack::{ContextStack, Lookup};
@@ -41,81 +41,72 @@ use rquickjs::{
     Runtime, Undefined, Value as JsValue,
 };
 
-mod archive_host;
+mod bind;
 mod compiled;
-mod conditions;
 mod convert;
 mod decimal;
 mod ec_extra;
-mod ec_screen;
-mod edi;
 mod entities;
-mod error_info;
 mod facades;
-mod files_host;
 #[cfg(test)]
 mod framework_gaps_tests;
 mod helpers;
 #[cfg(test)]
 mod metadata_tests;
 mod native_tools;
-mod notification;
-mod pass_host;
 #[cfg(test)]
 mod realm_tests;
 mod screen_host;
-mod search;
-mod services;
-mod sftp;
-mod theme_host;
-mod tools_host;
 mod upload;
-mod urls;
-mod user_host;
 mod values;
 mod web_host;
 
-pub(crate) use compiled::ScriptText;
+pub(crate) use crate::script::text::ScriptText;
 use compiled::{eval_compiled, eval_compiled_text, MAX_COMPILED_SCRIPTS, MAX_COMPILED_SCRIPT_BYTES};
-use conditions::{
-    comparison, condition_js, condition_of, date_range_condition, join, make_action_condition, make_condition,
-    make_condition_date, make_condition_where, HostCondition,
-};
 use convert::{
-    collection_to_js, converts_with_script, enter_nested, host_ref_to_js, host_texts, i64_to_js, js_bytes, js_caught,
-    js_i64, js_matches_host, js_string, js_truthy, js_value_to_host, object_map, optional_text, text_or_empty,
-    value_to_js,
+    collection_to_js, enter_nested, host_ref_to_js, js_bytes, js_caught, js_i64, js_matches_host, js_string,
+    js_truthy, js_value_to_host, object_map, text_or_empty,
 };
 pub use convert::{host_to_js, js_to_host};
 use decimal::HostDecimal;
 pub use ec_extra::expand_localized;
+pub(crate) use ec_extra::{code128_options, encode_html_js_safe, flatten_nested_map, js_safe_map, localized, url_safe_chars};
+pub(crate) use helpers::{java_type_of, now_timestamp, timestamp_of, HELPERS_JS};
+pub(crate) use facades::{module_cache_on, read_module};
 use entities::{
-    atom_name, entity_find, entity_make_value, entity_to_js, install_entity_prototypes, keep_assigned, prototype_has,
-    prototype_member, wrap_find, EntityCell, HostEntity, HostFind, HostList, ScriptList,
+    atom_name, entity_to_js, install_entity_prototypes, keep_assigned, prototype_has, prototype_member, wrap_find,
+    HostEntity, HostList, ScriptList,
 };
-use error_info::HostErrorInfo;
+pub(crate) use convert::{converts_with_script, temporal_text, MAX_NESTING, SAFE_INTEGER, SET_KEY, TOO_DEEP, WRAP_KEY};
+pub(crate) use crate::script::host::rounding_strategy_named as rounding_named;
+pub(crate) use decimal::{arith, decimal_of, decimals_compare, decimals_equal, Arith};
+pub(crate) use entities::{
+    entity_field_names, entity_is_field, entity_set_field, EntityCell, EntityField,
+};
 pub use facades::forget_scripts;
 pub use facades::run_script_location;
-use facades::{
-    cache_get_cache, logger_log, logger_warn, read_script, resource_expand, resource_script,
-    sri_send_redirect_and_stop_render, system_get_property, HostMessage, HostUser, HostWeb,
-};
-use helpers::{install_helpers, now_timestamp, timestamp_of};
+use facades::{resource_expand, resource_script, system_get_property};
+use helpers::install_helpers;
 use native_tools::{tool_to_js, HostTool};
 pub(crate) use screen_host::with_screen_runner;
-use search::{entity_get_data_documents, search_object};
-use services::{service_async, service_job, service_sync};
-use upload::{HostStream, HostUpload, StreamBytes};
+use upload::StreamBytes;
 pub use values::script_list_values;
 pub(crate) use values::{context_combined, pop_context_frame, put_context_all, value_entity_name, value_field};
 pub use values::{value_items, value_map};
 pub(crate) use web_host::invoke as invoke_web_handler;
+pub(crate) use web_host::INVOKE_JS as WEB_INVOKE_JS;
 
 use crate::context::{Error, ErrorKind, ExecutionContext};
-use moqui_db::sql::{CompareOp, Condition};
+use crate::script::engine::EntryKind;
+pub(crate) use crate::script::run::{mark_request_thread, script_time_remaining};
+pub use crate::script::run::DeadlineGuard;
+#[cfg(test)]
+use crate::script::run::{script_limit_for, NESTED_STACK, REQUEST_SCRIPT_STACK, SCRIPT_LIMIT};
+pub(crate) use crate::script::run::STACK;
+use crate::script::run::{stack_budget, EngineTag, ScriptLimit, DEADLINE, DEPTH, MAX_SCRIPT_DEPTH};
+use moqui_db::sql::Condition;
 
 use crate::entity::{EntityFacade, EntityFind, EntityList, EntityValue};
-use crate::service::call::CallOptions;
 
 const MAX_CACHED_TEMPLATES: usize = 4096;
 /// The source text the template and screen unit caches of an engine may hold. Their bytecode is about the size of the
@@ -126,35 +117,40 @@ const MEMORY_LIMIT: usize = 64 * 1024 * 1024;
 // Leave room for a new render's transient values and compilation. Source-byte cache limits cannot predict bytecode
 // size, and a screen may catch an allocation error before with_context sees it and releases the caches.
 const CACHE_HEAP_PRESSURE: i64 = (MEMORY_LIMIT * 3 / 4) as i64;
-/// The stack the outermost script on a thread may use, below the 2 MiB of a service worker. QuickJS counts the engine's
-/// stack from where the outermost script enters it, so the scripts it nests share this budget plus [`NESTED_STACK`]
-/// (on a request worker, [`REQUEST_SCRIPT_STACK`]). Less than [`MIN_NESTED_STACK`] left fails before a nested script.
-const SCRIPT_STACK: usize = 1024 * 1024;
-/// Full app renders nest widget templates, includes and services on the request worker's 8 MiB stack.
-const REQUEST_SCRIPT_STACK: usize = 4 * 1024 * 1024;
-const NESTED_STACK: usize = 256 * 1024;
-const MIN_NESTED_STACK: usize = 32 * 1024;
-const VALUE_OF_MESSAGE: &str =
+pub(crate) const VALUE_OF_MESSAGE: &str =
     "decimal valueOf is not supported; use add, subtract, multiply, divide, eq, compare, isZero, or toNumber";
 
 thread_local! {
     /// While true, an expression of a widget runs with the `ec` of the server-static browser host: the compatibility report's full check.
     static WIDGET_WRAP: Cell<bool> = const { Cell::new(false) };
-    static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
-    /// Whether `DEADLINE` is the default limit of a script that runs outside a transaction (see [`ScriptLimit`]).
-    static DEADLINE_IS_DEFAULT: Cell<bool> = const { Cell::new(false) };
-    /// The default limit of a script outside a transaction, read at the first script on the thread.
-    static SCRIPT_LIMIT: Cell<Option<Option<Duration>>> = const { Cell::new(None) };
-    /// Whether this thread is a request worker, whose scripts outside a transaction are limited by default.
-    static REQUEST_THREAD: Cell<bool> = const { Cell::new(false) };
-    /// Where the stack was when the outermost script on the thread was entered.
-    static STACK_BASE: Cell<usize> = const { Cell::new(0) };
-    static STACK: RefCell<ContextStack> = RefCell::new(ContextStack::new());
+    /// The real `ec` while a widget expression runs with the wrapper in its place ([`with_widget_ec`]), for a script it
+    /// calls into ([`RealEcForNested`]).
+    static WRAPPED_REAL: RefCell<Option<Persistent<JsValue<'static>>>> = const { RefCell::new(None) };
     /// This thread's engines: the main one ([`EngineKind::Main`]) and, for the test harness, the spec one.
     static ENGINES: RefCell<Vec<(EngineKind, Rc<Engine>)>> = const { RefCell::new(Vec::new()) };
-    /// The engine of each running script, innermost last.
+    /// The QuickJS engine of each running QuickJS script, innermost last. [`crate::script::run`] has the engine of
+    /// every running script, of both engines.
     static RUNNING: RefCell<Vec<Rc<Engine>>> = const { RefCell::new(Vec::new()) };
-    static DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Whether widget expressions run with the wrapped `ec` now (the server-static report's full check).
+pub(crate) fn widget_wrap_on() -> bool {
+    WIDGET_WRAP.with(Cell::get)
+}
+
+/// Write the innermost QuickJS script's tracked values back to the stack: the boundary an oxide script crosses when it
+/// starts inside a running QuickJS script, so it reads by bare name what the QuickJS script changed in place
+/// ([`crate::script::engine::cross_into_oxide`]). Kept tracked (`Flush::Keep`) for a read-only oxide script; released
+/// (`Flush::Release`) for one that may write, so the QuickJS script reads what it wrote.
+pub(crate) fn flush_innermost(release: bool) -> Result<(), Error> {
+    let Some(engine) = current_engine() else {
+        return Ok(());
+    };
+    // SAFETY: `engine` is running on this thread (it is the innermost of `RUNNING`), so its outermost
+    // `Context::with` holds the runtime's lock for as long as this call lasts, and the `Ctx` made here does not
+    // outlive it.
+    let ctx = unsafe { Ctx::from_raw(engine.context.as_raw()) };
+    flush_tracked(&ctx, &engine, if release { Flush::Release } else { Flush::Keep })
 }
 
 /// Turn the wrapped `ec` for widget expressions on or off. Returns the setting it replaces.
@@ -195,11 +191,89 @@ pub(crate) fn with_real_ec<T>(body: impl FnOnce() -> T) -> T {
 struct RealEc<'js> {
     ctx: Ctx<'js>,
     real: JsValue<'js>,
+    /// What [`WRAPPED_REAL`] held before.
+    previous: Option<Persistent<JsValue<'static>>>,
+}
+
+impl<'js> RealEc<'js> {
+    fn hold(ctx: &Ctx<'js>, real: JsValue<'js>) -> Self {
+        let saved = Persistent::save(ctx, real.clone());
+        Self {
+            ctx: ctx.clone(),
+            real,
+            previous: WRAPPED_REAL.with(|held| held.replace(Some(saved))),
+        }
+    }
 }
 
 impl Drop for RealEc<'_> {
     fn drop(&mut self) {
-        let _ = set_ec(&self.ctx, self.real.clone());
+        if let Err(err) = set_ec(&self.ctx, self.real.clone()) {
+            tracing::error!(error = %err, "the real ec could not be put back after a widget expression");
+            discard_engine_of(&self.ctx);
+        }
+        let previous = self.previous.take();
+        WRAPPED_REAL.with(|held| *held.borrow_mut() = previous);
+    }
+}
+
+/// A script a widget expression calls into (a host function that runs one, [`with_nested_context`]) runs in the same
+/// engine, so it gets the real `ec` for its run, not the wrapper: it is not the screen's widget expression. What
+/// `globalThis.ec` was is put back when it ends.
+struct RealEcForNested<'js> {
+    ctx: Ctx<'js>,
+    outer: Option<JsValue<'js>>,
+}
+
+impl<'js> RealEcForNested<'js> {
+    fn enter(ctx: &Ctx<'js>) -> Self {
+        let real = WRAPPED_REAL.with(|held| held.borrow().clone()).and_then(|real| real.restore(ctx).ok());
+        let outer = real.and_then(|real| {
+            let outer: JsValue = ctx.globals().get("ec").ok()?;
+            set_ec(ctx, real).ok()?;
+            Some(outer)
+        });
+        Self { ctx: ctx.clone(), outer }
+    }
+}
+
+impl Drop for RealEcForNested<'_> {
+    fn drop(&mut self) {
+        if let Some(outer) = self.outer.take() {
+            if let Err(err) = set_ec(&self.ctx, outer) {
+                tracing::error!(error = %err, "the widget check's ec could not be put back after a nested run");
+                discard_engine_of(&self.ctx);
+            }
+        }
+    }
+}
+
+/// Mark the thread's engine of `ctx` to go from [`ENGINES`] when its outermost run ends ([`with_engine`]), so the next
+/// script starts a new one: a run left it in a state the later scripts must not see (the widget check's wrapper of
+/// `ec` that could not be taken off). The runs still on the stack go on in it.
+fn discard_engine_of(ctx: &Ctx<'_>) {
+    let raw = ctx.as_raw().as_ptr().cast_const().cast::<()>();
+    DISCARD.with(|pending| pending.set(raw));
+}
+
+thread_local! {
+    /// The context of the engine [`discard_engine_of`] marked.
+    static DISCARD: Cell<*const ()> = const { Cell::new(std::ptr::null()) };
+}
+
+/// Drop `engine` from [`ENGINES`] when [`discard_engine_of`] marked it; the mark is taken.
+fn drop_if_discarded(engine: &Rc<Engine>) {
+    let raw = engine.context.as_raw().as_ptr().cast_const().cast::<()>();
+    let marked = DISCARD.with(|pending| {
+        let marked = std::ptr::eq(pending.get(), raw);
+        if marked {
+            pending.set(std::ptr::null());
+        }
+        marked
+    });
+    if marked {
+        tracing::error!("the script engine was left with the widget check's wrapper of ec; it is dropped and starts again on the next script");
+        ENGINES.with(|engines| engines.borrow_mut().retain(|(_, held)| !Rc::ptr_eq(held, engine)));
     }
 }
 
@@ -215,7 +289,7 @@ fn set_ec<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> rquickjs::Result<()> {
 /// `Symbol.toPrimitive`) and the probes of a plain object (`toString`, `valueOf` and the other `Object.prototype`
 /// members a template's coercion or a check reads; `then` and `toJSON`, undefined there) are as on a plain object, not
 /// violations.
-const WRAPPED_EC: &str = r#"(function (real, deny) {
+pub(crate) const WRAPPED_EC: &str = r#"(function (real, deny) {
     const has = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
     const guard = (target, prefix) => new Proxy(target, {
         get(target, key) {
@@ -238,6 +312,14 @@ const WRAPPED_EC: &str = r#"(function (real, deny) {
         resource: area("resource", ["expand", "expandNoL10n"])
     }, "");
 })"#;
+
+/// Note `expression` as the one a widget check records against, when the check is on: quickjs-oxide's wrapper
+/// (`oxide::widget`) sees the text only as it runs (`as_expression`'s form, a template literal).
+pub(crate) fn note_widget_expression(expression: &str) {
+    if WIDGET_WRAP.with(Cell::get) {
+        crate::screen::statics::set_expression(expression);
+    }
+}
 
 /// Run `body`, a widget expression, with the wrapped `ec` when a widget check is on. A violation is recorded when the expression
 /// touches an area outside the host, and the error is the caller's: `fallback` turns it into a value so a render goes on.
@@ -265,170 +347,12 @@ fn with_widget_ec<'js, R>(
         .catch(ctx)
         .map_err(|caught| Error::new(caught.to_string()))?;
     set_ec(ctx, wrapper).map_err(js_error)?;
-    let _real = RealEc { ctx: ctx.clone(), real };
+    let _real = RealEc::hold(ctx, real);
     // The expression may call back into the host (expand inside an expression): that is not checked twice.
     let _unchecked = WidgetWrap::set(false);
     body()
 }
 
-/// Bounds script time on this thread to a transaction's remaining time.
-///
-/// The QuickJS interrupt handler reads the deadline, so a loop that never returns
-/// ends with an error instead of holding the worker. Nested guards keep the earlier deadline. A transaction's limit
-/// replaces the default limit of a script that runs outside one, and the time inside does not count against that default.
-pub struct DeadlineGuard {
-    previous: Option<Instant>,
-    previous_default: bool,
-    /// When the guard replaced a default limit, so the default is moved on by the time spent inside.
-    replaced_default: Option<Instant>,
-}
-
-impl DeadlineGuard {
-    pub fn new(remaining: Option<Duration>) -> Self {
-        let previous = DEADLINE.with(Cell::get);
-        let previous_default = DEADLINE_IS_DEFAULT.with(Cell::get);
-        let mut replaced_default = None;
-        if let Some(remaining) = remaining {
-            let now = Instant::now();
-            let next = now + remaining;
-            let chosen = match previous {
-                Some(existing) if !previous_default => existing.min(next),
-                Some(_) => {
-                    replaced_default = Some(now);
-                    next
-                }
-                None => next,
-            };
-            DEADLINE.with(|deadline| deadline.set(Some(chosen)));
-            DEADLINE_IS_DEFAULT.with(|flag| flag.set(false));
-        }
-        Self {
-            previous,
-            previous_default,
-            replaced_default,
-        }
-    }
-}
-
-impl Drop for DeadlineGuard {
-    fn drop(&mut self) {
-        let previous = match (self.previous, self.replaced_default) {
-            (Some(at), Some(entered)) => Some(at + entered.elapsed()),
-            (previous, _) => previous,
-        };
-        DEADLINE.with(|deadline| deadline.set(previous));
-        DEADLINE_IS_DEFAULT.with(|flag| flag.set(self.previous_default));
-    }
-}
-
-/// The time left before this thread's script deadline, when it has one.
-pub(crate) fn script_time_remaining() -> Option<Duration> {
-    DEADLINE
-        .with(Cell::get)
-        .map(|deadline| deadline.saturating_duration_since(Instant::now()))
-}
-
-/// The default of `webapp_request_timeout`, the host's limit on a whole request, read here by the same name.
-const DEFAULT_REQUEST_TIMEOUT: u64 = 300;
-
-/// Mark this thread a request worker: a script on it that runs outside a transaction is limited to the request
-/// timeout unless `resource-facade` `script-timeout` says otherwise.
-pub(crate) fn mark_request_thread() {
-    REQUEST_THREAD.with(|flag| flag.set(true));
-    SCRIPT_LIMIT.with(|cell| cell.set(None));
-}
-
-/// The seconds a script may run when no transaction limits it, read once per thread. The conf's `resource-facade`
-/// `script-timeout` when set, for every thread; else the webapp's `requests` `request-timeout`
-/// (`webapp_request_timeout`) on a request worker, and no limit on a service, job, or scheduler thread, which run batch
-/// work outside a transaction as Java does. 0 is no limit.
-fn default_script_limit() -> Option<Duration> {
-    if let Some(limit) = SCRIPT_LIMIT.with(Cell::get) {
-        return limit;
-    }
-    let factory = crate::context::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()));
-    let limit = script_limit_for(
-        &crate::resource::setting("script-timeout"),
-        REQUEST_THREAD.with(Cell::get),
-        &crate::web::protection_setting(
-            factory.as_deref(),
-            "requests",
-            "request-timeout",
-            "webapp_request_timeout",
-        ),
-    );
-    SCRIPT_LIMIT.with(|cell| cell.set(Some(limit)));
-    limit
-}
-
-fn script_limit_for(script_timeout: &str, request_thread: bool, request_timeout: &str) -> Option<Duration> {
-    let seconds = match script_timeout.trim().parse::<u64>() {
-        Ok(seconds) => seconds,
-        Err(_) if request_thread => request_timeout.trim().parse().unwrap_or(DEFAULT_REQUEST_TIMEOUT),
-        Err(_) => 0,
-    };
-    (seconds > 0).then(|| Duration::from_secs(seconds))
-}
-
-/// The default deadline of the outermost script on a thread when nothing set one (see [`default_script_limit`]), so a
-/// loop in a script that runs outside a transaction (a widget condition, a `transaction="ignore"` service a request
-/// calls) cannot hold a request worker for good. Cleared when the script ends.
-struct ScriptLimit {
-    armed: bool,
-}
-
-impl ScriptLimit {
-    fn arm() -> Self {
-        let armed = DEADLINE.with(Cell::get).is_none()
-            && default_script_limit().is_some_and(|limit| {
-                DEADLINE.with(|deadline| deadline.set(Some(Instant::now() + limit)));
-                DEADLINE_IS_DEFAULT.with(|flag| flag.set(true));
-                true
-            });
-        Self { armed }
-    }
-}
-
-impl Drop for ScriptLimit {
-    fn drop(&mut self) {
-        if self.armed {
-            DEADLINE.with(|deadline| deadline.set(None));
-            DEADLINE_IS_DEFAULT.with(|flag| flag.set(false));
-        }
-    }
-}
-
-/// An address on the current stack.
-fn stack_address() -> usize {
-    let marker = 0_u8;
-    std::hint::black_box(std::ptr::from_ref(&marker)) as usize
-}
-
-/// The engine's stack limit when the outermost script enters it (`depth` 0), or for a nested script what is left of
-/// it, an error when too little is.
-fn stack_budget(depth: usize) -> Result<usize, Error> {
-    let here = stack_address();
-    let (budget, ceiling) = if REQUEST_THREAD.with(Cell::get) {
-        (REQUEST_SCRIPT_STACK, REQUEST_SCRIPT_STACK)
-    } else {
-        (SCRIPT_STACK, NESTED_STACK)
-    };
-    if depth == 0 {
-        STACK_BASE.with(|base| base.set(here));
-        // the one runtime's limit, from here: this script and the scripts it nests
-        return Ok(if REQUEST_THREAD.with(Cell::get) {
-            budget
-        } else {
-            budget + NESTED_STACK
-        });
-    }
-    let used = STACK_BASE.with(Cell::get).abs_diff(here);
-    let left = (budget + NESTED_STACK).saturating_sub(used).min(ceiling);
-    if left < MIN_NESTED_STACK {
-        return Err(Error::new("scripts are nested too deeply for the thread's stack"));
-    }
-    Ok(left)
-}
 
 /// An inert module's value kept for the run, with the text it was made from ([`kept_module`]).
 type KeptModule = (Arc<str>, Persistent<JsValue<'static>>);
@@ -481,7 +405,6 @@ mod counts {
     pub(super) static THREADS: AtomicUsize = AtomicUsize::new(0);
     pub(super) static LIVE: AtomicUsize = AtomicUsize::new(0);
     pub(super) static LIVE_MAX: AtomicUsize = AtomicUsize::new(0);
-    pub(super) static DEPTH_MAX: AtomicUsize = AtomicUsize::new(0);
     pub(super) static HEAP: AtomicUsize = AtomicUsize::new(0);
     pub(super) static HEAP_MAX: AtomicUsize = AtomicUsize::new(0);
 }
@@ -500,21 +423,68 @@ pub struct EngineStats {
     pub heap_bytes_max: usize,
     pub compiled: u64,
     pub shared_reads: u64,
+    /// The quickjs-oxide runtimes (one per thread that ran an oxide script): started, alive now and at most.
+    pub oxide_engines_started: usize,
+    pub oxide_engines_live: usize,
+    pub oxide_engines_live_max: usize,
+    /// Their reserved heap bytes as last sampled, now and at the highest.
+    pub oxide_heap_bytes: usize,
+    pub oxide_heap_bytes_max: usize,
+    /// The peak reserved heap bytes of each thread's oxide runtime (sampled every 32 runs), by thread.
+    pub oxide_heap_peaks: Vec<(String, usize)>,
+    /// Texts the oxide runtimes compiled.
+    pub oxide_compiled: u64,
+    /// Oxide runtimes dropped after a host function panicked.
+    pub oxide_poisoned: u64,
+    /// Runtimes dropped and started again because their heap stayed near the cap with their caches gone.
+    pub oxide_restarted: u64,
+    /// The process's oxide code images: made, loaded by a runtime instead of compiled (each a parse avoided), failed,
+    /// and the bytes kept.
+    pub oxide_images_made: u64,
+    pub oxide_image_loads: u64,
+    pub oxide_image_failures: u64,
+    pub oxide_image_bytes: usize,
+    /// Oxide runs that met something the bindings do not have before any host call, and ran on QuickJS instead.
+    pub oxide_fallbacks: u64,
+    /// Differences between the engines the difference check (`script_engine_check`) found.
+    pub oxide_differences: u64,
+    /// Texts the static check parsed.
+    pub check_parses: u64,
+    /// Scripts run by entry kind: (kind, on QuickJS, on quickjs-oxide).
+    pub scripts_by_kind: Vec<(&'static str, u64, u64)>,
 }
 
 /// [`EngineStats`] of the process.
 pub fn engine_stats() -> EngineStats {
     use std::sync::atomic::Ordering::Relaxed;
+    let oxide = crate::script::oxide::stats();
     EngineStats {
         engines_started: counts::STARTED.load(Relaxed),
         threads: counts::THREADS.load(Relaxed),
         engines_live: counts::LIVE.load(Relaxed),
         engines_live_max: counts::LIVE_MAX.load(Relaxed),
-        depth_max: counts::DEPTH_MAX.load(Relaxed),
+        depth_max: crate::script::run::DEPTH_MAX.load(Relaxed),
         heap_bytes: counts::HEAP.load(Relaxed),
         heap_bytes_max: counts::HEAP_MAX.load(Relaxed),
         compiled: compiled::compiled_count(),
         shared_reads: compiled::shared_bytecode_reads(),
+        oxide_engines_started: oxide.engines_started,
+        oxide_engines_live: oxide.engines_live,
+        oxide_engines_live_max: oxide.engines_live_max,
+        oxide_heap_bytes: oxide.heap_bytes,
+        oxide_heap_bytes_max: oxide.heap_bytes_max,
+        oxide_heap_peaks: crate::script::oxide::thread_heap_peaks(),
+        oxide_compiled: oxide.compiled,
+        oxide_poisoned: oxide.poisoned,
+        oxide_restarted: oxide.restarted,
+        oxide_images_made: oxide.images.made,
+        oxide_image_loads: oxide.images.loads,
+        oxide_image_failures: oxide.images.failed,
+        oxide_image_bytes: oxide.images.bytes,
+        oxide_fallbacks: crate::script::engine::oxide_fallbacks(),
+        oxide_differences: crate::script::engine::oxide_differences(),
+        check_parses: crate::script::check::parses(),
+        scripts_by_kind: crate::script::engine::scripts_by_kind(),
     }
 }
 
@@ -722,19 +692,19 @@ impl Drop for ContextFrame {
 
 /// The context stack's depth when made. Dropped without [`StackMark::keep`], it pops the frames pushed since: a script
 /// that threw between its `sri.pushContext()` and `sri.popContext()` leaves the stack as it found it.
-struct StackMark {
+pub(crate) struct StackMark {
     depth: Option<(usize, usize)>,
 }
 
 impl StackMark {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             depth: Some(STACK.with(|stack| stack.borrow().depth())),
         }
     }
 
     /// Leave the frames pushed since as they are.
-    fn keep(mut self) {
+    pub(crate) fn keep(mut self) {
         self.depth = None;
     }
 }
@@ -807,6 +777,22 @@ pub struct EngineMemory {
     pub units: usize,
     pub unit_bytes: usize,
     pub templates: usize,
+    /// This thread's quickjs-oxide runtime (0 or 1): the bytes its heap reserves and the live bytes its last
+    /// collection left, its compiled units and their instruction, position and source bytes, and its
+    /// compiled-expression cache's texts and their source bytes.
+    pub oxide_engines: usize,
+    pub oxide_reserved_bytes: usize,
+    pub oxide_live_bytes: usize,
+    pub oxide_code_units: usize,
+    pub oxide_code_bytes: usize,
+    pub oxide_compiled_scripts: usize,
+    pub oxide_compiled_script_bytes: usize,
+}
+
+/// One line of this thread's quickjs-oxide heaps after a collection (the main runtime's and the spec runtime's), for a
+/// per-spec heap log.
+pub fn oxide_heap_line() -> String {
+    crate::script::oxide::heap_line()
 }
 
 /// [`EngineMemory`] of this thread's engines, after a collection when `collect`. Not while a script runs on the thread.
@@ -839,6 +825,14 @@ pub fn engine_memory(collect: bool) -> EngineMemory {
         memory.unit_bytes += units.bytes();
         memory.templates += engine.templates.borrow().len();
     }
+    let oxide = crate::script::oxide::engine_memory(collect);
+    memory.oxide_engines = oxide.engines;
+    memory.oxide_reserved_bytes = oxide.reserved_bytes;
+    memory.oxide_live_bytes = oxide.live_bytes;
+    memory.oxide_code_units = oxide.code_units;
+    memory.oxide_code_bytes = oxide.code_bytes;
+    memory.oxide_compiled_scripts = oxide.compiled_scripts;
+    memory.oxide_compiled_script_bytes = oxide.compiled_script_bytes;
     memory
 }
 
@@ -847,11 +841,19 @@ pub fn run_script(source: &str) -> Result<(), Error> {
     if source.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
-    eval_script(source)
+    if crate::script::engine::script_engine() == crate::script::engine::ScriptEngine::Oxide {
+        let ran = crate::script::engine::try_oxide(EntryKind::Script, source, |source, hash, _| {
+            crate::script::oxide::run_script(source, hash)
+        })?;
+        if ran.is_some() {
+            return Ok(());
+        }
+    }
+    with_kind(EntryKind::Script, |ctx| eval_compiled::<JsValue>(ctx, source, false).map(|_| ()))
 }
 
 /// A source that starts with `{` is an object literal in an expression, not a block.
-fn as_expression(source: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn as_expression(source: &str) -> std::borrow::Cow<'_, str> {
     if source.trim_start().starts_with('{') {
         std::borrow::Cow::Owned(format!("({source}\n)"))
     } else {
@@ -868,12 +870,17 @@ pub fn eval_condition(expression: &str) -> Result<bool, Error> {
     if expression.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
-    with_context(|ctx| {
-        with_widget_ec(ctx, expression, || {
-            let value = eval_compiled::<JsValue>(ctx, &as_expression(expression), true)?;
-            Ok(js_truthy(&value))
+    let source = as_expression(expression);
+    note_widget_expression(expression);
+    let quickjs = || {
+        with_kind(EntryKind::Condition, |ctx| {
+            with_widget_ec(ctx, expression, || {
+                let value = eval_compiled::<JsValue>(ctx, &source, true)?;
+                Ok(js_truthy(&value))
+            })
         })
-    })
+    };
+    crate::script::engine::small_script(EntryKind::Condition, &source, crate::script::oxide::eval_condition, quickjs)
 }
 
 /// Expand a template. `${expression}` runs in this runtime. No `$`, or a trailing `$`, is unchanged.
@@ -884,19 +891,27 @@ pub fn expand(template: &str) -> Result<String, Error> {
     if template.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
-    with_context(|ctx| expand_in(ctx, template))
+    if crate::script::engine::may_route() {
+        // on quickjs-oxide the template literal itself, run as an expression: the same text QuickJS's function returns
+        let literal = template_literal(template);
+        note_widget_expression(template);
+        let quickjs = || with_kind(EntryKind::Expand, |ctx| expand_in(ctx, template));
+        return crate::script::engine::small_script(EntryKind::Expand, &literal, crate::script::oxide::eval_text, quickjs);
+    }
+    with_kind(EntryKind::Expand, |ctx| expand_in(ctx, template))
 }
 
 /// See [`upload::text_upload_to_js`].
 pub use upload::text_upload_to_js;
 
 pub fn with_ctx<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Error> {
-    with_context(body)
+    with_kind(EntryKind::Host, body)
 }
 
 /// [`with_ctx`] in the thread's spec engine, where the test harness's code and globals are
 /// ([`eval_named_value`]).
 pub fn with_spec_ctx<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Error> {
+    crate::script::engine::require_quickjs(EntryKind::Spec)?;
     with_engine(EngineKind::Spec, body)
 }
 
@@ -907,17 +922,20 @@ where
     eval_js(ctx, source)
 }
 
-/// Run one generated action script.
+/// Run one generated action script whose text and cache key were made once.
 ///
 /// The script is not strict. A strict function would reject bare assignment, and
 /// that assignment is how a plain value reaches the context stack.
-pub(super) fn eval_script(source: &str) -> Result<(), Error> {
-    with_context(|ctx| eval_compiled::<JsValue>(ctx, source, false).map(|_| ()))
-}
-
-/// [`eval_script`] for a script whose text and cache key were made once.
 pub(super) fn eval_script_text(script: &ScriptText) -> Result<(), Error> {
-    with_context(|ctx| eval_compiled_text::<JsValue>(ctx, script, false).map(|_| ()))
+    if crate::script::engine::may_route() {
+        let ran = crate::script::engine::try_oxide(EntryKind::Actions, script.text(), |source, hash, _| {
+            crate::script::oxide::run_actions(source, hash, script.file_name())
+        })?;
+        if ran.is_some() {
+            return Ok(());
+        }
+    }
+    with_kind(EntryKind::Actions, |ctx| eval_compiled_text::<JsValue>(ctx, script, false).map(|_| ()))
 }
 
 /// Same prefix rules as [`expand`], on the callback's context.
@@ -933,20 +951,14 @@ fn expand_here(ctx: &Ctx<'_>, template: &str) -> Result<String, Error> {
     expand_in(ctx, template)
 }
 
-/// A script that runs a service that runs a script runs in the same engine ([`with_nested_context`]). A chain of Mantle
-/// services from a shipment delivery to a ledger posting nests about 20 deep; the stack budget ([`stack_budget`]) is
-/// what stops runaway recursion, so this only bounds the nesting.
-const MAX_SCRIPT_DEPTH: usize = 64;
-
-struct DepthGuard;
-
-impl Drop for DepthGuard {
-    fn drop(&mut self) {
-        DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
-    }
+fn with_context<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Error> {
+    with_kind(EntryKind::Host, body)
 }
 
-fn with_context<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Error> {
+/// A script of `kind` in the thread's main QuickJS engine. Under `script_engine=oxide` a kind the oxide bindings do not
+/// cover is an error naming it ([`crate::script::engine::require_quickjs`]).
+fn with_kind<R>(kind: EntryKind, body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Error> {
+    crate::script::engine::require_quickjs(kind)?;
     with_engine(EngineKind::Main, body)
 }
 
@@ -995,10 +1007,12 @@ fn with_engine<R>(kind: EngineKind, body: impl FnOnce(&Ctx) -> Result<R, Error>)
         return Err(Error::new("scripts are nested too deeply"));
     }
     let stack = stack_budget(depth)?;
+    crate::script::engine::cross_into_quickjs()?;
     let engine = engine_of(kind)?;
     let entered = RUNNING.with(|running| running.borrow().iter().any(|held| Rc::ptr_eq(held, &engine)));
     RUNNING.with(|running| running.borrow_mut().push(Rc::clone(&engine)));
     let _running = Running;
+    let _tag = EngineTag::QuickJs.enter();
     if entered {
         return with_nested_context(&engine, depth, body);
     }
@@ -1008,10 +1022,8 @@ fn with_engine<R>(kind: EngineKind, body: impl FnOnce(&Ctx) -> Result<R, Error>)
     // QuickJS counts the stack from where the runtime is entered, here: the nested scripts this one runs share it.
     engine.runtime.set_max_stack_size(stack);
     let _limit = (depth == 0).then(ScriptLimit::arm);
-    DEPTH.with(|current| current.set(depth + 1));
-    counts::DEPTH_MAX.fetch_max(depth + 1, std::sync::atomic::Ordering::Relaxed);
-    let _guard = DepthGuard;
-    engine.context.with(|ctx| {
+    let _guard = crate::script::run::enter_depth(depth);
+    let ran = engine.context.with(|ctx| {
         let _run = RunValues {
             engine: &engine,
             outer: None,
@@ -1025,15 +1037,16 @@ fn with_engine<R>(kind: EngineKind, body: impl FnOnce(&Ctx) -> Result<R, Error>)
         let flushed = flush_tracked(&ctx, &engine, Flush::End);
         // the modules kept for this run go with it: the next run makes them again
         engine.modules.borrow_mut().clear();
-        // what the outermost script opened with `send()` and did not read or forward goes with it
-        if depth == 0 {
-            crate::web::upstream::clear();
-        }
+        // what the outermost script opened with `send()` and did not read or forward goes with it, when its depth guard
+        // drops ([`crate::script::run::enter_depth`]), on either engine
         match (result, flushed) {
             (Ok(value), Ok(())) => Ok(value),
             (Err(err), _) | (Ok(_), Err(err)) => Err(err),
         }
-    })
+    });
+    // the outermost run of this engine has ended
+    drop_if_discarded(&engine);
+    ran
 }
 
 /// A script run by a host call of a running script (a service it calls runs another script): in the thread's one
@@ -1061,10 +1074,10 @@ fn with_nested_context<R>(
         unit_depth: engine.unit_depth.replace(0),
         flushing: engine.flushing.replace(false),
     };
-    DEPTH.with(|current| current.set(depth + 1));
-    counts::DEPTH_MAX.fetch_max(depth + 1, std::sync::atomic::Ordering::Relaxed);
-    let guard = DepthGuard;
+    let guard = crate::script::run::enter_depth(depth);
+    let real_ec = RealEcForNested::enter(&ctx);
     let result = body(&ctx);
+    drop(real_ec);
     let flushed = flush_tracked(&ctx, engine, Flush::End);
     drop(guard);
     drop(outer);
@@ -1257,11 +1270,6 @@ impl Drop for RunValues<'_> {
     }
 }
 
-/// Whether a script is running on this thread.
-pub(crate) fn in_script() -> bool {
-    DEPTH.with(Cell::get) > 0
-}
-
 /// The value an inert module at `location` gave earlier in this outermost run, when made from the same text.
 fn kept_module<'js>(ctx: &Ctx<'js>, location: &str, text: &Arc<str>) -> Option<JsValue<'js>> {
     let engine = current_engine()?;
@@ -1356,7 +1364,17 @@ fn install_context(ctx: &Ctx<'_>) -> Result<Helpers, Error> {
     ec_extra::fill_security_checks(ctx, &user_security_checks)?;
     install_ec(ctx)?;
     install_helpers(ctx)?;
-    tools_host::install(ctx, &string_utilities, &collection_utilities, &web_utilities)?;
+    bind::install_shims(ctx, &string_utilities, &collection_utilities, &web_utilities)?;
+    freeze_helpers(
+        ctx,
+        [
+            &object_utilities,
+            &collection_utilities,
+            &string_utilities,
+            &web_utilities,
+            &user_security_checks,
+        ],
+    )?;
     install_entity_prototypes(ctx)?;
     freeze_host_globals(ctx, builtins)?;
     install_proxy(ctx)?;
@@ -1393,6 +1411,23 @@ const FREEZE_HOST_GLOBALS: &str = r#"(function (builtins) {
         });
     }
 })"#;
+
+/// Freeze the helper objects, the functions on them and `System` (`host::globals::FREEZE_HELPERS_JS`), once the shims
+/// have filled them, so one script cannot replace a helper, a `UserSecurityChecks` check among them, for the later
+/// scripts on the thread.
+fn freeze_helpers<'js>(ctx: &Ctx<'js>, helpers: [&Object<'js>; 5]) -> Result<(), Error> {
+    let objects = rquickjs::Array::new(ctx.clone()).map_err(js_error)?;
+    for (index, helper) in helpers.into_iter().enumerate() {
+        objects.set(index, helper.clone()).map_err(js_error)?;
+    }
+    let system: JsValue = ctx.globals().get("System").map_err(js_error)?;
+    objects.set(helpers.len(), system).map_err(js_error)?;
+    let freeze: Function = eval_js(ctx, crate::script::host::globals::FREEZE_HELPERS_JS)?;
+    freeze
+        .call::<_, ()>((objects,))
+        .catch(ctx)
+        .map_err(|caught| Error::new(format!("helper objects: {caught}")))
+}
 
 fn freeze_host_globals<'js>(ctx: &Ctx<'js>, builtins: JsValue<'js>) -> Result<(), Error> {
     let freeze: Function = eval_js(ctx, FREEZE_HOST_GLOBALS)?;
@@ -1762,22 +1797,6 @@ pub(super) fn context_combined_map(ctx: &Ctx<'_>) -> Result<Value, Error> {
     Ok(Value::Map(STACK.with(|stack| stack.borrow().combined_map())))
 }
 
-/// Set a name on the stack from host code, forgetting any list or map the script already read
-/// under that name so its next read sees the new value.
-fn put_name(ctx: &Ctx<'_>, name: &str, value: Value) -> rquickjs::Result<()> {
-    if let Some(engine) = current_engine() {
-        engine.tracked.borrow_mut().remove(name);
-        engine.released.borrow_mut().remove(name);
-    }
-    STACK.with(|stack| {
-        stack
-            .borrow_mut()
-            .put(name, value)
-            .map(|_| ())
-            .map_err(|err| Exception::throw_message(ctx, err.message()))
-    })
-}
-
 fn stack_get(name: &str) -> Lookup {
     STACK.with(|stack| stack.borrow().get(name))
 }
@@ -1829,7 +1848,7 @@ fn expand_in(ctx: &Ctx<'_>, template: &str) -> Result<String, Error> {
 
 /// Run a compiled fancy template function and return its text. The function is kept per engine.
 pub(crate) fn run_template_function(source: &str) -> Result<String, Error> {
-    with_context(|ctx| run_template_function_here(ctx, source))
+    with_kind(EntryKind::Template, |ctx| run_template_function_here(ctx, source))
 }
 
 /// [`run_template_function`] on the callback's context, for a host call made from a running script.
@@ -1871,7 +1890,14 @@ fn call_template(ctx: &Ctx<'_>, function: Function<'_>) -> Result<String, Error>
 }
 
 fn template_source(template: &str) -> String {
-    let mut source = String::from("(function(){return `");
+    format!("(function(){{return {};}})", template_literal(template))
+}
+
+/// A `${}` template as a JavaScript template literal: a backslash before `${` keeps it literal, any other backslash is
+/// itself, and a backtick is escaped.
+pub(crate) fn template_literal(template: &str) -> String {
+    let mut source = String::with_capacity(template.len() + 2);
+    source.push('`');
     let bytes = template.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
@@ -1894,7 +1920,7 @@ fn template_source(template: &str) -> String {
         source.push(ch);
         index += ch.len_utf8();
     }
-    source.push_str("`;})");
+    source.push('`');
     source
 }
 
@@ -1904,11 +1930,6 @@ pub fn host_guard<'js, T>(ctx: &Ctx<'js>, body: impl FnOnce() -> rquickjs::Resul
         Ok(result) => result,
         Err(payload) => Err(Exception::throw_message(ctx, &panic_message(payload))),
     }
-}
-
-/// A function that returns `text`, for the Java getters of an object made for a script.
-fn text_getter<'js>(ctx: &Ctx<'js>, text: String) -> rquickjs::Result<Function<'js>> {
-    Function::new(ctx.clone(), move |ctx: Ctx<'_>| host_guard(&ctx, || Ok(text.clone())))
 }
 
 fn panic_message(payload: Box<dyn Any + Send>) -> String {
@@ -1968,7 +1989,7 @@ fn throw_diagnostic(
 /// crossed the script and come back: an authorization failure in a service's script is still one for the call, as
 /// Java's `ArtifactAuthorizationException` passes through Groovy. It goes with that one error: one a script catches
 /// and goes on from does not mark a later failure, and a nested unit does not change the outer one's.
-const KIND_PROPERTY: &str = "moquiErrorKind";
+pub(crate) const KIND_PROPERTY: &str = "moquiErrorKind";
 
 /// The kinds [`mark_kind`] carries on the error, by name.
 const CARRIED_KINDS: [(ErrorKind, &str); 8] = [
@@ -1992,7 +2013,7 @@ fn mark_kind(exception: &Exception<'_>, kind: ErrorKind) -> rquickjs::Result<()>
 
 /// The property of a thrown error that holds a tarpit's retry seconds, so the `Retry-After` of a tarpit refused under
 /// a script (a screen's render) is still sent.
-const RETRY_AFTER_PROPERTY: &str = "moquiRetryAfter";
+pub(crate) const RETRY_AFTER_PROPERTY: &str = "moquiRetryAfter";
 
 /// Put the retry seconds of a refusal on an error about to be thrown.
 fn mark_retry_after(exception: &Exception<'_>, retry_after: Option<u64>) -> rquickjs::Result<()> {
@@ -2017,6 +2038,11 @@ fn caught_error(err: Error, caught: &rquickjs::CaughtError<'_>) -> Error {
     }
 }
 
+/// The kind [`mark_kind`] names `name`, for an error that crossed a script on either engine.
+pub(crate) fn carried_kind(name: &str) -> Option<ErrorKind> {
+    CARRIED_KINDS.iter().find(|(_, known)| *known == name).map(|(kind, _)| *kind)
+}
+
 /// The security kind [`mark_kind`] put on the error the script ended with, else general.
 fn caught_kind(caught: &rquickjs::CaughtError<'_>) -> ErrorKind {
     let object = match caught {
@@ -2035,34 +2061,16 @@ fn install_ec(ctx: &Ctx<'_>) -> Result<(), Error> {
     let ec = caught(ctx, "ec", Object::new(ctx.clone()))?;
     ec.set("entity", entity_object(ctx)?).map_err(js_error)?;
     ec.set("resource", resource_object(ctx)?).map_err(js_error)?;
-    let message = caught(ctx, "message", Class::instance(ctx.clone(), HostMessage {}))?;
-    ec.set("message", message).map_err(js_error)?;
-    ec.set("logger", logger_object(ctx)?).map_err(js_error)?;
-    ec.set("service", service_object(ctx)?).map_err(js_error)?;
-    let user = caught(ctx, "user", Class::instance(ctx.clone(), HostUser {}))?;
-    user_host::install_user_extras(ctx, &user)?;
-    ec.set("user", user).map_err(js_error)?;
-    let web = caught(ctx, "web", Class::instance(ctx.clone(), HostWeb {}))?;
-    ec.set("web", web).map_err(js_error)?;
-    ec.set("cache", cache_object(ctx)?).map_err(js_error)?;
-    ec.set("search", search_object(ctx)?).map_err(js_error)?;
-    // the agent runtime's object, when the binary links it (crate::llm_hooks)
-    if let Some(hooks) = crate::llm_hooks::get() {
-        ec.set("llm", (hooks.script_object)(ctx)?).map_err(js_error)?;
-    }
     ec.set("transaction", transaction_object(ctx)?).map_err(js_error)?;
     ec_extra::install_ec_extras(ctx, &ec)?;
-    let make_notification = Function::new(ctx.clone(), notification::make_notification_message).map_err(js_error)?;
-    ec.set("makeNotificationMessage", make_notification).map_err(js_error)?;
+    // every path of the host table (script/host), as the oxide engine installs them; last, so a path inside a member
+    // made above (ec.resource.x) is added to it
+    bind::install_ec(ctx, &ec)?;
     caught(ctx, "globals", ctx.globals().set("ec", ec))?;
-    ec_screen::install_builder(ctx)?;
-    caught(ctx, "globals", ctx.globals().set("sri", screen_host::sri_object(ctx)?))?;
     let system = Object::new(ctx.clone()).map_err(js_error)?;
     let property = Function::new(ctx.clone(), system_get_property).map_err(js_error)?;
     system.set("getProperty", property).map_err(js_error)?;
     caught(ctx, "globals", ctx.globals().set("System", system))?;
-    edi::install(ctx)?;
-    sftp::install(ctx)?;
     Ok(())
 }
 
@@ -2106,81 +2114,10 @@ fn default_transactions(ctx: &Ctx<'_>) -> rquickjs::Result<crate::transaction::T
 
 fn entity_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     let entity = Object::new(ctx.clone()).map_err(js_error)?;
-    let find = caught(ctx, "entity.find", Function::new(ctx.clone(), entity_find))?;
-    entity.set("find", find).map_err(js_error)?;
-    let make = caught(ctx, "entity.makeValue", Function::new(ctx.clone(), entity_make_value))?;
-    entity.set("makeValue", make).map_err(js_error)?;
-    let start_sim = caught(
-        ctx,
-        "entity.startTxCacheDb",
-        Function::new(ctx.clone(), entities::entity_start_tx_cache_db),
-    )?;
-    entity.set("startTxCacheDb", start_sim).map_err(js_error)?;
-    let stop_sim = caught(
-        ctx,
-        "entity.stopTxCache",
-        Function::new(ctx.clone(), entities::entity_stop_tx_cache),
-    )?;
-    entity.set("stopTxCache", stop_sim).map_err(js_error)?;
-    let sim_active = caught(
-        ctx,
-        "entity.isTxCacheActive",
-        Function::new(ctx.clone(), entities::entity_is_tx_cache_active),
-    )?;
-    entity.set("isTxCacheActive", sim_active).map_err(js_error)?;
-    let documents = caught(
-        ctx,
-        "entity.getDataDocuments",
-        Function::new(ctx.clone(), entity_get_data_documents),
-    )?;
-    entity.set("getDataDocuments", documents).map_err(js_error)?;
-    let sequenced = caught(
-        ctx,
-        "entity.sequencedIdPrimary",
-        Function::new(ctx.clone(), entities::entity_sequenced_id_primary),
-    )?;
-    entity.set("sequencedIdPrimary", sequenced).map_err(js_error)?;
-    let conf_name = caught(
-        ctx,
-        "entity.getDatabaseConfName",
-        Function::new(ctx.clone(), entities::entity_get_database_conf_name),
-    )?;
-    entity.set("getDatabaseConfName", conf_name).map_err(js_error)?;
-    let temp_set = caught(
-        ctx,
-        "entity.tempSetSequencedIdPrimary",
-        Function::new(ctx.clone(), entities::entity_temp_set_sequenced_id_primary),
-    )?;
-    entity.set("tempSetSequencedIdPrimary", temp_set).map_err(js_error)?;
-    let temp_reset = caught(
-        ctx,
-        "entity.tempResetSequencedIdPrimary",
-        Function::new(ctx.clone(), entities::entity_temp_reset_sequenced_id_primary),
-    )?;
-    entity
-        .set("tempResetSequencedIdPrimary", temp_reset)
-        .map_err(js_error)?;
-    let factory = Object::new(ctx.clone()).map_err(js_error)?;
-    let make_condition = Function::new(ctx.clone(), make_condition).map_err(js_error)?;
-    factory.set("makeCondition", make_condition).map_err(js_error)?;
-    let make_where = Function::new(ctx.clone(), make_condition_where).map_err(js_error)?;
-    factory.set("makeConditionWhere", make_where).map_err(js_error)?;
+    // find, makeValue and the sequence and transaction cache functions are the host table's (script/host/entities.rs)
     entity.set("databaseTimeZone", "UTC").map_err(js_error)?;
-    let make_date = Function::new(ctx.clone(), make_condition_date).map_err(js_error)?;
-    factory.set("makeConditionDate", make_date).map_err(js_error)?;
-    let make_direct = Function::new(ctx.clone(), make_action_condition).map_err(js_error)?;
-    factory
-        .set("makeActionConditionDirect", make_direct)
-        .map_err(js_error)?;
-    entity.set("conditionFactory", factory).map_err(js_error)?;
+    // getDataDocuments and conditionFactory are the host table's too (script/host/conditions.rs)
     Ok(entity)
-}
-
-fn cache_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
-    let cache = Object::new(ctx.clone()).map_err(js_error)?;
-    let get_cache = Function::new(ctx.clone(), cache_get_cache).map_err(js_error)?;
-    cache.set("getCache", get_cache).map_err(js_error)?;
-    Ok(cache)
 }
 
 fn resource_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
@@ -2191,34 +2128,6 @@ fn resource_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     resource.set("script", script).map_err(js_error)?;
     ec_extra::add_resource_functions(ctx, &resource)?;
     Ok(resource)
-}
-
-fn logger_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
-    let logger = Object::new(ctx.clone()).map_err(js_error)?;
-    let log = Function::new(ctx.clone(), logger_log).map_err(js_error)?;
-    logger.set("log", log).map_err(js_error)?;
-    let warn = Function::new(ctx.clone(), logger_warn).map_err(js_error)?;
-    logger.set("warn", warn).map_err(js_error)?;
-    let info = Function::new(ctx.clone(), facades::logger_info).map_err(js_error)?;
-    logger.set("info", info).map_err(js_error)?;
-    let error = Function::new(ctx.clone(), facades::logger_error).map_err(js_error)?;
-    logger.set("error", error).map_err(js_error)?;
-    let debug = Function::new(ctx.clone(), facades::logger_debug).map_err(js_error)?;
-    logger.set("debug", debug).map_err(js_error)?;
-    let trace = Function::new(ctx.clone(), facades::logger_trace).map_err(js_error)?;
-    logger.set("trace", trace).map_err(js_error)?;
-    Ok(logger)
-}
-
-fn service_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
-    let service = Object::new(ctx.clone()).map_err(js_error)?;
-    let sync = Function::new(ctx.clone(), service_sync).map_err(js_error)?;
-    service.set("sync", sync).map_err(js_error)?;
-    let async_call = Function::new(ctx.clone(), service_async).map_err(js_error)?;
-    service.set("async", async_call).map_err(js_error)?;
-    let job = Function::new(ctx.clone(), service_job).map_err(js_error)?;
-    service.set("job", job).map_err(js_error)?;
-    Ok(service)
 }
 
 /// The entity facade of the entered context; throws when there is none.
@@ -2259,15 +2168,25 @@ pub fn context_value(name: &str) -> Option<Value> {
 ///
 /// Returns an error when the expression does not parse, throws, or gives a value that cannot be held.
 pub fn eval_value(expression: &str) -> Result<Value, Error> {
+    eval_value_as(EntryKind::Value, expression)
+}
+
+/// [`eval_value`] for an entry of `kind` (a value, a field's value), routed between the engines by its kind.
+fn eval_value_as(kind: EntryKind, expression: &str) -> Result<Value, Error> {
     if expression.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
-    with_context(|ctx| {
-        with_widget_ec(ctx, expression, || {
-            let evaluated = eval_compiled::<JsValue>(ctx, &as_expression(expression), true)?;
-            js_value_to_host(ctx, &evaluated)
+    let source = as_expression(expression);
+    note_widget_expression(expression);
+    let quickjs = || {
+        with_kind(kind, |ctx| {
+            with_widget_ec(ctx, expression, || {
+                let evaluated = eval_compiled::<JsValue>(ctx, &source, true)?;
+                js_value_to_host(ctx, &evaluated)
+            })
         })
-    })
+    };
+    crate::script::engine::small_script(kind, &source, crate::script::oxide::eval_value, quickjs)
 }
 
 /// Evaluate a field's `from` expression to a host value. A timestamp, date, or time reaches a script as epoch
@@ -2278,7 +2197,7 @@ pub fn eval_value(expression: &str) -> Result<Value, Error> {
 ///
 /// Returns an error when the expression does not parse, throws, or gives a value that cannot be held.
 pub fn eval_field_value(expression: &str) -> Result<Value, Error> {
-    let value = eval_value(expression)?;
+    let value = eval_value_as(EntryKind::FieldValue, expression)?;
     if !matches!(value, Value::String(_)) {
         return Ok(value);
     }
@@ -2311,13 +2230,37 @@ fn temporal_at_path(expression: &str) -> Option<Value> {
 
 /// Run a script once, not kept, named `file_name` in stack traces, and return its value as a host value. The test
 /// harness runs a spec file with it, so an error names the spec file and line.
+///
+/// For the test harnesses only (moqui-devkit's spec engine, moqui-llm's agent specs): it runs in the thread's spec
+/// engine, whose globals (`call`, `login`, ...) are the harness's, apart from the scripts of services and screens.
+/// Application code runs scripts through [`run_script`] and the other entries.
 pub fn eval_named_value(source: &str, file_name: &str) -> Result<Value, Error> {
     if source.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
+    if crate::script::engine::script_engine() == crate::script::engine::ScriptEngine::Oxide {
+        return crate::script::oxide::spec::eval_named_value(source, file_name);
+    }
+    crate::script::engine::require_quickjs(EntryKind::Spec)?;
     with_engine(EngineKind::Spec, |ctx| {
         let evaluated = compiled::eval_named(ctx, source, file_name)?;
         js_value_to_host(ctx, &evaluated)
+    })
+}
+
+/// Define the global `name` in the thread's spec engine as an object of the host table's `class`, writable and
+/// configurable (the test harness's `__moquiTestHost`). A plain set of a global would go to the context stack. For
+/// the test harnesses only, as [`eval_named_value`].
+pub fn install_spec_global(name: &str, class: &'static crate::script::host::HostClass) -> Result<(), Error> {
+    if crate::script::engine::script_engine() == crate::script::engine::ScriptEngine::Oxide {
+        return crate::script::oxide::spec::install_global(name, class);
+    }
+    with_spec_ctx(|ctx| {
+        let object = bind::running_instance(ctx, HostObject::new(()), class).map_err(js_error)?;
+        let define: Function = ctx
+            .eval("(name, value) => Object.defineProperty(globalThis, name, { value, writable: true, configurable: true })")
+            .map_err(js_error)?;
+        define.call::<_, JsValue>((name, object)).map(|_| ()).map_err(js_error)
     })
 }
 
@@ -2326,12 +2269,17 @@ pub fn eval_map(expression: &str) -> Result<std::collections::BTreeMap<String, V
     if expression.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
-    with_context(|ctx| {
-        with_widget_ec(ctx, expression, || {
-            let evaluated = eval_compiled::<JsValue>(ctx, &as_expression(expression), true)?;
-            object_map(ctx, &evaluated)
+    let source = as_expression(expression);
+    note_widget_expression(expression);
+    let quickjs = || {
+        with_kind(EntryKind::Map, |ctx| {
+            with_widget_ec(ctx, expression, || {
+                let evaluated = eval_compiled::<JsValue>(ctx, &source, true)?;
+                object_map(ctx, &evaluated)
+            })
         })
-    })
+    };
+    crate::script::engine::small_script(EntryKind::Map, &source, crate::script::oxide::eval_map, quickjs)
 }
 
 #[cfg(test)]

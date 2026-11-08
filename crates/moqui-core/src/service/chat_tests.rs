@@ -1715,8 +1715,30 @@ fn an_agent_member_gets_each_message_through_its_entry_point() {
         ],
     );
     send(&chat, "<p>what is due today?</p>");
+    let in_transaction = crate::transaction::thread_in_transaction();
     let ran = ctx.factory().service_pools().run_pending();
-    assert!(ran >= 1, "the agent's delivery was queued");
+    // a failure once in a full parallel run (Wave 5) that does not repeat: say what the room held for the agent
+    let member = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        facade
+            .find("moqui.chat.ChatRoomMember")
+            .unwrap()
+            .eq("chatRoomId", text(&chat))
+            .eq("userId", text("agbot"))
+            .one()
+            .unwrap()
+            .map(|row| {
+                format!(
+                    "{:?}",
+                    (row.get("roleEnumId"), row.get("agentRef"), row.get("leftDate"))
+                )
+            })
+    };
+    assert!(
+        ran >= 1,
+        "the agent's delivery was queued: in a transaction {in_transaction}, member {member:?}, errors {}",
+        errors()
+    );
     let page = timeline(&chat, &[("limit", int(2))]);
     let shown = events(&page);
     assert_eq!(field(&shown[0], "bodyText"), "what is due today?");

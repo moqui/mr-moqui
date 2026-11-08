@@ -17,12 +17,16 @@ that test a running server from outside are in [Client-Testing](dev/Client-Testi
 
 ## Build
 
-Prerequisites: Rust 1.98 or newer (`rustc --version`) and bash, on Linux, macOS, or Windows. On Windows the host is
-`x86_64-pc-windows-msvc`, Visual Studio Build Tools supplies the C compiler (the "Desktop development with C++"
-workload; aws-lc and QuickJS compile C, and the embedded Postgres binaries load that workload's `VCRUNTIME140.dll`), and Git for Windows supplies bash. The first build that needs it downloads NASM 3.02 to `%USERPROFILE%\.moqui\nasm` (aws-lc assembles with it). Set `MOQUI_NASM` to a directory that contains `nasm.exe`, or to `nasm.exe` itself, to use that copy instead. A `cargo build` that does not go through `moq` still needs NASM on `PATH`. From PowerShell or cmd, `moq.cmd` runs
-`moq`; the binary is `target\release\moqui.exe`. A build with embedded Postgres embeds the 18.6.0 archive that
-`scripts/pg-payload.sh strip` downloads once and strips of psql (it links GPL readline); `./moq build` runs that when
-the archive is missing. Node is not needed to build or test.
+Prerequisites: Rust 1.99 or newer (`rustc --version`; `rust-toolchain.toml` pins 1.99.0, which quickjs-oxide
+declares) and bash, on Linux, macOS, or Windows. On Windows the host is `x86_64-pc-windows-msvc`, Visual Studio
+Build Tools supplies the C compiler (the "Desktop development with C++" workload; aws-lc and QuickJS compile C, and
+the embedded Postgres binaries load that workload's `VCRUNTIME140.dll`), and Git for Windows supplies bash. The first
+build that needs it downloads NASM 3.02 to `%USERPROFILE%\.moqui\nasm` (aws-lc assembles with it). Set `MOQUI_NASM`
+to a directory that contains `nasm.exe`, or to `nasm.exe` itself, to use that copy instead. A `cargo build` that does
+not go through `moq` still needs NASM on `PATH`. From PowerShell or cmd, `moq.cmd` runs `moq`; the binary is
+`target\release\moqui.exe`. A build with embedded Postgres embeds the 18.6.0 archive that `scripts/pg-payload.sh strip`
+downloads once and strips of psql (it links GPL readline); `./moq build` runs that when the archive is missing. Node
+is not needed to build or test.
 
 ```sh
 ./moq build                            # Maximal with the dev tools, target/release/moqui; --lite, --debug or
@@ -496,8 +500,8 @@ Acceptance tests can be deleted freely, since nothing depends on them.
   an acceptance spec can depend on a regression fixture. A spec's name is unique across both trees of a component.
 - **Fixtures.** Acceptance fixtures live under `acceptance/`, never in `test/`. Helper libraries a spec loads by
   `component://<component>/test/...` stay in `test/`, for both suites.
-- **Rust.** Rust has no such directory: its acceptance tests are `#[ignore = "..."]` (`cargo test-slow`) or opt-in
-  `[[test]]`s (`gate3`, `gate3_browser`, `client_browser`, `tui_screens`). `./moq accept-all` runs them, and no
+- **Rust.** Rust has no such directory: its acceptance tests are `#[ignore = "..."]` (`cargo test-slow`, and
+  moqui-core's sweep of screen generation on both script engines) or opt-in `[[test]]`s (`gate3`, `gate3_browser`, `client_browser`, `tui_screens`). `./moq accept-all` runs them, and no
   regression command does.
 - **Who runs it.** `./moq accept-all` on a schedule (nightly, or weekly while it is long) and before a release, with
   `--junit` for a dated summary. An agent runs an acceptance test only when the user asks, or when it adds or changes

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A form-list whose row-actions find a value for each row by its key: each row's text reads its own row's value. -->
+<screen require-authentication="false">
+    <actions>
+        <script>rows = [{enumId: 'E1'}, {enumId: 'E2'}, {enumId: 'E3'}]</script>
+    </actions>
+    <widgets>
+        <form-list name="RowFindList" list="rows">
+            <row-actions>
+                <entity-find-one entity-name="moqui.basic.Enumeration" value-field="found">
+                    <field-map field-name="enumId" from="enumId"/></entity-find-one>
+            </row-actions>
+            <field name="enumId"><default-field><display text="${enumId} (${found.description})"/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

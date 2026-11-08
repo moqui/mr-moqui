@@ -94,6 +94,37 @@ feature("second", {
     );
 }
 
+/// A spec's registration, setupSpec, features and cleanupSpec are runs of their own: an upload and a stream setupSpec
+/// made, kept in the file's variables, still read in a feature and in cleanupSpec on both engines (quickjs-oxide lets
+/// such objects go when the spec ends, not at the end of each run).
+#[test]
+fn objects_setup_spec_made_last_until_the_spec_ends() {
+    use moqui_core::script::{with_script_engine, ScriptEngine};
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        let result = with_script_engine(engine, || {
+            run(r#"
+let upload = null
+let stream = null
+spec({
+    setupSpec() { upload = __moquiTestHost.uploadedFile("a.txt", "hello"); stream = upload.getInputStream() },
+    cleanupSpec() { if (upload.getString() !== "hello") throw new Error("the upload went before the spec ended") },
+})
+feature("reads what setupSpec made", {
+    expect: () => upload.getName() == "a.txt" && stream.getText() == "hello",
+})
+"#)
+        });
+        assert!(result.setup_failure.is_none(), "{engine:?}: {:?}", result.setup_failure);
+        assert!(result.cleanup_failure.is_none(), "{engine:?}: {:?}", result.cleanup_failure);
+        assert_eq!(
+            outcomes(&result),
+            vec![("reads what setupSpec made".to_string(), "passed")],
+            "{engine:?}: {:?}",
+            result.cases.first().map(|case| &case.outcome)
+        );
+    }
+}
+
 #[test]
 fn a_false_condition_fails_with_a_diagram_and_its_line() {
     let result = run(r#"spec({})
@@ -694,9 +725,43 @@ feature("dialog sandbox", {
         assert.equal(sawHelper, true)
     },
 })
+feature("assignments and completion values", {
+    expect() {
+        const box = { count: 1, other: 1, held: 1, flag: true, __moquiOut: "kept" }
+        // a bare assignment and a var bind the sandbox's names; a write through globalThis is the sandbox's own
+        runInContext("count = 2; var other = 5; globalThis.held = 3", box)
+        assert.equal(box.count, 2)
+        assert.equal(box.other, 5)
+        assert.equal(box.held, 3)
+        // a second run on the same sandbox defines more and keeps the first's
+        runInContext("Object.defineProperty(globalThis, 'made', { value: 1, enumerable: true, configurable: true })", box)
+        assert.equal(box.made, 1)
+        assert.equal(box.count, 2)
+        // the completion value is eval's, also of a statement that is not an expression
+        assert.equal(runInContext("flag ? 'x' : 'y'", box), "x")
+        assert.equal(runInContext("if (flag) { 'a' } else { 'b' }", box), "a")
+        assert.equal(runInContext("try { 'tried' } finally { 'not this' }", box), "tried")
+        assert.equal(runInContext("let n = 0; for (const i of [1, 2, 3]) { n += i } n", box), 6)
+        assert.equal(runInContext("1; if (false) { 'never' }", box), undefined)
+        assert.equal(runInContext("var x = 1; { 'block' }", box), "block")
+        // a name the harness uses for itself is the sandbox's still
+        assert.equal(box.__moquiOut, "kept")
+        // a return outside a function is a syntax error, as eval's
+        assert.throws(() => runInContext("return 1", box), SyntaxError)
+        // what the source assigned before it threw is kept
+        assert.throws(() => runInContext("count = 9; throw new Error('stop')", box), /stop/)
+        assert.equal(box.count, 9)
+    },
+})
 "#);
     assert!(result.setup_failure.is_none(), "{:?}", result.setup_failure);
-    assert_eq!(outcomes(&result), vec![("dialog sandbox".to_string(), "passed")]);
+    assert_eq!(
+        outcomes(&result),
+        vec![
+            ("dialog sandbox".to_string(), "passed"),
+            ("assignments and completion values".to_string(), "passed")
+        ]
+    );
 }
 
 #[test]

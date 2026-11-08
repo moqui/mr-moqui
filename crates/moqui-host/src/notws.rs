@@ -128,9 +128,18 @@ impl Credential {
     /// The user the credential is for now, from a request worker, awaited without a waiting thread.
     async fn user(&self, factory: &Arc<ExecutionContextFactory>) -> Result<Option<String>, CoreError> {
         match self {
+            // the session's user, while the account is not disabled for good or past its end date (impl-admin F42): a
+            // live socket of an account disabled since it opened closes at the next check, as a revoked login key does
             Self::Session(id) => {
                 let (looked, id) = (Arc::clone(factory), id.clone());
-                on_pool(factory, move || user_of(&looked, &id)).await
+                on_pool(factory, move || {
+                    let user = user_of(&looked, &id)?;
+                    match user {
+                        Some(user_id) if !moqui_core::user::user_account_closed(&user_id)? => Ok(Some(user_id)),
+                        _ => Ok(None),
+                    }
+                })
+                .await
             }
             Self::LoginKeyHash(hash) => {
                 let hash = hash.clone();

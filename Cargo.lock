@@ -4753,6 +4753,7 @@ dependencies = [
  "pbkdf2 0.13.0",
  "prost",
  "pulldown-cmark",
+ "quickjs-oxide",
  "rcgen",
  "regex",
  "rquickjs",
@@ -4807,7 +4808,6 @@ dependencies = [
  "oxc_parser",
  "oxc_span",
  "regex",
- "rquickjs",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -5010,12 +5010,14 @@ dependencies = [
  "moqui-db",
  "moqui-devkit",
  "moqui-lib",
+ "quickjs-oxide",
  "rquickjs",
  "rust_decimal",
  "serde",
  "serde_json",
  "sha2 0.11.1",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -6500,6 +6502,30 @@ dependencies = [
  "encoding_rs",
  "memchr",
 ]
+
+[[package]]
+name = "quickjs-oxide"
+version = "0.4.1"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=8635ecb58e52a5414e1a5edb102026bd2fcfac0f#8635ecb58e52a5414e1a5edb102026bd2fcfac0f"
+dependencies = [
+ "num-bigint 0.5.1",
+ "num-traits",
+ "quickjs-oxide-core",
+ "quickjs-oxide-regexp",
+]
+
+[[package]]
+name = "quickjs-oxide-core"
+version = "0.4.1"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=8635ecb58e52a5414e1a5edb102026bd2fcfac0f#8635ecb58e52a5414e1a5edb102026bd2fcfac0f"
+dependencies = [
+ "quickjs-oxide-regexp",
+]
+
+[[package]]
+name = "quickjs-oxide-regexp"
+version = "0.4.1"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=8635ecb58e52a5414e1a5edb102026bd2fcfac0f#8635ecb58e52a5414e1a5edb102026bd2fcfac0f"
 
 [[package]]
 name = "quinn"
@@ -8341,7 +8367,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

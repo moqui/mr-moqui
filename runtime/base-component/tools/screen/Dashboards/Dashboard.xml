@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- One saved dashboard. A screen that includes it (Monitor's, BOSS Insights › Dashboard) takes in its transitions, which then
+    run at that screen's path. Its other links go to the report screens where the app mounts them: the reportLinks map the app's
+    root sets (docs/tools/Monitoring.md, "Mounting the report screens"), sent to the browser and the terminal as the
+    dashboard's appLinks beside screenUrl; without one they are Tools' Dashboards screens, and a link the map sets to null is
+    not offered. A mount may fix variables (reportFixedVariables, such as the organization in scope): a viewer's var-* parameter
+    or carried value never replaces a fixed one (nor the variables of a panel export or inspect), and a fixed variable is not
+    offered for editing. The mount sets reportLinks and reportFixedVariables in always-actions, so these transitions read them. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dashboard">
     <parameter name="filtersJson"/><parameter name="definitionId" required="true"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/>
     <transition name="exportPanel" method="get" read-only="true">
@@ -7,7 +14,7 @@
             if (!panelId) throw new Error('Choose a panel')
             if (!['csv','xlsx'].includes(String(renderMode))) throw new Error('Choose CSV or XLSX')
             const output=ec.service.sync().name('org.moqui.report.ReportServices.preview#Report').parameters({definitionId,panelId,
-                renderMode,from:from || 'now-7d',thru:thru || 'now',variables:variables ? JSON.parse(variables) : {},filters:JSON.parse(filtersJson || '[]')}).call()
+                renderMode,from:from || 'now-7d',thru:thru || 'now',variables:Object.assign(variables ? JSON.parse(variables) : {},ec.context.get('reportFixedVariables') || {}),filters:JSON.parse(filtersJson || '[]')}).call()
             ec.web.sendJsonResponse(output)
         ]]></script></actions><default-response type="none"/>
     </transition>
@@ -15,7 +22,7 @@
         <actions><script><![CDATA[
             if (!panelId) throw new Error('Choose a panel')
             const output=ec.service.sync().name('org.moqui.report.ReportServices.render#Dashboard').parameters({definitionId,panelId,inspect:true,
-                from:from || 'now-7d',thru:thru || 'now',variables:variables ? JSON.parse(variables) : {},filters:JSON.parse(filtersJson || '[]')}).call()
+                from:from || 'now-7d',thru:thru || 'now',variables:Object.assign(variables ? JSON.parse(variables) : {},ec.context.get('reportFixedVariables') || {}),filters:JSON.parse(filtersJson || '[]')}).call()
             ec.web.sendJsonResponse(output)
         ]]></script></actions><default-response type="none"/>
     </transition>
@@ -23,7 +30,7 @@
         <actions><script><![CDATA[
             const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
             const variable=(definition.body.variables || []).find(variable=>variable.name===variableName)
-            if (!variable || variable.kind==='constant') throw new Error('Choose an editable variable')
+            if (!variable || variable.kind==='constant' || Object.prototype.hasOwnProperty.call(ec.context.get('reportFixedVariables') || {},variableName)) throw new Error('Choose an editable variable')
             const values=JSON.parse(variableValuesJson || '{}')
             values[variableName]=variable.multi?String(variableValue || '').split(',').map(value=>value.trim()).filter(Boolean):variableValue
             variableParameters={definitionId,from,thru,filtersJson}
@@ -73,7 +80,7 @@
             ec.web.sendJsonResponse({removed:panelId})
         ]]></script></actions><default-response type="none"/>
     </transition>
-    <transition name="edit"><default-response url="//apps/dashboards/Definition"/></transition>
+    <transition name="edit"><default-response url="${ec.context.get('reportLinks')?.definition ?? '//apps/dashboards/Definition'}"/></transition>
     <actions><script><![CDATA[
         from = from || 'now-7d'; thru = thru || 'now'
         const definition = ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
@@ -84,6 +91,8 @@
         // The time form carries the current values as one JSON parameter; a var-* parameter wins over it.
         let carriedValues = {}
         try { carriedValues = JSON.parse(ec.web.parameters.variableValuesJson || '{}') || {} } catch (error) { ec.logger.warn('Dashboard variableValuesJson ignored: '+String(error)) }
+        // The mount's fixed variables (a scope predicate): a viewer's value never replaces one.
+        const fixedVariables = ec.context.get('reportFixedVariables') || {}
         for (const variable of dashboardDefinition.variables || []) {
             // A label in the viewer's language when the catalog has it, as the panel titles are (report/mod.rs).
             if (variable.label) variable.label = ec.l10n.localize(variable.label)
@@ -101,15 +110,19 @@
                     variable.options = []
                 }
             }
-            const supplied = ec.web.parameters['var-'+variable.name] ?? carriedValues[variable.name]
+            const fixed = Object.prototype.hasOwnProperty.call(fixedVariables, variable.name)
+            const supplied = fixed ? fixedVariables[variable.name] : ec.web.parameters['var-'+variable.name] ?? carriedValues[variable.name]
             let value = supplied == null ? variable.default : supplied
             if (value == null) value = variable.includeAll ? '$__all' : (variable.options || [])[0]
             if (value && typeof value === 'object' && !Array.isArray(value)) value = value.value
             const values = Array.isArray(value) ? value : (value == null || value === '' ? [] : [value])
-            dashboardDefinition.variableValues[variable.name] = variable.multi ? values : values[0]
+            // a fixed value is kept as the mount gives it (one organization, or the list of the viewer's)
+            dashboardDefinition.variableValues[variable.name] = fixed ? supplied : variable.multi ? values : values[0]
             if (variable.field && variable.kind !== 'groupBy' && values.length && !values.includes('$__all')) {
                 activeFilters.push({datasetId:variable.datasetId,query:{field:{name:variable.field,op:'in',values}}})
             }
+            // shown as a constant, so neither the browser nor the terminal offers it for editing
+            if (fixed) variable.kind = 'constant'
         }
         const rendered = ec.service.sync().name('org.moqui.report.ReportServices.render#Dashboard').parameters({definitionId,
             variables:dashboardDefinition.variableValues,filters:JSON.parse(filtersJson || '[]'),from,thru,panelId:panelId || undefined}).call().dashboard
@@ -120,7 +133,14 @@
         const datasetIds=new Set()
         const collect=query=>{if(query.datasetId)datasetIds.add(query.datasetId);for(const child of query.queries || [])collect(child)}
         for(const panel of Object.values(rendered.panels || {}))for(const query of panel.queries || [])collect(query)
-        for(const id of datasetIds){try{const dataset=ec.service.sync().name('org.moqui.report.ReportServices.get#Dataset').parameters({datasetId:id}).call().dataset;dashboardDefinition.datasetFields[id]=dataset.fields || []}catch(error){ec.logger.error('Dashboard filter fields '+id+' failed: '+String(error))}}
+        // A dataset the viewer may not read offers no filter fields; its panel says it is not available (render#Dashboard's
+        // notice), so its refusal is kept out of the page's messages.
+        for(const id of datasetIds){
+            ec.message.pushErrors()
+            try{const found=ec.service.sync().name('org.moqui.report.ReportServices.get#Dataset').parameters({datasetId:id}).call();if(!ec.message.hasError() && found && found.dataset)dashboardDefinition.datasetFields[id]=found.dataset.fields || []}
+            catch(error){ec.logger.error('Dashboard filter fields '+id+' failed: '+String(error))}
+            finally{ec.message.clearErrors();ec.message.popErrors()}
+        }
         dashboardDefinition.layout = rendered.layout || dashboardDefinition.layout
         dashboardDefinition.absoluteTime = rendered.range
         // The range as asked for (now-7d, now/d), for the time picker's label; absoluteTime is what it resolved to.
@@ -130,6 +150,16 @@
         dashboardDefinition.definitionId = definitionId
         // The including screen's URL: the panel export, inspect and variable requests use its transitions.
         dashboardDefinition.screenUrl = sri.buildUrl('.').path
+        // The report screens where the app mounts them (its reportLinks), as server paths: the editor, the library panel editor,
+        // Explore, alert rules and the Dashboard screen whose transitions duplicate and remove a panel. Without a map they are
+        // Tools' Dashboards screens; a link the map leaves out or sets to null is not offered.
+        const mountLinks = ec.context.get('reportLinks')
+        const toolsScreens = {definition:'Definition',panel:'Definition',explore:'Explore',alertRule:'AlertRule',dashboard:'Dashboard'}
+        dashboardDefinition.appLinks = {}
+        for (const [key, screen] of Object.entries(toolsScreens)) {
+            const url = mountLinks ? mountLinks[key] : '//apps/dashboards/' + screen
+            dashboardDefinition.appLinks[key] = url ? sri.buildUrl(url).path : null
+        }
         dashboardDefinition.panelId = panelId || null
         dashboardDefinition.kiosk = String(ec.web.parameters.kiosk || '') === 'true'
         dashboardDefinition.variableValues = rendered.variableValues || dashboardDefinition.variableValues
@@ -146,7 +176,7 @@
     ]]></script></actions>
     <widgets>
         <label text="${dashboardTitle}" type="h4"/>
-        <link url="edit" text="Edit / save a copy / versions" parameter-map="{definitionId:definitionId}"/>
+        <link url="edit" text="Edit / save a copy / versions" parameter-map="{definitionId:definitionId}" condition="dashboardDefinition.appLinks.definition"/>
         <!-- In qvt the dashboard's time picker sets the range; the other modes use this form. -->
         <section name="DashboardTimeForm" condition="sri.getRenderMode() !== 'qvt'"><widgets>
             <form-single name="DashboardTime" transition=".">

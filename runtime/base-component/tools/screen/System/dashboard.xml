@@ -149,7 +149,7 @@ along with this software (see the LICENSE.md file). If not, see
             </row-col>
             <row-col md="4">
                 <container-box id="LlmAdmin"><box-header title="Models and agents"/><box-body>
-                    <label text="Configure models and tools, then inspect activity and approvals." type="p" style="m-muted"/>
+                    <label text="Configure models, tools and the agents' constitution, then inspect activity and approvals." type="p" style="m-muted"/>
                     <link url="../Llm/Dashboard" text="Overview"/>
                     <link url="../Llm/Models" text="Models"/>
                     <link url="../Llm/Tools" text="Tools"/>
@@ -157,6 +157,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <link url="../Llm/Approvals" text="Approvals"/>
                     <link url="../Llm/Usage" text="Usage"/>
                     <link url="../Llm/Calls" text="Calls"/>
+                    <link url="../Constitution" text="Constitution"/>
                 </box-body></container-box>
                 <container-box id="EdgeAdmin"><box-header title="Edge connections"/><box-body>
                     <label text="Connect this instance to an edge node and inspect its clients." type="p" style="m-muted"/>

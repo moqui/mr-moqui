@@ -16,12 +16,15 @@
 
 use std::collections::HashSet;
 use std::sync::{mpsc, Mutex, OnceLock};
+use std::time::Instant;
 
 use moqui_lib::node::MNode;
 use moqui_lib::sync::lock;
 use rquickjs::{Ctx, Object};
 
 use super::runtime::ScriptText;
+use super::engine::{script_engine, with_script_engine, ScriptEngine};
+use super::run::{DeadlineGuard, DEADLINE};
 use super::walker::{self, Walk};
 use crate::context::Error;
 
@@ -158,7 +161,7 @@ pub fn check_actions(xml: &str) -> Result<(), Error> {
 ///
 /// Returns an error when the XML does not parse or does not generate.
 pub fn generated_source(xml: &str, debug: bool) -> Result<String, Error> {
-    if super::runtime::in_script() {
+    if super::run::in_script() {
         generate_apart(xml, debug)
     } else {
         generate_with(xml, debug)
@@ -180,7 +183,7 @@ fn generated(xml: &str) -> Result<ScriptText, Error> {
 
 fn generate(xml: &str) -> Result<String, Error> {
     let debug = std::env::var_os(DEBUG_ENV);
-    let source = if super::runtime::in_script() {
+    let source = if super::run::in_script() {
         generate_apart(xml, debug.is_some())?
     } else {
         generate_with(xml, debug.is_some())?
@@ -197,6 +200,9 @@ fn generate(xml: &str) -> Result<String, Error> {
 fn generate_with(xml: &str, debug: bool) -> Result<String, Error> {
     let root = MNode::parse_text("actions", xml)?;
     reject(&root)?;
+    if super::oxide::walker::on_oxide() {
+        return super::oxide::walker::generate_actions(&root, TEMPLATE_SUPPORT, XML_ACTIONS, debug);
+    }
     super::runtime::with_ctx(|ctx| {
         let name = if debug { "xml-actions-debug" } else { "xml-actions" };
         let macros = super::runtime::engine_object(ctx, name, |ctx| load_macros(ctx, debug))?;
@@ -208,11 +214,21 @@ fn generate_with(xml: &str, debug: bool) -> Result<String, Error> {
 /// The stack of the thread that generates for a running script, as much as the outermost script on a worker has.
 const GENERATOR_STACK: usize = 2 * 1024 * 1024;
 
-type Job = (String, bool, mpsc::Sender<Result<String, Error>>);
+/// A generation for the generator thread: the text and `debug`, as the caller would generate it.
+struct Job {
+    xml: String,
+    debug: bool,
+    /// The engine the caller generates on (its `with_script_engine` choice too).
+    engine: ScriptEngine,
+    /// The caller's script deadline, which bounds the generation as it would on the caller's thread.
+    deadline: Option<Instant>,
+    reply: mpsc::Sender<Result<String, Error>>,
+}
 
 /// Generate on a thread of its own. Text first generated inside a script, as the actions of a screen whose definition
 /// loads while a template renders a link to it, would otherwise get only what is left of that script's stack, and the
-/// macros recurse over the XML. Generation is a function of the text alone, so where it runs does not matter.
+/// macros recurse over the XML. Generation is a function of the text alone, so where it runs does not matter; it runs
+/// on the engine the caller's thread would have used.
 fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
     static GENERATOR: OnceLock<Mutex<mpsc::Sender<Job>>> = OnceLock::new();
     let sender = GENERATOR.get_or_init(|| {
@@ -221,8 +237,12 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
             .name("xml-actions-generator".into())
             .stack_size(GENERATOR_STACK)
             .spawn(move || {
-                for (xml, debug, reply) in jobs {
-                    let _ = reply.send(generate_with(&xml, debug));
+                for job in jobs {
+                    let _deadline = job
+                        .deadline
+                        .map(|at| DeadlineGuard::new(Some(at.saturating_duration_since(Instant::now()))));
+                    let generated = with_script_engine(job.engine, || generate_with(&job.xml, job.debug));
+                    let _ = job.reply.send(generated);
                 }
             });
         if let Err(err) = started {
@@ -231,7 +251,14 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
         Mutex::new(sender)
     });
     let (reply, result) = mpsc::channel();
-    let sent = lock(sender).send((xml.to_string(), debug, reply));
+    let job = Job {
+        xml: xml.to_string(),
+        debug,
+        engine: script_engine(),
+        deadline: DEADLINE.with(std::cell::Cell::get),
+        reply,
+    };
+    let sent = lock(sender).send(job);
     match sent {
         Ok(()) => result
             .recv()

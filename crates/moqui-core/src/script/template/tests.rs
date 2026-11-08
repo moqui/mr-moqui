@@ -22,6 +22,23 @@ use moqui_lib::object::Value;
 
 use super::*;
 
+/// Run a test body under `rquickjs` and under `oxide` (plans/Script-Engine-Oxide.md section 8): templates stay on
+/// QuickJS under `small-oxide`, so `oxide` is the setting that runs them on quickjs-oxide. A failure names the engine.
+fn on_template_engines(body: fn()) {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        let ran = std::panic::catch_unwind(|| with_script_engine(engine, body));
+        if let Err(payload) = ran {
+            let message = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|text| (*text).to_string()))
+                .unwrap_or_default();
+            panic!("under {}: {message}", engine.name());
+        }
+    }
+}
+
 fn testdata() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/script/testdata/template")
 }
@@ -55,21 +72,37 @@ fn check(name: &str, escape: Escape, out_file: &str) {
 
 #[test]
 fn golden_if() {
+    on_template_engines(golden_if_on);
+}
+
+fn golden_if_on() {
     check("if", Escape::None, "if.out");
 }
 
 #[test]
 fn golden_list() {
+    on_template_engines(golden_list_on);
+}
+
+fn golden_list_on() {
     check("list", Escape::None, "list.out");
 }
 
 #[test]
 fn golden_assign_and_comments() {
+    on_template_engines(golden_assign_and_comments_on);
+}
+
+fn golden_assign_and_comments_on() {
     check("assign", Escape::None, "assign.out");
 }
 
 #[test]
 fn golden_interpolation_and_escape_modes() {
+    on_template_engines(golden_interpolation_and_escape_modes_on);
+}
+
+fn golden_interpolation_and_escape_modes_on() {
     check("interp", Escape::None, "interp.out");
     check("interp", Escape::Html, "interp.html.out");
 }
@@ -95,14 +128,24 @@ fn compile_errors_name_the_line() {
 
 #[test]
 fn tag_only_lines_leave_no_blank_lines() {
+    on_template_engines(tag_only_lines_leave_no_blank_lines_on);
+}
+
+fn tag_only_lines_leave_no_blank_lines_on() {
     let out = render_trusted("a\n  <#if true>\nb\n  </#if>\nc\n", Escape::None).unwrap();
     assert_eq!(out, "a\nb\nc\n");
 }
 
 #[test]
 fn trusted_reads_the_live_context_and_locked_down_cannot_reach_ec() {
+    on_template_engines(trusted_reads_the_live_context_and_locked_down_cannot_reach_ec_on);
+}
+
+fn trusted_reads_the_live_context_and_locked_down_cannot_reach_ec_on() {
     let probe = "${typeof ec} ${typeof sri} ${typeof context} ${typeof globalThis.ec}";
-    let trusted = render_trusted(probe, Escape::None).unwrap();
+    // `sri` and the stack as `context` are not bound on quickjs-oxide yet (`check::QUICKJS_ONLY_GLOBALS`)
+    let on_oxide = crate::script::engine::script_engine() == crate::script::engine::ScriptEngine::Oxide;
+    let trusted = render_trusted(if on_oxide { "${typeof ec} ${typeof ec}" } else { probe }, Escape::None).unwrap();
     assert!(trusted.starts_with("object object"), "{trusted}");
     let locked = render_locked_with(probe, Escape::None, &Value::Map(Default::default())).unwrap();
     // A name that is not in the snapshot is null, which is an object.
@@ -125,8 +168,70 @@ fn trusted_reads_the_live_context_and_locked_down_cannot_reach_ec() {
     );
 }
 
+/// The snapshot form has no `with`: each name the template uses is a variable of its function, from the snapshot, so
+/// an arrow sees it, an assignment changes it for the rest of the render, and code made at run time does not see it.
+#[test]
+fn locked_down_names_are_variables_of_the_template_function() {
+    on_template_engines(locked_down_names_are_variables_of_the_template_function_on);
+}
+
+fn locked_down_names_are_variables_of_the_template_function_on() {
+    let compiled = compiled("${price}", Escape::None, Scope::Snapshot).unwrap();
+    assert!(!compiled.contains("with ("), "{compiled}");
+    let data = moqui_lib::json::from_json(&serde_json::json!({"price": 2, "toString": "data"}));
+    let out = render_locked_with(
+        "${(() => price * 2)()}|${price = 5}${price}|<#assign total = price + 1>${total}|\
+         ${Function('return typeof price')()}|${typeof toString}|${missing}${typeof missing}",
+        Escape::None,
+        &data,
+    )
+    .unwrap();
+    assert_eq!(out, "4|55|6|undefined|function|object");
+}
+
+/// The template function is kept for every render on the thread: one render cannot leave a value on it, its
+/// `arguments` or its `this` for the next (one user's render read by another's).
+#[test]
+fn a_locked_down_render_leaves_nothing_on_the_template_function() {
+    on_template_engines(a_locked_down_render_leaves_nothing_on_the_template_function_on);
+}
+
+fn a_locked_down_render_leaves_nothing_on_the_template_function_on() {
+    let alice = moqui_lib::json::from_json(&serde_json::json!({"secret": "alice"}));
+    let bob = Value::Map(Default::default());
+    let source = "<#if secret != null>${(() => { try { arguments.callee.s = secret; return 'kept' } \
+                  catch (e) { return 'refused' } })()}${(() => { try { $t.s = secret; return 'kept' } \
+                  catch (e) { return 'refused' } })()}<#else>${(() => { try { return String(arguments.callee.s) } \
+                  catch (e) { return 'refused' } })()}${String($t.s)}${typeof this}\
+                  </#if>";
+    assert_eq!(render_locked_with(source, Escape::None, &alice).unwrap(), "refusedrefused");
+    assert_eq!(
+        render_locked_with(source, Escape::None, &bob).unwrap(),
+        "refusedundefinedundefined"
+    );
+}
+
+/// A template that assigns the name of a global the prelude calls keeps its escaping and its lists.
+#[test]
+fn assigning_a_global_name_leaves_the_prelude_as_it_was() {
+    on_template_engines(assigning_a_global_name_leaves_the_prelude_as_it_was_on);
+}
+
+fn assigning_a_global_name_leaves_the_prelude_as_it_was_on() {
+    let source = "<#assign String = null><#assign Array = null><#assign Object = null><#assign Symbol = null>\
+                  ${'<'}|<#list ['a', 'b'] as x>${x}</#list>|${html('&')}|${cssString('a')}|${String}";
+    let expected = "&lt;|ab|&amp;|\"a\"|";
+    assert_eq!(render_trusted(source, Escape::Html).unwrap(), expected);
+    let locked = render_locked_with(source, Escape::Html, &Value::Map(Default::default())).unwrap();
+    assert_eq!(locked, expected);
+}
+
 #[test]
 fn locked_down_sees_plain_values_and_decimals_as_strings() {
+    on_template_engines(locked_down_sees_plain_values_and_decimals_as_strings_on);
+}
+
+fn locked_down_sees_plain_values_and_decimals_as_strings_on() {
     use std::str::FromStr;
     let mut entries = indexmap::IndexMap::new();
     entries.insert(
@@ -146,6 +251,10 @@ fn locked_down_sees_plain_values_and_decimals_as_strings() {
 
 #[test]
 fn locked_down_format_and_localize_are_plain_functions() {
+    on_template_engines(locked_down_format_and_localize_are_plain_functions_on);
+}
+
+fn locked_down_format_and_localize_are_plain_functions_on() {
     let data = moqui_lib::json::from_json(&serde_json::json!({"n": 1234.5, "when": "2024-03-05 10:20:30.0"}));
     let out = render_locked_with(
         "${format(n, '#,##0.00')} ${format(when, 'yyyy-MM-dd')} ${localize('Hello')}",
@@ -154,12 +263,23 @@ fn locked_down_format_and_localize_are_plain_functions() {
     )
     .unwrap();
     assert_eq!(out, "1,234.50 2024-03-05 Hello");
+    // a pattern that is passed must be a string; one left out is none
+    assert_eq!(render_locked_with("${format(5)}", Escape::None, &data).unwrap(), "5");
+    for pattern in ["5", "null", "undefined", "{}"] {
+        let source = format!("${{format(5, {pattern})}}");
+        let err = render_locked_with(&source, Escape::None, &data).expect_err(&source);
+        assert!(err.message().contains("into type 'string'"), "{source}: {}", err.message());
+    }
 }
 
 /// A theme render's `t(key)` texts last only as long as that render, also when it fails: a later locked render on the
 /// thread reads the key itself.
 #[test]
 fn locked_down_texts_end_with_their_render() {
+    on_template_engines(locked_down_texts_end_with_their_render_on);
+}
+
+fn locked_down_texts_end_with_their_render_on() {
     let texts = Arc::new(Texts::from([("a".to_string(), "<A>".to_string())]));
     let deadline = Instant::now() + LOCKED_TIME_LIMIT;
     let out = render_locked_bounded(
@@ -178,15 +298,23 @@ fn locked_down_texts_end_with_their_render() {
 
 #[test]
 fn a_locked_down_template_cannot_change_what_the_next_one_runs() {
+    on_template_engines(a_locked_down_template_cannot_change_what_the_next_one_runs_on);
+}
+
+fn a_locked_down_template_cannot_change_what_the_next_one_runs_on() {
     let empty = Value::Map(Default::default());
-    // Each of these would change the shared context for later renders if it held.
-    render_locked_with(
-        "${String.prototype.replace = function () { return 'x' }}${JSON.parse = null}${globalThis.leak = 'kept'}\
-         ${Array.prototype.join = null}${Object.getPrototypeOf([][Symbol.iterator]()).next = null}",
-        Escape::None,
-        &empty,
-    )
-    .unwrap();
+    // Each of these would change the shared context for later renders if it held. The template is strict, so each
+    // assignment to a frozen object throws.
+    for attempt in [
+        "${String.prototype.replace = function () { return 'x' }}",
+        "${JSON.parse = null}",
+        "${globalThis.leak = 'kept'}",
+        "${Array.prototype.join = null}",
+        "${Object.getPrototypeOf([][Symbol.iterator]()).next = null}",
+    ] {
+        let err = render_locked_with(attempt, Escape::None, &empty).expect_err(attempt);
+        assert!(err.message().contains("Error"), "{attempt}: {}", err.message());
+    }
     let mut entries = indexmap::IndexMap::new();
     entries.insert("v".to_string(), Value::string("<b>"));
     let out = render_locked_with(
@@ -198,8 +326,53 @@ fn a_locked_down_template_cannot_change_what_the_next_one_runs() {
     assert_eq!(out, "&lt;b&gt;|true|ab");
 }
 
+/// The intrinsics a template reaches from literals and built-ins, which no global names, are frozen too.
+#[test]
+fn locked_down_intrinsics_are_frozen() {
+    on_template_engines(locked_down_intrinsics_are_frozen_on);
+}
+
+fn locked_down_intrinsics_are_frozen_on() {
+    let probe = r#"${(() => {
+        const P = Object.getPrototypeOf, D = Object.getOwnPropertyDescriptor;
+        const at = (name, make) => { try { const o = make(); return o == null ? [] : [[name, o]]; } catch (e) { return []; } };
+        const all = [
+            ...at("ArrayIterator", () => P([][Symbol.iterator]())),
+            ...at("IteratorPrototype", () => P(P([][Symbol.iterator]()))),
+            ...at("MapIterator", () => P(new Map().entries())),
+            ...at("SetIterator", () => P(new Set().values())),
+            ...at("StringIterator", () => P(""[Symbol.iterator]())),
+            ...at("RegExpStringIterator", () => P(/a/[Symbol.matchAll]("a"))),
+            ...at("GeneratorFunction", () => P(function* () {}).constructor),
+            ...at("GeneratorFunction.prototype", () => P(function* () {})),
+            ...at("GeneratorPrototype", () => P(function* () {}).prototype),
+            ...at("AsyncFunction", () => P(async function () {}).constructor),
+            ...at("AsyncFunction.prototype", () => P(async function () {})),
+            ...at("AsyncGeneratorFunction", () => P(async function* () {}).constructor),
+            ...at("AsyncGeneratorFunction.prototype", () => P(async function* () {})),
+            ...at("AsyncGeneratorPrototype", () => P(async function* () {}).prototype),
+            ...at("AsyncIteratorPrototype", () => P(P(async function* () {}).prototype)),
+            ...at("TypedArray", () => P(Int8Array)),
+            ...at("TypedArray.prototype", () => P(Int8Array.prototype)),
+            ...at("IteratorHelper", () => P([].values().map((x) => x))),
+            ...at("WrapForValidIterator", () => P(Iterator.from({ next() {} }))),
+            ...at("ThrowTypeError", () => D(Function.prototype, "caller").get),
+            ...at("StrictCallee", () => (function () { "use strict"; return D(arguments, "callee").get; })()),
+            ...at("Promise.prototype", () => P((async () => {})())),
+        ];
+        const open = all.filter(([, o]) => Object.isExtensible(o) || !Object.isFrozen(o)).map(([n]) => n);
+        return all.length + ":" + (open.join(",") || "none");
+    })()}"#;
+    let out = render_locked_with(probe, Escape::None, &Value::Map(Default::default())).unwrap();
+    assert!(out.ends_with(":none"), "{out}");
+}
+
 #[test]
 fn locked_down_format_reads_a_decimal_text_by_a_number_pattern_and_a_date_by_a_date_pattern() {
+    on_template_engines(locked_down_format_reads_a_decimal_text_by_a_number_pattern_and_a_date_by_a_date_pattern_on);
+}
+
+fn locked_down_format_reads_a_decimal_text_by_a_number_pattern_and_a_date_by_a_date_pattern_on() {
     use std::str::FromStr;
     let mut entries = indexmap::IndexMap::new();
     entries.insert(
@@ -221,6 +394,10 @@ fn locked_down_format_reads_a_decimal_text_by_a_number_pattern_and_a_date_by_a_d
 
 #[test]
 fn locked_down_stops_a_runaway_loop() {
+    on_template_engines(locked_down_stops_a_runaway_loop_on);
+}
+
+fn locked_down_stops_a_runaway_loop_on() {
     let started = std::time::Instant::now();
     let err = render_locked_with(
         "${(() => { while (true) {} })()}",
@@ -236,6 +413,22 @@ fn locked_down_stops_a_runaway_loop() {
     assert!(err.message().contains("interrupted"), "{}", err.message());
 }
 
+/// A theme render's lower memory limit holds for that render only; a limit of 0 renders nothing.
+#[test]
+fn locked_down_memory_is_lowered_for_one_render() {
+    on_template_engines(locked_down_memory_is_lowered_for_one_render_on);
+}
+
+fn locked_down_memory_is_lowered_for_one_render_on() {
+    let texts = Arc::new(Texts::new());
+    let deadline = Instant::now() + LOCKED_TIME_LIMIT;
+    let hungry = "${'x'.repeat(4000000).length}";
+    assert!(render_locked_bounded(hungry, "{}", &texts, deadline, 2_000_000).is_err());
+    assert!(render_locked_bounded("${1}", "{}", &texts, deadline, 0).is_err());
+    let out = render_locked_bounded(hungry, "{}", &texts, deadline, LOCKED_MEMORY_LIMIT).unwrap();
+    assert_eq!(out, "4000000");
+}
+
 #[test]
 fn compiled_functions_are_cached_by_source() {
     let source = "cache probe ${1 + 1}";
@@ -248,6 +441,10 @@ fn compiled_functions_are_cached_by_source() {
 
 #[test]
 fn registry_picks_the_longest_extension() {
+    on_template_engines(registry_picks_the_longest_extension_on);
+}
+
+fn registry_picks_the_longest_extension_on() {
     let registry = TemplateRegistry::parse(
         r#"<moqui-conf><resource-facade>
         <template-renderer extension="fancy" class="fancy"/>
@@ -290,6 +487,10 @@ fn markdown_renders_html_and_passes_raw_html_through() {
 
 #[test]
 fn markdown_fancy_converts_markdown_then_runs_the_template() {
+    on_template_engines(markdown_fancy_converts_markdown_then_runs_the_template_on);
+}
+
+fn markdown_fancy_converts_markdown_then_runs_the_template_on() {
     let registry = TemplateRegistry::parse(
         r#"<moqui-conf><resource-facade>
         <template-renderer extension="fancy" class="fancy"/>
@@ -326,6 +527,10 @@ fn markdown_fancy_converts_markdown_then_runs_the_template() {
 
 #[test]
 fn markdown_fancy_tag_lines_in_a_table_do_not_become_rows() {
+    on_template_engines(markdown_fancy_tag_lines_in_a_table_do_not_become_rows_on);
+}
+
+fn markdown_fancy_tag_lines_in_a_table_do_not_become_rows_on() {
     // markdown makes a row of each line inside a table, so the list would repeat an empty row with
     // each item and the tag lines would leave empty rows of their own
     let source = "| Item | Qty |\n|---|--:|\n<#list items as item>\n| ${item.id} | ${item.qty} |\n</#list>\n\
@@ -362,6 +567,10 @@ fn markdown_fancy_tag_lines_in_a_table_do_not_become_rows() {
 
 #[test]
 fn css_string_quotes_text_for_a_style_element() {
+    on_template_engines(css_string_quotes_text_for_a_style_element_on);
+}
+
+fn css_string_quotes_text_for_a_style_element_on() {
     crate::script::clear_context_stack();
     crate::script::set_context_name("t", Value::string("a\"b\\c</style>\r\nd & e")).unwrap();
     let out = render_trusted(
@@ -379,6 +588,10 @@ fn css_string_quotes_text_for_a_style_element() {
 
 #[test]
 fn assign_reads_the_context_value_before_it_and_its_own_value_after() {
+    on_template_engines(assign_reads_the_context_value_before_it_and_its_own_value_after_on);
+}
+
+fn assign_reads_the_context_value_before_it_and_its_own_value_after_on() {
     crate::script::clear_context_stack();
     crate::script::set_context_name("n", Value::I32(5)).unwrap();
     let out = render_trusted("${n}<#assign n = n + 1>${n}", Escape::None).unwrap();

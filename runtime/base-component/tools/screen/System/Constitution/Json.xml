@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The whole global Constitution as JSON: download it, check a document, or save one in its place (an import). A save
+    names the hash the document was read at, so a change made in between is refused; an invalid document, or a new
+    reference URL of an untrusted origin, is refused with each problem named and nothing saved. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="JSON" default-menu-index="4">
+
+    <transition name="download" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.admin.ConstitutionServices.get#Constitution')
+                .parameters({scope: 'global', includeDocument: true}).call() || {}
+            if (!ec.message.hasError()) ec.web.sendTextResponse(String(out.documentText || ''), 'application/json', 'Constitution.json')
+        ]]></script></actions>
+        <default-response type="none"/>
+        <error-response url="."/>
+    </transition>
+    <!-- Check only: the problems as messages, nothing saved; otherwise store#Constitution, which checks the same -->
+    <transition name="save">
+        <actions>
+            <if condition="context.checkOnly == 'Y'"><then>
+                <service-call name="org.moqui.admin.ConstitutionServices.get#Constitution" out-map="current"
+                        in-map="{scope: 'global', includeDocument: true}"/>
+                <service-call name="org.moqui.admin.ConstitutionServices.validate#Constitution" out-map="checked"
+                        in-map="{documentText: context.documentText, previousText: current.documentText}"/>
+                <if condition="checked.valid == 'Y'"><then>
+                    <message type="success">The document is a valid Constitution; nothing was saved.</message>
+                </then><else>
+                    <iterate list="checked.errorList" entry="problem"><message type="warning">${problem.message}</message></iterate>
+                </else></if>
+            </then><else>
+                <service-call name="org.moqui.admin.ConstitutionServices.store#Constitution"
+                        in-map="{documentText: context.documentText, expectedHash: context.expectedHash}"/>
+                <if condition="!ec.message.hasError()"><message type="success">The Constitution was saved.</message></if>
+            </else></if>
+        </actions>
+        <default-response url="."/><error-response url="."/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.admin.ConstitutionServices.get#Constitution" out-map="cons"
+                in-map="{scope: 'global', includeDocument: true}"/>
+    </actions>
+    <widgets>
+        <container-box id="ConstitutionJsonBox"><box-header title="Constitution JSON"/><box-toolbar>
+            <link url="download" text="Download" icon="sym_o_download" link-type="anchor-button"/>
+        </box-toolbar><box-body>
+            <section-include name="ConstitutionSource" location="component://tools/template/ConstitutionParts.xml"/>
+            <label text="One object: schemaVersion 1, defaultLocale, title, provenance and instructions as maps of locale to text, and rules, each with id, title, description, instructions and references (id, title, url). Keys it does not know are kept." type="p"/>
+            <form-single name="JsonForm" transition="save">
+                <field name="expectedHash" from="cons.globalHash"><default-field><hidden/></default-field></field>
+                <field name="documentText" from="cons.documentText"><default-field title="Document"><text-area rows="30" cols="120"/></default-field></field>
+                <field name="checkOnly" from="canEdit ? 'N' : 'Y'"><default-field title="Check only" tooltip="Show the problems of the document without saving it">
+                    <check><option key="Y" text="Check only, do not save"/></check></default-field></field>
+                <field name="submitButton"><default-field title="Check or save"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+    </widgets>
+</screen>

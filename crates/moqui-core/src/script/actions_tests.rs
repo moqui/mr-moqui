@@ -12,8 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{generate, generate_with, load_macros, run_actions};
+use super::{generate, generate_apart, generate_with, load_macros, run_actions};
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
+use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 
 use crate::entity::{EntityFacade, EntityValue};
@@ -188,6 +189,7 @@ fn the_ignore_attribute_is_an_expression() {
 
 #[test]
 fn generated_scripts_are_shared_by_threads_and_the_macros_kept_per_engine() {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     let xml = r#"<actions><set field="sharedGenerationProbe" value="1"/></actions>"#;
     let here = super::generated(xml).unwrap();
     let there = std::thread::spawn(move || super::generated(xml).unwrap())
@@ -356,6 +358,7 @@ fn a_missing_macro_names_the_element() {
 
 #[test]
 fn each_concrete_element_has_a_macro() {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     let names = macro_names().unwrap();
     assert_eq!(names, MACROS);
     assert!(!names
@@ -719,6 +722,8 @@ fn actions_first_generated_deep_inside_a_script_generate() -> Result<(), Error> 
     let outcome = std::thread::Builder::new()
         .stack_size(2 * 1024 * 1024)
         .spawn(move || {
+            // the setting is the thread's: this one's own
+            let _quickjs = crate::script::engine::quickjs_for_test();
             let base = [0_u8; 1];
             let base = std::hint::black_box(&base).as_ptr() as usize;
             with_ctx(|ctx| {
@@ -773,4 +778,69 @@ fn an_inert_module_is_kept_for_the_run_and_one_with_a_memo_is_not() {
     }
     clear_context_stack();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Generation is a function of the text alone, so the actions of the framework's and the components' service files
+/// generate the same script on QuickJS and on quickjs-oxide (`script_engine=oxide`), with and without debug comments.
+#[test]
+fn service_actions_generate_the_same_on_both_engines() {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let mut compared = 0;
+    use crate::script::walker::test_files::{component_xml_files, named};
+    for file in component_xml_files("service") {
+        let Ok(root) = MNode::parse_file(&file) else {
+            continue;
+        };
+        let mut actions = Vec::new();
+        named(&root, "actions", &mut actions);
+        for node in actions {
+            let xml = node.write_string();
+            for debug in [false, true] {
+                let quickjs = with_script_engine(ScriptEngine::Rquickjs, || generate_with(&xml, debug));
+                let oxide = with_script_engine(ScriptEngine::Oxide, || generate_with(&xml, debug));
+                match (&quickjs, &oxide) {
+                    (Ok(quickjs), Ok(oxide)) => assert_eq!(quickjs, oxide, "{}", file.display()),
+                    (Err(_), Err(_)) => {}
+                    _ => panic!("{}: {quickjs:?} against {oxide:?}", file.display()),
+                }
+            }
+            compared += 1;
+        }
+    }
+    assert!(compared > 100, "{compared}");
+}
+
+/// Text generated apart from a running script, on the generator thread, is generated on the engine the caller chose
+/// (`with_script_engine`), not on the generator thread's own setting.
+#[test]
+fn actions_generated_apart_keep_the_callers_engine() {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    use crate::script::oxide::walker::generated_actions_with;
+    let xml = |marker: &str| format!("<actions><set field=\"{marker}\" value=\"1\"/></actions>");
+    let on_oxide = with_script_engine(ScriptEngine::Oxide, || generate_apart(&xml("apartOnOxide"), false)).unwrap();
+    let on_quickjs =
+        with_script_engine(ScriptEngine::Rquickjs, || generate_apart(&xml("apartOnQuickJs"), false)).unwrap();
+    assert!(on_oxide.contains("apartOnOxide"), "{on_oxide}");
+    assert!(on_quickjs.contains("apartOnQuickJs"), "{on_quickjs}");
+    assert!(generated_actions_with("apartOnOxide"));
+    assert!(!generated_actions_with("apartOnQuickJs"));
+}
+
+/// Text generated apart from a running script is bounded by the caller's script deadline, on the generator thread, on
+/// either engine.
+#[test]
+fn actions_generated_apart_keep_the_callers_deadline() {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let sets: String = (0..2000).map(|index| format!("<set field=\"f{index}\" value=\"{index}\"/>")).collect();
+    let xml = format!("<actions>{sets}</actions>");
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        let late = {
+            let _deadline = crate::script::DeadlineGuard::new(Some(std::time::Duration::ZERO));
+            with_script_engine(engine, || generate_apart(&xml, false))
+        };
+        let late = late.unwrap_err();
+        assert!(late.message().contains("interrupted"), "{engine:?}: {}", late.message());
+        let in_time = with_script_engine(engine, || generate_apart(&xml, false)).unwrap();
+        assert!(in_time.contains("f1999"), "{engine:?}");
+    }
 }

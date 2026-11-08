@@ -16,7 +16,7 @@ To report security issues that should not be disclosed publicly before they are 
 
 ## Issues and Pull Requests
 
-For more information on submitting issues and pull requests please see the [Issue and Pull Request Guide](https://moqui.org/m/docs/moqui/Issue+and+Pull+Request+Guide) on moqui.org.
+For more information on submitting issues and pull requests please see the [Issue and Pull Request Guide](https://moqui.org/m/docs/moqui/Issue+and+Pull+Request+Guide) on moqui.org. Code contributions also need a signature in [AUTHORS.md](AUTHORS.md); its Contributing section says what happens to a pull request from an account that has not signed.
 
 ## Attack surface
 

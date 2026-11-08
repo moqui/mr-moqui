@@ -34,7 +34,6 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
-use rquickjs::{CatchResultExt, Context, Runtime};
 use serde_json::{json, Map, Value as Json};
 
 use super::openui::{Problem, Rule};
@@ -960,32 +959,29 @@ fn submitted_names(text: &str) -> Vec<(String, usize)> {
 /// The syntax error of `script` compiled (not run) as the body of a function of `module` and `exports`, in a QuickJS
 /// runtime of its own; `None` when it compiles, or when QuickJS cannot start (logged: the browser compiles it again).
 fn script_error(script: &str) -> Option<String> {
-    let started = (|| -> Result<(Runtime, Context), rquickjs::Error> {
-        let runtime = Runtime::new()?;
-        runtime.set_memory_limit(16 * 1024 * 1024);
-        runtime.set_max_stack_size(1024 * 1024);
-        let deadline = Instant::now() + Duration::from_secs(2);
-        runtime.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
-        let context = Context::full(&runtime)?;
-        Ok((runtime, context))
-    })();
-    let (_runtime, context) = match started {
-        Ok(started) => started,
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let started = super::standalone::Standalone::start(16 * 1024 * 1024, 1024 * 1024, move || {
+        Instant::now() >= deadline
+    });
+    let js = match started {
+        Ok(js) => js,
         Err(error) => {
-            tracing::error!("QuickJS did not start to check a Vue SFC script: {error}");
+            tracing::error!("The script engine did not start to check a Vue SFC script: {error}");
             return None;
         }
     };
     let source = serde_json::to_string(script).ok()?;
+    // the message alone: QuickJS gives a syntax error no line, and quickjs-oxide's `lineNumber` counts the two lines
+    // `new Function` puts before the body
     let check = format!(
         "(function () {{ try {{ new Function('module', 'exports', {source}); return ''; }} \
-         catch (e) {{ return String((e && e.message) || e) + (e && e.lineNumber ? ' (line ' + e.lineNumber + ')' : ''); }} }})()"
+         catch (e) {{ return String((e && e.message) || e); }} }})()"
     );
-    context.with(|ctx| match ctx.eval::<String, _>(check).catch(&ctx) {
+    match js.text(&check) {
         Ok(text) if text.is_empty() => None,
         Ok(text) => Some(text),
-        Err(error) => Some(error.to_string()),
-    })
+        Err(error) => Some(error),
+    }
 }
 
 /// Check `blocks` and give its problems; `compiler` is the Vue compiler's source, when the server has it.

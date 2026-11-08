@@ -177,6 +177,65 @@ fn a_filter_wraps_the_screens_and_a_servlet_error_is_its_requests_only() {
     );
 }
 
+/// A chain of two script filters and a script servlet on each engine: on quickjs-oxide `chain.doFilter()` lends the
+/// engine to the next filter and the servlet, each a run nested in the filter's (`script/oxide/web.rs`). The filters
+/// run in order around the servlet and see what it set when the chain comes back; a servlet's error is its request's
+/// 500, which the filters see as the status when the chain comes back, as on QuickJS.
+#[test]
+fn a_filter_chain_runs_around_its_servlet_on_each_engine() {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let scripts = Scripts::new("chain");
+    let outer = scripts.write(
+        "Outer.js",
+        r#"({ doFilter(request, response, chain) {
+            request.setAttribute("order", "outer")
+            chain.doFilter(request, response)
+            response.setHeader("X-Outer-After", String(response.getStatus()))
+        } })"#,
+    );
+    let inner = scripts.write(
+        "Inner.js",
+        r#"({ doFilter(request, response, chain) {
+            request.setAttribute("order", request.getAttribute("order") + ",inner")
+            chain.doFilter()
+            response.setHeader("X-Inner-After", String(response.getStatus()))
+        } })"#,
+    );
+    let servlet = scripts.write(
+        "End.js",
+        r#"({ doGet(request, response) {
+            if (request.pathInfo === "/fail") throw new Error("servlet failed")
+            response.setStatus(202)
+            // QuickJS has Error.captureStackTrace and quickjs-oxide does not (plans/Script-Engine-Oxide.md)
+            response.setHeader("X-Engine", typeof Error.captureStackTrace === "function" ? "rquickjs" : "oxide")
+            response.write(request.getAttribute("order") + ",servlet")
+        } })"#,
+    );
+    let world = World::open_in_framework(&conf(&format!(
+        r#"<filter name="Outer" location="{outer}" priority="1"><url-pattern>/chain/*</url-pattern></filter>
+        <filter name="Inner" location="{inner}" priority="2"><url-pattern>/chain/*</url-pattern></filter>
+        <servlet name="End" location="{servlet}"><url-pattern>/chain/*</url-pattern></servlet>"#
+    )));
+    let root = webroot().to_string_lossy().into_owned();
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        with_script_engine(engine, || {
+            let response = serve_at(&world.factory, request("GET", "/chain/ok"), &root);
+            let name = engine.name();
+            assert_eq!(response.status, 202, "{name}: {}", response.body_text());
+            assert_eq!(response.body_text(), "outer,inner,servlet", "{name}");
+            assert_eq!(header_value(&response, "X-Engine").as_deref(), Some(name), "the servlet ran on {name}");
+            assert_eq!(header_value(&response, "X-Inner-After").as_deref(), Some("202"), "{name}");
+            assert_eq!(header_value(&response, "X-Outer-After").as_deref(), Some("202"), "{name}");
+
+            let response = serve_at(&world.factory, request("GET", "/chain/fail"), &root);
+            assert_eq!(response.status, 500, "{name}: {}", response.body_text());
+            assert!(response.body_text().contains("servlet failed"), "{name}: {}", response.body_text());
+            assert_eq!(header_value(&response, "X-Inner-After").as_deref(), Some("500"), "{name}");
+            assert_eq!(header_value(&response, "X-Outer-After").as_deref(), Some("500"), "{name}");
+        });
+    }
+}
+
 #[test]
 fn the_lifecycle_actions_and_listeners_run_at_their_points() {
     let scripts = Scripts::new("lifecycle");

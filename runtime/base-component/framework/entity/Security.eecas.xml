@@ -17,6 +17,13 @@ along with this software (see the LICENSE.md file). If not, see
             on-create="true" on-update="true" on-delete="true" run-before="true">
         <actions><script>UserSecurityChecks.assertPrivilegedGroupMembership(userGroupId)</script></actions>
     </eeca>
+    <!-- a membership carries its group's grants: in a group that grants a sealed permission only a holder of it gives one (a
+        change that only ends a membership sooner passes; granting a sealed permission is UserGroupPermissionSealed) -->
+    <eeca id="UserGroupMemberSealed" entity="moqui.security.UserGroupMember"
+            on-create="true" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>UserSecurityChecks.assertSealedGroupMembership(userGroupId, thruDate,
+            eecaOperation == "update" &amp;&amp; originalValue != null, originalValue != null ? originalValue.thruDate : null)</script></actions>
+    </eeca>
     <eeca id="UserGroupPermissionSealed" entity="moqui.security.UserGroupPermission"
             on-create="true" on-update="true" on-delete="true" run-before="true">
         <actions><script>UserSecurityChecks.assertSealedPermissionGrant(userPermissionId)</script></actions>

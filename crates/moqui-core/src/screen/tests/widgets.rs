@@ -296,6 +296,18 @@ fn enumeration_world() -> World {
     world
 }
 
+/// A row action's entity find gives each row its own value: the second row's text reads the second row's value, not
+/// the first's.
+#[test]
+fn a_row_action_find_gives_each_row_its_own_value() {
+    let world = enumeration_world();
+    let context = world.factory.new_context();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let csv = body(&world.factory, "/RowFind.csv", &[]);
+    assert_eq!(csv, "Enum ID\nE1 (first)\nE2 (second)\nE3 (third)\n", "{csv}");
+}
+
 #[test]
 fn entity_values_lists_options_and_display_entity() {
     let world = enumeration_world();

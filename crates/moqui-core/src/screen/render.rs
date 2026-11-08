@@ -2208,7 +2208,12 @@ fn respond(
             parameters.entry(name).or_insert(value);
         }
         let base = web::base_url();
-        let location = format!("{}{}", base.trim_end_matches('/'), encode_path(&prepared.names));
+        let location = format!(
+            "{}{}{}",
+            base.trim_end_matches('/'),
+            web::link_prefix(),
+            encode_path(&prepared.names)
+        );
         screen_path = Some(prepared.names);
         location
     };
@@ -2261,7 +2266,10 @@ fn send_json_redirect(screen_path: Option<Vec<String>>, location: &str, paramete
             map.insert("screenParameters".to_string(), V::Map(screen_parameters));
             map.insert(
                 "screenUrl".to_string(),
-                V::string(with_query(encode_path(&names), parameters)),
+                V::string(with_query(
+                    format!("{}{}", web::link_prefix(), encode_path(&names)),
+                    parameters,
+                )),
             );
         }
         None => {

@@ -35,7 +35,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rquickjs::{CatchResultExt, Context, Runtime};
 use serde_json::{json, Value as Json};
 
 use moqui_core::context::{Error, ExecutionContextFactory};
@@ -418,10 +417,7 @@ pub struct Sources {
 
 struct Engine {
     key: u64,
-    context: Context,
-    // The context borrows the runtime; drop order frees the context first.
-    #[allow(dead_code)]
-    runtime: Runtime,
+    js: super::standalone::Standalone,
 }
 
 thread_local! {
@@ -429,38 +425,31 @@ thread_local! {
     static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
+/// The texts and the engine the setting picks (a thread's setting may change, in the tests).
 fn key_of(sources: &Sources) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    moqui_core::script::script_engine().name().hash(&mut hasher);
     sources.bundle.hash(&mut hasher);
     sources.spec.hash(&mut hasher);
     hasher.finish()
 }
 
 fn engine_for(sources: &Sources) -> Result<Engine, Error> {
-    let runtime = Runtime::new().map_err(|err| Error::new(err.to_string()))?;
-    runtime.set_memory_limit(MEMORY_LIMIT);
-    runtime.set_max_stack_size(STACK_LIMIT);
-    runtime.set_interrupt_handler(Some(Box::new(|| {
+    let js = super::standalone::Standalone::start(MEMORY_LIMIT, STACK_LIMIT, || {
         DEADLINE.with(Cell::get).is_some_and(|at| Instant::now() >= at)
-    })));
-    let context = Context::full(&runtime).map_err(|err| Error::new(err.to_string()))?;
+    })
+    .map_err(Error::new)?;
     let spec = serde_json::to_string(&*sources.spec).map_err(|err| Error::new(err.to_string()))?;
-    context.with(|ctx| {
-        ctx.eval::<(), _>(&*sources.bundle)
-            .catch(&ctx)
-            .map_err(|err| Error::new(format!("the OpenUI Lang bundle did not load: {err}")))?;
-        ctx.eval::<(), _>(GLUE)
-            .catch(&ctx)
-            .map_err(|err| Error::new(format!("the OpenUI Lang glue did not load: {err}")))?;
-        ctx.eval::<(), _>(format!("__openui.setSpec({spec})"))
-            .catch(&ctx)
-            .map_err(|err| Error::new(format!("the OpenUI library spec did not load: {err}")))
-    })?;
+    js.run(&sources.bundle)
+        .map_err(|err| Error::new(format!("the OpenUI Lang bundle did not load: {err}")))?;
+    js.run(GLUE)
+        .map_err(|err| Error::new(format!("the OpenUI Lang glue did not load: {err}")))?;
+    js.run(&format!("__openui.setSpec({spec})"))
+        .map_err(|err| Error::new(format!("the OpenUI library spec did not load: {err}")))?;
     Ok(Engine {
         key: key_of(sources),
-        context,
-        runtime,
+        js,
     })
 }
 
@@ -476,11 +465,10 @@ fn run_script(sources: &Sources, script: &str) -> Result<String, Error> {
             .as_ref()
             .ok_or_else(|| Error::new("the OpenUI Lang engine did not start"))?;
         DEADLINE.with(|deadline| deadline.set(Some(Instant::now() + TIME_LIMIT)));
-        let out: Result<String, Error> = engine.context.with(|ctx| {
-            ctx.eval(script)
-                .catch(&ctx)
-                .map_err(|err| Error::new(format!("OpenUI Lang failed: {err}")))
-        });
+        let out = engine
+            .js
+            .text(script)
+            .map_err(|err| Error::new(format!("OpenUI Lang failed: {err}")));
         DEADLINE.with(|deadline| deadline.set(None));
         out
     })

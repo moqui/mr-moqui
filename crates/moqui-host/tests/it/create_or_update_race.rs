@@ -204,6 +204,9 @@ fn authorizing_factory(dir: &Path, facade: &EntityFacade) -> Arc<ExecutionContex
             "moqui.security.ArtifactAuthz",
             "moqui.security.ArtifactAuthzFailure",
             "moqui.security.ArtifactTarpit",
+            // ArtifactAuthz.authzTypeEnumId is audit-logged: a write takes an EntityAuditLog id from the sequence.
+            "moqui.entity.EntityAuditLog",
+            "moqui.entity.SequenceValueItem",
         ])
         .unwrap();
     let runtime = dir.join("runtime");

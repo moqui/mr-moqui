@@ -85,7 +85,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="artifactAuthzId" type="id" is-pk="true"/>
         <field name="userGroupId" type="id"/>
         <field name="artifactGroupId" type="id"/>
-        <field name="authzTypeEnumId" type="id"/>
+        <!-- audit-logged (Admin P3, impl-admin F23): a grant's type is what widens or ends it -->
+        <field name="authzTypeEnumId" type="id" enable-audit-log="true"/>
         <field name="authzActionEnumId" type="id"/>
         <field name="authzServiceName" type="text-medium">
             <description>If specified this service will be called and it should return a authzTypeEnumId with the
@@ -268,14 +269,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="terminateDate" type="date-time" enable-audit-log="true">
             <description>If set then user may not login after this date, and no notifications will be sent after this date.</description></field>
         <field name="successiveFailedLogins" type="number-integer"/>
-        <field name="requirePasswordChange" type="text-indicator"/>
+        <field name="requirePasswordChange" type="text-indicator" enable-audit-log="true"/>
         <field name="currencyUomId" type="id"/>
         <field name="locale" type="text-short"/>
         <field name="timeZone" type="text-short"/>
         <field name="externalUserId" type="text-medium"/>
         <field name="emailAddress" type="text-medium" enable-audit-log="update">
             <description>The email address to use for forgot password emails and other system messages.</description></field>
-        <field name="ipAllowed" type="text-medium">
+        <field name="ipAllowed" type="text-medium" enable-audit-log="true">
             <description>If specified only allow login from matching client IP. Comma separated patterns: IPv4 has 4
                 dot separated segments each segment may be number, '*' for wildcard, or '-' separate number range (like '0-31');
                 IPv6 is an exact match after canonicalization.</description>
@@ -343,8 +344,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="userGroupId" type="id" is-pk="true"/>
         <field name="description" type="text-medium"/>
         <field name="groupTypeEnumId" type="id"/>
-        <field name="ipAllowed" type="text-medium"><description>See UserAccout.ipAllowed</description></field>
-        <field name="requireAuthcFactor" type="text-indicator"/>
+        <!-- audit-logged (Admin P3, impl-admin F23): each limits who may sign in -->
+        <field name="ipAllowed" type="text-medium" enable-audit-log="true"><description>See UserAccout.ipAllowed</description></field>
+        <field name="requireAuthcFactor" type="text-indicator" enable-audit-log="true"/>
         <relationship type="one" title="UserGroupType" related="moqui.basic.Enumeration" short-alias="groupTypeEnum">
             <key-map field-name="groupTypeEnumId"/></relationship>
         <relationship type="many" related="moqui.security.UserGroupPermission" short-alias="permissions">
@@ -358,10 +360,11 @@ along with this software (see the LICENSE.md file). If not, see
         </seed-data>
     </entity>
     <entity entity-name="UserGroupMember" package="moqui.security" use="configuration" cache="true">
+        <!-- the dates are audit-logged (Admin P3, impl-admin F23): a membership is a dated row, ended rather than deleted -->
         <field name="userGroupId" type="id" is-pk="true"/>
         <field name="userId" type="id" is-pk="true"/>
-        <field name="fromDate" type="date-time" is-pk="true"/>
-        <field name="thruDate" type="date-time"/>
+        <field name="fromDate" type="date-time" is-pk="true" enable-audit-log="create"/>
+        <field name="thruDate" type="date-time" enable-audit-log="true"/>
         <relationship type="one" related="moqui.security.UserGroup" short-alias="group"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user">
             <description>No FK in order to allow externally authenticated users.</description></relationship>
@@ -383,8 +386,9 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="UserGroupPermission" package="moqui.security" use="configuration" cache="true" short-alias="userGroupPermissions">
         <field name="userGroupId" type="id" is-pk="true"/>
         <field name="userPermissionId" type="id-long" is-pk="true"/>
-        <field name="fromDate" type="date-time" is-pk="true"/>
-        <field name="thruDate" type="date-time"/>
+        <!-- the dates are audit-logged (Admin P3, impl-admin F23): a grant is a dated row, ended rather than deleted -->
+        <field name="fromDate" type="date-time" is-pk="true" enable-audit-log="create"/>
+        <field name="thruDate" type="date-time" enable-audit-log="true"/>
         <relationship type="one" related="moqui.security.UserGroup" short-alias="group"/>
         <relationship type="one-nofk" related="moqui.security.UserPermission" short-alias="permission">
             <description>No FK in order to allow arbitrary permissions (ie not pre-configured).</description></relationship>
@@ -511,7 +515,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Use this entity for user group preferences (or properties). For all users use userGroupId="ALL_USERS".</description>
         <field name="userGroupId" type="id" is-pk="true"/>
         <field name="preferenceKey" type="text-medium" is-pk="true"/>
-        <field name="preferenceValue" type="text-long"/>
+        <!-- audit-logged (Admin P3): a group default changes what every member gets -->
+        <field name="preferenceValue" type="text-long" enable-audit-log="true"/>
         <field name="groupPriority" type="number-integer">
             <description>For deciding which value to use when a user is a member of multiple groups with preferences with the same key.</description></field>
         <relationship type="one-nofk" related="moqui.security.UserGroup" short-alias="group">
@@ -519,6 +524,65 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one-nofk" title="UserPreferenceKey" related="moqui.basic.Enumeration" short-alias="keyEnum">
             <description>No FK because any key can be used whether or not there is an Enumeration record for it.</description>
             <key-map field-name="preferenceKey"/></relationship>
+    </entity>
+    <!-- The capability registry (Admin P3; mr-boss plan/design-admin.md §14 "Capability description", §5): the registered bundles
+        an access administrator may assign through org.moqui.admin.AccessServices, each a user group with the permissions it
+        carries and the artifact bindings (an app's launcher) that may be granted from it. It is descriptive metadata over the
+        native rows: UserGroupPermission and ArtifactAuthz stay authoritative, and the framework evaluator decides access. Each
+        component seeds its own rows; a row naming a missing group is logged by name when read and left out. -->
+    <entity entity-name="CapabilityBundle" package="moqui.security" use="configuration" cache="true">
+        <field name="userGroupId" type="id" is-pk="true"><description>The group a membership assigns</description></field>
+        <field name="appName" type="text-short"><description>The app or domain the bundle belongs to, for grouping
+            (Purchasing, Accounting, Admin)</description></field>
+        <field name="description" type="text-medium"><description>What the bundle lets its members do</description></field>
+        <field name="delegablePermissionId" type="id-long"><description>A permission an actor needs, beside
+            ADMIN_ACCESS_MANAGE, to assign this bundle or grant from it; empty for ADMIN_ACCESS_MANAGE alone</description></field>
+        <field name="scopeDependency" type="text-medium"><description>The scope its services still check (organization,
+            facility, team), shown beside a grant</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"><description>Y leaves the bundle out: no membership or grant from it</description></field>
+        <relationship type="one-nofk" related="moqui.security.UserGroup" short-alias="group"/>
+        <relationship type="one-nofk" title="Delegable" related="moqui.security.UserPermission">
+            <key-map field-name="delegablePermissionId" related="userPermissionId"/></relationship>
+        <relationship type="many" related="moqui.security.CapabilityBundlePermission" short-alias="permissions">
+            <key-map field-name="userGroupId"/></relationship>
+        <relationship type="many" related="moqui.security.CapabilityBundleArtifact" short-alias="artifacts">
+            <key-map field-name="userGroupId"/></relationship>
+    </entity>
+    <entity entity-name="CapabilityBundlePermission" package="moqui.security" use="configuration" cache="true">
+        <description>A permission a registered bundle carries, with its kind: view, edit, export or sensitive (a permission over
+            restricted values: costs, supplier prices, pay, private records). An edit never implies a view.</description>
+        <field name="userGroupId" type="id" is-pk="true"/>
+        <field name="userPermissionId" type="id-long" is-pk="true"/>
+        <field name="capabilityKindEnumId" type="id"/>
+        <relationship type="one" related="moqui.security.CapabilityBundle"/>
+        <relationship type="one-nofk" related="moqui.security.UserPermission" short-alias="permission"/>
+        <relationship type="one" title="CapabilityKind" related="moqui.basic.Enumeration">
+            <key-map field-name="capabilityKindEnumId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Capability Kind" enumTypeId="CapabilityKind"/>
+            <moqui.basic.Enumeration description="View" enumId="CpkView" enumTypeId="CapabilityKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Edit" enumId="CpkEdit" enumTypeId="CapabilityKind" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Export" enumId="CpkExport" enumTypeId="CapabilityKind" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Sensitive" enumId="CpkSensitive" enumTypeId="CapabilityKind" sequenceNum="4"/>
+        </seed-data>
+    </entity>
+    <entity entity-name="CapabilityBundleArtifact" package="moqui.security" use="configuration" cache="true">
+        <description>An artifact binding a registered bundle offers (an app's launcher or area): granting it to a group writes an
+            ArtifactAuthz of this type and action on the artifact group, with an ArtifactAuthzFilter for each of the filter sets,
+            so a grant never drops the organization filters the bundle's own rows carry.</description>
+        <field name="userGroupId" type="id" is-pk="true"/>
+        <field name="artifactGroupId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="authzTypeEnumId" type="id"/>
+        <field name="authzActionEnumId" type="id"/>
+        <field name="entityFilterSetIds" type="text-medium"><description>Comma separated EntityFilterSet ids</description></field>
+        <relationship type="one" related="moqui.security.CapabilityBundle"/>
+        <relationship type="one" related="moqui.security.ArtifactGroup"/>
+        <relationship type="one" title="AuthzType" related="moqui.basic.Enumeration">
+            <key-map field-name="authzTypeEnumId"/></relationship>
+        <relationship type="one" title="AuthzAction" related="moqui.basic.Enumeration">
+            <key-map field-name="authzActionEnumId"/></relationship>
     </entity>
     <entity entity-name="UserScreenTheme" package="moqui.security" use="configuration" cache="true">
         <field name="userId" type="id" is-pk="true"/>

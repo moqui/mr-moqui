@@ -378,6 +378,8 @@ pub struct PrefixSpec<'a> {
     pub variant: PromptVariant,
     pub vars: &'a PromptVars,
     pub agent_instructions: &'a str,
+    /// The run's Constitution section ([`crate::constitution::render::prompt_section`]); empty for none. Never cut.
+    pub constitution: &'a str,
     /// The organization's instructions, from a user-facts provider (none in the framework).
     pub org_instructions: &'a str,
     pub catalog: &'a Catalog,
@@ -394,7 +396,7 @@ pub struct PrefixSpec<'a> {
 /// One part of the system text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Section {
-    /// core, addendum, small, agent, organization, catalog, facts, memory, tools, language.
+    /// core, addendum, small, constitution, agent, organization, catalog, facts, memory, tools, language.
     pub name: &'static str,
     pub text: String,
     pub cap: usize,
@@ -449,6 +451,8 @@ pub fn build_prefix(texts: &PromptTexts, spec: &PrefixSpec<'_>) -> Prefix {
     if spec.variant == PromptVariant::Small {
         push("small", fill(&texts.small, vars), usize::MAX);
     }
+    // the Constitution (plans/LLM-A2A-Assist.md 7.10): the whole document in the run's locale, never cut
+    push("constitution", spec.constitution.to_string(), usize::MAX);
     if !spec.agent_instructions.trim().is_empty() {
         push(
             "agent",
@@ -637,7 +641,8 @@ impl From<Prefix> for FrozenPrefix {
 
 const CONVERSATION: &str = "moqui.agent.AgentConversation";
 
-/// The prefix of a conversation: the one stored on its `AgentConversation` row, else `build()` stored there now. The
+/// The prefix of a conversation: the one stored on its `AgentConversation` row, else `build()` stored there now; also
+/// rebuilt when `constitution_key` (the run's Constitution) is not the one it was built for. The
 /// row is read for update, so two first turns at once store one prefix. `tools` are the tools offered now: with a
 /// stored prefix they are what is sent, and a hash that differs from the stored one is logged (the cache misses once).
 ///
@@ -648,6 +653,7 @@ pub fn freeze(
     facade: &EntityFacade,
     conversation_id: &str,
     tools: &[ToolSpec],
+    constitution_key: Option<&str>,
     build: impl FnOnce() -> Prefix,
 ) -> Result<FrozenPrefix, Error> {
     facade
@@ -661,7 +667,15 @@ pub fn freeze(
             else {
                 return Err(Error::new(format!("there is no agent conversation {conversation_id}")));
             };
-            if let Some(system_text) = super::text_of(&row, "systemText") {
+            // a run whose Constitution (source, organization, hash or locale) differs from the one the stored prefix was
+            // built for rebuilds it before its first call (plan 7.10: the exception to the frozen prefix); the same key
+            // keeps the stored bytes
+            let stored_key = super::text_of(&row, "constitutionKey");
+            let constitution_changed = constitution_key.is_some_and(|key| stored_key.as_deref() != Some(key));
+            if constitution_changed && super::text_of(&row, "systemText").is_some() {
+                tracing::info!("the Constitution of agent conversation {conversation_id} changed, so its prompt is rebuilt");
+            }
+            if let Some(system_text) = super::text_of(&row, "systemText").filter(|_| !constitution_changed) {
                 let stored_hash = super::text_of(&row, "toolsHash").unwrap_or_default();
                 let mut sorted = tools.to_vec();
                 sorted.sort_by(|left, right| left.name.cmp(&right.name));
@@ -694,6 +708,9 @@ pub fn freeze(
             let json = if prefix.tool_mode == ToolMode::Json { "+json" } else { "" };
             row.set("promptVariant", Value::string(format!("{}{json}", variant_str(prefix.variant))));
             row.set("skillCatalog", Value::string(prefix.catalog.join(", ")));
+            if let Some(key) = constitution_key {
+                row.set("constitutionKey", Value::string(key));
+            }
             row.update(facade)?;
             Ok(FrozenPrefix::from(prefix))
         })

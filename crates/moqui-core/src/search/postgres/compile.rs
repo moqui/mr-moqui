@@ -20,9 +20,12 @@
 //!
 //! Matching follows the field kind. Text is tokenized with the `simple` configuration
 //! (lower-cased, no stemming, no stop words), close to Elastic's `standard` analyzer. Keyword is
-//! exact and case-sensitive. A bare term searches the generated all-fields vector. Every leaf is
-//! wrapped in `COALESCE(.., false)`, so a negation also matches a document that lacks the field,
-//! as Elastic's `must_not` does.
+//! exact and case-sensitive. A bare term searches the generated all-fields vector. A leaf on a missing
+//! value is null; each negation is `NOT COALESCE(.., FALSE)`, so it matches a document that lacks the
+//! field, as Elastic's `must_not` does. Under AND and OR alone a null is no match, as false is, so a
+//! leaf is not wrapped: a wrapped column is no index condition, and every search read the whole table.
+//! A keyword `eq` or `in` also matches a list in the body when the column is null, as
+//! `col = ? OR (col IS NULL AND list @> ..)`, which an index on the column still serves.
 //!
 //! No `?` operator is written, because `?` is the parameter marker.
 
@@ -266,9 +269,7 @@ impl<'a> Compiler<'a> {
             Query::Field(field) => {
                 let positive = self.field(scope, field)?;
                 if field.negate {
-                    let mut out = Sql::new("NOT ");
-                    out.append(positive);
-                    Ok(out)
+                    Ok(not(positive))
                 } else {
                     Ok(positive)
                 }
@@ -284,9 +285,7 @@ impl<'a> Compiler<'a> {
                     parts.push(self.compile(item, scope)?);
                 }
                 for item in none {
-                    let mut out = Sql::new("NOT ");
-                    out.append(self.compile(item, scope)?);
-                    parts.push(out);
+                    parts.push(not(self.compile(item, scope)?));
                 }
                 let min = effective_min_any(all, any, *min_any) as usize;
                 if min > 0 && !any.is_empty() {
@@ -308,9 +307,9 @@ impl<'a> Compiler<'a> {
                             if index > 0 {
                                 out.push(" + ");
                             }
-                            out.push("(");
+                            out.push("COALESCE(");
                             out.append(self.compile(item, scope)?);
-                            out.push(")::int");
+                            out.push(", FALSE)::int");
                         }
                         out.push(&format!(") >= {min})"));
                         parts.push(out);
@@ -458,9 +457,7 @@ impl<'a> Compiler<'a> {
         match self.locate(scope, name) {
             Located::Missing => Ok(Sql::new("FALSE")),
             Located::Field { arrays, expr, field } => {
-                let mut inner = Sql::new("COALESCE(");
-                inner.append(leaf(&expr, field)?);
-                inner.push(", FALSE)");
+                let inner = leaf(&expr, field)?;
                 if arrays.is_empty() {
                     Ok(inner)
                 } else {
@@ -766,7 +763,7 @@ impl<'a> Compiler<'a> {
             let leaf = field_leaf(&self.text.config, expr, field.kind, query)?;
             Ok(match list {
                 Some(list) if field.kind == FieldKind::Keyword && matches!(query.op, FieldOp::Eq | FieldOp::In) => {
-                    or_list_element(leaf, &list, query)
+                    or_list_element(leaf, expr, &list, query)
                 }
                 _ => leaf,
             })
@@ -1105,10 +1102,18 @@ fn field_leaf(config: &str, expr: &str, kind: FieldKind, query: &FieldQuery) -> 
     })
 }
 
-/// `COALESCE(leaf, list @> [value] OR ...)`: the column's answer, or when the column is null (the document holds a list,
-/// or nothing) whether the list in the body has one of the values. A body value that is not a list contains no array, so
-/// a scalar never matches through this arm.
-fn or_list_element(leaf: Sql, list: &str, query: &FieldQuery) -> Sql {
+/// `NOT COALESCE(inner, FALSE)`: true also when the inner expression is null, for a document that lacks the field.
+fn not(inner: Sql) -> Sql {
+    let mut out = Sql::new("NOT COALESCE(");
+    out.append(inner);
+    out.push(", FALSE)");
+    out
+}
+
+/// `(leaf OR (column IS NULL AND (list @> [value] OR ...)))`: the column's answer, or when the column is null (the
+/// document holds a list, or nothing) whether the list in the body has one of the values. A body value that is not a
+/// list contains no array, so a scalar never matches through this arm. Both arms are index conditions on the column.
+fn or_list_element(leaf: Sql, column: &str, list: &str, query: &FieldQuery) -> Sql {
     let values: Vec<&Value> = match query.op {
         FieldOp::In if !query.values.is_empty() => query.values.iter().collect(),
         _ => vec![&query.value],
@@ -1117,9 +1122,9 @@ fn or_list_element(leaf: Sql, list: &str, query: &FieldQuery) -> Sql {
     if values.is_empty() {
         return leaf;
     }
-    let mut out = Sql::new("COALESCE(");
+    let mut out = Sql::new("(");
     out.append(leaf);
-    out.push(", ");
+    out.push(&format!(" OR ({column} IS NULL AND ("));
     for (index, value) in values.into_iter().enumerate() {
         if index > 0 {
             out.push(" OR ");
@@ -1127,7 +1132,7 @@ fn or_list_element(leaf: Sql, list: &str, query: &FieldQuery) -> Sql {
         out.push(&format!("{list} @> jsonb_build_array("));
         out.param(Value::String(to_plain_string(value))).push("::text)");
     }
-    out.push(")");
+    out.push(")))");
     out
 }
 

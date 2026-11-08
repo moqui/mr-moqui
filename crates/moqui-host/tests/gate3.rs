@@ -1149,7 +1149,8 @@ fn the_qapps_shell_and_its_menu_data_work_for_a_signed_in_user() {
 
 /// An anonymous token route (screen/token_route.rs): `/tk/<token>` is the public shell page with the theme and the
 /// m-* components and no session user; `/tk/<token>.qvt` the route's screen with the check's answer in its context;
-/// `/tk/<token>/files` a transition below it; a bad or revoked token gets the short page and nothing of the screen runs.
+/// `/tk/<token>/files` a transition below it, which the screen's form posts to and a redirect stays under; a bad or
+/// revoked token gets the short page and nothing of the screen runs.
 #[test]
 fn a_token_route_renders_its_screen_in_the_public_shell_after_the_token_check() {
     if !crate::common::own_process() {
@@ -1207,6 +1208,21 @@ fn a_token_route_renders_its_screen_in_the_public_shell_after_the_token_check() 
     assert!(
         screen.contains("For the gate") && screen.contains("Shared by John Doe"),
         "{screen}"
+    );
+    // the screen is the root of its links: its form posts under the route, not to /files outside it
+    assert!(
+        screen.contains(&format!("action=\"/tk/{LINK_TOKEN}/files\"")),
+        "the form's action under the route: {screen}"
+    );
+    // and a transition's redirect back to the screen stays under the route
+    let (status, headers, _) = exchange(
+        address,
+        &http_request("GET", &format!("/tk/{LINK_TOKEN}/back"), &html, ""),
+    );
+    let location = header(&headers, "location").unwrap_or_default();
+    assert!(
+        (300..400).contains(&status) && location.contains(&format!("/tk/{LINK_TOKEN}")) && !location.contains("/back"),
+        "{status} {location}"
     );
     // a transition below it: the public-share service checks the token again and lists the folder
     let (status, _, files) = exchange(

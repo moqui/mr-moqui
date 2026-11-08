@@ -2506,6 +2506,8 @@ task_accept_all() {
     suite "gate3_browser" cargo test -p moqui-host --test gate3_browser
     suite "cargo test-slow" cargo test-slow
     suite "moqui cli ignored tests" cargo test -p moqui --test cli -- --ignored
+    suite "generation on both script engines" cargo test -p moqui-core --lib -- --ignored \
+        screen::generate::tests::every_screens_widgets_generate_the_same_on_both_engines
     if [ -n "${MOQUI_TEST_MYSQL:-}" ]; then
         suite "mysql driver network bounds" cargo test -p moqui-drivers --features mysql --lib -- --ignored mysql::
     fi

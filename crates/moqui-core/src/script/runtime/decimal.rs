@@ -226,30 +226,13 @@ pub(super) fn rounding_strategy<'js>(
     ctx: &Ctx<'js>,
     mode: Option<&JsValue<'js>>,
 ) -> rquickjs::Result<Option<moqui_lib::format::RoundingStrategy>> {
-    use moqui_lib::format::RoundingStrategy;
     let mode = match mode {
         Some(value) if !value.is_null() && !value.is_undefined() => {
             moqui_lib::object::to_plain_string(&js_to_host(ctx, value)?)
         }
         _ => String::new(),
     };
-    let strategy = match mode.as_str() {
-        "UP" | "0" => Some(RoundingStrategy::AwayFromZero),
-        "DOWN" | "1" => Some(RoundingStrategy::ToZero),
-        "CEILING" | "2" => Some(RoundingStrategy::ToPositiveInfinity),
-        "FLOOR" | "3" => Some(RoundingStrategy::ToNegativeInfinity),
-        "HALF_UP" | "4" => Some(RoundingStrategy::MidpointAwayFromZero),
-        "HALF_DOWN" | "5" => Some(RoundingStrategy::MidpointTowardZero),
-        "HALF_EVEN" | "6" => Some(RoundingStrategy::MidpointNearestEven),
-        "" | "UNNECESSARY" | "7" => None,
-        other => {
-            return Err(Exception::throw_message(
-                ctx,
-                &format!("rounding mode {other} is not known"),
-            ))
-        }
-    };
-    Ok(strategy)
+    crate::script::host::rounding_strategy_named(&mode).map_err(|message| Exception::throw_message(ctx, &message))
 }
 
 /// The other side of a decimal method: a decimal, or a JavaScript number or numeric string converted as
@@ -275,7 +258,7 @@ fn operand<'js>(ctx: &Ctx<'js>, value: &JsValue<'js>) -> rquickjs::Result<Value>
 }
 
 /// `value` as a decimal: a decimal, an integer, a finite float, or numeric text.
-pub(super) fn decimal_of(value: &Value) -> Option<Value> {
+pub(crate) fn decimal_of(value: &Value) -> Option<Value> {
     if matches!(value, Value::Bool(_) | Value::Null) {
         return None;
     }
@@ -285,7 +268,7 @@ pub(super) fn decimal_of(value: &Value) -> Option<Value> {
     }
 }
 
-pub(super) enum Arith {
+pub(crate) enum Arith {
     Add,
     Subtract,
     Multiply,
@@ -299,7 +282,7 @@ pub(super) fn host_arith(ctx: &Ctx<'_>, left: &Value, right: &Value, op: Arith) 
     })
 }
 
-pub(super) fn arith(left: &Value, right: &Value, op: Arith) -> Result<Value, moqui_lib::error::Error> {
+pub(crate) fn arith(left: &Value, right: &Value, op: Arith) -> Result<Value, moqui_lib::error::Error> {
     let Some(left) = left.as_decimal() else {
         return Err(moqui_lib::error::Error::new("not a decimal"));
     };
@@ -315,7 +298,7 @@ pub(super) fn arith(left: &Value, right: &Value, op: Arith) -> Result<Value, moq
     Ok(Value::Decimal(number))
 }
 
-pub(super) fn decimals_equal(left: &Value, right: &Value) -> Result<bool, moqui_lib::error::Error> {
+pub(crate) fn decimals_equal(left: &Value, right: &Value) -> Result<bool, moqui_lib::error::Error> {
     let Some(left) = left.as_decimal() else {
         return Err(moqui_lib::error::Error::new("not a decimal"));
     };
@@ -325,7 +308,7 @@ pub(super) fn decimals_equal(left: &Value, right: &Value) -> Result<bool, moqui_
     Ok(moqui_lib::object::decimal_eq(left, right))
 }
 
-pub(super) fn decimals_compare(left: &Value, right: &Value) -> Result<Ordering, moqui_lib::error::Error> {
+pub(crate) fn decimals_compare(left: &Value, right: &Value) -> Result<Ordering, moqui_lib::error::Error> {
     let Some(left) = left.as_decimal() else {
         return Err(moqui_lib::error::Error::new("not a decimal"));
     };

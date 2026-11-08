@@ -1352,6 +1352,38 @@ fn terminated(account: &EntityValue, now: i64) -> bool {
     field_millis(account, "terminateDate").is_some_and(|term| now > term)
 }
 
+/// Whether an account's live sign-ins are to end (impl-admin F4, F6, F42): it is disabled for good (`disabled` with no
+/// `disabledDateTime`, as `disable#UserAccount` leaves it) or past its `terminateDate`, either of which stops a login. A
+/// tarpit lock (disabled with a `disabledDateTime`) stops new logins only until it expires and does not end a session, so
+/// failed logins by someone else cannot sign the account's owner out.
+pub(crate) fn account_closed(account: &EntityValue, now: i64) -> bool {
+    (text_field(account, "disabled") == "Y" && field_millis(account, "disabledDateTime").is_none())
+        || terminated(account, now)
+}
+
+/// [`account_closed`] for the account `user_id`, read now; an unknown account is closed. For the notification socket's
+/// recheck of a web session's user and a job's run-as user.
+///
+/// # Errors
+///
+/// Returns a storage error when the account cannot be read.
+pub fn user_account_closed(user_id: &str) -> Result<bool, Error> {
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    Ok(find_user_id(&facade, user_id)?.is_none_or(|account| account_closed(&account, now_millis())))
+}
+
+/// [`account_closed`] for the account of `username` (a job's run-as user), read now; an unknown account is closed.
+///
+/// # Errors
+///
+/// Returns a storage error when the account cannot be read.
+pub fn username_account_closed(username: &str) -> Result<bool, Error> {
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    Ok(find_username(&facade, username)?.is_none_or(|account| account_closed(&account, now_millis())))
+}
+
 fn password_expired(account: &EntityValue, now: i64) -> bool {
     let Some(set_at) = field_millis(account, "passwordSetDate") else {
         return false;

@@ -1426,6 +1426,77 @@ fn a_text_response_takes_a_type_and_a_file_name_and_an_upload_reads_in_its_chars
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The request owns its spooled uploads: a script that keeps one past its request (here on the global object, which
+/// both engines' runtimes keep for the thread) does not keep its spool file, which goes when the request ends, and a
+/// later request that reaches it gets an error, not the bytes.
+#[test]
+fn a_spooled_upload_goes_when_its_request_ends_while_a_script_still_holds_it() {
+    let dir = std::env::temp_dir().join(format!("moqui-forms-spool-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let root = dir.join("Keep.xml").to_string_lossy().into_owned();
+    std::fs::write(
+        &root,
+        r#"<screen require-authentication="false">
+    <transition name="keep" require-session-token="false">
+        <actions><script><![CDATA[
+            // own properties of the global object: a plain assignment would go to the context stack
+            const keep = (name, value) => Object.defineProperty(globalThis, name, {value, writable: true, configurable: true})
+            const upload = ec.web.multiPartParameters.doc
+            const stream = upload.getInputStream()
+            keep('keptUpload', upload)
+            keep('keptStream', stream)
+            ec.web.sendJsonResponse({size: upload.size, head: stream.read(0, 3).length})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="read" read-only="true">
+        <actions><script><![CDATA[
+            let failed = ''
+            try { globalThis.keptUpload.getString() } catch (e) { failed = String(e.message) }
+            delete globalThis.keptUpload
+            delete globalThis.keptStream
+            ec.web.sendJsonResponse({failed: failed})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <widgets><label text="keep"/></widgets>
+</screen>"#,
+    )
+    .unwrap();
+    let world = World::open("");
+    let spool = crate::web::multipart::Spool {
+        dir: dir.join("spool"),
+        memory_limit: 100,
+        field_limit: 1000,
+    };
+    let big = "x".repeat(5000);
+    let (content_type, body) = multipart(&[("doc", big.as_str(), Some(("big.txt", "text/plain")))]);
+    let mut reader = crate::web::multipart::MultipartReader::new(&content_type, Some(spool.clone())).unwrap();
+    reader.feed(&body).unwrap();
+    let mut post = request("POST", "/keep");
+    post.set_header("content-type", content_type);
+    post.multipart = Some(std::sync::Arc::new(reader.finish().unwrap()));
+    assert_eq!(std::fs::read_dir(&spool.dir).unwrap().count(), 1);
+    let kept = serve_at(&world.factory, post, &root);
+    assert_eq!(kept.status, 200, "{}", kept.body_text());
+    assert!(kept.body_text().contains("5000"), "{}", kept.body_text());
+    assert_eq!(
+        std::fs::read_dir(&spool.dir).unwrap().count(),
+        0,
+        "the spool file went with its request"
+    );
+    let read = serve_at(&world.factory, request("GET", "/read"), &root);
+    assert_eq!(read.status, 200, "{}", read.body_text());
+    let text = read.body_text();
+    // QuickJS's object reads the gone file; oxide's object was let go when its script ended
+    assert!(
+        text.contains("no longer available") || text.contains("was let go"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// What a client shows of a refused transition carries the messages only, never the Rust source location of the
 /// error (`crates/...rs:line:col` after "Rust:"), which stays in the server log: a service whose body fails in Rust
 /// (its failure in the message facade), a service that is not there called from a script, and the JSON answer of a

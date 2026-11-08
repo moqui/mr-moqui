@@ -113,6 +113,7 @@ fn the_manifest_licenses_are_the_reviewed_set() {
         let license = lib["license"].as_str().unwrap();
         let reviewed = match id {
             "fontawesome" => "OFL-1.1 AND MIT",
+            "atkinson-next" | "atkinson-mono" => "OFL-1.1",
             "tom-select" | "material-icons" | "material-symbols" | "pdfjs" => "Apache-2.0",
             "dompurify" => "MPL-2.0 OR Apache-2.0",
             "highlightjs" => "BSD-3-Clause",
