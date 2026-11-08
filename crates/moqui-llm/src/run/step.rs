@@ -1266,7 +1266,8 @@ impl Turn {
         let loaded = quietly(|| window::load(facade, &conversation_id))?;
         let (history, tail) = loaded.messages();
         let frozen = quietly(|| {
-            prompt::freeze(facade, &conversation_id, &tools, || {
+            let constitution_key = self.run.constitution.as_ref().map(crate::constitution::snapshot::RunConstitution::key);
+            prompt::freeze(facade, &conversation_id, &tools, constitution_key.as_deref(), || {
                 let mut catalog = self.catalog(&tools, &history, tail.as_deref());
                 if let Some(size) = target
                     .model
@@ -1300,6 +1301,12 @@ impl Turn {
                     room_name: crate::chat::room_name(facade, &conversation_id).unwrap_or_default(),
                     ..PromptVars::default()
                 };
+                let constitution = self
+                    .run
+                    .constitution
+                    .as_ref()
+                    .and_then(|picked| crate::constitution::snapshot::section(facade, picked))
+                    .unwrap_or_default();
                 let instructions = self
                     .agent
                     .row
@@ -1314,6 +1321,7 @@ impl Turn {
                         variant: target.model.behavior.prompt_variant,
                         vars: &vars,
                         agent_instructions: &instructions,
+                        constitution: &constitution,
                         org_instructions: &user_facts.org_instructions,
                         catalog: &catalog,
                         user_facts: facts,

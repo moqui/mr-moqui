@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The origins trusted for reading Constitution references inside the app (the reference dialog): instance policy in
+    runtime/conf/ConstitutionOrigins.json, separate from the document (a reset leaves it) and from CORS. Exact https://
+    origins on the default port; an organization's document cannot add one. A reference of another origin is listed
+    but does not open in the dialog. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Origins" default-menu-index="5">
+
+    <transition name="addOrigin">
+        <actions>
+            <service-call name="org.moqui.admin.ConstitutionServices.get#ReferenceOrigins" out-map="policy"/>
+            <service-call name="org.moqui.admin.ConstitutionServices.store#ReferenceOrigins"
+                    in-map="{origins: (policy.originList || []).concat([context.origin || '']), expectedRevision: context.expectedRevision}"/>
+        </actions>
+        <default-response url="."/><error-response url="."/>
+    </transition>
+    <transition name="removeOrigin">
+        <actions>
+            <service-call name="org.moqui.admin.ConstitutionServices.get#ReferenceOrigins" out-map="policy"/>
+            <service-call name="org.moqui.admin.ConstitutionServices.store#ReferenceOrigins"
+                    in-map="{origins: (policy.originList || []).filter((origin) => origin != context.origin), expectedRevision: context.expectedRevision}"/>
+        </actions>
+        <default-response url="."/><error-response url="."/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.admin.ConstitutionServices.get#ReferenceOrigins" out-map="policy"/>
+        <set field="originRows" from="(policy.originList || []).map((origin) => ({origin}))"/>
+    </actions>
+    <widgets>
+        <container-box id="ConstitutionOriginBox"><box-header title="Trusted reference origins"/><box-toolbar>
+            <container-dialog id="AddOriginDialog" button-text="Add origin" icon="sym_o_add" width="560" title="Trust a reference origin"
+                    condition="policy.canEdit == 'Y'">
+                <label text="References on this origin open in the app's reference dialog, for every reader. Its pages must allow being framed." type="p"/>
+                <form-single name="AddOriginForm" transition="addOrigin">
+                    <field name="expectedRevision" from="policy.revision"><default-field><hidden/></default-field></field>
+                    <field name="origin" from="''"><default-field title="Origin" tooltip="https://host, no path, no port, no wildcard"><text-line size="50"/></default-field></field>
+                    <field name="submitButton"><default-field title="Add origin"><submit/></default-field></field>
+                </form-single>
+            </container-dialog>
+        </box-toolbar><box-body>
+            <label text="${policy.customized == 'Y' ? 'Set for this instance (runtime/conf/ConstitutionOrigins.json).' : 'The default: https://grok-the-rock.org.'}" type="p"/>
+            <label text="The policy file cannot be used, so no origin is trusted: ${policy.problem}" type="p" style="text-warning" condition="policy.problem"/>
+            <form-list name="OriginList" list="originRows" skip-form="true">
+                <field name="origin"><default-field title="Origin"><display/></default-field></field>
+                <field name="actions" align="right"><default-field title="">
+                    <link url="removeOrigin" text="Remove" icon="sym_o_delete" btn-type="danger" condition="policy.canEdit == 'Y'"
+                            confirmation="Stop trusting ${origin}? Its references, old ones too, no longer open in the app."
+                            parameter-map="{origin: origin, expectedRevision: policy.revision}"/>
+                </default-field></field>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

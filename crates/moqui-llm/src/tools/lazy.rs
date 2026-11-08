@@ -844,7 +844,11 @@ fn run_service(
     }
     if entry.classification.is_read() {
         let guard = fence::enter(format!("tool {}", entry.name));
-        let ran = call_service(&checked.service, &checked.cleaned);
+        // the run is the trusted context a READ service may read (get#ConstitutionReferences answers from its snapshot)
+        let run_id = ctx.run.map(|run| run.run_id.clone());
+        let ran = crate::constitution::services::with_run(run_id.as_deref(), || {
+            call_service(&checked.service, &checked.cleaned)
+        });
         if let Some(refused) = fenced_refusal(&entry.name, &guard) {
             return refused;
         }

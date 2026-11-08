@@ -264,6 +264,7 @@ pub fn schedule_feed_receive(facade: &EntityFacade, pending_ids: Vec<String>) ->
 fn is_security_check(actions: &str) -> bool {
     actions.contains("UserSecurityChecks.assertPrivilegedGroupMembership(")
         || actions.contains("UserSecurityChecks.assertSealedPermissionGrant(")
+        || actions.contains("UserSecurityChecks.assertSealedGroupMembership(")
 }
 
 pub(super) fn to_lib(err: crate::context::Error) -> Error {

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Constitution section of an agent's system prompt in a language, exactly as a run that starts now in that
+    language gets it from the global document: the shared instructions, each rule's id, title and agent instructions,
+    and the reference hint. Never cut; its size counts toward the model's context. Human descriptions, provenance and
+    references are not in it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Agent Prompt" default-menu-index="3">
+    <parameter name="locale"/>
+    <actions>
+        <service-call name="org.moqui.admin.ConstitutionServices.get#Constitution" out-map="cons"
+                in-map="{scope: 'global', locale: context.locale || null}"/>
+        <set field="locale" from="cons.locale"/>
+        <service-call name="org.moqui.admin.ConstitutionServices.preview#ConstitutionPrompt" out-map="preview"
+                in-map="{scope: 'global', locale: locale}"/>
+        <set field="fallbackList" from="preview.fallbackList || []"/>
+    </actions>
+    <widgets>
+        <container-box id="ConstitutionPromptBox"><box-header title="Agent prompt section"/><box-body>
+            <section-include name="ConstitutionSource" location="component://tools/template/ConstitutionParts.xml"/>
+            <section-include name="ConstitutionLanguage" location="component://tools/template/ConstitutionParts.xml"/>
+            <label text="${preview.characters ?? 0} characters, ${preview.bytes ?? 0} bytes in UTF-8, in ${preview.locale ?? locale}. A run keeps the section it started with; a change applies from the next run." type="p"/>
+            <section name="FallbackSection" condition="fallbackList.length"><widgets>
+                <label text="These texts have no ${preview.locale ?? locale} translation and come from another language:" type="p" style="text-warning"/>
+                <form-list name="FallbackList" list="fallbackList" skip-form="true">
+                    <field name="path"><default-field title="Field"><display/></default-field></field>
+                    <field name="locale"><default-field title="From"><display/></default-field></field>
+                </form-list>
+            </widgets></section>
+            <label text="${preview.promptText ?? ''}" type="pre" encode="true"/>
+        </box-body></container-box>
+    </widgets>
+</screen>

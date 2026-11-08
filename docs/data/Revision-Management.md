@@ -253,7 +253,8 @@ rule (below) holds for every caller.
 `get#DriveMembers`, `get#UserDrives` (the bytes used only with `includeUsage`, and a records drive's only with
 `includeRecordsUsage` too, as sizing reads every file under a drive), `get#DriveUsage` (the bytes of one drive or a list,
 for a quota bar shown when it is needed; a records drive's for its managers), `export#Drive` (a `db` repository as a bare
-repository on disk, a folder drive as a zip). Files: `list#Folder` (size, modified and modified by from the last change,
+repository on disk, a folder drive as a zip), `find#OwnedDrives` and `transfer#DriveOwner` (a shared drive's owner changed
+by its owner, or with `DRIVE_OWNER_CHANGE` when the owner leaves; the new owner an enabled internal account). Files: `list#Folder` (size, modified and modified by from the last change,
 version and note, shared, favorite, tags, content and file type), `get#ResourceInfo`, `find#Resources` (through the `MoquiDriveFile`
 search document when search is available, else a walk), `find#Recent`, `upload#Resource` (one change set, a version note,
 conflicts replace, keepBoth or skip, the quota), `save#Text`, `create#Folder`, `rename#Resource`, `move#Resource` and

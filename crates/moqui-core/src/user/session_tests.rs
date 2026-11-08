@@ -343,6 +343,88 @@ fn a_user_ends_another_session_of_theirs_by_its_visit() {
     assert_eq!(user_after, None);
 }
 
+/// An administrator's revocation (impl-admin P4, F4, F42): every session and open visit of another user ends at once, on
+/// this server and by the cluster notice, while the caller's own session stays; and a live session of an account
+/// disabled for good signs out on its next request, where a tarpit lock (disabled with a time) leaves it signed in.
+#[test]
+fn every_session_of_a_user_ends_and_a_disabled_account_signs_out() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    create_user(&facade, "ada", "Secret1!");
+    let browser = |factory: &Arc<ExecutionContextFactory>| {
+        let factory = Arc::clone(factory);
+        std::thread::spawn(move || {
+            let ctx = factory.new_context();
+            let _entered = ctx.enter();
+            let guard = bind(&factory, None, None, false).unwrap();
+            login::login_user("ada", "Secret1!").unwrap();
+            start_deferred_visit().unwrap();
+            flush_dirty(&factory).unwrap();
+            (
+                guard.session_cookie_header().unwrap(),
+                guard.session_id(),
+                visit_id().unwrap().unwrap(),
+            )
+        })
+        .join()
+        .unwrap()
+    };
+    let signed_in = |factory: &Arc<ExecutionContextFactory>, cookie: String| {
+        let factory = Arc::clone(factory);
+        std::thread::spawn(move || {
+            let ctx = factory.new_context();
+            let _entered = ctx.enter();
+            let _guard = bind(&factory, Some(cookie_value(&cookie)), None, false).unwrap();
+            current_user_id().unwrap()
+        })
+        .join()
+        .unwrap()
+    };
+    let (first_cookie, first_id, first_visit) = browser(&factory);
+    let (second_cookie, _, _) = browser(&factory);
+    // the administrator's own request: another user, whose session is kept
+    let guard = bind(&factory, None, None, false).unwrap();
+    set_user("root", "root");
+    assert!(end_user_sessions("", None).is_err());
+    assert_eq!(end_user_sessions("ada", Some(&[])).unwrap(), 0);
+    assert_eq!(end_user_sessions("ada", None).unwrap(), 2);
+    assert_eq!(
+        current_user_id().unwrap().as_deref(),
+        Some("root"),
+        "the caller's own session stays"
+    );
+    drop(guard);
+    let ended = facade
+        .find(VISIT)
+        .unwrap()
+        .eq("visitId", Value::string(&first_visit))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert!(ended.get("thruDate").is_some_and(|value| !value.is_null()));
+    assert!(load_session_optional(&facade, &first_id).is_none());
+    assert_eq!(signed_in(&factory, first_cookie), None);
+    assert_eq!(signed_in(&factory, second_cookie), None);
+
+    // a tarpit lock leaves a live session signed in; a permanent disable ends it at the next request
+    let (cookie, _, _) = browser(&factory);
+    let mut account = facade
+        .find(USER_ACCOUNT)
+        .unwrap()
+        .eq("userId", Value::string("ada"))
+        .one()
+        .unwrap()
+        .unwrap();
+    account.set("disabled", Value::string("Y"));
+    account.set("disabledDateTime", login::now_value());
+    account.update(&facade).unwrap();
+    assert_eq!(signed_in(&factory, cookie.clone()).as_deref(), Some("ada"));
+    account.set("disabledDateTime", Value::Null);
+    account.update(&facade).unwrap();
+    assert_eq!(signed_in(&factory, cookie), None);
+}
+
 /// Another server ended a session this one holds live (its `end#UserVisit` deleted the row and published
 /// `session-end`): the live copy is dropped, so its cookie starts over signed out and no flush writes the row back.
 #[test]

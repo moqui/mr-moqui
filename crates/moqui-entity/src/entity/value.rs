@@ -952,7 +952,9 @@ impl EntityFacade {
             match known {
                 Some(row) => Some(row),
                 None => {
-                    let keys = self.pk_map(entity_name, &values)?;
+                    // The key converted to the fields' types, as the write binds it: a date-time given as epoch
+                    // milliseconds (`fromDate: 0`) is a timestamp to the database, not a number.
+                    let keys = self.normalize_values(entity_name, self.pk_map(entity_name, &values)?, true)?;
                     let _raw = super::field_rw::RawReadGuard::enter();
                     self.refresh_by_pk(entity_name, &keys)?.map(|row| row.into_fields())
                 }

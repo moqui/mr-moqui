@@ -691,7 +691,90 @@ pub(super) fn fill_security_checks<'js>(ctx: &Ctx<'js>, checks: &Object<'js>) ->
         "assertDocumentExpression",
         checks.set("assertDocumentExpression", function),
     )?;
+    let function = caught(
+        ctx,
+        "assertSealedGroupMembership",
+        Function::new(ctx.clone(), security_assert_sealed_group_membership),
+    )?;
+    caught(
+        ctx,
+        "assertSealedGroupMembership",
+        checks.set("assertSealedGroupMembership", function),
+    )?;
+    let function = caught(
+        ctx,
+        "privilegedGroups",
+        Function::new(ctx.clone(), security_privileged_groups),
+    )?;
+    caught(ctx, "privilegedGroups", checks.set("privilegedGroups", function))?;
+    let function = caught(
+        ctx,
+        "sealedPermissions",
+        Function::new(ctx.clone(), security_sealed_permissions),
+    )?;
+    caught(ctx, "sealedPermissions", checks.set("sealedPermissions", function))?;
+    let function = caught(
+        ctx,
+        "endUserSessions",
+        Function::new(ctx.clone(), security_end_user_sessions),
+    )?;
+    caught(ctx, "endUserSessions", checks.set("endUserSessions", function))?;
     Ok(())
+}
+
+/// `UserSecurityChecks.endUserSessions(userId, visitIds)`: end the web sessions of a user, those of the visits named (a
+/// list of visit ids) or with none every session and open visit of the user, on every server of the cluster, keeping the
+/// current request's own (`user::end_user_sessions`); the number of web sessions ended. For
+/// `org.moqui.admin.IdentityServices` (revoke#Sessions, revoke#AccountAccess), which check who may first: this decides
+/// no authority.
+fn security_end_user_sessions<'js>(
+    ctx: Ctx<'js>,
+    user_id: Opt<JsValue<'js>>,
+    visit_ids: Opt<JsValue<'js>>,
+) -> rquickjs::Result<i64> {
+    host_guard(&ctx, || {
+        let user_id = opt_id_text(&ctx, &user_id)?;
+        let visits = match &visit_ids.0 {
+            Some(value) if !value.is_null() && !value.is_undefined() => {
+                let host = js_to_host(&ctx, value)?;
+                let items = super::values::value_items(&host).unwrap_or_default();
+                Some(
+                    items
+                        .iter()
+                        .map(moqui_lib::object::to_plain_string)
+                        .filter(|id| !id.trim().is_empty())
+                        .collect::<Vec<String>>(),
+                )
+            }
+            _ => None,
+        };
+        crate::user::end_user_sessions(&user_id, visits.as_deref())
+            .map(|count| i64::try_from(count).unwrap_or(i64::MAX))
+            .map_err(|err| Exception::throw_message(&ctx, err.message()))
+    })
+}
+
+/// `UserSecurityChecks.privilegedGroups()`: the effective privileged group ids, sorted (the framework's list and every
+/// component's `privileged-group` element), so a screen marks a group and a service names why a membership is refused.
+fn security_privileged_groups(ctx: Ctx<'_>) -> rquickjs::Result<JsValue<'_>> {
+    host_guard(&ctx, || {
+        let ids = crate::service::privileged_groups()
+            .into_iter()
+            .map(Value::String)
+            .collect();
+        host_to_js(&ctx, Value::List(ids))
+    })
+}
+
+/// `UserSecurityChecks.sealedPermissions()`: the effective sealed permission ids, sorted, as `privilegedGroups`.
+fn security_sealed_permissions(ctx: Ctx<'_>) -> rquickjs::Result<JsValue<'_>> {
+    host_guard(&ctx, || {
+        let ids = crate::service::sealed_permissions()
+            .into_iter()
+            .map(Value::String)
+            .collect();
+        host_to_js(&ctx, Value::List(ids))
+    })
 }
 
 fn security_assert_document_expression<'js>(ctx: Ctx<'js>, field_path: Opt<JsValue<'js>>) -> rquickjs::Result<()> {
@@ -720,6 +803,32 @@ fn security_assert_sealed_permission_grant<'js>(
     host_guard(&ctx, || {
         let facade = facade_of(&ctx)?;
         crate::service::assert_sealed_permission_grant(&facade, &opt_id_text(&ctx, &user_permission_id)?)
+            .map_err(|err| throw_lib(&ctx, &err))
+    })
+}
+
+/// `UserSecurityChecks.assertSealedGroupMembership(userGroupId, thruDate, hasStored, storedThruDate)`: the
+/// `UserGroupMemberSealed` rule's check (`Security.eecas.xml`); `hasStored` is true for an update that found the stored
+/// row, whose end is `storedThruDate`, so a change that only ends the membership sooner passes.
+fn security_assert_sealed_group_membership<'js>(
+    ctx: Ctx<'js>,
+    user_group_id: Opt<JsValue<'js>>,
+    thru_date: Opt<JsValue<'js>>,
+    has_stored: Opt<JsValue<'js>>,
+    stored_thru_date: Opt<JsValue<'js>>,
+) -> rquickjs::Result<()> {
+    host_guard(&ctx, || {
+        let facade = facade_of(&ctx)?;
+        let host = |value: &Opt<JsValue<'js>>| -> rquickjs::Result<Value> {
+            match &value.0 {
+                Some(value) if !value.is_null() && !value.is_undefined() => js_to_host(&ctx, value),
+                _ => Ok(Value::Null),
+            }
+        };
+        let stored = host(&stored_thru_date)?;
+        let has_stored = has_stored.0.as_ref().and_then(JsValue::as_bool).unwrap_or(false);
+        let ends_sooner = crate::service::membership_ends_sooner(&host(&thru_date)?, has_stored.then_some(&stored));
+        crate::service::assert_sealed_group_membership(&facade, &opt_id_text(&ctx, &user_group_id)?, ends_sooner)
             .map_err(|err| throw_lib(&ctx, &err))
     })
 }

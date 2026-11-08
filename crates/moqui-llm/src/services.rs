@@ -61,6 +61,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     super::gateway::register(map)?;
     super::ai_task::register(map)?;
     super::remote::register(map)?;
+    super::constitution::services::register(map)?;
     super::approval::steps::register(map)?;
     super::skills::services::register(map)
 }
@@ -1062,6 +1063,23 @@ fn get_prompt_preview(parameters: &Parameters, facade: &EntityFacade) -> Out {
         },
     );
     let instructions = prompt::agent_instructions(&factory, &agent);
+    // the Constitution a run started now would use (the user's organization, locale)
+    let constitution = if user_id.is_empty() {
+        String::new()
+    } else {
+        let scope = super::constitution::snapshot::scope_for(surface, false, &user_id);
+        match super::constitution::resolve::resolve(&factory, scope) {
+            Ok(resolved) => {
+                let locale = super::constitution::snapshot::user_locale(facade, &user_id)
+                    .unwrap_or_else(|| super::constitution::document::default_locale(&resolved.document));
+                super::constitution::render::prompt_section(&resolved.document, &locale).text
+            }
+            Err(diagnostics) => {
+                message(format!("No Constitution applies: {}", diagnostics.join(" ")), "warning");
+                String::new()
+            }
+        }
+    };
     let prefix = prompt::build_prefix(
         &PromptTexts::of(&factory),
         &PrefixSpec {
@@ -1070,6 +1088,7 @@ fn get_prompt_preview(parameters: &Parameters, facade: &EntityFacade) -> Out {
             variant,
             vars: &vars,
             agent_instructions: &instructions,
+            constitution: &constitution,
             org_instructions: &user_facts.org_instructions,
             catalog: &catalog,
             user_facts: &facts,

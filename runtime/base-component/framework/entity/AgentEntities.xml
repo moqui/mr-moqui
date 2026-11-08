@@ -112,6 +112,14 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="classificationEnumId"/></relationship>
     </entity>
 
+    <entity entity-name="AgentConstitutionSnapshot" package="moqui.agent" use="transactional" cache="never">
+        <description>A Constitution document as it was, stored once by its hash: the document each agent run used
+            (AgentRun.constitutionHash) and the before and after of every saved change (docs/ai/Constitution.md).</description>
+        <field name="contentHash" type="text-medium" is-pk="true"/>
+        <field name="documentJson" type="text-very-long"/>
+        <field name="createdDate" type="date-time"/>
+    </entity>
+
     <!-- ========== Conversations and runs ========== -->
 
     <entity entity-name="AgentConversation" package="moqui.agent" use="transactional" cache="never">
@@ -139,6 +147,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastMessageSeq" type="number-integer"/>
         <field name="lastMessageDate" type="date-time"/>
         <field name="systemText" type="text-very-long"/>
+        <field name="constitutionKey" type="text-medium"><description>The run Constitution key (source, organization,
+            hash, locale) the frozen systemText was built for; a run with another key rebuilds it first</description></field>
         <field name="toolsHash" type="text-medium"/>
         <field name="promptVariant" type="text-short"/>
         <field name="skillCatalog" type="text-long"/>
@@ -223,6 +233,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="resultJson" type="text-very-long"/>
         <field name="errorCode" type="text-short"/>
         <field name="errorText" type="text-long"/>
+        <field name="constitutionSource" type="text-short"><description>Where the run's Constitution came from:
+            organization, instance, shipped or unavailable (docs/ai/Constitution.md); kept through its steps and resume</description></field>
+        <field name="constitutionOrgId" type="id"><description>The organization whose document the run used, or whose
+            document it would have used</description></field>
+        <field name="constitutionHash" type="text-medium"><description>The SHA-256 of the run's Constitution
+            (AgentConstitutionSnapshot)</description></field>
+        <field name="localeCode" type="text-short"><description>The normalized locale of the run's Constitution section:
+            the requester's (a job's run-as user's), else the document's default</description></field>
         <relationship type="one-nofk" related="moqui.agent.AgentConversation" short-alias="conversation"/>
         <relationship type="one-nofk" related="moqui.agent.AgentDefinition" short-alias="agent"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>

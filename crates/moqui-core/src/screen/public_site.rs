@@ -100,11 +100,11 @@ pub(super) fn refuses_framework_route(
         return false;
     }
     match MNode::parse_shared("moqui-conf", &factory.conf_text()) {
-        Ok(conf) => host_restricted(&conf, request),
+        Ok(conf) => host_restricted(factory, &conf, request),
         Err(err) => {
             tracing::error!(
                 "Public site host check of {}: the conf did not parse: {err}",
-                request.path
+                super::token_route::redact(factory, &request.path)
             );
             true
         }
@@ -129,7 +129,7 @@ fn screen_path_first(path: &str) -> String {
 }
 
 /// [`refuses_framework_route`] for a framework route on the request's host, over `conf`.
-fn host_restricted(conf: &MNode, request: &WebRequest) -> bool {
+fn host_restricted(factory: &ExecutionContextFactory, conf: &MNode, request: &WebRequest) -> bool {
     let Some(list) = conf.first_named("webapp-list") else {
         return false;
     };
@@ -168,7 +168,10 @@ fn host_restricted(conf: &MNode, request: &WebRequest) -> bool {
                     }
                 }
                 Err(err) => {
-                    tracing::error!("Public site host check {service} for {host}{}: {err}", request.path);
+                    tracing::error!(
+                        "Public site host check {service} for {host}{}: {err}",
+                        super::token_route::redact(factory, &request.path)
+                    );
                     return true;
                 }
             }

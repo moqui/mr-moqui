@@ -46,6 +46,7 @@ fn spec<'a>(
         variant,
         vars,
         agent_instructions: "Scope: this site's apps and the user's work in them.",
+        constitution: "",
         org_instructions: "",
         catalog,
         user_facts: facts,
@@ -322,13 +323,19 @@ fn the_prefix_runs_from_global_to_per_user_and_cuts_admin_text_to_its_cap() {
     let mut spec = spec(Surface::Drawer, PromptVariant::Small, &vars, &catalog, &facts, &tools);
     spec.agent_instructions = &long_instructions;
     spec.memory = &memory;
+    // the Constitution comes after the release texts and before the agent's and organization's instructions, whole
+    let shipped = std::fs::read_to_string(testing::framework_dir().join("docs/Constitution.json")).unwrap();
+    let constitution = crate::constitution::render::prompt_section(&serde_json::from_str(&shipped).unwrap(), "en").text;
+    spec.constitution = &constitution;
     let prefix = build_prefix(&texts, &spec);
     let names: Vec<&str> = prefix.sections.iter().map(|section| section.name).collect();
     assert_eq!(
         names,
-        ["core", "addendum", "small", "agent", "catalog", "facts", "memory", "language"]
+        ["core", "addendum", "small", "constitution", "agent", "catalog", "facts", "memory", "language"]
     );
-    let agent = &prefix.sections[3];
+    assert_eq!(prefix.sections[3].text, constitution.trim());
+    assert!(!prefix.sections[3].cut);
+    let agent = &prefix.sections[4];
     assert!(agent.cut && agent.text.chars().count() <= caps::AGENT_INSTRUCTIONS && agent.text.ends_with("…(cut)"));
     assert!(prefix
         .system_text
@@ -422,7 +429,7 @@ fn two_turns_send_byte_identical_prefixes() {
     };
     let facts = vec![("name".to_string(), "John Doe".to_string())];
     let mut built = 0;
-    let first = freeze(&facade, "PROMPT_TWO_TURNS", &tools, || {
+    let first = freeze(&facade, "PROMPT_TWO_TURNS", &tools, Some("shipped||h1|en"), || {
         built += 1;
         build_prefix(
             &texts,
@@ -446,7 +453,7 @@ fn two_turns_send_byte_identical_prefixes() {
         ..PromptVars::default()
     };
     let reordered: Vec<ToolSpec> = tools.iter().rev().cloned().collect();
-    let second = freeze(&facade, "PROMPT_TWO_TURNS", &reordered, || {
+    let second = freeze(&facade, "PROMPT_TWO_TURNS", &reordered, Some("shipped||h1|en"), || {
         built += 1;
         build_prefix(
             &texts,
@@ -525,9 +532,22 @@ fn two_turns_send_byte_identical_prefixes() {
         .cloned()
         .chain([ToolSpec::new("skill", "Load a skill.", serde_json::Value::Null)])
         .collect();
-    let changed = freeze(&facade, "PROMPT_TWO_TURNS", &more, || unreachable!()).unwrap();
+    let changed = freeze(&facade, "PROMPT_TWO_TURNS", &more, None, || unreachable!()).unwrap();
     assert!(changed.tools_changed && changed.tools.len() == 3);
-    assert!(freeze(&facade, "NO_SUCH_CONVERSATION", &tools, || unreachable!()).is_err());
+    assert!(freeze(&facade, "NO_SUCH_CONVERSATION", &tools, None, || unreachable!()).is_err());
+
+    // a run with another Constitution (an edit, an organization or a locale) rebuilds the prefix before its first call
+    let rebuilt = freeze(&facade, "PROMPT_TWO_TURNS", &tools, Some("instance||h2|en"), || {
+        built += 1;
+        let mut spec = spec(Surface::Drawer, PromptVariant::Standard, &second_vars, &catalog, &facts, &tools);
+        spec.constitution = "## Rules\n\nBe kind.";
+        build_prefix(&texts, &spec)
+    })
+    .unwrap();
+    assert_eq!(built, 2);
+    assert!(rebuilt.system_text.contains("## Rules\n\nBe kind.") && rebuilt.system_text.contains("Johnny"));
+    let again = freeze(&facade, "PROMPT_TWO_TURNS", &tools, Some("instance||h2|en"), || unreachable!()).unwrap();
+    assert_eq!(again.system_text, rebuilt.system_text, "the same key keeps the same bytes");
 }
 
 /// Words that name Mantle or its data: none may appear in a framework prompt, skill or tool text.

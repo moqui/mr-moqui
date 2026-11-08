@@ -674,6 +674,65 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <!-- A shared account's owner (mr-boss plan/impl-admin.md P6, F31): a shared mail account (EakShared) moves to a new owner when
+        its owner leaves, through the owned-resource contract of org.moqui.admin.IdentityServices. A personal account (Internal,
+        hosted or external, with its owner's own sign-in) is not transferred. -->
+    <service verb="find" noun="OwnedEmailAccounts" allow-remote="false">
+        <description>The shared mail accounts (EakShared, not removed) userId owns, each {resourceId (the emailAccountId),
+            resourceName (its name and address), resourceKind mailAccount, transferable, note (its member count)}; never mail.
+            The caller's own, or another user's with EMAIL_ACCOUNT_OWNER_CHANGE.</description>
+        <implements service="org.moqui.admin.IdentityServices.define#OwnedResourceLookup"/>
+        <actions><script><![CDATA[
+            resourceList = []
+            if (!ec.user.userId) { ec.message.addError('Sign in to see owned mail accounts'); return }
+            if (userId !== ec.user.userId && !ec.user.hasPermission('EMAIL_ACCOUNT_OWNER_CHANGE')) {
+                ec.message.addError('EMAIL_ACCOUNT_OWNER_CHANGE is required for another user\'s mail accounts'); return }
+            for (const row of ec.entity.find('moqui.basic.email.EmailAccount').condition('ownerUserId', userId)
+                    .condition('accountKindEnumId', 'EakShared').orderBy('accountName').disableAuthz().list()) {
+                if (row.statusId === 'EasRemoved') continue
+                const members = ec.entity.find('moqui.basic.email.EmailAccountUser').condition('emailAccountId', row.emailAccountId)
+                        .conditionDate('fromDate', 'thruDate', null).disableAuthz().count()
+                resourceList.push({resourceId: row.emailAccountId, resourceName: [row.accountName, row.emailAddress].filter(Boolean).join(' · ')
+                    || row.emailAccountId, resourceKind: 'mailAccount', transferable: true, note: members + ' member(s)'})
+            }
+        ]]></script></actions>
+    </service>
+    <service verb="transfer" noun="EmailAccountOwner" allow-remote="false">
+        <description>A shared mail account's owner changed from fromUserId to toUserId: by its owner, or with
+            EMAIL_ACCOUNT_OWNER_CHANGE. The new owner must be an enabled account, not ended and not an external user
+            (EXTERNAL_USER); a current member row of the new owner ends, as the owner manages, and both users' mail change cursors
+            start again (reset#MailChanges). Only a shared account (EakShared, not removed) is transferred. The server sign-in
+            stays the account's. Logged with the reason.</description>
+        <implements service="org.moqui.admin.IdentityServices.define#OwnedResourceTransfer"/>
+        <in-parameters><parameter name="emailAccountId" required="true"/></in-parameters>
+        <actions><script><![CDATA[
+            transferred = false
+            const me = ec.user.userId
+            if (!me) { ec.message.addError('Sign in to change a mail account\'s owner'); return }
+            const row = ec.entity.find('moqui.basic.email.EmailAccount').condition('emailAccountId', emailAccountId).disableAuthz().one()
+            if (row == null || row.ownerUserId !== fromUserId) { ec.message.addError(`Email account ${emailAccountId} is not owned by ${fromUserId}`); return }
+            if (fromUserId !== me && !ec.user.hasPermission('EMAIL_ACCOUNT_OWNER_CHANGE')) {
+                ec.message.addError('EMAIL_ACCOUNT_OWNER_CHANGE is required to change another user\'s mail account'); return }
+            if (row.accountKindEnumId !== 'EakShared' || row.statusId === 'EasRemoved') {
+                ec.message.addError(`Email account ${row.accountName || emailAccountId} is not a shared account: its owner is not changed`); return }
+            if (toUserId === fromUserId) { ec.message.addError('The new owner is the current owner'); return }
+            const account = ec.entity.find('moqui.security.UserAccount').condition('userId', toUserId).disableAuthz().one()
+            const now = Number(ec.user.nowTimestamp)
+            const ended = (value) => value != null && (value instanceof Date ? value.getTime() : Number(value) || Date.parse(String(value))) <= now
+            if (account == null || (account.disabled === 'Y' && account.disabledDateTime == null) || ended(account.terminateDate)) {
+                ec.message.addError(`User ${toUserId} cannot own a mail account: the account is not enabled`); return }
+            if (ec.service.sync().name('org.moqui.impl.ChatServices.get#ExternalUsers').parameter('userIdList', [toUserId])
+                    .disableAuthz().call()?.anyExternal !== false) {
+                ec.message.addError(`User ${toUserId} cannot own a mail account: an external user`); return }
+            ec.entity.find('moqui.basic.email.EmailAccountUser').condition('emailAccountId', emailAccountId).condition('userId', toUserId)
+                    .conditionDate('fromDate', 'thruDate', null).disableAuthz().updateAll({thruDate: ec.user.nowTimestamp})
+            row.ownerUserId = toUserId
+            row.update()
+            transferred = true
+            ec.service.sync().name('org.moqui.impl.EmailClientServices.reset#MailChanges').parameter('userIdList', [fromUserId, toUserId]).disableAuthz().call()
+            ec.logger.info(`Email account ${emailAccountId} owner ${fromUserId} -> ${toUserId} by ${ec.user.username}${reason ? ': ' + reason : ''}`)
+        ]]></script></actions>
+    </service>
     <service verb="add" noun="EmailAccountUser">
         <description>Share an account with a user (manage permission; not the Internal account), or change their permission:
             EapRead, EapSend or EapManage. A user newly sharing it has their mail change cursor reset (reset#MailChanges).</description>

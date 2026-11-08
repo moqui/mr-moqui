@@ -15,3 +15,10 @@ browser.runInPage({
         "/files/runtime/base-component/webroot/test/client/pages/WebrootAssistCanvas-module.js", "/js/WebrootAssistCanvas.js"],
     test: "/files/runtime/base-component/webroot/test/client/pages/WebrootAssistCanvas.page.js",
 })
+
+// The Constitution's reading view and reference dialog (js/WebrootConstitution.js): its logic, without Vue.
+
+browser.runInPage({
+    scripts: ["/js/MoquiLib.js", "/js/WebrootAssist.js", "/js/WebrootConstitution.js"],
+    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootConstitution.page.js",
+})

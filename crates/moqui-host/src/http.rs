@@ -193,7 +193,11 @@ struct LoggedIdentity {
 #[derive(Clone)]
 struct RequestTelemetry {
     telemetry: Arc<moqui_core::telemetry::Telemetry>,
+    /// The token routes of the conf now, whose tokens the request log leaves out.
+    token_routes: TokenRoutes,
 }
+
+type TokenRoutes = Arc<dyn Fn() -> Vec<moqui_core::screen::token_route::TokenRoute> + Send + Sync>;
 
 /// Bind `bind` (and the HTTPS address when there is one), publish the local addresses, and serve until `stop` is
 /// dropped or a ctrl-c arrives. With no `bind` nothing listens, and the app is reached in process only
@@ -321,6 +325,10 @@ pub(crate) async fn listen(
     // Every request owns its SERVER span across the asynchronous response.
     let request_telemetry = RequestTelemetry {
         telemetry: moqui_core::telemetry::for_factory(&factory),
+        token_routes: {
+            let factory = Arc::clone(&factory);
+            Arc::new(move || moqui_core::screen::token_route::token_routes(&factory))
+        },
     };
     // inside the request log: on an edge node, a terminate host's request goes down its node's link here
     let app = app.layer(axum::middleware::from_fn(edge_forward));
@@ -1120,7 +1128,9 @@ async fn log_http(State(state): State<RequestTelemetry>, mut request: Request, n
         })
         .unwrap_or_default();
     let host = request_header(request.headers(), "host");
-    let path = request.uri().path().to_string();
+    // a token route's token is its credential: the log has `/i/:token/...` for the path, a Referer and a returnTo
+    let token_routes = (state.token_routes)();
+    let path = moqui_core::screen::token_route::redact_url(&token_routes, request.uri().path()).into_owned();
     let query = request.uri().query().unwrap_or("").to_string();
     let version = request.version();
     let referrer = request_header(request.headers(), "referer");
@@ -1131,10 +1141,13 @@ async fn log_http(State(state): State<RequestTelemetry>, mut request: Request, n
     span.set_attribute("server.address", Value::string(&host));
     span.set_attribute("client.address", Value::string(&client_ip));
     span.set_attribute("user_agent.original", Value::string(&agent));
-    span.set_attribute("url.query", Value::string(redacted_query(&query)));
+    span.set_attribute("url.query", Value::string(redacted_query(&query, &token_routes)));
     span.set_attribute(
         "http.request.header.referer",
-        Value::string(moqui_core::telemetry::redact_text(&referrer)),
+        Value::string(moqui_core::screen::token_route::redact_url(
+            &token_routes,
+            &moqui_core::telemetry::redact_text(&referrer),
+        )),
     );
     span.set_attribute("network.protocol.version", Value::string(format!("{version:?}")));
     // A browser page's later requests name the page's trace; it is recorded, never used as a parent.
@@ -1321,15 +1334,16 @@ impl Drop for TelemetryBody {
     }
 }
 
-fn redacted_query(query: &str) -> String {
+fn redacted_query(query: &str, token_routes: &[moqui_core::screen::token_route::TokenRoute]) -> String {
     moqui_core::web::form_pairs(query)
         .into_iter()
         .map(|(name, value)| {
-            // The framework's one secret-name rule: `api_key` is redacted, `primaryKeyId` is not.
+            // The framework's one secret-name rule: `api_key` is redacted, `primaryKeyId` is not. A path or URL under a
+            // token route (a sign-in step's `returnTo`) loses its token.
             let value = if moqui_core::telemetry::sensitive_key(&name) {
                 "[REDACTED]".into()
             } else {
-                value
+                moqui_core::screen::token_route::redact_url(token_routes, &value).into_owned()
             };
             format!("{name}={value}")
         })

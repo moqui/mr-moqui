@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- A dashboard playlist played in kiosk mode. A screen that mounts it under another app (BOSS Insights › Playlists) takes in its
+    data transition, which the player calls at that screen's path, and its dashboard links open the app's Dashboard (the reportLinks
+    map of its root, docs/tools/Monitoring.md "Mounting the report screens"); Tools' Dashboards app keeps its own. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Playlist">
     <parameter name="definitionId" required="true"/><parameter name="from"/><parameter name="thru"/>
     <transition name="data" method="get" read-only="true">
@@ -20,7 +23,7 @@
         if (definition.type!=='report' || definition.body.kind!=='playlist') throw new Error('Choose a dashboard playlist')
         playlistTitle=definition.title;playlistSeconds=definition.body.seconds || 30;playlistEntries=[]
         // Links still open the full dashboard; the playlist requests authorized frames from its data transition.
-        const dashboardPath=sri.buildUrl('//apps/dashboards/Dashboard').path
+        const dashboardPath=sri.buildUrl(ec.context.get('reportLinks')?.dashboard ?? '//apps/dashboards/Dashboard').path
         for (const [index,item] of (definition.body.playlist || []).slice(0,50).entries()) {
             try {
                 const dashboard=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId:item.definitionId}).call().definition
@@ -31,8 +34,8 @@
     <widgets>
         <label text="${playlistTitle}" type="h4"/>
         <render-mode>
-            <text type="qvt"><![CDATA[<m-report-playlist source="${WebUtilities.encodeHtml(sri.buildUrl('//apps/dashboards/Playlist/data').getUrlWithParams())}" :items="${WebUtilities.encodeHtml(JSON.stringify(playlistEntries))}" :seconds="${playlistSeconds}"></m-report-playlist>]]></text>
-            <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-playlist',props:{source:sri.buildUrl('//apps/dashboards/Playlist/data').getUrlWithParams(),definitionId:definitionId,from:from || 'now-7d',thru:thru || 'now',items:playlistEntries,seconds:playlistSeconds}})}]]></text>
+            <text type="qvt"><![CDATA[<m-report-playlist source="${WebUtilities.encodeHtml(sri.buildUrl('data').getUrlWithParams())}" :items="${WebUtilities.encodeHtml(JSON.stringify(playlistEntries))}" :seconds="${playlistSeconds}"></m-report-playlist>]]></text>
+            <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-playlist',props:{source:sri.buildUrl('data').getUrlWithParams(),definitionId:definitionId,from:from || 'now-7d',thru:thru || 'now',items:playlistEntries,seconds:playlistSeconds}})}]]></text>
             <text type="html,html-print,text"><![CDATA[<p>Open a dashboard below.</p>]]></text>
         </render-mode>
         <form-list name="PlaylistDashboards" list="playlistEntries" skip-form="true">

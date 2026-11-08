@@ -355,6 +355,79 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   a preview of several CSVs downloads as a zip. Preview, Send now and Pause are on Dashboards › Reports. An empty report is skipped. Saving to a server
   location needs `REPORT_SAVE_LOCATION`.
 
+### Mounting the report screens
+
+An app mounts the Dashboards screens under its own root (BOSS Insights does: impl-insights P2) with a screen of its own
+per Tools screen that includes it (`include-screen share-scope="true"`) and takes in its transitions
+(`transition-include`): Home (the list, with `definitionType` set), Dashboard, Definition, Panels, Explore, Split and
+Playlist. The screens run under the app's authorization; using them needs no `DASHBOARDS_APP` or
+`REPORT_DATASETS_ADMIN`, only the ReportServices operations a capability uses and each dataset's own artifact.
+
+The app's root sets, in its `always-actions` so that the transitions read them too:
+
+| Context | What it does |
+|---|---|
+| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns) and `share`. Without the map the screens keep Tools' own (`//apps/dashboards/...`); a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and the editor's save keeps the saved group, whatever group is posted |
+| `reportFixedVariables` | Dashboard variables the app fixes, such as the organization in scope: a viewer's `var-` parameter, carried value or panel export and inspect variables never replace one, and it is shown as a constant (set by the Dashboard screen's own `always-actions` when it depends on the request) |
+| `reportHiddenComponents` | Components whose shipped definitions the list leaves out (Insights: `tools`, the telemetry dashboards) |
+| `reportDefinitionTypes` | Set by an editor's screen in its `always-actions`: the definition types it offers, and the only ones its save and copy take |
+
+Dashboard sends the links to the browser and the terminal as the dashboard's `appLinks`, server paths beside
+`screenUrl` (`definition`, `panel`, `explore`, `alertRule`, `dashboard`), and Explore's count over time carries its own
+`explore`; the panel menu, the `e` key, Explore from a panel, a filter outside a dashboard and the duplicate and remove
+posts use them, and a dashboard without them uses Tools' screens. Under a mount the editor's dataset choices are the
+datasets the author may read (`list#Datasets`, each dataset's artifact), a new panel starts on the first of them, and
+Explore and Split open on one of them. A panel the viewer may not read (a dataset refused, a failed query) says "Not
+available" with the reason, never "No data". Saving a definition still checks every dataset it references as the
+author, so a copy of a dashboard over a dataset the author may not read is refused until the dataset is granted.
+
+Request parameters are names in a screen's context, so these names are set only by screens: Tools' Dashboards and
+Monitor roots set them to null, and a mount sets each in `always-actions` of the screen that reads it.
+
+The mount's root grant is inherited by the screens it mounts (impl-admin F34): deny, on the screens of an area only some
+groups use, the root's groups and grant the others there, and take in only the transitions the area needs. An
+inheritable `AUTHZT_ALWAYS` on a screen passes every deny below it, including the engine operations' own, so grant such
+an area with `inheritAuthz="N"` on the screen and on its transitions by name (`AT_XML_SCREEN_TRANS`, `<screen>/<transition>`,
+as BOSS Insights' editors): a transition not named is refused, and each engine operation is checked by its own grant. The regression
+spec is `tools/test/ReportMounts.spec.js`, over the test mount `tools/test/screen/ReportMount.xml`.
+
+### Business datasets
+
+A dataset definition whose body says `"signal": "business"` (over a DataDocument, `documentType`) is a business dataset, kept
+by `crates/moqui-report/src/business.rs` (BOSS impl-insights P3, INS-03):
+
+- **Admission.** It is read only once admitted (a `moqui.report.BusinessDataset` row with `admittedDate` and no `retiredDate`),
+  except by its steward, who holds the dataset's update artifact (`org.moqui.report.dataset.<id>`, action update; `ADMIN` holds
+  all through `REPORT_DATASETS_ADMIN`). Until then a reader's query is refused "dataset … is not admitted", so a panel over it says
+  "Not available", never "No data". `store#BusinessDataset` with `admit` admits it only when three checks pass: its document is in
+  a registered DataFeed (a `DataFeedDocument` row), the document's index is built (and not older than its last field or condition
+  change), and its `rowFilterService` is a registered scope policy. An admitted dataset whose definition no longer binds a
+  registered policy is read only by its steward again, and so is one whose body names an `indexName` or a `serviceName` (a
+  business dataset reads its one document). `find#BusinessDatasets` reports each dataset's state
+  (admitted, review, retired, unavailable) and checks live; `validate#BusinessDataset` gives one dataset's checks to its steward.
+- **Scope policies** are services registered as `ReportScopePolicy` enumerations (`enumCode` the service): the framework's
+  `ReportUserGroups` (`get#UserGroupRowFilter`, rows whose field is one of the viewer's groups) and Mantle's `MantleOrganization`
+  (`mantle.party.PartyServices.get#OrganizationRowFilter`, the viewer's organizations). A `rowFilterService` is called with
+  `userId`, the dataset's id and the dataset's `rowFilterParameters` (such as `{"organizationField": "vendorPartyId"}`), so one
+  policy serves every dataset by naming its field; a registered policy runs without a grant of its own (it is the engine's,
+  reviewed code), any other with the viewer's. Its filter is added before documents, suggestions, value counts, aggregations,
+  panel exports and playlists alike, so a dashboard's variables or a query's `ignoreVariables` cannot widen it.
+- **Stewardship.** `create#BusinessDataset` (a dataset over a registered feed's document with a registered policy, owned by the
+  steward, waiting for review; a saved dataset's body changed any other way, by `save#Definition`, a copy, a restore, an import or
+  a git pull, returns it to review, and deleting the definition deletes its admission), `store#BusinessDataset` (title, time field, policy and parameters of a saved dataset, which return
+  it to review; a shipped dataset's definition is its component's; steward; admit; retire; `expectedVersion`),
+  `store#BusinessDatasetFields` (plain field paths only, no expression, secret or encrypted entity field; unique names; removing or renaming a field
+  any definition over the dataset names is refused with those definitions' names) and `store#BusinessDatasetConditions` (a field of
+  the document and an operator of the list, never a post-query expression). `index#BusinessDataset` rebuilds the dataset's
+  document of its feed only (`index#DataFeedDocuments` with the document), for its steward, recording the time and count. An
+  application grants its readers each dataset's artifact (view) and its documents' `DataDocumentUserGroup` rows; admission does
+  not grant.
+- **The document is read through its dataset.** A dataset that is not a business one (a DataDocument by its id, an `index:`
+  alias, a definition without the signal) over a document some business dataset reads is opened only to a holder of that
+  dataset's update artifact (the steward of a saved one, `ADMIN`), so a view grant on such an artifact, by pattern or by mistake,
+  reaches no unfiltered rows.
+- The regression spec is `framework/test/BusinessDatasets.spec.js`.
+
 ## Regressions and incidents
 
 The `detect_Regressions_5min` job (`detect#Regressions`) compares each service version that served requests in the
@@ -507,6 +580,8 @@ ends. The services are `org.moqui.monitor.MonitorServices.list#RuntimeSettings`,
 - Every query runs as the viewer. A dataset is authorized as the artifact `org.moqui.report.dataset.<id>`
   (`MONITOR_APP` holds the `otel_*` ones; `REPORT_DATASETS_ADMIN` holds all), plus `DataDocumentUserGroup` for a
   DataDocument. A saved panel never widens access.
+- A business dataset is read only once admitted, and its row filter is a registered scope policy
+  ([Business datasets](#business-datasets)).
 - Row filters (`rowFilter`, `contextFilters` from the signed-in identity, or a `rowFilterService`) are added by the
   server before documents, ranking, totals, aggregations and exports; a client never supplies them. Existing entity
   filters are not translated automatically: write the dataset filters an organization needs, and grant business roles
@@ -552,6 +627,10 @@ take the index refresh interval to appear.
   ```
 
   Then set the report email template's SMTP server.
+- **Business datasets** (Insights P3): the entity check creates `moqui.report.BusinessDataset`; load `ReportSetupData.xml` again
+  for the `ReportScopePolicy` type and mr-mantle's `MonitoringSalesSecurityData.xml` for its policy. From then on a dataset with `signal`
+  business is read only once admitted or by a holder of its update artifact (`ADMIN` holds them all), so a non-`ADMIN` reader of
+  one sees it as not admitted until a steward admits it ([Business datasets](#business-datasets)).
 - **Retired:** the ArtifactHit and ArtifactHitBin entities and their report view, the System Artifact Summary,
   Artifact Bins, Log Viewer and DataDocument Search screens, the hit REST resources, and the shipping of logs to
   `moqui_logs` and `moqui_http_log`. Startup pauses the old `clean_ArtifactData_daily`,

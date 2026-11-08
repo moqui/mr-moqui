@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Compare two ranges or two versions of a dataset, Explore's included region. A screen may mount it under another app (BOSS
+    Insights › Split); its dataset choices are the datasets the viewer may read, and the request rate, error and duration charts
+    show only to a viewer who reads Tools' request metric (otel_metrics). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Compare" default-menu-include="false">
     <parameter name="datasetId"/><parameter name="queryString"/><parameter name="from"/><parameter name="thru"/>
     <parameter name="compareFrom"/><parameter name="compareThru"/><parameter name="leftVersion"/><parameter name="rightVersion"/><parameter name="serviceName"/>
     <actions><script><![CDATA[
-        datasetId=datasetId || 'otel_spans';from=from || 'now-7d';thru=thru || 'now'
+        // the datasets the viewer may read; with none chosen, Tools' spans where the viewer reads them, else the first
+        datasetList=ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []
+        redAvailable=datasetList.some(dataset=>dataset.id==='otel_metrics')
+        datasetId=datasetId || (datasetList.find(dataset=>dataset.id==='otel_spans') || datasetList[0] || {id:'otel_spans'}).id;from=from || 'now-7d';thru=thru || 'now'
         // Two versions usually run in the same range (a canary or a rolling deploy), so the second range defaults to the first then.
         compareFrom=compareFrom || (rightVersion ? from : 'now-14d');compareThru=compareThru || (rightVersion ? thru : 'now-7d')
         const query=(start,end,version)=>({datasetId,mode:'documents',from:start,thru:end,queryString:queryString || '',pageSize:1000,
@@ -29,7 +35,7 @@
         }
         redFrames={left:{},right:{}};redPanels={left:{},right:{}};versionOptions=[]
         const versions=new Set()
-        for (const [side,start,end,version] of [['left',from,thru,leftVersion],['right',compareFrom,compareThru,rightVersion]]) {
+        for (const [side,start,end,version] of (redAvailable ? [['left',from,thru,leftVersion],['right',compareFrom,compareThru,rightVersion]] : [])) {
             const base=[...(version?[{field:{name:'service.version',op:'eq',value:String(version)}}]:[]),...(serviceName?[{field:{name:'service.name',op:'eq',value:String(serviceName)}}]:[])]
             for (const [id,chart] of Object.entries(red)) {
                 const filters=[...base,...(chart.status?[{field:{name:'http.response.status_code',op:'range',gte:500}}]:[])]
@@ -56,7 +62,7 @@
     ]]></script></actions>
     <widgets>
         <form-single name="CompareOptions" transition=".">
-            <field name="datasetId"><default-field title="Dataset"><text-line/></default-field></field>
+            <field name="datasetId"><default-field title="Dataset"><drop-down><list-options list="datasetList" key="${id}" text="${title || id}"/></drop-down></default-field></field>
             <field name="queryString"><default-field title="Shared query"><text-line size="70"/></default-field></field>
             <field name="from"><default-field title="First range from"><text-line/></default-field></field>
             <field name="thru"><default-field title="First range through"><text-line/></default-field></field>
@@ -68,13 +74,15 @@
             <field name="compare"><default-field><submit text="Compare"/></default-field></field>
         </form-single>
         <section-iterate name="CompareNotices" list="compareNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
-        <label text="Request rate, server errors and duration for each side, from the HTTP request metric. With a second version and no second range, both sides use the first range." type="p"/>
-        <container-row><row-col md="6"><report-panel frame="redFrames.left.rate" panel="redPanels.left.rate"/></row-col>
-            <row-col md="6"><report-panel frame="redFrames.right.rate" panel="redPanels.right.rate"/></row-col></container-row>
-        <container-row><row-col md="6"><report-panel frame="redFrames.left.errors" panel="redPanels.left.errors"/></row-col>
-            <row-col md="6"><report-panel frame="redFrames.right.errors" panel="redPanels.right.errors"/></row-col></container-row>
-        <container-row><row-col md="6"><report-panel frame="redFrames.left.duration" panel="redPanels.left.duration"/></row-col>
-            <row-col md="6"><report-panel frame="redFrames.right.duration" panel="redPanels.right.duration"/></row-col></container-row>
+        <section name="RequestCharts" condition="redAvailable"><widgets>
+            <label text="Request rate, server errors and duration for each side, from the HTTP request metric. With a second version and no second range, both sides use the first range." type="p"/>
+            <container-row><row-col md="6"><report-panel frame="redFrames.left.rate" panel="redPanels.left.rate"/></row-col>
+                <row-col md="6"><report-panel frame="redFrames.right.rate" panel="redPanels.right.rate"/></row-col></container-row>
+            <container-row><row-col md="6"><report-panel frame="redFrames.left.errors" panel="redPanels.left.errors"/></row-col>
+                <row-col md="6"><report-panel frame="redFrames.right.errors" panel="redPanels.right.errors"/></row-col></container-row>
+            <container-row><row-col md="6"><report-panel frame="redFrames.left.duration" panel="redPanels.left.duration"/></row-col>
+                <row-col md="6"><report-panel frame="redFrames.right.duration" panel="redPanels.right.duration"/></row-col></container-row>
+        </widgets></section>
         <label text="Each pane shows at most 1,000 documents. Missing telemetry does not establish health." type="p"/>
         <container-row><row-col md="6"><report-panel frame="leftFrame" panel="{title:'First range',visualization:'table'}"/></row-col>
             <row-col md="6"><report-panel frame="rightFrame" panel="{title:'Second range',visualization:'table'}"/></row-col></container-row>

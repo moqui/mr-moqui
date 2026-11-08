@@ -13,9 +13,9 @@
             }
             ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition:{id:playlistId,type:'report',title:playlistTitle,
                 body:{kind:'playlist',seconds,playlist:ids.map(definitionId=>({definitionId}))}},note:'Created dashboard playlist'}).call()
-        ]]></script></actions><default-response url="//apps/dashboards/Playlist"><parameter name="definitionId" from="playlistId"/></default-response>
+        ]]></script></actions><default-response url="${ec.context.get('reportLinks')?.playlist ?? '//apps/dashboards/Playlist'}"><parameter name="definitionId" from="playlistId"/></default-response>
     </transition>
-    <transition name="playlist"><default-response url="//apps/dashboards/Playlist"/></transition>
+    <transition name="playlist"><default-response url="${ec.context.get('reportLinks')?.playlist ?? '//apps/dashboards/Playlist'}"/></transition>
     <transition name="createSchedule" method="post" authz-action="create">
         <actions><service-call name="org.moqui.report.ReportServices.create#Schedule" in-map="{definitionId:definitionId,cronExpression:cronExpression,emailTemplateId:(delivery==='email' || delivery==='both')?(emailTemplateId || 'DASHBOARD_REPORT'):null,userId:(delivery==='email' || delivery==='both')?(userId || (userGroupId ? null : ec.user.userId)):null,userGroupId:(delivery==='email' || delivery==='both')?userGroupId:null,saveToLocation:delivery==='email'?null:saveToLocation,renderMode:renderMode}"/></actions>
         <default-response url="."/>

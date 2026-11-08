@@ -63,6 +63,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 | Guide | What it covers |
 |---|---|
 | [Assist.md](ai/Assist.md) | The Assist drawer and its server: the agent runtime, tools, approvals, skills and canvases |
+| [Constitution.md](ai/Constitution.md) | The Constitution: shared guidance for people and agent runs, its sources, editing, prompt section and references |
 | [A2A.md](ai/A2A.md) | The agent-to-agent server and client (A2A 1.0) |
 | [MCP.md](ai/MCP.md) | The MCP tool server for AI agents and coding assistants, and the MCP client |
 | [Gateway.md](ai/Gateway.md) | The OpenAI-compatible LLM gateway at `/llm/v1`, and the LLM embedder |

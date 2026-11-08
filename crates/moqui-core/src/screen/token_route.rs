@@ -35,6 +35,11 @@
 //! and nothing of the screen runs. Otherwise the screen's context has `token` and `tokenRoute`
 //! (`{name, token, basePath, title, context}`, `context` being the service's `routeContext`); a request parameter of
 //! either name is replaced. The screen still checks the token in each service it calls (the public-share services do).
+//!
+//! The named screen is the root of its render, and its links, form actions and redirects to a screen start with
+//! `/<name>/<token>` (`web::set_link_prefix`), so a form posts to `/<name>/<token>/<transition>`; a server-static
+//! template, cached for every visitor, is made without it. The token is the route's credential: what the server records
+//! of a path or URL ([`redact_url`], [`redact_json`]) has `/<name>/:token/...` instead.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -172,6 +177,115 @@ pub fn match_path(routes: &[TokenRoute], path: &str) -> Option<RouteMatch> {
     })
 }
 
+/// What a token route's token reads as where a path is recorded: `/i/{token}/accept` is `/i/:token/accept`.
+pub const REDACTED_TOKEN: &str = ":token";
+
+/// `path` with the token of a token route replaced by [`REDACTED_TOKEN`], for telemetry and logs (a route's token is
+/// its credential, and every trace, log line and request record would otherwise hold it); `None` when the path is under
+/// no route, or the segment after the route's name is no token (8 to 128 of the token characters, ending the segment
+/// or followed by a render-mode suffix). The rest of the path is kept: `/u/{token}/oneClick` names the transition.
+pub fn redact_path(routes: &[TokenRoute], path: &str) -> Option<String> {
+    let rest = path.strip_prefix('/')?;
+    let (name, after) = rest.split_once('/')?;
+    if !routes.iter().any(|route| route.name == name) {
+        return None;
+    }
+    let token_len = after
+        .bytes()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'-' || *byte == b'_')
+        .count();
+    let ends = after[token_len..]
+        .chars()
+        .next()
+        .is_none_or(|next| matches!(next, '/' | '.' | '?' | '#' | ';'));
+    if !(8..=128).contains(&token_len) || !ends {
+        return None;
+    }
+    Some(format!("/{name}/{REDACTED_TOKEN}{}", &after[token_len..]))
+}
+
+/// [`redact_path`] for a path (`/i/...`) or an absolute URL (`https://host/i/...`) in recorded text, such as a
+/// `Referer` or a `returnTo` parameter; any other text, and a path under no route, as it is.
+pub fn redact_url<'a>(routes: &[TokenRoute], text: &'a str) -> std::borrow::Cow<'a, str> {
+    use std::borrow::Cow;
+    if routes.is_empty() {
+        return Cow::Borrowed(text);
+    }
+    if text.starts_with('/') && !text.starts_with("//") {
+        return redact_path(routes, text).map_or(Cow::Borrowed(text), Cow::Owned);
+    }
+    // an absolute URL, or a scheme-relative one (`//host/...`)
+    let host_start = match text.strip_prefix("//") {
+        Some(_) => 2,
+        None => match text.find("://") {
+            Some(scheme_end) => scheme_end + 3,
+            None => return Cow::Borrowed(text),
+        },
+    };
+    let Some(path_start) = text[host_start..].find('/').map(|at| host_start + at) else {
+        return Cow::Borrowed(text);
+    };
+    match redact_path(routes, &text[path_start..]) {
+        Some(path) => Cow::Owned(format!("{}{path}", &text[..path_start])),
+        None => Cow::Borrowed(text),
+    }
+}
+
+/// [`redact_url`] with this factory's token routes: what the request log and a log line record of a path or URL.
+pub fn redact<'a>(factory: &ExecutionContextFactory, text: &'a str) -> std::borrow::Cow<'a, str> {
+    redact_url(&routes(factory).0, text)
+}
+
+/// [`redact_url`] for each path or URL within free text (a span name `GET /i/{token}`, a log body, a message), the words
+/// being split at white space, quotes, brackets and parentheses; the separators are kept.
+pub fn redact_text<'a>(routes: &[TokenRoute], text: &'a str) -> std::borrow::Cow<'a, str> {
+    use std::borrow::Cow;
+    if routes.is_empty() || !text.contains('/') {
+        return Cow::Borrowed(text);
+    }
+    let separator = |ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | '`' | '<' | '>' | '(' | ')' | '[' | ']');
+    let mut out: Option<String> = None;
+    let mut start = 0;
+    for (at, ch) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+        if !separator(ch) {
+            continue;
+        }
+        let word = &text[start..at];
+        if let Cow::Owned(redacted) = redact_url(routes, word) {
+            let out = out.get_or_insert_with(|| text[..start].to_string());
+            out.push_str(&redacted);
+        } else if let Some(out) = out.as_mut() {
+            out.push_str(word);
+        }
+        if let Some(out) = out.as_mut() {
+            if at < text.len() {
+                out.push(ch);
+            }
+        }
+        start = at + ch.len_utf8();
+    }
+    out.map_or(Cow::Borrowed(text), Cow::Owned)
+}
+
+/// Every string in `json` with [`redact_text`] applied: what a browser sends (`/rum/*` OTLP records, a replay's rrweb
+/// events, whose snapshot holds the page's links) before it is stored. Object keys are left as they are.
+pub fn redact_json(routes: &[TokenRoute], json: &mut serde_json::Value) {
+    use serde_json::Value as Json;
+    if routes.is_empty() {
+        return;
+    }
+    match json {
+        Json::String(text) => {
+            if let std::borrow::Cow::Owned(redacted) = redact_text(routes, text) {
+                *text = redacted;
+            }
+        }
+        Json::Array(items) => items.iter_mut().for_each(|item| redact_json(routes, item)),
+        Json::Object(map) => map.values_mut().for_each(|item| redact_json(routes, item)),
+        _ => {}
+    }
+}
+
 /// The route of a request path in this factory's conf.
 pub(super) fn find(factory: &ExecutionContextFactory, path: &str) -> Option<RouteMatch> {
     let routes = routes(factory);
@@ -294,6 +408,9 @@ pub(super) fn dispatch(
     parameters.insert("tokenRoute".to_string(), Value::Map(route));
     let mut inner = request.clone();
     inner.path = path;
+    // the named screen is the render's root, so its links, form actions and redirects start with the route's path: a
+    // transition is /<name>/<token>/<transition>, not /<transition> outside the route (the shell's root is the webroot)
+    let _prefix = (!matches!(target, RouteTarget::Shell)).then(|| crate::web::set_link_prefix(&base_path));
     super::dispatch_request(factory, &inner, &root, &parameters, json_list, login_error, flags, None)
 }
 
@@ -337,5 +454,72 @@ mod tests {
         assert_eq!(at("/call/abcDEF12"), None, "not a configured route");
         assert_eq!(at("/s"), None);
         assert_eq!(at("/qapps/s/abcDEF12"), None);
+    }
+
+    #[test]
+    fn a_routes_token_is_redacted_from_a_recorded_path_or_url() {
+        let routes = [route("i"), route("u"), route("call")];
+        let path = |text: &str| redact_path(&routes, text);
+        assert_eq!(path("/i/abcDEF12_-xyz").as_deref(), Some("/i/:token"));
+        assert_eq!(path("/i/abcDEF12_-xyz/").as_deref(), Some("/i/:token/"));
+        assert_eq!(path("/u/abcDEF12345/oneClick").as_deref(), Some("/u/:token/oneClick"));
+        assert_eq!(path("/call/abcDEF12345.qvt").as_deref(), Some("/call/:token.qvt"));
+        assert_eq!(path("/i/short"), None, "no token under 8 characters");
+        assert_eq!(path("/i/abcDEF12*x"), None);
+        assert_eq!(path("/s/abcDEF12345"), None, "not a configured route");
+        assert_eq!(path("/apps/i/abcDEF12345"), None, "a route is at the root only");
+        assert_eq!(path("/i"), None);
+        let url = |text: &str| redact_url(&routes, text).into_owned();
+        assert_eq!(url("/i/abcDEF12345/accept?x=1"), "/i/:token/accept?x=1");
+        assert_eq!(
+            url("https://staff.example.com/i/abcDEF12345/accept"),
+            "https://staff.example.com/i/:token/accept"
+        );
+        assert_eq!(
+            url("http://localhost:8080/call/abcDEF12345"),
+            "http://localhost:8080/call/:token"
+        );
+        assert_eq!(
+            url("https://example.com/apps/System"),
+            "https://example.com/apps/System"
+        );
+        assert_eq!(url("https://example.com"), "https://example.com");
+        assert_eq!(url("//staff.example.com/i/abcDEF12345"), "//staff.example.com/i/:token");
+        assert_eq!(url("plain text"), "plain text");
+        assert_eq!(redact_url(&[], "/i/abcDEF12345"), "/i/abcDEF12345");
+    }
+
+    #[test]
+    fn a_routes_token_is_redacted_within_text_and_json() {
+        let routes = [route("i"), route("tk")];
+        let text = |text: &str| redact_text(&routes, text).into_owned();
+        assert_eq!(text("GET /i/abcDEF12345/accept"), "GET /i/:token/accept");
+        assert_eq!(
+            text("from (https://h.example.com/tk/abcDEF12345?x=1) and [/i/abcDEF12345]"),
+            "from (https://h.example.com/tk/:token?x=1) and [/i/:token]"
+        );
+        assert_eq!(
+            text("GET /apps/i/abcDEF12345"),
+            "GET /apps/i/abcDEF12345",
+            "not under a route"
+        );
+        assert_eq!(text("caf\u{e9} /i/abcDEF12345\n"), "caf\u{e9} /i/:token\n");
+        assert!(matches!(
+            redact_text(&routes, "no path here"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        let mut json = serde_json::json!({
+            "name": "GET /tk/abcDEF12345.qvt",
+            "attributes": [{"key": "url.full", "value": {"stringValue": "https://h/i/abcDEF12345/factor"}}],
+            "events": [{"type": 2, "data": {"attributes": {"href": "/tk/abcDEF12345/files"}}}, 4, null]
+        });
+        redact_json(&routes, &mut json);
+        let shown = json.to_string();
+        assert!(!shown.contains("abcDEF12345"), "{shown}");
+        assert_eq!(
+            json["attributes"][0]["value"]["stringValue"],
+            "https://h/i/:token/factor"
+        );
+        assert_eq!(json["events"][0]["data"]["attributes"]["href"], "/tk/:token/files");
     }
 }

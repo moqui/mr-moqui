@@ -52,6 +52,7 @@ pub use login::{
     now_value, renew_device_key, revoke_login_key, with_client_ip,
 };
 pub use login::{last_auth_millis, recent_auth};
+pub use login::{user_account_closed, username_account_closed};
 pub use login::{now_effective_millis, value_millis};
 pub use login::{now_effective_value, now_millis};
 pub(crate) use login::{AUTHC_FACTOR_REQUIRED, PRE_AUTHC_USERNAME};
@@ -65,7 +66,7 @@ pub use preference::{
 pub use session::derived_cookie_key;
 pub(crate) use session::Memory;
 pub use session::{
-    bind, csrf_token, current_log_actor, current_user_id, current_username, end_request, end_user_visit,
+    bind, csrf_token, current_log_actor, current_user_id, current_username, end_request, end_user_sessions, end_user_visit,
     error_parameters, flash_messages, format_session_cookie, format_visitor_cookie, http_log_identity, invalidate,
     is_anonymous, live_session_user_id, locale, saved_parameters, screen_history, session_attribute_values,
     session_attributes, set_current_log_actor, set_session_attribute, set_session_attribute_json, time_zone,

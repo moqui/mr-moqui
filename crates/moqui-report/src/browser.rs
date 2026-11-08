@@ -2,7 +2,8 @@
 //! and logs, and with `replay-enabled` masked rrweb event chunks, to `/rum/traces`, `/rum/logs` and `/rum/replay`
 //! (the webroot's `rum.xml`), whose transitions have checked its session and CSRF token. Here each is held to `<telemetry><browser>`:
 //! on, within its body limit and its session's rate; the page's identity is replaced with the session's
-//! (`moqui_core::telemetry::browser::scrub`); and a replay is held to its time and byte caps. Replays are read back
+//! (`moqui_core::telemetry::browser::scrub`); a token route's token is left out of every string, records and replay
+//! events alike (`token_route::redact_json`); and a replay is held to its time and byte caps. Replays are read back
 //! only by a user with `MONITOR_REPLAY`, and each read is logged.
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -177,6 +178,11 @@ fn receive_browser(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
         visit_id: &visit,
     };
     let refused = scrub(signal, &mut json, &identity, MAX_RECORDS);
+    // a token route's token is its credential: a page URL, span name or log body has `/<name>/:token` instead
+    moqui_core::screen::token_route::redact_json(
+        &moqui_core::screen::token_route::token_routes(ec.factory()),
+        &mut json,
+    );
     let telemetry = moqui_core::telemetry::for_factory(ec.factory());
     if !telemetry.accepting() {
         return Err(Error::new("telemetry is disabled"));
@@ -261,10 +267,10 @@ fn receive_replay(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
     if setting(ec, "replay-enabled") != "true" {
         return Err(Error::new("session replay is off"));
     }
-    let chunk: Json =
+    let mut chunk: Json =
         serde_json::from_str(body).map_err(|error| Error::new(format!("invalid replay chunk: {error}")))?;
-    let replay = chunk["replayId"].as_str().unwrap_or("");
-    if !valid_replay_id(replay) {
+    let replay = chunk["replayId"].as_str().unwrap_or("").to_string();
+    if !valid_replay_id(&replay) {
         return Err(Error::new(
             "a replay chunk needs a replayId of 16 to 64 letters, digits and dashes",
         ));
@@ -273,12 +279,16 @@ fn receive_replay(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
         .as_u64()
         .filter(|seq| *seq < 1_000_000)
         .ok_or_else(|| Error::new("a replay chunk needs its seq"))?;
-    let Some(events) = chunk["events"].as_array() else {
+    if !chunk["events"].is_array() {
         return Err(Error::new("a replay chunk needs its events"));
-    };
-    let events = serde_json::to_vec(events).map_err(|error| Error::new(error.to_string()))?;
+    }
+    // a token route's token is its credential: the page's URL and the links its snapshot holds have `/<name>/:token`
+    let token_routes = moqui_core::screen::token_route::token_routes(ec.factory());
+    moqui_core::screen::token_route::redact_json(&token_routes, &mut chunk["events"]);
+    moqui_core::screen::token_route::redact_json(&token_routes, &mut chunk["url"]);
+    let events = serde_json::to_vec(&chunk["events"]).map_err(|error| Error::new(error.to_string()))?;
     ec.factory().extension(|_| ReplayBudget::default()).charge(
-        replay,
+        &replay,
         &format!("{user}/{visit}"),
         events.len() as u64,
         ec.factory().conf_number(BROWSER, "replay-max-minutes", 30_i64),
@@ -300,7 +310,7 @@ fn receive_replay(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
         .collect();
     let mut document = Document::from_iter([
         ("_id".into(), Value::String(format!("{replay}-{seq:06}"))),
-        ("replay_id".into(), Value::string(replay)),
+        ("replay_id".into(), Value::string(&replay)),
         ("seq".into(), Value::I64(seq as i64)),
         ("start".into(), Value::I64(start)),
         ("end".into(), Value::I64(chunk["end"].as_i64().unwrap_or(now))),

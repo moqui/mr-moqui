@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <parameter name="visitId" required="true"/>
 
-    <transition name="userAccountDetail"><default-response url="//system/Security/UserAccountDetail"/></transition>
+    <transition name="userAccountDetail"><default-response url="../../Security/UserAccount/UserAccountDetail"/></transition>
     <transition name="getVisitClientIpData"><service-call name="org.moqui.impl.ServerServices.get#VisitClientIpData"/>
         <default-response url="."/></transition>
 

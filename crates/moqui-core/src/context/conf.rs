@@ -324,7 +324,24 @@ fn merge_user_facade(base: &MNode, over: &MNode) {
     base_node.merge_single_child(&over_node, "password");
     base_node.merge_single_child(&over_node, "login-key");
     base_node.merge_single_child(&over_node, "login");
-    base_node.merge_single_child(&over_node, "authz");
+    merge_authz(&base_node, &over_node);
+}
+
+/// `authz`'s attributes replace the base's, as other settings elements do, but its `sealed-permission` and
+/// `privileged-group` children are added to the base's by `name`, never replacing them: each component adds its own
+/// to the lists and keeps the framework's.
+fn merge_authz(base: &MNode, over: &MNode) {
+    let Some(over_authz) = over.first_named("authz") else {
+        return;
+    };
+    let Some(base_authz) = base.first_named("authz") else {
+        base.append_node(over_authz.deep_copy());
+        return;
+    };
+    base_authz.copy_attributes_from(&over_authz);
+    for child in ["sealed-permission", "privileged-group"] {
+        base_authz.merge_children_by_keys(&over_authz, child, &["name"], None);
+    }
 }
 
 fn merge_transaction_facade(base: &MNode, over: &MNode) {
@@ -424,6 +441,7 @@ fn merge_llm_facade(base: &MNode, over: &MNode) {
     base_node.merge_children_by_keys(&over_node, "bind", &["feature"], None);
     base_node.merge_children_by_keys(&over_node, "data-entity", &["package", "entity"], None);
     base_node.merge_children_by_keys(&over_node, "user-facts", &["service"], None);
+    base_node.merge_children_by_keys(&over_node, "constitution-provider", &["service"], None);
     base_node.merge_children_by_keys(&over_node, "ai-task", &["name"], None);
     for name in ["limits", "content-log", "screen-sessions", "mcp", "gateway"] {
         base_node.merge_single_child(&over_node, name);

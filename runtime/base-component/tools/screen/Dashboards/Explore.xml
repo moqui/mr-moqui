@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Explore a dataset: search, filter pills, field values, log patterns, live tail, save a search or add a panel to a dashboard.
+    A screen that mounts it under another app (BOSS Insights › Explore) takes in its transitions, which then run at that screen's
+    path; adding a panel opens the app's Dashboard, Compare its Split and surrounding entries its log context, by the reportLinks
+    map of the app's root (docs/tools/Monitoring.md, "Mounting the report screens"), and a link the map leaves out is not offered.
+    The dataset choices are the datasets the viewer may read, and with no dataset chosen it opens on Tools' log dataset when the
+    viewer reads it, else on the first one. Saving is offered only where the mount has a definition editor (the viewer authors
+    there). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Explore" default-menu-index="3">
     <parameter name="filtersJson"/><parameter name="pillAction"/><parameter name="pillIndex"/><parameter name="pillField"/><parameter name="pillOperation"/><parameter name="pillValue"/><parameter name="pillLabel"/><parameter name="historyQuery"/>
     <parameter name="from"/><parameter name="thru"/><parameter name="queryString"/>
@@ -19,7 +26,7 @@
     </transition>
     <transition name="trace"><default-response url="//apps/monitor/TraceDetail"/></transition>
     <transition name="user"><default-response url="//apps/system/Security/UserAccount/UserAccountDetail"/></transition>
-    <transition name="context"><default-response url="//apps/dashboards/LogContext"/></transition>
+    <transition name="context"><default-response url="${ec.context.get('reportLinks')?.logContext ?? '//apps/dashboards/LogContext'}"/></transition>
     <transition name="visit"><default-response url="//apps/system/Visit/VisitList"/></transition>
     <transition name="tail" method="get" read-only="true">
         <actions><script><![CDATA[
@@ -52,9 +59,9 @@
                 datasetId,mode:'documents',queryString:queryString || '',filters:JSON.parse(filtersJson || '[]'),retrievalMode:retrievalMode || 'lexical',pageSize:1000
             }]}
             ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Added panel from Explore'}).call()
-        ]]></script></actions><default-response url="//apps/dashboards/Dashboard"><parameter name="definitionId" from="dashboardId"/><parameter name="from"/><parameter name="thru"/></default-response>
+        ]]></script></actions><default-response url="${ec.context.get('reportLinks')?.dashboard ?? '//apps/dashboards/Dashboard'}"><parameter name="definitionId" from="dashboardId"/><parameter name="from"/><parameter name="thru"/></default-response>
     </transition>
-    <transition name="split"><default-response url="//apps/dashboards/Split"/></transition>
+    <transition name="split"><default-response url="${ec.context.get('reportLinks')?.split ?? '//apps/dashboards/Split'}"/></transition>
     <actions><script><![CDATA[
         if (savedSearchId) {
             const saved=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId:savedSearchId}).call().definition
@@ -69,10 +76,15 @@
         savedSearches=ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'search'}).call().definitions || []
         editableDashboards=(ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:'dashboard'}).call().definitions || []).filter(definition=>!definition.readOnly && definition.ownerId===ec.user.userId)
         datasetList = ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []
+        // With none chosen: Tools' log dataset where the viewer reads it, else the first dataset they may read.
+        datasetId = datasetId || (datasetList.find(dataset=>dataset.id==='otel_logs') || datasetList[0] || {id:'otel_logs'}).id
         // A dataset the viewer may not read leaves its error as the message, not a render failure.
-        datasetInfo = ec.service.sync().name('org.moqui.report.ReportServices.get#Dataset').parameters({datasetId:datasetId || 'otel_logs'}).call().dataset || {id:datasetId || 'otel_logs',fields:[]}
+        datasetInfo = ec.service.sync().name('org.moqui.report.ReportServices.get#Dataset').parameters({datasetId}).call().dataset || {id:datasetId,fields:[]}
         datasetFields = (datasetInfo.fields || []).filter(field=>field.aggregatable)
-        datasetId = datasetId || 'otel_logs'
+        // the mount's links (reportLinks): saving where it has a definition editor, Compare and surrounding entries where mounted
+        const mountLinks=ec.context.get('reportLinks')
+        exploreOffers={save:!mountLinks || !!mountLinks.definition,split:!mountLinks || !!mountLinks.split,context:!mountLinks || !!mountLinks.logContext,
+            path:sri.buildUrl('.').path}
         if (historyQuery) queryString=historyQuery
         const pinKey='REPORT_PINNED_'+datasetId,historyKey='REPORT_HISTORY_'+datasetId
         filtersJson=filtersJson || ec.user.getPreference(pinKey) || '[]'
@@ -209,6 +221,7 @@
         }
     ]]></script></actions>
     <widgets>
+        <label condition="!datasetList.length" text="No dataset is available to you yet." type="p"/>
         <container-row>
             <row-col md="6">
                 <form-single name="DatasetOptions" transition=".">
@@ -297,7 +310,7 @@
             </form-single>
         </widgets></section>
         <container style="row items-center q-gutter-sm q-mb-md">
-            <section name="ExploreSaveAvailable" condition="!queryError"><widgets>
+            <section name="ExploreSaveAvailable" condition="!queryError &amp;&amp; exploreOffers.save"><widgets>
                 <container-dialog id="SaveExplore" button-text="Save search / add to dashboard">
                     <form-single name="SaveSearch" transition="saveSearch">
                         <field name="filtersJson"><default-field><hidden/></default-field></field>
@@ -324,11 +337,11 @@
                     </form-single>
                 </container-dialog>
             </widgets></section>
-            <link url="split" text="Compare ranges or versions" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru}"/>
+            <link url="split" text="Compare ranges or versions" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru}" condition="exploreOffers.split"/>
         </container>
         <label text="Queries run with your dataset permissions and row filters. Search syntax: field:value, AND, OR, NOT, quoted text, term~ for native typo matching, and clause^2 for relevance boosts. Fuzzy matches can differ between PostgreSQL and OpenSearch. Use attributes.key:value, attributes.key:*, and keyword wildcards for custom attributes. Numbered fuzziness and phrase slop are unsupported." type="p"/>
         <section name="ExploreResults" condition="!queryError"><widgets>
-        <report-panel frame="histogramFrame" panel="{title:'Documents over time',visualization:'timeSeries'}"/>
+        <report-panel frame="histogramFrame" panel="{title:'Documents over time',visualization:'timeSeries',appLinks:{explore:exploreOffers.path}}"/>
         <section name="LogPatterns" condition="patternsAvailable"><widgets>
             <link condition="showPatterns !== 'Y'" url="." text="Show log patterns" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru,filtersJson:filtersJson,showPatterns:'Y'}"/>
             <link condition="showPatterns === 'Y'" url="." text="Hide log patterns" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru,filtersJson:filtersJson}"/>
@@ -404,7 +417,7 @@
                 </widgets></section-iterate>
             </default-field></field>
             <field name="trace_id"><default-field title="Trace"><link condition="trace_id" url="trace" text="${trace_id}" link-type="anchor"><parameter name="traceId" from="trace_id"/><parameter name="from"/><parameter name="thru"/></link></default-field></field>
-            <field name="context"><default-field title="Context"><link url="context" text="Surrounding entries" link-type="anchor"
+            <field name="context"><default-field title="Context"><link url="context" text="Surrounding entries" link-type="anchor" condition="exploreOffers.context"
                 parameter-map="{datasetId:datasetId,documentId:documentId,documentType:documentType,anchorTime:anchorTime,from:from,thru:thru,filtersJson:filtersJson,queryString:queryString}"/></default-field></field>
             <field name="documentJson"><default-field title="Document"><display style="m-report-export-only"/><container-dialog id="ExploreDocument" button-text="View document"><code-view text="${documentJson}" language="json"/></container-dialog></default-field></field>
         </form-list>

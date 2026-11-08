@@ -387,7 +387,11 @@ pub(crate) fn serve_template(state: &RenderState, request: &WebRequest, path: &s
         frames.enter_screen(def, index == last)?;
     }
     let key = template_key(path);
-    let made = script::with_screen_runner(|runner| template_for(state, runner, &key));
+    // the template is cached for every visitor: no token route's `/<name>/<token>` in the paths it holds
+    let made = {
+        let _no_prefix = crate::web::set_link_prefix("");
+        script::with_screen_runner(|runner| template_for(state, runner, &key))
+    };
     let template = match made {
         Ok(template) => template,
         Err(err)
