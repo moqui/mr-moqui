@@ -643,6 +643,13 @@ fn convert_args(
             converted.push(Arg::Missing);
             continue;
         }
+        // text read from the heap with no handle and one copy
+        if matches!(kind, ArgKind::Text | ArgKind::OptText | ArgKind::NullableText | ArgKind::OptNullableText) {
+            if let Some(text) = scope.arg_text(index) {
+                converted.push(Arg::Text(text));
+                continue;
+            }
+        }
         let value = scope.arg(index);
         let void = matches!(value, JsValue::Undefined | JsValue::Null);
         converted.push(match (kind, &value) {

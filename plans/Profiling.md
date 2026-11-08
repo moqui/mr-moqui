@@ -1727,6 +1727,52 @@ tests passed. From here a round is proved locally like this, with no Sweep, no M
 Next, from the backlog: a Release flush without the copy, strings in one copy, plain objects built in one step,
 `PropertyKey::as_index`, and a bare name in one hook.
 
+## Round 35: plain objects in one step, strings in one copy, a Release flush with no copy
+
+The first iteration of the long run, proved locally (`js_speed`'s switch variants and the touched unit tests). The
+fork's `perf/plain-objects` merged to its `main` (1251adb9), with additive API:
+- `Js::new_object_from` makes a plain object's data properties by `CreateDataProperty` in one crossing; with
+  `InitValue::Text` a property's Rust text becomes a heap string in one copy. `new_array_from_inits` does the same for
+  an array.
+- `Js::plain_own_data` and `dense_array_values` read a plain object's own data properties, or an Array's elements, in
+  one crossing, running no code. They return `None` for anything else.
+- `PropertyKey::as_index` reads an index key as a number, and `Scope::arg_text` reads a text argument to a `String`.
+
+The bindings' changes, each behind a switch for one build:
+- **`rel`**: a Release flush notes the stack's value by a 64-bit fingerprint, not a copy, and compares in place too.
+  The fingerprint ignores a map's order, as `java_equals` does; two different values share one about once in 2^64.
+- **`obj`**: maps are made with `new_object_from`, and `to_host` and the in-place flush read with `plain_own_data` and
+  `dense_array_values`.
+- **`idx`**: an entity list's `list[i]` uses `as_index`.
+- **`str`**: map and list text is passed as `InitValue::Text`, and text arguments are read with `arg_text`.
+
+µs a call (allocations), each row at its better of two runs. The first three columns are Round 34 and this round with
+every change; the last four have that one change off:
+
+| Row | Round 34 | Round 35 | `rel` off | `obj` off | `idx` off | `str` off |
+|---|---:|---:|---:|---:|---:|---:|
+| walk itemList, 100 context maps | 127 (1711) | 88 (1307) | 92 | 122 | 93 | 95 (1712) |
+| 10 noop service calls, `itemList` tracked | 302 (4256) | 227 (3032) | 273 (4257) | 275 | 232 | 238 (3457) |
+| 100 cache gets (a text argument) | 28 (408) | 26 (206) | 28 | 28 | 29 | 29 (408) |
+| walk an entity list, 100 cached rows | 159 (2546) | 156 (2344) | 156 | 156 | 159 (2546) | 155 |
+| trusted template | 74 (569) | 66 (487) | 67 | 73 | 67 | 68 (570) |
+| Labels, html | 278 (2614) | 258 (2195) | 275 (2604) | 269 | 258 | 256 |
+| Single, html | 400 (3460) | 347 (2962) | 359 | 395 | 352 | 352 (3152) |
+| Single.qvt | 661 (5680) | 564 (4739) | 583 | 655 | 571 | 574 (5102) |
+| List, html, 100 rows | 9502 (94247) | 9062 (88958) | 9183 | 9369 | 9182 | 9112 (92787) |
+| List.qvt, 100 rows | 14487 (117626) | 13964 (112438) | 14097 | 14255 | 14073 | 14128 (116468) |
+| List, text, 100 rows | 2753 (34068) | 2614 (32918) | 2623 | 2777 | 2636 | 2610 |
+
+(The `rel`, `obj` and `idx` columns come from the build before `str`, compared with its own all-on row.)
+
+Against Round 32's QuickJS:
+- List html 100 (9062 vs 9268), List text (2614 vs 2876) and nowTimestamp (31 vs 30) are at or below it.
+- Single html and Single.qvt are ×1.10, List.qvt ×1.08, Labels ×1.15 and the trusted template ×1.11.
+- walk itemList is ×1.48, cached finds ×1.22 and the locked-down template ×1.20.
+
+The qvt rows' profile is mostly the engine core (`run_at` 11% of Single.qvt and 24% of List.qvt, self time), so the
+binding layer is no longer what they mostly spend.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.

@@ -43,6 +43,10 @@ pub(crate) struct ListValues;
 
 /// The index a property name stands for, when it is one of the list's.
 fn index_of(list: &ListState, key: &PropertyKey) -> Option<usize> {
+    if let Some(index) = key.as_index() {
+        let index = usize::try_from(index).ok()?;
+        return (index < list.list.len()).then_some(index);
+    }
     // a key in an index's canonical form: digits, no leading zero (the engine makes such a key an index already)
     let name = key.to_js_string()?;
     let mut index: usize = 0;

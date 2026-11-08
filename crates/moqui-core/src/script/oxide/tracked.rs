@@ -48,15 +48,20 @@ pub(crate) enum Flush {
 
 /// What a screen unit sets aside of the run around it ([`RunValues::take_outer`]): its released values and the values
 /// it kept by name.
-pub(super) type OuterValues = (HashMap<String, (Value, HostValue)>, HashMap<String, Value>);
+pub(super) type OuterValues = (HashMap<String, (Value, u64)>, HashMap<String, Value>);
+
+/// Whether the stack still holds, for `name`, the host value whose [`fingerprint`] a [`Flush::Release`] noted.
+fn print_held(name: &str, print: u64) -> bool {
+    STACK.with(|stack| stack.borrow().with_value(name, fingerprint) == Some(print))
+}
 
 /// The values of one run, by name.
 #[derive(Default)]
 pub(super) struct RunValues {
     /// Lists and maps read or assigned by name, written back at a flush.
     tracked: HashMap<String, Value>,
-    /// Values a [`Flush::Release`] took off `tracked`, with the host value written for each.
-    released: HashMap<String, (Value, HostValue)>,
+    /// Values a [`Flush::Release`] took off `tracked`, with the [`fingerprint`] of the host value written for each.
+    released: HashMap<String, (Value, u64)>,
     /// Decimals and entity values read by name, kept so a second read is the same object.
     kept: HashMap<String, Value>,
     /// Whether a flush is writing back now: a conversion meanwhile does not flush again.
@@ -215,7 +220,7 @@ fn is_plain_collection<J: Js>(js: &mut J, engine: &OxideEngine, value: &Value) -
 fn readopt(engine: &OxideEngine, name: &str) -> Option<Value> {
     let mut values = values(engine).borrow_mut();
     let (value, written) = values.released.remove(name)?;
-    if !STACK.with(|stack| stack.borrow().holds(name, &written)) {
+    if !print_held(name, written) {
         return None;
     }
     values.tracked.insert(name.to_string(), value.clone());
@@ -271,20 +276,26 @@ fn flush_values<J: Js>(js: &mut J, engine: &OxideEngine, mode: Flush) -> Result<
         // what the stack holds, for `readopt`.
         // A value of ordinary objects and data properties only is compared in place, under the stack's borrow: reading
         // it runs no code. A keep or an end then needs no copy of the stack's value.
-        if mode != Flush::Release {
-            let in_place = STACK.with(|stack| {
-                stack
-                    .borrow()
-                    .with_value(&name, |held| matches_in_place(js, engine, &value, held, 0))
-            });
-            match in_place {
-                Some(Ok(Some(true))) => continue,
-                Some(Err(err)) => {
-                    first.get_or_insert(err);
-                    continue;
+        // A release then notes the stack's value by its fingerprint, with no copy.
+        let release = mode == Flush::Release;
+        let in_place = STACK.with(|stack| {
+            stack.borrow().with_value(&name, |held| {
+                matches_in_place(js, engine, &value, held, 0)
+                    .map(|same| same.map(|same| (same, (same && release).then(|| fingerprint(held)))))
+            })
+        });
+        match in_place {
+            Some(Ok(Some((true, print)))) => {
+                if let Some(print) = print {
+                    values(engine).borrow_mut().released.insert(name, (value, print));
                 }
-                Some(Ok(Some(false) | None)) | None => {}
+                continue;
             }
+            Some(Err(err)) => {
+                first.get_or_insert(err);
+                continue;
+            }
+            Some(Ok(Some((false, _)) | None)) | None => {}
         }
         // Otherwise the comparison reads the script's object, which may run script code (a Proxy's traps, a getter)
         // that writes the stack: it compares a copy, with the stack free.
@@ -296,7 +307,7 @@ fn flush_values<J: Js>(js: &mut J, engine: &OxideEngine, mode: Flush) -> Result<
         match unchanged {
             Some(Ok(Some(written))) => {
                 if let Some(written) = written {
-                    values(engine).borrow_mut().released.insert(name, (value, written));
+                    values(engine).borrow_mut().released.insert(name, (value, fingerprint(&written)));
                 }
                 continue;
             }
@@ -309,10 +320,8 @@ fn flush_values<J: Js>(js: &mut J, engine: &OxideEngine, mode: Flush) -> Result<
         match to_host(js, engine, &value) {
             Ok(host) => {
                 if mode == Flush::Release {
-                    values(engine)
-                        .borrow_mut()
-                        .released
-                        .insert(name.clone(), (value, host.clone()));
+                    let print = fingerprint(&host);
+                    values(engine).borrow_mut().released.insert(name.clone(), (value, print));
                 }
                 crate::script::census::note_side_effect();
                 STACK.with(|stack| {
@@ -499,10 +508,79 @@ fn matches_in_place<J: Js>(
     host: &HostValue,
     depth: usize,
 ) -> Result<Option<bool>, Conv> {
-    use quickjs_oxide::engine::api::core::CompleteOrdinaryPropertyDescriptor as Descriptor;
     if depth >= MAX_NESTING {
         return Ok(None);
     }
+    Ok(Some(match host {
+        HostValue::List(items) => {
+            let Value::Object(object) = value else {
+                return Ok(Some(false));
+            };
+            // read in one step when every element is an own data property; anything else as below
+            let Some(elements) = js.dense_array_values(object)? else {
+                return matches_in_place_slow(js, engine, value, host, depth);
+            };
+            if elements.len() != items.len() {
+                return Ok(Some(false));
+            }
+            for (element, item) in elements.iter().zip(items) {
+                match matches_in_place(js, engine, element, item, depth + 1)? {
+                    Some(true) => {}
+                    other => return Ok(other),
+                }
+            }
+            true
+        }
+        HostValue::Map(entries) => {
+            if entries.contains_key(SET_KEY) || entries.contains_key(WRAP_KEY) {
+                return Ok(Some(false));
+            }
+            let Value::Object(object) = value else {
+                return Ok(Some(false));
+            };
+            let Some(properties) = js.plain_own_data(object, Some(&engine.protos.object_prototype))? else {
+                return matches_in_place_slow(js, engine, value, host, depth);
+            };
+            let mut expected = entries.iter();
+            for property in properties {
+                if !property.enumerable {
+                    continue;
+                }
+                let Some(name) = property.key.to_js_string() else {
+                    continue;
+                };
+                if let Value::Object(inner) = &property.value {
+                    if js.as_callable(inner)?.is_some() {
+                        continue;
+                    }
+                }
+                let Some((held_name, held_item)) = expected.next() else {
+                    return Ok(Some(false));
+                };
+                if !super::convert::text_is(&name, held_name) {
+                    return Ok(Some(false));
+                }
+                match matches_in_place(js, engine, &property.value, held_item, depth + 1)? {
+                    Some(true) => {}
+                    other => return Ok(other),
+                }
+            }
+            expected.next().is_none()
+        }
+        _ => return matches_in_place_slow(js, engine, value, host, depth),
+    }))
+}
+
+/// [`matches_in_place`] a property at a time: an object [`Js::plain_own_data`] does not read (another prototype, an
+/// accessor, a hole).
+fn matches_in_place_slow<J: Js>(
+    js: &mut J,
+    engine: &OxideEngine,
+    value: &Value,
+    host: &HostValue,
+    depth: usize,
+) -> Result<Option<bool>, Conv> {
+    use quickjs_oxide::engine::api::core::CompleteOrdinaryPropertyDescriptor as Descriptor;
     let own_data = |js: &mut J, object, key: &PropertyKey| -> Result<Option<Value>, Conv> {
         Ok(match js.get_own_property(object, key)? {
             Some(Descriptor::Data { value, .. }) => Some(value),
@@ -597,4 +675,52 @@ fn text_is(value: &Value, text: &str) -> bool {
         Value::String(found) => super::convert::text_is(found, text),
         _ => false,
     }
+}
+
+/// A 64-bit print of a host value, equal for values [`moqui_lib::object::java_equals`] finds equal (a map's entries in
+/// any order), made in place with no allocation. Two different values share a print about once in 2^64 checks.
+fn fingerprint(value: &HostValue) -> u64 {
+    use std::hash::{BuildHasher, Hash, Hasher};
+    const SEED: foldhash::quality::FixedState = foldhash::quality::FixedState::with_seed(0x6d71_6f78_6964_6531);
+    fn walk(value: &HostValue, hasher: &mut impl Hasher) {
+        std::mem::discriminant(value).hash(hasher);
+        match value {
+            HostValue::Null => {}
+            HostValue::String(text) => text.hash(hasher),
+            HostValue::Bool(flag) => flag.hash(hasher),
+            HostValue::I32(number) => number.hash(hasher),
+            HostValue::I64(number) => number.hash(hasher),
+            HostValue::F64(number) => number.to_bits().hash(hasher),
+            HostValue::Decimal(decimal) => {
+                decimal.mantissa().hash(hasher);
+                decimal.scale().hash(hasher);
+            }
+            HostValue::Timestamp(timestamp) => timestamp.hash(hasher),
+            HostValue::Date(date) => date.hash(hasher),
+            HostValue::Time(time) => time.hash(hasher),
+            HostValue::Bytes(bytes) => bytes.hash(hasher),
+            HostValue::List(items) => {
+                items.len().hash(hasher);
+                for item in items {
+                    walk(item, hasher);
+                }
+            }
+            HostValue::Map(entries) => {
+                // order-free: the entries' own prints summed
+                entries.len().hash(hasher);
+                let mut sum = 0u64;
+                for (key, entry) in entries {
+                    let mut inner = SEED.build_hasher();
+                    key.hash(&mut inner);
+                    walk(entry, &mut inner);
+                    sum = sum.wrapping_add(inner.finish());
+                }
+                sum.hash(hasher);
+            }
+            HostValue::Object(object) => (std::sync::Arc::as_ptr(&object.0) as *const () as usize).hash(hasher),
+        }
+    }
+    let mut hasher = SEED.build_hasher();
+    walk(value, &mut hasher);
+    hasher.finish()
 }

@@ -21,7 +21,7 @@
 
 
 use moqui_lib::object::{HostObject, Value as HostValue};
-use quickjs_oxide::engine::api::core::{Js, JsString, ObjectRef, PropertyKey, RuntimeError, TypedArrayKind, Value};
+use quickjs_oxide::engine::api::core::{InitValue, Js, JsString, ObjectRef, PropertyKey, RuntimeError, TypedArrayKind, Value};
 
 use super::decimal::OxDecimal;
 use super::engine::OxideEngine;
@@ -163,9 +163,9 @@ fn to_js_at<J: Js>(js: &mut J, engine: &OxideEngine, value: &HostValue, depth: u
             }
             let mut values = Vec::with_capacity(items.len());
             for item in items {
-                values.push(to_js_at(js, engine, item, depth + 1)?);
+                values.push(to_init(js, engine, item, depth + 1)?);
             }
-            Value::Object(js.new_array_from_values(values)?)
+            Value::Object(js.new_array_from_inits(&values)?)
         }
         HostValue::Map(entries) => {
             if depth >= MAX_HOST_NESTING {
@@ -208,6 +208,15 @@ fn to_js_at<J: Js>(js: &mut J, engine: &OxideEngine, value: &HostValue, depth: u
                 let array = js.new_array_from_values(values)?;
                 return Ok(js.construct(&engine.protos.set, &[Value::Object(array)])?);
             }
+            // made in one step, as an object literal makes its properties; `__proto__` is a name that [[Set]]s the
+            // prototype instead
+            if !entries.contains_key("__proto__") {
+                let mut made = Vec::with_capacity(entries.len());
+                for (name, item) in entries {
+                    made.push((engine.key(name)?, to_init(js, engine, item, depth + 1)?));
+                }
+                return Ok(Value::Object(js.new_object_from(&made)?));
+            }
             let object = js.new_object()?;
             for (name, item) in entries {
                 let item = to_js_at(js, engine, item, depth + 1)?;
@@ -221,6 +230,26 @@ fn to_js_at<J: Js>(js: &mut J, engine: &OxideEngine, value: &HostValue, depth: u
         }
         HostValue::Object(object) => object_to_js(js, engine, object)?,
     })
+}
+
+/// A host value as what an object's property or an array's element is made from: text as itself, made a string in
+/// one copy, else [`to_js_at`].
+fn to_init<'a, J: Js>(
+    js: &mut J,
+    engine: &OxideEngine,
+    value: &'a HostValue,
+    depth: usize,
+) -> Result<InitValue<'a>, Conv> {
+    match value {
+        HostValue::String(text) => {
+            if text.len() > JsString::MAX_LEN {
+                // the cap as `JsString::try_from_utf8` checks it, in UTF-16 units
+                JsString::try_from_utf8(text)?;
+            }
+            Ok(InitValue::Text(text))
+        }
+        _ => Ok(InitValue::Value(to_js_at(js, engine, value, depth)?)),
+    }
 }
 
 fn object_to_js<J: Js>(js: &mut J, engine: &OxideEngine, object: &HostObject) -> Result<Value, Conv> {
@@ -272,6 +301,36 @@ fn to_host_in<J: Js>(
         Value::BigInt(_) | Value::Symbol(_) => return Err(Conv::Error("cannot convert this value".to_string())),
         Value::Object(object) => object,
     };
+    // a plain array or object, read in one step: none of the checks below would take it
+    if let Some(items) = js.dense_array_values(object)? {
+        enter(path, object)?;
+        let mut list = Vec::with_capacity(items.len());
+        for item in &items {
+            list.push(to_host_in(js, engine, item, path)?);
+        }
+        path.pop();
+        return Ok(HostValue::List(list));
+    }
+    if let Some(entries) = js.plain_own_data(object, Some(&engine.protos.object_prototype))? {
+        enter(path, object)?;
+        let mut map = indexmap::IndexMap::with_capacity(entries.len());
+        for entry in entries {
+            if !entry.enumerable {
+                continue;
+            }
+            let Some(name) = entry.key.to_js_string() else {
+                continue;
+            };
+            if let Value::Object(inner) = &entry.value {
+                if js.as_callable(inner)?.is_some() {
+                    continue;
+                }
+            }
+            map.insert(name.to_utf8_lossy(), to_host_in(js, engine, &entry.value, path)?);
+        }
+        path.pop();
+        return Ok(HostValue::Map(map));
+    }
     if js.as_callable(object)?.is_some() {
         return Err(Conv::Error("cannot convert this value".to_string()));
     }
