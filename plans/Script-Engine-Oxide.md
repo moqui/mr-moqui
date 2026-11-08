@@ -2,8 +2,9 @@
 
 Status 2026-11-07: Phases 0 to 3 built. quickjs-oxide is a dependency at the fork's revision 7cf1f530, with F1, F2,
 F3a, F3 and F4 (§6). Under `script_engine=oxide` every kind runs on quickjs-oxide, and both suites and the client
-suite pass; the speed and heap rows miss and are accepted for now (§7, Phase 3 result). The default is still
-`rquickjs`, and rquickjs stays until Phase 4.
+suite pass. After Profiling Rounds 33 to 47 (accepted in Round 48, 2026-11-08) the screen rows are within ×1.10 of
+QuickJS and the Mantle operations are +0.6%; the heap still misses its gate (§11). The default is still `rquickjs`, and
+rquickjs stays until Phase 4.
 This plan adds [quickjs-oxide](https://github.com/pocket-nexus/quickjs-oxide), a QuickJS-compatible engine in safe Rust,
 first for expressions and other small scripts, then for everything, and then removes rquickjs. It also changes our fork
 of quickjs-oxide so compiled code is shared by all threads of the process, as compiled Groovy was in Java. The
@@ -614,7 +615,8 @@ Open, with what decides each:
 ## 11. Resuming
 
 State at the end of Phase 3 (2026-11-07):
-- **mr-moqui:** `master` holds Phases 0 to 3, Profiling Rounds 33 to 47 and the pin to the fork's 7cf1f530.
+- **mr-moqui:** `master` holds Phases 0 to 3, Profiling Rounds 33 to 47 (accepted in Round 48) and the pin to the
+  fork's 7cf1f530.
 - **The fork:** its `main` is 7cf1f530 (Round 43's `perf/replace-one-byte` merged).
 - **Defaults:** `rquickjs` is the default. `small-oxide` and `oxide` are both whole and pass the suites.
 - **Measurement:** the measurement workspace is `../oxide-bench` (its `README.md`). It has:
@@ -622,7 +624,7 @@ State at the end of Phase 3 (2026-11-07):
   - the scripts for the Mantle operations against a Postgres 200 µs away;
   - Round 32's raw data.
 
-The work goes on in this order: first the bindings' speed and the heap (Profiling's Round 32 "Next"), then Phase 4.
+The bindings' speed is done (Round 48's acceptance, below). Next is Phase 4, with the heap as fork work beside it.
 
 ### Where things are
 
@@ -714,6 +716,20 @@ QuickJS, or below it. Next: the engine core for the qvt rows, cached finds, and 
 bindings), so one release build measures every change on its own. The switches come out before the commit. Use
 `../oxide-bench/round33/run-variants.sh` and `table.py`. A round is proved locally (`js_speed`, a profile, the touched
 unit tests and the fork's API tests), with no Sweep, Mantle run or full-suite run.
+
+**Round 48 (Profiling): the acceptance of Rounds 33 to 47.** Against Phase 3's gates:
+- **The screen rows, within ×1.10 of QuickJS: met.** Labels is at ×1.10, Single html at ×1.07 and Single.qvt at ×1.06.
+  List html, List.qvt and List text are at ×0.82 to ×1.00.
+- **The Mantle operations, no slower: met, within the noise.** In all, oxide is 3400 ms against QuickJS's 3380 (+0.6%;
+  Round 32 was +3.9%). No service is beyond the run-to-run spread.
+- **The heap, under half of 139 MiB: missed.** The workers peak at 103 to 118 MB, against QuickJS's 114 to 153 MB. The
+  two causes are the fork's: about 30 runtimes a process, and arenas that give back only their ends.
+- **Still over ×1.10.** Three script rows are ×1.16: walk itemList, cached finds and the locked-down template. These
+  are a host map's conversion, a find's arguments and a snapshot's copy.
+- **Plain JavaScript** is ×0.67 to ×0.96 of QuickJS.
+- **The suites.** Both engines pass the same suites, with two failures that are not the engine's: a timing flake in
+  `moqui-git`, and mr-mantle's `SupportAssignment` round-robin feature, which fails under both engines. The Sweep,
+  `gates.sh` and the memory sweep pass on the fork's `main`.
 
 ### Next: Phase 4 (rquickjs removed)
 

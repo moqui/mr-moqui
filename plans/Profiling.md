@@ -2054,6 +2054,113 @@ In the profile:
   lend and restore 0.4%, the trampoline 0.3%.
 - About a third of the server's CPU in both runs is Argon2 password hashing, the specs' logins.
 
+## Round 48: acceptance of Rounds 33 to 47
+
+Everything Rounds 33 to 47 deferred, run at once on `master` 2b20f765 (the fork's `main` 7cf1f530, jemalloc). The raw
+logs are in `../oxide-bench/accept48/`.
+
+**`js_speed`, before and after.** "Before" is `master` 680c2ee5, before Round 33 (the fork's 8635ecb5); "now" is
+2b20f765. One release build of each, two runs of each engine, compared at the better run, with nothing else building.
+The machine's load was about 8 when the runs started, which is why QuickJS's "now" column is 1 to 3% above its
+"before": the QuickJS bindings did not change. µs a call, allocations a call in brackets (QuickJS's C allocations are
+not counted):
+
+| Row | QuickJS before | QuickJS now | oxide before | oxide now | oxide / QuickJS now |
+|---|---:|---:|---:|---:|---:|
+| walk itemList, 100 context maps | 58.3 | 58.6 | 197.4 (4123) | 68.2 (807) | 1.16 |
+| 100 `ec.user.nowTimestamp` | 31.3 | 29.6 | 66.6 (802) | 31.7 (502) | 1.07 |
+| 100 decimal multiply + add | 70.3 | 71.7 | 97.6 (1216) | 71.7 (613) | 1.00 |
+| 10 cached entity finds | 43.2 | 43.9 | 61.3 (820) | 50.7 (576) | 1.16 |
+| 1000 string concatenations | 136.8 | 143.5 | 140.3 | 96.0 | 0.67 |
+| JSON stringify + parse of 100 objects | 101.8 | 107.8 | 111.1 | 94.0 | 0.87 |
+| fancy, trusted (live context) | 59.6 | 61.8 | 95.1 (1059) | 63.4 (326) | 1.03 |
+| fancy, locked down (a snapshot) | 66.4 | 69.7 | 88.2 (885) | 81.0 (824) | 1.16 |
+| Plain, html | 27.7 | 28.2 | 30.5 | 27.1 | 0.96 |
+| Labels, html (40 labels) | 226.9 | 226.2 | 306.7 (3502) | 248.7 (1719) | 1.10 |
+| Single, html | 315.1 | 317.5 | 472.9 (5407) | 340.1 (2312) | 1.07 |
+| Single.qvt | 509.6 | 514.1 | 814.2 (9394) | 546.5 (3601) | 1.06 |
+| List, html, 20 rows | 1987 | 2011 | 2342 (24133) | 1867 (13834) | 0.93 |
+| List, html, 100 rows | 9322 | 9491 | 10939 (117278) | 8600 (66690) | 0.91 |
+| Plain.qvt | 24.4 | 25.1 | 27.4 | 24.0 | 0.96 |
+| List.qvt, 100 rows | 12910 | 13254 | 16438 (141730) | 13316 (82992) | 1.00 |
+| List, text, 100 rows | 2869 | 2920 | 3110 (44641) | 2385 (26190) | 0.82 |
+
+- **The screen rows meet Phase 3's gate (within ×1.10 of QuickJS).** Labels is at the edge, ×1.10. Against QuickJS's
+  quieter "before" column, Labels is ×1.10, Single html ×1.08 and Single.qvt ×1.07.
+- **The rows still over.** Three script rows are ×1.16: walk itemList, cached finds and the locked-down template.
+  These are a host map's conversion, the find's arguments, and a snapshot's copy.
+- **The bare-name row** (1000 adds to a bare name) read 342 → 398 µs here. In the per-round A/Bs it ran 340 to 386 on
+  both sides of every change, and it follows the machine's load. It is noise, not a change.
+- **oxide's allocations** are a half to a fifth of what they were.
+
+**The fork's Sweep.** The fork's `main` 7cf1f530 against 8635ecb5, which covers every branch merged since Round 34:
+
+- the eight V8 v7 programs: ×0.989 instructions; all at or under ×1.0000; `regexp` ×0.919 (Round 40's scratch
+  buffers). The instruction gate passes.
+- `run_at`: 15,251 bytes, under 16,384. The gate passes.
+- all 20 fixed workloads: ×0.9995 instructions.
+- memory: ×0.997 over 37 programs. An empty script is 4,324 → 4,396 KiB.
+
+The fork's `gates.sh` (upstream's CI steps, GC stress included) passes on `main`.
+
+**The Mantle operations, two runs of each engine** (rq1 ox1 rq2 ox2, Postgres 200 µs away). Medians times the calls:
+
+| Service | Calls | QuickJS ms | oxide ms | Ratio |
+|---|---:|---:|---:|---:|
+| `place#Order` | 26 | 21.1 | 21.1 | 0.997 |
+| `approve#Order` | 26 | 16.3 | 16.3 | 1.002 |
+| `add#OrderProductQuantity` | 32 | 16.7 | 16.7 | 0.998 |
+| `change#InvoiceState` | 2 | 23.0 | 22.6 | 0.982 |
+| `create#Payment` | 11 | 23.4 | 23.7 | 1.015 |
+| `apply#Settlement` | 8 | 48.0 | 49.0 | 1.021 |
+| `pack#Shipment` | 16 | 44.2 | 43.0 | 0.975 |
+| `get#PaymentFinanceDetail` | 24 | 12.7 | 13.9 | 1.095 |
+| `approve#Payable` | 6 | 29.0 | 29.0 | 0.999 |
+
+- **Totals.** 3380 ms on QuickJS and 3400 on oxide, +0.6%. Round 32 was +3.9%, and Round 33 +2.2%.
+- **`get#PaymentFinanceDetail`** is ×1.10 here, but Round 47's single run had it at ×0.92. It is about 1 ms a call,
+  inside the run-to-run spread.
+- **`apply#Settlement`** was ×1.11 in Round 32; it is now ×1.02.
+- **The features.** All 111 passed in each of the four runs, and the round trips are equal.
+
+**The suites.**
+
+| Suite | Result |
+|---|---|
+| `./moq test-framework` | All passed, except one `cargo test` failure (below) |
+| `./moq test-apps`, `script_engine=oxide` | 3393 of 3394 features passed, and the 19 client features |
+| `./moq test-apps`, default (`rquickjs`) | The same 3393 of 3394 features passed, and the 19 client features |
+
+Neither failure comes from the script engine:
+- **`moqui-git`'s `mirror_fetches_and_opted_in_writes_raise_events`** counted one event where it expected two. It
+  passes when run alone, so it is a timing flake in the full run.
+- **mr-mantle's `SupportAssignment` "round robin skips the agent outside their hours..."** fails under both engines,
+  and alone as well, with `SERVICE_NOT_CONFIGURED: Customer Service is not set up for Assignment Spec Org`. It is in
+  the Customer Service P5 work (2026-11-05), not in the engine.
+
+The difference check counted no differences, and no run fell back.
+
+**The heap under `oxide`** (`MOQUI_SCRIPT_STATS_FILE`, per test-apps process):
+- **The peaks.** The four large workers peak at 103, 109, 113 and 118 MB, against Round 32's 91, 102, 105 and 118.
+  QuickJS's peaks are 114, 125, 141 and 153 MB, against 126, 130, 137 and 140, so the suite itself grew.
+- **The gate is still missed.** Phase 3's gate is half of 139 MiB; oxide's top peak is about ×0.78 of QuickJS's.
+- **Engines.** At most 31 live engines a process (QuickJS 33), and 306 started.
+- **Restarts and sheds.** No restart for memory (Round 32 had 1). Round 44's check shed 18 fragmented runtimes.
+- **The largest thread's sum of peaks** is 49.8 MB, against 54.2.
+- **What sets the peak.** The peak is the number of runtimes times each one's working set. Neither of the two causes
+  Round 32 named moved, and both are fork work: about 30 runtimes a process, and arenas that give back only their
+  ends.
+- **jemalloc** does not show in these numbers. `heap_bytes` is the engine's own accounting; jemalloc's effect on
+  process RSS is Round 37's.
+
+**Where this leaves the gates.**
+- **Screen rows, within ×1.10:** met.
+- **The Mantle operations, no slower:** +0.6% in all, which is inside the noise.
+- **The heap, under half of 139 MiB:** missed, at 118 MB.
+
+The plain-JavaScript rows (concatenation, JSON, locals) are faster on oxide than on QuickJS. The rows over ×1.10 are
+all at the boundary between host and engine.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
