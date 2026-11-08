@@ -42,7 +42,8 @@ is in `libs/`. To upgrade, change the version in `refresh.mjs`, run with `--writ
 | Quasar | 2.35.1 | `quasar/quasar.umd.prod.js`, `quasar/quasar.prod.css`, `quasar/lang/{en-US,de,es,fr,it,pt-BR,ja,zh-CN,ru,nl}.umd.prod.js`, `quasar/icon-set/material-symbols-outlined.umd.prod.js`, global `Quasar` | `qvt` pages. The language pack is chosen from the user locale; the icon set is Quasar's own icons as Material Symbols. |
 | Material Icons | 1.13.14 | `material-icons/material-icons.css` and `.woff2`, `.woff` beside it | `qvt` pages (icon names without a prefix: `menu`, `add`) |
 | Material Symbols Outlined | 0.47.6 (npm `@material-symbols/font-400`) | `material-symbols/outlined.css`, `material-symbols/material-symbols-outlined.woff2` (weight 400, 0.5 MB) | `qvt` pages (the `sym_o_*` names and Quasar's icon set) |
-| Chart.js | 4.5.1 | `chartjs/chart.umd.min.js`, global `Chart` | Lazy, Assist and chart widgets |
+| Atkinson Hyperlegible Next and Mono | 5.3.0 (npm `@fontsource-variable/atkinson-hyperlegible-{next,mono}`) | `atkinson-{next,mono}/atkinson-hyperlegible-{next,mono}-{latin,latin-ext}-wght-{normal,italic}.woff2` (variable, 170 KB in all) | `qvt` pages: the default text and code fonts, `@font-face` in `css/WebrootVue.qvt.css` |
+| Chart.js | 4.5.1 | `chartjs/chart.umd.min.js`, global `Chart` | Lazy, Assist and chart widgets; the Marble ledger charts |
 | Mermaid | 11.17.2 | `mermaid/mermaid.min.js`, global `mermaid` | Lazy, Assist. `mermaid.init` no longer exists in 11, call `mermaid.run`. |
 | Marked | 18.1.1 | `marked/marked.umd.min.js`, global `marked` | Assist panel, markdown textarea |
 | DOMPurify | 3.4.17 | `dompurify/purify.min.js`, global `DOMPurify` | Assist panel |

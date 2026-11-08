@@ -72,26 +72,16 @@ along with this software (see the LICENSE.md file). If not, see
 
         <section name="XmlActionDisplaySection" condition="serviceNode.first('actions')"><widgets>
             <label text="XML Actions" type="h3"/>
-            <container type="pre" style="line-numbers"><label text="${serviceNode.first('actions')?.toString()}"
-                    type="code" style="language-markup" encode="true"/></container>
+            <code-view text="${serviceNode.first('actions')?.toString()}" language="xml"/>
 
         </widgets></section>
         <section name="LocationDisplaySection" condition="sd.serviceNode.attribute('location') &amp;&amp; sd.serviceNode.attribute('type')!='java'"><widgets>
             <label text="Script" type="h3"/>
-            <container type="pre" style="line-numbers">
-                <label text="${ec.resource.getLocationText(sd.serviceNode.attribute('location'), false)}" type="code"
-                       style="language-javascript" encode="true"/></container>
+            <code-view text="${ec.resource.getLocationText(sd.serviceNode.attribute('location'), false)}" file-name="${sd.serviceNode.attribute('location')}"/>
         </widgets></section>
         <label text="SECA Rules" type="h3" condition="secas"/>
         <section-iterate name="Secas" list="secas" entry="seca"><widgets>
-            <container type="pre" style="line-numbers">
-                <label text="${seca.toString()}" type="code" style="language-markup" encode="true"/></container>
+            <code-view text="${seca.toString()}" language="xml"/>
         </widgets></section-iterate>
-        <render-mode><text type="html,vuet,qvt"><![CDATA[
-            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.20.0/themes/prism-twilight.min.css" type="text/css"/>
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.20.0/prism.min.js" type="text/javascript"></script>
-        ]]></text>
-        <!-- the highlighter only: nothing to show in the terminal -->
-        <text type="tui" template="false">[]</text></render-mode>
     </widgets>
 </screen>

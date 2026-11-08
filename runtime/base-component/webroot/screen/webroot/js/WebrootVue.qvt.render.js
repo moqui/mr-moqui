@@ -6,7 +6,7 @@
 (function (moqui) {
     "use strict";
     moqui.qvtRenders = Object.assign(moqui.qvtRenders || {}, {
-        "m-appearance-dialog": { hash: "e766a6a8", make: function (Vue) {
+        "m-appearance-dialog": { hash: "122444de", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass, createBlock: _createBlock, createTextVNode: _createTextVNode, withCtx: _withCtx, mergeProps: _mergeProps, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
             return function render(_ctx, _cache) {
@@ -144,7 +144,14 @@
                                 }, 8, ["label", "options", "model-value", "onUpdate:modelValue"])
                               ]))
                             }), 128))
-                          ])
+                          ]),
+                          (_ctx.fontsRemote)
+                            ? (_openBlock(), _createElementBlock("div", {
+                                key: 0,
+                                class: "text-caption m-muted q-mt-xs",
+                                id: "m-appearance-fonts-remote"
+                              }, _toDisplayString(_ctx.labels.fontsRemote), 1))
+                            : _createCommentVNode("", true)
                         ]))
                       : _createCommentVNode("", true),
                     (_ctx.sizeRoles.length)
@@ -5998,7 +6005,7 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-qapps-root": { hash: "f938a38a", make: function (Vue) {
+        "m-qapps-root": { hash: "cb3c98bd", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, withModifiers: _withModifiers, withKeys: _withKeys, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, createElementVNode: _createElementVNode, vShow: _vShow } = Vue
 
             return function render(_ctx, _cache) {
@@ -6014,11 +6021,11 @@
               const _component_q_breadcrumbs_el = _resolveComponent("q-breadcrumbs-el")
               const _component_q_breadcrumbs = _resolveComponent("q-breadcrumbs")
               const _component_q_space = _resolveComponent("q-space")
+              const _component_q_separator = _resolveComponent("q-separator")
               const _component_q_badge = _resolveComponent("q-badge")
               const _component_m_dynamic_dialog = _resolveComponent("m-dynamic-dialog")
               const _component_q_item_label = _resolveComponent("q-item-label")
               const _component_m_avatar = _resolveComponent("m-avatar")
-              const _component_q_separator = _resolveComponent("q-separator")
               const _component_m_user_status_menu = _resolveComponent("m-user-status-menu")
               const _component_m_push_item = _resolveComponent("m-push-item")
               const _component_q_toggle = _resolveComponent("q-toggle")
@@ -6407,46 +6414,57 @@
                                       }, 8, ["aria-label"]))
                                     : _createCommentVNode("", true),
                                   (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.headerCounters, (counter) => {
-                                    return (_openBlock(), _createBlock(_component_q_btn, {
-                                      key: counter.key,
-                                      flat: "",
-                                      round: "",
-                                      dense: "",
-                                      id: 'm-counter-' + counter.key,
-                                      icon: counter.icon,
-                                      "aria-label": counter.label,
-                                      class: _normalizeClass({'text-primary': counter.tray && _ctx.trayOpen && (counter.any || _ctx.trayTab === counter.key)}),
-                                      onClick: $event => (counter.tray ? _ctx.toggleTray(counter.any ? null : counter.key) : _ctx.setUrl(counter.url))
-                                    }, {
-                                      default: _withCtx(() => [
-                                        (_ctx.counterCount(counter))
-                                          ? (_openBlock(), _createBlock(_component_q_badge, {
-                                              key: 0,
-                                              floating: "",
-                                              rounded: "",
-                                              color: "negative"
-                                            }, {
-                                              default: _withCtx(() => [
-                                                _createTextVNode(_toDisplayString(_ctx.counterText(counter)), 1)
-                                              ]),
-                                              _: 2
-                                            }, 1024))
-                                          : _createCommentVNode("", true),
-                                        (counter.key === 'chat' && _ctx.myPresence)
-                                          ? (_openBlock(), _createElementBlock("span", {
-                                              key: 1,
-                                              class: _normalizeClass(["m-avatar-presence m-shell-presence", 'm-presence-' + _ctx.myPresence])
-                                            }, null, 2))
-                                          : _createCommentVNode("", true),
-                                        _createVNode(_component_q_tooltip, null, {
-                                          default: _withCtx(() => [
-                                            _createTextVNode(_toDisplayString(counter.label), 1)
-                                          ]),
-                                          _: 2
-                                        }, 1024)
-                                      ]),
-                                      _: 2
-                                    }, 1032, ["id", "icon", "aria-label", "class", "onClick"]))
+                                    return (_openBlock(), _createElementBlock(_Fragment, {
+                                      key: counter.key
+                                    }, [
+                                      (counter.dividerBefore)
+                                        ? (_openBlock(), _createBlock(_component_q_separator, {
+                                            key: 0,
+                                            vertical: "",
+                                            inset: "",
+                                            class: "q-mx-xs m-header-divider"
+                                          }))
+                                        : _createCommentVNode("", true),
+                                      _createVNode(_component_q_btn, {
+                                        flat: "",
+                                        round: "",
+                                        dense: "",
+                                        id: 'm-counter-' + counter.key,
+                                        icon: counter.icon,
+                                        "aria-label": counter.label,
+                                        class: _normalizeClass({'text-primary': counter.tray && _ctx.trayOpen && (counter.any || _ctx.trayTab === counter.key)}),
+                                        onClick: $event => (counter.tray ? _ctx.toggleTray(counter.any ? null : counter.key) : _ctx.setUrl(counter.url))
+                                      }, {
+                                        default: _withCtx(() => [
+                                          (_ctx.counterCount(counter))
+                                            ? (_openBlock(), _createBlock(_component_q_badge, {
+                                                key: 0,
+                                                floating: "",
+                                                rounded: "",
+                                                color: "negative"
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createTextVNode(_toDisplayString(_ctx.counterText(counter)), 1)
+                                                ]),
+                                                _: 2
+                                              }, 1024))
+                                            : _createCommentVNode("", true),
+                                          (counter.key === 'chat' && _ctx.myPresence)
+                                            ? (_openBlock(), _createElementBlock("span", {
+                                                key: 1,
+                                                class: _normalizeClass(["m-avatar-presence m-shell-presence", 'm-presence-' + _ctx.myPresence])
+                                              }, null, 2))
+                                            : _createCommentVNode("", true),
+                                          _createVNode(_component_q_tooltip, null, {
+                                            default: _withCtx(() => [
+                                              _createTextVNode(_toDisplayString(counter.label), 1)
+                                            ]),
+                                            _: 2
+                                          }, 1024)
+                                        ]),
+                                        _: 2
+                                      }, 1032, ["id", "icon", "aria-label", "class", "onClick"])
+                                    ], 64))
                                   }), 128)),
                                   (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.qzVue), { ref: "qzVue" }, null, 512)),
                                   (_ctx.documentMenuList.length)
@@ -7999,16 +8017,15 @@
               ], 8, ["type"]))
             }
         } },
-        "m-shell-assist": { hash: "f608e595", make: function (Vue) {
+        "m-shell-assist": { hash: "467c25dd", make: function (Vue) {
             const { openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, createBlock: _createBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_icon = _resolveComponent("q-icon")
               const _component_q_select = _resolveComponent("q-select")
               const _component_q_space = _resolveComponent("q-space")
-              const _component_q_btn_toggle = _resolveComponent("q-btn-toggle")
-              const _component_q_circular_progress = _resolveComponent("q-circular-progress")
               const _component_q_tooltip = _resolveComponent("q-tooltip")
+              const _component_q_circular_progress = _resolveComponent("q-circular-progress")
               const _component_q_btn = _resolveComponent("q-btn")
               const _component_q_badge = _resolveComponent("q-badge")
               const _component_q_item_section = _resolveComponent("q-item-section")
@@ -8087,19 +8104,30 @@
                               }, _toDisplayString(_ctx.agent.name || _ctx.labels.assist), 1)),
                           _createVNode(_component_q_space),
                           (_ctx.tierOptions.length > 1)
-                            ? (_openBlock(), _createBlock(_component_q_btn_toggle, {
+                            ? (_openBlock(), _createBlock(_component_q_select, {
                                 key: 2,
                                 "model-value": _ctx.s.tier || _ctx.tiers[0],
                                 "onUpdate:modelValue": _ctx.setTier,
                                 options: _ctx.tierOptions,
+                                "emit-value": "",
+                                "map-options": "",
                                 dense: "",
-                                flat: "",
-                                "no-caps": "",
-                                size: "sm",
-                                "toggle-color": "primary",
+                                borderless: "",
+                                "options-dense": "",
                                 class: "m-assist-tier",
-                                id: "m-assist-tier"
-                              }, null, 8, ["model-value", "onUpdate:modelValue", "options"]))
+                                id: "m-assist-tier",
+                                "aria-label": _ctx.labels.tier
+                              }, {
+                                default: _withCtx(() => [
+                                  _createVNode(_component_q_tooltip, null, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(_ctx.labels.tier), 1)
+                                    ]),
+                                    _: 1
+                                  })
+                                ]),
+                                _: 1
+                              }, 8, ["model-value", "onUpdate:modelValue", "options", "aria-label"]))
                             : _createCommentVNode("", true),
                           (_ctx.meter)
                             ? (_openBlock(), _createElementBlock("div", {

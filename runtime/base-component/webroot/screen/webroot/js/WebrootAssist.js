@@ -71,7 +71,7 @@
             open: "Open", answer: "Answer", continueRun: "Continue", stopRun: "Stop", copy: "Copy", image: "Image", unavailable: "Assist is not available",
             empty: "Ask about this page, or tell Assist what to do.", earlier: "Earlier messages", recommended: "recommended", other: "Other",
             commands: "Commands", help: "/new starts a conversation, /tier fast|balanced|thorough picks the tier, /skill <name> asks for a skill, /help shows this.",
-            adminHelp: "Admin: /prompt, /tools, /skills, /context, /usage.", tier: "Tier", agent: "Agent", menu: "More", expired: "Expired",
+            adminHelp: "Admin: /prompt, /tools, /skills, /context, /usage.", tier: "Thinking", agent: "Agent", menu: "More", expired: "Expired",
             approved: "Approved", rejected: "Rejected", executed: "Done", executing: "Running", unknownOutcome: "Outcome unknown", handedOff: "Handed to you", decided: "Decided",
             errorTitle: "Something went wrong", nothingWaiting: "Nothing waiting", up: "Helpful", down: "Not helpful",
             canvas: "Canvas", backToPage: "Back to the page", showCanvas: "Show canvas", closeCanvas: "Close the canvas", loading: "Loading",
@@ -2714,7 +2714,7 @@
                         '<q-select v-if="agentOptions.length > 1" :model-value="convo.agentId || s.agentId" @update:model-value="setAgent" :options="agentOptions" emit-value map-options dense borderless options-dense class="m-assist-agent" for="m-assist-agent" :aria-label="labels.agent"></q-select>' +
                         '<div v-else class="text-subtitle2 text-weight-medium ellipsis">{{agent.name || labels.assist}}</div>' +
                         '<q-space></q-space>' +
-                        '<q-btn-toggle v-if="tierOptions.length > 1" :model-value="s.tier || tiers[0]" @update:model-value="setTier" :options="tierOptions" dense flat no-caps size="sm" toggle-color="primary" class="m-assist-tier" id="m-assist-tier"></q-btn-toggle>' +
+                        '<q-select v-if="tierOptions.length > 1" :model-value="s.tier || tiers[0]" @update:model-value="setTier" :options="tierOptions" emit-value map-options dense borderless options-dense class="m-assist-tier" id="m-assist-tier" :aria-label="labels.tier"><q-tooltip>{{labels.tier}}</q-tooltip></q-select>' +
                         '<div v-if="meter" class="m-assist-context q-mx-xs" id="m-assist-context" tabindex="0" :data-assist-context-level="meter.level" :data-percent="meter.percent" :aria-label="meter.tooltip">' +
                             '<q-circular-progress :value="meter.value" size="24px" :thickness="0.2" :color="meter.level === \'warning\' ? \'warning\' : \'primary\'" track-color="grey-5" show-value font-size="8px">{{meter.percent}}</q-circular-progress>' +
                             '<q-tooltip>{{meter.tooltip}}</q-tooltip></div>' +

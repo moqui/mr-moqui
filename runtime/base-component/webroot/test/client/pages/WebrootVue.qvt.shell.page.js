@@ -297,11 +297,15 @@ test("the root's shell: the current app and its title, the + menu, the account m
     assert.deepEqual(vm.paletteActions.map((action) => action.title), ["Open the widget gallery", "New event"]);
     // the tray: a tab for each screen the theme names, loaded from /apps; the counters in the header's order
     assert.deepEqual(vm.trayTabs.map((tab) => [tab.key, tab.loadUrl]), [["today", "/apps/Hub/Panel/Today"], ["notifications", "/apps/Hub/Panel/Notifications"]]);
-    assert.deepEqual(vm.headerCounters.map((counter) => [counter.key, counter.tray, counter.url || null]), [["today", true, null],
-        ["email", false, "/qapps/Mail/Inbox"], ["messages", false, "/qapps/Mail/Messages"], ["notifications", true, null]]);
+    // the tray's buttons first, in its tab order, then a divider and the links to screens
+    assert.deepEqual(vm.headerCounters.map((counter) => [counter.key, counter.tray, counter.url || null, !!counter.dividerBefore]), [["today", true, null, false],
+        ["notifications", true, null, false], ["email", false, "/qapps/Mail/Inbox", true], ["messages", false, "/qapps/Mail/Messages", false]]);
+    // the tray tab has the short name, the header button the full one
+    assert.deepEqual(vm.trayTabs.map((tab) => tab.label), ["Today", "Alerts"]);
+    assert.equal(vm.headerCounters[1].label, "Notifications");
     assert.equal(vm.countOf("today"), 3);
     assert.equal(vm.countText("email"), "99+");
-    assert.deepEqual(vm.headerCounters.map((counter) => vm.counterText(counter)), ["3", "99+", "2", "0"]);
+    assert.deepEqual(vm.headerCounters.map((counter) => vm.counterText(counter)), ["3", "0", "99+", "2"]);
     assert.equal(vm.countOf("notifications"), 0);
     assert.equal(vm.countOf("chat"), 0);
     // below 600 px Mail and Messages are one button to the mail screen with the counts summed, and the tray tabs one tray button
@@ -327,7 +331,7 @@ test("the root's shell: the current app and its title, the + menu, the account m
     assert.equal(vm.counterText(vm.headerCounters[2]), "2");
     vm.$q = { screen: { lt: { sm: false } } };
     vm.shellCounts = Object.assign({}, vm.shellCounts, { calls: 0 });
-    assert.deepEqual(vm.headerCounters.map((counter) => counter.key), ["today", "email", "messages", "calls", "notifications"], "always on a wide screen");
+    assert.deepEqual(vm.headerCounters.map((counter) => counter.key), ["today", "notifications", "email", "messages", "calls"], "always on a wide screen");
     vm.$q = { screen: { lt: { sm: true } } };
     vm.shellData.shell.callsScreen = null;
     vm.shellCounts = { email: 3, messages: 2, today: 1, notifications: 4 };
@@ -346,7 +350,7 @@ test("the root's shell: the current app and its title, the + menu, the account m
     // one tray tab alone keeps its own button
     const trayChat = vm.shellData.shell.trayToday;
     vm.shellData.shell.trayToday = null;
-    assert.deepEqual(vm.headerCounters.map((counter) => counter.key), ["mail", "notifications"]);
+    assert.deepEqual(vm.headerCounters.map((counter) => counter.key), ["notifications", "mail"]);
     vm.shellData.shell.trayToday = trayChat;
     delete vm.$q;
     vm.shellCounts = vm.shellData.counts;

@@ -14,7 +14,7 @@ There are four large pieces of work, and three smaller ones.
 The smaller pieces:
 
 5. **Upstream release hygiene.** Tagged, signed release tarballs, a version scheme, a man page, and a supported upgrade path for data. Debian stable users upgrade in place across releases, and the README still says the data model changes without migrations until 0.1.0 (§2).
-6. **Privacy and downloads.** The default theme data loads Google Fonts. The binary has download commands for Chromium and other tools. Debian expects neither fetches by default nor remote assets in shipped pages (§6.4).
+6. **Privacy and downloads.** Resolved for shipped pages: the default fonts are vendored and no page asks a CDN or font host (§6.4). The binary still has download commands for Chromium and other tools, and Debian expects no fetches by default (§6.4).
 7. **The Debian process.** An ITP bug, a Salsa repository, sponsored uploads by the two Debian Developers, ftpmaster review in NEW, then autopkgtest and testing migration (§8).
 
 A `.deb` for our own apt repository does not have to wait for any of this. The same `debian/` directory can build one today from a vendored crate tree (§6.5), while the archive version follows as its crates land.
@@ -153,7 +153,7 @@ The `.env` file is generated state, not configuration, so it stays in `/var/lib`
 
 ### 6.4 Privacy and downloads
 
-- `WebrootQuasarThemeData.xml` links Google Fonts (Roboto, Inter, Source Sans 3, Atkinson Hyperlegible, Merriweather, Source Serif 4). `LocaleServices.xml` points at a cdnjs URL. lintian flags these (`privacy-breach-generic`), and Debian users expect no third-party requests by default. Use local fonts (Debian has `fonts-roboto` and others) or system fonts in the Debian build, and better, upstream by default.
+- Resolved: shipped pages make no third-party requests by default. The qvt shell's default fonts (Atkinson Hyperlegible Next and Mono) are vendored in `webroot/libs`, Roboto is gone, and the Prism, Chart.js and jquery-validate CDN links were replaced by vendored libraries or removed. The remaining Google Fonts choices of `WebrootQuasarThemeData.xml` load only when a user picks one in Appearance, which labels them "(Google)" and says they come from Google's servers. A Debian build may still drop those `ScreenFontOption` rows, or point them at `fonts-*` packages.
 - Commands that download executables or archives (`chromium-download`, `scripts/pg-payload.sh`, an OpenSearch launch from `runtime/opensearch`) should be left out of the Debian build or say what to install instead.
 - No default network contact at startup: no update checks, no telemetry export, and no LLM provider calls without configuration. This needs an audit; the desktop updater is already off unless its variables are set.
 
