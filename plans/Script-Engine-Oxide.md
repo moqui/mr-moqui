@@ -1,9 +1,9 @@
 # Script engine: quickjs-oxide beside rquickjs
 
-Status 2026-11-07: Phases 0 to 2 built. quickjs-oxide is a dependency at the fork's revision with F2, F3a and F1
-steps 1 and 2 (§6); `script_engine` routes conditions, values, `${}` text, maps and the actions subset (§3) in
-`small-oxide`. Phase 2's suites and heap pass but its speed rows miss (§7, Phase 2 result), so the default is still
-`rquickjs`.
+Status 2026-11-07: Phases 0 to 3 built. quickjs-oxide is a dependency at the fork's revision 28aede7d, with F1, F2,
+F3a, F3 and F4 (§6). Under `script_engine=oxide` every kind runs on quickjs-oxide, and both suites and the client
+suite pass; the speed and heap rows miss and are accepted for now (§7, Phase 3 result). The default is still
+`rquickjs`, and rquickjs stays until Phase 4.
 This plan adds [quickjs-oxide](https://github.com/pocket-nexus/quickjs-oxide), a QuickJS-compatible engine in safe Rust,
 first for expressions and other small scripts, then for everything, and then removes rquickjs. It also changes our fork
 of quickjs-oxide so compiled code is shared by all threads of the process, as compiled Groovy was in Java. The
@@ -360,6 +360,53 @@ proceed in parallel and land in the order the phases need them.
   1.34 → 1.81, new text each call 0.55 → 1.23. The actions rows run on QuickJS in `js_speed` either way. The rest is
   the bindings' per-call cost (allocations: 0 → 4 for `a`, 11 → 53 for a new map) and compile time for new text, F4's
   work and Phase 3's.
+
+### Phase 3 result (2026-11-07)
+
+- **Built:** script files, script services and `run_script` on a whole oxide runtime (nested runs through F3a, tracked
+  values, errors with their location, the deadline); `ec.resource.script` modules; templates (§5.4's snapshot form
+  first, then the locked sandbox); XML actions and screen macros generated on oxide; screen units, `render_inline_text`
+  and the `screen_runner`; the spec engine, `settle` through F3a; moqui-llm's `script_object`; the widget check's
+  wrapped `ec`; QuickJS's own builtins (`queueMicrotask`, `atob`, `btoa`, `performance`, `DOMException`,
+  `SuppressedError` and the disposable stacks) on a whole runtime; the helper objects frozen on both engines; resource
+  objects let go when the outermost script ends (§ Engine differences); memory pressure, out-of-memory recovery and
+  restarts (§ Memory). The fork's F4 speed work is merged (V8 v7 instructions ×0.974 of the F1 to F3 revision, RegExp
+  ×0.805), with RegExp searches polled for the deadline by their work.
+- **Suites passed** under `script_engine=oxide`, and again under `rquickjs` on the same commit:
+  - `./moq test-apps`: 3306 of 3306 features and 17 of 17 client walks.
+  - `./moq test-framework`: every spec suite passes. The cargo step fails only on
+    `serve::a_server_that_does_not_start_fails_its_suite_only`, which fails on both engines and on `master` before
+    this work.
+  - The 26 unit tests of QuickJS-only entry points are pinned to `rquickjs` (§8).
+  - `./moq accept-all`: under `oxide` it fails nothing that does not fail under `rquickjs` on the same commit.
+    - Three oxide-only failures were fixed: SimpleScreensRender, the Tools AutoFind screens, and TuiRender's out of
+      memory.
+    - The first two had one cause: a form-list row read the first row's value kept by name.
+    - The failures left on both engines are application specs, worked on separately.
+- **Speed rows missed, accepted.** The cost is in the bindings between the host and the engine (host getters, context
+  reads, allocations per call); plain JavaScript is as fast or faster on oxide. The fork's API can grow to fit them.
+  - `js_speed` screen rows are ×1.03 to ×1.60 of QuickJS against the gate's ×1.10:
+    - Plain html ×1.03, List text 100 ×1.09, List html 100 ×1.17, List.qvt 100 ×1.26.
+    - Labels ×1.37, Single html ×1.50, Single.qvt ×1.60.
+  - Script rows: a local loop ×0.22, the empty script ×0.80, walking 100 context maps ×3.3, a host getter ×2.2.
+  - The Mantle operations against the Postgres 200 µs away (Round 26's nine services, the transaction cache on): ×1.039
+    in all, 3458 ms on QuickJS and 3594 ms on oxide. The services range from ×1.006 to ×1.11 (`apply#Settlement`).
+    Round trips are the same on both engines.
+- **Heap row missed.** The peak of each `./moq test-apps` worker's script heaps:
+  - `oxide`: 91 to 118 MB.
+  - `rquickjs`: 126 to 140 MB.
+  - The gate is half of Round 28's 139 MiB. What is left is the fork's: about 30 runtimes a process that share no
+    caches, and arenas that keep their interior free space (§ Memory).
+- **Left for later:**
+  - The fork's `fix/lower-heap-oom` (3f5d5809). It reports a compile that runs out of heap while lowering as out of
+    memory. Our side maps it already (`errors::compile_out_of_memory`), so the revision is not bumped for it.
+  - A decimal read again after a releasing flush is a new object on oxide (`===` is false), where QuickJS gives back
+    the same one.
+  - `entity_proxy`'s scan grows with a run's rows.
+  - `using` declarations, which need the fork's parser.
+  - A back-reference compared in one unpolled step.
+  - On both engines, a filter's `try`/`catch` around `chain.doFilter()` cannot keep a servlet's error from the
+    response.
 
 ### Phase 3: engine differences
 
