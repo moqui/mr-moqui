@@ -242,6 +242,14 @@
     };
     moqui.colorSchemeHref = (scheme) => scheme && scheme.custom ?
         (moqui.appRootPath || "") + "/apps/colorSchemeCss?colorSchemeId=" + encodeURIComponent(scheme.id) + "&v=" + encodeURIComponent(scheme.version || "") : null;
+    // the host a font option's style sheet loads from when it is not this server ("Google" for Google Fonts), else ""
+    moqui.fontRemoteHost = (href) => {
+        const match = /^(?:https?:)?\/\/([^/?#:]+)/i.exec(String(href || ""));
+        if (!match) return "";
+        const host = match[1].toLowerCase();
+        if (root.location && host === String(root.location.hostname || "").toLowerCase()) return "";
+        return /(^|\.)(googleapis|gstatic)\.com$/.test(host) ? "Google" : host;
+    };
     moqui.applyAppearance = (key, value) => {
         const doc = root.document;
         const html = doc && doc.documentElement, body = doc && doc.body;
@@ -8324,7 +8332,7 @@
         srcdoc(parts) {
             const p = parts || {};
             const dark = !!p.dark && !p.designed;
-            const font = p.font || "Roboto, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif";
+            const font = p.font || "system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif";
             const base = [
                 ":root { color-scheme: " + (dark ? "dark" : "light") + "; }",
                 "html, body { margin: 0; padding: 0; overflow: hidden; background: " + (p.designed && p.dark ? "#ffffff" : "transparent") + "; }",
@@ -9067,7 +9075,8 @@
                                 '<q-select dense outlined emit-value map-options :label="role.label" :options="role.options" :model-value="value(role.key)" @update:model-value="set(role.key, $event)">' +
                                     '<template v-slot:option="scope"><q-item v-bind="scope.itemProps"><q-item-section :style="{fontFamily: scope.opt.family || null}">{{scope.opt.label}}</q-item-section></q-item></template>' +
                                 '</q-select></div>' +
-                        '</div></div>' +
+                        '</div>' +
+                        '<div v-if="fontsRemote" class="text-caption m-muted q-mt-xs" id="m-appearance-fonts-remote">{{labels.fontsRemote}}</div></div>' +
                     '<div v-if="sizeRoles.length"><div class="text-subtitle2 q-mb-xs">{{labels.textSize}}</div>' +
                         '<div v-for="size in sizeRoles" :key="size.key" class="q-mb-xs"><div class="text-caption">{{size.label}}</div>' +
                             '<q-btn-toggle :model-value="value(size.key) || \'1\'" @update:model-value="set(size.key, $event === \'1\' ? \'\' : $event)" dense no-caps unelevated toggle-color="primary" ' +
@@ -9104,12 +9113,17 @@
                     .filter((accent) => this.allowed(accent.key));
             },
             fontRoles() {
+                // a font whose sheet is on another host is labeled with that host: choosing it makes the browser ask that host
                 const options = (kinds) => [{ label: this.labels.themeDefault, value: "", family: "" }].concat(this.fonts.filter((font) => kinds.includes(font.kind))
-                    .map((font) => ({ label: font.description, value: font.id, family: font.family })));
+                    .map((font) => {
+                        const host = moqui.fontRemoteHost(font.stylesheet);
+                        return { label: host ? font.description + " (" + host + ")" : font.description, value: font.id, family: font.family };
+                    }));
                 return [{ key: "THEME_FONT_BODY", label: this.labels.fontBody, options: options(["sans", "serif"]) },
                     { key: "THEME_FONT_HEADING", label: this.labels.fontHeading, options: options(["sans", "serif"]) },
                     { key: "THEME_FONT_MONO", label: this.labels.fontMono, options: options(["mono"]) }].filter((role) => this.allowed(role.key));
             },
+            fontsRemote() { return this.fonts.some((font) => moqui.fontRemoteHost(font.stylesheet)); },
             sizeRoles() {
                 return [{ key: "THEME_SIZE_SMALL", label: this.labels.sizeSmall }, { key: "THEME_SIZE_LARGE", label: this.labels.sizeLarge }]
                     .filter((size) => this.allowed(size.key));
@@ -9222,13 +9236,17 @@
         "                </q-item>\n" +
         "            </q-list></q-menu>\n" +
         "        </q-btn>\n" +
-        // Today, Chat, Mail, Messages and Notifications, each only when the theme names its screen; the tray ones open the tray on their tab
-        "        <q-btn v-for=\"counter in headerCounters\" :key=\"counter.key\" flat round dense :id=\"'m-counter-' + counter.key\" :icon=\"counter.icon\" :aria-label=\"counter.label\"\n" +
+        // Today, Chat and Notifications, which open the tray on their tab, then a divider and Mail, Messages and Missed calls, which
+        // go to their screens; each only when the theme names its screen
+        "        <template v-for=\"counter in headerCounters\" :key=\"counter.key\">\n" +
+        "        <q-separator v-if=\"counter.dividerBefore\" vertical inset class=\"q-mx-xs m-header-divider\"></q-separator>\n" +
+        "        <q-btn flat round dense :id=\"'m-counter-' + counter.key\" :icon=\"counter.icon\" :aria-label=\"counter.label\"\n" +
         "                :class=\"{'text-primary': counter.tray && trayOpen && (counter.any || trayTab === counter.key)}\" @click=\"counter.tray ? toggleTray(counter.any ? null : counter.key) : setUrl(counter.url)\">\n" +
         "            <q-badge v-if=\"counterCount(counter)\" floating rounded color=\"negative\">{{counterText(counter)}}</q-badge>\n" +
         "            <span v-if=\"counter.key === 'chat' && myPresence\" class=\"m-avatar-presence m-shell-presence\" :class=\"'m-presence-' + myPresence\"></span>\n" +
         "            <q-tooltip>{{counter.label}}</q-tooltip>\n" +
         "        </q-btn>\n" +
+        "        </template>\n" +
         "\n" +
         "        <component :is=\"qzVue\" ref=\"qzVue\"></component>\n" +
         "\n" +
@@ -9368,7 +9386,7 @@
 
     // The text of the suite shell when the page's labels (qapps.xml, localized there) do not have it.
     qvt.shellLabels = { terminal: "Terminal UI", menu: "Menu", applications: "Applications", allApplications: "All applications", search: "Search", quickCreate: "Create",
-        quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", dialer: "Dialer", missedCalls: "Missed calls", close: "Close",
+        quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", dialer: "Dialer", trayNotifications: "Alerts", trayDialer: "Call", missedCalls: "Missed calls", close: "Close",
         closeTopmost: "Close the dialog, menu or panel", keyboardShortcuts: "Keyboard shortcuts", keysEverywhere: "Everywhere", recent: "Recent",
         screens: "Screens", savedFinds: "Saved finds", actions: "Actions", more: "More", noResults: "Nothing found",
         paletteHint: "Search screens, records and actions", paletteEmpty: "Type to search screens, records, people and actions",
@@ -9376,7 +9394,9 @@
         expandMenu: "Expand the menu", collapseMenu: "Collapse the menu",
         // the Appearance dialog
         appearance: "Appearance", appearanceMode: "Mode", modeLight: "Light", modeDark: "Dark", modeAuto: "Auto (system)", colorScheme: "Color scheme",
-        accentColor: "Accent color", schemeColor: "Scheme color", fonts: "Fonts", fontBody: "Text", fontHeading: "Headings", fontMono: "Code",
+        accentColor: "Accent color", schemeColor: "Scheme color", fonts: "Fonts",
+        fontsRemote: "A font marked with a host, such as (Google), is downloaded from that host's servers once chosen; the others are served from here.",
+        fontBody: "Text", fontHeading: "Headings", fontMono: "Code",
         themeDefault: "Theme default", textSize: "Text size", sizeSmall: "Small text (tables, captions)", sizeLarge: "Large text (headings)",
         density: "Density", densityComfortable: "Comfortable", densityCompact: "Compact", motion: "Motion", motionAuto: "Follow the system",
         motionReduce: "Reduce", motionFull: "Full", readability: "Readability", lineRelaxed: "Relaxed line spacing", linksUnderline: "Underline links",
@@ -9995,18 +10015,20 @@
             trayTabs() {
                 const values = this.shellValues;
                 const labels = this.labels;
-                return [{ key: "today", icon: "sym_o_today", label: labels.today, url: values.trayToday },
-                    { key: "chat", icon: "sym_o_chat", label: labels.chat, url: values.trayChat },
-                    { key: "notifications", icon: "sym_o_notifications", label: labels.notifications, url: values.trayNotifications },
+                // label: the tab's short name, to fit four in the 400 px tray; title: the full name of the header button
+                return [{ key: "today", icon: "sym_o_today", label: labels.today, title: labels.today, url: values.trayToday },
+                    { key: "chat", icon: "sym_o_chat", label: labels.chat, title: labels.chat, url: values.trayChat },
+                    { key: "notifications", icon: "sym_o_notifications", label: labels.trayNotifications, title: labels.notifications, url: values.trayNotifications },
                     // the dialer (Comms V3): no count of its own, a tab of the tray only
-                    { key: "dialer", icon: "sym_o_dialpad", label: labels.dialer, url: values.trayDialer }]
+                    { key: "dialer", icon: "sym_o_dialpad", label: labels.trayDialer, title: labels.dialer, url: values.trayDialer }]
                     .filter((tab) => tab.url).map((tab) => Object.assign(tab, { loadUrl: this.shellLoadPath(tab.url) }));
             },
-            // the header's count buttons in their order: Today, Chat, Mail and Messages (links), Missed calls (a link), Notifications, each when its theme
-            // value is set; `counts` are the shellCounts keys of its badge. Below 600 px Mail and Messages are one button to the mail
-            // screen with the two counts summed, and the tray tabs (Today, Chat, Notifications) one tray button (key tray, any: it
-            // opens the tray on its last tab, whose tabs switch) with their counts summed, so a phone header does not overflow. The
-            // updates count has no button: the Notifications tab shows it.
+            // the header's count buttons in their order: the ones that open the tray, in the tray's tab order (Today, Chat, Notifications),
+            // then the links to screens (Mail and Messages, Missed calls), each when its theme value is set; `counts` are the shellCounts
+            // keys of its badge, and the first link after a tray button has dividerBefore (a separator between the two kinds). Below
+            // 600 px Mail and Messages are one button to the mail screen with the two counts summed, and the tray tabs one tray button
+            // (key tray, any: it opens the tray on its last tab, whose tabs switch) with their counts summed, so a phone header does not
+            // overflow. The updates count has no button: the Notifications tab shows it.
             headerCounters() {
                 const tray = (key) => this.trayTabs.find((tab) => tab.key === key);
                 const values = this.shellValues;
@@ -10016,9 +10038,10 @@
                 const foldTray = narrow && trayTabs.length > 1;
                 if (foldTray) {
                     const icon = (tray("notifications") || trayTabs[0]).icon;
-                    out.push({ key: "tray", icon, label: trayTabs.map((tab) => tab.label).join(", "), tray: true, any: true, counts: trayTabs.map((tab) => tab.key) });
+                    out.push({ key: "tray", icon, label: trayTabs.map((tab) => tab.title).join(", "), tray: true, any: true, counts: trayTabs.map((tab) => tab.key) });
                 }
-                if (!foldTray) ["today", "chat"].forEach((key) => { const tab = tray(key); if (tab) out.push({ key, icon: tab.icon, label: tab.label, tray: true, counts: [key] }); });
+                if (!foldTray) ["today", "chat", "notifications"].forEach((key) => { const tab = tray(key); if (tab) out.push({ key, icon: tab.icon, label: tab.title, tray: true, counts: [key] }); });
+                const trayCount = out.length;
                 const mail = values.mailScreen ? { key: "email", icon: "sym_o_mail", label: this.labels.mail, url: values.mailScreen, tray: false, counts: ["email"] } : null;
                 const messages = values.messagesScreen ? { key: "messages", icon: "sym_o_forum", label: this.labels.messages, url: values.messagesScreen, tray: false, counts: ["messages"] } : null;
                 if (mail && messages && narrow) {
@@ -10031,8 +10054,7 @@
                 if (values.callsScreen && (!narrow || this.countOf("calls") > 0)) {
                     out.push({ key: "calls", icon: "sym_o_phone_missed", label: this.labels.missedCalls, url: values.callsScreen, tray: false, counts: ["calls"] });
                 }
-                const notifications = tray("notifications");
-                if (notifications && !foldTray) out.push({ key: "notifications", icon: notifications.icon, label: notifications.label, tray: true, counts: ["notifications"] });
+                if (trayCount && out.length > trayCount) out[trayCount].dividerBefore = true;
                 return out;
             },
             paletteKeyHint() { return keymap.isMac ? "⌘K" : "Ctrl K"; },

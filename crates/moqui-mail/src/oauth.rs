@@ -1885,7 +1885,7 @@ fn page_html(sign_in_id: &str, outcome: &Outcome, nonce: &str) -> String {
         concat!(
             "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">",
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{heading}</title>",
-            "<style nonce=\"{nonce}\">body{{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;margin:0;",
+            "<style nonce=\"{nonce}\">body{{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;margin:0;",
             "padding:32px 24px;color:#1b1b1f;background:#fdfbff;line-height:1.5}}h1{{font-size:1.25rem;margin:0 0 12px}}",
             "p{{margin:0 0 16px}}.error{{color:#ba1a1a}}button{{font:inherit;padding:8px 20px;border-radius:20px;",
             "border:1px solid #74777f;background:transparent;color:inherit;cursor:pointer}}",

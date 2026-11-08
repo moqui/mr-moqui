@@ -109,7 +109,7 @@
                 body.push(h("iframe", {
                     class: "m-reference-frame", src: constitution.href(reference.url), title: reference.title || reference.url,
                     sandbox: "allow-scripts allow-same-origin", referrerpolicy: "no-referrer", allow: "",
-                    style: "width: 100%; height: min(70vh, 720px); border: 0; display: block;",
+                    style: "width: 100%; height: 100%; border: 0; display: block;",
                 }));
             }
             const foot = [];
@@ -125,7 +125,9 @@
                 "onUpdate:modelValue": (open) => { if (!open) constitution.closeReference(dialog); },
                 onHide: () => constitution.restoreFocus(dialog),
                 noRefocus: true,
-            }, () => h(R("q-card"), { class: "m-reference-dialog", style: "width: min(960px, 96vw); max-width: 96vw;" }, () => [
+                // the whole screen on a phone; else 90% of the height, 1000 px wide at most (css/WebrootVue.qvt.css)
+                maximized: !!(this.$q && this.$q.screen && this.$q.screen.lt.sm),
+            }, () => h(R("q-card"), { class: "m-reference-dialog column no-wrap" }, () => [
                 h(R("q-card-section"), { class: "row items-center no-wrap q-pb-sm" }, () => [
                     h("div", { class: "col" }, [
                         h("div", { class: "text-subtitle1", id: "m-reference-dialog-title" }, dialog.title || T("Reference")),
@@ -134,7 +136,7 @@
                     h(R("q-btn"), { flat: true, round: true, dense: true, icon: "sym_o_close", "aria-label": T("Close"),
                         onClick: () => constitution.closeReference(dialog) }),
                 ]),
-                h(R("q-card-section"), { class: "q-pa-none" }, () => body),
+                h(R("q-card-section"), { class: "q-pa-none col m-reference-body" }, () => body),
                 h(R("q-card-section"), { class: "row items-center q-pt-sm" }, () => foot),
             ]));
         },

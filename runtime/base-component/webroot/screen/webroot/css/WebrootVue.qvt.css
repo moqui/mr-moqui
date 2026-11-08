@@ -3,13 +3,41 @@
 /* The styles of the qvt shell and widgets over Quasar 2.35. The widgets take what they can from Quasar props (dense, outlined,
    stack-label, hide-bottom-space, unelevated, flat, use-chips, ...); this sheet holds only what Quasar has no option for. */
 
+/* The default fonts, served from /libs (no font host is asked): Atkinson Hyperlegible Next and Mono, variable (200 to 800),
+   normal and italic, latin and latin-ext. Another font a user chooses in Appearance is that ScreenFontOption's own sheet. */
+@font-face { font-family:"Atkinson Hyperlegible Next"; font-style:normal; font-weight:200 800; font-display:swap;
+    src:url(../libs/atkinson-next/atkinson-hyperlegible-next-latin-wght-normal.woff2) format("woff2");
+    unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family:"Atkinson Hyperlegible Next"; font-style:normal; font-weight:200 800; font-display:swap;
+    src:url(../libs/atkinson-next/atkinson-hyperlegible-next-latin-ext-wght-normal.woff2) format("woff2");
+    unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family:"Atkinson Hyperlegible Next"; font-style:italic; font-weight:200 800; font-display:swap;
+    src:url(../libs/atkinson-next/atkinson-hyperlegible-next-latin-wght-italic.woff2) format("woff2");
+    unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family:"Atkinson Hyperlegible Next"; font-style:italic; font-weight:200 800; font-display:swap;
+    src:url(../libs/atkinson-next/atkinson-hyperlegible-next-latin-ext-wght-italic.woff2) format("woff2");
+    unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family:"Atkinson Hyperlegible Mono"; font-style:normal; font-weight:200 800; font-display:swap;
+    src:url(../libs/atkinson-mono/atkinson-hyperlegible-mono-latin-wght-normal.woff2) format("woff2");
+    unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family:"Atkinson Hyperlegible Mono"; font-style:normal; font-weight:200 800; font-display:swap;
+    src:url(../libs/atkinson-mono/atkinson-hyperlegible-mono-latin-ext-wght-normal.woff2) format("woff2");
+    unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family:"Atkinson Hyperlegible Mono"; font-style:italic; font-weight:200 800; font-display:swap;
+    src:url(../libs/atkinson-mono/atkinson-hyperlegible-mono-latin-wght-italic.woff2) format("woff2");
+    unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family:"Atkinson Hyperlegible Mono"; font-style:italic; font-weight:200 800; font-display:swap;
+    src:url(../libs/atkinson-mono/atkinson-hyperlegible-mono-latin-ext-wght-italic.woff2) format("woff2");
+    unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+
 /* ====== tokens (js/README.md, Appearance) ======
    The fonts, text sizes, line height and corners are on :root, where the user's appearance preferences (moqui.applyAppearance) set them
    on the html element. The colors are on the body for light and dark: a color scheme (the apps colorSchemeCss transition, from
    ScreenColorScheme) is a later sheet with the same selectors. The brand colors are Quasar's --q-* (a scheme sets them !important,
    over the brand the Quasar config writes on the body). The borders and tints left as black or white at a low alpha read on any surface. */
-:root { --m-font-body:Roboto, -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; --m-font-heading:var(--m-font-body);
-    --m-font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+:root { --m-font-body:"Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --m-font-heading:var(--m-font-body);
+    --m-font-mono:"Atkinson Hyperlegible Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     --m-fs-small-scale:1; --m-fs-large-scale:1; --m-line-height:1.5; }
 body:not(.body--dark) { --m-page-bg:#f4f6f8; --m-panel-bg:#fff; --m-header-bg:#fff; --m-header-fg:#1d1d1d; --m-drawer-bg:#fff;
     --m-text:#000; --m-text-muted:#616161; --m-link:color-mix(in srgb, var(--q-primary) 85%, black); --m-negative-text:var(--q-negative);
@@ -36,6 +64,12 @@ body:not(.body--dark) :is(.q-card, .q-menu, .q-table__card, .q-stepper, .q-tab-p
    above and Quasar's; the user's corners (m-radius-*) win over btn-radius and card-radius. */
 #top { background-image:var(--m-header-bg-image, none); box-shadow:var(--m-header-shadow, none); }
 #top.q-header--bordered { border-bottom:var(--m-header-border, 1px solid var(--m-border)); }
+/* the Constitution's reference viewer (WebrootConstitution.js): 90% of the height and at most 1000 px or 90% wide; a phone's whole screen */
+.q-dialog__inner > .m-reference-dialog { width:min(1000px, 90vw); max-width:90vw; height:90vh; max-height:90vh; }
+.m-reference-body { min-height:0; }
+@media (max-width: 599.98px) { .q-dialog__inner > .m-reference-dialog { width:100vw; max-width:100vw; height:100%; max-height:100%; } }
+/* between the header buttons that open the tray and the ones that go to a screen */
+#top .m-header-divider { background:currentColor; opacity:.2; margin-top:12px; margin-bottom:12px; }
 body { background-image:var(--m-page-bg-image, none); }
 .q-btn--rectangle { border-radius:var(--m-btn-radius, 3px); border:var(--m-btn-border, 0); }
 .q-btn.bg-primary { background:var(--m-btn-primary-bg, var(--q-primary)) !important; }
@@ -945,6 +979,7 @@ body.m-radius-round :is(.q-btn:not(.q-btn--round), .q-field--outlined .q-field__
 .m-assist-resize:hover { background:color-mix(in srgb, var(--q-primary) 30%, transparent); }
 .m-assist-header { min-height:44px; }
 .m-assist-agent { max-width:180px; }
+.m-assist-tier { flex:none; font-size:.8125rem; }
 .m-assist-thread { overflow-y:auto; overscroll-behavior:contain; }
 .m-assist-user { display:flex; flex-direction:column; align-items:flex-end; }
 .m-assist-bubble { max-width:88%; padding:6px 10px; border-radius:12px 12px 2px 12px; background:color-mix(in srgb, var(--q-primary) 12%, transparent); }

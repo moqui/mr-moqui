@@ -22,8 +22,8 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Default Theme (note that DEFAULT ScreenTheme record defined in ScreenEntities.xml) -->
 
     <!-- Style sheets of the qvt shell, in order: Font Awesome 4 for the fa icons of the screens, Material Symbols (outlined) for the
-         sym_o_* names and Quasar's own icons, the Material Icons of the names without a prefix, Quasar, Roboto, and the layout and widget styles
-         loaded last to override. The icon fonts come before Quasar, whose icon rules set their size. The paths are the vendored
+         sym_o_* names and Quasar's own icons, the Material Icons of the names without a prefix, Quasar, and the layout and widget styles
+         loaded last to override (with the @font-face rules of the default Atkinson Hyperlegible fonts, from libs/: no page asks a font host). The icon fonts come before Quasar, whose icon rules set their size. The paths are the vendored
          libraries (webroot/README.md). -->
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="1" resourceTypeEnumId="STRT_STYLESHEET"
             resourceValue="/libs/fontawesome/css/font-awesome.min.css"/>
@@ -33,10 +33,6 @@ along with this software (see the LICENSE.md file). If not, see
             resourceValue="/libs/material-icons/material-icons.css"/>
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="4" resourceTypeEnumId="STRT_STYLESHEET"
             resourceValue="/libs/quasar/quasar.prod.css"/>
-
-    <!-- Match Java’s Roboto weights without replacing either vendored icon font. -->
-    <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="5" resourceTypeEnumId="STRT_STYLESHEET"
-            resourceValue="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900"/>
 
     <!-- Add external theme(s) here  -->
     <moqui.screen.ScreenThemeResource screenThemeId="DEFAULT_QUASAR" sequenceNum="10" resourceTypeEnumId="STRT_STYLESHEET" resourceValue=""/>
@@ -164,22 +160,19 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.screen.ScreenColorSchemeColor colorSchemeId="HIGH_CONTRAST" colorModeEnumId="SCM_DARK" colorName="border" colorValue="rgba(255,255,255,.7)"/>
     <moqui.screen.ScreenColorSchemeColor colorSchemeId="HIGH_CONTRAST" colorModeEnumId="SCM_DARK" colorName="divider" colorValue="rgba(255,255,255,.45)"/>
 
-    <!-- Fonts a user may choose (THEME_FONT_BODY, THEME_FONT_HEADING, THEME_FONT_MONO); without a choice the style sheet's Roboto
-         and system mono stacks. The web fonts load from Google Fonts, as the theme's Roboto does. -->
+    <!-- Fonts a user may choose (THEME_FONT_BODY, THEME_FONT_HEADING, THEME_FONT_MONO); without a choice the style sheet's Atkinson
+         Hyperlegible Next and Mono, served from libs/. An option with a stylesheetLocation on another host loads from there (these from
+         Google Fonts) only once a user chooses it, and the Appearance panel says so. -->
     <moqui.screen.ScreenFontOption fontOptionId="SYSTEM_SANS" fontKindEnumId="SFK_SANS" sequenceNum="1" description="System"
-            fontFamily="system-ui, -apple-system, &quot;Segoe UI&quot;, Roboto, &quot;Helvetica Neue&quot;, Arial, sans-serif"/>
-    <moqui.screen.ScreenFontOption fontOptionId="ROBOTO" fontKindEnumId="SFK_SANS" sequenceNum="2" description="Roboto"
-            fontFamily="Roboto, -apple-system, &quot;Helvetica Neue&quot;, Helvetica, Arial, sans-serif"
-            stylesheetLocation="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900"/>
+            fontFamily="system-ui, -apple-system, &quot;Segoe UI&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif"/>
+    <moqui.screen.ScreenFontOption fontOptionId="ATKINSON_NEXT" fontKindEnumId="SFK_SANS" sequenceNum="2" description="Atkinson Hyperlegible Next (easy to read)"
+            fontFamily="&quot;Atkinson Hyperlegible Next&quot;, system-ui, sans-serif"/>
     <moqui.screen.ScreenFontOption fontOptionId="INTER" fontKindEnumId="SFK_SANS" sequenceNum="3" description="Inter"
             fontFamily="Inter, system-ui, sans-serif"
             stylesheetLocation="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;display=swap"/>
     <moqui.screen.ScreenFontOption fontOptionId="SOURCE_SANS" fontKindEnumId="SFK_SANS" sequenceNum="4" description="Source Sans 3"
             fontFamily="&quot;Source Sans 3&quot;, system-ui, sans-serif"
             stylesheetLocation="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&amp;display=swap"/>
-    <moqui.screen.ScreenFontOption fontOptionId="ATKINSON" fontKindEnumId="SFK_SANS" sequenceNum="5" description="Atkinson Hyperlegible (easy to read)"
-            fontFamily="&quot;Atkinson Hyperlegible&quot;, system-ui, sans-serif"
-            stylesheetLocation="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&amp;display=swap"/>
     <moqui.screen.ScreenFontOption fontOptionId="SYSTEM_SERIF" fontKindEnumId="SFK_SERIF" sequenceNum="11" description="System Serif"
             fontFamily="Georgia, Cambria, &quot;Times New Roman&quot;, serif"/>
     <moqui.screen.ScreenFontOption fontOptionId="MERRIWEATHER" fontKindEnumId="SFK_SERIF" sequenceNum="12" description="Merriweather"
@@ -190,10 +183,12 @@ along with this software (see the LICENSE.md file). If not, see
             stylesheetLocation="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&amp;display=swap"/>
     <moqui.screen.ScreenFontOption fontOptionId="SYSTEM_MONO" fontKindEnumId="SFK_MONO" sequenceNum="21" description="System Mono"
             fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, &quot;Liberation Mono&quot;, monospace"/>
-    <moqui.screen.ScreenFontOption fontOptionId="JETBRAINS_MONO" fontKindEnumId="SFK_MONO" sequenceNum="22" description="JetBrains Mono"
+    <moqui.screen.ScreenFontOption fontOptionId="ATKINSON_MONO" fontKindEnumId="SFK_MONO" sequenceNum="22" description="Atkinson Hyperlegible Mono"
+            fontFamily="&quot;Atkinson Hyperlegible Mono&quot;, ui-monospace, monospace"/>
+    <moqui.screen.ScreenFontOption fontOptionId="JETBRAINS_MONO" fontKindEnumId="SFK_MONO" sequenceNum="23" description="JetBrains Mono"
             fontFamily="&quot;JetBrains Mono&quot;, ui-monospace, monospace"
             stylesheetLocation="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;display=swap"/>
-    <moqui.screen.ScreenFontOption fontOptionId="IBM_PLEX_MONO" fontKindEnumId="SFK_MONO" sequenceNum="23" description="IBM Plex Mono"
+    <moqui.screen.ScreenFontOption fontOptionId="IBM_PLEX_MONO" fontKindEnumId="SFK_MONO" sequenceNum="24" description="IBM Plex Mono"
             fontFamily="&quot;IBM Plex Mono&quot;, ui-monospace, monospace"
             stylesheetLocation="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&amp;display=swap"/>
 
