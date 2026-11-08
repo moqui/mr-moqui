@@ -1828,9 +1828,16 @@ the C library's `malloc` less than oxide's arenas and the bindings do. With jema
 every screen row but Labels (×1.06), and ×1.11 on walk itemList. The same runs give today's QuickJS on glibc: the
 Round 32 numbers above came from a quieter machine.
 
-The proposal is a `#[global_allocator]` in the server binary (`tikv-jemallocator`, or `mimalloc`, measured the same
-way first). That is a framework decision (a C dependency, and memory behavior under load to check), so it is left for
-you.
+Adopted: `crates/moqui/src/main.rs` and the binary `./moq build` generates set `tikv_jemallocator::Jemalloc` as the
+global allocator (not on MSVC, which keeps the system's). To go back, remove those three lines and the dependency.
+The tests keep their own allocators (`moqui-host`'s counting one), as the allocator is set only in the binaries.
+
+The server's memory, started on this tree, idle 20 seconds, then 50 page loads:
+- glibc: 480 MB at its peak and at the end;
+- jemalloc: 603 MB at its peak (startup's data load and search indexing), then 502 MB.
+
+jemalloc holds freed pages until its decay returns them. `_RJEM_MALLOC_CONF` (for example `dirty_decay_ms`) tunes that
+if the peak matters.
 
 ## Round 38: a plain object's strings compared and copied where they lie
 

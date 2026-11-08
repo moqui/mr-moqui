@@ -20,6 +20,12 @@ use dev_aide as _;
 #[cfg(feature = "devtools")]
 use example as _;
 
+// jemalloc, not the C library's malloc: 5 to 15% off script-heavy rows (plans/Profiling.md Round 37). To go back to the
+// system allocator, remove these lines (and the dependency); nothing else names the allocator.
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 fn main() {
     moqui_host::main();
 }

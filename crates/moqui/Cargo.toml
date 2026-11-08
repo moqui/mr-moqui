@@ -43,5 +43,9 @@ moqui-host = { workspace = true }
 dev-aide = { workspace = true, optional = true }
 example = { workspace = true, optional = true }
 
+# The global allocator (src/main.rs). tikv-jemallocator does not build for MSVC, which keeps the system's.
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = { workspace = true }
+
 [lints]
 workspace = true
