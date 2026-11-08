@@ -32,16 +32,23 @@ const HELD_LIT: &str = "$nodeLit";
 /// `expected an element object`.
 pub(crate) fn lit_of(js: &mut impl Js, value: &JsValue) -> JsResult<Arc<NodeLit>> {
     if let JsValue::Object(object) = value {
-        if let JsValue::Object(held) = js.get_property(object, &super::super::convert::static_key(HELD_LIT)?)? {
-            if let Some(node) = js
-                .host_data::<OxideHost>(&held)?
-                .and_then(|held| held.obj().and_then(|obj| obj.downcast::<NodeLit>()))
-            {
-                return Ok(node);
-            }
+        let held = js.property_host_data::<OxideHost>(object, &super::super::convert::static_key(HELD_LIT)?)?;
+        if let Some(node) = held_lit(held) {
+            return Ok(node);
         }
     }
     lit_in(js, value, &mut Vec::new()).map(Arc::new)
+}
+
+/// [`lit_of`] of argument `index` when its literal holds its conversion, read with no handle for the argument or the
+/// held object; `None` for any other argument (converted by [`lit_of`]).
+pub(crate) fn held_lit_arg(scope: &mut quickjs_oxide::engine::api::core::Scope<'_>, index: usize) -> JsResult<Option<Arc<NodeLit>>> {
+    let held = scope.arg_property_host_data::<OxideHost>(index, &super::super::convert::static_key(HELD_LIT)?)?;
+    Ok(held_lit(held))
+}
+
+fn held_lit(held: Option<std::rc::Rc<OxideHost>>) -> Option<Arc<NodeLit>> {
+    held.and_then(|held| held.obj().and_then(|obj| obj.downcast::<NodeLit>()))
 }
 
 /// `path` holds the element objects above this one, through `children` and `parent`.

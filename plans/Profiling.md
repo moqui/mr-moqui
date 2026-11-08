@@ -1923,6 +1923,22 @@ Against Round 40's binary (µs a call, allocations; another job ran during it, s
 - Single.qvt: 545 → 538;
 - Labels: 246 → 240.
 
+## Round 42: an element literal's held conversion read with no handle
+
+A template's element literal holds its conversion, a host object, under `$nodeLit`. `lit_of` had lifted that value
+into a handle to read its datum, and `convert_args` had lifted the argument first. The fork's
+`perf/property-host-data` merged to its `main` (2469ea98):
+- `Js::property_host_data` reads the host datum of `object[key]` with no handle for the value;
+- `Scope::arg_property_host_data` does the same for a call's argument, with no handle for the argument either.
+
+Node arguments use the latter, and `lit_of` the former.
+
+Against Round 41's binary, on a quiet machine (µs a call, allocations):
+- List text 100: 2435 (27190) → 2375 (26190);
+- List html 100: 8609 (68432) → 8535 (67030);
+- List.qvt 100: 13237 (85394) → 13134 (83392);
+- Single.qvt: 541 (3672) → 536 (3614).
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.

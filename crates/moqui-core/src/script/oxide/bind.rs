@@ -651,6 +651,13 @@ fn convert_args(
                 continue;
             }
         }
+        // an element literal holding its conversion, read with no handle
+        if matches!(kind, ArgKind::Node | ArgKind::OptNode) {
+            if let Some(node) = node_lits::held_lit_arg(scope, index)? {
+                converted.push(Arg::Node(node));
+                continue;
+            }
+        }
         let value = scope.arg(index);
         let void = matches!(value, JsValue::Undefined | JsValue::Null);
         converted.push(match (kind, &value) {
