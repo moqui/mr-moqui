@@ -63,6 +63,10 @@ pub struct ArtifactRow {
 /// parameters, [`super::resolve::Resolver::derive`]).
 pub const ORIGIN_DERIVED: &str = "derived";
 
+/// The origin of a default subscreen's reference, made from the directory a screen is in rather than read from an
+/// element ([`RefRow::ref_type`]).
+pub const ORIGIN_DIRECTORY: &str = "directory";
+
 /// The pseudo file of the derived artifacts.
 pub const DERIVED_PATH: &str = "derived:entity-auto";
 
@@ -87,6 +91,10 @@ pub enum ToKind {
     TransitionAnchor,
     /// An in-parameter of the service in `scope` (a `field-map`'s `field-name`).
     Parameter,
+    /// A screen path written in the screen at `scope` (a `link`'s or a response's `url`, a form's `transition`):
+    /// `../Assignments`, `EditTask`, `Sub/Screen/trans`, `/apps/a/B`. It resolves to the screen or transition it
+    /// reaches ([`super::resolve::Resolver::screen_path`]).
+    ScreenPath,
 }
 
 impl ToKind {
@@ -102,6 +110,7 @@ impl ToKind {
             Self::Anchor => "anchor",
             Self::TransitionAnchor => "transition-anchor",
             Self::Parameter => "parameter",
+            Self::ScreenPath => "screen-path",
         }
     }
 
@@ -117,6 +126,7 @@ impl ToKind {
             "anchor" => Self::Anchor,
             "transition-anchor" => Self::TransitionAnchor,
             "parameter" => Self::Parameter,
+            "screen-path" => Self::ScreenPath,
             _ => return None,
         })
     }
@@ -133,7 +143,10 @@ pub struct RefRow {
     pub to_scope: String,
     /// How it refers: the element that makes it (`entity-find`, `service-call`, `relationship`, `member-entity`,
     /// `subscreens-item`), `extend` for an extension's target, `anchor` for a named anchor of a base screen,
-    /// `implements`, `link`, `script` for a string in a script, `data` for a data file's records.
+    /// `implements`, `link`, `script` for a string in a script, `data` for a data file's records. A screen in a
+    /// directory beside a screen of the directory's name (`Foo/Bar.xml` and `Foo.xml`) is that screen's default
+    /// subscreen: a `subscreens-item` reference from the parent screen (`screen:<Foo.xml>`, its location in `to_scope`)
+    /// to the screen, read from the subscreen's file, with origin [`ORIGIN_DIRECTORY`].
     pub ref_type: String,
     pub line: u32,
     pub column: u32,
@@ -163,7 +176,8 @@ pub struct BindingRow {
     pub to_id: String,
     /// `in` (passed in) or `out` (read back).
     pub direction: String,
-    /// `literal`, `parameter`, `context`, `expression` or `unknown`.
+    /// `literal`, `parameter`, `context`, `expression` or `unknown`; `form-field` for a field of a form that submits to
+    /// a transition calling the service (from the form, the field's id in `source_id`, its name in `source_text`).
     pub source_kind: String,
     /// The literal, the name or the expression as written.
     pub source_text: String,
@@ -378,6 +392,14 @@ impl Reader<'_> {
                     .unwrap_or_default();
                 let id = format!("screen:{location}");
                 self.artifact(id.clone(), "screen", &location, Some(root), title, None);
+                if let Some(parent) = super::resolve::directory_parent(&location) {
+                    let from = format!("screen:{parent}");
+                    // no line: the file's own lines are its definitions
+                    self.reference(&from, ToKind::Screen, &location, &parent, "subscreens-item", 0, 0);
+                    if let Some(last) = self.index.refs.last_mut() {
+                        last.origin = ORIGIN_DIRECTORY.to_string();
+                    }
+                }
                 id
             }
             ArtifactKind::ScreenExtend => {
@@ -891,8 +913,9 @@ impl Reader<'_> {
                 let id = format!("form:{location}#{name}");
                 // a screen-extend's form may post to a transition of the base screen: not read as one of its own
                 if self.info.kind == ArtifactKind::Screen {
-                    if let Some(transition) = node.attribute("transition").filter(|name| is_plain_name(name)) {
-                        self.transition_refs(node, &id, &transition, "form");
+                    if let Some(transition) = node.attribute("transition") {
+                        self.url_refs(node, &id, &transition, "form");
+                        self.form_bindings(node, &id, &transition);
                     }
                 }
                 self.artifact(
@@ -944,8 +967,8 @@ impl Reader<'_> {
                     summary.push_str(&format!(", {label}"));
                 }
                 if self.info.kind == ArtifactKind::Screen {
-                    if let Some(transition) = node.attribute("transition").filter(|name| is_plain_name(name)) {
-                        self.transition_refs(node, &id, &transition, element);
+                    if let Some(transition) = node.attribute("transition") {
+                        self.url_refs(node, &id, &transition, element);
                     }
                 }
                 self.artifact(id.clone(), "ext", &name, Some(node), summary, Some(self.screen_owner()));
@@ -962,8 +985,11 @@ impl Reader<'_> {
                 ArtifactKind::Screen,
                 "link" | "default-response" | "success-response" | "error-response" | "conditional-response",
             ) => {
-                if let Some(url) = node.attribute("url").filter(|url| is_plain_name(url)) {
-                    self.transition_refs(node, from, &url, "link");
+                let plain = node
+                    .attribute("url-type")
+                    .is_some_and(|kind| matches!(kind.as_str(), "plain" | "content"));
+                if let Some(url) = node.attribute("url").filter(|_| !plain) {
+                    self.url_refs(node, from, &url, "link");
                 }
                 None
             }
@@ -1056,18 +1082,84 @@ impl Reader<'_> {
         }
     }
 
-    /// A method-less reference may reach every overload; preserve each edge rather than choosing one.
-    fn transition_refs(&mut self, node: &MNode, from: &str, name: &str, ref_type: &str) {
+    /// The reference a screen URL written in this screen makes: a transition of this file by its name
+    /// ([`Self::transition_refs`]), else a screen path ([`ToKind::ScreenPath`]). None for an expression, a URL with a
+    /// scheme, or `.` (this screen).
+    fn url_refs(&mut self, node: &MNode, from: &str, url: &str, ref_type: &str) {
+        let url = url.trim();
+        if is_plain_name(url) && !self.transitions_named(node, url).is_empty() {
+            self.transition_refs(node, from, url, ref_type);
+        } else if is_screen_path(url) {
+            self.reference(
+                from,
+                ToKind::ScreenPath,
+                url,
+                self.info.location,
+                ref_type,
+                node.line(),
+                node.column(),
+            );
+        }
+    }
+
+    /// The `transition` and `transition-include` elements of this file named `name`.
+    fn transitions_named(&self, node: &MNode, name: &str) -> Vec<MNode> {
         let mut root = node.clone();
         while let Some(parent) = root.parent() {
             root = parent;
         }
-        let method = node.attribute("method").map(|value| value.to_ascii_lowercase());
-        let mut methods: Vec<String> = root
-            .child_iter()
+        root.child_iter()
             .filter(|child| {
                 matches!(child.name().as_str(), "transition" | "transition-include") && child.attribute_is("name", name)
             })
+            .collect()
+    }
+
+    /// The bindings of a form that submits to the transition `transition` of this file: each field of the form flows
+    /// into the in-parameter of its name of each service the transition calls with the request's parameters (a
+    /// `service-call` with no `in-map`, or `in-map="true"`). A field the service does not take still has its binding,
+    /// to a parameter id no artifact has.
+    fn form_bindings(&mut self, form: &MNode, form_id: &str, transition: &str) {
+        let mut services: Vec<String> = Vec::new();
+        for node in self.transitions_named(form, transition) {
+            for call in node.child_iter().filter(|child| child.name() == "service-call") {
+                let passes = call.attribute("in-map").is_none_or(|map| map.trim() == "true");
+                if let Some(name) = call.attribute("name").filter(|name| passes && refs::is_literal(name)) {
+                    if !services.contains(&name) {
+                        services.push(name);
+                    }
+                }
+            }
+        }
+        let Some(form_key) = form_id.strip_prefix("form:") else {
+            return;
+        };
+        for field in form.child_iter().filter(|child| child.name() == "field") {
+            let Some(name) = field.attribute("name").filter(|name| !name.is_empty()) else {
+                continue;
+            };
+            for service in &services {
+                self.index.bindings.push(BindingRow {
+                    from: form_id.to_string(),
+                    to_id: parameter_id(&format!("service:{service}"), "in", &name),
+                    direction: "in".to_string(),
+                    source_kind: "form-field".to_string(),
+                    source_text: name.clone(),
+                    source_id: Some(format!("form-field:{form_key}@{name}")),
+                    origin: self.origin.to_string(),
+                    origin_hash: self.hash.clone(),
+                    line: field.line(),
+                });
+            }
+        }
+    }
+
+    /// A method-less reference may reach every overload; preserve each edge rather than choosing one.
+    fn transition_refs(&mut self, node: &MNode, from: &str, name: &str, ref_type: &str) {
+        let method = node.attribute("method").map(|value| value.to_ascii_lowercase());
+        let mut methods: Vec<String> = self
+            .transitions_named(node, name)
+            .iter()
             .map(|child| {
                 child
                     .attribute("method")
@@ -1630,6 +1722,16 @@ fn is_plain_name(url: &str) -> bool {
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
         && url != "."
+}
+
+/// A URL that is a screen path ([`ToKind::ScreenPath`]): no expression, no scheme (`https:`, `mailto:`), not `.`
+/// alone (the screen it is written in).
+fn is_screen_path(url: &str) -> bool {
+    !url.is_empty()
+        && url != "."
+        && refs::is_literal(url)
+        && !url.starts_with("//")
+        && !url.split(['/', '?', '#']).next().unwrap_or_default().contains(':')
 }
 
 /// The first sentence of a `description` child, at most 160 characters.
