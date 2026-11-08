@@ -1536,7 +1536,7 @@ on quickjs-oxide under `script_engine=small-oxide`. Measured on a quiet machine 
 ## Round 32: everything on quickjs-oxide (Script-Engine-Oxide Phase 3)
 
 [Script-Engine-Oxide](Script-Engine-Oxide.md) Phase 3 runs every kind of script on quickjs-oxide under
-`script_engine=oxide`. The fork is at 28aede7d, with its F4 speed work. Release builds on a quiet machine; the default
+`script_engine=oxide`. The fork is at 28aede7d (8635ecb5 since, with one error-path fix), with its F4 speed work. Release builds on a quiet machine; the default
 is still `rquickjs`.
 
 | `js_speed` row (µs a call) | QuickJS | oxide | ratio |
@@ -1579,6 +1579,25 @@ runs of each engine):
   API grown to fit, is the next work.
 - **Heap:** the peak of each `./moq test-apps` worker's script heaps is 91 to 118 MB under `oxide` and 126 to 140 MB
   under `rquickjs`.
+
+The raw data and the scripts are in `../oxide-bench`: `round32/` holds the data, and `mantle-pg/` reruns the Mantle
+table (its README).
+
+Next (plans/Script-Engine-Oxide.md §11 has the files and commands):
+1. **A profile of the rows that lose on oxide**, to find where the bindings spend their time and allocations:
+   - a host getter: 100 `ec.user.nowTimestamp`;
+   - walking 100 context maps;
+   - decimals;
+   - cached entity finds;
+   - the trusted template;
+   - form-single html and qvt;
+   - `apply#Settlement` among the Mantle operations.
+2. **Conversions that keep a value's wrapper**, and host calls with fewer allocations. Grow the fork's embedding API
+   where the bindings need it.
+3. **The heap of many runtimes:**
+   - caches and atoms shared across runtimes (F1 step 3, further);
+   - arenas that give back their interior free space.
+4. **Then Script-Engine-Oxide Phase 4:** `oxide` the default, and rquickjs removed.
 
 ## Behaviour changes to know
 

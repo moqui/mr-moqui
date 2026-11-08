@@ -1,6 +1,6 @@
 # Script engine: quickjs-oxide beside rquickjs
 
-Status 2026-11-07: Phases 0 to 3 built. quickjs-oxide is a dependency at the fork's revision 28aede7d, with F1, F2,
+Status 2026-11-07: Phases 0 to 3 built. quickjs-oxide is a dependency at the fork's revision 8635ecb5, with F1, F2,
 F3a, F3 and F4 (§6). Under `script_engine=oxide` every kind runs on quickjs-oxide, and both suites and the client
 suite pass; the speed and heap rows miss and are accepted for now (§7, Phase 3 result). The default is still
 `rquickjs`, and rquickjs stays until Phase 4.
@@ -8,7 +8,7 @@ This plan adds [quickjs-oxide](https://github.com/pocket-nexus/quickjs-oxide), a
 first for expressions and other small scripts, then for everything, and then removes rquickjs. It also changes our fork
 of quickjs-oxide so compiled code is shared by all threads of the process, as compiled Groovy was in Java. The
 measurements it rests on are in §1; the setting that picks the engine is §2; the fork's four changes are §6; the phases
-and their gates are §7.
+and their gates are §7; how to pick the work up in a new session is §11.
 
 ## 1. Why, and what was measured
 
@@ -610,3 +610,130 @@ Open, with what decides each:
 - F1 step 3's key scheme (unit-local key tables or process-wide atom ids): upstream's instruction gate, and upstream.
 - Whether generated actions join the small kinds in Phase 2 or wait for Phase 3: the census, and the `echo#Data` row.
 - The process store's byte cap and when a text counts as one-off: the census's counts of distinct texts.
+
+## 11. Resuming
+
+State at the end of Phase 3 (2026-11-07):
+- **mr-moqui:** `master` holds Phases 0 to 3, the merge fixes after them and the pin to the fork's 8635ecb5.
+- **The fork:** its `main`, pushed, is 8635ecb5, with no other branches.
+- **Defaults:** `rquickjs` is the default. `small-oxide` and `oxide` are both whole and pass the suites.
+- **Measurement:** the measurement workspace is `../oxide-bench` (its `README.md`). It has:
+  - the fork's Sweep;
+  - the scripts for the Mantle operations against a Postgres 200 µs away;
+  - Round 32's raw data.
+
+The work goes on in this order: first the bindings' speed and the heap (Profiling's Round 32 "Next"), then Phase 4.
+
+### Where things are
+
+- **Engine choice.** `script/engine.rs` holds the setting and `route(kind, text)`. `script/run.rs` holds the depth, the
+  deadline and `ReleaseScope`.
+- **Bindings for both engines.** `script/host/` is the host table both engines bind:
+  - `Method`, `HostClass` and `EngineOps`;
+  - the helper objects in `host/globals.rs`.
+
+  A new helper method or `ec` method goes on the host table. `runtime/ec_extra.rs` is QuickJS's old binding and goes
+  in Phase 4: work added only there (as Admin P3 and P4 did) is missing on both engines, because the host table's
+  helpers replace and freeze them.
+- **The oxide engine.** `script/oxide/` is the oxide engine:
+  - `engine.rs`: the runtimes, `with_run`, memory pressure and restarts;
+  - `tracked.rs`: tracked values and `kept`;
+  - `bind.rs`: the binder, and the objects let go at a run's end;
+  - `units.rs`, `templates.rs`, `walker.rs`, `spec.rs`, `builtins.rs`, `widget.rs` and `errors.rs`.
+- **The QuickJS engine.** `script/runtime.rs` and `script/runtime/` are QuickJS's engine and bindings.
+- **Tests for both engines.** `engine::on_both_engines`, `with_script_engine` and `quickjs_for_test` are the test
+  helpers (§8).
+- **Diagnostics:**
+  - `MOQUI_SCRIPT_STATS_FILE=<file>` writes a line per process with scripts by kind and engine, fallbacks and heap
+    peaks.
+  - `MOQUI_SCRIPT_HEAP_LOG=<file>` writes a line per spec with each runtime's arenas, code and caches.
+  - `script_engine_check=true` is the difference check.
+
+### Measuring
+
+- **`js_speed`.** One release build, then each engine in turn, two runs of each; the rows are compared at their
+  better run. Release builds only, with nothing else building.
+
+  ```
+  JS_SPEED_ENGINE=rquickjs|oxide JS_SPEED_ONLY=screen,script,template \
+    cargo test --release -p moqui-host --test js_speed -- --ignored --nocapture
+  ```
+
+  `JS_SPEED_ROW=<part of a row name>` runs those rows alone, for a profile (`samply`, `perf record -g`;
+  `CARGO_PROFILE_RELEASE_DEBUG=1`). Copies of the binary and traces go under `target/profiling`, not `/tmp`.
+- **`service_speed`.** Its `echo#Data` row is the held service call. The expression rows of `js_speed` are run under
+  `small-oxide`.
+- **The heap.** The peak of each process is in the stats file of a `./moq test-apps` run, under each engine.
+- **The Mantle operations.** These are measured with `../oxide-bench/mantle-pg/` (its README), and the table is
+  Round 32's.
+
+### Next: the bindings' speed and the heap
+
+Round 32 measured where the time goes. Plain JavaScript is as fast or faster on oxide. What is slower is the crossing
+between the host and the engine.
+
+**Rows that lose:**
+- a host getter, `ec.user.nowTimestamp`: ×2.2;
+- walking 100 context maps: ×3.3;
+- decimals: ×1.3;
+- cached entity finds: ×1.4;
+- the trusted template: ×1.6;
+- form-single screens: ×1.5 to ×1.6.
+
+**The bindings allocate 4 to 10 times what QuickJS's do.** The fork is ours, so its embedding API can grow to fit what
+the bindings need. Places to look first:
+- the trampoline and argument conversion of a host call (`oxide/bind.rs`);
+- the conversion of host maps and lists to JS and back (`oxide/convert.rs`, `entities.rs`): keep a value's wrapper
+  rather than make a new one;
+- the names exotic object's lookups (`oxide/names.rs`);
+- the property-key cache;
+- `entity_proxy`'s scan, which grows with a run's rows.
+
+**The heap.** A test-apps worker peaks at 91 to 118 MB under `oxide`, against 126 to 140 MB under `rquickjs`. Two
+causes remain, both in the fork:
+- about 30 runtimes a process, each with its own inline caches and atoms (F1 step 3's sharing goes further);
+- arenas that give back only their ends (a compacting sweep, or arenas in chunks).
+
+A fork change goes on a branch of its own, gets a review, and runs the Sweep in a quiet window before it merges to
+the fork's `main` (`../oxide-bench/README.md`).
+
+### Next: Phase 4 (rquickjs removed)
+
+Before the removal:
+- **The default.** Make `oxide` the default and run a round of the suites, the acceptance suites and the client
+  suite under it.
+- **Engine differences to settle.** Decide which of the "Engine differences" sections' items to fix and which to list
+  in [Parity-Diffs](Parity-Diffs.md):
+  - `using` declarations, which need the fork's parser;
+  - `performance.now()`'s whole milliseconds;
+  - `Error.captureStackTrace`;
+  - stack and message texts;
+  - a decimal's identity after a releasing flush.
+- **Port what stays on rquickjs** to oxide runtimes of their own, as `moqui-llm`'s `ui/standalone.rs` does:
+  - `screen/vue_check.rs`, the Vue compiler;
+  - `tests/browser_libs.rs`;
+  - `screen/tests/qvt.rs`.
+
+  `js_speed`'s QuickJS half goes.
+
+The removal:
+- **Remove the QuickJS bindings and engine:**
+  - `script/runtime.rs` and `script/runtime/`, including `ec_extra.rs`, `bind.rs` and `compiled.rs`'s
+    `SHARED_BYTECODE`;
+  - the QuickJS side of `walker.rs`, `actions.rs`, `template.rs` and `screen/generate.rs`;
+  - the rquickjs uses in `script/oxide/` (the cross-engine flush and the nested QuickJS paths);
+  - the public functions that hand out a `Ctx`.
+- **Remove the setting and what only routing needed:**
+  - `script_engine` itself;
+  - `small-oxide`'s hardened runtime, if the small kinds then run on the whole runtime;
+  - the static check's routing role (`check.rs`, the census), keeping only what the difference check or security
+    still needs, or removing it with the difference check.
+- **Tests.** The 26 tests pinned with `quickjs_for_test` are deleted, or ported where they check behaviour a user
+  sees. `on_both_engines` becomes a single run.
+- **Dependencies and builds:**
+  - `rquickjs` leaves the workspace's `Cargo.toml`, moqui-core (two entries, one with `bindgen`) and moqui-llm.
+  - The browser build loses `bindgen` and the emsdk sysroot's QuickJS needs (`scripts/wasm-build.sh`); it keeps
+    `native_depth_limit`.
+  - `deny.toml` and the license review lose QuickJS's rows.
+- **Docs:** Build-Test, Run-Deploy, `docs/interfaces/Web-Scripts.md` and Parity-Diffs.
+- **The gate (§7):** `./moq test-all`, the browser build and the packages pass with no C in the script engine's build.
