@@ -853,6 +853,9 @@ const AUTHZ_TABLES: &[&str] = &[
     "moqui.security.ArtifactGroupMember",
     "moqui.security.ArtifactAuthz",
     "moqui.security.ArtifactAuthzCheckView",
+    // ArtifactAuthz.authzTypeEnumId is audit-logged: a write takes an EntityAuditLog id from the sequence.
+    "moqui.entity.EntityAuditLog",
+    "moqui.entity.SequenceValueItem",
 ];
 
 fn authz_base(facade: &EntityFacade, user_group_id: &str, artifact_group_id: &str, members: &[&str]) {

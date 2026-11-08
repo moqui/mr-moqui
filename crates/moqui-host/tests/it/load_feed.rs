@@ -73,6 +73,9 @@ fn load_data_stores_eca_and_inserts_pending() {
             "moqui.security.ArtifactTarpit",
             "moqui.security.ArtifactAuthz",
             "moqui.security.ArtifactGroupMember",
+            // the audit-logged security fields take an EntityAuditLog id from the sequence
+            "moqui.entity.EntityAuditLog",
+            "moqui.entity.SequenceValueItem",
         ])
         .unwrap();
 
