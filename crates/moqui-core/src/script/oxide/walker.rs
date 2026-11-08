@@ -255,31 +255,13 @@ fn limited<R>(body: impl FnOnce() -> Result<R, Error>) -> Result<R, Error> {
 }
 
 fn failed(context: &Context, err: RuntimeError) -> Error {
-    if out_of_memory(context, &err) {
+    // the walker passes on what the macro threw, which may be the engine's `InternalError: out of memory`
+    if super::errors::is_out_of_memory(&mut context.clone(), &err) {
         // a runtime that ran out of heap is not used again: the next generation on the thread starts a new one
         GENERATOR.with(|cell| cell.borrow_mut().take());
     }
     let mut context = context.clone();
     runtime_error(&mut context, err)
-}
-
-/// Whether `err` is the runtime running out of heap: the engine's own error, or its `InternalError: out of memory`,
-/// which a script can catch (the walker passes it on as what the macro threw).
-fn out_of_memory(context: &Context, err: &RuntimeError) -> bool {
-    let thrown = match err {
-        RuntimeError::OutOfMemory => return true,
-        RuntimeError::Exception(Value::Object(thrown)) => thrown,
-        _ => return false,
-    };
-    let mut context = context.clone();
-    if !context.is_error_object(thrown).unwrap_or(false) {
-        return false;
-    }
-    let text = |context: &mut Context, name: &str| match key(name).map(|key| context.get_property(thrown, &key)) {
-        Ok(Ok(Value::String(text))) => text.to_utf8_lossy(),
-        _ => String::new(),
-    };
-    text(&mut context, "name") == "InternalError" && text(&mut context, "message") == "out of memory"
 }
 
 fn js_text(text: &str) -> Result<Value, Error> {

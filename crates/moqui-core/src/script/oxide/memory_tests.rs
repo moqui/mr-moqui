@@ -80,6 +80,49 @@ fn many_distinct_units_and_texts_keep_the_heap_bounded() -> Result<(), Error> {
     })
 }
 
+/// A screen unit that runs out of heap inside a render, whose error the render writes in the page (so the render ends
+/// well), still has the render's end relieve the heap: a unit that left it near the cap has the runtime started
+/// again, and the script after the render runs on a new one. Before, only an error the outermost run returned counted,
+/// and a stale heap sample let the next render start at the cap (mr-boss TuiRender's sweep).
+#[test]
+fn a_unit_that_runs_out_inside_a_render_has_the_render_relieve_the_heap() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    with_script_engine(ScriptEngine::Oxide, || {
+        assert_eq!(crate::script::eval_value("1 + 1")?, Value::I32(2));
+        let hog = crate::screen::generate::Unit {
+            id: u64::MAX - 500,
+            source: "(function ($depth) { Array.prototype.hog = []; while (true) [].hog.push(new Array(1000).fill(1)) })"
+                .to_string(),
+            runtime: Arc::from(""),
+            runtime_id: 0,
+        };
+        let failed = crate::script::with_screen_runner(|runner| {
+            // as a section does: the unit's error is the page's, the render goes on
+            Ok(runner.run(&hog).expect_err("out of memory").message().to_string())
+        })?;
+        assert!(failed.contains("out of memory"), "{failed}");
+        assert_eq!(
+            crate::script::eval_value("typeof [].hog")?,
+            Value::string("undefined"),
+            "a new runtime"
+        );
+        assert_eq!(crate::script::eval_value("2 + 2")?, Value::I32(4));
+        Ok(())
+    })
+}
+
+/// quickjs-oxide gives a compile that ran out of heap while it lowered the code as an internal error; the bindings
+/// take it as the heap cap's, so the compile is tried again once the caches went and the run counts as running out.
+#[test]
+fn a_compile_that_ran_out_is_out_of_memory() {
+    use quickjs_oxide::engine::api::core::RuntimeError;
+    let lowered = super::errors::compile_out_of_memory(RuntimeError::Internal("out of memory".to_string()));
+    assert!(matches!(lowered, RuntimeError::OutOfMemory), "{lowered:?}");
+    let other = super::errors::compile_out_of_memory(RuntimeError::Internal("internal lowering error: x".to_string()));
+    assert!(matches!(other, RuntimeError::Internal(_)), "{other:?}");
+}
+
 /// A script that runs out of heap fails with `out of memory`, alone: the caches go and the runtime collects, and one
 /// that left its heap near the cap (a global holding what it made) is dropped and started again, so the scripts after
 /// it run.

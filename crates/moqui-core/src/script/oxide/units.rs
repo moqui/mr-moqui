@@ -206,11 +206,15 @@ impl Drop for Depth<'_> {
 /// Run `unit` on the runtime: its mode runtime first if this runtime has not run it, its function compiled once, called
 /// with the unit depth.
 fn call_unit(engine: &OxideEngine, context: &mut Context, unit: &Unit) -> Result<(), Error> {
+    let failed = |context: &mut Context, err: RuntimeError| {
+        if super::errors::is_out_of_memory(context, &err) {
+            engine.note_out_of_memory();
+        }
+        runtime_error(context, err)
+    };
     if !unit.runtime.is_empty() && !engine.unit_runtimes.borrow().contains(&unit.runtime_id) {
-        let compiled = engine
-            .compile(&unit.runtime, unit.runtime_id, super::compiled::FILE_NAME)
-            .and_then(|compiled| context.execute(&compiled));
-        compiled.map_err(|err| runtime_error(context, err))?;
+        let compiled = compile(engine, &unit.runtime, unit.runtime_id).and_then(|compiled| context.execute(&compiled));
+        compiled.map_err(|err| failed(context, err))?;
         engine.unit_runtimes.borrow_mut().insert(unit.runtime_id);
     }
     let saved = engine.units.borrow_mut().get(&unit.id);
@@ -218,10 +222,9 @@ fn call_unit(engine: &OxideEngine, context: &mut Context, unit: &Unit) -> Result
         Some(function) => function,
         None => {
             let hash = crate::script::text::hash_text(&unit.source);
-            let made = engine
-                .compile(&unit.source, hash, super::compiled::FILE_NAME)
+            let made = compile(engine, &unit.source, hash)
                 .and_then(|compiled| context.execute(&compiled))
-                .map_err(|err| runtime_error(context, err))?;
+                .map_err(|err| failed(context, err))?;
             let function = match &made {
                 Value::Object(object) => context.as_callable(object).map_err(|err| runtime_error(context, err))?,
                 _ => None,
@@ -244,6 +247,22 @@ fn call_unit(engine: &OxideEngine, context: &mut Context, unit: &Unit) -> Result
             mark.keep();
             Ok(())
         }
-        Err(err) => Err(runtime_error(context, err)),
+        Err(err) => Err(failed(context, err)),
+    }
+}
+
+/// A unit's code compiled: once more after the caches went when the compile ran out of heap, as a script's is
+/// (nothing of the unit has run).
+fn compile(
+    engine: &OxideEngine,
+    source: &str,
+    hash: u64,
+) -> Result<quickjs_oxide::engine::api::core::FunctionBytecodeRef, RuntimeError> {
+    match engine.compile(source, hash, super::compiled::FILE_NAME) {
+        Err(RuntimeError::OutOfMemory) => {
+            engine.shed();
+            engine.compile(source, hash, super::compiled::FILE_NAME)
+        }
+        compiled => compiled,
     }
 }

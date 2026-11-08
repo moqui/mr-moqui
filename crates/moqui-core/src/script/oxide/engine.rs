@@ -202,6 +202,9 @@ pub(super) struct OxideEngine {
     keys: RefCell<std::collections::HashMap<Box<str>, quickjs_oxide::engine::api::core::PropertyKey>>,
     /// Set when the runtime is dropped to start again on the same thread ([`PRESSURE_BYTES`]): the thread's peak stays.
     restarting: Cell<bool>,
+    /// Set when anything in the outermost run ran out of heap ([`OxideEngine::note_out_of_memory`]), a screen unit's
+    /// compile or call or a nested run among them; its end then relieves the heap as for a run that ran out.
+    ran_out: Cell<bool>,
 }
 
 /// Map keys kept as property keys, at most; past it the cache starts again. Only a key of at most [`MAX_KEY_BYTES`] is
@@ -801,6 +804,7 @@ impl OxideEngine {
             unit_depth: Cell::new(0),
             keys: RefCell::default(),
             restarting: Cell::new(false),
+            ran_out: Cell::new(false),
         }, builtins))
     }
 
@@ -878,7 +882,18 @@ impl OxideEngine {
         let before = cache.compiles();
         let compiled = cache.get_or_compile(&self.context, source, hash, file_name);
         counts::COMPILED.fetch_add(cache.compiles() - before, Relaxed);
-        compiled
+        compiled.map_err(|err| {
+            let err = super::errors::compile_out_of_memory(err);
+            if matches!(err, RuntimeError::OutOfMemory) {
+                self.note_out_of_memory();
+            }
+            err
+        })
+    }
+
+    /// Note that something in this outermost run ran out of heap, for the pressure check at its end.
+    pub(super) fn note_out_of_memory(&self) {
+        self.ran_out.set(true);
     }
 
     /// The value the inert module at `location` gave earlier in this outermost run, when made from the same text.
@@ -946,6 +961,13 @@ impl OxideEngine {
         if runs % HEAP_SAMPLE_RUNS != 1 {
             return;
         }
+        self.sample_heap_now();
+    }
+
+    /// Sample the reserved bytes unless the last sample is younger than [`HEAP_SAMPLE_EVERY`]: at the end of each
+    /// outermost run too, so its pressure check never reads a sample older than that, however few the runs (a screen
+    /// render is one outermost run around many nested ones).
+    fn sample_heap_now(&self) {
         let now = std::time::Instant::now();
         if self
             .sampled
@@ -1314,6 +1336,14 @@ pub(super) fn with_run<T>(
         out_of_memory |= matches!(err, RuntimeError::OutOfMemory);
     };
     let mut outcome = body(&engine, &mut context, &mut note);
+    if out_of_memory {
+        engine.note_out_of_memory();
+    }
+    // what ran out inside the run without reaching its outcome (a section's error is written in the page, a nested
+    // run's is its caller's to handle) is the outermost run's to relieve
+    if !nested {
+        out_of_memory |= engine.ran_out.take();
+    }
     // a script that caught the engine's `out of memory` and threw it on, or a screen unit's error, may have run out
     // too; the text alone may also be a script's own throw or a database's message, so it only samples the heap now
     let names_out_of_memory = !out_of_memory
@@ -1355,6 +1385,9 @@ pub(super) fn with_run<T>(
             engine.shed();
         }
         engine.sample_heap();
+        if !nested {
+            engine.sample_heap_now();
+        }
         // the pressure check of the outermost run: a runtime its caches' going leaves past it starts again
         // (not while a runtime's start is on the stack: its shims' host calls run scripts on it)
         if !nested && !Active::starting_on_stack() && engine.relieve(out_of_memory, names_out_of_memory) {

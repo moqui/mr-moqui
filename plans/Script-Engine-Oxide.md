@@ -471,6 +471,10 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
     `iterator()`) is its rows, read whole; a find is a builder; a `dbresource://` stream reads its chunks per call;
     transactions are the thread's. An entity list's rows (and other plain values) are memory only and still wait for
     the collector on oxide; the heap's pressure check does not count them.
+- A decimal or entity value a script reads by name is one object until the next host call that may change the stack
+  (a `Release` flush): QuickJS reads an entity value from the stack each time and releases a decimal there. Oxide had
+  kept it for the whole run, so in a render (one run) each form-list row read the first row's row-action value
+  (mr-marble PostedBalanceSummary's class names, the Tools AutoFind and AutoEditDetail lists).
 - Error columns: oxide places a call at its `(`, QuickJS at the callee's name.
 - An assignment through a list on the prototype chain (`Object.create(list).x = 1`) defines on the receiver on both
   engines now; oxide's list ignored it, as it ignores one to the list itself.
@@ -501,6 +505,16 @@ values. Now the unit cache keeps 1024 units and 2 MiB of source; at half the cap
 caches go, then starts again on the next script (`restarted` in the stats); and a script that runs out fails alone, its
 compile tried again once the caches went. `MOQUI_SCRIPT_HEAP_LOG=<file>` appends a line of the thread's runtimes'
 heaps after each spec. The fork could give back interior free space (a compacting sweep, or arenas in chunks).
+
+A screen render is one outermost run around many nested ones, so two gaps let a long sweep (mr-boss TuiRender at
+Phase 3's gate) reach the cap: the pressure check read a sample up to 32 runs old, and a unit that ran out inside a
+render (its error written in the page as a section's) did not count, so the next render started at the cap too. Now
+each outermost run's end samples the heap unless the last sample is under 250 ms old; anything that runs out inside the
+outermost run (a unit's compile or call, a nested run) has its end relieve the heap as for a run that ran out
+(`OxideEngine::note_out_of_memory`); and a unit's compile that runs out is tried again once the caches went, as a
+script's is. quickjs-oxide gave a compile that ran out while it lowered the code as `Internal("out of memory")`, not
+`OutOfMemory`, so neither retry fired; the bindings take that text as the cap's (`errors::compile_out_of_memory`), and
+the fork's fix is on its branch `fix/lower-heap-oom`.
 
 ## 8. Testing
 
