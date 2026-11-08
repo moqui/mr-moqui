@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{generate, generate_apart, generate_with, load_macros, run_actions};
+use super::{generate, generate_apart, generate_with, run_actions};
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
@@ -188,8 +188,7 @@ fn the_ignore_attribute_is_an_expression() {
 }
 
 #[test]
-fn generated_scripts_are_shared_by_threads_and_the_macros_kept_per_engine() {
-    let _quickjs = crate::script::engine::quickjs_for_test();
+fn generated_scripts_are_shared_by_threads() {
     let xml = r#"<actions><set field="sharedGenerationProbe" value="1"/></actions>"#;
     let here = super::generated(xml).unwrap();
     let there = std::thread::spawn(move || super::generated(xml).unwrap())
@@ -199,12 +198,6 @@ fn generated_scripts_are_shared_by_threads_and_the_macros_kept_per_engine() {
         std::ptr::eq(here.text(), there.text()),
         "one generated text for every thread"
     );
-    super::generated(r#"<actions><set field="macrosKeptProbe" value="2"/></actions>"#).unwrap();
-    crate::script::runtime::with_ctx(|ctx| {
-        crate::script::runtime::engine_object(ctx, "xml-actions", |_| Err(Error::new("the macros were loaded again")))
-            .map(|_| ())
-    })
-    .unwrap();
 }
 
 #[test]
@@ -358,7 +351,6 @@ fn a_missing_macro_names_the_element() {
 
 #[test]
 fn each_concrete_element_has_a_macro() {
-    let _quickjs = crate::script::engine::quickjs_for_test();
     let names = macro_names().unwrap();
     assert_eq!(names, MACROS);
     assert!(!names
@@ -531,15 +523,7 @@ fn a_paginated_search_sets_the_page_keys_of_the_list() -> Result<(), Error> {
 }
 
 fn macro_names() -> Result<Vec<String>, Error> {
-    crate::script::runtime::with_ctx(|ctx| {
-        let macros = load_macros(ctx, false)?;
-        let mut names = Vec::new();
-        for key in macros.keys::<String>() {
-            names.push(key.map_err(|err| Error::new(err.to_string()))?);
-        }
-        names.sort();
-        Ok(names)
-    })
+    crate::script::oxide::walker::action_macro_names(super::TEMPLATE_SUPPORT, super::XML_ACTIONS)
 }
 
 fn field_str(row: &EntityValue, name: &str) -> String {
@@ -666,85 +650,6 @@ fn open_facade() -> EntityFacade {
     crate::testing::open()
 }
 
-const SHIPMENT_ITEMS_ACTIONS: &str = r#"<actions>
-    <service-call name="mantle.shipment.ShipmentInfoServices.get#ShipmentDisplayInfo" in-map="{shipmentId:shipmentId}" out-map="context"/>
-
-    <!-- get first 'open' package for default -->
-    <set field="activePackage" from="shipmentPackageList?.find(it => it.weight == null || it.shipmentBoxTypeId == null)"/>
-    <set field="activePackageSeqId" from="activePackage?.shipmentPackageSeqId"/>
-    <log message="activePackageSeqId ${activePackageSeqId}"/>
-
-    <!-- get all products for filter form -->
-    <set field="allProductIds" from="shipmentItemDetailList.map(it => it.productId)"/>
-    <entity-find entity-name="mantle.product.Product" list="allProductList">
-        <econdition field-name="productId" operator="in" from="allProductIds"/>
-        <order-by field-name="pseudoId"/>
-    </entity-find>
-
-    <if condition="filterProductId">
-        <filter-map-list list="shipmentItemDetailList"><field-map field-name="productId" from="filterProductId"/></filter-map-list>
-    </if>
-    <if condition="onlyRemaining == 'Y'">
-        <set field="tempItemDetailList" from="[]"/>
-        <iterate list="shipmentItemDetailList" entry="sid">
-            <if condition="isOutgoing || isTransfer">
-                <if condition="toDecimal(sid.quantity).subtract(sid.quantityTotal ?? 0).compare(0) &gt; 0">
-                    <script>tempItemDetailList.push(sid)</script><continue/></if>
-            </if>
-            <if condition="isIncoming || isTransfer">
-                <if condition="toDecimal(sid.quantity).subtract(sid.quantityAcceptedTotal ?? 0).subtract(sid.quantityRejectedTotal ?? 0).compare(0) &gt; 0">
-                    <script>tempItemDetailList.push(sid)</script><continue/></if>
-            </if>
-        </iterate>
-        <set field="shipmentItemDetailList" from="tempItemDetailList"/>
-    </if>
-
-    <set field="pageSize" from="pageSize || '10'"/>
-</actions>"#;
-
-#[test]
-fn actions_first_generated_deep_inside_a_script_generate() -> Result<(), Error> {
-    use crate::script::runtime::{eval_source, js_error, with_ctx};
-    /// Host frames under a script, as a template that renders a link many screens deep has: they use the stack
-    /// until a nested engine would get little more than the least it may have.
-    fn host_frames(base: usize, then: &dyn Fn() -> String) -> String {
-        let frame = [0_u8; 2 * 1024];
-        let here = std::hint::black_box(&frame).as_ptr() as usize;
-        if base.abs_diff(here) > 1235 * 1024 {
-            then()
-        } else {
-            host_frames(base, then)
-        }
-    }
-    // The screen actions of mr-marble's ShipmentItems, first loaded while Order Detail renders its Shipment
-    // links. A comment makes the text distinct, so the cache does not hold it from another test.
-    let xml = format!("<!-- {} -->{SHIPMENT_ITEMS_ACTIONS}", line!());
-    let outcome = std::thread::Builder::new()
-        .stack_size(2 * 1024 * 1024)
-        .spawn(move || {
-            // the setting is the thread's: this one's own
-            let _quickjs = crate::script::engine::quickjs_for_test();
-            let base = [0_u8; 1];
-            let base = std::hint::black_box(&base).as_ptr() as usize;
-            with_ctx(|ctx| {
-                let generate = rquickjs::Function::new(ctx.clone(), move || {
-                    host_frames(base, &|| match super::check_actions(&xml) {
-                        Ok(()) => "generated".to_string(),
-                        Err(err) => err.message().to_string(),
-                    })
-                })
-                .map_err(js_error)?;
-                let call: rquickjs::Function = eval_source(ctx, "(function (generate) { return generate(); })")?;
-                call.call::<_, String>((generate,)).map_err(js_error)
-            })
-        })
-        .unwrap()
-        .join()
-        .expect("the thread did not overflow")?;
-    assert_eq!(outcome, "generated");
-    Ok(())
-}
-
 /// An inert module (`parse::module_is_inert`) loaded twice in one run is the same value, its functions made once; a
 /// module with a memo at its top level is made again at each load.
 #[test]
@@ -780,11 +685,10 @@ fn an_inert_module_is_kept_for_the_run_and_one_with_a_memo_is_not() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Generation is a function of the text alone, so the actions of the framework's and the components' service files
-/// generate the same script on QuickJS and on quickjs-oxide (`script_engine=oxide`), with and without debug comments.
+/// The actions of the framework's and the components' service files generate the same text (or fail) each time, with
+/// and without debug comments.
 #[test]
-fn service_actions_generate_the_same_on_both_engines() {
-    use crate::script::engine::{with_script_engine, ScriptEngine};
+fn service_actions_generate() {
     let mut compared = 0;
     use crate::script::walker::test_files::{component_xml_files, named};
     for file in component_xml_files("service") {
@@ -796,12 +700,12 @@ fn service_actions_generate_the_same_on_both_engines() {
         for node in actions {
             let xml = node.write_string();
             for debug in [false, true] {
-                let quickjs = with_script_engine(ScriptEngine::Rquickjs, || generate_with(&xml, debug));
-                let oxide = with_script_engine(ScriptEngine::Oxide, || generate_with(&xml, debug));
-                match (&quickjs, &oxide) {
-                    (Ok(quickjs), Ok(oxide)) => assert_eq!(quickjs, oxide, "{}", file.display()),
+                let first = generate_with(&xml, debug);
+                let again = generate_with(&xml, debug);
+                match (&first, &again) {
+                    (Ok(first), Ok(again)) => assert_eq!(first, again, "{}", file.display()),
                     (Err(_), Err(_)) => {}
-                    _ => panic!("{}: {quickjs:?} against {oxide:?}", file.display()),
+                    _ => panic!("{}: {first:?}, then {again:?}", file.display()),
                 }
             }
             compared += 1;
@@ -810,37 +714,28 @@ fn service_actions_generate_the_same_on_both_engines() {
     assert!(compared > 100, "{compared}");
 }
 
-/// Text generated apart from a running script, on the generator thread, is generated on the engine the caller chose
-/// (`with_script_engine`), not on the generator thread's own setting.
+/// Text generated apart from a running script, on the generator thread, is generated by the macro walker.
 #[test]
-fn actions_generated_apart_keep_the_callers_engine() {
-    use crate::script::engine::{with_script_engine, ScriptEngine};
+fn actions_generated_apart_are_generated_by_the_walker() {
     use crate::script::oxide::walker::generated_actions_with;
-    let xml = |marker: &str| format!("<actions><set field=\"{marker}\" value=\"1\"/></actions>");
-    let on_oxide = with_script_engine(ScriptEngine::Oxide, || generate_apart(&xml("apartOnOxide"), false)).unwrap();
-    let on_quickjs =
-        with_script_engine(ScriptEngine::Rquickjs, || generate_apart(&xml("apartOnQuickJs"), false)).unwrap();
-    assert!(on_oxide.contains("apartOnOxide"), "{on_oxide}");
-    assert!(on_quickjs.contains("apartOnQuickJs"), "{on_quickjs}");
-    assert!(generated_actions_with("apartOnOxide"));
-    assert!(!generated_actions_with("apartOnQuickJs"));
+    let xml = "<actions><set field=\"apartOnTheWalker\" value=\"1\"/></actions>";
+    let generated = generate_apart(xml, false).unwrap();
+    assert!(generated.contains("apartOnTheWalker"), "{generated}");
+    assert!(generated_actions_with("apartOnTheWalker"));
 }
 
 /// Text generated apart from a running script is bounded by the caller's script deadline, on the generator thread, on
 /// either engine.
 #[test]
 fn actions_generated_apart_keep_the_callers_deadline() {
-    use crate::script::engine::{with_script_engine, ScriptEngine};
     let sets: String = (0..2000).map(|index| format!("<set field=\"f{index}\" value=\"{index}\"/>")).collect();
     let xml = format!("<actions>{sets}</actions>");
-    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
-        let late = {
-            let _deadline = crate::script::DeadlineGuard::new(Some(std::time::Duration::ZERO));
-            with_script_engine(engine, || generate_apart(&xml, false))
-        };
-        let late = late.unwrap_err();
-        assert!(late.message().contains("interrupted"), "{engine:?}: {}", late.message());
-        let in_time = with_script_engine(engine, || generate_apart(&xml, false)).unwrap();
-        assert!(in_time.contains("f1999"), "{engine:?}");
-    }
+    let late = {
+        let _deadline = crate::script::DeadlineGuard::new(Some(std::time::Duration::ZERO));
+        generate_apart(&xml, false)
+    };
+    let late = late.unwrap_err();
+    assert!(late.message().contains("interrupted"), "{}", late.message());
+    let in_time = generate_apart(&xml, false).unwrap();
+    assert!(in_time.contains("f1999"));
 }

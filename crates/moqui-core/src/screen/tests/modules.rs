@@ -78,11 +78,10 @@ fn recorded_strings(source: &str) -> Vec<String> {
         return JSON.stringify(recorded);
     }})()"#
     );
-    let json = crate::script::walker_context(|ctx| {
-        ctx.eval::<String, _>(script.as_str())
-            .map_err(|err| crate::context::Error::new(format!("{err}\n{script}")))
-    })
-    .unwrap();
+    // on the script runtime, where a name the unit reads that no frame holds is null
+    let json = moqui_lib::object::to_plain_string(
+        &crate::script::eval_value(&script).unwrap_or_else(|err| panic!("{err}\n{script}")),
+    );
     match crate::service::parse_json(&json).unwrap() {
         Value::List(items) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
         other => panic!("{other:?}"),
@@ -137,7 +136,6 @@ const TEMPLATES: &[(&str, &[&str])] = &[
 
 #[test]
 fn text_with_quotes_backslashes_newlines_and_dollar_braces_survives_every_macro() {
-    let _quickjs = crate::script::engine::quickjs_for_test();
     for mode in ["text", "csv", "xml", "html-print"] {
         for (template, shown_in) in TEMPLATES {
             for nasty in NASTY {
@@ -364,7 +362,6 @@ fn the_generated_code_of_the_whole_render_is_one_function_per_section() {
 /// cannot be assembled fails here and not on the first request that reaches the screen.
 #[test]
 fn every_base_component_screen_generates_in_all_three_modes() {
-    let _quickjs = crate::script::engine::quickjs_for_test();
     use crate::screen::generate::{unit_for, UnitRequest};
 
     fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -434,7 +431,7 @@ fn every_base_component_screen_generates_in_all_three_modes() {
                         mode,
                         macro_location: &macro_location,
                     };
-                    match crate::script::walker_context(|ctx| unit_for(Some(ctx), &request)) {
+                    match unit_for(&request) {
                         Ok(Some(_)) => units += 1,
                         Ok(None) => {}
                         Err(err) => failures.push(format!(

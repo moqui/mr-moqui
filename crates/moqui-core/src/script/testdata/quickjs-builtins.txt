@@ -1,0 +1,63 @@
+queueMicrotask function len=1 wtrueefalsectrue own=length,name proto=- tag=[object Function]
+atob function len=1 wtrueefalsectrue own=length,name proto=- tag=[object Function]
+btoa function len=1 wtrueefalsectrue own=length,name proto=- tag=[object Function]
+performance object len=undefined wtrueetruectrue own=now,timeOrigin proto=- tag=[object Object]
+DOMException function len=0 wtrueefalsectrue own=length,name,prototype,INDEX_SIZE_ERR,DOMSTRING_SIZE_ERR,HIERARCHY_REQUEST_ERR,WRONG_DOCUMENT_ERR,INVALID_CHARACTER_ERR,NO_DATA_ALLOWED_ERR,NO_MODIFICATION_ALLOWED_ERR,NOT_FOUND_ERR,NOT_SUPPORTED_ERR,INUSE_ATTRIBUTE_ERR,INVALID_STATE_ERR,SYNTAX_ERR,INVALID_MODIFICATION_ERR,NAMESPACE_ERR,INVALID_ACCESS_ERR,VALIDATION_ERR,TYPE_MISMATCH_ERR,SECURITY_ERR,NETWORK_ERR,ABORT_ERR,URL_MISMATCH_ERR,QUOTA_EXCEEDED_ERR,TIMEOUT_ERR,INVALID_NODE_TYPE_ERR,DATA_CLONE_ERR proto=ABORT_ERR,DATA_CLONE_ERR,DOMSTRING_SIZE_ERR,HIERARCHY_REQUEST_ERR,INDEX_SIZE_ERR,INUSE_ATTRIBUTE_ERR,INVALID_ACCESS_ERR,INVALID_CHARACTER_ERR,INVALID_MODIFICATION_ERR,INVALID_NODE_TYPE_ERR,INVALID_STATE_ERR,NAMESPACE_ERR,NETWORK_ERR,NOT_FOUND_ERR,NOT_SUPPORTED_ERR,NO_DATA_ALLOWED_ERR,NO_MODIFICATION_ALLOWED_ERR,QUOTA_EXCEEDED_ERR,SECURITY_ERR,SYNTAX_ERR,TIMEOUT_ERR,TYPE_MISMATCH_ERR,URL_MISMATCH_ERR,VALIDATION_ERR,WRONG_DOCUMENT_ERR,code,constructor,message,name/Symbol(Symbol.toStringTag) tag=[object Function]
+DisposableStack function len=0 wtrueefalsectrue own=length,name,prototype proto=adopt,constructor,defer,dispose,disposed,move,use/Symbol(Symbol.dispose),Symbol(Symbol.toStringTag) tag=[object Function]
+AsyncDisposableStack function len=0 wtrueefalsectrue own=length,name,prototype proto=adopt,constructor,defer,disposeAsync,disposed,move,use/Symbol(Symbol.asyncDispose),Symbol(Symbol.toStringTag) tag=[object Function]
+SuppressedError function len=3 wtrueefalsectrue own=length,name,prototype proto=constructor,message,name/ tag=[object Function]
+typeof Symbol.dispose: symbol
+typeof Symbol.asyncDispose: symbol
+btoa('hiÿ'): aGn/
+atob('aGk='): hi
+atob('!') threw InvalidCharacterError: The string to be decoded is not correctly encoded [InvalidCharacterError]
+btoa('Ā') threw InvalidCharacterError: String contains an invalid character [InvalidCharacterError]
+atob(' aG k '): hi
+atob('aGk'): hi
+atob('a') threw InvalidCharacterError: The string to be decoded is not correctly encoded [InvalidCharacterError]
+atob(null): ée
+btoa(null): bnVsbA==
+btoa(): dW5kZWZpbmVk
+JSON.stringify(Object.getOwnPropertyNames(performance)): ["now","timeOrigin"]
+typeof performance.now(): number
+performance.now() < 1e7: true
+Object.prototype.toString.call(performance): [object Object]
+Object.getOwnPropertyNames(Object.getPrototypeOf(performance)).join(): toString,toLocaleString,valueOf,hasOwnProperty,isPrototypeOf,propertyIsEnumerable,__proto__,__defineGetter__,__defineSetter__,__lookupGetter__,__lookupSetter__,constructor
+(() => { const e = new DOMException('m', 'NotFoundError'); return [e.name, e.message, e.code, e instanceof Error, String(e), Object.keys(e).join(), typeof e.stack, Object.getOwnPropertyNames(e).join()].join('|') })(): NotFoundError|m|8|true|NotFoundError: m||string|stack
+(() => { const e = new DOMException(); return [e.name, e.message, e.code].join('|') })(): Error||0
+(() => { const e = new DOMException('x', 'Bogus'); return [e.name, e.message, e.code, DOMException.NOT_FOUND_ERR, DOMException.prototype.NOT_FOUND_ERR].join('|') })(): Bogus|x|0|8|8
+Object.getOwnPropertyNames(DOMException).join(): length,name,prototype,INDEX_SIZE_ERR,DOMSTRING_SIZE_ERR,HIERARCHY_REQUEST_ERR,WRONG_DOCUMENT_ERR,INVALID_CHARACTER_ERR,NO_DATA_ALLOWED_ERR,NO_MODIFICATION_ALLOWED_ERR,NOT_FOUND_ERR,NOT_SUPPORTED_ERR,INUSE_ATTRIBUTE_ERR,INVALID_STATE_ERR,SYNTAX_ERR,INVALID_MODIFICATION_ERR,NAMESPACE_ERR,INVALID_ACCESS_ERR,VALIDATION_ERR,TYPE_MISMATCH_ERR,SECURITY_ERR,NETWORK_ERR,ABORT_ERR,URL_MISMATCH_ERR,QUOTA_EXCEEDED_ERR,TIMEOUT_ERR,INVALID_NODE_TYPE_ERR,DATA_CLONE_ERR
+(() => { const e = new SuppressedError(1, 2, 'm'); return [e.name, e.message, e.error, e.suppressed, e instanceof Error, Object.getOwnPropertyNames(e).filter(n => n !== 'stack').join(), String(e)].join('|') })(): SuppressedError|m|1|2|true|message,error,suppressed|SuppressedError: m
+(() => { const log = []; const s = new DisposableStack(); s.defer(() => log.push('a')); s.use({[Symbol.dispose]() { log.push('b') }}); s.adopt(1, (v) => log.push('c' + v)); s.dispose(); return log.join() + '|' + s.disposed })(): c1,b,a|true
+(() => { const s = new DisposableStack(); s.defer(() => { throw new Error('one') }); s.defer(() => { throw new Error('two') }); try { s.dispose() } catch (e) { return [e.name, e.error && e.error.message, e.suppressed && e.suppressed.message].join('|') } })(): SuppressedError|one|two
+(() => { const s = new DisposableStack(); const m = s.move(); return [s.disposed, m.disposed, typeof s[Symbol.dispose], s[Symbol.toStringTag]].join('|') })(): true|false|function|DisposableStack
+(() => { const s = new AsyncDisposableStack(); return [typeof s.disposeAsync, typeof s[Symbol.asyncDispose], s[Symbol.toStringTag], String(s.disposeAsync())].join('|') })(): function|function|AsyncDisposableStack|[object Promise]
+(() => { let r; queueMicrotask(() => { r = 1 }); return typeof r })(): undefined
+(() => { try { queueMicrotask(1) } catch (e) { return String(e) } })(): TypeError: not a function
+(() => { try { new DisposableStack().use(1) } catch (e) { return String(e) } })(): TypeError: not an object
+(() => { try { DisposableStack() } catch (e) { return e.name } })(): TypeError
+Object.getPrototypeOf(DOMException) === Error: false
+Object.getPrototypeOf(DOMException.prototype) === Error.prototype: true
+['IndexSizeError','DOMStringSizeError','HierarchyRequestError','WrongDocumentError','InvalidCharacterError','NoDataAllowedError','NoModificationAllowedError','NotFoundError','NotSupportedError','InUseAttributeError','InvalidStateError','SyntaxError','InvalidModificationError','NamespaceError','InvalidAccessError','ValidationError','TypeMismatchError','SecurityError','NetworkError','AbortError','URLMismatchError','QuotaExceededError','TimeoutError','InvalidNodeTypeError','DataCloneError','EncodingError','NotReadableError'].map(n => new DOMException('', n).code).join(): 1,0,3,4,5,0,7,8,9,10,11,12,13,14,15,0,17,18,19,20,21,22,23,24,25,0,0
+JSON.stringify(Object.getOwnPropertyDescriptor(DOMException, 'NOT_FOUND_ERR')): {"value":8,"writable":false,"enumerable":true,"configurable":false}
+JSON.stringify(Object.getOwnPropertyDescriptor(DOMException.prototype, 'NOT_FOUND_ERR')): {"value":8,"writable":false,"enumerable":true,"configurable":false}
+typeof Object.getOwnPropertyDescriptor(DOMException.prototype, 'name').get: function
+(() => { try { atob('!') } catch (e) { return [e instanceof DOMException, e.code, e.name].join() } })(): true,5,InvalidCharacterError
+(() => { try { DOMException() } catch (e) { return e.name } })(): TypeError
+(() => { const e = SuppressedError(1, 2); return [e instanceof SuppressedError, Object.getOwnPropertyNames(e).filter(n => n !== 'stack').join(), e.message === '', Object.getPrototypeOf(SuppressedError) === Error].join() })(): true,error,suppressed,true,true
+(() => { const e = new DOMException('m', 'NotFoundError'); const s = Object.getOwnPropertyDescriptor(e, 'stack'); return [typeof s.value, s.writable, s.enumerable, s.configurable].join() })(): string,true,false,true
+JSON.stringify(Object.getOwnPropertyDescriptor(DisposableStack.prototype, 'disposed').get !== undefined): true
+DisposableStack.prototype[Symbol.dispose] === DisposableStack.prototype.dispose: true
+AsyncDisposableStack.prototype[Symbol.asyncDispose] === AsyncDisposableStack.prototype.disposeAsync: true
+(() => { const s = new DisposableStack(); s.dispose(); try { s.defer(() => 1) } catch (e) { return String(e) } })(): ReferenceError: DisposableStack has been disposed
+(() => { const s = new DisposableStack(); s.defer(() => { throw new Error('one') }); try { s.dispose() } catch (e) { return String(e) } })(): Error: one
+(() => { const e = new SuppressedError(1, 2); return JSON.stringify(Object.getOwnPropertyDescriptor(e, 'error')) })(): {"value":1,"writable":true,"enumerable":false,"configurable":true}
+queueMicrotask.name + queueMicrotask.length + atob.name + btoa.name + (typeof queueMicrotask.prototype): queueMicrotask1atobbtoaundefined
+Object.getOwnPropertyNames(Symbol).filter(n => n.includes('ispose')).join(): dispose,asyncDispose
+JSON.stringify(Object.getOwnPropertyDescriptor(Symbol, 'dispose')): {"writable":false,"enumerable":false,"configurable":false}
+btoa(String.fromCharCode(0,1,2,255)): AAEC/w==
+atob('AAEC/w==').split('').map(c => c.charCodeAt(0)).join(): 0,1,2,255
+atob('AAEC/w=') threw InvalidCharacterError: The string to be decoded is not correctly encoded [InvalidCharacterError]
+atob('AA==A') threw InvalidCharacterError: The string to be decoded is not correctly encoded [InvalidCharacterError]
+atob('A===') threw InvalidCharacterError: The string to be decoded is not correctly encoded [InvalidCharacterError]
+[DisposableStack.prototype.dispose.name, DisposableStack.prototype.use.length, DisposableStack.prototype.adopt.length, AsyncDisposableStack.prototype.disposeAsync.name, SuppressedError.prototype.name, DOMException.name, DOMException.length].join(): dispose,1,2,disposeAsync,SuppressedError,DOMException,0

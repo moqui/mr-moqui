@@ -1,10 +1,9 @@
 # Script engine: quickjs-oxide beside rquickjs
 
-Status 2026-11-07: Phases 0 to 3 built. quickjs-oxide is a dependency at the fork's revision 7cf1f530, with F1, F2,
-F3a, F3 and F4 (§6). Under `script_engine=oxide` every kind runs on quickjs-oxide, and both suites and the client
-suite pass. After Profiling Rounds 33 to 47 (accepted in Round 48, 2026-11-08) the screen rows are within ×1.10 of
-QuickJS and the Mantle operations are +0.6%; the heap still misses its gate (§11). The default is still `rquickjs`, and
-rquickjs stays until Phase 4.
+Status 2026-11-08: Phases 0 to 4 built. quickjs-oxide is the only script engine, at the fork's revision 7cf1f530, with
+F1, F2, F3a, F3 and F4 (§6); rquickjs, the `script_engine` setting and the routing between engines are gone (§7,
+Phase 4 result). After Profiling Rounds 33 to 47 (accepted in Round 48) the screen rows were within ×1.10 of QuickJS
+and the Mantle operations +0.6%; the heap still misses its gate (§11).
 This plan adds [quickjs-oxide](https://github.com/pocket-nexus/quickjs-oxide), a QuickJS-compatible engine in safe Rust,
 first for expressions and other small scripts, then for everything, and then removes rquickjs. It also changes our fork
 of quickjs-oxide so compiled code is shared by all threads of the process, as compiled Groovy was in Java. The
@@ -85,7 +84,8 @@ embedder exotic objects; there is no C API. The fork changes the parts Moqui nee
 
 - **The default.** The target default is `small-oxide`. The default moves from `rquickjs` to `small-oxide` when Phase 2's
   gate passes (§7), so the tree stays green while the oxide bindings are partial.
-- **After Phase 4.** rquickjs is removed and the setting is gone.
+- **After Phase 4.** rquickjs is removed and the setting is gone (2026-11-08): an unknown or old `script_engine` value
+  is ignored.
 - **Reports.** `engine_stats` and `engine_memory` report each engine separately: engines started, scripts by kind, heap
   bytes, compiled units. So does the `MOQUI_SCRIPT_STATS_FILE` a test run writes.
 - **One engine of each kind per thread, as now.** In `small-oxide` a thread that runs both kinds holds one runtime of
@@ -409,6 +409,39 @@ proceed in parallel and land in the order the phases need them.
   - On both engines, a filter's `try`/`catch` around `chain.doFilter()` cannot keep a servlet's error from the
     response.
 
+### Phase 4 result (2026-11-08)
+
+rquickjs is gone. What went:
+- **The QuickJS engine and bindings:** `script/runtime.rs`'s engine, `script/runtime/`'s `bind`, `compiled`,
+  `convert`, `decimal`, `ec_extra`, `entities`, `facades`, `native_tools`, `screen_host`, `upload` and `web_host` (the
+  parts the oxide side still used were kept: the decimals' arithmetic, the text encodings, localized expansion, the
+  script files by location, the context's values), the QuickJS template sandbox, the QuickJS macro walker, and the
+  public functions that handed out a `Ctx` (`with_ctx`, `with_spec_ctx`, `host_to_js`, `js_to_host`, `host_guard`,
+  `throw_lib`, `facade_of`, `with_ec`, `text_upload_to_js`).
+- **The setting and the routing:** `script_engine`, `ScriptEngine`, `with_script_engine`, the router, the fallback
+  memo, the difference check (`script_engine_check`), the census (`script/census.rs`) and the static check
+  (`script/check.rs`), and the oxide runtime's cut start for small scripts (`HARDEN_JS`); every entry is now one call of
+  `script/engine.rs`'s `run`. A fallback the bindings still report is an error naming the kind.
+- **What only QuickJS ran:** the Vue compiler checks (`screen/vue_check.rs`), the bundle tests, `tests/browser_libs.rs`
+  and moqui-llm's OpenUI and SFC checks run on `script/standalone.rs`, one bare runtime (moqui-llm's own
+  `ui/standalone.rs` moved there).
+- **Tests:** the two-engine helpers (`on_both_engines`, `quickjs_for_test`) and the tests of QuickJS's internals went;
+  the comparisons became checks of one engine. The QuickJS builtins' answers that oxide matched are kept as a golden
+  file (`script/testdata/quickjs-builtins.txt`).
+- **Builds:** rquickjs left the workspace, moqui-core (with the emscripten `bindgen` entry) and moqui-llm, and
+  `Cargo.lock`; `scripts/wasm-env.sh` no longer sets up libclang or bindgen.
+
+The gate:
+- `./moq test-framework`: every step passed but `cargo test --workspace`, whose one failure (moqui-host's XMPP walk,
+  "not in time") passed three times of three alone, a timing flake under the run's load.
+- `./moq test-apps`: 3393 of 3394 features and the 19 client features pass. The one failure, mr-mantle's
+  `SupportAssignment` round robin, fails the same under rquickjs (Round 48).
+- The browser build (`cargo check -p moqui-browser --target wasm32-unknown-emscripten`) passes with no libclang or
+  bindgen; no C is in the script engine's build.
+- `./moq test-all` and the packages were not run.
+
+The heap of the test-apps workers is as at Round 48: 91 to 118 MB at their peaks, 31 runtimes live at most.
+
 ### Phase 3: engine differences
 
 What `oxide` still shows differently from QuickJS, found by the generation comparison
@@ -614,42 +647,37 @@ Open, with what decides each:
 
 ## 11. Resuming
 
-State at the end of Phase 3 (2026-11-07):
-- **mr-moqui:** `master` holds Phases 0 to 3, Profiling Rounds 33 to 47 (accepted in Round 48) and the pin to the
+State at the end of Phase 4 (2026-11-08):
+- **mr-moqui:** `master` holds Phases 0 to 4, Profiling Rounds 33 to 47 (accepted in Round 48) and the pin to the
   fork's 7cf1f530.
 - **The fork:** its `main` is 7cf1f530 (Round 43's `perf/replace-one-byte` merged).
-- **Defaults:** `rquickjs` is the default. `small-oxide` and `oxide` are both whole and pass the suites.
+- **The engine:** quickjs-oxide only; rquickjs is out of the workspace and `Cargo.lock`.
 - **Measurement:** the measurement workspace is `../oxide-bench` (its `README.md`). It has:
   - the fork's Sweep;
   - the scripts for the Mantle operations against a Postgres 200 µs away;
   - Round 32's raw data.
 
-The bindings' speed is done (Round 48's acceptance, below). Next is Phase 4, with the heap as fork work beside it.
+The bindings' speed is done (Round 48's acceptance, below), and so is Phase 4. Next is the heap.
 
 ### Where things are
 
-- **Engine choice.** `script/engine.rs` holds the setting and `route(kind, text)`. `script/run.rs` holds the depth, the
-  deadline and `ReleaseScope`.
-- **Bindings for both engines.** `script/host/` is the host table both engines bind:
-  - `Method`, `HostClass` and `EngineOps`;
-  - the helper objects in `host/globals.rs`.
-
-  A new helper method or `ec` method goes on the host table. `runtime/ec_extra.rs` is QuickJS's old binding and goes
-  in Phase 4: work added only there (as Admin P3 and P4 did) is missing on both engines, because the host table's
-  helpers replace and freeze them.
-- **The oxide engine.** `script/oxide/` is the oxide engine:
+- **The entries.** `script/runtime.rs` holds the entries the framework calls (`eval_condition`, `eval_value`,
+  `expand`, `run_actions`'s scripts, `run_script`, ...), the context stack's API and the widget check; each entry is one
+  call of `script/engine.rs`'s `run`, which counts it by kind. `script/run.rs` holds the depth, the deadline and
+  `ReleaseScope`. `script/runtime/` keeps what the bindings share that is not the engine's: decimals, the text
+  encodings, localized expansion, script files by location and the context's values.
+- **The host table.** `script/host/` is the table the bindings bind: `Method`, `HostClass` and `EngineOps`; the helper
+  objects in `host/globals.rs`. A new helper method or `ec` method goes on the host table.
+- **The engine.** `script/oxide/` is the engine:
   - `engine.rs`: the runtimes, `with_run`, memory pressure and restarts;
   - `tracked.rs`: tracked values and `kept`;
   - `bind.rs`: the binder, and the objects let go at a run's end;
   - `units.rs`, `templates.rs`, `walker.rs`, `spec.rs`, `builtins.rs`, `widget.rs` and `errors.rs`.
-- **The QuickJS engine.** `script/runtime.rs` and `script/runtime/` are QuickJS's engine and bindings.
-- **Tests for both engines.** `engine::on_both_engines`, `with_script_engine` and `quickjs_for_test` are the test
-  helpers (§8).
+- **A runtime of its own.** `script/standalone.rs` is a bare runtime with a heap cap and an interrupt, for the checks
+  that run a library's code: the Vue compiler (`screen/vue_check.rs`), OpenUI Lang and Vue SFC scripts in moqui-llm.
 - **Diagnostics:**
-  - `MOQUI_SCRIPT_STATS_FILE=<file>` writes a line per process with scripts by kind and engine, fallbacks and heap
-    peaks.
+  - `MOQUI_SCRIPT_STATS_FILE=<file>` writes a line per process with scripts by kind and the runtimes' heap peaks.
   - `MOQUI_SCRIPT_HEAP_LOG=<file>` writes a line per spec with each runtime's arenas, code and caches.
-  - `script_engine_check=true` is the difference check.
 
 ### Measuring
 
@@ -731,43 +759,8 @@ unit tests and the fork's API tests), with no Sweep, Mantle run or full-suite ru
   `moqui-git`, and mr-mantle's `SupportAssignment` round-robin feature, which fails under both engines. The Sweep,
   `gates.sh` and the memory sweep pass on the fork's `main`.
 
-### Next: Phase 4 (rquickjs removed)
+### Next: the heap
 
-Before the removal:
-- **The default.** Make `oxide` the default and run a round of the suites, the acceptance suites and the client
-  suite under it.
-- **Engine differences to settle.** Decide which of the "Engine differences" sections' items to fix and which to list
-  in [Parity-Diffs](Parity-Diffs.md):
-  - `using` declarations, which need the fork's parser;
-  - `performance.now()`'s whole milliseconds;
-  - `Error.captureStackTrace`;
-  - stack and message texts;
-  - a decimal's identity after a releasing flush.
-- **Port what stays on rquickjs** to oxide runtimes of their own, as `moqui-llm`'s `ui/standalone.rs` does:
-  - `screen/vue_check.rs`, the Vue compiler;
-  - `tests/browser_libs.rs`;
-  - `screen/tests/qvt.rs`.
-
-  `js_speed`'s QuickJS half goes.
-
-The removal:
-- **Remove the QuickJS bindings and engine:**
-  - `script/runtime.rs` and `script/runtime/`, including `ec_extra.rs`, `bind.rs` and `compiled.rs`'s
-    `SHARED_BYTECODE`;
-  - the QuickJS side of `walker.rs`, `actions.rs`, `template.rs` and `screen/generate.rs`;
-  - the rquickjs uses in `script/oxide/` (the cross-engine flush and the nested QuickJS paths);
-  - the public functions that hand out a `Ctx`.
-- **Remove the setting and what only routing needed:**
-  - `script_engine` itself;
-  - `small-oxide`'s hardened runtime, if the small kinds then run on the whole runtime;
-  - the static check's routing role (`check.rs`, the census), keeping only what the difference check or security
-    still needs, or removing it with the difference check.
-- **Tests.** The 26 tests pinned with `quickjs_for_test` are deleted, or ported where they check behaviour a user
-  sees. `on_both_engines` becomes a single run.
-- **Dependencies and builds:**
-  - `rquickjs` leaves the workspace's `Cargo.toml`, moqui-core (two entries, one with `bindgen`) and moqui-llm.
-  - The browser build loses `bindgen` and the emsdk sysroot's QuickJS needs (`scripts/wasm-build.sh`); it keeps
-    `native_depth_limit`.
-  - `deny.toml` and the license review lose QuickJS's rows.
-- **Docs:** Build-Test, Run-Deploy, `docs/interfaces/Web-Scripts.md` and Parity-Diffs.
-- **The gate (§7):** `./moq test-all`, the browser build and the packages pass with no C in the script engine's build.
+Phase 4 is done (§7, Phase 4 result). What is left of Phase 3's gates is the heap: test-apps workers peak at 91 to
+118 MB of reserved runtime heap, against a gate of half of 139 MiB. The two causes, about 30 runtimes a process and
+arenas that give back only their ends, are in Profiling's Round 49 onward.

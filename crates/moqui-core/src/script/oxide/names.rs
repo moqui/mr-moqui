@@ -185,7 +185,6 @@ impl ExoticClass for EntityValues {
             }
             let engine = current().ok_or(Conv::Unsupported("no oxide engine"))?;
             let host = to_host(scope, &engine, &value)?;
-            crate::script::census::note_side_effect();
             entity_set_field(&cell, name, host).map_err(Conv::Error)?;
             Ok(true)
         })
@@ -311,10 +310,46 @@ pub(super) fn missing(name: &str) -> Result<Value, Conv> {
                     return Ok(Value::Object(helper.clone()));
                 }
             }
-            if crate::script::check::QUICKJS_ONLY_GLOBALS.contains(&name) {
+            if QUICKJS_ONLY_GLOBALS.contains(&name) {
                 return Err(Conv::Unsupported("a QuickJS global"));
             }
             Ok(Value::Null)
         }
     }
 }
+
+/// Global names a script written for QuickJS may use that quickjs-oxide does not bind: a bare one is an error naming
+/// it, not a context name that is not set.
+pub(crate) const QUICKJS_ONLY_GLOBALS: &[&str] = &[
+    // QuickJS builtins quickjs-oxide does not have
+    "AsyncDisposableStack",
+    "DOMException",
+    "DisposableStack",
+    "SuppressedError",
+    "atob",
+    "btoa",
+    "performance",
+    "queueMicrotask",
+    // the host's globals (`install_ec`, `install_helpers`, `tools_host`, `edi`, `sftp`)
+    "EdiHandler",
+    "ResourceReference",
+    "SftpClient",
+    "System",
+    "__compareOrder",
+    "__inDateRange",
+    "__moquiWrap",
+    "compare",
+    "elasticQueryAutoWildcard",
+    "filterMapList",
+    "filterMapListByDate",
+    "numberToWords",
+    "numberToWordsWithDecimal",
+    "orderMapList",
+    "sri",
+    // names the QuickJS bare-name object answers itself (`read_name`'s helper objects, the stack as `context`)
+    "ObjectUtilities",
+    "CollectionUtilities",
+    "StringUtilities",
+    "WebUtilities",
+    "UserSecurityChecks",
+];

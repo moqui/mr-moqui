@@ -305,78 +305,71 @@ fn privileged_group_membership_is_denied_to_a_non_member() {
 /// (the helper objects are frozen); with authorization disabled, as a data load runs, each write is stored.
 #[test]
 fn the_security_checks_run_on_each_engine() {
-    use crate::script::{with_script_engine, ScriptEngine};
-    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
-        with_script_engine(engine, || {
-            let (facade, context, _runtime) = boot_security();
-            let _entered = context.enter();
-            {
-                let _authz = context.disable_authz();
-                seed_entity_allow(&facade);
-                seed_user(&facade, "plain", "Secret-12");
-                create_row(
-                    &facade,
-                    "moqui.entity.document.DataDocument",
-                    &[("dataDocumentId", "DOC1"), ("primaryEntityName", "moqui.test.Foo")],
-                );
-            }
-            login_user("plain", "Secret-12").expect("login");
-            let name = engine.name();
-            // sloppy code: the assignment does nothing, and the checks are the host's still
-            crate::script::run_script(
-                "UserSecurityChecks.assertPrivilegedGroupMembership = function () {};
-                 UserSecurityChecks.assertSealedPermissionGrant = function () {};
-                 UserSecurityChecks.assertDocumentExpression = function () {};",
-            )
-            .expect("sloppy assignment");
-            let member = |group: &str| {
-                let mut row = facade.make_value("moqui.security.UserGroupMember").unwrap();
-                row.set("userGroupId", Value::string(group));
-                row.set("userId", Value::string("U1"));
-                row.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
-                row
-            };
-            let document_field = |seq: &str| {
-                let mut row = facade.make_value("moqui.entity.document.DataDocumentField").unwrap();
-                row.set("dataDocumentId", Value::string("DOC1"));
-                row.set("fieldSeqId", Value::string(seq));
-                row.set("fieldPath", Value::string("fooText:(fooText + 'x')"));
-                row
-            };
-            let err = member("ADMIN").create(&facade).expect_err("privileged group");
-            assert!(err.to_string().contains("membership of group ADMIN"), "{name}: {err}");
-            let err = permission_row(&facade, "ADMIN", "ADMIN_PASSWORD")
-                .create(&facade)
-                .expect_err("sealed permission");
-            assert!(err.to_string().contains("grant permission ADMIN_PASSWORD"), "{name}: {err}");
-            let err = document_field("01").create(&facade).expect_err("document expression");
-            assert!(err.to_string().contains("DATABASE_ADMIN"), "{name}: {err}");
-            // a bare name over the helper's, then a write in the same script: on QuickJS the name is the context
-            // stack's, which hides the helper from the rule's script, whose call then fails, so the write does (fails
-            // closed); on oxide the assignment throws
-            let hidden = crate::script::run_script(
-                "UserSecurityChecks = {assertPrivilegedGroupMembership: function () {}};
-                 const row = ec.entity.makeValue('moqui.security.UserGroupMember');
-                 row.set('userGroupId', 'ADMIN'); row.set('userId', 'U1'); row.set('fromDate', ec.user.nowTimestamp);
-                 row.create()",
-            );
-            let err = hidden.expect_err("a hidden check").to_string();
-            let why = if engine == ScriptEngine::Oxide { "host global" } else { "UserGroupMemberPrivileged" };
-            assert!(err.contains(why), "{name}: {err}");
-            // the value stays on QuickJS's stack, hiding the helper from the later writes of this context
-            crate::script::clear_context_stack();
-            assert!(!user_in_group(&facade, "ADMIN").unwrap(), "{name}");
-            // a plain group, a plain path: allowed to the same user
-            member("ALL_USERS").create(&facade).expect("a group that is not privileged");
+    {
+        let (facade, context, _runtime) = boot_security();
+        let _entered = context.enter();
+        {
             let _authz = context.disable_authz();
-            member("ADMIN").create(&facade).expect("authz disabled");
-            permission_row(&facade, "ADMIN", "ADMIN_PASSWORD")
-                .create(&facade)
-                .expect("authz disabled");
-            document_field("02").create(&facade).expect("authz disabled");
-            assert!(user_in_group(&facade, "ADMIN").unwrap(), "{name}");
-            assert_eq!(permission_count(&facade, "ADMIN", "ADMIN_PASSWORD"), 1, "{name}");
-        });
+            seed_entity_allow(&facade);
+            seed_user(&facade, "plain", "Secret-12");
+            create_row(
+                &facade,
+                "moqui.entity.document.DataDocument",
+                &[("dataDocumentId", "DOC1"), ("primaryEntityName", "moqui.test.Foo")],
+            );
+        }
+        login_user("plain", "Secret-12").expect("login");
+        // sloppy code: the assignment does nothing, and the checks are the host's still
+        crate::script::run_script(
+            "UserSecurityChecks.assertPrivilegedGroupMembership = function () {};
+             UserSecurityChecks.assertSealedPermissionGrant = function () {};
+             UserSecurityChecks.assertDocumentExpression = function () {};",
+        )
+        .expect("sloppy assignment");
+        let member = |group: &str| {
+            let mut row = facade.make_value("moqui.security.UserGroupMember").unwrap();
+            row.set("userGroupId", Value::string(group));
+            row.set("userId", Value::string("U1"));
+            row.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
+            row
+        };
+        let document_field = |seq: &str| {
+            let mut row = facade.make_value("moqui.entity.document.DataDocumentField").unwrap();
+            row.set("dataDocumentId", Value::string("DOC1"));
+            row.set("fieldSeqId", Value::string(seq));
+            row.set("fieldPath", Value::string("fooText:(fooText + 'x')"));
+            row
+        };
+        let err = member("ADMIN").create(&facade).expect_err("privileged group");
+        assert!(err.to_string().contains("membership of group ADMIN"), "{err}");
+        let err = permission_row(&facade, "ADMIN", "ADMIN_PASSWORD")
+            .create(&facade)
+            .expect_err("sealed permission");
+        assert!(err.to_string().contains("grant permission ADMIN_PASSWORD"), "{err}");
+        let err = document_field("01").create(&facade).expect_err("document expression");
+        assert!(err.to_string().contains("DATABASE_ADMIN"), "{err}");
+        // a bare name over the helper's, then a write in the same script: the assignment to the frozen host
+        // global throws, so the write is never made
+        let hidden = crate::script::run_script(
+            "UserSecurityChecks = {assertPrivilegedGroupMembership: function () {}};
+             const row = ec.entity.makeValue('moqui.security.UserGroupMember');
+             row.set('userGroupId', 'ADMIN'); row.set('userId', 'U1'); row.set('fromDate', ec.user.nowTimestamp);
+             row.create()",
+        );
+        let err = hidden.expect_err("a hidden check").to_string();
+        assert!(err.contains("host global"), "{err}");
+        crate::script::clear_context_stack();
+        assert!(!user_in_group(&facade, "ADMIN").unwrap());
+        // a plain group, a plain path: allowed to the same user
+        member("ALL_USERS").create(&facade).expect("a group that is not privileged");
+        let _authz = context.disable_authz();
+        member("ADMIN").create(&facade).expect("authz disabled");
+        permission_row(&facade, "ADMIN", "ADMIN_PASSWORD")
+            .create(&facade)
+            .expect("authz disabled");
+        document_field("02").create(&facade).expect("authz disabled");
+        assert!(user_in_group(&facade, "ADMIN").unwrap());
+        assert_eq!(permission_count(&facade, "ADMIN", "ADMIN_PASSWORD"), 1);
     }
 }
 

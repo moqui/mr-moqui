@@ -164,43 +164,6 @@ fn a_script_reads_localized_fields_and_writes_the_stored_ones() {
     crate::user::session::set_locale(None);
 }
 
-/// The allocations the outermost script runtime holds now, after a collection. Not while a script runs: that
-/// holds the runtime's lock.
-fn live_allocations() -> i64 {
-    let engine = super::super::ENGINES
-        .with(|engines| engines.borrow().first().map(|(_, engine)| engine.clone()))
-        .expect("a started engine");
-    engine.runtime.run_gc();
-    engine.runtime.memory_usage().malloc_count
-}
-
-/// `keep_assigned` matches what rquickjs does with an assigned value: an extra reference each time would keep
-/// every assigned string alive.
-#[test]
-fn a_field_assigned_many_times_does_not_grow_the_runtime() {
-    let _quickjs = crate::script::engine::quickjs_for_test();
-    let context = enumerations();
-    let _entered = context.enter();
-    let assign = |count: u32| {
-        run_script(&format!(
-            r#"(function () {{
-                    const value = ec.entity.makeValue("moqui.basic.Enumeration");
-                    for (let i = 0; i < {count}; i++) {{ value.description = "text " + i; }}
-                }})()"#
-        ))
-        .unwrap();
-    };
-    assign(1_000);
-    let before = live_allocations();
-    assign(100_000);
-    let after = live_allocations();
-    assert!(
-        after - before < 1_000,
-        "{} allocations kept after 100k assignments",
-        after - before
-    );
-}
-
 #[test]
 fn an_eeca_action_reads_the_value_being_written() {
     let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -595,49 +558,6 @@ fn a_template_loop_reads_fields_by_dot() {
     )
     .unwrap();
     assert_eq!(text, "E1=first (Type 1);E2=second (Type 1);E3=third (Type 1);");
-}
-
-/// The engine counts its heap's live bytes as it allocates (`CountingAllocator`), close to what QuickJS's own walk
-/// of the heap reports.
-#[test]
-fn the_engine_counts_its_heap_as_quickjs_does() {
-    let _quickjs = crate::script::engine::quickjs_for_test();
-    let context = enumerations();
-    let _entered = context.enter();
-    run_script("globalThis.big = []; for (let i = 0; i < 20000; i++) globalThis.big.push('x' + i)").unwrap();
-    let engine = super::super::ENGINES
-        .with(|engines| engines.borrow().first().map(|(_, engine)| engine.clone()))
-        .expect("a started engine");
-    engine.runtime.run_gc();
-    let counted = i64::try_from(engine.heap_bytes.get()).unwrap();
-    let walked = engine.runtime.memory_usage().malloc_size;
-    assert!(
-        counted > walked / 2 && counted < walked * 2,
-        "counted {counted} against QuickJS's {walked}"
-    );
-}
-
-/// A script one thread's engine compiled is read from the process's bytecode by another thread's engine, not parsed
-/// again, and runs the same.
-#[test]
-fn another_threads_engine_reads_a_compiled_script_s_bytecode() {
-    let source = "(function () { let total = 0; for (let i = 1; i <= 10; i++) total += i; return 'sum ' + total })() /* shared bytecode test */";
-    let run = move || {
-        // the setting is the thread's: each spawned one's own
-        let _quickjs = crate::script::engine::quickjs_for_test();
-        let context = enumerations();
-        let _entered = context.enter();
-        super::super::eval_value(source).unwrap()
-    };
-    let first = std::thread::spawn(run).join().unwrap();
-    let before = super::compiled::shared_bytecode_reads();
-    let second = std::thread::spawn(run).join().unwrap();
-    assert_eq!(first, Value::string("sum 55"));
-    assert_eq!(second, first);
-    assert!(
-        super::compiled::shared_bytecode_reads() > before,
-        "the second engine read the bytecode"
-    );
 }
 
 /// The members of `ec.entity`, a find, a list and a value keep the names and lengths they had as QuickJS classes, and

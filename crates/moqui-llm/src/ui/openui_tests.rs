@@ -64,34 +64,6 @@ fn skill_sections() -> std::collections::BTreeMap<String, String> {
     out
 }
 
-/// The thread's engine is the setting's: a change of setting on the thread starts the other one, and both parse alike.
-#[test]
-fn the_thread_engine_follows_the_setting() {
-    use moqui_core::script::{with_script_engine, ScriptEngine};
-    let sources = test_sources();
-    let mut roots = Vec::new();
-    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide, ScriptEngine::Rquickjs] {
-        roots.push(with_script_engine(engine, || {
-            let parsed = parse(&sources, CHART).unwrap();
-            let kind = ENGINE.with(|slot| match slot.borrow().as_ref().map(|engine| &engine.js) {
-                Some(super::super::standalone::Standalone::Oxide { .. }) => "oxide",
-                Some(super::super::standalone::Standalone::QuickJs { .. }) => "rquickjs",
-                None => "none",
-            });
-            (kind, parsed.root)
-        }));
-    }
-    let root = Some("Stack".to_string());
-    assert_eq!(
-        roots,
-        [
-            ("rquickjs", root.clone()),
-            ("oxide", root.clone()),
-            ("rquickjs", root)
-        ]
-    );
-}
-
 #[test]
 fn a_chart_program_parses_and_checks_with_no_problems() {
     let sources = test_sources();

@@ -1665,9 +1665,9 @@ mod tests {
             .factory()
             .service_pools()
             .call(|| {
-                // with_ctx is a QuickJS entry point; the deadline it reads is the engines' shared one (script/run.rs).
-                let _quickjs = crate::script::engine::quickjs_for_test();
-                crate::script::walker_context(|_| Ok(crate::script::script_time_remaining()))
+                // the deadline an outermost script arms as it starts (script/run.rs)
+                let _limit = crate::script::run::ScriptLimit::arm();
+                Ok::<_, crate::context::Error>(crate::script::script_time_remaining())
             })
             .unwrap();
         assert_eq!(left, None, "batch work outside a transaction runs as long as it takes");

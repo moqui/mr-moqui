@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The macro walker on quickjs-oxide under `script_engine=oxide` (plans/Script-Engine-Oxide.md, Phase 3): XML actions
+//! The macro walker on quickjs-oxide (plans/Script-Engine-Oxide.md, Phase 3): XML actions
 //! (`TemplateSupport.js`, `XmlActions.js`) and screen macro modules generate their JavaScript here instead of on the
 //! thread's QuickJS engine (`script/walker.rs`).
 //!
@@ -34,13 +34,7 @@ use super::convert::key;
 use super::errors::{runtime_error, rquickjs_type_name};
 use crate::context::Error;
 use crate::script::bounded::BoundedMap;
-use crate::script::engine::{script_engine, ScriptEngine};
 use crate::script::run::{self, ScriptLimit, DEADLINE};
-
-/// Whether generation runs on quickjs-oxide: under `script_engine=oxide` only.
-pub(crate) fn on_oxide() -> bool {
-    script_engine() == ScriptEngine::Oxide
-}
 
 /// `walker::walk` in JavaScript, over the tree's JSON text: the node objects (`name`, `text`, `attrs`, `src`, `inert`,
 /// `parent`, `children`) first, then the macros in post-order, each node's `source` set as its macro returns. The
@@ -489,6 +483,22 @@ pub(crate) fn generated_actions_with(marker: &str) -> bool {
     moqui_lib::sync::lock(&GENERATED_ACTIONS)
         .iter()
         .any(|tree| tree.contains(marker))
+}
+
+/// The macro names of the XML actions chain (`support`, then `module`), sorted. For tests.
+#[cfg(test)]
+pub(crate) fn action_macro_names(support: &str, module: &str) -> Result<Vec<String>, Error> {
+    let generator = generator()?;
+    let loaded = chain(&generator, None, support, &[module], false, "")?;
+    let macros = loaded.last().ok_or_else(|| Error::new("no XML actions macros"))?;
+    let context = &generator.context;
+    let keys = context.own_property_keys(macros).map_err(|err| failed(context, err))?;
+    let mut names: Vec<String> = keys
+        .into_iter()
+        .filter_map(|found| found.to_js_string().map(|name| name.to_utf8_lossy()))
+        .collect();
+    names.sort();
+    Ok(names)
 }
 
 /// A screen macro module loaded on the thread's generator: `screen::generate`'s `ModeModule` on quickjs-oxide.

@@ -16,21 +16,17 @@
 //! JavaScript function and cached.
 //!
 //! The trusted renderer runs that function on the script runtime with the live context. The
-//! locked-down renderer runs it in a separate QuickJS context that holds nothing but the plain
+//! locked-down renderer runs it in a separate quickjs-oxide runtime that holds nothing but the plain
 //! snapshot of a map, `format`, `localize` and `t` (a theme's own texts by key). Tags are listed in Templating in
 //! `plans/archive/Architecture-Proposal.md`. Every template also has `raw(v)` (output as is), `html(v)` (HTML escaped
 //! once) and `cssString(v)` (a quoted CSS string that cannot end a `<style>` element, for `@page` margin boxes).
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::runtime::js_error;
-
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
-use rquickjs::function::Opt;
-use rquickjs::{CatchResultExt, Context, Ctx, Exception, Function, Persistent, Runtime, Value as JsValue};
 
 use crate::context::{Error, ExecutionContextFactory};
 
@@ -113,10 +109,7 @@ impl TemplateRenderer for FancyRenderer {
         if let Some(Value::Map(entries)) = data {
             super::put_context_all(entries);
         }
-        if super::oxide::templates::on_oxide() {
-            return super::oxide::templates::run_live(&compiled);
-        }
-        super::runtime::run_template_function(&compiled)
+        super::oxide::templates::run_live(&compiled)
     }
 
     fn check(&self, source: &str) -> Result<(), Error> {
@@ -377,15 +370,6 @@ pub fn render_trusted(source: &str, escape: Escape) -> Result<String, Error> {
 /// Returns an error when the template does not compile or throws.
 pub fn render_locked_with(source: &str, escape: Escape, data: &Value) -> Result<String, Error> {
     LockedRenderer { escape }.render(source, Some(data))
-}
-
-/// Render `source` as a trusted fancy template on the context of a running host call.
-pub(crate) fn render_trusted_here(ctx: &Ctx<'_>, source: &str, escape: Escape) -> Result<String, Error> {
-    let compiled = compiled(source, escape, Scope::Live)?;
-    if super::oxide::templates::on_oxide() {
-        return super::oxide::templates::run_live(&compiled);
-    }
-    super::runtime::run_template_function_here(ctx, &compiled)
 }
 
 /// Check that a fancy template compiles, including a parse of every expression.
@@ -1172,79 +1156,14 @@ pub(super) const SANDBOX_LOCKDOWN: &str = r#"
 })();
 "#;
 
-struct Sandbox {
-    functions: RefCell<super::bounded::BoundedMap<String, Persistent<Function<'static>>>>,
-    context: Context,
-    // The context borrows this runtime. Drop order frees the context first. A theme render lowers its memory limit for
-    // the call (`render_locked_bounded`).
-    runtime: Runtime,
-}
-
 /// Texts by key for `t(key)` in a locked render: a theme package's `locales/` for the view's locale (`script/theme`).
 pub(crate) type Texts = std::collections::HashMap<String, String>;
 
 thread_local! {
-    static SANDBOX: RefCell<Option<Sandbox>> = const { RefCell::new(None) };
-    static LOCKED_DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
     static LOCKED_TEXTS: RefCell<Option<Arc<Texts>>> = const { RefCell::new(None) };
 }
 
-impl Sandbox {
-    fn start() -> Result<Self, Error> {
-        let runtime = Runtime::new().map_err(js_error)?;
-        runtime.set_memory_limit(LOCKED_MEMORY_LIMIT);
-        runtime.set_interrupt_handler(Some(Box::new(|| {
-            LOCKED_DEADLINE.with(Cell::get).is_some_and(|at| Instant::now() >= at)
-        })));
-        let context = Context::full(&runtime).map_err(js_error)?;
-        context.with(|ctx| -> Result<(), Error> {
-            let globals = ctx.globals();
-            globals
-                .set("format", Function::new(ctx.clone(), locked_format).map_err(js_error)?)
-                .map_err(js_error)?;
-            globals
-                .set(
-                    "localize",
-                    Function::new(ctx.clone(), locked_localize).map_err(js_error)?,
-                )
-                .map_err(js_error)?;
-            globals
-                .set("t", Function::new(ctx.clone(), locked_text).map_err(js_error)?)
-                .map_err(js_error)?;
-            ctx.eval::<(), _>(SANDBOX_PRELUDE)
-                .catch(&ctx)
-                .map_err(|err| Error::new(err.to_string()))?;
-            // The context is shared by every locked-down render on this thread, so nothing a template does may last:
-            // the globals and every built-in object are frozen, and a template cannot change `$esc`'s String methods,
-            // JSON, or the functions the next template calls.
-            ctx.eval::<(), _>(SANDBOX_LOCKDOWN)
-                .catch(&ctx)
-                .map_err(|err| Error::new(err.to_string()))
-        })?;
-        Ok(Self {
-            functions: RefCell::new(super::bounded::BoundedMap::new(MAX_COMPILED)),
-            context,
-            runtime,
-        })
-    }
-}
-
-fn locked_format(ctx: Ctx<'_>, value: JsValue<'_>, pattern: Opt<String>) -> rquickjs::Result<String> {
-    let host = if let Some(text) = value.as_string() {
-        Value::String(text.to_string()?)
-    } else if let Some(number) = value.as_int() {
-        Value::I64(i64::from(number))
-    } else if let Some(number) = value.as_float() {
-        Value::F64(number)
-    } else if let Some(flag) = value.as_bool() {
-        Value::Bool(flag)
-    } else {
-        Value::Null
-    };
-    format_snapshot_value(host, pattern.0.as_deref()).map_err(|err| Exception::throw_message(&ctx, err.message()))
-}
-
-/// The locked renderers' `format(value, pattern)` on either engine: `value` is the snapshot's text, number or flag
+/// The locked renderers' `format(value, pattern)`: `value` is the snapshot's text, number or flag
 /// (anything else is null).
 pub(super) fn format_snapshot_value(value: Value, pattern: Option<&str>) -> Result<String, Error> {
     let host = match value {
@@ -1277,19 +1196,7 @@ pub(super) fn format_snapshot_value(value: Value, pattern: Option<&str>) -> Resu
     crate::l10n::format_value(&host, pattern)
 }
 
-fn locked_localize(ctx: Ctx<'_>, text: String) -> rquickjs::Result<String> {
-    crate::l10n::localize(&text).map_err(|err| Exception::throw_message(&ctx, err.message()))
-}
-
-fn locked_text(key: JsValue<'_>) -> rquickjs::Result<String> {
-    let key = match key.as_string() {
-        Some(key) => Some(key.to_string()?),
-        None => None,
-    };
-    Ok(snapshot_text(key))
-}
-
-/// `t(key)` on either engine: the render's text for `key`, or the key itself when the theme has none (so a missing
+/// `t(key)`: the render's text for `key`, or the key itself when the theme has none (so a missing
 /// text shows, as the key, rather than nothing); empty for a key that is not a string (`None`).
 pub(super) fn snapshot_text(key: Option<String>) -> String {
     let Some(key) = key else {
@@ -1329,7 +1236,7 @@ pub(crate) fn render_locked_bounded(
     let compiled = compiled(source, Escape::Html, Scope::Snapshot)?;
     let deadline = deadline.min(Instant::now() + LOCKED_TIME_LIMIT);
     let _texts = TextsSet::new(texts);
-    // QuickJS reads a memory limit of 0 as none, so the least is 1 byte (every allocation fails), never 0.
+    // the least is 1 byte (every allocation fails), never 0
     render_locked_until(&compiled, json, deadline, memory.clamp(1, LOCKED_MEMORY_LIMIT))
 }
 
@@ -1351,53 +1258,7 @@ impl Drop for TextsSet {
 }
 
 fn render_locked_until(compiled: &str, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {
-    if super::oxide::templates::on_oxide() {
-        return super::oxide::templates::render_locked(compiled, json, deadline, memory);
-    }
-    SANDBOX.with(|cell| {
-        if cell.borrow().is_none() {
-            *cell.borrow_mut() = Some(Sandbox::start()?);
-        }
-        let guard = cell.borrow();
-        let sandbox = guard
-            .as_ref()
-            .ok_or_else(|| Error::new("template sandbox did not start"))?;
-        let previous = LOCKED_DEADLINE.with(Cell::get);
-        LOCKED_DEADLINE.with(|cell| cell.set(Some(deadline)));
-        let lowered = memory < LOCKED_MEMORY_LIMIT;
-        if lowered {
-            sandbox.runtime.set_memory_limit(memory);
-        }
-        let result = sandbox.context.with(|ctx| {
-            let saved = sandbox.functions.borrow_mut().get(compiled);
-            let function = match saved {
-                Some(saved) => saved.restore(&ctx).map_err(js_error)?,
-                None => {
-                    let mut options = rquickjs::context::EvalOptions::default();
-                    options.strict = false;
-                    options.global = true;
-                    let function: Function = ctx
-                        .eval_with_options(compiled, options)
-                        .catch(&ctx)
-                        .map_err(|err| Error::new(err.to_string()))?;
-                    sandbox
-                        .functions
-                        .borrow_mut()
-                        .insert(compiled.to_string(), Persistent::save(&ctx, function.clone()));
-                    function
-                }
-            };
-            function
-                .call::<_, String>((json,))
-                .catch(&ctx)
-                .map_err(|err| Error::new(err.to_string()))
-        });
-        if lowered {
-            sandbox.runtime.set_memory_limit(LOCKED_MEMORY_LIMIT);
-        }
-        LOCKED_DEADLINE.with(|cell| cell.set(previous));
-        result
-    })
+    super::oxide::templates::render_locked(compiled, json, deadline, memory)
 }
 
 #[cfg(test)]

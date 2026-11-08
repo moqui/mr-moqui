@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The test harness's spec runtime on quickjs-oxide (`script_engine=oxide`), the counterpart of QuickJS's spec engine
+//! The test harness's spec runtime on quickjs-oxide, the counterpart of QuickJS's spec engine
 //! (`runtime.rs`, `EngineKind::Spec`): one per thread and of its own, so the globals the harness defines (`call`,
 //! `login`, ...) are not in front of the context stack for the scripts of the services a spec calls, which run on the
 //! thread's main runtime. It runs whole scripts, so it has no small-script lockdown, and has the globals a whole
@@ -31,7 +31,7 @@ use super::engine::{start_whole, take_fallback, Active, OxideEngine, RunState};
 use super::errors::runtime_error;
 use super::tracked::Flush;
 use crate::context::Error;
-use crate::script::engine::{count, EntryKind, Route};
+use crate::script::engine::{count, EntryKind};
 use crate::script::host::HostClass;
 use crate::script::run::{self, EngineTag, ScriptLimit, MAX_SCRIPT_DEPTH};
 
@@ -71,7 +71,7 @@ pub(crate) fn eval_named_value(source: &str, file_name: &str) -> Result<HostValu
         ));
     }
     run::stack_budget(depth)?;
-    count(EntryKind::Spec, Route::Oxide);
+    count(EntryKind::Spec);
     let _active = Active::enter(&engine);
     let _tag = EngineTag::Oxide.enter();
     let _limit = (depth == 0).then(ScriptLimit::arm);
@@ -98,7 +98,7 @@ pub(crate) fn eval_named_value(source: &str, file_name: &str) -> Result<HostValu
     }
     if let Some(reason) = take_fallback() {
         outcome = Err(Error::new(format!(
-            "script_engine=oxide: this spec needs {reason}, which the quickjs-oxide bindings do not have yet"
+            "this spec needs {reason}, which the quickjs-oxide bindings do not have yet"
         )));
     }
     drop(state);
@@ -139,7 +139,7 @@ fn conv_error(context: &mut quickjs_oxide::engine::api::core::Context, conv: Con
         Conv::Js(err) => runtime_error(context, err),
         Conv::Error(message) => Error::new(message),
         Conv::Unsupported(reason) => Error::new(format!(
-            "script_engine=oxide: this spec needs {reason}, which the quickjs-oxide bindings do not have yet"
+            "this spec needs {reason}, which the quickjs-oxide bindings do not have yet"
         )),
     }
 }

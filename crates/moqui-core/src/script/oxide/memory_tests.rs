@@ -21,7 +21,6 @@ use moqui_lib::object::Value;
 
 use crate::context::Error;
 use crate::screen::sri::Runner;
-use crate::script::engine::{with_script_engine, ScriptEngine};
 use crate::script::{clear_context_stack, push_context_frame};
 
 const MIB: usize = 1024 * 1024;
@@ -45,39 +44,37 @@ fn unit_source(index: usize, statements: usize) -> String {
 fn many_distinct_units_and_texts_keep_the_heap_bounded() -> Result<(), Error> {
     clear_context_stack();
     push_context_frame();
-    with_script_engine(ScriptEngine::Oxide, || {
-        // the runtime the units and texts run on: bounded by its caches, not by a restart
-        assert_eq!(crate::script::eval_value("1")?, Value::I32(1));
-        let started = super::engine::start_for_tests()?;
-        // 1600 units of about 7.5 KB: 12 MB of source, three times the static store's 4 MiB
-        for index in 0..1600 {
-            let unit = crate::screen::generate::Unit {
-                id: u64::MAX - 1000 - index as u64,
-                source: unit_source(index, 80),
-                runtime: Arc::from(""),
-                runtime_id: 0,
-            };
-            super::units::RUNNER.run(&unit)?;
-        }
-        for index in 0..2000 {
-            let text = format!("[{index}, 'text {index}'].length + {index}");
-            assert_eq!(crate::script::eval_value(&text)?, Value::I32(2 + index));
-        }
-        let running = super::engine::start_for_tests()?;
-        assert!(
-            std::rc::Rc::ptr_eq(&started, &running),
-            "the runtime was not started again"
-        );
-        let memory = super::engine_memory(true);
-        assert!(
-            memory.live_bytes < 20 * MIB,
-            "live {} of reserved {}, code {}",
-            memory.live_bytes,
-            memory.reserved_bytes,
-            memory.code_bytes
-        );
-        Ok(())
-    })
+    // the runtime the units and texts run on: bounded by its caches, not by a restart
+    assert_eq!(crate::script::eval_value("1")?, Value::I32(1));
+    let started = super::engine::start_for_tests()?;
+    // 1600 units of about 7.5 KB: 12 MB of source, three times the static store's 4 MiB
+    for index in 0..1600 {
+        let unit = crate::screen::generate::Unit {
+            id: u64::MAX - 1000 - index as u64,
+            source: unit_source(index, 80),
+            runtime: Arc::from(""),
+            runtime_id: 0,
+        };
+        super::units::RUNNER.run(&unit)?;
+    }
+    for index in 0..2000 {
+        let text = format!("[{index}, 'text {index}'].length + {index}");
+        assert_eq!(crate::script::eval_value(&text)?, Value::I32(2 + index));
+    }
+    let running = super::engine::start_for_tests()?;
+    assert!(
+        std::rc::Rc::ptr_eq(&started, &running),
+        "the runtime was not started again"
+    );
+    let memory = super::engine_memory(true);
+    assert!(
+        memory.live_bytes < 20 * MIB,
+        "live {} of reserved {}, code {}",
+        memory.live_bytes,
+        memory.reserved_bytes,
+        memory.code_bytes
+    );
+    Ok(())
 }
 
 /// A screen unit that runs out of heap inside a render, whose error the render writes in the page (so the render ends
@@ -88,28 +85,26 @@ fn many_distinct_units_and_texts_keep_the_heap_bounded() -> Result<(), Error> {
 fn a_unit_that_runs_out_inside_a_render_has_the_render_relieve_the_heap() -> Result<(), Error> {
     clear_context_stack();
     push_context_frame();
-    with_script_engine(ScriptEngine::Oxide, || {
-        assert_eq!(crate::script::eval_value("1 + 1")?, Value::I32(2));
-        let hog = crate::screen::generate::Unit {
-            id: u64::MAX - 500,
-            source: "(function ($depth) { Array.prototype.hog = []; while (true) [].hog.push(new Array(1000).fill(1)) })"
-                .to_string(),
-            runtime: Arc::from(""),
-            runtime_id: 0,
-        };
-        let failed = crate::script::with_screen_runner(|runner| {
-            // as a section does: the unit's error is the page's, the render goes on
-            Ok(runner.run(&hog).expect_err("out of memory").message().to_string())
-        })?;
-        assert!(failed.contains("out of memory"), "{failed}");
-        assert_eq!(
-            crate::script::eval_value("typeof [].hog")?,
-            Value::string("undefined"),
-            "a new runtime"
-        );
-        assert_eq!(crate::script::eval_value("2 + 2")?, Value::I32(4));
-        Ok(())
-    })
+    assert_eq!(crate::script::eval_value("1 + 1")?, Value::I32(2));
+    let hog = crate::screen::generate::Unit {
+        id: u64::MAX - 500,
+        source: "(function ($depth) { Array.prototype.hog = []; while (true) [].hog.push(new Array(1000).fill(1)) })"
+            .to_string(),
+        runtime: Arc::from(""),
+        runtime_id: 0,
+    };
+    let failed = crate::script::with_screen_runner(|runner| {
+        // as a section does: the unit's error is the page's, the render goes on
+        Ok(runner.run(&hog).expect_err("out of memory").message().to_string())
+    })?;
+    assert!(failed.contains("out of memory"), "{failed}");
+    assert_eq!(
+        crate::script::eval_value("typeof [].hog")?,
+        Value::string("undefined"),
+        "a new runtime"
+    );
+    assert_eq!(crate::script::eval_value("2 + 2")?, Value::I32(4));
+    Ok(())
 }
 
 /// quickjs-oxide gives a compile that ran out of heap while it lowered the code as an internal error; the bindings
@@ -130,27 +125,25 @@ fn a_compile_that_ran_out_is_out_of_memory() {
 fn running_out_of_memory_fails_that_script_alone() -> Result<(), Error> {
     clear_context_stack();
     push_context_frame();
-    with_script_engine(ScriptEngine::Oxide, || {
-        let value = |text: &str| crate::script::eval_value(text);
-        assert_eq!(value("1 + 1")?, Value::I32(2));
-        let hungry = "(function () { const hog = []; while (true) hog.push(new Array(100000).fill(1)); })()";
-        let err = crate::script::run_script(hungry).expect_err("out of memory");
-        assert!(err.message().contains("out of memory"), "{}", err.message());
-        assert_eq!(value("1 + 1")?, Value::I32(2), "the runtime runs again");
-        // one that keeps what it made (on a prototype: the global object's names are the context stack's): the runtime
-        // starts again
-        let kept = "Array.prototype.hog = []; while (true) [].hog.push(new Array(1000).fill(1))";
-        let err = crate::script::run_script(kept).expect_err("out of memory");
-        assert!(err.message().contains("out of memory"), "{}", err.message());
-        assert_eq!(value("typeof [].hog")?, Value::string("undefined"), "a new runtime");
-        assert_eq!(value("2 + 2")?, Value::I32(4));
-        for index in 0..50 {
-            assert_eq!(value(&format!("{index} * 2"))?, Value::I32(index * 2));
-        }
-        let memory = super::engine_memory(true);
-        assert!(memory.live_bytes < 8 * MIB, "live {}", memory.live_bytes);
-        Ok(())
-    })
+    let value = |text: &str| crate::script::eval_value(text);
+    assert_eq!(value("1 + 1")?, Value::I32(2));
+    let hungry = "(function () { const hog = []; while (true) hog.push(new Array(100000).fill(1)); })()";
+    let err = crate::script::run_script(hungry).expect_err("out of memory");
+    assert!(err.message().contains("out of memory"), "{}", err.message());
+    assert_eq!(value("1 + 1")?, Value::I32(2), "the runtime runs again");
+    // one that keeps what it made (on a prototype: the global object's names are the context stack's): the runtime
+    // starts again
+    let kept = "Array.prototype.hog = []; while (true) [].hog.push(new Array(1000).fill(1))";
+    let err = crate::script::run_script(kept).expect_err("out of memory");
+    assert!(err.message().contains("out of memory"), "{}", err.message());
+    assert_eq!(value("typeof [].hog")?, Value::string("undefined"), "a new runtime");
+    assert_eq!(value("2 + 2")?, Value::I32(4));
+    for index in 0..50 {
+        assert_eq!(value(&format!("{index} * 2"))?, Value::I32(index * 2));
+    }
+    let memory = super::engine_memory(true);
+    assert!(memory.live_bytes < 8 * MIB, "live {}", memory.live_bytes);
+    Ok(())
 }
 
 /// A runtime whose peak left its arenas far larger than what lives in them (a few survivors scattered through slots
@@ -159,24 +152,22 @@ fn running_out_of_memory_fails_that_script_alone() -> Result<(), Error> {
 fn a_runtime_its_peak_left_fragmented_starts_fresh() -> Result<(), Error> {
     clear_context_stack();
     push_context_frame();
-    with_script_engine(ScriptEngine::Oxide, || {
-        let value = |text: &str| crate::script::eval_value(text);
-        let shed = || super::engine::stats().shed_fragmented;
-        assert_eq!(value("Array.prototype.marker = 1; [].marker")?, Value::I32(1));
-        let before = shed();
-        // a burst of objects, one in every thousand kept (on a prototype: the global object's names are the stack's)
-        let burst = "Array.prototype.kept = []; (function () { let all = []; \
-                     for (let i = 0; i < 450000; i++) { const o = {a: i}; all.push(o); \
-                     if (i % 1000 === 999) [].kept.push(o); } return all.length })()";
-        assert_eq!(value(burst)?, Value::I32(450000));
-        // the next outermost run past the sample interval sees it, collects, and drops the runtime
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        assert_eq!(value("[].kept.length")?, Value::I32(450));
-        assert_eq!(shed(), before + 1, "dropped as fragmented");
-        assert_eq!(value("typeof [].marker")?, Value::string("undefined"), "a fresh runtime");
-        assert_eq!(value("3 * 3")?, Value::I32(9));
-        let memory = super::engine_memory(true);
-        assert!(memory.reserved_bytes < 8 * MIB, "reserved {}", memory.reserved_bytes);
-        Ok(())
-    })
+    let value = |text: &str| crate::script::eval_value(text);
+    let shed = || super::engine::stats().shed_fragmented;
+    assert_eq!(value("Array.prototype.marker = 1; [].marker")?, Value::I32(1));
+    let before = shed();
+    // a burst of objects, one in every thousand kept (on a prototype: the global object's names are the stack's)
+    let burst = "Array.prototype.kept = []; (function () { let all = []; \
+                 for (let i = 0; i < 450000; i++) { const o = {a: i}; all.push(o); \
+                 if (i % 1000 === 999) [].kept.push(o); } return all.length })()";
+    assert_eq!(value(burst)?, Value::I32(450000));
+    // the next outermost run past the sample interval sees it, collects, and drops the runtime
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert_eq!(value("[].kept.length")?, Value::I32(450));
+    assert_eq!(shed(), before + 1, "dropped as fragmented");
+    assert_eq!(value("typeof [].marker")?, Value::string("undefined"), "a fresh runtime");
+    assert_eq!(value("3 * 3")?, Value::I32(9));
+    let memory = super::engine_memory(true);
+    assert!(memory.reserved_bytes < 8 * MIB, "reserved {}", memory.reserved_bytes);
+    Ok(())
 }

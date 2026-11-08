@@ -17,7 +17,7 @@
 //! `numberToWords`, `numberToWordsWithDecimal`, `orderMapList`, `filterMapList`, `filterMapListByDate`,
 //! `elasticQueryAutoWildcard`, `System.getProperty`, and the functions of `StringUtilities`, `WebUtilities` and
 //! `CollectionUtilities` whose arguments and results are host values, and `UserSecurityChecks`, the checks
-//! `Security.eecas.xml` runs. The helper objects, their functions and `System` are frozen ([`FREEZE_HELPERS_JS`]), so
+//! `Security.eecas.xml` runs. The helper objects, their functions and `System` are frozen ([`freeze_helpers_js`]), so
 //! a script cannot replace a check, or any helper, for the later scripts on the thread.
 //!
 //! [`SHIM`] is not a path of the table: the oxide engine installs it itself (`oxide::engine`), and QuickJS keeps its own
@@ -46,10 +46,6 @@ macro_rules! freeze_helpers_js {
 }"#
     };
 }
-
-/// [`freeze_helpers_js`] as an expression, for QuickJS's engine (`runtime.rs`, `install_context`), which fills its
-/// helper objects itself; the oxide engine's are frozen at the end of [`GLOBALS_JS`].
-pub(crate) const FREEZE_HELPERS_JS: &str = concat!("(", freeze_helpers_js!(), ")");
 
 const GLOBALS_JS: &str = concat!(
     r#"(function (global, hidden, helpers) {

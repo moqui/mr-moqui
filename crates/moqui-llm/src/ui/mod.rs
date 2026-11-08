@@ -28,7 +28,6 @@ pub mod openui;
 pub mod proxy;
 pub mod qvue_screen;
 pub mod screen_xml;
-mod standalone;
 pub mod vue_sfc;
 pub mod write;
 

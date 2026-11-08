@@ -187,7 +187,6 @@ pub(super) fn write_name<J: Js>(js: &mut J, name: &str, value: &Value) -> Result
     }
     let host = to_host(js, &engine, value)?;
     let keep = matches!(host, HostValue::List(_) | HostValue::Map(_)) && is_plain_collection(js, &engine, value)?;
-    crate::script::census::note_side_effect();
     STACK.with(|stack| {
         stack
             .borrow_mut()
@@ -323,7 +322,6 @@ fn flush_values<J: Js>(js: &mut J, engine: &OxideEngine, mode: Flush) -> Result<
                     let print = fingerprint(&host);
                     values(engine).borrow_mut().released.insert(name.clone(), (value, print));
                 }
-                crate::script::census::note_side_effect();
                 STACK.with(|stack| {
                     let _ = stack.borrow_mut().put_nearest(&name, host);
                 });

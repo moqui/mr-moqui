@@ -49,7 +49,7 @@ Each component is its own git repository. Commit in each repository that a chang
 
 - **Services are XML Actions first.** A service's implementation is inline XML Actions in its definition; JavaScript is
   for logic XML Actions do not express well (§4).
-- **Scripts are JavaScript** (QuickJS), not Groovy. XML action expressions, `<script>` bodies, conditions, `${}`
+- **Scripts are JavaScript** (quickjs-oxide, a QuickJS-compatible engine), not Groovy. XML action expressions, `<script>` bodies, conditions, `${}`
   template text and service scripts are all JavaScript. Groovy's `?:` and `?.` habits do not all carry over: use `||` or
   `??`. `moqui lint --groovy <dir>` reports Groovy left in a component; `moqui lint --screens` reports idioms and hazards
   in screen expressions.

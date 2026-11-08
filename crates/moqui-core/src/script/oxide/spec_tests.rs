@@ -184,7 +184,7 @@ fn a_main_run_under_a_spec_keeps_the_spec_runs_fallback() {
 /// (`host::globals` and the helper objects).
 #[test]
 fn the_whole_runtimes_share_their_globals() {
-    crate::script::with_script_engine(crate::script::ScriptEngine::Oxide, || {
+    {
         clear_context_stack();
         install_global("probeNested", &NESTED).expect("install");
         let names = "[typeof System.getProperty, typeof StringUtilities.base64Encode, typeof \
@@ -196,7 +196,7 @@ fn the_whole_runtimes_share_their_globals() {
             Value::String("function,function,function,function,function,function,object".to_string())
         );
         assert_eq!(spec(names), main);
-    });
+    };
 }
 
 static RENDER: HostClass = HostClass {
@@ -233,7 +233,7 @@ fn render_units(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// value between them, see what each other wrote.
 #[test]
 fn a_render_from_a_spec_run_runs_its_units_in_the_main_runtime() {
-    crate::script::with_script_engine(crate::script::ScriptEngine::Oxide, || {
+    {
         clear_context_stack();
         install_global("probeRender", &RENDER).expect("install");
         let between = spec(
@@ -242,7 +242,7 @@ fn a_render_from_a_spec_run_runs_its_units_in_the_main_runtime() {
         );
         assert_eq!(between, Value::I32(42));
         assert_eq!(crate::script::context_value("second"), Some(Value::I32(123)));
-    });
+    };
 }
 
 /// The thread's memory report counts the spec runtime beside the main one.

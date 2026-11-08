@@ -299,14 +299,15 @@ For shared data that is never mutated, `Arc<str>` and `Arc<[T]>` save one alloca
 If only one place ever holds the `Rc`, own the value (`Option<T>`, `&mut T`). Read the comment first. Two known cases
 are shared on purpose:
 - `transaction/manager.rs` shares `Rc<RefCell<Option<PooledConn>>>` between the transaction and an open stream.
-- `Rc` in the QuickJS bindings and in the `context_stack` frames is shared with the script runtime.
+- `Rc` in the script engine's bindings (`script/oxide`) and in the `context_stack` frames is shared with the script
+  runtime.
 
 ### 6d. Clones that a borrow would do
 
 - `f(&x.clone())` → `f(&x)`.
 - Cloning a `serde_json::Value`, a map or a `Vec` only to read one field → borrow it, then clone only that field.
 - A `String`, `Vec` or map parameter that is taken by value but only read → `&str`, `&[T]` or `&Map`
-  (`clippy::needless_pass_by_value`). rquickjs binding signatures need owned values; leave those.
+  (`clippy::needless_pass_by_value`).
 - `.to_string()` on a `&str` passed to a function that only reads it → change the parameter to `&str`.
 - Cloning, inside a loop, a value the loop does not change → hoist the clone or borrow.
 - A value that is usually borrowed and sometimes built → `Cow<'_, str>`.
@@ -344,7 +345,7 @@ are shared on purpose:
 ## 8. Where MR Moqui departs from Google
 
 Do not "fix" these:
-- **`catch_unwind` and `panic = "unwind"`.** Google forbids `catch_unwind`. Here every QuickJS host function, the
+- **`catch_unwind` and `panic = "unwind"`.** Google forbids `catch_unwind`. Here every script host function, the
   service pool and the background jobs catch panics, so that one bad piece fails alone
   ([Architecture-Proposal](../../plans/archive/Architecture-Proposal.md), `.cargo/config.toml`, the failure tolerance rule).
   A new background loop does the same.

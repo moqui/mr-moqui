@@ -22,20 +22,16 @@ use moqui_lib::object::Value;
 
 use super::*;
 
-/// Run a test body under `rquickjs` and under `oxide` (plans/Script-Engine-Oxide.md section 8): templates stay on
-/// QuickJS under `small-oxide`, so `oxide` is the setting that runs them on quickjs-oxide. A failure names the engine.
+/// Run a test body, its panic's message passed on.
 fn on_template_engines(body: fn()) {
-    use crate::script::engine::{with_script_engine, ScriptEngine};
-    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
-        let ran = std::panic::catch_unwind(|| with_script_engine(engine, body));
-        if let Err(payload) = ran {
-            let message = payload
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| payload.downcast_ref::<&str>().map(|text| (*text).to_string()))
-                .unwrap_or_default();
-            panic!("under {}: {message}", engine.name());
-        }
+    let ran = std::panic::catch_unwind(body);
+    if let Err(payload) = ran {
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|text| (*text).to_string()))
+            .unwrap_or_default();
+        panic!("{message}");
     }
 }
 
@@ -143,9 +139,8 @@ fn trusted_reads_the_live_context_and_locked_down_cannot_reach_ec() {
 
 fn trusted_reads_the_live_context_and_locked_down_cannot_reach_ec_on() {
     let probe = "${typeof ec} ${typeof sri} ${typeof context} ${typeof globalThis.ec}";
-    // `sri` and the stack as `context` are not bound on quickjs-oxide yet (`check::QUICKJS_ONLY_GLOBALS`)
-    let on_oxide = crate::script::engine::script_engine() == crate::script::engine::ScriptEngine::Oxide;
-    let trusted = render_trusted(if on_oxide { "${typeof ec} ${typeof ec}" } else { probe }, Escape::None).unwrap();
+    // `sri` and the stack as `context` are not bound in a template (`oxide::names::QUICKJS_ONLY_GLOBALS`)
+    let trusted = render_trusted("${typeof ec} ${typeof ec}", Escape::None).unwrap();
     assert!(trusted.starts_with("object object"), "{trusted}");
     let locked = render_locked_with(probe, Escape::None, &Value::Map(Default::default())).unwrap();
     // A name that is not in the snapshot is null, which is an object.

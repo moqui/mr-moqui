@@ -87,25 +87,6 @@ thread_local! {
     static LAST_FRAGMENTED_CHECK: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
 }
 
-/// What the runtime cuts when it starts for small scripts (`rquickjs` and `small-oxide`), behind the static check
-/// (`script::check`): a computed key it cannot read
-/// (`row[name]`) may still name `constructor` at run time, so no function's `constructor` reaches `Function` (or its
-/// generator and async kinds), and the legacy accessor definers, which would leave a function on a shared prototype,
-/// are gone. Expressions use neither. Under `script_engine=oxide` the runtime runs every script, as QuickJS's main
-/// context does, with `Function`, `Promise`, `Symbol`, `Reflect` and `Proxy` whole, so it is not cut there
-/// ([`hardened_for_setting`]).
-const HARDEN_JS: &str = r#"(function () {
-    const refuse = function () { throw new TypeError("Function is not available to an expression"); };
-    const kinds = [function () {}];
-    try { kinds.push(eval("(function* () {})"), eval("(async function () {})"), eval("(async function* () {})")); } catch (e) {}
-    for (const kind of kinds) {
-        Object.defineProperty(Object.getPrototypeOf(kind), "constructor", { value: refuse, writable: false, configurable: false });
-    }
-    for (const name of ["__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__"]) {
-        delete Object.prototype[name];
-    }
-})()"#;
-
 /// `toNumber(x)`, as the QuickJS host's (`runtime/helpers.rs`): a JavaScript number from a decimal, a number or
 /// numeric text, and null from null or empty text. Read-only, as the QuickJS host's globals are.
 const TO_NUMBER_JS: &str = r#"Object.defineProperty(globalThis, "toNumber", {
@@ -193,8 +174,6 @@ pub(super) struct Protos {
 
 pub(super) struct OxideEngine {
     runtime: quickjs_oxide::engine::api::core::Runtime,
-    /// Whether the start cut the ways to `Function` ([`HARDEN_JS`]): for small scripts, not under `oxide`.
-    hardened: bool,
     context: Context,
     pub(super) protos: Protos,
     compiled: RefCell<Compiled>,
@@ -446,14 +425,13 @@ pub(crate) fn start_failed_recently() -> bool {
     START_FAILED.with(Cell::get).is_some_and(|failed| failed.elapsed() < START_BACKOFF)
 }
 
-/// The start of the runtime, from [`engine`] until dropped: no interrupt, the census set aside. It ends what it
+/// The start of the runtime, from [`engine`] until dropped: no interrupt. It ends what it
 /// began, so it gives back what was there before.
 struct Starting {
     before: bool,
     /// The fallback mark of a run of another runtime the start is under (a spec's lent host call): set aside, so the
     /// shims' host calls are not refused as calls of a run that fell back.
     fallback: Option<&'static str>,
-    _census: crate::script::census::Suspended,
 }
 
 impl Starting {
@@ -461,7 +439,6 @@ impl Starting {
         Self {
             before: STARTING.with(|starting| starting.replace(true)),
             fallback: FALLBACK.with(Cell::take),
-            _census: crate::script::census::suspend(),
         }
     }
 }
@@ -603,26 +580,13 @@ pub(super) fn active_depth() -> usize {
 fn engine() -> Result<Rc<OxideEngine>, Error> {
     // the main one, whichever runtime has the innermost run
     if let Some(engine) = ENGINE.with(|engine| engine.borrow().clone()) {
-        // a thread whose setting changed (a test, `js_speed`) starts the runtime its setting needs, between scripts
-        if engine.hardened == hardened_for_setting() {
-            return Ok(engine);
-        }
-        // a setting changed under a live run: its runtime is the wrong one for this script, and cannot be restarted
-        if Active::holds(&engine) {
-            return Err(Error::new(
-                "the script_engine setting changed while a quickjs-oxide run is live; the nested script does not run on it",
-            ));
-        }
-        ENGINE.with(|current| *current.borrow_mut() = None);
+        return Ok(engine);
     }
     if start_failed_recently() {
         return Err(Error::new(DID_NOT_START));
     }
     let starting = Starting::enter();
-    // the host calls a shim makes as it installs are not the running script's
-    let calls = crate::script::census::host_calls();
     let started = start_engine();
-    crate::script::census::forget_host_calls_since(calls);
     drop(starting);
     match started {
         Ok(started) => {
@@ -652,18 +616,12 @@ fn engine() -> Result<Rc<OxideEngine>, Error> {
     }
 }
 
-/// Whether the runtime this thread's setting needs is cut for small scripts ([`HARDEN_JS`]): under every setting but
-/// `oxide`, where it runs whole scripts as QuickJS's main context does.
-fn hardened_for_setting() -> bool {
-    crate::script::engine::script_engine() != crate::script::engine::ScriptEngine::Oxide
-}
-
 fn start_engine() -> Result<Rc<OxideEngine>, RuntimeError> {
     #[cfg(test)]
     if FAIL_START.with(Cell::get) {
         return Err(RuntimeError::Invariant("a start the test fails"));
     }
-    let (started, builtins) = OxideEngine::start(hardened_for_setting())?;
+    let (started, builtins) = OxideEngine::start()?;
     let started = Rc::new(started);
     // the shims call host functions as they install, whose conversions read the thread's engine
     ENGINE.with(|engine| *engine.borrow_mut() = Some(Rc::clone(&started)));
@@ -679,20 +637,15 @@ fn start_engine() -> Result<Rc<OxideEngine>, RuntimeError> {
 }
 
 /// A runtime of its own for whole scripts, not the thread's main one: `ec`, the shims and the bare names as the main
-/// one has them, without the small scripts' lockdown. The test harness's spec runtime ([`super::spec`]).
+/// one has them. The test harness's spec runtime ([`super::spec`]).
 pub(super) fn start_whole() -> Result<Rc<OxideEngine>, RuntimeError> {
     let _starting = Starting::enter();
-    let calls = crate::script::census::host_calls();
-    let started = (|| {
-        let (started, builtins) = OxideEngine::start(false)?;
-        let started = Rc::new(started);
-        // the shims call host functions as they install, whose conversions read the innermost runtime
-        let _active = Active::starting(&started);
-        started.finish_start(&builtins)?;
-        Ok(started)
-    })();
-    crate::script::census::forget_host_calls_since(calls);
-    started
+    let (started, builtins) = OxideEngine::start()?;
+    let started = Rc::new(started);
+    // the shims call host functions as they install, whose conversions read the innermost runtime
+    let _active = Active::starting(&started);
+    started.finish_start(&builtins)?;
+    Ok(started)
 }
 
 /// Drop this thread's runtime and its start failure, and make the next start fail or not, for the tests.
@@ -700,12 +653,6 @@ pub(super) fn start_whole() -> Result<Rc<OxideEngine>, RuntimeError> {
 pub(super) fn restart_for_tests(fail: bool) {
     ENGINE.with(|engine| *engine.borrow_mut() = None);
     START_FAILED.with(|failed| failed.set(None));
-    FAIL_START.with(|failing| failing.set(fail));
-}
-
-/// Make the next start fail or not, keeping a failure already remembered, for the tests.
-#[cfg(test)]
-pub(super) fn fail_start_for_tests(fail: bool) {
     FAIL_START.with(|failing| failing.set(fail));
 }
 
@@ -731,7 +678,7 @@ pub(crate) fn run_jobs_for_tests() -> Result<(), Error> {
 impl OxideEngine {
     /// The runtime with `ec` and the helper objects, and the names of its own globals read before the host added any
     /// (for [`Self::finish_start`]'s freeze of the host's).
-    fn start(hardened: bool) -> Result<(Self, ObjectRef), RuntimeError> {
+    fn start() -> Result<(Self, ObjectRef), RuntimeError> {
         let options = RuntimeOptions {
             heap: HeapLimits { max_bytes: HEAP_CAP },
             min_heap: MIN_HEAP,
@@ -740,10 +687,8 @@ impl OxideEngine {
         };
         let runtime = quickjs_oxide::engine::api::core::Runtime::with_host(MoquiHost, options);
         let context = runtime.context();
-        // QuickJS's builtins quickjs-oxide lacks, for a whole runtime: builtins here too, not frozen host globals
-        if !hardened {
-            super::builtins::install(&context)?;
-        }
+        // QuickJS's builtins quickjs-oxide lacks: builtins here too, not frozen host globals
+        super::builtins::install(&context)?;
         // the runtime's own globals, before the host adds its own ([`FREEZE_HOST_GLOBALS_JS`])
         let builtins = match context.eval("Object.getOwnPropertyNames(globalThis)")? {
             Value::Object(names) => names,
@@ -816,7 +761,6 @@ impl OxideEngine {
         counts::LIVE_MAX.fetch_max(live, Relaxed);
         Ok((Self {
             runtime,
-            hardened,
             context,
             protos,
             compiled: RefCell::new(Compiled::new()),
@@ -860,14 +804,11 @@ impl OxideEngine {
         )?;
         context.eval(crate::script::runtime::HELPERS_JS)?;
         let global = context.global_object()?;
-        if !self.hardened {
-            // a whole script names the helper objects as QuickJS's bare names answer them; the small scripts' static
-            // check refuses them (`check::QUICKJS_ONLY_GLOBALS`), so a cut runtime leaves them out. Frozen below.
-            for name in ["ObjectUtilities", "CollectionUtilities", "StringUtilities", "WebUtilities", "UserSecurityChecks"] {
-                let name = key(name).map_err(conv_runtime)?;
-                let helper = context.get_property(&self.protos.helpers, &name)?;
-                context.set_property(&global, &name, helper)?;
-            }
+        // a script names the helper objects as QuickJS's bare names answered them. Frozen below.
+        for name in ["ObjectUtilities", "CollectionUtilities", "StringUtilities", "WebUtilities", "UserSecurityChecks"] {
+            let name = key(name).map_err(conv_runtime)?;
+            let helper = context.get_property(&self.protos.helpers, &name)?;
+            context.set_property(&global, &name, helper)?;
         }
         match context.get_property(&global, &key("__moquiWrap").map_err(conv_runtime)?)? {
             Value::Object(object) => {
@@ -884,16 +825,7 @@ impl OxideEngine {
         }
         .ok_or(RuntimeError::Invariant("the host globals' freeze"))?;
         context.call(&freeze, Value::Undefined, &[Value::Object(builtins.clone())])?;
-        if self.hardened {
-            context.eval(HARDEN_JS)?;
-        }
         super::names::install_names(&context)
-    }
-
-    /// Whether the runtime runs whole scripts (`script_engine=oxide`, or the spec runtime), with no static check in
-    /// front and no QuickJS to fall back on.
-    pub(super) fn whole(&self) -> bool {
-        !self.hardened
     }
 
     /// The runtime's realm, for a host function that lent the engine and a runner outside this file
@@ -1294,24 +1226,6 @@ impl Drop for RunState<'_> {
             }
         }
     }
-}
-
-/// Before a QuickJS script nested in the running oxide one ([`crate::script::engine::cross_into_quickjs`]): the
-/// tracked values released. Only while the runtime is lent; a host function that does not lend had the binder flush
-/// before its call.
-pub(crate) fn release_for_quickjs() -> Result<(), Error> {
-    let Some(engine) = current() else {
-        return Ok(());
-    };
-    if !engine.runtime.is_lent() {
-        return Ok(());
-    }
-    let mut context = engine.context.clone();
-    super::tracked::flush(&mut context, Flush::Release).map_err(|conv| match conv {
-        Conv::Js(err) => runtime_error(&mut context, err),
-        Conv::Error(message) => Error::new(message),
-        Conv::Unsupported(reason) => Error::new(format!("quickjs-oxide could not write back {reason}")),
-    })
 }
 
 /// This thread's oxide runtime's realm, started if need be, for the tests that define their own host functions.

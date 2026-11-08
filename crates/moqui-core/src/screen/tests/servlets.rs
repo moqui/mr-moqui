@@ -177,13 +177,12 @@ fn a_filter_wraps_the_screens_and_a_servlet_error_is_its_requests_only() {
     );
 }
 
-/// A chain of two script filters and a script servlet on each engine: on quickjs-oxide `chain.doFilter()` lends the
-/// engine to the next filter and the servlet, each a run nested in the filter's (`script/oxide/web.rs`). The filters
+/// A chain of two script filters and a script servlet: `chain.doFilter()` lends the engine to the next filter and the
+/// servlet, each a run nested in the filter's (`script/oxide/web.rs`). The filters
 /// run in order around the servlet and see what it set when the chain comes back; a servlet's error is its request's
-/// 500, which the filters see as the status when the chain comes back, as on QuickJS.
+/// 500, which the filters see as the status when the chain comes back.
 #[test]
-fn a_filter_chain_runs_around_its_servlet_on_each_engine() {
-    use crate::script::engine::{with_script_engine, ScriptEngine};
+fn a_filter_chain_runs_around_its_servlet() {
     let scripts = Scripts::new("chain");
     let outer = scripts.write(
         "Outer.js",
@@ -206,8 +205,6 @@ fn a_filter_chain_runs_around_its_servlet_on_each_engine() {
         r#"({ doGet(request, response) {
             if (request.pathInfo === "/fail") throw new Error("servlet failed")
             response.setStatus(202)
-            // QuickJS has Error.captureStackTrace and quickjs-oxide does not (plans/Script-Engine-Oxide.md)
-            response.setHeader("X-Engine", typeof Error.captureStackTrace === "function" ? "rquickjs" : "oxide")
             response.write(request.getAttribute("order") + ",servlet")
         } })"#,
     );
@@ -217,22 +214,18 @@ fn a_filter_chain_runs_around_its_servlet_on_each_engine() {
         <servlet name="End" location="{servlet}"><url-pattern>/chain/*</url-pattern></servlet>"#
     )));
     let root = webroot().to_string_lossy().into_owned();
-    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
-        with_script_engine(engine, || {
-            let response = serve_at(&world.factory, request("GET", "/chain/ok"), &root);
-            let name = engine.name();
-            assert_eq!(response.status, 202, "{name}: {}", response.body_text());
-            assert_eq!(response.body_text(), "outer,inner,servlet", "{name}");
-            assert_eq!(header_value(&response, "X-Engine").as_deref(), Some(name), "the servlet ran on {name}");
-            assert_eq!(header_value(&response, "X-Inner-After").as_deref(), Some("202"), "{name}");
-            assert_eq!(header_value(&response, "X-Outer-After").as_deref(), Some("202"), "{name}");
+    {
+        let response = serve_at(&world.factory, request("GET", "/chain/ok"), &root);
+        assert_eq!(response.status, 202, "{}", response.body_text());
+        assert_eq!(response.body_text(), "outer,inner,servlet");
+        assert_eq!(header_value(&response, "X-Inner-After").as_deref(), Some("202"));
+        assert_eq!(header_value(&response, "X-Outer-After").as_deref(), Some("202"));
 
-            let response = serve_at(&world.factory, request("GET", "/chain/fail"), &root);
-            assert_eq!(response.status, 500, "{name}: {}", response.body_text());
-            assert!(response.body_text().contains("servlet failed"), "{name}: {}", response.body_text());
-            assert_eq!(header_value(&response, "X-Inner-After").as_deref(), Some("500"), "{name}");
-            assert_eq!(header_value(&response, "X-Outer-After").as_deref(), Some("500"), "{name}");
-        });
+        let response = serve_at(&world.factory, request("GET", "/chain/fail"), &root);
+        assert_eq!(response.status, 500, "{}", response.body_text());
+        assert!(response.body_text().contains("servlet failed"), "{}", response.body_text());
+        assert_eq!(header_value(&response, "X-Inner-After").as_deref(), Some("500"));
+        assert_eq!(header_value(&response, "X-Outer-After").as_deref(), Some("500"));
     }
 }
 

@@ -828,7 +828,7 @@ record, written under the run's lease with the fence lifted for it, as an approv
 `@openuidev/lang-core` 0.2.18 (`webroot/libs/openui/lang-core.min.js`, the global `OpenUILang`), built by `libs/refresh.mjs`
 from the npm package with two reviewed patches of `libs/patches/` (telemetry off; a failed Query is not fetched again
 until its arguments change), recorded with their sha256 in `MANIFEST.json`; `node libs/refresh.mjs` verifies it. The
-server runs the same bundle in a QuickJS runtime of its own (one a thread, 64 MiB, 5 s a call) with the library spec
+server runs the same bundle in a script runtime of its own (one a thread, 64 MiB, 5 s a call) with the library spec
 `webroot/js/openui-library.spec.json`. A program is parsed and checked before anything is shown. A patch is parsed alone
 first, then merged onto the canvas with lang-core's own `mergeStatements` (the same name replaces, a new one is added,
 `name = null` removes one, what root no longer reaches is dropped), and the merged program is checked. There is no
@@ -888,7 +888,7 @@ lookup) answers it as it is; one that writes is 403.
 
 **Writes: the click is the approval** (answered open question 13). A Mutation never posts from the page: the page names
 the Mutation, and the server evaluates its arguments from the stored program with the posted state (lang-core's
-`evaluate` in QuickJS), holds the request at the transition gate (a fenced render under `Hold`, which answers the held
+`evaluate` in a script runtime), holds the request at the transition gate (a fenced render under `Hold`, which answers the held
 request and its hash and runs nothing) and runs that exact request under `Approved` with the hash
 (`crates/moqui-llm/src/ui/write.rs`). Before it is held, when an approval resumes and for a click, the user ∩ the
 agent is checked as the screen tool checks its held writes: the agent's role groups on the transition and the user's own
@@ -944,8 +944,8 @@ rule of `llm/ui/vue_sfc.rs` is quoted in its section, and the example checks, wh
 **Checked on the server** (`crates/moqui-llm/src/ui/vue_sfc.rs`) before anything is shown, each problem naming its
 section and quoting its rule (`vue_sfc_invalid`, with the `block` and its line): at most 64k characters; the blocks
 (nothing outside them, none twice, a template); the template compiled with the vendored `libs/vue/compiler-dom.cjs.js`
-in QuickJS (the compiler of the qvt screens; the same version as the browser build); the script compiled, not run, in a
-QuickJS runtime of its own; names the frame does not have (`window`, `document`, `location`, `fetch`, `XMLHttpRequest`,
+in a script runtime (the compiler of the qvt screens; the same version as the browser build); the script compiled, not run, in a
+script runtime of its own; names the frame does not have (`window`, `document`, `location`, `fetch`, `XMLHttpRequest`,
 `WebSocket`, `eval`, `Function`, `navigator`, the storages, `open`, …, as free names outside strings and comments; a
 property such as `row.location` is a field) and properties that lead out (`ownerDocument`, `defaultView`,
 `constructor`, `innerHTML`, …), in the script and in the template's bindings and `{{ }}`; elements that load, post or

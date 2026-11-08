@@ -338,9 +338,9 @@ fn a_script_on_a_request_worker_is_limited_to_the_request_timeout() {
     pool.start(1, 1).unwrap();
     let left = pool
         .try_submit(test_factory(), || {
-            // with_ctx is a QuickJS entry point; the deadline it reads is the engines' shared one (script/run.rs).
-            let _quickjs = crate::script::engine::quickjs_for_test();
-            crate::script::walker_context(|_| Ok(crate::script::script_time_remaining()))
+            // the deadline an outermost script arms as it starts (script/run.rs)
+            let _limit = crate::script::run::ScriptLimit::arm();
+            Ok::<_, crate::context::Error>(crate::script::script_time_remaining())
         })
         .unwrap()
         .recv_timeout(Duration::from_secs(30))

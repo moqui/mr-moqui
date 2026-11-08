@@ -13,12 +13,12 @@
  */
 
 //! The vendored browser libraries under `webroot/libs`: the manifest matches the files, and the Vue
-//! compiler bundle runs in QuickJS (Spike 4 of `plans/archive/QvtServerStatic.md`).
+//! compiler bundle runs in the script engine, quickjs-oxide (Spike 4 of `plans/archive/QvtServerStatic.md`).
 
 use std::path::PathBuf;
 use std::time::Instant;
 
-use rquickjs::{CatchResultExt, Context, Runtime};
+use moqui_core::script::standalone::Standalone;
 use sha2::{Digest, Sha256};
 
 fn libs_dir() -> PathBuf {
@@ -137,36 +137,27 @@ fn compiler_script() -> String {
     std::fs::read_to_string(libs_dir().join("vue/compiler-dom.cjs.js")).expect("compiler-dom.cjs.js")
 }
 
-/// Run `body` with the compiler bundle loaded in a plain QuickJS context.
-fn with_compiler<R>(body: impl FnOnce(&rquickjs::Ctx<'_>) -> R) -> R {
-    let runtime = Runtime::new().unwrap();
-    runtime.set_memory_limit(256 * 1024 * 1024);
-    runtime.set_max_stack_size(4 * 1024 * 1024);
-    let context = Context::full(&runtime).unwrap();
-    context.with(|ctx| {
-        let started = Instant::now();
-        ctx.eval::<(), _>(compiler_script())
-            .catch(&ctx)
-            .unwrap_or_else(|err| panic!("load: {err}"));
-        eprintln!("compiler-dom bundle loaded in {:?}", started.elapsed());
-        body(&ctx)
-    })
+/// Run `body` with the compiler bundle loaded in a runtime of its own.
+fn with_compiler<R>(body: impl FnOnce(&Standalone) -> R) -> R {
+    let js = Standalone::start(256 * 1024 * 1024, || false);
+    let started = Instant::now();
+    js.run(&compiler_script()).unwrap_or_else(|err| panic!("load: {err}"));
+    eprintln!("compiler-dom bundle loaded in {:?}", started.elapsed());
+    body(&js)
 }
 
-fn compile(ctx: &rquickjs::Ctx<'_>, template: &str) -> String {
+fn compile(js: &Standalone, template: &str) -> String {
     let source = format!(
         "VueCompilerDOM.compile({}, {{prefixIdentifiers: true, mode: 'function'}}).code",
         serde_json::to_string(template).unwrap()
     );
-    ctx.eval::<String, _>(source)
-        .catch(ctx)
-        .unwrap_or_else(|err| panic!("compile: {err}"))
+    js.text(&source).unwrap_or_else(|err| panic!("compile: {err}"))
 }
 
 #[test]
-fn the_vue_compiler_bundle_compiles_in_quickjs_with_prefix_identifiers() {
-    with_compiler(|ctx| {
-        let code = compile(ctx, r#"<div :a="b">{{c}}</div>"#);
+fn the_vue_compiler_bundle_compiles_with_prefix_identifiers() {
+    with_compiler(|js| {
+        let code = compile(js, r#"<div :a="b">{{c}}</div>"#);
         eprintln!("generated:\n{code}");
         assert!(code.contains("_ctx.b"), "{code}");
         assert!(code.contains("_toDisplayString(_ctx.c)"), "{code}");
@@ -175,7 +166,7 @@ fn the_vue_compiler_bundle_compiles_in_quickjs_with_prefix_identifiers() {
 
         // A larger template: v-if, v-for, v-model, an event handler, a slot, a component.
         let code = compile(
-            ctx,
+            js,
             r#"<q-form @submit.prevent="save(row)"><q-input v-model="form.name" label="Name"/>
             <div v-if="rows.length"><q-item v-for="(row, i) in rows" :key="row.id" @click="pick(i)">{{ row.name | 0 }}</q-item></div>
             <template v-slot:after><q-btn label="Go"/></template></q-form>"#,
@@ -185,12 +176,11 @@ fn the_vue_compiler_bundle_compiles_in_quickjs_with_prefix_identifiers() {
         assert!(!code.contains("with ("));
 
         // The code is a body that takes Vue and returns the render function.
-        let kind: String = ctx
-            .eval(format!(
+        let kind: String = js
+            .text(&format!(
                 "typeof (new Function('Vue', {}))({{}})",
                 serde_json::to_string(&code).unwrap()
             ).replace("({})", "({toDisplayString(){},resolveComponent(){},openBlock(){},createBlock(){},createVNode(){},createElementBlock(){},createElementVNode(){},createCommentVNode(){},createTextVNode(){},withCtx(){},withModifiers(){},Fragment:1,renderList(){}})"))
-            .catch(ctx)
             .unwrap_or_else(|err| panic!("evaluate: {err}"));
         assert_eq!(kind, "function");
     });
@@ -198,12 +188,11 @@ fn the_vue_compiler_bundle_compiles_in_quickjs_with_prefix_identifiers() {
 
 #[test]
 fn a_bad_expression_is_reported_through_on_error() {
-    with_compiler(|ctx| {
-        let message: String = ctx
-            .eval(
+    with_compiler(|js| {
+        let message: String = js
+            .text(
                 "var errors = []; VueCompilerDOM.compile('<div :a=\"b c\"></div>', {prefixIdentifiers: true, mode: 'function', onError: function (e) { errors.push(String(e.code) + ' ' + e.message); }}); errors.join('|')",
             )
-            .catch(ctx)
             .unwrap_or_else(|err| panic!("compile: {err}"));
         assert!(!message.is_empty(), "an invalid expression must reach onError");
     });

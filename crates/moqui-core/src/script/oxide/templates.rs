@@ -12,8 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Fancy templates on quickjs-oxide under `script_engine=oxide` (plans/Script-Engine-Oxide.md section 5.4, Phase 3).
-//! Under `rquickjs` and `small-oxide` they run on QuickJS (`script/template.rs`).
+//! Fancy templates on quickjs-oxide (plans/Script-Engine-Oxide.md section 5.4); `script/template.rs` compiles them.
 //!
 //! - **The live form** (the trusted renderer) is a run on the thread's oxide runtime: the compiled function called at
 //!   once, its bare names on the context stack through the runtime's global names, as the other kinds run there.
@@ -35,15 +34,10 @@ use quickjs_oxide::engine::api::core::{
 
 use super::errors::{runtime_error, throw_plain};
 use crate::context::Error;
-use crate::script::engine::{script_engine, EntryKind, Route, ScriptEngine};
+use crate::script::engine::EntryKind;
 use crate::script::run::{self, EngineTag};
 use crate::script::template;
 use crate::script::BoundedMap;
-
-/// Whether templates run on quickjs-oxide: under `script_engine=oxide` only.
-pub(crate) fn on_oxide() -> bool {
-    script_engine() == ScriptEngine::Oxide
-}
 
 // ---- the live form ----
 
@@ -56,8 +50,7 @@ thread_local! {
 }
 
 /// Run a compiled live-form template function (`(function(){...})`) on the thread's oxide runtime and give its text.
-/// Its bare names read and write the context stack, and what it writes there is written back at its end. A run inside
-/// a running QuickJS script writes that script's tracked values back first (`engine::cross_into_oxide`).
+/// Its bare names read and write the context stack, and what it writes there is written back at its end.
 ///
 /// # Errors
 ///
@@ -65,7 +58,7 @@ thread_local! {
 pub(crate) fn run_live(function: &str) -> Result<String, Error> {
     if run::is_running(EngineTag::Oxide) && !super::is_lent() {
         return Err(Error::new(
-            "script_engine=oxide: a template nested in a running quickjs-oxide script needs the re-entry handle (F3a)",
+            "a template nested in a running quickjs-oxide script needs the re-entry handle (F3a)",
         ));
     }
     let (call, hash) = CALLS.with(|calls| {
@@ -77,13 +70,11 @@ pub(crate) fn run_live(function: &str) -> Result<String, Error> {
         calls.borrow_mut().insert(Rc::from(function), (Rc::clone(&call), hash));
         (call, hash)
     });
-    let ran = crate::script::engine::cross_into_oxide(true, || super::engine::eval_template(&call, hash, true))?;
-    crate::script::engine::count(EntryKind::Template, Route::Oxide);
+    let ran = super::engine::eval_template(&call, hash, true);
+    crate::script::engine::count(EntryKind::Template);
     ran.map_err(|outcome| match outcome {
         super::Outcome::Error(err) => err,
-        super::Outcome::Fallback(reason) => Error::new(format!(
-            "script_engine=oxide: this template needs {reason}, which the quickjs-oxide bindings do not have yet"
-        )),
+        super::Outcome::Fallback(reason) => crate::script::engine::unsupported(EntryKind::Template, reason),
     })
 }
 

@@ -74,7 +74,7 @@ fn invoker(engine: &OxideEngine, context: &Context) -> Result<CallableRef, Runti
     }
     let invariant = |what: &'static str| RuntimeError::Invariant(what);
     let key_of = |name: &str| key(name).map_err(|_| invariant("a key"));
-    let make = match context.eval(crate::script::runtime::WEB_INVOKE_JS)? {
+    let make = match context.eval(INVOKE_JS)? {
         Value::Object(object) => context.as_callable(&object)?,
         _ => None,
     }
@@ -107,3 +107,39 @@ fn chain_next(scope: &mut Scope<'_>) -> Result<Value, RuntimeError> {
         }
     })
 }
+
+/// Calls a handler object's method for its kind: a servlet's `service`, else its `doGet` (`doPost`, ...) by method, a
+/// filter's `doFilter` with the chain, a listener's method named for the event. The handler's `config` is set first.
+const INVOKE_JS: &str = r#"(function (ec, chainNext) {
+    const methods = { GET: "doGet", POST: "doPost", PUT: "doPut", DELETE: "doDelete", PATCH: "doPatch", HEAD: "doHead",
+        OPTIONS: "doOptions" };
+    function configOf(data) {
+        const params = data.initParams || {};
+        return { name: data.name, location: data.location, initParams: params,
+            getInitParameter: (name) => params[name] ?? null, getInitParameterNames: () => Object.keys(params),
+            getServletName: () => data.name, getFilterName: () => data.name };
+    }
+    return { invoke(handler, kind, data) {
+        if (handler == null || typeof handler !== "object") {
+            throw new Error(`${data.location} must evaluate to a handler object, as ({ doGet(request, response) {...} })`);
+        }
+        const config = configOf(data);
+        if (Object.isExtensible(handler)) handler.config = config;
+        if (kind === "listener") {
+            const method = handler[data.event];
+            if (typeof method === "function") method.call(handler, Object.assign({ type: data.event }, data.eventData || {}), config);
+            return;
+        }
+        const request = ec.web.request, response = ec.web.response;
+        if (kind === "filter") {
+            if (typeof handler.doFilter !== "function") throw new Error(`${data.location} has no doFilter(request, response, chain)`);
+            handler.doFilter(request, response, { doFilter: () => chainNext() }, config);
+            return;
+        }
+        if (typeof handler.service === "function") { handler.service(request, response, config); return; }
+        let name = methods[request.method];
+        if (name === "doHead" && typeof handler.doHead !== "function") name = "doGet";
+        if (name && typeof handler[name] === "function") { handler[name](request, response, config); return; }
+        response.sendError(405, `HTTP method ${request.method} is not supported by this URL`);
+    } };
+})"#;

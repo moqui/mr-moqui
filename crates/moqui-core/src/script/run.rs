@@ -45,7 +45,6 @@ thread_local! {
 /// Which engine a running script is on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EngineTag {
-    QuickJs,
     Oxide,
 }
 
@@ -65,11 +64,6 @@ impl Drop for Running {
             running.borrow_mut().pop();
         });
     }
-}
-
-/// The engine of the innermost running script on this thread.
-pub(crate) fn innermost() -> Option<EngineTag> {
-    RUNNING.with(|running| running.borrow().last().copied())
 }
 
 /// Whether a script of `tag` is running on this thread, at any depth.

@@ -14,7 +14,7 @@
 
 //! OpenUI Lang on the server (plans/LLM-A2A-Assist.md 4.10, 7.4, D6, J28): the one parser is the vendored
 //! `@openuidev/lang-core` bundle (`webroot/libs/openui/lang-core.min.js`, built by `libs/refresh.mjs` with its reviewed
-//! patches), run in a QuickJS runtime of its own with the component library the renderer declares
+//! patches), run in a quickjs-oxide runtime of its own with the component library the renderer declares
 //! (`webroot/js/openui-library.spec.json`, generated from `js/WebrootAssistCanvas.js`). A `write_ui` program is parsed
 //! once here, before anything is shown; a patch is merged here once with lang-core's own `mergeStatements` (the
 //! history keeps only the patch, the canvas the merged program). There is no repair layer: what does not parse or does
@@ -50,7 +50,6 @@ pub const MAX_PROGRAM_CHARS: usize = 64 * 1024;
 const MAX_PROBLEMS: usize = 5;
 
 const MEMORY_LIMIT: usize = 64 * 1024 * 1024;
-const STACK_LIMIT: usize = 2 * 1024 * 1024;
 /// How long one parse, merge or evaluation may run.
 const TIME_LIMIT: Duration = Duration::from_secs(5);
 
@@ -327,7 +326,7 @@ pub fn error_json(problems: &[Problem], program: &str, patch: bool) -> String {
     error.to_text()
 }
 
-// ---- the engine: lang-core in QuickJS ----
+// ---- the engine: lang-core in a runtime of its own ----
 
 /// The glue the bundle is driven by: the parser over the library, each statement's own tree (for the checks), the
 /// statement merge and the evaluation of a Mutation's arguments against a posted state. Every answer is JSON text.
@@ -417,7 +416,7 @@ pub struct Sources {
 
 struct Engine {
     key: u64,
-    js: super::standalone::Standalone,
+    js: moqui_core::script::standalone::Standalone,
 }
 
 thread_local! {
@@ -425,21 +424,19 @@ thread_local! {
     static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
-/// The texts and the engine the setting picks (a thread's setting may change, in the tests).
+/// The texts the engine was loaded with.
 fn key_of(sources: &Sources) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    moqui_core::script::script_engine().name().hash(&mut hasher);
     sources.bundle.hash(&mut hasher);
     sources.spec.hash(&mut hasher);
     hasher.finish()
 }
 
 fn engine_for(sources: &Sources) -> Result<Engine, Error> {
-    let js = super::standalone::Standalone::start(MEMORY_LIMIT, STACK_LIMIT, || {
+    let js = moqui_core::script::standalone::Standalone::start(MEMORY_LIMIT, || {
         DEADLINE.with(Cell::get).is_some_and(|at| Instant::now() >= at)
-    })
-    .map_err(Error::new)?;
+    });
     let spec = serde_json::to_string(&*sources.spec).map_err(|err| Error::new(err.to_string()))?;
     js.run(&sources.bundle)
         .map_err(|err| Error::new(format!("the OpenUI Lang bundle did not load: {err}")))?;

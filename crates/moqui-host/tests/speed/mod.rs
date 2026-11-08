@@ -23,9 +23,8 @@
 //! - **sql/call**: statements the entity layer ran (`statement_stats`), on any thread. Begin and commit are not counted.
 //! - **rt/call**: waited round trips (`driver::round_trips`), on any thread: the times a driver sent requests and then
 //!   waited for the reply. Begin and commit are counted, and pipelined statements share one.
-//! - **js kept/call** (rows with `js` set): bytes this thread's QuickJS engines hold from `malloc` at the end of the
-//!   batch less at its start, with no collection between. QuickJS allocates with the C library's `malloc`, so the
-//!   columns above do not see it.
+//! - **js kept/call** (rows with `js` set): bytes this thread's script runtime's heap reserves at the end of the batch
+//!   less at its start, with no collection between.
 
 #![allow(dead_code)]
 
@@ -245,13 +244,13 @@ pub struct Measured {
 pub fn measure<T>(body: impl FnOnce() -> T) -> (Measured, T) {
     let (statements_before, _) = moqui_core::entity::statement_stats();
     let trips_before = moqui_core::driver::round_trips();
-    let js_before = moqui_core::script::engine_memory(false).malloc_size;
+    let js_before = i64::try_from(moqui_core::script::engine_memory(false).oxide_reserved_bytes).unwrap_or(i64::MAX);
     let before = counts();
     let started = Instant::now();
     let out = body();
     let elapsed = started.elapsed();
     let after = counts();
-    let js_after = moqui_core::script::engine_memory(false).malloc_size;
+    let js_after = i64::try_from(moqui_core::script::engine_memory(false).oxide_reserved_bytes).unwrap_or(i64::MAX);
     let (statements_after, _) = moqui_core::entity::statement_stats();
     let trips_after = moqui_core::driver::round_trips();
     let measured = Measured {

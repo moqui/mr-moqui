@@ -417,7 +417,6 @@ fn trampoline(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'_
     if super::engine::fallback_pending() {
         return Err(super::engine::host_error(scope, super::convert::Conv::Unsupported(FELL_BACK)));
     }
-    host::note_path(method.path);
     let required = method.required();
     let given = scope.argc();
     if given < required {

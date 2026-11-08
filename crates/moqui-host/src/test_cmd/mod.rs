@@ -1264,11 +1264,9 @@ pub(crate) fn order_by_load(components: &mut [TestComponent], factory: &Executio
 mod tests;
 
 /// With `MOQUI_SCRIPT_STATS_FILE` set, a JSON line of this process's script engine counts appended to that file
-/// (`moqui_core::script::engine_stats`): a worker of a run writes its own. The QuickJS counts keep their names; the
-/// quickjs-oxide ones are under `oxide`, and the scripts each engine ran by entry kind under `scripts_by_kind`. With
-/// `MOQUI_SCRIPT_CENSUS_FILE` set, the census of small scripts is written too (`moqui_core::script::write_census`).
+/// (`moqui_core::script::engine_stats`): a worker of a run writes its own. The runtimes' counts are under `oxide`, and
+/// the scripts run by entry kind under `scripts_by_kind`.
 fn write_script_stats() {
-    moqui_core::script::write_census();
     let path = moqui_lib::env::get_prop_or_env("MOQUI_SCRIPT_STATS_FILE");
     if path.is_empty() {
         return;
@@ -1277,20 +1275,11 @@ fn write_script_stats() {
     let by_kind: serde_json::Map<String, serde_json::Value> = stats
         .scripts_by_kind
         .iter()
-        .map(|(kind, quickjs, oxide)| (kind.to_string(), serde_json::json!({"quickjs": quickjs, "oxide": oxide})))
+        .map(|(kind, runs)| (kind.to_string(), serde_json::json!(runs)))
         .collect();
     let line = serde_json::json!({
         "pid": std::process::id(),
-        "script_engine": moqui_core::script::script_engine().name(),
-        "threads": stats.threads,
-        "engines_started": stats.engines_started,
-        "engines_live": stats.engines_live,
-        "engines_live_max": stats.engines_live_max,
         "depth_max": stats.depth_max,
-        "heap_bytes": stats.heap_bytes,
-        "heap_bytes_max": stats.heap_bytes_max,
-        "compiled": stats.compiled,
-        "shared_reads": stats.shared_reads,
         "oxide": {
             "engines_started": stats.oxide_engines_started,
             "engines_live": stats.oxide_engines_live,
@@ -1305,8 +1294,6 @@ fn write_script_stats() {
             "image_loads": stats.oxide_image_loads,
             "image_failures": stats.oxide_image_failures,
             "image_bytes": stats.oxide_image_bytes,
-            "fallbacks": stats.oxide_fallbacks,
-            "differences": stats.oxide_differences,
             "heap_bytes_peak_threads_sum": stats.oxide_heap_peaks.iter().map(|(_, bytes)| bytes).sum::<usize>(),
             "heap_bytes_peak_by_thread": stats
                 .oxide_heap_peaks
@@ -1314,7 +1301,6 @@ fn write_script_stats() {
                 .map(|(thread, bytes)| serde_json::json!({"thread": thread, "peak": bytes}))
                 .collect::<Vec<_>>(),
         },
-        "check_parses": stats.check_parses,
         "scripts_by_kind": by_kind,
     });
     let line = format!("{line}\n");

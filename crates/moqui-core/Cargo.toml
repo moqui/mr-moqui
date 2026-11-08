@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 # No direct tokio, axum, postgres, mysql, or postgresql_embedded.
-# moqui-lib http is blocking reqwest. rquickjs, croner, argon2,
+# moqui-lib http is blocking reqwest. croner, argon2,
 # pulldown-cmark, and totp-rs stay workspace pins. totp-rs is the second
 # factor of phase 11, with qr off as in plans/archive/License-Review.md.
 # Mail (lettre, imap) is moqui-mail's (plans/archive/Crate-Split.md).
@@ -29,8 +29,7 @@ opentelemetry_sdk = { workspace = true, optional = true, features = ["experiment
 opentelemetry-proto = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 getrandom = { workspace = true }
-rquickjs = { workspace = true, features = ["macro"] }
-# Not called yet (plans/Script-Engine-Oxide.md phase 0).
+# The script engine, safe Rust (plans/Script-Engine-Oxide.md).
 quickjs-oxide = { workspace = true }
 md-5 = { workspace = true }
 sha2 = { workspace = true }
@@ -66,11 +65,6 @@ tar = { workspace = true }
 p256 = { workspace = true, optional = true, features = ["ecdh"] }
 hkdf = { workspace = true, optional = true }
 aes-gcm = { workspace = true, optional = true }
-
-# No prebuilt QuickJS bindings ship for this target. bindgen needs libclang and the emsdk sysroot;
-# scripts/wasm-env.sh sets both.
-[target.'cfg(target_os = "emscripten")'.dependencies]
-rquickjs = { workspace = true, features = ["bindgen"] }
 
 # Default on. The browser build (crates/moqui-browser, plans/archive/Wasm.md) turns them all off so no
 # socket, TLS (aws-lc), or blocking-HTTP code is linked. The packages (docs/Build-Test.md) pick them through moqui-host.

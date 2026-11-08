@@ -95,14 +95,12 @@ feature("second", {
 }
 
 /// A spec's registration, setupSpec, features and cleanupSpec are runs of their own: an upload and a stream setupSpec
-/// made, kept in the file's variables, still read in a feature and in cleanupSpec on both engines (quickjs-oxide lets
-/// such objects go when the spec ends, not at the end of each run).
+/// made, kept in the file's variables, still read in a feature and in cleanupSpec (the runtime lets such objects go
+/// when the spec ends, not at the end of each run).
 #[test]
 fn objects_setup_spec_made_last_until_the_spec_ends() {
-    use moqui_core::script::{with_script_engine, ScriptEngine};
-    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
-        let result = with_script_engine(engine, || {
-            run(r#"
+    let result = run(
+        r#"
 let upload = null
 let stream = null
 spec({
@@ -112,17 +110,16 @@ spec({
 feature("reads what setupSpec made", {
     expect: () => upload.getName() == "a.txt" && stream.getText() == "hello",
 })
-"#)
-        });
-        assert!(result.setup_failure.is_none(), "{engine:?}: {:?}", result.setup_failure);
-        assert!(result.cleanup_failure.is_none(), "{engine:?}: {:?}", result.cleanup_failure);
-        assert_eq!(
-            outcomes(&result),
-            vec![("reads what setupSpec made".to_string(), "passed")],
-            "{engine:?}: {:?}",
-            result.cases.first().map(|case| &case.outcome)
-        );
-    }
+"#,
+    );
+    assert!(result.setup_failure.is_none(), "{:?}", result.setup_failure);
+    assert!(result.cleanup_failure.is_none(), "{:?}", result.cleanup_failure);
+    assert_eq!(
+        outcomes(&result),
+        vec![("reads what setupSpec made".to_string(), "passed")],
+        "{:?}",
+        result.cases.first().map(|case| &case.outcome)
+    );
 }
 
 #[test]

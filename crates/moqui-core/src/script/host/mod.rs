@@ -909,12 +909,6 @@ pub fn shims() -> impl Iterator<Item = &'static Shim> {
     })
 }
 
-/// Record that a script reached `path`, into the running script's census entry ([`crate::script::census::note`]).
-#[inline]
-pub fn note_path(path: &'static str) {
-    crate::script::census::note(path);
-}
-
 #[cfg(test)]
 pub(crate) mod test_class;
 #[cfg(test)]

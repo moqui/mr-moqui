@@ -28,11 +28,7 @@
 //! `JS_SPEED_ONLY` (a comma list of `expr`, `script`, `actions`, `service`, `template`, `screen`, `cold`) runs those
 //! sections alone, and `JS_SPEED_ROW` (part of a row name) those rows alone, for a profile. `JS_SPEED_PEEK` prints the
 //! start of each screen's output, and `JS_SPEED_DUMP` (a directory) writes each screen's output there, to compare two
-//! builds' output. `JS_SPEED_ENGINE` (`rquickjs`, the default, or `oxide`) picks the engine: `oxide` runs the
-//! expressions section under `script_engine=small-oxide` (conditions and values on quickjs-oxide, `${}` strings still on
-//! QuickJS), the scripts, templates and screens sections under `script_engine=oxide`, and the other sections stay on
-//! QuickJS until the later phases of plans/Script-Engine-Oxide.md bind them, which their headings say. See `speed/mod.rs` for the columns; `js kept` is the QuickJS heap, which the
-//! allocation columns do not see. The database is embedded Postgres (or `SPEED_PG_HOST`), for the services and the cached finds; nothing
+//! builds' output. See `speed/mod.rs` for the columns. The database is embedded Postgres (or `SPEED_PG_HOST`), for the services and the cached finds; nothing
 //! here writes.
 //!
 //! The context is entered with authorization disabled, as in `service_speed`. Names the expressions read are set once
@@ -102,12 +98,6 @@ fn script_speed() {
         screens: (calls / 10).max(1),
         batches: env_usize("JS_SPEED_BATCHES", 5),
     };
-    let engine = std::env::var("JS_SPEED_ENGINE").unwrap_or_default();
-    let oxide = match engine.trim() {
-        "" | "rquickjs" => false,
-        "oxide" => true,
-        other => panic!("JS_SPEED_ENGINE is rquickjs or oxide, not {other}"),
-    };
     let only = std::env::var("JS_SPEED_ONLY").unwrap_or_default();
     let wanted = |section: &str| only.is_empty() || only.split(',').any(|one| one.trim() == section);
 
@@ -135,76 +125,42 @@ fn script_speed() {
         let _authz = context.disable_authz();
         println!();
         println!(
-            "script engine {}, {} calls ({} for services, {} for screens) x {} batches, warmup {WARMUP}. \
+            "{} calls ({} for services, {} for screens) x {} batches, warmup {WARMUP}. \
              ExecutionContext entered, authorization disabled.",
-            if oxide { "oxide (small-oxide for expressions)" } else { "rquickjs" },
             sizes.calls,
             sizes.services,
             sizes.screens,
             sizes.batches
         );
-        // the sections quickjs-oxide does not run yet say so
-        let quickjs = if oxide { " (on QuickJS until a later phase)" } else { "" };
         set_names();
         if wanted("expr") {
-            if oxide {
-                script::with_script_engine(script::ScriptEngine::SmallOxide, || {
-                    section(
-                        "expressions on quickjs-oxide (small-oxide: `${}` strings on QuickJS)",
-                        &sizes,
-                        sizes.calls,
-                        expressions,
-                    );
-                });
-            } else {
-                section("expressions: one engine entry each", &sizes, sizes.calls, expressions);
-            }
+            section("expressions: one engine entry each", &sizes, sizes.calls, expressions);
         }
-        // whole scripts and screens run on quickjs-oxide under `script_engine=oxide`
-        let whole = if oxide { script::ScriptEngine::Oxide } else { script::ScriptEngine::Rquickjs };
         if wanted("script") {
-            let heading = if oxide {
-                "scripts on quickjs-oxide (oxide): one entry, the work inside"
-            } else {
-                "scripts: one entry, the work inside"
-            };
-            script::with_script_engine(whole, || section(heading, &sizes, sizes.calls, scripts));
+            section("scripts: one entry, the work inside", &sizes, sizes.calls, scripts);
         }
         if wanted("actions") {
-            section(&format!("XML actions, run directly{quickjs}"), &sizes, sizes.calls, actions);
+            section("XML actions, run directly", &sizes, sizes.calls, actions);
         }
         if wanted("service") {
             section(
-                &format!("services: the service layer around actions and scripts{quickjs}"),
+                "services: the service layer around actions and scripts",
                 &sizes,
                 sizes.services,
                 services,
             );
         }
         if wanted("template") {
-            // templates run on quickjs-oxide under `script_engine=oxide` only (`script/oxide/templates.rs`)
-            let setting = if oxide { script::ScriptEngine::Oxide } else { script::ScriptEngine::Rquickjs };
-            let heading = if oxide {
-                "templates on quickjs-oxide (oxide: both forms; the locked one in its sandbox runtime) over 20 items"
-            } else {
-                "templates: the fancy dialect over 20 items"
-            };
-            script::with_script_engine(setting, || {
-                section(heading, &sizes, sizes.calls, |rows, calls| {
-                    templates(rows, calls, &items_template);
-                });
-            });
+            section(
+                "templates: the fancy dialect over 20 items (the locked form in its sandbox runtime)",
+                &sizes,
+                sizes.calls,
+                |rows, calls| templates(rows, calls, &items_template),
+            );
         }
         if wanted("screen") {
-            let heading = if oxide {
-                "screens on quickjs-oxide (oxide: generation, units and their scripts): the js-speed fixture screens"
-            } else {
-                "screens: the js-speed fixture screens"
-            };
-            script::with_script_engine(whole, || {
-                section(heading, &sizes, sizes.screens, |rows, calls| {
-                    screens(rows, calls, &factory, &root);
-                });
+            section("screens: the js-speed fixture screens", &sizes, sizes.screens, |rows, calls| {
+                screens(rows, calls, &factory, &root);
             });
         }
         print_memory("this thread's engine, after the rows", script::engine_memory(true));
@@ -633,64 +589,38 @@ fn cold(factory: &Arc<ExecutionContextFactory>, root: &str, sizes: &Sizes) {
     print_memory("the same after Plain html", after_second);
 }
 
-/// The process's engines by kind: what ran on each, the oxide runtimes and their fallbacks to QuickJS.
+/// The process's scripts by kind and its runtimes.
 fn print_engine_stats() {
     let stats = script::engine_stats();
     let ran: Vec<String> = stats
         .scripts_by_kind
         .iter()
-        .filter(|(_, quickjs, oxide)| quickjs + oxide > 0)
-        .map(|(kind, quickjs, oxide)| format!("{kind} {quickjs} QuickJS / {oxide} oxide"))
+        .filter(|(_, runs)| *runs > 0)
+        .map(|(kind, runs)| format!("{kind} {runs}"))
         .collect();
     println!(
-        "\n  scripts by kind: {}; oxide runtimes started {}, fallbacks to QuickJS {}, texts compiled {}, heap {:.0} KiB \
-         (most {:.0} KiB); texts checked {}",
+        "\n  scripts by kind: {}; runtimes started {}, texts compiled {}, heap {:.0} KiB (most {:.0} KiB)",
         ran.join(", "),
         stats.oxide_engines_started,
-        stats.oxide_fallbacks,
         stats.oxide_compiled,
         stats.oxide_heap_bytes as f64 / 1024.0,
         stats.oxide_heap_bytes_max as f64 / 1024.0,
-        stats.check_parses
     );
 }
 
 fn print_memory(label: &str, memory: EngineMemory) {
-    let kib = |bytes: i64| bytes as f64 / 1024.0;
+    let kib = |bytes: usize| bytes as f64 / 1024.0;
     println!(
-        "\n  {label}: {} engine(s), malloc {:.0} KiB in {} blocks, QuickJS estimate {:.0} KiB; {} objects, {} strings \
-         ({:.0} KiB), {} shapes, {} functions ({:.0} KiB bytecode); cached: {} compiled scripts ({:.0} KiB source), {} \
-         screen units ({:.0} KiB source), {} templates",
-        memory.engines,
-        kib(memory.malloc_size),
-        memory.malloc_count,
-        kib(memory.memory_used_size),
-        memory.obj_count,
-        memory.str_count,
-        kib(memory.str_size),
-        memory.shape_count,
-        memory.js_func_count,
-        kib(memory.js_func_code_size),
-        memory.compiled_scripts,
-        kib(i64::try_from(memory.compiled_script_bytes).unwrap_or(i64::MAX)),
-        memory.units,
-        kib(i64::try_from(memory.unit_bytes).unwrap_or(i64::MAX)),
-        memory.templates,
+        "\n  {label}: {} runtime, heap reserves {:.0} KiB ({:.0} KiB live at the last collection); {} code units \
+         ({:.0} KiB of instructions, positions and source); cached: {} compiled expressions ({:.0} KiB source)",
+        memory.oxide_engines,
+        kib(memory.oxide_reserved_bytes),
+        kib(memory.oxide_live_bytes),
+        memory.oxide_code_units,
+        kib(memory.oxide_code_bytes),
+        memory.oxide_compiled_scripts,
+        kib(memory.oxide_compiled_script_bytes),
     );
-    if memory.oxide_engines > 0 {
-        let kib = |bytes: usize| bytes as f64 / 1024.0;
-        println!(
-            "  quickjs-oxide: {} runtime, heap reserves {:.0} KiB ({:.0} KiB live at the last collection); {} code units \
-             ({:.0} KiB of instructions, positions and source); cached: {} compiled expressions ({:.0} KiB source)",
-            memory.oxide_engines,
-            kib(memory.oxide_reserved_bytes),
-            kib(memory.oxide_live_bytes),
-            memory.oxide_code_units,
-            kib(memory.oxide_code_bytes),
-            memory.oxide_compiled_scripts,
-            kib(memory.oxide_compiled_script_bytes),
-        );
-    }
 }
 
 fn copy_dir(from: &Path, to: &Path) {

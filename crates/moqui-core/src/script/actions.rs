@@ -14,22 +14,18 @@
 
 //! XML actions. One cached script per action XML text. Names in that script are bare.
 
-use std::collections::HashSet;
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::Instant;
 
 use moqui_lib::node::MNode;
 use moqui_lib::sync::lock;
-use rquickjs::{Ctx, Object};
 
 use super::runtime::ScriptText;
-use super::engine::{script_engine, with_script_engine, ScriptEngine};
 use super::run::{DeadlineGuard, DEADLINE};
-use super::walker::{self, Walk};
 use crate::context::Error;
 
-const TEMPLATE_SUPPORT: &str = include_str!("../../../../runtime/base-component/framework/template/TemplateSupport.js");
-const XML_ACTIONS: &str = include_str!("../../../../runtime/base-component/framework/template/XmlActions.js");
+pub(super) const TEMPLATE_SUPPORT: &str = include_str!("../../../../runtime/base-component/framework/template/TemplateSupport.js");
+pub(super) const XML_ACTIONS: &str = include_str!("../../../../runtime/base-component/framework/template/XmlActions.js");
 
 /// Set this to add a comment naming the XML element before each generated statement. The value `dump` also prints
 /// each generated script to stderr, with line numbers as an error's `eval_script:LINE` has them.
@@ -200,15 +196,7 @@ fn generate(xml: &str) -> Result<String, Error> {
 fn generate_with(xml: &str, debug: bool) -> Result<String, Error> {
     let root = MNode::parse_text("actions", xml)?;
     reject(&root)?;
-    if super::oxide::walker::on_oxide() {
-        return super::oxide::walker::generate_actions(&root, TEMPLATE_SUPPORT, XML_ACTIONS, debug);
-    }
-    super::runtime::with_ctx(|ctx| {
-        let name = if debug { "xml-actions-debug" } else { "xml-actions" };
-        let macros = super::runtime::engine_object(ctx, name, |ctx| load_macros(ctx, debug))?;
-        let (source, _) = render(ctx, &macros, &root)?;
-        Ok(source)
-    })
+    super::oxide::walker::generate_actions(&root, TEMPLATE_SUPPORT, XML_ACTIONS, debug)
 }
 
 /// The stack of the thread that generates for a running script, as much as the outermost script on a worker has.
@@ -218,8 +206,6 @@ const GENERATOR_STACK: usize = 2 * 1024 * 1024;
 struct Job {
     xml: String,
     debug: bool,
-    /// The engine the caller generates on (its `with_script_engine` choice too).
-    engine: ScriptEngine,
     /// The caller's script deadline, which bounds the generation as it would on the caller's thread.
     deadline: Option<Instant>,
     reply: mpsc::Sender<Result<String, Error>>,
@@ -227,8 +213,7 @@ struct Job {
 
 /// Generate on a thread of its own. Text first generated inside a script, as the actions of a screen whose definition
 /// loads while a template renders a link to it, would otherwise get only what is left of that script's stack, and the
-/// macros recurse over the XML. Generation is a function of the text alone, so where it runs does not matter; it runs
-/// on the engine the caller's thread would have used.
+/// macros recurse over the XML. Generation is a function of the text alone, so where it runs does not matter.
 fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
     static GENERATOR: OnceLock<Mutex<mpsc::Sender<Job>>> = OnceLock::new();
     let sender = GENERATOR.get_or_init(|| {
@@ -241,7 +226,7 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
                     let _deadline = job
                         .deadline
                         .map(|at| DeadlineGuard::new(Some(at.saturating_duration_since(Instant::now()))));
-                    let generated = with_script_engine(job.engine, || generate_with(&job.xml, job.debug));
+                    let generated = generate_with(&job.xml, job.debug);
                     let _ = job.reply.send(generated);
                 }
             });
@@ -254,7 +239,6 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
     let job = Job {
         xml: xml.to_string(),
         debug,
-        engine: script_engine(),
         deadline: DEADLINE.with(std::cell::Cell::get),
         reply,
     };
@@ -265,16 +249,6 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
             .unwrap_or_else(|_| Err(Error::new("the XML actions generator thread stopped"))),
         Err(_) => generate_with(xml, debug),
     }
-}
-
-/// The macro table. The support script evaluates to an object, and the actions script
-/// is a function of that object, so no names are left in the global scope.
-fn load_macros<'js>(ctx: &Ctx<'js>, debug: bool) -> Result<Object<'js>, Error> {
-    let loaded = walker::load_chain(ctx, TEMPLATE_SUPPORT, &[XML_ACTIONS], debug)?;
-    loaded
-        .into_iter()
-        .next_back()
-        .ok_or_else(|| Error::new("no XML actions macros"))
 }
 
 fn reject(node: &MNode) -> Result<(), Error> {
@@ -288,18 +262,6 @@ fn reject(node: &MNode) -> Result<(), Error> {
         reject(&child)?;
     }
     Ok(())
-}
-
-fn render<'js>(ctx: &Ctx<'js>, macros: &Object<'js>, node: &MNode) -> Result<(String, Object<'js>), Error> {
-    let opaque = HashSet::new();
-    let walk = Walk {
-        macros,
-        opaque: &opaque,
-        resolve: None,
-        missing: "XML action macro",
-        fallback: None,
-    };
-    walker::walk(ctx, &walk, node, None)
 }
 
 #[cfg(test)]

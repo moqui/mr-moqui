@@ -17,7 +17,6 @@
 use moqui_lib::object::Value;
 
 use crate::context::Error;
-use crate::script::engine::{with_script_engine, ScriptEngine};
 use crate::script::run::STACK;
 use crate::script::{clear_context_stack, push_context_frame};
 
@@ -30,7 +29,7 @@ fn a_nested_run_leaves_the_outer_runs_values_to_its_frame() -> Result<(), Error>
     use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
     clear_context_stack();
     push_context_frame();
-    let context = with_script_engine(ScriptEngine::Oxide, super::engine::context_for_tests);
+    let context = super::engine::context_for_tests();
     let global = context.global_object().unwrap();
     context
         .define_function(
@@ -56,11 +55,11 @@ fn a_nested_run_leaves_the_outer_runs_values_to_its_frame() -> Result<(), Error>
             },
         )
         .unwrap();
-    with_script_engine(ScriptEngine::Oxide, || {
+    {
         crate::script::run_script(
             "ids = []; ids.push('a'); serviceCall(); if (!ids.includes('b')) { serviceCall(); ids.push('b') }",
         )
-    })?;
+    }?;
     assert_eq!(
         crate::script::context_value("ids"),
         Some(Value::List(vec![Value::string("a"), Value::string("b")]))
@@ -82,7 +81,7 @@ fn a_nested_run_in_the_same_frame_reads_the_outer_runs_changes() -> Result<(), E
     clear_context_stack();
     push_context_frame();
     crate::script::set_context_name("items", Value::List(vec![Value::I32(1)]))?;
-    let context = with_script_engine(ScriptEngine::Oxide, super::engine::context_for_tests);
+    let context = super::engine::context_for_tests();
     let global = context.global_object().unwrap();
     context
         .define_function(&global, "sameFrame", 0, |scope: &mut Scope<'_>| -> Result<JsValue, _> {
@@ -97,9 +96,9 @@ fn a_nested_run_in_the_same_frame_reads_the_outer_runs_changes() -> Result<(), E
             }
         })
         .unwrap();
-    with_script_engine(ScriptEngine::Oxide, || {
+    {
         crate::script::run_script("items.push(5); sameFrame()")
-    })?;
+    }?;
     assert_eq!(crate::script::context_value("seen"), Some(Value::I32(2)));
     assert_eq!(
         crate::script::context_value("items"),
@@ -125,7 +124,7 @@ fn a_unit_releases_the_callers_values_and_sets_them_aside() -> Result<(), Error>
         runtime: std::sync::Arc::from(""),
         runtime_id: 0,
     };
-    let context = with_script_engine(ScriptEngine::Oxide, super::engine::context_for_tests);
+    let context = super::engine::context_for_tests();
     let global = context.global_object().unwrap();
     context
         .define_function(&global, "renderUnit", 1, move |scope: &mut Scope<'_>| -> Result<JsValue, _> {
@@ -148,13 +147,13 @@ fn a_unit_releases_the_callers_values_and_sets_them_aside() -> Result<(), Error>
             }
         })
         .unwrap();
-    with_script_engine(ScriptEngine::Oxide, || {
+    {
         crate::script::run_script(
             "rows.push('before'); renderUnit(false); rows.push('after'); \
              try { renderUnit(true) } catch (e) { failed = String(e.message).includes('unit failed') } \
              rows.push('last')",
         )
-    })?;
+    }?;
     assert_eq!(crate::script::context_value("failed"), Some(Value::Bool(true)));
     let texts = |names: &[&str]| Value::List(names.iter().map(|name| Value::string(*name)).collect());
     assert_eq!(
@@ -174,7 +173,7 @@ fn a_unit_reads_its_own_frame_not_the_callers_kept_values() -> Result<(), Error>
     clear_context_stack();
     push_context_frame();
     crate::script::set_context_name("price", decimal("1.5"))?;
-    let context = with_script_engine(ScriptEngine::Oxide, super::engine::context_for_tests);
+    let context = super::engine::context_for_tests();
     let global = context.global_object().unwrap();
     context
         .define_function(&global, "renderPriced", 0, move |scope: &mut Scope<'_>| -> Result<JsValue, _> {
@@ -198,11 +197,11 @@ fn a_unit_reads_its_own_frame_not_the_callers_kept_values() -> Result<(), Error>
             Ok(JsValue::String(JsString::try_from_utf8(&text).unwrap()))
         })
         .unwrap();
-    with_script_engine(ScriptEngine::Oxide, || {
+    {
         crate::script::run_script(
             "before = price.toString(); seen = renderPriced(); after = price.toString()",
         )
-    })?;
+    }?;
     assert_eq!(crate::script::context_value("before"), Some(Value::string("1.5")));
     assert_eq!(crate::script::context_value("seen"), Some(Value::string("2.5")), "the unit's frame");
     assert_eq!(crate::script::context_value("after"), Some(Value::string("1.5")));

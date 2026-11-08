@@ -25,7 +25,6 @@ indexmap = { workspace = true }
 inventory = { workspace = true }
 jiff = { workspace = true }
 quickjs-oxide = { workspace = true }
-rquickjs = { workspace = true }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -13,19 +13,18 @@
  */
 
 //! Whether Vue accepts a qvt template. The vendored compiler bundle (`webroot/libs/vue/compiler-dom.cjs.js`)
-//! runs in a QuickJS runtime of its own and compiles each template as the browser build does, as the template of a
+//! runs in a quickjs-oxide runtime of its own and compiles each template as the browser build does, as the template of a
 //! component. This is the check that "the qvt response is a component the Vue 3 compiler can compile" (Gate 3) runs
 //! for the fixture screens, and the compiler the server-static work compiles with.
 
 use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
-use rquickjs::{CatchResultExt, Context, Runtime};
+use crate::script::standalone::Standalone;
 
 use crate::context::Error;
 
 const MEMORY_LIMIT: usize = 256 * 1024 * 1024;
-const STACK_LIMIT: usize = 4 * 1024 * 1024;
 
 /// Compile each template, wrapped in a `div` as the client wraps a screen, and return the compiler errors as
 /// `"<index>: <code> <message> at <line>:<column>"`. An empty list means every template compiled.
@@ -40,18 +39,11 @@ pub fn compile_errors(compiler_source: &str, templates: &[String]) -> Result<Vec
 
 /// [`compile_errors`], with the compile script stopped once `limit` has passed.
 fn compile_errors_within(compiler_source: &str, templates: &[String], limit: Duration) -> Result<Vec<String>, Error> {
-    let runtime = Runtime::new().map_err(|err| Error::new(err.to_string()))?;
-    runtime.set_memory_limit(MEMORY_LIMIT);
-    runtime.set_max_stack_size(STACK_LIMIT);
     // A template that sends the compiler into a loop stops at the deadline instead of holding the worker.
-    runtime.set_interrupt_handler(Some(Box::new(|| {
-        COMPILE_DEADLINE.with(Cell::get).is_some_and(|at| Instant::now() >= at)
-    })));
-    let context = Context::full(&runtime).map_err(|err| Error::new(err.to_string()))?;
+    let js = Standalone::start(MEMORY_LIMIT, past_deadline);
     let list = serde_json::to_string(templates).map_err(|err| Error::new(err.to_string()))?;
-    context.with(|ctx| {
-        ctx.eval::<(), _>(compiler_source)
-            .catch(&ctx)
+    {
+        js.run(compiler_source)
             .map_err(|err| Error::new(format!("the Vue compiler did not load: {err}")))?;
         let script = format!(
             "(function () {{ var errors = []; {list}.forEach(function (template, index) {{
@@ -60,21 +52,22 @@ fn compile_errors_within(compiler_source: &str, templates: &[String], limit: Dur
             }}); return JSON.stringify(errors); }})()"
         );
         COMPILE_DEADLINE.with(|deadline| deadline.set(Some(Instant::now() + limit)));
-        let json: Result<String, Error> = ctx
-            .eval(script)
-            .catch(&ctx)
+        let json: Result<String, Error> = js
+            .text(&script)
             .map_err(|err| Error::new(format!("the Vue compiler failed: {err}")));
         COMPILE_DEADLINE.with(|deadline| deadline.set(None));
         serde_json::from_str(&json?).map_err(|err| Error::new(err.to_string()))
-    })
+    }
 }
 
-/// A QuickJS runtime that has the compiler loaded, kept for the thread: loading the bundle costs more than a compile.
+/// Whether the compile deadline of this thread has passed: the runtimes' interrupt.
+fn past_deadline() -> bool {
+    COMPILE_DEADLINE.with(Cell::get).is_some_and(|at| Instant::now() >= at)
+}
+
+/// A runtime that has the compiler loaded, kept for the thread: loading the bundle costs more than a compile.
 struct Compiler {
-    context: Context,
-    // The context borrows this runtime. Drop order frees the context first.
-    #[allow(dead_code)]
-    runtime: Runtime,
+    js: Standalone,
 }
 
 thread_local! {
@@ -86,20 +79,11 @@ thread_local! {
 const COMPILE_TIME_LIMIT: Duration = Duration::from_secs(20);
 
 fn compiler_for(source: &str) -> Result<Compiler, Error> {
-    let runtime = Runtime::new().map_err(|err| Error::new(err.to_string()))?;
-    runtime.set_memory_limit(MEMORY_LIMIT);
-    runtime.set_max_stack_size(STACK_LIMIT);
-    // `compile_render` sets `COMPILE_DEADLINE`: without this a template that loops the compiler never stops.
-    runtime.set_interrupt_handler(Some(Box::new(|| {
-        COMPILE_DEADLINE.with(Cell::get).is_some_and(|at| Instant::now() >= at)
-    })));
-    let context = Context::full(&runtime).map_err(|err| Error::new(err.to_string()))?;
-    context.with(|ctx| {
-        ctx.eval::<(), _>(source)
-            .catch(&ctx)
-            .map_err(|err| Error::new(format!("the Vue compiler did not load: {err}")))
-    })?;
-    Ok(Compiler { context, runtime })
+    // `compile_render` sets `COMPILE_DEADLINE`: without the interrupt a template that loops the compiler never stops.
+    let js = Standalone::start(MEMORY_LIMIT, past_deadline);
+    js.run(source)
+        .map_err(|err| Error::new(format!("the Vue compiler did not load: {err}")))?;
+    Ok(Compiler { js })
 }
 
 /// The whole compiler text, so an edited bundle of the same length starts a new runtime. Compiles are rare: once per
@@ -138,11 +122,10 @@ fn compile_render_within(compiler_source: &str, template: &str, limit: Duration)
                 return JSON.stringify({{ code: result.code, errors: errors }}); }})()"
         );
         COMPILE_DEADLINE.with(|deadline| deadline.set(Some(Instant::now() + limit)));
-        let json: Result<String, Error> = compiler.context.with(|ctx| {
-            ctx.eval(script)
-                .catch(&ctx)
-                .map_err(|err| Error::new(format!("the Vue compiler failed: {err}")))
-        });
+        let json: Result<String, Error> = compiler
+            .js
+            .text(&script)
+            .map_err(|err| Error::new(format!("the Vue compiler failed: {err}")));
         COMPILE_DEADLINE.with(|deadline| deadline.set(None));
         let json = json?;
         let parsed: serde_json::Value = serde_json::from_str(&json).map_err(|err| Error::new(err.to_string()))?;
@@ -160,7 +143,7 @@ fn compile_render_within(compiler_source: &str, template: &str, limit: Duration)
     })
 }
 
-/// The string templates of the client components: each script is run in a QuickJS context of its own (the client loads
+/// The string templates of the client components: each script is run in a runtime of its own (the client loads
 /// `MoquiLib.js` and then `WebrootVue.qvt.js`), and each entry of `moqui.qvt.components` that has a template is
 /// answered as its name, the template, and the hash `qvt.templateHash` gives. A definition registered under two names
 /// is answered once.
@@ -169,18 +152,14 @@ fn compile_render_within(compiler_source: &str, template: &str, limit: Duration)
 ///
 /// Returns an error when a script does not run.
 pub fn component_templates(scripts: &[&str]) -> Result<Vec<(String, String, String)>, Error> {
-    let runtime = Runtime::new().map_err(|err| Error::new(err.to_string()))?;
-    runtime.set_memory_limit(MEMORY_LIMIT);
-    runtime.set_max_stack_size(STACK_LIMIT);
-    let context = Context::full(&runtime).map_err(|err| Error::new(err.to_string()))?;
-    context.with(|ctx| {
+    let js = Standalone::start(MEMORY_LIMIT, || false);
+    {
         for script in scripts {
-            ctx.eval::<(), _>(*script)
-                .catch(&ctx)
+            js.run(script)
                 .map_err(|err| Error::new(format!("a client script did not run: {err}")))?;
         }
-        let json: String = ctx
-            .eval(
+        let json: String = js
+            .text(
                 "(function () { var qvt = globalThis.moqui.qvt; var seen = []; var out = [];
                     Object.keys(qvt.components).sort().forEach(function (name) {
                         var comp = qvt.components[name];
@@ -190,10 +169,9 @@ pub fn component_templates(scripts: &[&str]) -> Result<Vec<(String, String, Stri
                     });
                     return JSON.stringify(out); })()",
             )
-            .catch(&ctx)
             .map_err(|err| Error::new(format!("the client components could not be read: {err}")))?;
         serde_json::from_str(&json).map_err(|err| Error::new(err.to_string()))
-    })
+    }
 }
 
 /// `WebrootVue.qvt.render.js`: the render function of each client component, compiled as a server-static template is
@@ -351,17 +329,11 @@ fn script_body(script: &str) -> String {
 
 /// The templates a `.qvue` script's component needs render functions for: its own string `template` (path `[]`,
 /// which takes the place of the file's, as in `parseVue`) and those of the components under `components`, each object
-/// once (a component used twice, or one that lists itself, is found once). The script runs in a QuickJS context of
+/// once (a component used twice, or one that lists itself, is found once). The script runs in a runtime of
 /// its own, with a stand-in `moqui`, under the compile deadline; one that does not run there is an error, since the
 /// bundle would not run either.
 fn script_templates(script: &str, limit: Duration) -> Result<Vec<(Vec<String>, String)>, Error> {
-    let runtime = Runtime::new().map_err(|err| Error::new(err.to_string()))?;
-    runtime.set_memory_limit(MEMORY_LIMIT);
-    runtime.set_max_stack_size(STACK_LIMIT);
-    runtime.set_interrupt_handler(Some(Box::new(|| {
-        COMPILE_DEADLINE.with(Cell::get).is_some_and(|at| Instant::now() >= at)
-    })));
-    let context = Context::full(&runtime).map_err(|err| Error::new(err.to_string()))?;
+    let js = Standalone::start(MEMORY_LIMIT, past_deadline);
     let source = format!(
         "(function () {{ var moqui = {{ define: function (a, b, c) {{ var cb = typeof a === 'string' ? (c || b) : (b === undefined ? a : b);
             return typeof cb === 'function' ? cb() : cb; }} }};
@@ -376,11 +348,9 @@ fn script_templates(script: &str, limit: Duration) -> Result<Vec<(Vec<String>, S
         script_body(script)
     );
     COMPILE_DEADLINE.with(|deadline| deadline.set(Some(Instant::now() + limit)));
-    let found: Result<String, Error> = context.with(|ctx| {
-        ctx.eval(source)
-            .catch(&ctx)
-            .map_err(|err| Error::new(format!("its script did not run: {err}")))
-    });
+    let found: Result<String, Error> = js
+        .text(&source)
+        .map_err(|err| Error::new(format!("its script did not run: {err}")));
     COMPILE_DEADLINE.with(|deadline| deadline.set(None));
     serde_json::from_str(&found?).map_err(|err| Error::new(err.to_string()))
 }

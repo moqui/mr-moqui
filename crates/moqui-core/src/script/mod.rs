@@ -12,25 +12,22 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Script facade: server expressions and XML actions on QuickJS.
+//! Script facade: server expressions, templates and XML actions on quickjs-oxide.
 
 mod actions;
 pub mod bounded;
-pub(crate) mod census;
-pub(crate) mod check;
 pub mod engine;
 pub mod host;
 pub(crate) mod oxide;
 pub mod parse;
 pub(crate) mod run;
 mod runtime;
+pub mod standalone;
 pub mod template;
 pub(crate) mod text;
 pub mod theme;
 pub(crate) mod walker;
 
-pub use census::write_census;
-pub use engine::{script_engine, set_thread_script_engine, with_script_engine, ScriptEngine};
 pub use run::ReleaseScope;
 
 pub(crate) use actions::run_actions_at;
@@ -41,7 +38,6 @@ pub use parse::parse_js;
 pub use runtime::{forget_scripts, oxide_heap_line};
 #[cfg(test)]
 pub(crate) use runtime::script_time_remaining;
-pub(crate) use runtime::with_ctx as walker_context;
 pub use runtime::{
     clear_context_stack, context_value, engine_memory, eval_field_value, eval_map, eval_value, expand,
     push_context_frame, run_script, run_script_location, script_list_values, set_context_name, set_widget_wrap,
@@ -55,10 +51,8 @@ pub use runtime::{
     engine_stats, eval_condition, expand_localized, ContextFrame, DeadlineGuard, EngineMemory, EngineStats,
     IsolatedContext,
 };
-pub use runtime::{text_upload_to_js, with_ctx, with_spec_ctx};
-// for host callbacks outside this crate: moqui-llm's ec.llm
-pub use runtime::{eval_named_value, install_spec_global, value_items, value_map};
-pub use runtime::{facade_of, host_guard, host_to_js, js_error, js_to_host, throw_lib, with_ec};
+// for the test harnesses outside this crate: moqui-devkit's spec engine, moqui-llm's agent specs
+pub use runtime::{eval_named_value, install_spec_global, js_error, value_items, value_map};
 
 #[cfg(test)]
 mod tests {

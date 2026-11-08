@@ -483,13 +483,7 @@ fn the_frame_document_loads_only_the_runtime_and_has_no_network() {
 }
 
 #[test]
-fn a_script_syntax_error_reads_the_same_on_both_engines() {
-    let mut seen = Vec::new();
-    for engine in [moqui_core::script::ScriptEngine::Rquickjs, moqui_core::script::ScriptEngine::Oxide] {
-        seen.push(moqui_core::script::with_script_engine(engine, || {
-            script_error("var a = 1;\nvar b = 2;\nvar c = ;")
-        }));
-    }
-    assert_eq!(seen[0].as_deref(), Some("unexpected token in expression: ';'"));
-    assert_eq!(seen[0], seen[1]);
+fn a_script_syntax_error_reads_as_quickjs_read_it() {
+    let seen = script_error("var a = 1;\nvar b = 2;\nvar c = ;");
+    assert_eq!(seen.as_deref(), Some("unexpected token in expression: ';'"));
 }

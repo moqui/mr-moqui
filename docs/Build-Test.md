@@ -226,8 +226,7 @@ database, so it is off. Stripping symbols saves about 16 MB a binary; it is not 
 function names.
 
 What a clean build still spends: aws-lc-sys (the TLS crypto every package links) is the first link of the longest
-chain, then rustls, reqwest and moqui-core itself; QuickJS is compiled twice because rquickjs's `macro` proc-macro links
-its own copy; postgresql_embedded's build script still compiles reqwest and tokio (without TLS) though it no longer
+chain, then rustls, reqwest and moqui-core itself; postgresql_embedded's build script still compiles reqwest and tokio (without TLS) though it no longer
 uses them. `cargo build --timings` writes the chart to `target/cargo-timings/`.
 
 ### Compile cache

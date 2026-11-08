@@ -247,10 +247,7 @@ tonic-prost-build = { version = "0.14.9", default-features = false }
 protox = "0.10"
 # CSPRNG for CHANGEME secrets written to runtime/.env. No /dev/urandom.
 getrandom = { version = "0.4", features = ["std"] }
-# Exact: `keep_assigned` in moqui-core script/runtime/entities.rs depends on how this version owns the value an
-# exotic set is given. Re-check it, and its test, before moving this.
-rquickjs = "=0.14.0"
-# The script engine in Rust that replaces rquickjs (plans/Script-Engine-Oxide.md). The moqui fork, by exact revision;
+# The script engine, in safe Rust (plans/Script-Engine-Oxide.md). The moqui fork, by exact revision;
 # local work on the fork patches it to ../quickjs-oxide outside committed files. Declares rust-version 1.99.
 quickjs-oxide = { git = "https://github.com/moqui/quickjs-oxide", rev = "7cf1f530fd47c58dfcdeca7f4160e78cb259785a", default-features = false }
 # 0.156.0 declares rust-version 1.97.0.

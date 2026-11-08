@@ -48,7 +48,7 @@ The merges into `mr-mantle` and `mr-marble` kept the commit history of both repo
 
 - Keep XML as the spec language for configuration, entities, services, screens, SECAs, and data files, with only the adaptations required by a Rust runtime.
 - Move the heavy lifting (entity facade, service facade, screen rendering, tooling, and performance-sensitive service implementations) into Rust.
-- Use one language (JavaScript) for scripts and templates on the server, and for inline expressions on the client, so that XML Screens can become client-renderable. The engine is QuickJS.
+- Use one language (JavaScript) for scripts and templates on the server, and for inline expressions on the client, so that XML Screens can become client-renderable. The engine is [quickjs-oxide](https://github.com/moqui/quickjs-oxide), a QuickJS-compatible engine in safe Rust.
 - Default to an embedded Postgres (`postgresql_embedded`, theseus) when no external database is configured, and use an external Postgres when one is. The same engine backs the sim-mode overlay.
 - Make OpenSearch optional from day one by planning a search interface that can be satisfied by Postgres full-text search and JSON operators.
 - Preserve the ExecutionContext / facade shape that makes Moqui’s artifact model work.
@@ -57,7 +57,7 @@ The merges into `mr-mantle` and `mr-marble` kept the commit history of both repo
 
 Most of MR-Moqui is a port of the Java framework as it exists when the port begins. These are the places that change on purpose.
 
-1. **JavaScript for scripts and templates.** Scripts, XML actions, screen macros and text templates are JavaScript on QuickJS; `ec.resource.expand()` is a template literal, and a small `if`/`list`/`assign` renderer (with a locked-down sandbox variant) handles structured text. Plan: [Architecture-Proposal](plans/archive/Architecture-Proposal.md) (Templating).
+1. **JavaScript for scripts and templates.** Scripts, XML actions, screen macros and text templates are JavaScript on quickjs-oxide; `ec.resource.expand()` is a template literal, and a small `if`/`list`/`assign` renderer (with a locked-down sandbox variant) handles structured text. Plan: [Architecture-Proposal](plans/archive/Architecture-Proposal.md) (Templating).
 2. **SearchFacade replaces ElasticFacade.** Postgres full-text and JSON are the default backend; OpenSearch is optional. Plan: [SearchFacade](plans/archive/SearchFacade.md).
 3. **qvt can be server-static.** With `server-static` set for `qvt`, the server sends a data-free compiled template and the client merges the data. Opt-in. Plan: [QvtServerStatic](plans/archive/QvtServerStatic.md).
 4. **Print HTML is its own render mode.** `html-print` (print CSS and `@page`, also selected by the old `xsl-fo` name) is printed to PDF by one long-lived external Chromium; `/fop/<path>` sends a screen as PDF. Plan: [Architecture-Proposal](plans/archive/Architecture-Proposal.md) (Tool components and print).

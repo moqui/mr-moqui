@@ -19,7 +19,16 @@ use moqui_lib::sync::lock;
 
 use indexmap::IndexMap;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+
+use moqui_lib::object::HostObject;
+
 use super::*;
+use crate::context::ExecutionContext;
+use crate::entity::{EntityList, EntityValue};
+use crate::script::host::entities::ScriptList;
 
 /// The fields of a map or an entity value, an entity value's localized fields in the user's locale and a view's
 /// `pq-expression` aliases, as Java's `getMap`.

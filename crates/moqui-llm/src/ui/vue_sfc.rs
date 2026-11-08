@@ -18,8 +18,8 @@
 //! The program is the component's blocks: `<template>`, `<script>` (`module.exports = {...}`, the Options API), an
 //! optional `<style>` and an optional `<actions>`, a JSON list of the writes it may ask for. The server checks it
 //! before anything is shown ([`VueSfc::prepare`]): the size, the blocks, the template compiled with the vendored Vue
-//! compiler (`libs/vue/compiler-dom.cjs.js` in QuickJS, the one the qvt screens compile with), the script compiled
-//! (not run) in QuickJS, the constructs the sandbox refuses (the page, the network, navigation, code from text, raw
+//! compiler (`libs/vue/compiler-dom.cjs.js` in a runtime of its own, the one the qvt screens compile with), the script compiled
+//! (not run) the same way, the constructs the sandbox refuses (the page, the network, navigation, code from text, raw
 //! HTML, elements that load or post), the widgets, the links and the actions. Each problem names its section of the
 //! skill `vue-sfc` and quotes its rule, as OpenUI's do. These checks are a first layer that tells the model what does
 //! not work; the boundary is the frame: the component is compiled in the browser, inside an opaque-origin frame
@@ -956,20 +956,11 @@ fn submitted_names(text: &str) -> Vec<(String, usize)> {
     out
 }
 
-/// The syntax error of `script` compiled (not run) as the body of a function of `module` and `exports`, in a QuickJS
-/// runtime of its own; `None` when it compiles, or when QuickJS cannot start (logged: the browser compiles it again).
+/// The syntax error of `script` compiled (not run) as the body of a function of `module` and `exports`, in a runtime
+/// of its own; `None` when it compiles.
 fn script_error(script: &str) -> Option<String> {
     let deadline = Instant::now() + Duration::from_secs(2);
-    let started = super::standalone::Standalone::start(16 * 1024 * 1024, 1024 * 1024, move || {
-        Instant::now() >= deadline
-    });
-    let js = match started {
-        Ok(js) => js,
-        Err(error) => {
-            tracing::error!("The script engine did not start to check a Vue SFC script: {error}");
-            return None;
-        }
-    };
+    let js = moqui_core::script::standalone::Standalone::start(16 * 1024 * 1024, move || Instant::now() >= deadline);
     let source = serde_json::to_string(script).ok()?;
     // the message alone: QuickJS gives a syntax error no line, and quickjs-oxide's `lineNumber` counts the two lines
     // `new Function` puts before the body

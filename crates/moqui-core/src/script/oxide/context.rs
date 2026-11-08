@@ -114,7 +114,6 @@ impl ExoticClass for ContextStack {
         };
         guarded_hook(scope, |_| {
             super::tracked::forget(&name)?;
-            crate::script::census::note_side_effect();
             STACK.with(|stack| {
                 stack.borrow_mut().remove(&name);
             });

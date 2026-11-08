@@ -34,7 +34,6 @@ mod engine;
 mod errors;
 mod host;
 mod names;
-mod reads;
 mod resource;
 pub(crate) mod spec;
 pub(crate) mod templates;
@@ -45,11 +44,9 @@ pub(crate) mod walker;
 mod widget;
 
 pub(crate) use engine::{
-    start_failed_recently, DID_NOT_START,
-    engine_memory, eval_condition, heap_line, eval_map, eval_text, eval_value, is_lent, release_for_quickjs, run_actions, run_script, stats,
+    engine_memory, eval_condition, heap_line, eval_map, eval_text, eval_value, is_lent, run_actions, run_script, stats,
     thread_heap_peaks, Outcome,
 };
-pub(crate) use reads::reads_are_held;
 
 #[cfg(test)]
 pub(crate) use engine::run_jobs_for_tests;

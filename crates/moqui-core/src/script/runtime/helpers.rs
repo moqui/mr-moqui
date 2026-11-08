@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Global helper functions: `compare`, `basicConvert`, list ordering and filtering, and the query-string wildcard.
+//! The helper functions every script runtime installs, and the values they hand out.
 
 use super::*;
 
@@ -86,25 +86,6 @@ pub(crate) const HELPERS_JS: &str = r#"
 })();
 "#;
 
-pub(super) fn install_helpers(ctx: &Ctx<'_>) -> Result<(), Error> {
-    let globals = ctx.globals();
-    let compare = Function::new(ctx.clone(), js_compare).map_err(js_error)?;
-    globals.set("compare", compare).map_err(js_error)?;
-    let convert = Function::new(ctx.clone(), js_basic_convert).map_err(js_error)?;
-    globals.set("basicConvert", convert).map_err(js_error)?;
-    let to_decimal = Function::new(ctx.clone(), js_to_decimal).map_err(js_error)?;
-    globals.set("toDecimal", to_decimal).map_err(js_error)?;
-    let words = Function::new(ctx.clone(), js_number_to_words_with_decimal).map_err(js_error)?;
-    globals.set("numberToWordsWithDecimal", words).map_err(js_error)?;
-    let words = Function::new(ctx.clone(), js_number_to_words).map_err(js_error)?;
-    globals.set("numberToWords", words).map_err(js_error)?;
-    let order = Function::new(ctx.clone(), js_compare_order).map_err(js_error)?;
-    globals.set("__compareOrder", order).map_err(js_error)?;
-    let in_range = Function::new(ctx.clone(), js_in_date_range).map_err(js_error)?;
-    globals.set("__inDateRange", in_range).map_err(js_error)?;
-    caught(ctx, "helpers", ctx.eval::<(), _>(HELPERS_JS))
-}
-
 /// Java type name of a value, so a string on the other side of a compare converts to it.
 pub(crate) fn java_type_of(value: &Value) -> &'static str {
     match value {
@@ -121,114 +102,6 @@ pub(crate) fn java_type_of(value: &Value) -> &'static str {
     }
 }
 
-pub(super) fn js_compare<'js>(
-    ctx: Ctx<'js>,
-    field: JsValue<'js>,
-    operator: String,
-    value: JsValue<'js>,
-    to_field: JsValue<'js>,
-    _format: JsValue<'js>,
-    kind: Opt<String>,
-) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        let field = js_to_host(&ctx, &field)?;
-        let value = js_to_host(&ctx, &value)?;
-        let target = if value.is_null() {
-            js_to_host(&ctx, &to_field)?
-        } else {
-            value
-        };
-        let kind = kind.0.filter(|name| !name.is_empty() && name != "Object");
-        let kind = kind.unwrap_or_else(|| java_type_of(&field).to_string());
-        crate::l10n::compare(&field, &operator, &target, &kind).map_err(|err| throw_lib(&ctx, &err))
-    })
-}
-
-pub(super) fn js_basic_convert<'js>(
-    ctx: Ctx<'js>,
-    value: JsValue<'js>,
-    kind: String,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let host = js_to_host(&ctx, &value)?;
-        host_to_js(&ctx, crate::l10n::basic_convert(&host, &kind).value)
-    })
-}
-
-/// `toDecimal(x)`: a decimal from a decimal, a number or numeric text, else an error.
-pub(super) fn js_to_decimal<'js>(ctx: Ctx<'js>, value: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let host = js_to_host(&ctx, &value)?;
-        match super::decimal::decimal_of(&host) {
-            Some(decimal) => host_to_js(&ctx, decimal),
-            None => Err(Exception::throw_message(
-                &ctx,
-                &format!(
-                    "toDecimal takes a decimal, a number or numeric text, not {}",
-                    moqui_lib::object::to_plain_string(&host)
-                ),
-            )),
-        }
-    })
-}
-
-/// `numberToWords(value, useAnd)` for a whole number.
-pub(super) fn js_number_to_words<'js>(
-    ctx: Ctx<'js>,
-    value: JsValue<'js>,
-    use_and: Opt<bool>,
-) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        let whole = js_i64(&ctx, &value)?;
-        Ok(moqui_lib::string::number_to_words(whole, use_and.0.unwrap_or(false)))
-    })
-}
-
-/// `numberToWordsWithDecimal(amount)`: the whole part in words, then `and NN/100` of the amount rounded to cents, as
-/// Java's: `1234.5` is `One thousand two hundred  thirty four and 50/100`.
-pub(super) fn js_number_to_words_with_decimal<'js>(ctx: Ctx<'js>, value: JsValue<'js>) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        let host = js_to_host(&ctx, &value)?;
-        let Some(Value::Decimal(amount)) = super::decimal::decimal_of(&host) else {
-            return Err(Exception::throw_message(
-                &ctx,
-                "numberToWordsWithDecimal takes a decimal or a number",
-            ));
-        };
-        let whole: i64 = amount
-            .trunc()
-            .to_string()
-            .parse()
-            .map_err(|_| Exception::throw_message(&ctx, "the amount is too large"))?;
-        let mut cents = amount.round_dp_with_strategy(2, moqui_lib::format::RoundingStrategy::MidpointAwayFromZero);
-        cents.rescale(2);
-        let text = cents.to_string();
-        let fraction = text.rsplit('.').next().unwrap_or("00");
-        Ok(format!(
-            "{} and {fraction}/100",
-            moqui_lib::string::number_to_words(whole, false)
-        ))
-    })
-}
-
-pub(super) fn js_compare_order<'js>(ctx: Ctx<'js>, left: JsValue<'js>, right: JsValue<'js>) -> rquickjs::Result<i32> {
-    host_guard(&ctx, || {
-        let left = js_to_host(&ctx, &left)?;
-        let right = js_to_host(&ctx, &right)?;
-        let ordering = match moqui_lib::object::compare_obj(&left, &right) {
-            Ok(ordering) => ordering,
-            // A null on the right cannot be ordered, so it sorts after a value.
-            Err(_) if right.is_null() => Ordering::Less,
-            Err(_) => Ordering::Equal,
-        };
-        Ok(match ordering {
-            Ordering::Less => -1,
-            Ordering::Equal => 0,
-            Ordering::Greater => 1,
-        })
-    })
-}
-
 /// A time stamp from a script's value: epoch millis, a time stamp, or text, which is in the session time zone unless it
 /// has an offset.
 pub(crate) fn timestamp_of(value: &Value) -> Value {
@@ -238,27 +111,4 @@ pub(crate) fn timestamp_of(value: &Value) -> Value {
 /// `ec.user.nowTimestamp`: the context's effective time, or the clock.
 pub(crate) fn now_timestamp() -> Value {
     timestamp_of(&Value::I64(crate::user::now_effective_millis()))
-}
-
-pub(super) fn js_in_date_range<'js>(
-    ctx: Ctx<'js>,
-    from: JsValue<'js>,
-    thru: JsValue<'js>,
-    valid: JsValue<'js>,
-) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        let from = timestamp_of(&js_to_host(&ctx, &from)?);
-        let thru = timestamp_of(&js_to_host(&ctx, &thru)?);
-        let valid = js_to_host(&ctx, &valid)?;
-        let valid = if moqui_lib::object::is_empty(&valid) {
-            now_timestamp()
-        } else {
-            timestamp_of(&valid)
-        };
-        let started = from.is_null()
-            || moqui_lib::object::compare_obj(&from, &valid).is_ok_and(|ordering| ordering != Ordering::Greater);
-        let open = thru.is_null()
-            || moqui_lib::object::compare_obj(&thru, &valid).is_ok_and(|ordering| ordering == Ordering::Greater);
-        Ok(started && open)
-    })
 }

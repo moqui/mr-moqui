@@ -696,21 +696,19 @@ fn bundled_screens_are_precompiled() {
 /// Run a bundle of `precompiled_qvue` as the shell does, with a stand-in Vue and `moqui`, and make each of `names`:
 /// what is wrong (a screen that is missing or does not make, a component left with a template or without a render).
 fn made_bundle(made: &str, names: &[&str]) -> Vec<String> {
-    use rquickjs::CatchResultExt;
-    let runtime = rquickjs::Runtime::new().unwrap();
-    let context = rquickjs::Context::full(&runtime).unwrap();
-    context.with(|ctx| {
-        ctx.eval::<(), _>(
+    let js = crate::script::standalone::Standalone::start(256 * 1024 * 1024, || false);
+    {
+        js.run(
             "globalThis.moqui = { define: function () {}, l10n: null };
              globalThis.Vue = new Proxy({}, { get: function () { return function () { return {}; }; } });",
         )
         .unwrap();
-        if let Err(err) = ctx.eval::<(), _>(made).catch(&ctx) {
+        if let Err(err) = js.run(made) {
             return vec![format!("the bundle did not run: {err}")];
         }
         let names = serde_json::to_string(names).unwrap();
-        let json: String = ctx
-            .eval(format!(
+        let json: String = js
+            .text(&format!(
                 "(function () {{ var wrong = []; {names}.forEach(function (name) {{
                     var entry = moqui.qvtBundled[name];
                     if (!entry) {{ wrong.push(name + ': missing'); return; }}
@@ -724,17 +722,15 @@ fn made_bundle(made: &str, names: &[&str]) -> Vec<String> {
                             walk(cs[n], path + '/' + n); }}); }})(made.component, name);
                 }}); return JSON.stringify(wrong); }})()"
             ))
-            .catch(&ctx)
             .unwrap();
         serde_json::from_str(&json).unwrap()
-    })
+    }
 }
 
 /// A bundled `.qvue` comes out as a script whose `make` answers its component with render functions, for its template
 /// and its components' string templates (a component listed twice, or listing itself, once), and its style.
 #[test]
 fn a_bundled_qvue_makes_its_component_with_render_functions() {
-    use rquickjs::CatchResultExt;
     let compiler = std::fs::read_to_string(
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../runtime/base-component/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js"),
@@ -761,23 +757,21 @@ module.exports = {
         2,
         "the root and the one row component: {made}"
     );
-    let runtime = rquickjs::Runtime::new().unwrap();
-    let context = rquickjs::Context::full(&runtime).unwrap();
-    let checked: String = context.with(|ctx| {
-        ctx.eval::<(), _>(
+    let js = crate::script::standalone::Standalone::start(256 * 1024 * 1024, || false);
+    let checked: String = {
+        js.run(
             "globalThis.moqui = { define: function () {} };
              globalThis.Vue = new Proxy({}, { get: function () { return function () { return {}; }; } });",
         )
         .unwrap();
-        ctx.eval::<(), _>(made.as_str()).catch(&ctx).unwrap();
-        ctx.eval(
+        js.run(made.as_str()).unwrap();
+        js.text(
             "(function () { var b = moqui.qvtBundled.Sample.make(globalThis.Vue); var row = b.component.components['item-row'];
                 return [b.component.name, row === b.component.components['same-row'], typeof row.components.again.render,
                     b.style.trim(), String(b.scoped)].join('|'); })()",
         )
-        .catch(&ctx)
         .unwrap()
-    });
+    };
     assert_eq!(checked, "Sample|true|function|.x { color: red; }|true");
     // a leading export default, as parseVue takes it
     let exported = crate::screen::vue_check::precompiled_qvue(

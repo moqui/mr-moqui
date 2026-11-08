@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Screen units on quickjs-oxide under `script_engine=oxide`: the [`Runner`] a render runs its units with, the oxide
+//! Screen units on quickjs-oxide: the [`Runner`] a render runs its units with, the oxide
 //! side of `runtime/screen_host.rs`. Generation runs on the thread's oxide generator (`screen::generate`,
 //! `oxide::walker`); a unit runs on the thread's main oxide runtime.
 //!
@@ -53,11 +53,11 @@ pub(crate) static RUNNER: OxideRunner = OxideRunner;
 
 impl Runner for OxideRunner {
     fn generate(&self, request: &UnitRequest<'_>) -> Result<Option<Arc<Unit>>, Error> {
-        generate::unit_for(None, request)
+        generate::unit_for(request)
     }
 
     fn generate_dynamic(&self, request: &UnitRequest<'_>, form: &FormInstance) -> Result<Arc<Unit>, Error> {
-        generate::unit_for_dynamic_form(None, request, form)
+        generate::unit_for_dynamic_form(request, form)
     }
 
     fn run(&self, unit: &Unit) -> Result<(), Error> {
@@ -72,10 +72,7 @@ impl Runner for OxideRunner {
             let mut context = engine.context().clone();
             return in_unit_scope(&engine, &mut context, |context| call_unit(&engine, context, unit));
         }
-        crate::script::engine::count(
-            crate::script::engine::EntryKind::Host,
-            crate::script::engine::Route::Oxide,
-        );
+        crate::script::engine::count(crate::script::engine::EntryKind::Host);
         let ran = with_run(true, "a screen unit", |engine, context, note| {
             call_unit(engine, context, unit).map_err(|err| {
                 if err.message().contains(super::errors::POISONED) {
@@ -87,7 +84,7 @@ impl Runner for OxideRunner {
         ran.map_err(|outcome| match outcome {
             Outcome::Error(err) => err,
             Outcome::Fallback(reason) => Error::new(format!(
-                "script_engine=oxide: this screen unit needs {reason}, which the quickjs-oxide bindings do not have yet"
+                "this screen unit needs {reason}, which the quickjs-oxide bindings do not have yet"
             )),
         })
     }
@@ -97,7 +94,7 @@ impl Runner for OxideRunner {
     }
 }
 
-/// [`crate::script::with_screen_runner`] under `script_engine=oxide`: the render is one run, with one deadline, its
+/// [`crate::script::with_screen_runner`]: the render is one run, with one deadline, its
 /// unit depth starting afresh as on QuickJS (nested in a running oxide script, a nested run). Its Rust body holds the
 /// runtime free ([`RenderBody`]), so the units and scripts it runs enter it as runs nested in the render's.
 pub(crate) fn with_screen_runner<R>(body: impl FnOnce(&dyn Runner) -> Result<R, Error>) -> Result<R, Error> {
@@ -111,11 +108,11 @@ pub(crate) fn with_screen_runner<R>(body: impl FnOnce(&dyn Runner) -> Result<R, 
         }
         Ok(())
     };
-    let ran = crate::script::engine::cross_into_oxide(true, || with_run(true, "a screen render", render))?;
+    let ran = with_run(true, "a screen render", render);
     match (ran, result) {
         (_, Some(Err(err))) | (Err(Outcome::Error(err)), _) => Err(err),
         (Err(Outcome::Fallback(reason)), _) => Err(Error::new(format!(
-            "script_engine=oxide: this screen render needs {reason}, which the quickjs-oxide bindings do not have yet"
+            "this screen render needs {reason}, which the quickjs-oxide bindings do not have yet"
         ))),
         (Ok(()), Some(Ok(value))) => Ok(value),
         (Ok(()), None) => Err(Error::new("the screen render did not run")),
