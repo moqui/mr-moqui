@@ -25,8 +25,14 @@ along with this software (see the LICENSE.md file). If not, see
                 @update:model-value="(v) => save({videoIn: v})"></q-select>
         <q-select dense outlined emit-value map-options :label="t('Speaker')" :options="options('audiooutput')" :model-value="settings.audioOut"
                 @update:model-value="(v) => save({audioOut: v})"></q-select>
-        <div><q-btn flat no-caps icon="sym_o_mic" :label="t('Test the microphone and camera')" @click="test"></q-btn>
-            <q-linear-progress v-if="testing" :value="level" color="positive" class="q-mt-xs"></q-linear-progress></div>
+        <div><q-btn flat no-caps icon="sym_o_mic" :label="t('Test the microphone and camera')" :loading="pending" :disable="pending || testing" @click="test"></q-btn>
+            <q-btn v-if="pending || testing" flat no-caps :label="pending ? t('Cancel test') : t('Stop test')" @click="stop"></q-btn>
+            <div v-if="pending" role="status" aria-live="polite" class="text-caption m-muted q-mt-xs">{{t('Waiting for microphone and camera access. Check the browser permission prompt.')}}</div>
+            <q-banner v-if="testError" dense rounded role="alert" class="m-tonal text-negative q-mt-xs">{{testError}}</q-banner>
+            <template v-if="testing">
+                <div role="status" class="text-caption m-muted q-mt-xs">{{t('Device test running. Speak to check the microphone level.')}}</div>
+                <q-linear-progress :value="level" color="positive" class="q-mt-xs"></q-linear-progress>
+            </template></div>
         <q-toggle :model-value="settings.ringtone" :label="t('Play a ringtone for a call')" @update:model-value="(v) => save({ringtone: v})"></q-toggle>
         <q-toggle :model-value="settings.joinMuted" :label="t('Start calls muted')" @update:model-value="(v) => save({joinMuted: v})"></q-toggle>
         <q-toggle :model-value="settings.cameraOff" :label="t('Start calls with the camera off')" @update:model-value="(v) => save({cameraOff: v})"></q-toggle>
@@ -37,7 +43,7 @@ along with this software (see the LICENSE.md file). If not, see
 const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
 module.exports = {
     name: 'CallSettings',
-    data() { return { devices: [], testing: false, level: 0, stream: null, meter: null }; },
+    data() { return { devices: [], pending: false, testing: false, testError: null, testRequest: 0, stopTimer: null, level: 0, stream: null, meter: null }; },
     computed: {
         store() { return moqui.call || null; },
         settings() { return moqui.call ? moqui.call.state.settings : {}; }
@@ -57,34 +63,59 @@ module.exports = {
         save(changes) { if (moqui.call) moqui.call.saveSettings(changes); },
         test() {
             this.stop();
+            this.testError = null;
             if (!moqui.call) return;
-            moqui.call.getMedia(true).then((stream) => {
-                if (!stream) return;
+            const request = this.testRequest;
+            this.pending = true;
+            const failed = () => {
+                if (request !== this.testRequest) return;
+                this.stop();
+                this.testError = t('The devices could not be opened. Check microphone and camera permissions and availability, then try again.');
+            };
+            const received = (stream) => {
+                if (request !== this.testRequest) {
+                    if (stream) stream.getTracks().forEach((track) => track.stop());
+                    return;
+                }
+                if (!stream) { failed(); return; }
+                this.pending = false;
                 this.stream = stream;
                 this.testing = true;
                 this.list();
+                this.stopTimer = setTimeout(() => { if (request === this.testRequest) this.stop(); }, 10000);
                 const Ctx = window.AudioContext || window.webkitAudioContext;
                 if (!Ctx || !stream.getAudioTracks().length) return;
-                const ctx = new Ctx();
-                const analyser = ctx.createAnalyser();
-                ctx.createMediaStreamSource(stream).connect(analyser);
-                const data = new Uint8Array(analyser.fftSize);
-                const tick = () => {
-                    analyser.getByteTimeDomainData(data);
-                    let peak = 0;
-                    for (const v of data) peak = Math.max(peak, Math.abs(v - 128));
-                    this.level = Math.min(1, peak / 64);
-                    this.meter.frame = requestAnimationFrame(tick);
-                };
-                this.meter = { ctx, frame: requestAnimationFrame(tick) };
-                setTimeout(() => this.stop(), 10000);
-            });
+                let ctx = null;
+                try {
+                    ctx = new Ctx();
+                    const analyser = ctx.createAnalyser();
+                    ctx.createMediaStreamSource(stream).connect(analyser);
+                    const data = new Uint8Array(analyser.fftSize);
+                    const tick = () => {
+                        analyser.getByteTimeDomainData(data);
+                        let peak = 0;
+                        for (const v of data) peak = Math.max(peak, Math.abs(v - 128));
+                        this.level = Math.min(1, peak / 64);
+                        this.meter.frame = requestAnimationFrame(tick);
+                    };
+                    this.meter = { ctx, frame: requestAnimationFrame(tick) };
+                } catch (err) {
+                    if (ctx) { try { ctx.close(); } catch (e) { /* closed */ } }
+                    this.stop();
+                    this.testError = t('The microphone level could not be tested. Check browser audio support and try again.');
+                }
+            };
+            try { moqui.call.getMedia(true).then(received, failed); } catch (err) { failed(); }
         },
         stop() {
+            this.testRequest++;
+            this.pending = false;
+            if (this.stopTimer != null) { clearTimeout(this.stopTimer); this.stopTimer = null; }
             if (this.meter) { cancelAnimationFrame(this.meter.frame); try { this.meter.ctx.close(); } catch (e) { /* closed */ } this.meter = null; }
             if (this.stream) this.stream.getTracks().forEach((track) => track.stop());
             this.stream = null;
             this.testing = false;
+            this.level = 0;
         }
     }
 };

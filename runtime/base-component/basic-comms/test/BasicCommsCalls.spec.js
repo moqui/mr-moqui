@@ -67,6 +67,65 @@ spec({
     }
 })
 
+feature("call device tests report pending and failed requests and release cancelled or unmounted streams", {
+    expect() {
+        // Actual component methods with controlled media answers; this is no browser permission or live-media proof.
+        const source = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Settings/Calls.qvue", false)
+        const requests = [], timers = new Map()
+        let timerId = 0, stopped = 0
+        const scope = {
+            module: {exports: {}},
+            moqui: {call: {getMedia: () => ({then: (resolve, reject) => requests.push({resolve, reject})})}},
+            window: {navigator: {mediaDevices: {enumerateDevices: () => ({then: resolve => resolve([])})}}},
+            setTimeout: callback => { timers.set(++timerId, callback); return timerId },
+            clearTimeout: id => timers.delete(id)
+        }
+        runInContext(/<script>([\s\S]*?)<\/script>/.exec(source)[1], scope)
+        const component = scope.module.exports
+        const state = Object.assign(component.data(), component.methods)
+        const stream = () => ({getTracks: () => [{stop: () => stopped++}], getAudioTracks: () => []})
+        state.test()
+        assert.equal(state.pending, true, "a pending permission request has visible state immediately")
+        assert.equal(state.testing, false, "waiting does not claim that media is running")
+        state.stop()
+        assert.equal(state.pending, false)
+        requests[0].resolve(stream())
+        assert.equal(stopped, 1, "media arriving after Cancel is stopped")
+        assert.equal(state.stream, null)
+        state.test()
+        requests[0].reject(new Error("late refusal"))
+        assert.equal(state.pending, true, "a stale refusal cannot end a newer request")
+        requests[1].resolve(null)
+        assert.equal(state.pending, false)
+        assert.equal(state.testing, false)
+        assert.ok(state.testError.includes("permissions"), "a null result explains how to retry")
+        state.test()
+        assert.equal(state.testError, null, "retry clears the previous refusal")
+        requests[2].reject(new Error("permission refused"))
+        assert.ok(state.testError.includes("permissions"), "a rejected request is also visible")
+        state.test()
+        requests[3].resolve(stream())
+        assert.equal(state.pending, false)
+        assert.equal(state.testing, true)
+        const oldStop = timers.get(state.stopTimer)
+        assert.equal(typeof oldStop, "function", "a stream stops even without an AudioContext")
+        state.test()
+        assert.equal(stopped, 2, "retry releases the earlier stream")
+        requests[4].resolve(stream())
+        oldStop()
+        assert.equal(state.testing, true, "an earlier test's timeout cannot stop its replacement")
+        component.beforeUnmount.call(state)
+        assert.equal(stopped, 3)
+        assert.equal(timers.size, 0, "unmount clears the running test's timer")
+        state.test()
+        component.beforeUnmount.call(state)
+        requests[5].resolve(stream())
+        assert.equal(stopped, 4, "media arriving after unmount is stopped too")
+        assert.equal(state.testing, false)
+        assert.equal(state.stream, null)
+    }
+})
+
 feature("a user with no party calls john.doe and he answers, through the Calls transitions", {
     when() {
         ec.user.internalLoginUser("basic.comms.caller")
