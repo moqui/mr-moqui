@@ -80,7 +80,7 @@ along with this software (see the LICENSE.md file). If not, see
         </box-body></container-box>
 
         <section name="EditExampleSection" condition="example"><widgets>
-            <container-box><box-header title="Example ${example.exampleName}"/><box-toolbar>
+            <container-box><box-header title="${ec.l10n.localize('Example')} ${example.exampleName}"/><box-toolbar>
                 <link url="." text="Close" icon="sym_o_close" link-type="anchor-button" btn-type="default"/>
             </box-toolbar><box-body>
                 <form-single name="EditExample" map="example" transition="updateExample">
@@ -148,7 +148,7 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="estimate" align="right"><default-field title="Est.">
                 <editable id="WorkEstimate" text="${estimate}" transition="editEstimate" parameter-name="estimate" widget-type="text-line">
                     <parameter name="itemId"/></editable></default-field></field>
-            <field name="actual" align="right"><default-field title="Act."><display/></default-field></field>
+            <field name="actual" align="right"><default-field title="Act"><display/></default-field></field>
             <field name="totalEstimate" align="right"><default-field title="Total est."><display/></default-field></field>
             <field name="totalActual" align="right"><default-field title="Total act."><display/></default-field></field>
             <field name="doneOfTotal" align="right"><default-field title="Done"><display/></default-field></field>

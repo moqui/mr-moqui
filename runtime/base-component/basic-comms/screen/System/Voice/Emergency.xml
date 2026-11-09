@@ -111,7 +111,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="validationText"><default-field title="Validation"><display/></default-field></field>
                 <field name="readyText"><default-field title="Ready"><display style="text-caption"/></default-field></field>
                 <field name="tools" align="right"><default-field title="">
-                    <container-dialog id="EditLocationDialog_${emergencyLocationId}" button-text="Edit" icon="sym_o_edit" width="720" title="Edit ${name}">
+                    <container-dialog id="EditLocationDialog_${emergencyLocationId}" button-text="Edit" icon="sym_o_edit" width="720" title="${ec.l10n.localize('Edit')} ${name}">
                         <form-single name="EditLocation" transition="storeLocation">
                             <field name="emergencyLocationId" from="emergencyLocationId"><default-field><hidden/></default-field></field>
                             <field name="name" from="name"><default-field title="Name"><text-line size="30"/></default-field></field>

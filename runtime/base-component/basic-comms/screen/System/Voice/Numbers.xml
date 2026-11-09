@@ -90,7 +90,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="messagingName"><default-field title="Texts"><display/></default-field></field>
                 <field name="description"><default-field title="Description"><display style="text-caption"/></default-field></field>
                 <field name="tools" align="right"><default-field title="">
-                    <container-dialog id="EditNumberDialog_${phoneNumber}" button-text="Edit" icon="sym_o_edit" width="640" title="Edit ${phoneNumber}">
+                    <container-dialog id="EditNumberDialog_${phoneNumber}" button-text="Edit" icon="sym_o_edit" width="640" title="${ec.l10n.localize('Edit')} ${phoneNumber}">
                         <form-single name="EditNumber" transition="storeNumber">
                             <field name="phoneNumber" from="phoneNumber"><default-field><hidden/></default-field></field>
                             <field name="voiceTrunkId" from="voiceTrunkId"><default-field title="Trunk"><drop-down allow-empty="true"><list-options list="trunkOptions" key="${key}" text="${text}"/></drop-down></default-field></field>

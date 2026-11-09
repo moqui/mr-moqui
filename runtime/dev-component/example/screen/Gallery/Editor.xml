@@ -47,7 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <service-call name="org.moqui.impl.WikiServices.get#WikiPageInfo" in-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath}"
                     out-map="restoreInfo"/>
-            <if condition="!restoreInfo.wikiPageId"><return error="true" message="There is no page ${pagePath} in ${wikiSpaceId}"/></if>
+            <if condition="!restoreInfo.wikiPageId"><return error="true" message="There is no page ${pagePath} in ${wikiSpaceId}."/></if>
             <service-call name="org.moqui.impl.WikiServices.restore#WikiPageVersion"
                     in-map="{wikiPageId:restoreInfo.wikiPageId, versionName:versionName}"/>
             <message>Restored version ${versionName.substring(0, 10)} as the newest version</message>

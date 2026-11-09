@@ -38,7 +38,7 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <container-box><box-header title="Prompt of ${preview?.agentId ?? ''} on ${preview?.surface ?? ''} (${preview?.variant ?? ''})"/>
             <box-toolbar>
-                <link url="modelDetail" text="Model ${preview?.modelId}" condition="preview?.modelId" parameter-map="{modelId: preview.modelId}"/>
+                <link url="modelDetail" text="${ec.l10n.localize('Model')} ${preview?.modelId}" condition="preview?.modelId" parameter-map="{modelId: preview.modelId}"/>
             </box-toolbar><box-body>
             <form-single name="PreviewOptions" transition=".">
                 <field name="agentId"><default-field title="Agent"><drop-down allow-empty="false" no-current-selected-key="assist">

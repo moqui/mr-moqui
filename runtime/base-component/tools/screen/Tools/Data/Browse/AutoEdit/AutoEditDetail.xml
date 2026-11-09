@@ -22,15 +22,15 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="list"><default-response url="../../MainEntityList"/></transition>
     <transition name="find"><default-response url="../../AutoFind"/></transition>
     <transition name="create"><actions>
-        <if condition="WebUtilities.isRestrictedGenericEntity(den)"><message error="true">Entity ${den} is not available through this tool</message><return/></if>
+        <set field="entityName" from="den"/><if condition="WebUtilities.isRestrictedGenericEntity(den)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
         <service-call name="create#${den}" in-map="true"/></actions>
         <default-response url="." parameter-map="ec.entity.getEntityDefinition(aen).getPrimaryKeys(context)"/></transition>
     <transition name="update"><actions>
-        <if condition="WebUtilities.isRestrictedGenericEntity(den)"><message error="true">Entity ${den} is not available through this tool</message><return/></if>
+        <set field="entityName" from="den"/><if condition="WebUtilities.isRestrictedGenericEntity(den)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
         <service-call name="update#${den}" in-map="true"/></actions>
         <default-response url="." parameter-map="ec.entity.getEntityDefinition(aen).getPrimaryKeys(context)"/></transition>
     <transition name="deleteRecord"><actions>
-        <if condition="WebUtilities.isRestrictedGenericEntity(den)"><message error="true">Entity ${den} is not available through this tool</message><return/></if>
+        <set field="entityName" from="den"/><if condition="WebUtilities.isRestrictedGenericEntity(den)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
         <service-call name="delete#${den}" in-map="context"/></actions>
         <default-response url="." parameter-map="ec.entity.getEntityDefinition(aen).getPrimaryKeys(context)"/></transition>
     <transition name="getFormXml" read-only="true">
@@ -67,8 +67,8 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <container>
             <link url="list" text="Entity List" link-type="hidden-form"/>
-            <link url="find" text="Find ${ec.entity.getEntityDefinition(aen).getPrettyName(null, null)}" link-type="hidden-form"/>
-            <container-dialog id="CreateValueDialog" button-text="New ${ec.entity.getEntityDefinition(den).getPrettyName(null, aen)}">
+            <link url="find" text="${ec.l10n.localize('Find')} ${ec.entity.getEntityDefinition(aen).getPrettyName(null, null)}" link-type="hidden-form"/>
+            <container-dialog id="CreateValueDialog" button-text="${ec.l10n.localize('New')} ${ec.entity.getEntityDefinition(den).getPrettyName(null, aen)}">
                 <form-single name="CreateEntityValue" transition="create" dynamic="true">
                     <auto-fields-entity entity-name="${den}" field-type="edit"/>
                     <field name="aen"><default-field><hidden/></default-field></field>

@@ -23,13 +23,13 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="edit"><default-response url="."/></transition>
     <transition name="update">
         <actions>
-            <if condition="WebUtilities.isRestrictedGenericEntity(selectedEntity)"><message error="true">Entity ${selectedEntity} is not available through this tool</message><return/></if>
+            <set field="entityName" from="selectedEntity"/><if condition="WebUtilities.isRestrictedGenericEntity(selectedEntity)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
             <service-call name="update#${selectedEntity}" in-map="true"/></actions>
         <default-response url="." parameter-map="ec.entity.getEntityDefinition(selectedEntity).getPrimaryKeys(context)"/>
     </transition>
 
     <actions>
-        <if condition="WebUtilities.isRestrictedGenericEntity(selectedEntity)"><message error="true">Entity ${selectedEntity} is not available through this tool</message><return/></if>
+        <set field="entityName" from="selectedEntity"/><if condition="WebUtilities.isRestrictedGenericEntity(selectedEntity)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
         <set field="entityDefinition" from="ec.entity.getEntityDefinition(selectedEntity)"/>
 
         <set field="dependentLevels" from="parseInt(dependentLevels || '0', 10)"/>

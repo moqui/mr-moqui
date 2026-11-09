@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
         <section name="ExampleSection" condition="example"><widgets>
             <link url="search" text="Back to the search" icon="sym_o_arrow_back" link-type="anchor"/>
             <container-row><row-col lg="6">
-                <container-box><box-header title="Example ${exampleId}"/><box-body>
+                <container-box><box-header title="${ec.l10n.localize('Example')} ${exampleId}"/><box-body>
                     <form-single name="EditExampleForm" map="example" transition="updateExample">
                         <field name="exampleId"><default-field><hidden/></default-field></field>
                         <field name="exampleName"><default-field title="Name"><text-line size="30"/></default-field></field>

@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
                 in-map="Object.assign({}, context, {screenLocation: sri.getActiveScreenDef().location, bodyParameters: ec.web.requestParameters})"/>
         <actions>
             <if condition="!ec.message.hasError()">
-                <message type="success">Your report is being generated and will be sent to ${toAddresses} when ready.</message></if>
+                <set field="reportTo" from="toAddresses"/><message type="success">Your report is being generated and will be sent to ${reportTo} when ready.</message></if>
         </actions>
         <default-response url="." parameter-map="ec.web.requestParameters"/>
     </transition>
@@ -31,7 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
                 in-map="Object.assign({}, context, {screenLocation: sri.getActiveScreenDef().location, bodyParameters: ec.web.requestParameters, toAddresses: ec.user.userAccount?.emailAddress})"/>
         <actions>
             <if condition="!ec.message.hasError()">
-                <message type="success">Your report is being generated and will be sent to ${ec.user.userAccount?.emailAddress} when ready.</message></if>
+                <set field="reportTo" from="ec.user.userAccount?.emailAddress"/><message type="success">Your report is being generated and will be sent to ${reportTo} when ready.</message></if>
         </actions>
         <default-response url="." parameter-map="ec.web.requestParameters"/>
     </transition>

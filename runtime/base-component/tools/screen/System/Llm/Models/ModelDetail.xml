@@ -47,7 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
                         probeDate: stored?.probeDate ?? null, evidence: stored?.evidence ?? ''} })"/>
     </actions>
     <widgets>
-        <container-box><box-header title="Model ${modelId}"/><box-toolbar>
+        <container-box><box-header title="${ec.l10n.localize('Model')} ${modelId}"/><box-toolbar>
             <link url="testModel" text="Test" tooltip="One small call to the model"/>
             <link url="probeModel" text="Probe Capabilities" confirmation="Send a small live request for each capability?"/>
             <link url="callList" text="Calls" parameter-map="{modelId:modelId}"/>

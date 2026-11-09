@@ -79,7 +79,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="bodyText"><default-field title="Text"><display style="text-caption m-muted"/></default-field></field>
                 <field name="sharedText"><default-field title="Who has it"><display style="text-caption"/></default-field></field>
                 <field name="tools" align="right"><conditional-field condition="isOwner" title="">
-                    <container-dialog id="EditTextBlockDialog" button-text="Edit" icon="sym_o_edit" width="640" title="Edit ${title}">
+                    <container-dialog id="EditTextBlockDialog" button-text="Edit" icon="sym_o_edit" width="640" title="${ec.l10n.localize('Edit')} ${title}">
                         <form-single name="EditTextBlock" transition="storeTextBlock">
                             <field name="emailTextBlockId" from="emailTextBlockId"><default-field><hidden/></default-field></field>
                             <field name="title" from="title"><default-field title="Name"><text-line size="40"/></default-field></field>

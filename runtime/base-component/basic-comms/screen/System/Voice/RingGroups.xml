@@ -93,7 +93,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="scheduleName"><default-field title="Hours"><display/></default-field></field>
                 <field name="numbersText"><default-field title="Numbers"><display/></default-field></field>
                 <field name="tools" align="right"><default-field title="">
-                    <container-dialog id="EditGroupDialog_${ringGroupId}" button-text="Edit" icon="sym_o_edit" width="640" title="Edit ${name}">
+                    <container-dialog id="EditGroupDialog_${ringGroupId}" button-text="Edit" icon="sym_o_edit" width="640" title="${ec.l10n.localize('Edit')} ${name}">
                         <form-single name="EditGroup" transition="storeGroup">
                             <field name="ringGroupId" from="ringGroupId"><default-field><hidden/></default-field></field>
                             <field name="name" from="name"><default-field title="Name"><text-line size="30"/></default-field></field>

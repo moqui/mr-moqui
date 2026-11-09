@@ -48,13 +48,14 @@ along with this software (see the LICENSE.md file). If not, see
 
         <!-- Java shows the JVM heap and non-heap; the port shows the process memory -->
         <set field="processInfo" from="ec.factory.getStatusMap().Process"/>
+        <set field="threadCountText" from="processInfo.Threads != null ? ec.l10n.format(processInfo.Threads, '#,##0') : ec.l10n.localize('Unavailable')"/>
     </actions>
     <widgets>
         <section name="ProcessMetrics" condition="processInfo.MemoryUsed != null || processInfo.Threads != null"><widgets>
             <container-row><row-col md="8">
                 <label text="Memory used: ${processInfo.MemoryUsed != null ? ec.l10n.format(processInfo.MemoryUsed, '#,##0.00') + ' MiB' : ec.l10n.localize('Unavailable')} · Peak: ${processInfo.MemoryPeak != null ? ec.l10n.format(processInfo.MemoryPeak, '#,##0.00') + ' MiB' : ec.l10n.localize('Unavailable')}"/>
             </row-col><row-col md="4">
-                <label text="Threads: ${processInfo.Threads != null ? processInfo.Threads : ec.l10n.localize('Unavailable')}"/>
+                <label text="Threads: ${threadCountText}"/>
             </row-col></container-row>
         </widgets><fail-widgets>
             <label text="Process memory and thread metrics are not reported by this platform." type="p" style="m-muted"/>

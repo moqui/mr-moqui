@@ -21,7 +21,7 @@
             text:span.status_code+' · '+(Number(span.duration_nano)/1000000).toFixed(2)+' ms · '+span.span_id,kind:span.status_code==='ERROR'?'error':'info'}))
     ]]></script></actions>
     <widgets>
-        <label text="Trace ${traceId}" type="h4" style="m-wrap-anywhere"/>
+        <label text="${ec.l10n.localize('Trace')} ${traceId}" type="h4" style="m-wrap-anywhere"/>
         <link url="logs" text="Logs for this trace" parameter-map="{queryString:'trace_id:'+traceId,from:from,thru:thru}"/>
         <section name="SpanLimit" condition="spanLimitReached"><widgets><label text="This trace exceeds the display limit. Narrow the time range to inspect more spans." type="p"/></widgets></section>
         <render-mode>

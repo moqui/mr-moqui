@@ -634,18 +634,19 @@
         return { mode: "countries", countries, listed, unmatched: unmatched.slice(0, 20), max, field: value && value.field };
     };
     // ---- time ranges ----
+    // Hours, days, and minutes stay separate templates: Spanish gender follows the unit. Last 1 hour stays singular.
     report.quickRanges = [
-        ["now-5m", "now", "Last 5 minutes"], ["now-15m", "now", "Last 15 minutes"], ["now-30m", "now", "Last 30 minutes"], ["now-1h", "now", "Last 1 hour"],
-        ["now-3h", "now", "Last 3 hours"], ["now-6h", "now", "Last 6 hours"], ["now-12h", "now", "Last 12 hours"], ["now-24h", "now", "Last 24 hours"],
-        ["now-2d", "now", "Last 2 days"], ["now-7d", "now", "Last 7 days"], ["now-30d", "now", "Last 30 days"], ["now-90d", "now", "Last 90 days"],
+        ["now-5m", "now", "Last {0} minutes", 5], ["now-15m", "now", "Last {0} minutes", 15], ["now-30m", "now", "Last {0} minutes", 30], ["now-1h", "now", "Last 1 hour"],
+        ["now-3h", "now", "Last {0} hours", 3], ["now-6h", "now", "Last {0} hours", 6], ["now-12h", "now", "Last {0} hours", 12], ["now-24h", "now", "Last {0} hours", 24],
+        ["now-2d", "now", "Last {0} days", 2], ["now-7d", "now", "Last {0} days", 7], ["now-30d", "now", "Last {0} days", 30], ["now-90d", "now", "Last {0} days", 90],
         ["now/d", "now/d", "Today"], ["now/d", "now", "Today so far"], ["now-1d/d", "now-1d/d", "Yesterday"], ["now/w", "now/w", "This week"],
         ["now/w", "now", "This week so far"], ["now-1w/w", "now-1w/w", "Previous week"], ["now/M", "now/M", "This month"], ["now-1M/M", "now-1M/M", "Previous month"],
         ["now/y", "now/y", "This year"], ["now-1y/y", "now-1y/y", "Previous year"],
-    ].map(([from, thru, label]) => ({ from, thru, label }));
+    ].map(([from, thru, label, count]) => ({ from, thru, label, count }));
     report.rangeLabel = (range) => {
         if (!range || !range.from) return "";
         const quick = report.quickRanges.find((item) => item.from === range.from && item.thru === (range.thru || "now"));
-        if (quick) return T(quick.label);
+        if (quick) return quick.count == null ? T(quick.label) : T(quick.label, quick.count);
         const text = (value) => /^now/.test(String(value || "")) ? String(value) : report.format(value, { type: "time" });
         return T("{0} to {1}", text(range.from), text(range.thru || "now"));
     };
@@ -1610,7 +1611,7 @@
                         E.button('Apply time range',this.applyAbsolute),this.error?h('p',{role:'alert',class:'text-negative'},this.error):null,
                         h('h5',{class:'q-my-xs'},T('Recent ranges')),this.recent.length?h('ul',{class:'q-pl-none',style:{listStyle:'none'}},this.recent.map(range=>choice(range))):h('p',T('No recent ranges yet.')),
                         this.recent.length?E.button('Clear recent ranges',()=>{this.recent=report.recentRanges.clear(this.viewerId);}):null]),
-                    h('section',[h('h5',{class:'q-my-xs'},T('Quick ranges')),h('ul',{class:'q-pl-none',style:{listStyle:'none',columns:'2'}},report.quickRanges.map(range=>choice(range,T(range.label))))])]):null]);
+                    h('section',[h('h5',{class:'q-my-xs'},T('Quick ranges')),h('ul',{class:'q-pl-none',style:{listStyle:'none',columns:'2'}},report.quickRanges.map(range=>choice(range)))])]):null]);
         }
     };
     components['m-dashboard-filters']={
