@@ -402,16 +402,17 @@ parameters for long runs: Entities (`pageSize=3000`, 1,482 rows, three links a r
 `l10n.message` (330 rows), Artifact Stats (`levels=3`) and the System dashboard, each in html, qvt and tui.
 
 Medians of the third round and `perf stat` instructions a request, base against the end of the round (bench
-`rounds/r53`, `work/r53/{base,m2}.log`). Wall times of the small pages move up to 20% between builds with their
-instructions flat (the code placement of R52); read the instruction ratios:
+`rounds/r53`, `work/r53/{base,m3}.log`). Wall times of the small pages move up to 20% between builds with their
+instructions flat (the code placement of R52); read the instruction ratios. Artifact Stats lists every screen and
+service, so it grew with the System Conf screens while this round ran:
 
 | Screen | html ms | qvt ms | tui ms | html Mi ÷ | qvt Mi ÷ | tui Mi ÷ |
 |---|---:|---:|---:|---:|---:|---:|
-| Entities, 1,482 rows | 196 → 107 | 263 → 165 | 287 → 84 | 0.56 | 0.66 | 0.27 |
-| Cache List | 12.0 → 9.6 | 13.0 → 10.7 | 11.6 → 4.9 | 0.79 | 0.82 | 0.36 |
-| Cache Elements, 330 rows | 23.6 → 19.8 | 28.6 → 23.9 | 27.9 → 10.5 | 0.80 | 0.84 | 0.33 |
-| Artifact Stats | 160 → 95 | 179 → 108 | 176 → 81 | 0.49 | 0.54 | 0.40 |
-| Dashboard | 6.7 → 6.5 | 5.3 → 4.9 | 7.4 → 4.4 | 0.92 | 0.91 | 0.45 |
+| Entities, 1,482 rows | 196 → 92 | 263 → 153 | 287 → 80 | 0.51 | 0.61 | 0.26 |
+| Cache List | 12.0 → 9.0 | 13.0 → 9.7 | 11.6 → 4.9 | 0.73 | 0.75 | 0.36 |
+| Cache Elements, 330 rows | 23.6 → 17.5 | 28.6 → 20.9 | 27.9 → 11.0 | 0.75 | 0.78 | 0.32 |
+| Artifact Stats | 160 → 94 | 179 → 110 | 176 → 81 | 0.51 | 0.55 | 0.40 |
+| Dashboard | 6.7 → 6.5 | 5.3 → 5.0 | 7.4 → 4.4 | 0.92 | 0.89 | 0.45 |
 
 Outputs are the same as before, live values (memory, hit counts, times) aside.
 
@@ -480,14 +481,30 @@ against the base, html ×0.58, qvt ×0.68, tui ×0.27, outputs the same.
   script gives text and the narrowest number, which a display shows differently; a `for...of` fast path (arrays are
   walked by index already).
 
+**The third batch** (`work/r53/m3.log`; quickjs-oxide pinned at 223a2047 with the sampler):
+- **The sampler made honest** (fork `perf/sampler-natives`, merged as f873d7e7, Sweep `r53-natives`: V8 ×1.0001,
+  memory ×0.994): while a sampler runs the loop polls at every call and back-edge (the counts follow time, where every
+  thousandth event weighted them by calls), and a sample asked while a native runs is the native's (`name (native)`),
+  where it went to the script that ran next. Entities html then: script 38%, host calls 42%, builtins 20%
+  (`RegExp.test` 3.6%, `String` 2.4%, `Object.keys` 2.1%); qvt 46/30/25 (`test` 6.6%, `String` 4.3%); tui 31/50/19.
+  The sampler costs nothing measurable with its poll at every event (Entities html 100.0 against 100.5 ms).
+- **A link's field id and a qvt display's ids** from names read once an element (`linkFieldId`, `displayOf`), and
+  html's plain row cell `<div>` as text: Entities html ×0.957, qvt ×0.967.
+- **No context for a cell that sets nothing** (`ScreenSupport.cellNeedsContext`): Java pushes one for each list cell
+  so its `set` elements stay in it; a part with no `set` whose widgets put nothing in the context (the
+  `bufferedListRows` set) is written without the push and pop. With **`isAnchorLink` answered in script** for
+  `link-type` anchor and anchor-button: html ×0.938, qvt ×0.961.
+- **tui links:** a text with no `${` expanded once a unit (`$xc`), `isTransition` asked once, and no post check for an
+  anchor: Entities tui ×0.969.
+
 **Fancy templates** are compiled in Rust (`script/template.rs`: the tags, `${}` and the generated function, cached by
 text) and `${}` in an expand is a template literal compiled once by its hash; nothing parses template text in script
 on a render. `sri.renderText` was 0.6 ms of Cache Elements (four templates) and 0.2 ms of the dashboard.
 
 **What is left** (Entities html after the changes, 171 ms with the profile on):
-- **The macros' own code:** after the macro pass units are 43% of html (59 ms with the profile on), 58% of qvt (115
-  ms) and 44% of tui. The sampler's next targets: the field ids and names a cell makes (`fid`, `fname`, `fnmWith`:
-  10 to 17% of qvt), `rowCellOpen`'s attributes, the qvt display widget, and tui's `$addPart` and `$cellOf`.
+- **By the honest sampler** (Entities): host calls are the largest part, `makeUrlByType` (5.5% html, 9% tui),
+  `startFormListRow` (5%), `getFieldValueTexts`, `getUrlWithParams`; then the builtins the escapes and conversions call
+  (`RegExp.test`, `String`); tui's stringify replacer (`$plain`, 8%, one call a value).
 - **`makeUrlByType` at 4 µs a link** (9% of html, 15% of tui): the `parameter-map` evaluated as a nested script (3.7%)
   and the URL's parameters built from the screen and transition definitions (3.2%). The macro could pass the map it
   already has in script.

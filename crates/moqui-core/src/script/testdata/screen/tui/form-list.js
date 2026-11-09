@@ -76,15 +76,16 @@ $addPart($parts, $start, (() => { const $l = (() => {
             const $made = sri.makeUrlByType("open", "transition", {"name":"link","attrs":{"url":"open","text":"Open ${id}","link-type":"anchor"},"parent":{"name":"default-field","attrs":{"title":"Open"},"parent":{"name":"field","attrs":{"name":"link"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}}, "true");
             const $link = {t:"link",id:$uid("Rows.link." + $rowKey),text:String($text),url:$made ? ($made.getUrlWithParams() || "") : ""};
             if ($made && $made.getDisableLink()) $link.disabled = true;
-            if ($writes($made)) $link.writes = true;
+            // asked once: whether the URL is a transition decides writes and the method
+            const $isTransition = !!$made && $made.isTransition();
+            if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             $link.kind = "anchor";
             
             
             
             
             
-            if ($made && !$link.method && $made.isTransition() && !sri.isAnchorLink({"name":"link","attrs":{"url":"open","text":"Open ${id}","link-type":"anchor"},"parent":{"name":"default-field","attrs":{"title":"Open"},"parent":{"name":"field","attrs":{"name":"link"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}}, $made)
-                && $made.getTransitionMethod() !== "get") $link.method = "post";
+            
             
             return $link;
         })(); return $l.text || $l.icon || $l.tooltip ? $l : ""; })());

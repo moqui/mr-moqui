@@ -21,15 +21,16 @@ try {
             const $made = sri.makeUrlByType("go", "transition", {"name":"link","attrs":{"url":"go","text":"Go ${a}","link-type":"anchor"},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"a"},"parent":{"name":"form-single","attrs":{"name":"LinkForm"},"parent":{"name":"widgets","attrs":{}}}}}}, "true");
             const $link = {t:"link",id:$uid("LinkForm.a"),text:String($text),url:$made ? ($made.getUrlWithParams() || "") : ""};
             if ($made && $made.getDisableLink()) $link.disabled = true;
-            if ($writes($made)) $link.writes = true;
+            // asked once: whether the URL is a transition decides writes and the method
+            const $isTransition = !!$made && $made.isTransition();
+            if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             $link.kind = "anchor";
             
             
             
             
             
-            if ($made && !$link.method && $made.isTransition() && !sri.isAnchorLink({"name":"link","attrs":{"url":"go","text":"Go ${a}","link-type":"anchor"},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"a"},"parent":{"name":"form-single","attrs":{"name":"LinkForm"},"parent":{"name":"widgets","attrs":{}}}}}}, $made)
-                && $made.getTransitionMethod() !== "get") $link.method = "post";
+            
             
             return $link;
         })();
@@ -44,14 +45,16 @@ if (b != null) {
             const $made = sri.makeUrlByType("go", "transition", {"name":"link","attrs":{"url":"go","text":"Hidden ${b}","link-type":"hidden-form-link","condition":"b != null"},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"b"},"parent":{"name":"form-single","attrs":{"name":"LinkForm"},"parent":{"name":"widgets","attrs":{}}}}}}, "true");
             const $link = {t:"link",id:$uid("LinkForm.b"),text:String($text),url:$made ? ($made.getUrlWithParams() || "") : ""};
             if ($made && $made.getDisableLink()) $link.disabled = true;
-            if ($writes($made)) $link.writes = true;
+            // asked once: whether the URL is a transition decides writes and the method
+            const $isTransition = !!$made && $made.isTransition();
+            if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             $link.kind = "hidden-form-link";
             
             
             
             
             $link.method = "post";
-            if ($made && !$link.method && $made.isTransition() && !sri.isAnchorLink({"name":"link","attrs":{"url":"go","text":"Hidden ${b}","link-type":"hidden-form-link","condition":"b != null"},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"b"},"parent":{"name":"form-single","attrs":{"name":"LinkForm"},"parent":{"name":"widgets","attrs":{}}}}}}, $made)
+            if ($isTransition && !$link.method && !sri.isAnchorLink({"name":"link","attrs":{"url":"go","text":"Hidden ${b}","link-type":"hidden-form-link","condition":"b != null"},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"b"},"parent":{"name":"form-single","attrs":{"name":"LinkForm"},"parent":{"name":"widgets","attrs":{}}}}}}, $made)
                 && $made.getTransitionMethod() !== "get") $link.method = "post";
             
             return $link;
@@ -61,20 +64,22 @@ if (b != null) {
 }
 {
     const $l = (() => {
-            let $text = ec.resource.expand("Plain");
+            let $text = $xc("Plain");
             if ($text == null || $text === "null") $text = "";
             
             const $made = sri.makeUrlByType("go", "transition", {"name":"link","attrs":{"url":"go","text":"Plain","link-type":"auto"},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"c"},"parent":{"name":"form-single","attrs":{"name":"LinkForm"},"parent":{"name":"widgets","attrs":{}}}}}}, "true");
             const $link = {t:"link",id:$uid("LinkForm.c"),text:String($text),url:$made ? ($made.getUrlWithParams() || "") : ""};
             if ($made && $made.getDisableLink()) $link.disabled = true;
-            if ($writes($made)) $link.writes = true;
+            // asked once: whether the URL is a transition decides writes and the method
+            const $isTransition = !!$made && $made.isTransition();
+            if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             $link.kind = "auto";
             
             
             
             
             
-            if ($made && !$link.method && $made.isTransition() && !sri.isAnchorLink({"name":"link","attrs":{"url":"go","text":"Plain","link-type":"auto"},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"c"},"parent":{"name":"form-single","attrs":{"name":"LinkForm"},"parent":{"name":"widgets","attrs":{}}}}}}, $made)
+            if ($isTransition && !$link.method && !sri.isAnchorLink({"name":"link","attrs":{"url":"go","text":"Plain","link-type":"auto"},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"c"},"parent":{"name":"form-single","attrs":{"name":"LinkForm"},"parent":{"name":"widgets","attrs":{}}}}}}, $made)
                 && $made.getTransitionMethod() !== "get") $link.method = "post";
             
             return $link;
@@ -89,15 +94,16 @@ if (b != null) {
             const $made = sri.makeUrlByType("go", "transition", {"name":"link","attrs":{"url":"go","entity-name":"moqui.basic.Enumeration","link-type":"anchor","text":"${description}"},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"d"},"parent":{"name":"form-single","attrs":{"name":"LinkForm"},"parent":{"name":"widgets","attrs":{}}}}}}, "true");
             const $link = {t:"link",id:$uid("LinkForm.d"),text:String($text),url:$made ? ($made.getUrlWithParams() || "") : ""};
             if ($made && $made.getDisableLink()) $link.disabled = true;
-            if ($writes($made)) $link.writes = true;
+            // asked once: whether the URL is a transition decides writes and the method
+            const $isTransition = !!$made && $made.isTransition();
+            if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             $link.kind = "anchor";
             
             
             
             
             
-            if ($made && !$link.method && $made.isTransition() && !sri.isAnchorLink({"name":"link","attrs":{"url":"go","entity-name":"moqui.basic.Enumeration","link-type":"anchor","text":"${description}"},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"d"},"parent":{"name":"form-single","attrs":{"name":"LinkForm"},"parent":{"name":"widgets","attrs":{}}}}}}, $made)
-                && $made.getTransitionMethod() !== "get") $link.method = "post";
+            
             
             return $link;
         })();
@@ -111,15 +117,16 @@ if (b != null) {
             const $made = sri.makeUrlByType("go", "transition", {"name":"link","attrs":{"url":"go","text":"Mapped ${v}","text-map":"{v: 1}","link-type":"anchor"},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"e"},"parent":{"name":"form-single","attrs":{"name":"LinkForm"},"parent":{"name":"widgets","attrs":{}}}}}}, "true");
             const $link = {t:"link",id:$uid("LinkForm.e"),text:String($text),url:$made ? ($made.getUrlWithParams() || "") : ""};
             if ($made && $made.getDisableLink()) $link.disabled = true;
-            if ($writes($made)) $link.writes = true;
+            // asked once: whether the URL is a transition decides writes and the method
+            const $isTransition = !!$made && $made.isTransition();
+            if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             $link.kind = "anchor";
             
             
             
             
             
-            if ($made && !$link.method && $made.isTransition() && !sri.isAnchorLink({"name":"link","attrs":{"url":"go","text":"Mapped ${v}","text-map":"{v: 1}","link-type":"anchor"},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"e"},"parent":{"name":"form-single","attrs":{"name":"LinkForm"},"parent":{"name":"widgets","attrs":{}}}}}}, $made)
-                && $made.getTransitionMethod() !== "get") $link.method = "post";
+            
             
             return $link;
         })();
@@ -131,20 +138,22 @@ $closeChildren();
 }
 {
     const $l = (() => {
-            let $text = ec.resource.expand("Standalone");
+            let $text = $xc("Standalone");
             if ($text == null || $text === "null") $text = "";
             
             const $made = sri.makeUrlByType("go", "transition", {"name":"link","attrs":{"url":"go","text":"Standalone"},"parent":{"name":"widgets","attrs":{}}}, "true");
             const $link = {t:"link",id:$uid("widgets/link"),text:String($text),url:$made ? ($made.getUrlWithParams() || "") : ""};
             if ($made && $made.getDisableLink()) $link.disabled = true;
-            if ($writes($made)) $link.writes = true;
+            // asked once: whether the URL is a transition decides writes and the method
+            const $isTransition = !!$made && $made.isTransition();
+            if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             
             
             
             
             
             
-            if ($made && !$link.method && $made.isTransition() && !sri.isAnchorLink({"name":"link","attrs":{"url":"go","text":"Standalone"},"parent":{"name":"widgets","attrs":{}}}, $made)
+            if ($isTransition && !$link.method && !sri.isAnchorLink({"name":"link","attrs":{"url":"go","text":"Standalone"},"parent":{"name":"widgets","attrs":{}}}, $made)
                 && $made.getTransitionMethod() !== "get") $link.method = "post";
             
             return $link;

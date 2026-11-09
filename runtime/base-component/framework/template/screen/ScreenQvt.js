@@ -1037,7 +1037,9 @@
             if (l.encode) text = t(text);
             let url = sri.makeUrlByType(l.url, l.urlType, n, l.expand);
             if (l.passThrough) url = url.addParameters(sri.getScreenUrlInstance().getPassThroughParameterMap());
-            return { text, url, img, anchor: sri.isAnchorLink(n, url), disabled: url.getDisableLink() };
+            // link-type anchor and anchor-button are anchors whatever the URL (sri.isAnchorLink's first rule)
+            const anchor = l.linkType === "anchor" || l.linkType === "anchor-button" || sri.isAnchorLink(n, url);
+            return { text, url, img, anchor, disabled: url.getDisableLink() };
         };
 
         const linkBody = (n, text, img) => {
@@ -2569,7 +2571,11 @@
         const isHidden = !!child(sub, "hidden");
         const style = attr(sub, "container-style");
         const align = attr(field, "align");
-        const inner = isHidden ? subWidgets(sub) : stampCode(field) + js`
+        const inner = isHidden ? subWidgets(sub) : !S.cellNeedsContext(sub) ? stampCode(field) + js`
+            $v.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2);
+            ${subWidgets(sub)}
+            $v.rowCellClose($m === 2);
+        ` : stampCode(field) + js`
             $v.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2);
             sri.pushContext();
             try {

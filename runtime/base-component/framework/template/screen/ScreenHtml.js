@@ -693,7 +693,7 @@
                     urlType: at(n, "url-type") || "transition", expand: at(n, "expand-transition-url") || "true",
                     passThrough: at(n, "pass-through-parameters") === "true", badge: at(n, "badge"), tooltip: at(n, "tooltip"),
                     confirmation: at(n, "confirmation"), style: at(n, "style"), urlNoparam: at(n, "url-noparam") === "true",
-                    load: at(n, "dynamic-load-id"), target: at(n, "target-window"), btnType: at(n, "btn-type"),
+                    load: at(n, "dynamic-load-id"), target: at(n, "target-window"), btnType: at(n, "btn-type"), linkType: at(n, "link-type"),
                     // a btn-type with ${ can differ by row, so it is expanded each time
                     btn: at(n, "btn-type").indexOf("${") >= 0 ? undefined : btnAttr(n)
                 };
@@ -730,7 +730,9 @@
             if (l.encode) text = e(text);
             let url = sri.makeUrlByType(l.url, l.urlType, n, l.expand);
             if (l.passThrough) url = url.addParameters(sri.getScreenUrlInstance().getPassThroughParameterMap());
-            return { text, url, img, anchor: sri.isAnchorLink(n, url), disabled: url.getDisableLink() };
+            // link-type anchor and anchor-button are anchors whatever the URL (sri.isAnchorLink's first rule)
+            const anchor = l.linkType === "anchor" || l.linkType === "anchor-button" || sri.isAnchorLink(n, url);
+            return { text, url, img, anchor, disabled: url.getDisableLink() };
         };
 
         const linkContent = (n, text, img) => {
@@ -1985,7 +1987,11 @@
             const isHidden = !!child(sub, "hidden");
             const style = attr(sub, "container-style");
             const align = attr(field, "align");
-            const inner = isHidden ? subWidgets(sub) : js`
+            const inner = isHidden ? subWidgets(sub) : !S.cellNeedsContext(sub) ? js`
+                $h.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2);
+                ${subWidgets(sub)}
+                $h.rowCellClose($m === 2);
+            ` : js`
                 $h.rowCellOpen(${style ? noL10n(style) : '""'}, ${lit(align)}, $m === 2);
                 sri.pushContext();
                 try {
