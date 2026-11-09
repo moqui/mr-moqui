@@ -118,7 +118,7 @@ const SRI_JS: &str = r#"(function (global, hidden) {
         }
     };
     for (const name of ["sendRedirectAndStopRender", "baseLinkUrl", "getBaseLinkUrl", "setFocusField", "uniqueId",
-        "htmlText", "write", "stamp", "renderSection", "renderSectionInclude", "renderSubscreen", "renderIncludeScreen",
+        "htmlText", "write", "stamp", "renderSection", "renderSectionValue", "renderSectionInclude", "renderSubscreen", "renderIncludeScreen",
         "renderDynamicForm", "renderUserColumnsForm", "renderText", "renderTextValue", "renderInlineText",
         "doBoundaryComments", "getRenderMode", "encodeHtml", "getActiveScreenDef", "getScreenUrlInfo", "pushContext",
         "popContext", "setInContext", "pushSingleFormMapContext", "getSingleFormMap", "holdNodeLits",
@@ -172,6 +172,7 @@ static SRI: &[Method] = &[
     method!("sri", "write", [Value], None, leaf, write),
     method!("sri", "stamp", [Value], None, leaf, stamp),
     method!("sri", "renderSection", [Text], Release, render_section),
+    method!("sri", "renderSectionValue", [Text], Release, render_section_value),
     method!("sri", "renderSectionInclude", [Node], Release, render_section_include),
     method!("sri", "renderSubscreen", [], Release, render_subscreen),
     method!(
@@ -487,6 +488,12 @@ fn render_section(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let runner = call.ops.screen_runner()?;
     in_render(|state| logic::render_section(state, runner, &name))?;
     Ok(done())
+}
+
+fn render_section_value(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = opt_text(call, 0).to_string();
+    let runner = call.ops.screen_runner()?;
+    in_render(|state| logic::render_section_value(state, runner, &name)).map(Ret::from)
 }
 
 fn render_section_include(call: &mut Call<'_>) -> Result<Ret, HostError> {

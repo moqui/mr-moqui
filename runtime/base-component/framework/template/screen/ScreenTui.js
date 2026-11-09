@@ -711,6 +711,9 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
     };
     // One widget of a list cell: a text, a link, or a field node (an editable; an input or a button of a row form).
     const cellPiece = (field, sub, widget, list) => {
+        if (widget.name === "section") {
+            return `JSON.parse(sri.renderSectionValue(${jsString(attr(widget, "name") || "")}))`;
+        }
         if (["container", "container-row", "row-col"].includes(widget.name)) {
             const pieces = widget.children.filter((kid) => !notWidget(kid)).map((kid) => cellPiece(field, sub, kid, list));
             return `[${pieces.join(", ")}]`;

@@ -159,6 +159,23 @@ pub fn render_section(state: &RenderState, runner: &dyn Runner, name: &str) -> R
     })
 }
 
+/// A terminal list cell's section as its JSON array, with the native conditions, actions and fail-widgets.
+/// The nested body is removed even on a security error, which still propagates to the caller.
+///
+/// # Errors
+/// Returns an error outside JSON mode, when the native renderer refuses access, or for invalid UTF-8 output.
+pub fn render_section_value(state: &RenderState, runner: &dyn Runner, name: &str) -> Result<String, Error> {
+    if state.output_kind != OutputKind::Json {
+        return Err(Error::new("A section value is only available in a JSON render"));
+    }
+    let start = web::output_body_len().unwrap_or(0);
+    let result = render_section(state, runner, name);
+    let body = web::with_body(|body| body.get(start..).unwrap_or_default().to_vec());
+    web::truncate_output(start);
+    result?;
+    String::from_utf8(body).map_err(|err| Error::new(format!("A section value did not write UTF-8 JSON: {err}")))
+}
+
 /// In a JSON document a nested render is the value of its parent's `"c"`, so one that writes nothing (an empty
 /// section, a stopped screen, a screen with no widgets) writes `[]`.
 fn json_value(state: &RenderState, body: impl FnOnce() -> Result<(), Error>) -> Result<(), Error> {

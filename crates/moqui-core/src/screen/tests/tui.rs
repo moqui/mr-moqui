@@ -82,6 +82,17 @@ fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conver
             <field name="actions"><conditional-field condition="id === 'P&amp;1'"><container style="row items-center">
                 <link url="/approve" url-type="plain" text="Approve ${name}" link-type="hidden-form-link" parameter-map="{id:id}"/>
             </container></conditional-field><default-field><label text="Read only"/></default-field></field>
+            <field name="offered"><default-field><section name="RowOffer" condition="id === 'P&amp;1'">
+                <actions><script>rowActionLabel = 'Stop ' + id</script></actions>
+                <widgets><link url="/stop" url-type="plain" text="${rowActionLabel}" link-type="hidden-form-link" parameter-map="{id:id}"/></widgets>
+                <fail-widgets><link url="/offer" url-type="plain" text="${rowActionLabel == null ? 'Offer ' + id : 'LEAK: ' + rowActionLabel}"
+                        link-type="hidden-form-link" parameter-map="{id:id}"/></fail-widgets>
+            </section></default-field></field>
+            <field name="failed"><default-field><section name="RowFailure" condition="id === 'P&amp;1'">
+                <actions><script>throw new Error('bounded row failure')</script></actions>
+                <widgets><label text="Unreachable"/></widgets><fail-widgets><label text="No failure ${id}"/></fail-widgets>
+            </section></default-field></field>
+            <field name="after"><default-field><label text="After ${id}"/></default-field></field>
         </form-list>
         </widgets></screen>"#,
         BTreeMap::new(),
@@ -122,7 +133,7 @@ fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conver
         .unwrap();
     assert_eq!(list.rows.len(), 2);
     let index = moqui_tui::Index::of([&model]);
-    assert_eq!(index.links.len(), 7);
+    assert_eq!(index.links.len(), 9);
     let mut link_ids = std::collections::BTreeSet::new();
     for (row, name, url, tail) in [
         (
@@ -154,6 +165,23 @@ fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conver
         assert_eq!(row.cells[4].parts()[1].text(), tail.replace("Tail ", "Type "));
         assert!(row.cells[4].link_url().unwrap().starts_with("/files?id="));
         assert_eq!(index.links[row.cells[4].nodes()[0].id()].browser, name != "Second");
+        let offered = row.cells[6].nodes()[0];
+        let offered = &index.links[offered.id()];
+        assert!(offered.posts());
+        if name == "Second" {
+            assert_eq!(row.cells[6].text(), "Offer P2");
+            assert_eq!(offered.url, "/offer?id=P2");
+            assert_eq!(row.cells[7].text(), "No failure P2");
+        } else {
+            assert_eq!(row.cells[6].text(), "Stop P&1");
+            assert_eq!(offered.url, "/stop?id=P%261");
+            assert!(row.cells[7].nodes().into_iter().any(|node| matches!(node,
+                moqui_tui::Node::Error { text, .. } if text.contains("bounded row failure"))));
+        }
+        assert_eq!(
+            row.cells[8].text(),
+            if name == "Second" { "After P2" } else { "After P&1" }
+        );
         if name == "Second" {
             assert_eq!(row.cells[5].text(), "Read only");
             assert!(row.cells[5].nodes().is_empty());
