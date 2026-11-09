@@ -7,7 +7,7 @@ Status 2026-11-08. This file replaces four running logs, now in `archive/`:
 - [Script-Engine-Zipp-Ideas](archive/Script-Engine-Zipp-Ideas.md): ideas from zipp.org.
 
 It keeps the latest numbers, what is still open and the ideas not yet built. Round 50 (2026-11-08, [below](#round-50-tiers-0-to-2))
-built §5's tiers 0 to 2. Each one cites where it was measured or proposed: "R*n*" is a Profiling round, "TX §*name*" or "TX D*n*" a section or decision of TX-Cache, "Oxide §*n*" a
+built §5's tiers 0 to 2, and Round 51 ([below](#round-51-shared-atoms)) the shared atoms. Each one cites where it was measured or proposed: "R*n*" is a Profiling round, "TX §*name*" or "TX D*n*" a section or decision of TX-Cache, "Oxide §*n*" a
 section of Script-Engine-Oxide, and "Zipp *n*" an item of Script-Engine-Zipp-Ideas §3.
 
 Most of the database and service work is done:
@@ -17,9 +17,9 @@ Most of the database and service work is done:
 - The script engine is quickjs-oxide alone (Oxide §7, Phase 4 result). Its screen rows are within ×1.10 of QuickJS's
   last numbers, and plain JavaScript is faster than it was (R48).
 
-What is left is mostly two things. Two script rows still lose to QuickJS at the boundary between host and engine (walk
-itemList ×1.15, cached finds ×1.04, R50). And the heap of the script runtimes is still over its gate in some test
-processes (R49, R50).
+What is left is mostly at the boundary between host and engine: two script rows still lose to QuickJS (walk itemList
+×1.15, cached finds ×1.04, R50). The heap of the script runtimes is under its gate in every test-apps process since the
+shared atoms (R51).
 
 ## 1. Headline numbers
 
@@ -34,7 +34,7 @@ processes (R49, R50).
 | Mantle operations (200 µs to the database) | 6,037 → 3,954 ms with the cache; oxide 3400 ms against QuickJS's 3380 (+0.6%) | R27, R48 |
 | Script engine | js_speed's 59 rows ×0.90 of R49 (geometric mean); screen rows ×0.89 to ×0.97 of R49; the locked template ×0.75, fancy ×0.73; cached finds ×0.90; numbers to text and one-character strings ×0.40, the regexp scan ×0.58 | R50 |
 | Runtime start | 1.57 ms, 9,277 allocations, 2.9 MB allocated (8.96 ms, 47,436, 12.3 MB before) | R50 |
-| Script heap | test-apps process peaks 15 to 86 MB, three of six under the gate of 73 MB (R49: 16 to 83 MB, also three) | R50 |
+| Script heap | test-apps process peaks 15 to 68 MB, all six under the gate of 73 MB (R50: 15 to 86 MB, three of six); mr-mantle's runtimes at the peak 99.7 → 75.4 MB | R51 |
 | Startup | first start 5.63 s (the empty-database load about 1.15 s), restart 268 ms | R9 |
 | Definitions and XML | entity model 5.3 ms, service definitions 8.7 ms, 112 µs a screen definition; MNode parse 76 µs a file | R4, R8 |
 
@@ -149,8 +149,8 @@ ms, the mail store with two attachments 14.8 → 8.7 ms, all at 200 µs to the d
 
 ### The script engine
 
-quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` 1cdb77e2
-(R50; 7cf1f530 before, Oxide §7, Phase 4 result).
+quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` 3c741ee8
+(R51; 1cdb77e2 in R50, 7cf1f530 before, Oxide §7, Phase 4 result).
 
 The fork's changes:
 - **F1:** compiled code shared by the process. Code images (step 1) and shared unit bodies (step 2) are done; shared
@@ -272,6 +272,40 @@ since R50.
 - **Earlier:** R44 drops a runtime whose reserved heap is more than 2.5 times its live bytes, at most every 30 s, and R45
   confirms that with a collection.
 
+### Round 51: shared atoms
+
+The fork's `docs/shared-atoms.md`. Atoms that every runtime would intern alike live once per process, in a shared table
+that is read with no lock and added to under a mutex; they are immutable and never collected, with ids from 2^29.
+A runtime looks in its own table first, so a text never has two ids in one runtime.
+- **Phase 1** (66db6a8f): the 512 builtin atoms. A fresh fork runtime reserves 171 → 125 KB. Instructions +0.5 to
+  +3% on the rows that make many strings (concatenation +3.0%, in glibc's `malloc`, not in the engine); the eight V8 v7
+  programs within ×1.02 (geometric mean ×1.003).
+- **Phase 2** (3c741ee8): a code image's keys, function names and string constants, as the image loads, up to a cap
+  of 261k atoms and 16M units. `Runtime::atom_census` is an API (no print).
+
+What the counts showed first (quickjs-oxide-bench `rounds/r51/census-mantle`): the busiest mr-mantle workers held 9.7k
+to 9.8k atoms, 91% of them code (image keys about 5.0k, constants 3.7k to 3.9k), host keys about 230.
+
+mr-mantle's specs, phase 1 against phase 2 (`rounds/r51/shared-atoms-p2`):
+
+| | Phase 1 | Phase 2 |
+|---|---:|---:|
+| Busiest worker's atoms (its own) | 11,614 (11,102) | 13,302 (831) |
+| Service workers' most reserved, median | 3324 KiB | 2230 KiB |
+| The 23 workers' most reserved, summed | 70.8 MiB | 53.6 MiB |
+| Runtimes at the process peak (`heap_at_max`) | 99.7 MB | 75.4 MB |
+| The shared table | 512 atoms | 28,858 atoms, 4.2 MB once a process |
+
+js_speed: a new thread's runtime reserves 860 → 734 KiB (live 398 → 325) from R50, 1,132 → 863 KiB after a List
+render; the engine start 9,277 → 7,775 allocations. The script rows' instructions are unchanged from phase 1: they run
+on the thread that compiled the images.
+
+test-apps' six large processes peak at 15, 36, 48, 53, 66 and 68 MB, all under the gate of 73 MB (R50: 15, 44, 59, 76,
+82 and 86 MB).
+
+Phase 3, key tables shared in the image body, is not built: a busy worker's key tables are 115 to 145 KB, about 3 to 5
+MB across 23 workers, 6% of what phase 2 leaves.
+
 ### Startup and threads
 
 A first start takes 5.63 s and a restart 268 ms. The table check is 2.1 s of a first start, and initdb 1.8 s (R9). A
@@ -363,14 +397,11 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
   - script object keys and strings are one copy each (R18).
 
 **The script heap, in the fork** (R49 "Next")
-- Each runtime has its own atoms, about 11k in a busy worker. The design is on the fork's branch `perf/shared-atoms`
-  (`docs/shared-atoms.md`, about two weeks, a process-wide `Sync` table), with `Runtime::atom_census`
-  (`QJS_ATOM_CENSUS`). R50's counts on js_speed: 4,188 atoms on the main thread and 3,081 on a new one; builtin and code
-  atoms are about 90%, string literals the largest class, host keys and the rest about 400. Count an mr-mantle worker
-  before deciding.
+- Shared atoms: built in R51 ([Round 51](#round-51-shared-atoms)), phases 1 and 2. Left: phase 3, key tables shared
+  in the image body (about 6% of what is left in the workers).
 - The inline-cache table: trimmed and compacted at a collection since R50 (80a91e10).
 - A compacting value heap: the arenas give back only their ends.
-- Gate status: the three largest test-apps processes are 3 to 10 MB over it (R49).
+- Gate status: every test-apps process under it since R51 (the largest 68 MB of 73).
 
 **Engine differences to settle** (Oxide "Engine differences under `oxide`", "Phase 3: engine differences")
 
@@ -423,7 +454,7 @@ Tiers 0 to 2 were built in R50 ([Round 50](#round-50-tiers-0-to-2)), apart from 
   zipp B124 (Zipp 6). Check the screen generators too.
 
 **Tier 2: aimed at the losing rows and the heap**, done in R50 except: `JSON.parse`'s in-place Latin-1 scan and key
-plans; the regexp's lazy loops and failed-run skip; shared atoms (designed, not built) and the compacting heap
+plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared atoms were built in R51
 - **A one-byte string builder:** Latin-1 until a wide unit arrives, for `join`, `JSON.stringify`, `concat`, `repeat`,
   `pad` and case conversion. It removes the narrowing scan R43 found (Zipp 7).
 - **`JSON.parse`:** scan Latin-1 in place, build each object at its final shape (zipp 57bbb00f, −11.9% instructions),
@@ -528,6 +559,8 @@ plans; the regexp's lazy loops and failed-run skip; shared atoms (designed, not 
 - Inert modules are kept for an outermost run (`script_module_cache`).
 - A runtime's start texts are compiled by the process's first runtime and loaded from its code images by later ones
   (R50).
+- Builtin atoms and the atoms of code images are the process's, in one shared table that is never collected; a
+  runtime keeps its own atoms for other texts (R51).
 - `ec.entity.find` and `EntityFind.condition` run without lending the engine, except for a definition made from rows
   (R50).
 - A list or map read by bare name keeps its host type. A decimal read twice is the same object until a releasing flush.
