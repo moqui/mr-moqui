@@ -4996,6 +4996,8 @@
                 }
                 const fullPath = rootVm_.basePath + "/" + curPathList.slice(0, pathIndex + 1).join("/");
                 if (!pathChanged && !searchChanged && moqui.componentCache.containsKey(fullPath)) return false;
+                // A cached custom component observes its new parameters itself. Reusing it does not remount its child placeholders.
+                if (!pathChanged && moqui.componentCache.get(fullPath) === this.activeComponent) return false;
                 const urlInfo = { path: fullPath };
                 if (pathIndex === curPathList.length - 1) {
                     const extra = rootVm_.extraPathList;
@@ -9567,7 +9569,8 @@
                     return;
                 }
                 for (let i = 0; i < activeSubscreens.length; i++) {
-                    if (i >= fullPathList.length) break;
+                    // The placeholder just beyond the route must clear its old child and remain registered for a later visit.
+                    if (i > fullPathList.length) break;
                     // the first one that loads clears the rest, whose placeholders will register and load
                     if (activeSubscreens[i].loadActive()) { activeSubscreens.splice(i + 1); break; }
                 }

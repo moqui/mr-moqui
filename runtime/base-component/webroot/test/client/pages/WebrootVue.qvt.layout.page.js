@@ -4,6 +4,53 @@
 // The library starts the app only when #moqui-config, Vue and Quasar are all present.
 "use strict";
 
+test("returning to a cached custom parent clears its child and retains the placeholder for another visit", () => {
+    const subscreen = moqui.qvt.components["m-subscreens-active"];
+    const options = moqui.qvt.rootOptions({ basePath: "/apps" });
+    const root = Object.assign(options.data(), options.methods, { currentPathList: ["Commons", "Knowledge"], currentSearch: "wikiSpaceId=FIRST", basePathSize: 0 });
+    const commons = {}, knowledge = {};
+    let staticUses = 0;
+    const spaces = { mqStatic: () => ({ use: ++staticUses }) };
+    const cache = new Map([["/apps/Commons", commons], ["/apps/Commons/Knowledge", knowledge], ["/apps/Commons/Knowledge/Spaces", spaces]]);
+    const originalCache = moqui.componentCache, originalLoad = moqui.loadComponent;
+    const loads = [];
+    moqui.componentCache = { get: (path) => cache.get(path), containsKey: (path) => cache.has(path) };
+    moqui.loadComponent = (url, done) => { loads.push(url); const component = cache.get(url.path); done(component.mqStatic ? component.mqStatic() : component); return { abort() {} }; };
+    const make = (index, name, component) => Object.assign(subscreen.data(), subscreen.methods, {
+        $root: root, pathIndex: index, pathName: name, searchUsed: "", activeComponent: component
+    });
+    const child = make(2, "Spaces", { use: 0 });
+    root.activeSubscreens = [make(0, "Commons", commons), make(1, "Knowledge", knowledge), child];
+    try {
+        root.reloadSubscreens();
+        assert.equal(root.activeSubscreens[1].activeComponent, knowledge, "the custom parent stays mounted for its parameter watcher");
+        assert.equal(child.activeComponent, moqui.EmptyComponent, "the previous Spaces screen is removed");
+        assert.equal(root.activeSubscreens[2], child, "its still-mounted placeholder keeps its route index");
+        assert.equal(loads.length, 0, "the same cached custom component is not falsely reported as replaced");
+        root.currentPathList = ["Commons", "Knowledge", "Spaces"]; root.currentSearch = "";
+        root.reloadSubscreens();
+        assert.equal(child.activeComponent.use, 1, "the child can be opened again without reloading the document");
+        root.currentSearch = "text=filter";
+        root.reloadSubscreens();
+        assert.equal(child.activeComponent.use, 2, "a server-static target still gets new data for changed query parameters");
+        root.currentPathList = ["Commons", "Knowledge"]; root.currentSearch = "wikiSpaceId=SECOND";
+        root.reloadSubscreens();
+        assert.equal(child.activeComponent, moqui.EmptyComponent, "Back clears the child again");
+        assert.equal(root.activeSubscreens.length, 3);
+        root.currentSearch = "wikiSpaceId=THIRD";
+        root.reloadSubscreens();
+        assert.equal(root.activeSubscreens[1].activeComponent, knowledge, "query-only parent navigation retains the custom component");
+        root.currentPathList = ["Commons", "Knowledge", "Spaces"]; root.currentSearch = "";
+        root.reloadSubscreens();
+        assert.equal(child.activeComponent.use, 3, "Forward can reuse the retained child placeholder");
+        const files = {}; cache.set("/apps/Commons/Files", files);
+        root.currentPathList = ["Commons", "Files"];
+        root.reloadSubscreens();
+        assert.equal(root.activeSubscreens[1].activeComponent, files);
+        assert.equal(root.activeSubscreens.length, 2, "a different parent still removes its old descendants");
+    } finally { moqui.componentCache = originalCache; moqui.loadComponent = originalLoad; }
+});
+
 test("a split stacks below 1024 px and when side and main do not fit, and keeps the side width in its limits", () => {
     assert.deepEqual(moqui.splitLayout({ wide: true, width: 1200, sideWidth: 320, minMain: 480 }), { stacked: false, side: 320, min: 200, max: 720 });
     assert.equal(moqui.splitLayout({ wide: false, width: 1200, sideWidth: 320, minMain: 480 }).stacked, true);
