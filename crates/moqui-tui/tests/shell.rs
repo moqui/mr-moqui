@@ -544,7 +544,10 @@ fn app_links_use_the_terminal_mount_but_explicit_browser_opening_keeps_the_mater
         {"t":"link","id":"inside","text":"See changes","url":"/qapps/app/Changes?id=MR1&note=A%20B"},
         {"t":"link","id":"outside","text":"External","url":"https://example.invalid/qapps/help"},
         {"t":"link","id":"print","text":"Print","url":"/apps/app/Main?renderMode=html-print&id=P1&note=A%20B"},
-        {"t":"link","id":"otherMount","text":"Other mount","url":"/qapps-archive/help"}]}"#;
+        {"t":"link","id":"otherMount","text":"Other mount","url":"/qapps-archive/help"},
+        {"t":"formList","id":"Files","name":"Files","columns":[{"name":"file","title":"File"}],"rows":[{"key":"R1","cells":[
+            {"t":"link","id":"inline","text":"Open estimate","url":"/apps/app/estimateFile?id=E1&note=A%20B","browser":true}
+        ]}]}]}"#;
     let changes = r#"{"v":1,"screen":{"path":"/apps/app/Changes","pathList":["apps","app","Changes"]},"c":[]}"#;
     let link = FakeLink::from_json(&[main, changes]).unwrap();
     let mut session = Session::start("/apps/app/Main");
@@ -584,7 +587,20 @@ fn app_links_use_the_terminal_mount_but_explicit_browser_opening_keeps_the_mater
         before_print,
         "print opens in the browser without asking for a TUI model"
     );
-    press(&mut session, &link, Key::Tab);
+    assert!(session.focus_key("Files"));
+    let before_inline = link.calls().len();
+    press(&mut session, &link, Key::Right);
+    assert_eq!(
+        session.take_open().as_deref(),
+        Some("/apps/app/estimateFile?id=E1&note=A%20B")
+    );
+    assert_eq!(session.path(), "/apps/app/Main");
+    assert_eq!(
+        link.calls().len(),
+        before_inline,
+        "an authored browser row link is not requested as TUI JSON"
+    );
+    assert!(session.focus_key("otherMount"));
     press(&mut session, &link, Key::Enter);
     assert!(link
         .calls()
@@ -601,7 +617,7 @@ fn f10_offers_only_the_focused_rows_actions_and_keeps_their_confirmation() {
                 {"t":"link","id":format!("open-{id}"),"text":format!("Open {id}"),"url":format!("/record?id={id}")},
                 {"t":"dialog","id":format!("edit-{id}"),"title":format!("Edit {id}"),"c":[]},
                 {"t":"link","id":format!("approve-{id}"),"text":"Approve","url":format!("/approve?id={id}"),
-                    "method":"post","writes":true,"confirm":format!("Approve {id}?")}
+                    "method":"post","writes":true,"browser":true,"confirm":format!("Approve {id}?")}
             ]})
         })
         .collect();

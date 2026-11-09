@@ -1501,7 +1501,7 @@ impl Session {
         let Some(link) = self.index.links.get(id).cloned() else {
             return;
         };
-        if link.kind == "image" {
+        if link.kind == "image" || (link.browser && !link.posts() && !link.writes) {
             self.set_message(format!("Open in browser: {}", link.url), false);
             self.open = Some(link.url);
             return;

@@ -298,6 +298,8 @@ use the terminal's `/apps` mount; explicitly opening a link in the browser prese
 links. Form, JSON and download endpoints keep their authored routes.
 An explicit `renderMode=html-print` link also opens its print view in the browser, keeping its filters and the current
 terminal screen.
+An authored `target-window="_blank"` GET link does the same, including an inline document in a list row. Download links
+without that browser target keep the terminal's file-saving behavior; write links keep their transition and confirmation.
 
 ## The mouse
 

@@ -75,7 +75,8 @@ fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conver
             </render-mode></default-field></field>
             <field name="nested"><default-field><container style="row no-wrap items-center">
                 <render-mode><text type="qvt">browser icon only</text><text type="tui" template="false">[]</text></render-mode>
-                <container><link url="/files" url-type="plain" text="${name}" parameter-map="{id:id}"/>
+                <container><link url="/files" url-type="plain" text="${name}" parameter-map="{id:id}"
+                        target-window="${id === 'P&amp;1' ? '_blank' : '_self'}"/>
                     <label text="Type ${id}"/></container>
             </container></default-field></field>
             <field name="actions"><conditional-field condition="id === 'P&amp;1'"><container style="row items-center">
@@ -152,6 +153,7 @@ fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conver
         assert_eq!(row.cells[4].parts().len(), 2);
         assert_eq!(row.cells[4].parts()[1].text(), tail.replace("Tail ", "Type "));
         assert!(row.cells[4].link_url().unwrap().starts_with("/files?id="));
+        assert_eq!(index.links[row.cells[4].nodes()[0].id()].browser, name != "Second");
         if name == "Second" {
             assert_eq!(row.cells[5].text(), "Read only");
             assert!(row.cells[5].nodes().is_empty());

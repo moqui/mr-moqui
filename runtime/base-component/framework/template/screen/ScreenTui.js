@@ -280,6 +280,7 @@ $w("]");
             ${attr(node, "icon") ? `if (!String($text).trim()) $text = $iconLabel(${jsString(attr(node, "icon"))}, ${attr(node, "tooltip") ? `String(${S.expandExpr(attr(node, "tooltip"))} || "")` : '""'});` : ""}
             const $made = sri.makeUrlByType(${jsString(attr(node, "url") || "")}, ${jsString(attr(node, "url-type") || "transition")}, ${S.nodeLit(node, true)}, ${jsString(attr(node, "expand-transition-url") || "true")});
             const $link = {t:"link",id:$uid(${linkIdExpr(node, inList)}),text:String($text),url:$made ? ($made.getUrlWithParams() || "") : ""};
+            ${attr(node, "target-window") ? `if (String(${S.expandNoL10nExpr(attr(node, "target-window"))} || "") === "_blank") $link.browser = true;` : ""}
             if ($made && $made.getDisableLink()) $link.disabled = true;
             if ($writes($made)) $link.writes = true;
             ${kind ? `$link.kind = ${jsString(kind)};` : ""}

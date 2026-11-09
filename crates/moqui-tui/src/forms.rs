@@ -119,6 +119,8 @@ pub struct LinkInfo {
     pub disabled: bool,
     /// It runs a transition that is not read-only.
     pub writes: bool,
+    /// An authored browser target, independent of the URL's route or content type.
+    pub browser: bool,
 }
 
 impl LinkInfo {
@@ -317,6 +319,7 @@ impl Index {
                     id,
                     text,
                     url,
+                    browser,
                     kind,
                     method,
                     confirm,
@@ -324,7 +327,7 @@ impl Index {
                     writes,
                     ..
                 } => {
-                    self.add_link(id, text, url, kind, method, confirm, *disabled, *writes, true);
+                    self.add_link(id, text, url, kind, method, confirm, *disabled, *writes, *browser, true);
                     if !disabled {
                         self.push(id, FocusKind::Link, at);
                     }
@@ -383,6 +386,7 @@ impl Index {
                             id,
                             text,
                             url,
+                            browser,
                             kind,
                             method,
                             confirm,
@@ -391,7 +395,9 @@ impl Index {
                             ..
                         } = inner
                         {
-                            self.add_link(id, text, url, kind, method, confirm, *disabled, *writes, false);
+                            self.add_link(
+                                id, text, url, kind, method, confirm, *disabled, *writes, *browser, false,
+                            );
                             links.push(id.clone());
                         }
                     });
@@ -469,7 +475,7 @@ impl Index {
                             (crate::layout::wizard_next(id), Some(active + 1), "Next"),
                         ] {
                             if let Some(step) = step.and_then(|step| tabs.get(step)) {
-                                self.add_link(&link, text, &step.url, "", "", "", false, false, true);
+                                self.add_link(&link, text, &step.url, "", "", "", false, false, false, true);
                                 self.push(&link, FocusKind::Link, at);
                             }
                         }
@@ -486,11 +492,11 @@ impl Index {
                     self.add(c, at);
                 }
                 Node::NumberCard { id, value, url, .. } if !url.is_empty() => {
-                    self.add_link(id, value, url, "", "", "", false, false, true);
+                    self.add_link(id, value, url, "", "", "", false, false, false, true);
                     self.push(id, FocusKind::Link, at);
                 }
                 Node::Image { id, alt, url } if !url.is_empty() => {
-                    self.add_link(id, alt, url, "image", "", "", false, false, true);
+                    self.add_link(id, alt, url, "image", "", "", false, false, true, true);
                     self.push(id, FocusKind::Link, at);
                 }
                 Node::Html { id, links, .. } => self.add_references(id, links, at),
@@ -590,13 +596,14 @@ impl Index {
                             id,
                             text,
                             url,
+                            browser,
                             kind,
                             method,
                             confirm,
                             disabled,
                             writes,
                             ..
-                        } => self.add_link(id, text, url, kind, method, confirm, *disabled, *writes, true),
+                        } => self.add_link(id, text, url, kind, method, confirm, *disabled, *writes, *browser, true),
                         Node::Field { id, .. } if posts => {
                             self.add_field(inner, &row_scope);
                             fields.push(id.clone());
@@ -700,7 +707,7 @@ impl Index {
     fn add_references(&mut self, id: &str, links: &[crate::model::HtmlLink], at: &At) {
         for (n, link) in links.iter().enumerate() {
             let key = crate::layout::ref_id(id, n + 1);
-            self.add_link(&key, &link.text, &link.url, "", "", "", false, false, true);
+            self.add_link(&key, &link.text, &link.url, "", "", "", false, false, false, true);
             self.push(&key, FocusKind::Link, at);
         }
     }
@@ -717,6 +724,7 @@ impl Index {
         confirm: &str,
         disabled: bool,
         writes: bool,
+        browser: bool,
         numbered: bool,
     ) {
         if numbered && !disabled && !url.is_empty() && !self.links.contains_key(id) {
@@ -733,6 +741,7 @@ impl Index {
                 confirm: confirm.to_string(),
                 disabled,
                 writes,
+                browser,
             },
         );
     }

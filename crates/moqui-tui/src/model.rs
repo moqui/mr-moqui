@@ -388,6 +388,9 @@ pub enum Node {
         id: String,
         text: String,
         url: String,
+        /// The author explicitly opens this GET link in a browser window.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        browser: bool,
         #[serde(default)]
         kind: String,
         #[serde(default)]
