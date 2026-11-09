@@ -35,20 +35,24 @@
         return jsString(value);
     };
 
+    // A set's value, and the statement before it that a default-value needs: the value is read once, and the default
+    // taken when Groovy's `?:` would take it (null, "", false, zero, an empty list or map), as Java's template does.
     const valueExpr = (node) => {
+        const type = attr(node, "type");
+        if (type === "NewList") return { before: "", value: "[]" };
+        if (type === "NewMap") return { before: "", value: "{}" };
         let base;
         if (has(node, "from")) base = attr(node, "from");
         else if (has(node, "value")) base = expandExpr(attr(node, "value"));
         else base = "null";
+        let before = "";
         if (has(node, "default-value")) {
             const fallback = expandExpr(attr(node, "default-value"));
-            base = `((${base} == null || ${base} === "") ? ${fallback} : (${base}))`;
+            before = `var _temp_default = ${base};`;
+            base = `(__isGroovyFalse(_temp_default) ? ${fallback} : _temp_default)`;
         }
-        const type = attr(node, "type");
-        if (type === "NewList") return "[]";
-        if (type === "NewMap") return "{}";
-        if (type) return `basicConvert(${base}, ${jsString(type)})`;
-        return base;
+        if (type) return { before, value: `basicConvert(${base}, ${jsString(type)})` };
+        return { before, value: base };
     };
 
     const fieldExpr = (node) => {
@@ -359,14 +363,19 @@
         }),
         "set": stmt((node) => {
             const field = attr(node, "field");
-            const value = valueExpr(node);
+            const { before, value } = valueExpr(node);
+            // set-if-empty="false" skips what Java's ObjectUtilities.isEmpty calls empty: null, "", an empty list or map
             if (attr(node, "set-if-empty") === "false") {
                 return js`
+                    ${before}
                     var _temp_internal = ${value};
-                    if (_temp_internal != null && _temp_internal !== "") ${field} = _temp_internal;
+                    if (!__isEmpty(_temp_internal)) ${field} = _temp_internal;
                 `;
             }
-            return `${field} = ${value};`;
+            return js`
+                ${before}
+                ${field} = ${value};
+            `;
         }),
         "order-map-list": stmt((node) => {
             const fields = childrenNamed(node, "order-by").map((ob) => literalOrExpand(attr(ob, "field-name")));

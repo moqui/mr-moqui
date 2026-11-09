@@ -305,3 +305,90 @@ fn echo_data_returns_its_timestamp_as_one() {
         vec![Some(Value::string("foo")), Some(Value::string("ping")), Some(amount), Some(Value::Timestamp(now))]
     );
 }
+
+/// A `default-value` is taken when Groovy's `?:` would take it, and `set-if-empty="false"` skips what Java's
+/// `ObjectUtilities.isEmpty` calls empty, by the plan and by the generated script alike.
+#[test]
+fn defaults_and_set_if_empty_follow_java() {
+    let ctx = ExecutionContextFactory::test_context();
+    let _guard = ctx.enter();
+    let zero = Value::Decimal("0.00".parse().unwrap());
+    let context = [
+        ("nothing", Value::Null),
+        ("empty", Value::string("")),
+        ("falseFlag", Value::Bool(false)),
+        ("trueFlag", Value::Bool(true)),
+        ("zeroInt", Value::I32(0)),
+        ("zeroLong", Value::I64(0)),
+        ("zeroDouble", Value::F64(0.0)),
+        ("zeroDecimal", zero),
+        ("one", Value::I32(1)),
+        ("zeroText", Value::string("0")),
+        ("noItems", Value::List(Vec::new())),
+        ("items", Value::List(vec![Value::I32(1)])),
+        ("noEntries", Value::Map(indexmap::IndexMap::new())),
+        ("entries", map(&[("k", Value::I32(1))])),
+        ("noSet", map(&[("__set__", Value::List(Vec::new()))])),
+        ("kept", Value::string("before")),
+    ];
+    let names: Vec<&str> = context.iter().map(|(name, _)| *name).filter(|name| *name != "kept").collect();
+    let defaults: String = names
+        .iter()
+        .map(|name| format!(r#"<set field="{name}Default" from="{name}" default-value="dflt"/>"#))
+        .collect();
+    let default_names: Vec<String> = names.iter().map(|name| format!("{name}Default")).collect();
+    let default_names: Vec<&str> = default_names.iter().map(String::as_str).collect();
+    let (native, script) = both(&context, &defaults, &default_names);
+    assert_eq!(native, script);
+    let defaulted: Vec<&str> = names
+        .iter()
+        .zip(&native)
+        .filter(|(_, value)| *value == &Some(Value::string("dflt")))
+        .map(|(name, _)| *name)
+        .collect();
+    assert_eq!(
+        defaulted,
+        ["nothing", "empty", "falseFlag", "zeroInt", "zeroLong", "zeroDouble", "zeroDecimal", "noItems", "noEntries", "noSet"]
+    );
+    for name in names.iter().copied().filter(|name| *name != "noSet") {
+        let skipped = matches!(name, "nothing" | "empty" | "noItems" | "noEntries");
+        let sets = format!(r#"<set field="kept" from="{name}" set-if-empty="false"/>"#);
+        let (native, script) = both(&context, &sets, &["kept"]);
+        // the script's round trip narrows a 64-bit zero and an integral double; the set itself is the same
+        if !matches!(name, "zeroLong" | "zeroDouble") {
+            assert_eq!(native, script, "{name}");
+        } else {
+            assert_ne!(script, vec![Some(Value::string("before"))], "{name}");
+        }
+        let expected = if skipped {
+            Value::string("before")
+        } else {
+            context.iter().find(|(held, _)| *held == name).unwrap().1.clone()
+        };
+        assert_eq!(native, vec![Some(expected)], "{name}");
+    }
+    // an empty Set is skipped too (it reads back as a list on the script's side)
+    let (native, script) = both(&context, r#"<set field="kept" from="noSet" set-if-empty="false"/>"#, &["kept"]);
+    assert_eq!((native, script), (vec![Some(Value::string("before"))], vec![Some(Value::string("before"))]));
+    // values only a script makes: an empty array, a zero decimal, an empty object
+    clear_context_stack();
+    super::super::run_actions(
+        r#"<actions>
+            <set field="fromArray" from="[1].slice(1)" default-value="dflt"/>
+            <set field="fromDecimal" from="toDecimal('0')" default-value="dflt"/>
+            <set field="fromObject" from="Object.assign({}, {})" default-value="dflt"/>
+            <set field="fromFull" from="[1].slice(0)" default-value="dflt"/>
+            <set field="kept" value="before"/>
+            <set field="kept" from="Object.assign({}, {})" set-if-empty="false"/>
+            <set field="kept2" from="toDecimal('0')" set-if-empty="false"/>
+        </actions>"#,
+    )
+    .unwrap();
+    assert_eq!(read("fromArray"), Some(Value::string("dflt")));
+    assert_eq!(read("fromDecimal"), Some(Value::string("dflt")));
+    assert_eq!(read("fromObject"), Some(Value::string("dflt")));
+    assert_eq!(read("fromFull"), Some(Value::List(vec![Value::I32(1)])));
+    assert_eq!(read("kept"), Some(Value::string("before")));
+    assert_eq!(read("kept2"), Some(Value::Decimal("0".parse().unwrap())));
+    clear_context_stack();
+}

@@ -21,9 +21,10 @@
 //! - a `value` (and a `default-value`) that is text with no `${`, or exactly `${name}` or `${a.b}`;
 //! - with a `type` (`NewList` and `NewMap` too) and `set-if-empty`.
 //!
-//! The plan does what the generated script does (`XmlActions.js`'s `set` and `valueExpr`): the default when the value
-//! is null or empty text, then `basicConvert`, then the set, skipped under `set-if-empty="false"` when the value is
-//! null or empty text. Values keep their host types: a timestamp, date or time stays one, and a number its width, as
+//! The plan does what the generated script does (`XmlActions.js`'s `set` and `valueExpr`), as Java's template does:
+//! the default when Groovy's `?:` would take it ([`is_groovy_false`]), then `basicConvert`, then the set, skipped
+//! under `set-if-empty="false"` when Java's `ObjectUtilities.isEmpty` says the value is empty ([`is_empty_value`]).
+//! Values keep their host types: a timestamp, date or time stays one, and a number its width, as
 //! in Java, where the script's round trip makes them text and the narrowest number.
 //!
 //! What the plan cannot answer as the script would (a path through a value that is not a map or an entity value, a
@@ -337,26 +338,57 @@ impl Step {
             Source::Text(text) => text.value(found)?,
         };
         if let Some(default) = &self.default {
-            if is_empty(&value) {
+            if is_groovy_false(&value) {
                 value = default.value(found)?;
             }
         }
         if let Some(kind) = &self.convert {
             value = crate::l10n::basic_convert(&value, kind).value;
         }
-        if self.if_not_empty && is_empty(&value) {
+        if self.if_not_empty && is_empty_value(&value) {
             return Some(None);
         }
         Some(Some(value))
     }
 }
 
-/// Null or empty text, as the script's `== null || === ""` takes it.
-fn is_empty(value: &Value) -> bool {
+/// Whether `value` is empty as Java's `ObjectUtilities.isEmpty` has it: null, empty text, or an empty list (an entity
+/// list among them), Set or map (an entity value with no fields among them). A zero, false or empty bytes is not.
+pub(crate) fn is_empty_value(value: &Value) -> bool {
     match value {
         Value::Null => true,
         Value::String(text) => text.is_empty(),
+        Value::List(items) => items.is_empty(),
+        Value::Map(entries) => match entries.get(crate::script::runtime::SET_KEY) {
+            Some(Value::List(items)) if entries.len() == 1 => items.is_empty(),
+            _ => entries.is_empty(),
+        },
+        Value::Object(object) => {
+            if let Some(list) = object.downcast::<crate::script::host::entities::ScriptList>() {
+                list.cells().is_empty()
+            } else if let Some(list) = object.downcast::<crate::entity::EntityList>() {
+                list.is_empty()
+            } else if let Some(cell) = object.downcast::<crate::script::runtime::EntityCell>() {
+                moqui_lib::sync::lock(&cell).fields().is_empty()
+            } else {
+                false
+            }
+        }
         _ => false,
+    }
+}
+
+/// Whether `value` is false by Groovy truth, as the `?:` of Java's template takes a default: what
+/// [`is_empty_value`] calls empty, false, a zero number or decimal, and empty bytes.
+pub(crate) fn is_groovy_false(value: &Value) -> bool {
+    match value {
+        Value::Bool(flag) => !flag,
+        Value::I32(number) => *number == 0,
+        Value::I64(number) => *number == 0,
+        Value::F64(number) => *number == 0.0,
+        Value::Decimal(number) => moqui_lib::object::decimal_is_zero(*number),
+        Value::Bytes(bytes) => bytes.is_empty(),
+        other => is_empty_value(other),
     }
 }
 

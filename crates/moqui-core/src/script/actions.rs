@@ -283,6 +283,8 @@ fn reject(node: &MNode) -> Result<(), Error> {
 #[path = "actions_set.rs"]
 mod set;
 
+pub(crate) use set::{is_empty_value, is_groovy_false};
+
 #[cfg(test)]
 #[path = "actions_tests.rs"]
 mod tests;
