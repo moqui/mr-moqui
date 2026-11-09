@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A form-list of rowCount rows (default 20) with two links a row, as a tools list has (Round 53): one to a transition
+     that only names a screen, with a parameter map, and one to a transition with a condition and actions, which html
+     writes as a form. What a row's links cost: the URL, its parameters, whether it is disabled. -->
+<screen require-authentication="false">
+    <parameter name="rowCount"/>
+    <transition name="detail"><default-response url="."/></transition>
+    <transition name="edit">
+        <condition><expression>editable</expression></condition>
+        <actions><set field="edited" from="itemId"/></actions>
+        <default-response url="."/>
+    </transition>
+    <actions>
+        <set field="rows" from="Number(rowCount || 20)"/>
+        <script><![CDATA[
+            itemList = []
+            for (let i = 0; i < rows; i++) itemList.push({itemId: 'I' + i, name: 'Item ' + i, editable: i % 2 == 0})
+        ]]></script>
+    </actions>
+    <widgets>
+        <form-list name="LinkList" list="itemList" paginate="false">
+            <field name="itemId"><default-field><display/></default-field></field>
+            <field name="name"><default-field><display/></default-field></field>
+            <field name="detail"><default-field>
+                <link url="detail" text="Detail" link-type="anchor" parameter-map="{itemId:itemId}"/>
+            </default-field></field>
+            <field name="edit"><default-field>
+                <link url="edit" text="Edit" parameter-map="{itemId:itemId}"/>
+            </default-field></field>
+        </form-list>
+    </widgets>
+</screen>

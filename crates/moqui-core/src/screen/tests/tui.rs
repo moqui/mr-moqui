@@ -291,6 +291,27 @@ fn a_password_a_credential_parameter_and_a_control_sequence_are_left_out() {
     assert!(!model.parameters.contains_key("password"));
 }
 
+/// Tab and line feed stay, as do characters past U+009F (one outside the BMP too), a backslash before a `b` and a quote;
+/// the other C0 controls, DEL and C1 go.
+#[test]
+fn only_control_characters_but_tab_and_line_feed_are_dropped() {
+    let output = render(
+        "controls",
+        r#"<screen require-authentication="false" default-menu-title="Controls"><actions><script>
+            mixed = "a\tb\nc\rd\u0000e\u007ff\u009fg h😀i\\bj\u0022k"
+        </script></actions><widgets>
+            <label text="${mixed}"/>
+        </widgets></screen>"#,
+        BTreeMap::new(),
+    );
+    let doc = document(&output);
+    let text = nodes(&doc)
+        .into_iter()
+        .find(|node| node.get("t").and_then(Json::as_str) == Some("text"))
+        .unwrap();
+    assert_eq!(text["text"], json!("a\tb\ncdefg\u{a0}h\u{1f600}i\\bj\"k"));
+}
+
 #[test]
 fn a_dialog_a_dependent_drop_down_a_list_and_a_tui_text_are_one_document() {
     let output = render(

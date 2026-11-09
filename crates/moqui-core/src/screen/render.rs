@@ -321,6 +321,9 @@ pub(crate) struct Job<'a> {
     pub options: &'a RenderOptions,
 }
 
+/// A map of this render's own keys, hashed fast (nothing outside the process chooses them).
+type FastMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::RandomState>;
+
 /// What a running render exposes to the code that writes the screen: `sri` reads this.
 pub struct RenderState {
     pub factory: Arc<ExecutionContextFactory>,
@@ -373,6 +376,14 @@ pub struct RenderState {
     /// The theme of this render and its resource values by type, found once as Java's `curThemeId`.
     pub theme_id: RefCell<Option<String>>,
     pub theme_values: RefCell<std::collections::HashMap<String, Vec<String>>>,
+    /// `getDisableLink`'s permission check of each resolved link path in this render, by the path's address, for the
+    /// user and authorization state it was decided under (see [`super::urls::UrlInstance::disable_link`]).
+    pub link_permitted: RefCell<FastMap<usize, super::urls::LinkPermitted>>,
+    /// Link paths resolved in this render, by the screen path they were resolved from and their text (see
+    /// [`super::urls`]'s `resolve_path`).
+    pub resolved_paths: RefCell<FastMap<String, super::url::ScreenPath>>,
+    /// `makeUrlByType`'s url-type texts with no `${`, localized once a render.
+    pub url_types: RefCell<FastMap<String, String>>,
 }
 
 impl RenderState {
@@ -426,6 +437,9 @@ impl RenderState {
             once: RefCell::new(std::collections::HashSet::new()),
             theme_id: RefCell::new(None),
             theme_values: RefCell::new(std::collections::HashMap::new()),
+            link_permitted: RefCell::default(),
+            resolved_paths: RefCell::default(),
+            url_types: RefCell::default(),
         }
     }
 }
@@ -664,6 +678,7 @@ fn plain_request_parameters() -> BTreeMap<String, String> {
 /// A job with a `moquiPreview` token on a dev instance renders from the proposed text the token names (F14,
 /// plans/design-dev-aide.md 13.3): under the read fence, so nothing it runs writes, and framed by the page that asked.
 pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<(), Error> {
+    let _profile = super::profile::request(job.path);
     let mut token = text_of(job.parameters.get("moquiPreview"));
     if token.is_empty() {
         token = job.request.header("x-moqui-preview").unwrap_or_default().to_string();
@@ -718,6 +733,7 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
     if last_standalone == 0 && standalone_json(requested_mode(job, None)) {
         last_standalone = 1;
     }
+    let url_span = super::profile::span("phase", "url");
     let mut info = ScreenUrlInfo::parse(factory, job.root, job.path, last_standalone)?;
     if last_standalone == 0 && standalone_json(requested_mode(job, Some(&info))) {
         info = ScreenUrlInfo::parse(factory, job.root, job.path, 1)?;
@@ -728,6 +744,7 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
         return Ok(());
     }
     check_authentication(&info)?;
+    drop(url_span);
     // Under a screen that says include-child-content a text file or template renders inside the screens, with the
     // request in the context; a binary file is still sent.
     let child_content = info.file_resource.as_ref().filter(|file| {
@@ -763,6 +780,7 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
     let client = client_mode(job.request, &mode_screen(&info, &picked), &picked);
     let negotiated = client.is_some();
     let mode = client.unwrap_or(picked);
+    super::profile::set_mode(&mode);
     let rendered = mode_screen(&info, &mode);
     if !rendered.allows_render_mode(&mode) {
         // A qvue-only screen still answers tui: one placeholder, so the screen list stays a document.
@@ -1077,6 +1095,7 @@ fn render_body(state: &RenderState) -> Result<(), Error> {
         }
         return Ok(());
     }
+    let _output = super::profile::span("phase", "output");
     super::sri::flush_end_text(state);
     if state.output_kind == OutputKind::Json && !state.dont_do_render.get() {
         wrap_json_envelope(state);

@@ -64,6 +64,7 @@ pub(crate) fn run_actions_at(actions: &str, source: Option<&moqui_lib::error::So
     if actions.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
+    let _profile = crate::screen::profile::span("phase", "actions");
     let prepared = generated(actions)?;
     if let Some(done) = prepared.plan.as_deref().and_then(set::SetPlan::run) {
         return done;

@@ -7,8 +7,9 @@ Status 2026-11-08. This file replaces four running logs, now in `archive/`:
 - [Script-Engine-Zipp-Ideas](archive/Script-Engine-Zipp-Ideas.md): ideas from zipp.org.
 
 It keeps the latest numbers, what is still open and the ideas not yet built. Round 50 (2026-11-08, [below](#round-50-tiers-0-to-2))
-built §5's tiers 0 to 2, Round 51 ([below](#round-51-shared-atoms)) the shared atoms, and Round 52
-([below](#round-52-the-boundary-rows-and-native-sets)) the boundary rows and native sets. Each one cites where it was measured or proposed: "R*n*" is a Profiling round, "TX §*name*" or "TX D*n*" a section or decision of TX-Cache, "Oxide §*n*" a
+built §5's tiers 0 to 2, Round 51 ([below](#round-51-shared-atoms)) the shared atoms, Round 52
+([below](#round-52-the-boundary-rows-and-native-sets)) the boundary rows and native sets, and Round 53 (2026-11-09,
+[below](#round-53-full-screen-renders)) full renders of real screens over HTTP. Each one cites where it was measured or proposed: "R*n*" is a Profiling round, "TX §*name*" or "TX D*n*" a section or decision of TX-Cache, "Oxide §*n*" a
 section of Script-Engine-Oxide, and "Zipp *n*" an item of Script-Engine-Zipp-Ideas §3.
 
 Most of the database and service work is done:
@@ -85,6 +86,16 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
   - `MOQUI_SCRIPT_STATS_FILE=<file>` appends a JSON line per process: scripts by kind, runtimes started, live and
     restarted, the heap at its peak, and `heap_at_max_by_runtime`, each runtime's share of the peak by thread (R49).
   - `MOQUI_SCRIPT_HEAP_LOG=<file>` writes a line per spec with the main thread's runtimes' arenas, code and caches.
+- **Screen renders** (R53):
+  - `MOQUI_RENDER_PROFILE=<file>` on a server appends a JSON line per screen render: the total, and per phase (the
+    URL, actions, units, each host method, their argument and result conversions, the flushes, the output) its count
+    and inclusive and exclusive time (`screen/profile.rs`). A unit's exclusive time is the interpreter between host
+    calls. Its clock reads add 5 to 15% to a render with many host calls; off, it is one static read a call.
+  - The bench repository's `rounds/r53/`: `screen_bench.py` times screens over HTTP as john.doe (3 × 100, single
+    threaded, `perf stat` of the server's instructions), `table.py` compares runs, `compare_bodies.py` diffs the
+    outputs, `profile_table.py` sums a render profile, and `inclusive.py` gives inclusive shares from `perf script`.
+  - The screen tarpit (`AT_XML_SCREEN`, 120 hits a minute in the demo data) answers a loop with error pages: turn it
+    off in the conf for a timing (`<artifact-execution type="AT_XML_SCREEN" tarpit-enabled="false"/>`).
   - A round's changes go behind a temporary `MOQUI_OXIDE_OFF` switch, so one release build measures each
     (`rounds/r33/run-variants.sh`, `table.py` in the bench repository).
 - **The fork's bench repository,** [moqui/quickjs-oxide-bench](https://github.com/moqui/quickjs-oxide-bench), checked out
@@ -378,6 +389,73 @@ with the instructions flat. The bisect (`rounds/r52/layout-bisect`) put it on wh
 cache line: every build with it at offset 0x30 ran the adds row about 10% slower, whatever the edit, and the final
 source built another way ran at the base's speed. Wall times of the interpreter rows move about 10% with unrelated
 edits; read instructions for them, and PGO (§5, tier 3) would steady them.
+
+### Round 53: full screen renders
+
+The first comparison with Moqui Java (2026-11-09, one thread, 3 × 100 renders each, as john.doe on demo data):
+System / Cache List 9.4 ms against Java's 7.6 ms once its JIT is warm (9.5 ms in its first round), with output of 66
+against 112 KB, and every round flat where Java's had 100 to 400 ms outliers. This round renders five tools screens
+over HTTP on the release server, splits each render by phase, and takes the largest costs out. The pages use page
+parameters for long runs: Entities (`pageSize=3000`, 1,482 rows, three links a row), Cache List, Cache Elements of
+`l10n.message` (330 rows), Artifact Stats (`levels=3`) and the System dashboard, each in html, qvt and tui.
+
+Medians of the third round and `perf stat` instructions a request (bench `rounds/r53`, `work/r53/{base,c2}.log`):
+
+| Screen | html ms | qvt ms | tui ms | html Mi ÷ | qvt Mi ÷ | tui Mi ÷ |
+|---|---:|---:|---:|---:|---:|---:|
+| Entities, 1,482 rows | 196 → 135 | 263 → 202 | 287 → 83 | 0.74 | 0.81 | 0.27 |
+| Cache List | 12.0 → 10.4 | 13.0 → 11.5 | 11.6 → 4.9 | 0.89 | 0.90 | 0.36 |
+| Cache Elements, 330 rows | 23.6 → 20.6 | 28.6 → 25.4 | 27.9 → 9.8 | 0.89 | 0.92 | 0.32 |
+| Artifact Stats | 160 → 156 | 179 → 173 | 176 → 143 | 0.98 | 0.98 | 0.80 |
+| Dashboard | 6.7 → 6.4 | 5.3 → 5.1 | 7.4 → 4.3 | 0.95 | 0.96 | 0.45 |
+
+Outputs are the same as before, live values (memory, hit counts, times) aside.
+
+**What the render profile showed** before the changes, Entities html (223 ms with the profile on): 51% host method
+bodies, 38% units, 9% argument and result conversions, 1% actions. 108k host calls a render. The links cost most:
+`UrlInstance.getDisableLink` 5.1 µs a call, twice a link in html (45 ms), and `sri.makeUrlByType` 7.0 µs a link (31
+ms). The perf profile put 22% of the render in `disable_link`: its `permitted` check pushes the path's screens on a
+fresh artifact stack for each link, with telemetry spans on each push (14% of the render), and the path resolve read
+`ScreenPathAlias` for each link (7.6%). In tui, 71% was units: `$clean` walked every key and value of the document
+one code point at a time (`for (const ch of text)`, with `out += ch`), and `$scrub` rebuilt `JSON.stringify` in
+script.
+
+**The changes:**
+- **A link's permission once a render** (`urls.rs` `permitted_in_render`): kept in the render state by the resolved
+  path's address, for the user and authorization state it was decided under; a transition's condition still runs on
+  each call. `getDisableLink` 5.1 → 0.47 µs.
+- **A link path resolved once a render** (`resolve_path`), by the screen path it is resolved from and its text, and a
+  url-type's localization once a render for a text with no `${` (`url_type_of`). `makeUrlByType` 7.0 → 4.0 µs.
+- **The tui writer on `JSON.stringify`** (`ScreenTui.js`): a replacer keeps `$scrub`'s `null` for `undefined` and text
+  for a function, symbol or bigint; one regexp test over the finished JSON finds the escaped controls, and only then a
+  replace drops them (tab and line feed kept, as before).
+- The render profile (`screen/profile.rs`), and js_speed rows for a tui list and a list of links:
+
+| Row | Base µs | R53 µs | ÷ | Allocations |
+|---|---:|---:|---:|---|
+| List, tui, 100 rows | 4114 | 2336 | 0.57 | 37,542 → 22,356 |
+| Links, html, 100 rows | 9811 | 8522 | 0.87 | 80,726 → 66,064 |
+| Links.qvt, 100 rows | 12636 | 11277 | 0.89 | 84,078 → 69,401 |
+| Links, tui, 100 rows | 11124 | 3753 | 0.34 | 101,027 → 36,167 |
+
+js_speed runs with authorization off, so its links gain less than a signed-in user's.
+
+**Fancy templates** are compiled in Rust (`script/template.rs`: the tags, `${}` and the generated function, cached by
+text) and `${}` in an expand is a template literal compiled once by its hash; nothing parses template text in script
+on a render. `sri.renderText` was 0.6 ms of Cache Elements (four templates) and 0.2 ms of the dashboard.
+
+**What is left** (Entities html after the changes, 171 ms with the profile on):
+- **The macros' own code:** units are 50% in html, 61% in qvt and 49% in tui. qvt costs 1.4 to 1.8 times html for the
+  same rows. The interpreter has no function names in a profile, so the next step is to read the generated units of
+  Entities and time the macro functions a cell calls.
+- **`makeUrlByType` at 4 µs a link** (9% of html, 15% of tui): the `parameter-map` evaluated as a nested script (3.7%)
+  and the URL's parameters built from the screen and transition definitions (3.2%). The macro could pass the map it
+  already has in script.
+- **`sri.write`:** 50k calls a render (34 a row) at 0.2 µs, 16 ms with its conversions; writes could gather in script
+  and cross once a cell or row.
+- **The host boundary:** argument and result conversions are 11% of html.
+- **Artifact Stats is framework work:** `getAllServiceInfo` 37.6 ms, `getKnownServiceNames` 36 ms and `openFormList`
+  8.9 ms a list, 100 of its 156 ms.
 
 ### Startup and threads
 

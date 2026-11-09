@@ -543,6 +543,10 @@ fn screens(rows: &mut Rows, calls: usize, factory: &Arc<ExecutionContextFactory>
         ("Plain.qvt", "/Plain.qvt", "qvt", None),
         ("List.qvt, 100 rows", "/List.qvt", "qvt", Some("100")),
         ("List, text, 100 rows", "/List", "text", Some("100")),
+        ("List, tui, 100 rows", "/List", "tui", Some("100")),
+        ("Links, html, 100 rows", "/Links", "html", Some("100")),
+        ("Links.qvt, 100 rows", "/Links.qvt", "qvt", Some("100")),
+        ("Links, tui, 100 rows", "/Links", "tui", Some("100")),
     ] {
         if !row_wanted(label) {
             continue;

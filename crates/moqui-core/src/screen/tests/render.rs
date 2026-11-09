@@ -1457,6 +1457,39 @@ fn a_transition_link_carries_its_service_keys_and_a_failed_condition_disables_it
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A render decides a link path's permission once, but a transition's condition on each row it is asked in.
+#[test]
+fn a_transition_condition_disables_its_link_row_by_row() {
+    let world = World::open("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-link-rows-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("Rows.xml"),
+        r#"<screen require-authentication="false">
+            <transition name="maybe"><condition><expression>ok</expression></condition><actions><set field="x" value="1"/></actions>
+                <default-response url="."/></transition>
+            <actions><script>rows = [{rowId:'ra', ok:true}, {rowId:'rb', ok:false}, {rowId:'rc', ok:true}]</script></actions>
+            <widgets>
+                <form-list name="Rows" list="rows">
+                    <field name="rowId"><default-field><display/></default-field></field>
+                    <field name="go"><default-field><link url="maybe" text="Go" link-type="anchor" parameter-map="{rowId:rowId}"/></default-field></field>
+                </form-list>
+            </widgets></screen>"#,
+    )
+    .unwrap();
+    let output = make_render(&world.factory)
+        .root_screen(dir.join("Rows.xml").to_string_lossy().into_owned())
+        .screen_path("/")
+        .render()
+        .unwrap();
+    let html = output.body_text();
+    assert!(html.contains("maybe?rowId=ra"), "{html}");
+    assert!(!html.contains("rowId=rb"), "{html}");
+    assert!(html.contains("maybe?rowId=rc"), "{html}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Allow `group` the `action` on one artifact, with the authorization inherited by what runs under it.
 fn grant(world: &World, id: &str, group: &str, artifact_type: &str, name: &str, action: &str) {
     let mut member = world.facade.make_value("moqui.security.ArtifactGroupMember").unwrap();

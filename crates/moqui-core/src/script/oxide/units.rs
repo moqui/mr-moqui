@@ -186,7 +186,9 @@ fn in_unit_scope<T>(
         outer: Some(engine.run_values().borrow_mut().take_outer()),
     };
     let result = body(context);
+    let flush_span = crate::screen::profile::span("phase", "flush.end");
     let flushed = super::tracked::flush(context, Flush::End).map_err(|conv| flush_error(context, conv));
+    drop(flush_span);
     drop(scope);
     result.and_then(|value| flushed.map(|()| value))
 }
@@ -203,6 +205,7 @@ impl Drop for Depth<'_> {
 /// Run `unit` on the runtime: its mode runtime first if this runtime has not run it, its function compiled once, called
 /// with the unit depth.
 fn call_unit(engine: &OxideEngine, context: &mut Context, unit: &Unit) -> Result<(), Error> {
+    let _profile = crate::screen::profile::span("phase", "unit");
     let failed = |context: &mut Context, err: RuntimeError| {
         if super::errors::is_out_of_memory(context, &err) {
             engine.note_out_of_memory();
@@ -218,6 +221,7 @@ fn call_unit(engine: &OxideEngine, context: &mut Context, unit: &Unit) -> Result
     let function = match saved {
         Some(function) => function,
         None => {
+            let _compile = crate::screen::profile::span("phase", "unit.compile");
             let hash = crate::script::text::hash_text(&unit.source);
             let made = compile(engine, &unit.source, hash)
                 .and_then(|compiled| context.execute(&compiled))

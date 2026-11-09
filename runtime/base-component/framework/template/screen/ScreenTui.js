@@ -31,33 +31,22 @@ const $stack = [];
 let $sink = null;
 const $w = (text) => { if ($sink) $sink.push(text); else sri.write(text); };
 const $sep = () => { if ($comma) $w(","); $comma = true; };
-const $clean = (value) => {
-    const text = String(value == null ? "" : value);
-    let out = "";
-    for (const ch of text) {
-        const code = ch.codePointAt(0);
-        if (code === 9 || code === 10 || (code >= 32 && code !== 127 && (code < 128 || code > 159))) out += ch;
-    }
-    return out;
+// A value as JSON, by the engine's JSON.stringify: undefined is null (an object keeps its key), and a function, symbol or
+// bigint is its text. A value with toJSON (a decimal, a date) is what that gives.
+const $plain = (key, value) => {
+    if (value === undefined) return null;
+    const type = typeof value;
+    return type === "function" || type === "symbol" || type === "bigint" ? String(value) : value;
 };
+// Control characters but tab and line feed are dropped (C0, DEL and C1), in keys and values, as JSON.stringify writes them:
+// an escape (\\b, \\f, \\r or \\u00XX) or, for DEL and C1, the character itself. Every other escape is matched whole, so
+// a scan never starts inside one.
+const $jsonControl = /\\\\u00(?:0[0-8bcef]|1[0-9a-f])|\\\\[bfr]|[\\x7F-\\x9F]/;
+const $jsonEscapes = /\\\\u00(?:0[0-8bcef]|1[0-9a-f])|\\\\[\\s\\S]|[\\x7F-\\x9F]/g;
+const $keepEscape = (match) => (match.length === 2 && match !== "\\\\b" && match !== "\\\\f" && match !== "\\\\r" ? match : "");
 const $scrub = (value) => {
-    if (typeof value === "string") return JSON.stringify($clean(value));
-    if (value === null || value === undefined) return "null";
-    if (typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
-    if (Array.isArray(value)) return "[" + value.map($scrub).join(",") + "]";
-    // A value with toJSON (a decimal, a date) is written as JSON.stringify would write it.
-    if (typeof value === "object" && typeof value.toJSON === "function") return $scrub(value.toJSON());
-    if (typeof value === "object") {
-        let out = "{";
-        let first = true;
-        for (const key of Object.keys(value)) {
-            if (!first) out += ",";
-            first = false;
-            out += JSON.stringify($clean(key)) + ":" + $scrub(value[key]);
-        }
-        return out + "}";
-    }
-    return JSON.stringify($clean(String(value)));
+    const json = JSON.stringify(value, $plain);
+    return $jsonControl.test(json) ? json.replace($jsonEscapes, $keepEscape) : json;
 };
 const $emit = (value) => { $sep(); $w($scrub(value)); };
 const $openRender = (fields) => {

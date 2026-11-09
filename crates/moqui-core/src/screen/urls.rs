@@ -32,6 +32,15 @@ use super::RenderState;
 use crate::context::{Authz, Error, ErrorKind, Tarpit};
 use crate::{script, web};
 
+/// A link path's permission held for the rest of a render ([`UrlInstance::disable_link`]). It holds the path, so its
+/// address is not reused while the render runs.
+pub struct LinkPermitted {
+    _info: Arc<ScreenUrlInfo>,
+    user: Option<String>,
+    authz_disabled: bool,
+    permitted: bool,
+}
+
 /// A URL for a link, with the parameters added to it.
 #[derive(Clone, Debug, Default)]
 pub struct UrlInstance {
@@ -186,7 +195,47 @@ impl UrlInstance {
                 return Ok(true);
             }
         }
-        Ok(!self.permitted())
+        Ok(!self.permitted_in_render())
+    }
+
+    /// [`Self::permitted`], decided once a render for each resolved path: a form-list asks it of the same few links on
+    /// every row, and html asks twice a link. The answer depends only on the path, its transition, the user and whether
+    /// authorization is disabled, so a hit must match the last two. The transition's condition is not part of it.
+    fn permitted_in_render(&self) -> bool {
+        let Some(info) = &self.info else {
+            return self.permitted();
+        };
+        let key = Arc::as_ptr(info) as usize;
+        let user = crate::user::current_user_id().ok().flatten();
+        let authz_disabled = crate::context::ExecutionContext::with_current(|ec| ec.authz_disabled()).unwrap_or(false);
+        let found = super::with_current_render(|state| {
+            state
+                .link_permitted
+                .borrow()
+                .get(&key)
+                .filter(|held| held.user == user && held.authz_disabled == authz_disabled)
+                .map(|held| held.permitted)
+        });
+        match found {
+            Some(Some(permitted)) => permitted,
+            // no render: decide each time
+            None => self.permitted(),
+            Some(None) => {
+                let permitted = self.permitted();
+                super::with_current_render(|state| {
+                    state.link_permitted.borrow_mut().insert(
+                        key,
+                        LinkPermitted {
+                            _info: Arc::clone(info),
+                            user,
+                            authz_disabled,
+                            permitted,
+                        },
+                    );
+                });
+                permitted
+            }
+        }
     }
 
     /// `isPermitted`: each screen of the path with its parents on the artifact stack, the single service of a transition
@@ -740,7 +789,7 @@ pub fn make_url_by_type(
     parameter_parent: Option<&NodeLit>,
     expand_transition_url: bool,
 ) -> Result<UrlInstance, Error> {
-    let kind = script::expand_localized(url_type)?;
+    let kind = url_type_of(state, url_type)?;
     let mut inline = Vec::new();
     let mut url = match kind.as_str() {
         "transition" | "screen" => {
@@ -798,6 +847,20 @@ pub fn make_url_by_type(
         }
     }
     Ok(url)
+}
+
+/// A link's url-type, expanded and localized as Java's `makeUrlByType` does. A text with no `${` cannot change within a
+/// render, so it is localized once.
+fn url_type_of(state: &RenderState, url_type: &str) -> Result<String, Error> {
+    if url_type.contains("${") {
+        return script::expand_localized(url_type);
+    }
+    if let Some(kind) = state.url_types.borrow().get(url_type) {
+        return Ok(kind.clone());
+    }
+    let kind = script::expand_localized(url_type)?;
+    state.url_types.borrow_mut().insert(url_type.to_string(), kind.clone());
+    Ok(kind)
 }
 
 /// A transition that only names another screen. Java's `expandTransitionAliasUrl` rewrites a link to that screen
@@ -913,14 +976,29 @@ fn missing_url() -> UrlInstance {
     }
 }
 
+///
+/// A path is resolved once a render for each screen path and text: a form-list's links are the same on every row, and
+/// each resolve reads `ScreenPathAlias`. A failure is not kept.
 fn resolve_path(state: &RenderState, from: &[String], url: &str) -> Result<super::url::ScreenPath, Error> {
+    let mut key = String::with_capacity(url.len() + 64);
+    for name in from {
+        key.push_str(name);
+        key.push('/');
+    }
+    key.push('\u{1}');
+    key.push_str(url);
+    if let Some(held) = state.resolved_paths.borrow().get(&key) {
+        return Ok(held.clone());
+    }
     let root = state
         .url_info
         .path_defs
         .first()
         .map(|def| def.location.as_str())
         .ok_or_else(|| Error::new("no root screen"))?;
-    resolve_screen_path(&state.factory, root, from, url)
+    let resolved = resolve_screen_path(&state.factory, root, from, url)?;
+    state.resolved_paths.borrow_mut().insert(key, resolved.clone());
+    Ok(resolved)
 }
 
 /// `sri.isAnchorLink(linkNode, urlInstance)`.
