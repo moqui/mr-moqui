@@ -29,7 +29,10 @@ use moqui_lib::sync::lock;
 /// A tracked scratch runtime, the install whose `pg_ctl` stops its postmasters, and whether `--keep` keeps it.
 struct Tracked {
     dir: PathBuf,
+    // Read when a signal stops the scratch postmaster. Windows has no such handler.
+    #[cfg_attr(not(unix), allow(dead_code))]
     install: PathBuf,
+    #[cfg_attr(not(unix), allow(dead_code))]
     keep: bool,
 }
 
@@ -137,6 +140,7 @@ fn owned(_dir: &Path) -> bool {
 }
 
 /// Clean up what is tracked, then end the process with the status of the signal.
+#[cfg(unix)]
 fn interrupted(status: i32) -> ! {
     let tracked = std::mem::take(&mut *lock(&TRACKED));
     for Tracked { dir, install, keep } in tracked {

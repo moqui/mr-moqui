@@ -18,12 +18,13 @@ lint-min = "clippy -p moqui-host --no-default-features --all-targets -- -D warni
 # generated crate `./moq build` links add-on components through (target/moqui-app), which is its own workspace. Cargo
 # reads this file from the directory it runs in and its parents, so run cargo from the repository.
 
-# Phase 6 unwinds across the service boundary. This is already the compiler default. The debug info stays in the
-# object files under target/debug, where debuggers and backtraces read it, instead of being linked into every test
-# binary (docs/Build-Test.md, Profiles).
+# Phase 6 unwinds across the service boundary. This is already the compiler default. On Unix, `moq` exports
+# CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=unpacked so debug info stays in the object files under target/debug, where
+# debuggers and backtraces read it, instead of being linked into every test binary (docs/Build-Test.md, Profiles).
+# Cargo has no per-target profile, and `unpacked` is not a Windows option: a Windows dev build keeps the compiler
+# default, a PDB beside the binary.
 [profile.dev]
 panic = "unwind"
-split-debuginfo = "unpacked"
 
 # Dependencies optimized in dev and test builds; the workspace crates stay at opt-level 0. A debug
 # screen render was about 12x slower than release with unoptimized dependencies, which made the

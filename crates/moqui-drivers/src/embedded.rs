@@ -25,6 +25,7 @@ mod cluster {
     use super::super::postgres::PostgresDriver;
 
     const DATABASE: &str = "moqui";
+    #[cfg(unix)]
     const PORT: u16 = 5432;
     /// `.cargo/config.toml` forces `POSTGRESQL_VERSION` to this exact theseus build; build.rs passes it on.
     const SHIPPED_VERSION: &str = env!("MOQUI_PG_VERSION");
@@ -129,7 +130,9 @@ mod cluster {
             // and the postmaster resolves a relative socket dir against the wrong base, so it
             // cannot create its lock file (`moqui load` passed `runtime/db/embedded` straight
             // through). Resolve once so every caller gets absolute paths.
-            let dir = std::fs::canonicalize(dir).map_err(|err| Error::new("resolve embedded dir").with_source(err))?;
+            let dir = super::plain_path(
+                std::fs::canonicalize(dir).map_err(|err| Error::new("resolve embedded dir").with_source(err))?,
+            );
             let data_dir = dir.join("data");
             #[cfg(unix)]
             check_socket_len(&socket_dir_for(&data_dir, &std::env::temp_dir()))?;
@@ -431,7 +434,9 @@ mod cluster {
     /// inside the cluster directory.
     fn cli_options(runtime_dir: &Path, dir: &Path) -> Result<StartOptions, Error> {
         std::fs::create_dir_all(dir).map_err(|err| Error::new("create embedded dir").with_source(err))?;
-        let dir = std::fs::canonicalize(dir).map_err(|err| Error::new("resolve embedded dir").with_source(err))?;
+        let dir = super::plain_path(
+            std::fs::canonicalize(dir).map_err(|err| Error::new("resolve embedded dir").with_source(err))?,
+        );
         let mut options = StartOptions::new(CLI_MAX_CONNECTIONS);
         options.install_dir = Some(shared_install_dir(runtime_dir, &dir));
         Ok(options)
@@ -736,13 +741,15 @@ mod cluster {
         let mut settings = Settings::new();
         // The unpacked install of this build's version (`install`), trusted as it is: nothing is looked up or
         // downloaded.
-        settings.installation_dir = install_dir
-            .clone()
-            .unwrap_or_else(|| dir.join("install"))
-            .join(SHIPPED_VERSION);
+        settings.installation_dir = super::plain_path(
+            install_dir
+                .clone()
+                .unwrap_or_else(|| dir.join("install"))
+                .join(SHIPPED_VERSION),
+        );
         settings.trust_installation_dir = true;
-        settings.password_file = dir.join("pgpass");
-        settings.data_dir = data_dir.to_path_buf();
+        settings.password_file = super::plain_path(dir.join("pgpass"));
+        settings.data_dir = super::plain_path(data_dir.to_path_buf());
         settings.temporary = false;
         settings.timeout = None;
         // fsync=on overrides pg_ctl's `-F`. Sim keeps it on too; synchronous_commit is its only relaxation.
@@ -1098,6 +1105,29 @@ pub use cluster::{
 #[cfg(feature = "embedded-postgres")]
 pub use cluster::{process_live, stop_postmaster};
 
+/// `canonicalize` on Windows prefixes `\\?\`. theseus `initdb` rewrites `\` as `/` and then cannot
+/// spawn `//?/D:/.../postgres.exe`. A normal absolute path is what the postmaster can run. A path
+/// that would not fit in `MAX_PATH` keeps the prefix.
+fn plain_path(path: std::path::PathBuf) -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let text = path.to_string_lossy();
+        let plain = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{rest}")
+        } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+            rest.to_string()
+        } else {
+            return path;
+        };
+        if plain.encode_utf16().count() >= 260 {
+            return path;
+        }
+        return std::path::PathBuf::from(plain);
+    }
+    #[cfg(not(windows))]
+    path
+}
+
 /// Where the embedded Postgres of a runtime is unpacked: `postgres` under `MOQUI_INSTALL` (a process property, then
 /// the environment variable, as `MOQUI_CONF`) when it is set, else under `install` in the runtime directory, where
 /// `./moq archive` leaves it out. Absolute, since the install path is handed on verbatim.
@@ -1114,7 +1144,7 @@ pub fn install_dir(runtime_dir: &std::path::Path) -> std::path::PathBuf {
             .unwrap_or_else(|_| runtime_dir.to_path_buf())
             .join("install"),
     };
-    root.join("postgres")
+    plain_path(root.join("postgres"))
 }
 
 /// Without embedded Postgres there is no install: the path is passed along and never used.

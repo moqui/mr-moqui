@@ -25,7 +25,11 @@ and the build packages are in [Build-Test](Build-Test.md).
 ### Develop on your machine
 
 You need Rust 1.99 or newer (`rustc --version`; quickjs-oxide declares 1.99, and `rust-toolchain.toml` pins 1.99.0),
-git and bash, on Linux or macOS.
+git and bash, on Linux, macOS, or Windows. On Windows, install the MSVC toolchain (`x86_64-pc-windows-msvc`), Visual
+Studio Build Tools with the "Desktop development with C++" workload, and Git for Windows, then use `moq.cmd` instead
+of `./moq` (the binary is `target\release\moqui.exe`). The first build that needs it downloads NASM 3.02 to
+`%USERPROFILE%\.moqui\nasm`; set `MOQUI_NASM` to an existing directory or `nasm.exe` to skip that download. A
+`cargo build` that does not go through `moq` still needs NASM on `PATH`.
 
 ```sh
 git clone https://github.com/moqui/mr-moqui.git
@@ -130,7 +134,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Run client specs against a server | `./moq test-client framework` | |
 | Archive the runtime with the binary | `./moq archive --release` | `./gradlew addRuntime` |
 | Remove the database, logs and old build output | `./moq clean-all` | `./gradlew cleanAll` |
-| Show the binary's package and features | `target/release/moqui version` | |
+| Show the binary's package and features | `target/release/moqui version` (`target\release\moqui.exe version` on Windows) | |
 
 ## Choose a topology
 
@@ -1326,7 +1330,7 @@ Component and data changes for a Java deployment are in [Moqui-Java-Migration.md
 
 ```
 mr-moqui/
-  moq                 the task script (bash 3.2 or newer)
+  moq                 the task script (bash 3.2 or newer); moq.cmd launches it from PowerShell or cmd
   addons.xml          known components and repositories; myaddons.xml (not in git) adds to it
   crates/             the Rust workspace: moqui (the binary), moqui-host, moqui-core, moqui-lib, moqui-llm, moqui-db,
                       moqui-tui, moqui-browser
@@ -1342,5 +1346,5 @@ mr-moqui/
   scripts/            pg-payload.sh, check-packages.sh, wasm-build.sh
   docs/               reference guides
   plans/              designs, status and reviews
-  target/             build output: target/release/moqui, target/lite/moqui, ...
+  target/             build output: target/release/moqui, target/lite/moqui, ... (moqui.exe on Windows)
 ```
