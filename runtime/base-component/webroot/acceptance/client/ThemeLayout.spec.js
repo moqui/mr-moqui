@@ -1,6 +1,6 @@
 // Measured theme and layout checks of the shared qvt components, in the page with Vue and Quasar: semantic text and
-// focus contrast in both default themes, Mermaid redraws on a color-mode change, and box headers at phone width.
-// Acceptance (./moq accept webroot), not regression: they measure rendered colors and geometry rather than check a rule.
+// focus contrast in both default themes, routed keyboard navigation, Mermaid redraws, and box headers at phone width.
+// Acceptance (./moq accept webroot): rendered colors, geometry and keyboard navigation journeys.
 // Moved from test/client/WebrootVue.qvt.spec.js, WebrootVue.qvt.markdown.spec.js and WebrootVue.qvt.layout.spec.js.
 spec({ server: false, timeout: 60 })
 
@@ -262,5 +262,116 @@ feature("box headers retain their title beside wrapping phone actions and name t
         toggle.press('Enter')
         page.waitFor(() => getComputedStyle(document.querySelector('.m-box-content')).display !== 'none')
         assert.equal(toggle.evaluate(el=>el.getAttribute('aria-expanded')), 'true')
+    },
+})
+
+feature("routed shell menu items activate once from the keyboard", {
+    expect() {
+        const page = browser.newPage()
+        page.setContent(`<!doctype html><html><head>
+            <link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
+            <link rel="stylesheet" href="/css/WebrootVue.qvt.css">
+            </head><body><div id="app"></div>
+            <script src="/libs/vue/vue.global.prod.js"></script>
+            <script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script>
+            <script src="/js/WebrootVue.qvt.js"></script>
+            <script>
+            // Settle menu transitions so the journey measures keyboard, focus and theme outcomes.
+            Quasar.QMenu.props.transitionDuration.default = 0;
+            // Mount the actual shell navigation markup, without fetching or rendering an application screen.
+            const source = moqui.qvt.components['m-qapps-root'].template;
+            const start = source.indexOf('<q-btn v-if="appScreenMenu"');
+            const crumbs = source.indexOf('<q-breadcrumbs v-if="!handheld"');
+            const template = source.slice(start, source.indexOf('</q-btn>', start) + 8) +
+                source.slice(crumbs, source.indexOf('</q-breadcrumbs>', crumbs) + 16) + '<button id="after-navigation">Search</button>';
+            // The slices end at the first closing tag: a nested q-btn in the menu button would cut it short, so say so.
+            const opened = (template.match(/<q-btn\\b/g) || []).length, closed = (template.match(/<\\/q-btn>/g) || []).length;
+            if (start < 0 || crumbs < 0 || opened !== closed) throw new Error('the shell navigation markup changed: update this fixture');
+            window.menu = { subscreens: [{ name: 'Home', title: 'Home', pathWithParams: '/qapps/dev/Home' }] };
+            window.visits = []; window.vueErrors = []; window.enterPrevented = [];
+            const app = Vue.createApp({ template, data() { return { appScreenMenu: window.menu, headerTitle: 'Dev AIDE', handheld: false,
+                breadcrumbStart: 0, navMenuList: [
+                    { title: 'LLM', subscreens: [{ name: 'Agents', title: 'Agents', pathWithParams: '/qapps/system/LLM/Agents' }] },
+                    { title: 'Agents', subscreens: [{ name: 'Agent', title: 'Agent detail', pathWithParams: '/qapps/system/LLM/Agents/Agent' }] },
+                    { title: 'Current agent' } ] }; },
+                methods: { getLinkPath(path) { return path; }, setUrl(path) { visits.push(path); this.appScreenMenu = null; } } });
+            app.use(Quasar);
+            app.component('m-menu-icon', moqui.qvt.components['m-menu-icon']);
+            app.config.globalProperties.$router = moqui.qvt.makeRouter();
+            app.config.globalProperties.$route = { path: '/qapps/dev/Workspace', matched: [], params: {} };
+            app.config.errorHandler = error => vueErrors.push(String(error));
+            window.vm = moqui.webrootVue = app.mount('#app');
+            document.addEventListener('keydown', event => { if (event.key === 'Enter') enterPrevented.push(event.defaultPrevented); });
+            // Observe modified clicks without opening an unrelated browser tab.
+            document.addEventListener('click', event => { if (event.ctrlKey || event.metaKey) event.preventDefault(); });
+            </script></body></html>`)
+        const openMenu = () => {
+            page.evaluate(async () => { vm.appScreenMenu = window.menu; await Vue.nextTick(); return true })
+            page.locator("#m-app-screens").click()
+        }
+        openMenu()
+        assert.equal(page.locator(".q-menu a").evaluate(item => item.getAttribute("href")), "/qapps/dev/Home")
+        page.locator(".q-menu a").press("Enter")
+        assert.deepEqual(page.evaluate(() => ({ visits, vueErrors, enterPrevented })),
+            { visits: ["/qapps/dev/Home"], vueErrors: [], enterPrevented: [true] })
+        assert.equal(page.locator(".q-menu").count(), 0)
+        openMenu()
+        page.locator(".q-menu a").press("Space")
+        assert.equal(page.evaluate(() => visits.length), 2)
+        openMenu()
+        page.locator(".q-menu a").evaluate(item => {
+            item.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }))
+            item.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true }))
+            return true
+        })
+        assert.equal(page.evaluate(() => visits.length), 2, "modified clicks retain native link handling")
+        openMenu()
+        page.locator(".q-menu a").click()
+        assert.equal(page.evaluate(() => visits.length), 3)
+        assert.deepEqual(page.evaluate(() => vueErrors), [])
+        page.evaluate(async () => { vm.appScreenMenu = window.menu; await Vue.nextTick(); document.querySelector('#m-app-screens').focus(); return true })
+        page.keyboard.press("Tab")
+        assert.equal(page.evaluate(() => document.activeElement.textContent.replace(/\s/g, "")), "LLMarrow_drop_down")
+        assert.equal(page.evaluate(() => document.activeElement.tagName), "BUTTON")
+        assert.equal(page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), "solid")
+        for (const dark of [false, true]) {
+            const ring = page.evaluate(async mode => {
+                Quasar.Dark.set(mode); await Vue.nextTick()
+                const style = getComputedStyle(document.activeElement)
+                const luminance = color => {
+                    const context = document.createElement("canvas").getContext("2d")
+                    context.fillStyle = color; context.fillRect(0, 0, 1, 1)
+                    const channels = Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3).map(value => {
+                        const c = value / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+                    })
+                    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+                }
+                const foreground = luminance(style.outlineColor)
+                const background = luminance(getComputedStyle(document.body).getPropertyValue("--m-header-bg"))
+                const text = luminance(style.color)
+                return { contrast: (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05), width: style.outlineWidth,
+                    textContrast: (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05) }
+            }, dark)
+            assert.equal(ring.width, "2px")
+            assert.ok(ring.contrast >= 3, "breadcrumb focus contrast: " + ring.contrast)
+            assert.ok(ring.textContrast >= 4.5, "breadcrumb text contrast: " + ring.textContrast)
+        }
+        page.keyboard.press("Enter")
+        page.waitFor(() => !!document.activeElement.closest(".q-menu"))
+        page.keyboard.press("Escape")
+        page.waitFor(() => !document.querySelector(".q-menu"))
+        assert.equal(page.evaluate(() => document.activeElement.textContent.replace(/\s/g, "")), "LLMarrow_drop_down")
+        page.keyboard.press("Tab")
+        assert.equal(page.evaluate(() => document.activeElement.textContent.replace(/\s/g, "")), "Agentsarrow_drop_down")
+        page.keyboard.press("Tab")
+        assert.equal(page.evaluate(() => document.activeElement.id), "after-navigation")
+        page.keyboard.press("Shift+Tab")
+        page.keyboard.press("Space")
+        page.waitFor(() => !!document.querySelector(".q-menu"))
+        page.locator(".q-menu a").press("Enter")
+        assert.equal(page.evaluate(() => visits[3]), "/qapps/system/LLM/Agents/Agent")
+        assert.equal(page.evaluate(() => visits.length), 4)
+        assert.deepEqual(page.evaluate(() => vueErrors), [])
     },
 })
