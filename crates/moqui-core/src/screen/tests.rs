@@ -315,6 +315,95 @@ fn login_sets_a_cookie_and_the_next_request_is_that_user() {
 }
 
 #[test]
+fn explicit_keys_revalidate_with_a_cookie_without_using_ambient_authority() {
+    let world = World::open(authz_conf());
+    world.user("admin", Some("ADMIN"));
+    world.user("other", None);
+    world.allow_entity("ADMIN");
+    world.enumeration_type();
+    for (key, user, expired) in [
+        ("current-key", "admin", false),
+        ("revoked-key", "admin", true),
+        ("other-key", "other", false),
+    ] {
+        let mut row = world.facade.make_value("moqui.security.UserLoginKey").unwrap();
+        row.set("loginKey", Value::string(crate::user::hash_login_key(key).unwrap()));
+        row.set("userId", Value::string(user));
+        row.set("fromDate", stamp());
+        if expired {
+            row.set("thruDate", stamp());
+        }
+        row.create(&world.facade).unwrap();
+    }
+    let root = webroot().to_string_lossy().into_owned();
+    let path = "/rest/e1/moqui.basic.EnumerationType";
+    let mut initial = request("GET", path);
+    initial.set_header("login_key", "current-key");
+    let response = serve_at(&world.factory, initial, &root);
+    assert_eq!(response.status, 200, "{}", response.body_text());
+    let cookie = header_value(&response, "Set-Cookie")
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .split_once('=')
+        .unwrap()
+        .1
+        .to_string();
+    let mut write = request("POST", path);
+    write.session_cookie = Some(cookie.clone());
+    write.set_header("login_key", "current-key");
+    write.set_header("content-type", "application/json");
+    write.body = br#"{"enumTypeId":"KeyCookieWrite"}"#.to_vec();
+    let valid = serve_at(&world.factory, write, &root);
+    let mut statuses = vec![valid.status];
+    for key in ["revoked-key", "other-key"] {
+        let mut denied = request("GET", path);
+        denied.session_cookie = Some(cookie.clone());
+        denied.set_header("login_key", key);
+        statuses.push(serve_at(&world.factory, denied, &root).status);
+    }
+    // An explicit API key also takes precedence over conflicting Basic credentials.
+    let mut explicit = request("GET", path);
+    explicit.session_cookie = Some(cookie.clone());
+    explicit.set_header("api_key", "current-key");
+    explicit.set_header("authorization", basic("other"));
+    statuses.push(serve_at(&world.factory, explicit, &root).status);
+    world
+        .facade
+        .find("moqui.security.UserLoginKey")
+        .unwrap()
+        .eq(
+            "loginKey",
+            Value::string(crate::user::hash_login_key("current-key").unwrap()),
+        )
+        .update_all([("thruDate".to_string(), stamp())])
+        .unwrap();
+    let mut revoked_current = request("GET", path);
+    revoked_current.session_cookie = Some(cookie.clone());
+    revoked_current.set_header("login_key", "current-key");
+    statuses.push(serve_at(&world.factory, revoked_current, &root).status);
+    // With no explicit credential the existing cookie is still the browser's normal authority.
+    let mut ambient = request("GET", path);
+    ambient.session_cookie = Some(cookie);
+    statuses.push(serve_at(&world.factory, ambient, &root).status);
+    assert_eq!(
+        statuses,
+        [200, 401, 401, 200, 401, 200],
+        "valid write: {}",
+        valid.body_text()
+    );
+    assert!(world
+        .facade
+        .find("moqui.basic.EnumerationType")
+        .unwrap()
+        .eq("enumTypeId", Value::string("KeyCookieWrite"))
+        .one()
+        .unwrap()
+        .is_some());
+}
+
+#[test]
 fn anonymous_entity_rest_is_401_and_a_user_without_an_allow_is_403() {
     let world = World::open(authz_conf());
     world.load_service_rest();

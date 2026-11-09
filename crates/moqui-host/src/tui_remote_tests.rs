@@ -186,6 +186,88 @@ fn the_tui_signs_in_with_a_second_factor_and_keeps_the_key() {
 }
 
 #[test]
+fn screen_redirects_keep_session_cookies_in_memory_with_their_scope() {
+    let (base, taken) = fake_server(|request| match request.path.as_str() {
+        "/apps/start" => (
+            200,
+            vec![
+                ("Set-Cookie", "moqui.session=first; Path=/apps; HttpOnly; SameSite=Lax"),
+                ("Set-Cookie", "foreign=no; Domain=example.invalid; Path=/"),
+            ],
+            "{}".to_string(),
+        ),
+        "/apps/issue" => (
+            302,
+            vec![
+                ("Set-Cookie", "moqui.session=second; Path=/apps; HttpOnly; SameSite=Lax"),
+                ("Location", "/apps/show"),
+            ],
+            "{}".to_string(),
+        ),
+        "/apps/show" => (
+            200,
+            vec![],
+            if request.headers.get("cookie").map(String::as_str) == Some("moqui.session=second") {
+                r#"{"oneTimeValue":"shown"}"#.to_string()
+            } else {
+                r#"{"oneTimeValue":null}"#.to_string()
+            },
+        ),
+        _ => (200, vec![], "{}".to_string()),
+    });
+    let http = Http::new(base, None).unwrap();
+    *lock(&http.login) = Some(Stored {
+        user: "ada".to_string(),
+        key: "K1".to_string(),
+    });
+    let send = |path: &str, method: &str| {
+        http.send(Ask {
+            path: path.to_string(),
+            method: method.to_string(),
+            parameters: BTreeMap::new(),
+            json: true,
+            tui: false,
+            remember: false,
+        })
+        .unwrap()
+    };
+    send("/apps/start", "GET");
+    assert_eq!(send("/apps/issue", "POST").status, 302);
+    assert!(send("/apps/show", "GET")
+        .body_text()
+        .contains(r#""oneTimeValue":"shown""#));
+    send("/outside", "GET");
+    let taken = lock(&taken);
+    assert_eq!(
+        taken[1].headers.get("cookie").map(String::as_str),
+        Some("moqui.session=first")
+    );
+    assert_eq!(
+        taken[3].headers.get("cookie"),
+        None,
+        "path and domain cookies remain scoped"
+    );
+    assert!(taken
+        .iter()
+        .all(|request| request.headers.get("login_key").map(String::as_str) == Some("K1")));
+    assert_eq!(http.store, None, "session cookies do not create a credentials file");
+    // Loopback HTTP is a trustworthy local origin in the standard jar. Check Secure on a remote host separately.
+    use reqwest::cookie::CookieStore;
+    let jar = reqwest::cookie::Jar::default();
+    let secure = reqwest::Url::parse("https://example.invalid/apps").unwrap();
+    jar.add_cookie_str("onlysecure=value; Secure; Path=/", &secure);
+    assert!(jar.cookies(&secure).is_some());
+    assert!(jar
+        .cookies(&reqwest::Url::parse("http://example.invalid/apps").unwrap())
+        .is_none());
+    assert!(jar
+        .cookies(&reqwest::Url::parse("https://other.invalid/apps").unwrap())
+        .is_none());
+    jar.add_cookie_str("onlysecure=; Max-Age=0; Secure; Path=/", &secure);
+    assert!(jar.cookies(&secure).is_none());
+}
+
+#[test]
 fn a_tui_sign_in_with_no_key_is_refused_and_nothing_is_kept() {
     let (base, _) = fake_server(|_| (200, vec![], r#"{"loggedIn": true}"#.to_string()));
     let http = Http::new(base, None).unwrap();

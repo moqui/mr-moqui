@@ -197,7 +197,7 @@ http = { workspace = true }
 bytes = { workspace = true }
 form_urlencoded = { workspace = true, optional = true }
 p256 = { workspace = true, optional = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["cookies"] }
 # A page problem that allowProblems ignores, in moqui test-client: already in the graph through moqui-tui.
 regex = { workspace = true, optional = true }
 ipp = { workspace = true, optional = true }

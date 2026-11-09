@@ -74,6 +74,9 @@ impl Http {
     /// Requests to `base` (checked by [`base_url`]), with the key in `store` when there is one.
     fn new(base: String, store: Option<PathBuf>) -> Result<Self, Error> {
         let client = reqwest::blocking::Client::builder()
+            // Session attributes (including one-time values across redirects) belong to this live connection.
+            // The jar stays in memory; only the existing device login key is written to the key file.
+            .cookie_store(true)
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(TIMEOUT_SECONDS))
             .user_agent(concat!("moqui-tui/", env!("CARGO_PKG_VERSION")))

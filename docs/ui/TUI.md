@@ -36,6 +36,9 @@ that takes one, when there is one. Esc closes the dialog and forgets what was ty
 `moqui tui --server <url>` is the same client for a server that is already running, here or elsewhere. It boots no
 runtime: each screen is a `GET <path>?renderMode=tui`, each form and transition asks for JSON, and every request
 carries a login key. `--agent`, `--snapshot`, `--ascii` and `--no-color` work with it as they do on the runtime.
+The connection keeps HTTP session cookies in memory so one-time values survive redirects; the login key is checked on
+each request. An explicit `api_key` or `login_key` takes precedence over cookie or Basic authentication, and a key for
+another user is refused against an existing session. Session cookies are not written to the credentials file.
 
 - **Login.** The client asks for the username and password once and posts them to the REST `login` with
   `createLoginKey=true` and a `deviceName` (`moqui tui on <host>`), the sign-in the desktop client makes too
