@@ -35,7 +35,14 @@ const DEBUG_ENV: &str = "MOQUI_ACTIONS_DEBUG";
 const MAX_CACHED_SCRIPTS: usize = 4096;
 const MAX_CACHED_SCRIPT_BYTES: usize = 32 * 1024 * 1024;
 
-type Generated = Mutex<super::bounded::BoundedMap<String, ScriptText>>;
+type Generated = Mutex<super::bounded::BoundedMap<String, Prepared>>;
+
+/// An action text made ready to run: its generated script, and its plan when it is only simple sets.
+#[derive(Clone)]
+struct Prepared {
+    script: ScriptText,
+    plan: Option<std::sync::Arc<set::SetPlan>>,
+}
 
 /// The script generated for each action XML text, for every thread: generation is a function of the text alone.
 fn generated_scripts() -> &'static Generated {
@@ -57,7 +64,11 @@ pub(crate) fn run_actions_at(actions: &str, source: Option<&moqui_lib::error::So
     if actions.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
-    let script = generated(actions)?;
+    let prepared = generated(actions)?;
+    if let Some(done) = prepared.plan.as_deref().and_then(set::SetPlan::run) {
+        return done;
+    }
+    let script = prepared.script;
     let file_name = source.and_then(|source| {
         source
             .file
@@ -94,7 +105,7 @@ pub fn eval_condition_element(xml: &str) -> Result<bool, Error> {
         combined.push_str(&child.write_string());
     }
     combined.push_str("</and>");
-    let script = generated(&combined)?;
+    let script = generated(&combined)?.script;
     // Only the root `actions` macro strips the raw-region marks of multi-line user code.
     super::runtime::eval_condition(&script.text().replace(['\u{1}', '\u{2}'], ""))
 }
@@ -104,7 +115,7 @@ pub fn eval_condition_group(and_xml: &str) -> Result<bool, Error> {
     if and_xml.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
-    let script = generated(and_xml)?;
+    let script = generated(and_xml)?.script;
     super::runtime::eval_condition(&script.text().replace(['\u{1}', '\u{2}'], ""))
 }
 
@@ -145,7 +156,7 @@ pub fn check_actions(xml: &str) -> Result<(), Error> {
     if xml.trim().is_empty() {
         return Ok(());
     }
-    let script = generated(xml)?;
+    let script = generated(xml)?.script;
     super::parse::check_program(script.text())
 }
 
@@ -164,17 +175,22 @@ pub fn generated_source(xml: &str, debug: bool) -> Result<String, Error> {
     }
 }
 
-fn generated(xml: &str) -> Result<ScriptText, Error> {
+fn generated(xml: &str) -> Result<Prepared, Error> {
     let scripts = generated_scripts();
     let cached = lock(scripts).get(xml);
-    if let Some(script) = cached {
-        return Ok(script);
+    if let Some(prepared) = cached {
+        return Ok(prepared);
     }
     // Not under the lock: two threads may generate the same text, and the second insert is the same script.
     let script = ScriptText::new(generate(xml)?);
     let bytes = xml.len() + script.text().len();
-    lock(scripts).insert_sized(xml.to_string(), script.clone(), bytes);
-    Ok(script)
+    // the script is generated first, so a text that does not generate is the same error with a plan or without
+    let prepared = Prepared {
+        script,
+        plan: set::SetPlan::of(xml).map(std::sync::Arc::new),
+    };
+    lock(scripts).insert_sized(xml.to_string(), prepared.clone(), bytes);
+    Ok(prepared)
 }
 
 fn generate(xml: &str) -> Result<String, Error> {
@@ -263,6 +279,9 @@ fn reject(node: &MNode) -> Result<(), Error> {
     }
     Ok(())
 }
+
+#[path = "actions_set.rs"]
+mod set;
 
 #[cfg(test)]
 #[path = "actions_tests.rs"]
