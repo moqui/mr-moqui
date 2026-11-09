@@ -87,8 +87,8 @@ fn an_entity_list_indexes_iterates_and_moves_its_cursor() -> Result<(), Error> {
     Ok(())
 }
 
-/// `ec.entity` on oxide against the in-memory database: a find's chain, its list and one, a used-up builder refused
-/// as on QuickJS, a relationship read and a value's methods, the engine lent to each.
+/// `ec.entity` on oxide against the in-memory database: a find's chain, its list and one, a builder that chains in
+/// place and runs again as Java's, a cached one, a relationship read and a value's methods.
 #[test]
 fn ec_entity_finds_and_values_run_on_oxide() -> Result<(), Error> {
     clear_context_stack();
@@ -137,9 +137,17 @@ fn ec_entity_finds_and_values_run_on_oxide() -> Result<(), Error> {
         let got = value(&format!("String({script})"))?;
         assert_eq!(moqui_lib::object::to_plain_string(&got), expected, "{script}");
     }
-    let used = "(() => { const find = ec.entity.find('moqui.basic.Enumeration'); find.orderBy('enumId'); \
-        try { find.list(); return 'ran'; } catch (e) { return e.message; } })()";
-    assert_eq!(value(used)?, Value::string("entity find was already used"));
+    // As Java's builder: a chained call changes the find and returns it, and a find runs again.
+    let chained = "(() => { const find = ec.entity.find('moqui.basic.Enumeration'); \
+        const same = find.orderBy('-enumId') === find; find.condition('enumTypeId', 'T1'); \
+        return [same, find.list()[0].enumId, find.count(), find.list().length, find.getQueryTextList().length > 0, \
+            find.limit(1).list().length].join(); })()";
+    assert_eq!(value(chained)?, Value::string("true,E2,2,2,true,1"));
+    let again =
+        "(() => { const find = ec.entity.find('moqui.basic.Enumeration').condition('enumId', 'E1').useCache(true); \
+        return [find.one().description, find.one().description, find.condition('enumId', 'E2').one().description, \
+            find.useCache(false).one().description].join(); })()";
+    assert_eq!(value(again)?, Value::string("dE1,dE1,dE2,dE2"));
     Ok(())
 }
 

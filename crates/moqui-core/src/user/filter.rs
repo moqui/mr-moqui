@@ -68,14 +68,18 @@ impl Target<'_> {
     }
 }
 
+/// Whether [`apply_entity_filters`] may change a find of `entity_name` now, evaluating the filters' expressions: a
+/// context is entered, the entity is not a framework (`moqui.*`) entity, and entity authorization is on and not
+/// disabled. False when it returns the condition as given, with no expression run.
+pub fn entity_filters_apply(entity_name: &str) -> bool {
+    context_entered()
+        && !entity_name.starts_with("moqui.")
+        && !ExecutionContext::with_current(|ctx| ctx.authz_disabled()).unwrap_or(true)
+        && authz_enabled_for("AT_ENTITY")
+}
+
 fn apply_filters(target: &Target<'_>, condition: Option<Condition>) -> Option<Condition> {
-    if !context_entered() || target.name().starts_with("moqui.") {
-        return condition;
-    }
-    if ExecutionContext::with_current(|ctx| ctx.authz_disabled()).unwrap_or(true) {
-        return condition;
-    }
-    if !authz_enabled_for("AT_ENTITY") {
+    if !entity_filters_apply(target.name()) {
         return condition;
     }
     match with_user_context(|| extra_conditions(target)) {

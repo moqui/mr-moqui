@@ -73,6 +73,7 @@ moqui_entity::hooks::submit! {
         },
         stack_names: || ExecutionContext::with_current(ExecutionContext::artifact_stack_names).unwrap_or_default(),
         entity_filters: crate::user::apply_entity_filters,
+        entity_filters_apply: crate::user::entity_filters_apply,
         view_filters: crate::user::apply_view_filters,
         note_write: crate::user::note_entity_write,
         push_frame: crate::script::push_context_frame,

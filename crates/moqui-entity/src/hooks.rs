@@ -113,6 +113,9 @@ pub struct EntityHooks {
     pub set_hit_detail: fn(&str),
     pub stack_names: fn() -> String,
     pub entity_filters: fn(&str, Option<Condition>) -> Option<Condition>,
+    /// Whether [`Self::entity_filters`] may change a find of the entity now, which evaluates the filters' expressions;
+    /// false when it returns the condition as given.
+    pub entity_filters_apply: fn(&str) -> bool,
     pub view_filters: fn(&EntityDefinition, Option<Condition>) -> Option<Condition>,
     /// An entity changed (its full name), for the authorization cache: written here, or invalidated by a cluster peer;
     /// `None` is every entity, a whole-cache clear. See `entity::cache::note_changed`.
@@ -189,6 +192,7 @@ impl EntityHooks {
         set_hit_detail: |_| {},
         stack_names: String::new,
         entity_filters: |_, condition| condition,
+        entity_filters_apply: |_| false,
         view_filters: |_, condition| condition,
         note_write: |_| {},
         push_frame: || {},

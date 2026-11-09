@@ -542,6 +542,21 @@ pub fn before_find(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option<
     Ok(None)
 }
 
+/// [`before_find`] when the shared entity cache answers it alone, with nothing read from the database: no sim on the
+/// thread, an entity the cache keeps for this lookup and that this thread's frame has not written. `None` otherwise,
+/// a miss too. In that case [`before_find`]'s overlay is left to the cache as well (`tx::overlay_rows`), so the answer
+/// is the same.
+pub fn shared_cache_hit(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option<EntityList>, Error> {
+    if sim_session_open() {
+        return Ok(None);
+    }
+    let meta = read_meta(facade, &lookup.entity_name)?;
+    if meta.caches(lookup) && !frame_wrote(facade, &lookup.entity_name, &meta) {
+        return Ok(cache_get(facade, &meta.full_name, lookup));
+    }
+    Ok(None)
+}
+
 /// Count held and sim rows when this thread has overlaid that entity. Otherwise miss.
 ///
 /// `Some` is the count itself. The merged list is unlimited, so its length is that count. Errors as [`before_find`].
