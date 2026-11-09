@@ -296,54 +296,88 @@ pub(super) fn to_host<J: Js>(js: &mut J, engine: &OxideEngine, value: &Value) ->
     to_host_in(js, engine, value, &mut Vec::new())
 }
 
+/// A value that is not an object as a host value.
+fn scalar_to_host(value: &Value) -> Result<HostValue, Conv> {
+    Ok(match value {
+        Value::Undefined | Value::Null => HostValue::Null,
+        Value::Bool(flag) => HostValue::Bool(*flag),
+        Value::Int(number) => HostValue::I32(*number),
+        Value::Float(number) => {
+            #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+            if number.fract() == 0.0 && number.abs() <= SAFE_INTEGER as f64 {
+                return Ok(HostValue::I64(*number as i64));
+            }
+            HostValue::F64(*number)
+        }
+        Value::String(text) => HostValue::String(text.to_utf8_lossy()),
+        Value::BigInt(_) | Value::Symbol(_) => return Err(Conv::Error("cannot convert this value".to_string())),
+        Value::Object(_) => return Err(Conv::Error("an object is not a scalar".to_string())),
+    })
+}
+
 fn to_host_in<J: Js>(
     js: &mut J,
     engine: &OxideEngine,
     value: &Value,
     path: &mut Vec<ObjectRef>,
 ) -> Result<HostValue, Conv> {
-    let object = match value {
-        Value::Undefined | Value::Null => return Ok(HostValue::Null),
-        Value::Bool(flag) => return Ok(HostValue::Bool(*flag)),
-        Value::Int(number) => return Ok(HostValue::I32(*number)),
-        Value::Float(number) => {
-            #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-            if number.fract() == 0.0 && number.abs() <= SAFE_INTEGER as f64 {
-                return Ok(HostValue::I64(*number as i64));
-            }
-            return Ok(HostValue::F64(*number));
-        }
-        Value::String(text) => return Ok(HostValue::String(text.to_utf8_lossy())),
-        Value::BigInt(_) | Value::Symbol(_) => return Err(Conv::Error("cannot convert this value".to_string())),
-        Value::Object(object) => object,
+    let Value::Object(object) = value else {
+        return scalar_to_host(value);
     };
-    // a plain array or object, read in one step: none of the checks below would take it
-    if let Some(items) = js.dense_array_values(object)? {
+    // a plain array or object, read in one step: none of the checks below would take it. Text is copied once from
+    // where it lies, a scalar converted there; the objects after, in their places.
+    let mut list = Vec::new();
+    let mut deferred = Vec::new();
+    let mut failed = None;
+    let visited = js.visit_dense_array(object, &mut |element| {
+        match element {
+            DataRef::Text(text) => list.push(HostValue::String(text.to_string_lossy())),
+            DataRef::Value(Value::Object(item)) => {
+                deferred.push((list.len(), item));
+                list.push(HostValue::Null);
+            }
+            DataRef::Value(item) => match scalar_to_host(&item) {
+                Ok(converted) => list.push(converted),
+                Err(err) => {
+                    failed = Some(err);
+                    return false;
+                }
+            },
+            DataRef::Callable => {
+                failed = Some(Conv::Error("cannot convert this value".to_string()));
+                return false;
+            }
+        }
+        true
+    })?;
+    if visited.is_some() {
+        if let Some(err) = failed {
+            return Err(err);
+        }
         enter(path, object)?;
-        let mut list = Vec::with_capacity(items.len());
-        for item in &items {
-            list.push(to_host_in(js, engine, item, path)?);
+        for (index, item) in deferred {
+            let converted = to_host_in(js, engine, &Value::Object(item), path)?;
+            if let Some(slot) = list.get_mut(index) {
+                *slot = converted;
+            }
         }
         path.pop();
         return Ok(HostValue::List(list));
     }
-    // text copied once from where it lies; the other values converted after, in their places
     let mut map = indexmap::IndexMap::new();
     let mut deferred = Vec::new();
-    let visited = js.visit_plain_own_data(object, Some(&engine.protos.object_prototype), &mut |property| {
+    // an object with a symbol key is read by the walk below
+    let visited = js.visit_plain_own_text(object, Some(&engine.protos.object_prototype), &mut |property| {
         if !property.enumerable || matches!(property.value, DataRef::Callable) {
             return true;
         }
-        let Some(name) = property.key.to_js_string() else {
-            return true;
-        };
         match property.value {
             DataRef::Text(text) => {
-                map.insert(name.to_utf8_lossy(), HostValue::String(text.to_string_lossy()));
+                map.insert(property.key.to_string_lossy(), HostValue::String(text.to_string_lossy()));
             }
             DataRef::Value(item) => {
                 deferred.push((map.len(), item));
-                map.insert(name.to_utf8_lossy(), HostValue::Null);
+                map.insert(property.key.to_string_lossy(), HostValue::Null);
             }
             DataRef::Callable => {}
         }
