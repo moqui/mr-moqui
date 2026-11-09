@@ -952,12 +952,10 @@ impl OxideEngine {
         let before = cache.compiles();
         let compiled = cache.get_or_compile(&self.context, source, hash, file_name);
         counts::COMPILED.fetch_add(cache.compiles() - before, Relaxed);
-        compiled.map_err(|err| {
-            let err = super::errors::compile_out_of_memory(err);
+        compiled.inspect_err(|err| {
             if matches!(err, RuntimeError::OutOfMemory) {
                 self.note_out_of_memory();
             }
-            err
         })
     }
 

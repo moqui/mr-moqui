@@ -249,7 +249,7 @@ fn limited<R>(body: impl FnOnce() -> Result<R, Error>) -> Result<R, Error> {
 }
 
 fn failed(context: &Context, err: RuntimeError) -> Error {
-    // the walker passes on what the macro threw, which may be the engine's `InternalError: out of memory`
+    // the heap cap's own error (a compile's too), or the `InternalError: out of memory` a macro caught and threw on
     if super::errors::is_out_of_memory(&mut context.clone(), &err) {
         // a runtime that ran out of heap is not used again: the next generation on the thread starts a new one
         GENERATOR.with(|cell| cell.borrow_mut().take());
