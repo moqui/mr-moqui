@@ -18,8 +18,8 @@ Most of the database and service work is done:
   last numbers, and plain JavaScript is faster than it was (R48).
 
 What is left is mostly at the boundary between host and engine: two script rows still lose to QuickJS (walk itemList
-×1.15, cached finds ×1.04, R50). The heap of the script runtimes is under its gate in every test-apps process since the
-shared atoms (R51).
+×1.15, cached finds ×1.04, R50). The heap of the script runtimes was under its gate in every test-apps process after the
+shared atoms (R51); the tree's growth since has the largest process 4 MB over it again.
 
 ## 1. Headline numbers
 
@@ -34,7 +34,7 @@ shared atoms (R51).
 | Mantle operations (200 µs to the database) | 6,037 → 3,954 ms with the cache; oxide 3400 ms against QuickJS's 3380 (+0.6%) | R27, R48 |
 | Script engine | js_speed's 59 rows ×0.90 of R49 (geometric mean); screen rows ×0.89 to ×0.97 of R49; the locked template ×0.75, fancy ×0.73; cached finds ×0.90; numbers to text and one-character strings ×0.40, the regexp scan ×0.58 | R50 |
 | Runtime start | 1.57 ms, 9,277 allocations, 2.9 MB allocated (8.96 ms, 47,436, 12.3 MB before) | R50 |
-| Script heap | test-apps process peaks 15 to 68 MB, all six under the gate of 73 MB (R50: 15 to 86 MB, three of six); mr-mantle's runtimes at the peak 99.7 → 75.4 MB | R51 |
+| Script heap | test-apps process peaks 13 to 77 MB, one of six over the gate of 73 MB (the same tree on the R51 phase 2 pin: 81 MB; R50: 15 to 86 MB, three over); mr-mantle's runtimes at the peak 99.7 → 74 MB | R51 |
 | Startup | first start 5.63 s (the empty-database load about 1.15 s), restart 268 ms | R9 |
 | Definitions and XML | entity model 5.3 ms, service definitions 8.7 ms, 112 µs a screen definition; MNode parse 76 µs a file | R4, R8 |
 
@@ -149,7 +149,7 @@ ms, the mail store with two attachments 14.8 → 8.7 ms, all at 200 µs to the d
 
 ### The script engine
 
-quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` 3c741ee8
+quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` 34ef6147
 (R51; 1cdb77e2 in R50, 7cf1f530 before, Oxide §7, Phase 4 result).
 
 The fork's changes:
@@ -303,8 +303,34 @@ on the thread that compiled the images.
 test-apps' six large processes peak at 15, 36, 48, 53, 66 and 68 MB, all under the gate of 73 MB (R50: 15, 44, 59, 76,
 82 and 86 MB).
 
-Phase 3, key tables shared in the image body, is not built: a busy worker's key tables are 115 to 145 KB, about 3 to 5
-MB across 23 workers, 6% of what phase 2 leaves.
+**Phase 3** (b0ae1755): each image unit keeps one key table, taken by every runtime whose atoms for its keys are the
+shared ones; a runtime whose own atom came first builds its own (`CodeUnit::keys` is an `Arc<[PropertyKey]>`).
+Image keys alone left most of the workers' entries their own: the units name host keys (`ec`, host members, entity
+fields) that each worker had already interned before its first image load.
+
+**Declared keys** (34ef6147, mr-moqui `engine.rs`): the embedder shares the keys it declares, and no others.
+`Runtime::share_keys` and `set_share_atoms`: mr-moqui shares every atom made during a runtime's start (`ec`, the host
+table and objects, the shims, the helpers) and, once a process, the entity model's entity, field, alias and relationship
+names. Keys from run-time data, such as a parsed map's keys, stay the runtime's own and are collected; sharing every
+key the host made, the first try, let data keys fill the never-collected table up to its cap.
+
+mr-mantle, image key tables alone (k1), every host key shared (k2, not kept) and the declared keys (k3, quickjs-oxide-bench
+`rounds/r51/shared-key-tables`, `rounds/r51/declared-keys`):
+
+| | k1 | k2 | k3 |
+|---|---:|---:|---:|
+| Workers' key entries in tables of their own | 304,733 of 416,046 | 128,844 of 419,528 | 18,933 of 417,420 |
+| Workers' most reserved, median | 2289 KiB | 2284 KiB | 2177 KiB |
+| Workers' most reserved, summed (23) | 54.9 MiB | 52.9 MiB | 52.0 MiB |
+| The shared table at the end | 28,281 atoms, 3.2 MB | 31,081, 4.3 MB | 34,525, 5.7 MB |
+
+k3's table starts at 11.6k atoms (the start and the model) and grows only as new code images load. A new thread's
+engine start: 6,166 allocations (7,775 after phase 2), 1.41 ms; its runtime after List html 808 KiB reserved.
+
+test-apps after the localization merge (2d0e1f29; quickjs-oxide-bench `rounds/r51/test-apps-heap`): the largest
+process peaks at 80.7 MB on 3c741ee8 and 76.8 MB on 34ef6147, against the gate's 73 MB; the other five are 13 to 71
+MB. The growth is the tree's, not the engine's: what that merge added to the largest process's main runtime and
+workers is the next thing to look at.
 
 ### Startup and threads
 
@@ -397,11 +423,11 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
   - script object keys and strings are one copy each (R18).
 
 **The script heap, in the fork** (R49 "Next")
-- Shared atoms: built in R51 ([Round 51](#round-51-shared-atoms)), phases 1 and 2. Left: phase 3, key tables shared
-  in the image body (about 6% of what is left in the workers).
+- Shared atoms: built in R51 ([Round 51](#round-51-shared-atoms)), phases 1 to 3, with the embedder's declared keys.
 - The inline-cache table: trimmed and compacted at a collection since R50 (80a91e10).
 - A compacting value heap: the arenas give back only their ends.
-- Gate status: every test-apps process under it since R51 (the largest 68 MB of 73).
+- Gate status: every test-apps process under it after R51's phase 2 (the largest 68 MB of 73); after the localization
+  merge the largest is 77 MB (81 MB on the phase 2 pin).
 
 **Engine differences to settle** (Oxide "Engine differences under `oxide`", "Phase 3: engine differences")
 
@@ -559,8 +585,9 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
 - Inert modules are kept for an outermost run (`script_module_cache`).
 - A runtime's start texts are compiled by the process's first runtime and loaded from its code images by later ones
   (R50).
-- Builtin atoms and the atoms of code images are the process's, in one shared table that is never collected; a
-  runtime keeps its own atoms for other texts (R51).
+- Builtin atoms, the atoms of code images, and the keys mr-moqui declares (a runtime's start, the entity model's names)
+  are the process's, in one shared table that is never collected; a runtime keeps its own atoms for other texts, keys
+  from run-time data among them (R51).
 - `ec.entity.find` and `EntityFind.condition` run without lending the engine, except for a definition made from rows
   (R50).
 - A list or map read by bare name keeps its host type. A decimal read twice is the same object until a releasing flush.
