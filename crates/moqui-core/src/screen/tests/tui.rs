@@ -73,6 +73,14 @@ fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conver
             <field name="browser"><default-field><render-mode>
                 <text type="qvt">browser cell only</text>
             </render-mode></default-field></field>
+            <field name="nested"><default-field><container style="row no-wrap items-center">
+                <render-mode><text type="qvt">browser icon only</text><text type="tui" template="false">[]</text></render-mode>
+                <container><link url="/files" url-type="plain" text="${name}" parameter-map="{id:id}"/>
+                    <label text="Type ${id}"/></container>
+            </container></default-field></field>
+            <field name="actions"><conditional-field condition="id === 'P&amp;1'"><container style="row items-center">
+                <link url="/approve" url-type="plain" text="Approve ${name}" link-type="hidden-form-link" parameter-map="{id:id}"/>
+            </container></conditional-field><default-field><label text="Read only"/></default-field></field>
         </form-list>
         </widgets></screen>"#,
         BTreeMap::new(),
@@ -99,6 +107,7 @@ fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conver
         "unused cell match",
         "browser name only",
         "browser cell only",
+        "browser icon only",
     ] {
         assert!(!text.contains(absent), "{absent}: {doc}");
     }
@@ -112,7 +121,7 @@ fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conver
         .unwrap();
     assert_eq!(list.rows.len(), 2);
     let index = moqui_tui::Index::of([&model]);
-    assert_eq!(index.links.len(), 4);
+    assert_eq!(index.links.len(), 7);
     let mut link_ids = std::collections::BTreeSet::new();
     for (row, name, url, tail) in [
         (
@@ -139,6 +148,21 @@ fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conver
         }
         assert_eq!(row.cells[2].text(), "Literal ${name}");
         assert_eq!(row.cells[3].text(), "");
+        assert_eq!(row.cells[4].text(), name);
+        assert_eq!(row.cells[4].parts().len(), 2);
+        assert_eq!(row.cells[4].parts()[1].text(), tail.replace("Tail ", "Type "));
+        assert!(row.cells[4].link_url().unwrap().starts_with("/files?id="));
+        if name == "Second" {
+            assert_eq!(row.cells[5].text(), "Read only");
+            assert!(row.cells[5].nodes().is_empty());
+        } else {
+            let action = row.cells[5].nodes()[0];
+            assert_eq!(row.cells[5].text(), format!("Approve {name}"));
+            assert!(
+                index.links[action.id()].posts(),
+                "a grouped conditional row action remains a POST"
+            );
+        }
     }
     assert_eq!(link_ids.len(), 4);
 }

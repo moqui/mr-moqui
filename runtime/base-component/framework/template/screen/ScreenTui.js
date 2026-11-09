@@ -143,6 +143,10 @@ const $withRemote = ($w, $r, $urlKey, $paramsKey) => {
 // A list cell: its parts, a field's texts joined on one line and a node a part of its own; one part is the cell itself.
 const $addPart = ($parts, $start, $piece) => {
     if ($piece == null) return;
+    if (Array.isArray($piece)) {
+        for (const $part of $piece) $addPart($parts, $start, $part);
+        return;
+    }
     if (typeof $piece === "object") {
         $parts.push($piece);
         return;
@@ -706,6 +710,10 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
     };
     // One widget of a list cell: a text, a link, or a field node (an editable; an input or a button of a row form).
     const cellPiece = (field, sub, widget, list) => {
+        if (["container", "container-row", "row-col"].includes(widget.name)) {
+            const pieces = widget.children.filter((kid) => !notWidget(kid)).map((kid) => cellPiece(field, sub, kid, list));
+            return `[${pieces.join(", ")}]`;
+        }
         if (widget.name === "render-mode") {
             const chosen = S.chooseRenderModeText(widget, "tui");
             // Only an authored terminal representation belongs in a cell; browser markup is not a cell value.

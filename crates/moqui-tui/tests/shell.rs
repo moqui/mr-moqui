@@ -482,3 +482,157 @@ fn an_export_is_a_file_to_save_or_text_to_read() {
     session.saved(Ok("/tmp/Things.csv".to_string()));
     assert!(session.message().contains("Things.csv"));
 }
+
+#[test]
+fn a_record_header_refreshes_after_a_write_or_f5_and_stays_cached_between_tabs() {
+    use moqui_tui::{Node, TransitionOutcome};
+
+    let child = r#"{"v":1,"screen":{"path":"/apps/app/Project/Overview","pathList":["apps","app","Project","Overview"]},"c":[]}"#;
+    let team =
+        r#"{"v":1,"screen":{"path":"/apps/app/Project/Team","pathList":["apps","app","Project","Team"]},"c":[]}"#;
+    let parent = |status: &str| {
+        serde_json::json!({"v":1,"screen":{"path":"/apps/app/Project","pathList":["apps","app","Project"]},
+            "c":[{"t":"text","id":"status","text":status},
+                {"t":"link","id":"change","text":"Change status","url":"/apps/app/Project/change","method":"post"}]})
+        .to_string()
+    };
+    let header = |session: &Session| match &session.nav().parents()[0].model.c[0] {
+        Node::Text { text, .. } => text.clone(),
+        other => panic!("expected the header's status, got {other:?}"),
+    };
+    let planning = parent("Planning");
+    let old = FakeLink::from_json(&[child, team, &planning]).unwrap();
+    let mut session = Session::start("/apps/app/Project/Overview?id=P1");
+    session.run_now(&old);
+    assert_eq!(header(&session), "Planning");
+
+    let approved = parent("Approved");
+    let current = FakeLink::from_json(&[child, team, &approved]).unwrap();
+    session.navigate("/apps/app/Project/Team?id=P1", true);
+    session.run_now(&current);
+    assert_eq!(
+        header(&session),
+        "Planning",
+        "normal tab navigation keeps the parent cache"
+    );
+    press(&mut session, &current, Key::F(5));
+    assert_eq!(
+        header(&session),
+        "Approved",
+        "explicit refresh reloads the record header too"
+    );
+
+    let complete = parent("Complete");
+    let changed = FakeLink::from_json(&[child, team, &complete]).unwrap();
+    let mut outcome = TransitionOutcome::saved("Status changed");
+    outcome.screen_url = "/apps/app/Project/Team".into();
+    outcome.parameters = map(&[("id", "P1")]);
+    changed.answer_transition("/apps/app/Project/change", outcome);
+    assert_eq!(session.focus_id(), "change");
+    press(&mut session, &changed, Key::Enter);
+    assert_eq!(session.path(), "/apps/app/Project/Team");
+    assert_eq!(
+        header(&session),
+        "Complete",
+        "a write refreshes the header after its redirect"
+    );
+}
+
+#[test]
+fn app_links_use_the_terminal_mount_but_explicit_browser_opening_keeps_the_material_address() {
+    let main = r#"{"v":1,"screen":{"path":"/apps/app/Main","pathList":["apps","app","Main"]},"c":[
+        {"t":"link","id":"inside","text":"See changes","url":"/qapps/app/Changes?id=MR1&note=A%20B"},
+        {"t":"link","id":"outside","text":"External","url":"https://example.invalid/qapps/help"},
+        {"t":"link","id":"print","text":"Print","url":"/apps/app/Main?renderMode=html-print&id=P1&note=A%20B"},
+        {"t":"link","id":"otherMount","text":"Other mount","url":"/qapps-archive/help"}]}"#;
+    let changes = r#"{"v":1,"screen":{"path":"/apps/app/Changes","pathList":["apps","app","Changes"]},"c":[]}"#;
+    let link = FakeLink::from_json(&[main, changes]).unwrap();
+    let mut session = Session::start("/apps/app/Main");
+    session.run_now(&link);
+    press(&mut session, &link, Key::Char('o'));
+    assert_eq!(
+        session.take_open().as_deref(),
+        Some("/qapps/app/Changes?id=MR1&note=A%20B")
+    );
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(session.path(), "/apps/app/Changes");
+    assert_eq!(session.parameters().get("note").map(String::as_str), Some("A B"));
+    assert_eq!(session.parameters().get("id").map(String::as_str), Some("MR1"));
+    assert!(!link
+        .calls()
+        .iter()
+        .any(|call| matches!(call, LinkCall::Level {path, ..} if path.starts_with("/qapps/"))));
+    press(&mut session, &link, Key::F(3));
+    press(&mut session, &link, Key::Tab);
+    assert_eq!(session.focus_id(), "outside");
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(
+        session.take_open().as_deref(),
+        Some("https://example.invalid/qapps/help")
+    );
+    let before_print = link.calls().len();
+    press(&mut session, &link, Key::Tab);
+    assert_eq!(session.focus_id(), "print");
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(
+        session.take_open().as_deref(),
+        Some("/apps/app/Main?renderMode=html-print&id=P1&note=A%20B")
+    );
+    assert_eq!(session.path(), "/apps/app/Main");
+    assert_eq!(
+        link.calls().len(),
+        before_print,
+        "print opens in the browser without asking for a TUI model"
+    );
+    press(&mut session, &link, Key::Tab);
+    press(&mut session, &link, Key::Enter);
+    assert!(link
+        .calls()
+        .iter()
+        .any(|call| matches!(call, LinkCall::Level {path, ..} if path == "/qapps-archive/help")));
+}
+
+#[test]
+fn f10_offers_only_the_focused_rows_actions_and_keeps_their_confirmation() {
+    let rows: Vec<serde_json::Value> = ["R1", "R2"]
+        .iter()
+        .map(|id| {
+            serde_json::json!({"id":id,"cells":[
+                {"t":"link","id":format!("open-{id}"),"text":format!("Open {id}"),"url":format!("/record?id={id}")},
+                {"t":"dialog","id":format!("edit-{id}"),"title":format!("Edit {id}"),"c":[]},
+                {"t":"link","id":format!("approve-{id}"),"text":"Approve","url":format!("/approve?id={id}"),
+                    "method":"post","writes":true,"confirm":format!("Approve {id}?")}
+            ]})
+        })
+        .collect();
+    let main = serde_json::json!({"v":1,"screen":{"path":"/rows"},"c":[
+        {"t":"formList","id":"Rows","name":"Rows","columns":[{"title":"Record"},{"title":"Edit"},{"title":"Approve"}],"rows":rows}
+    ]}).to_string();
+    let link = FakeLink::from_json(&[&main]).unwrap();
+    link.answer_transition("/approve", moqui_tui::TransitionOutcome::saved("Approved"));
+    let mut session = Session::start("/rows");
+    session.run_now(&link);
+    let labels = |session: &Session| match session.top_overlay() {
+        Some(Overlay::Menu(menu)) => menu.items.iter().map(|item| item.label.clone()).collect::<Vec<_>>(),
+        other => panic!("expected row actions, got {other:?}"),
+    };
+    press(&mut session, &link, Key::F(10));
+    assert_eq!(labels(&session), ["Edit R1…", "Approve"]);
+    press(&mut session, &link, Key::Escape);
+    press(&mut session, &link, Key::Down);
+    press(&mut session, &link, Key::F(10));
+    assert_eq!(labels(&session), ["Edit R2…", "Approve"]);
+    press(&mut session, &link, Key::Down);
+    press(&mut session, &link, Key::Enter);
+    assert!(matches!(session.top_overlay(), Some(Overlay::Confirm(confirm))
+        if matches!(&confirm.kind, moqui_tui::ConfirmKind::Ask(text) if text == "Approve R2?")));
+    assert_eq!(last_transition(&link), None);
+    press(&mut session, &link, Key::Escape);
+    assert_eq!(last_transition(&link), None);
+    press(&mut session, &link, Key::F(10));
+    press(&mut session, &link, Key::Down);
+    press(&mut session, &link, Key::Enter);
+    press(&mut session, &link, Key::Right);
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(last_transition(&link), Some(("/approve".into(), map(&[("id", "R2")]))));
+}

@@ -227,6 +227,7 @@ impl Session {
             self.set_message(outcome.messages.errors.join("; "), true);
             return;
         }
+        self.reload_parents();
         let text = outcome
             .messages
             .info

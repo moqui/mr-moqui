@@ -15,6 +15,80 @@
 use super::*;
 
 #[test]
+fn a_navigation_attachment_keeps_the_screen_and_saves_the_original_bytes() {
+    struct DownloadTransport;
+    impl Transport for DownloadTransport {
+        fn send(&self, ask: Ask) -> Result<RenderOutput, LinkError> {
+            let refused = ask.parameters.get("refused").is_some_and(|value| value == "Y");
+            Ok(RenderOutput {
+                status: if refused { 403 } else { 200 },
+                headers: vec![
+                    ("Content-Type".into(), "application/octet-stream".into()),
+                    (
+                        "Content-Disposition".into(),
+                        "attachment; filename=\"revision.bin\"".into(),
+                    ),
+                ],
+                body: if refused {
+                    b"Forbidden".to_vec()
+                } else if ask.parameters.contains_key("json") {
+                    br#"{"screenUrl":"/not-a-screen-redirect"}"#.to_vec()
+                } else {
+                    vec![0, 255, 1, 128]
+                },
+            })
+        }
+
+        fn login(&self, _username: &str, _password: &str, _code: &str) -> Result<(), LinkError> {
+            Ok(())
+        }
+
+        fn user(&self) -> Option<String> {
+            Some("fixture".into())
+        }
+    }
+
+    let link = Arc::new(Link::over(DownloadTransport));
+    let model = ScreenModel::from_json(
+        r#"{"v":1,"screen":{"path":"/apps/app/Files","pathList":["apps","app","Files"]},
+            "c":[{"t":"link","id":"download","text":"Download","url":"/apps/app/Files/raw"}]}"#,
+    )
+    .unwrap();
+    let mut session = moqui_tui::Session::new(model.clone());
+    session.navigate("/apps/app/Files/raw?ref=abc123", true);
+    session.run_now(&link);
+    assert_eq!(session.model(), &model);
+    assert!(session.nav().history().is_empty());
+    assert_eq!(session.focus_id(), "download");
+    assert!(!session.message_is_error());
+    assert_eq!(
+        session.take_downloads(),
+        [RawBody {
+            content_type: "application/octet-stream".into(),
+            file_name: "revision.bin".into(),
+            bytes: vec![0, 255, 1, 128],
+        }]
+    );
+    session.navigate("/apps/app/Files/raw?json=Y", true);
+    session.run_now(&link);
+    assert_eq!(
+        session.take_downloads()[0].bytes,
+        br#"{"screenUrl":"/not-a-screen-redirect"}"#
+    );
+    assert_eq!(
+        session.model(),
+        &model,
+        "an attached JSON file is not parsed as navigation metadata"
+    );
+    session.navigate("/apps/app/Files/raw?refused=Y", true);
+    session.run_now(&link);
+    assert!(session.take_downloads().is_empty());
+    assert!(session.message_is_error());
+    assert!(session.message().contains("403"));
+    assert_eq!(session.model(), &model);
+}
+
+#[test]
 fn context_free_quick_create_leaves_out_record_required_actions() {
     let data = serde_json::json!({"apps": [{"title": "Commons", "path": "/qapps/Commons", "providers": {
         "quickCreate": [

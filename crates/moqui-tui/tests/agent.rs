@@ -53,6 +53,39 @@ fn an_answer_names_the_place_and_focus_and_ends_with_its_outcome() {
 }
 
 #[test]
+fn a_download_is_handed_to_the_callers_policy_once_and_reports_success_or_failure() {
+    let model = r#"{"v":1,"screen":{"path":"/exports"},"c":[{"t":"formList","id":"Files","name":"Files",
+        "columns":[{"title":"Name"}],"rows":[],"exports":[{"kind":"csv","label":"CSV","url":"/exports/file"}]}]}"#;
+    let link = FakeLink::from_json(&[model]).unwrap();
+    link.answer_raw(
+        "/exports/file",
+        moqui_tui::RawBody {
+            content_type: "text/csv".into(),
+            file_name: "review.csv".into(),
+            bytes: b"name\nFixture\n".to_vec(),
+        },
+    );
+    let mut agent = Agent::open(link, "/exports", 100, 40);
+    assert!(agent.run("key F10 Enter").ok);
+    let mut saved = 0;
+    assert!(agent.finish_downloads(|body| {
+        saved += 1;
+        assert_eq!(body.file_name, "review.csv");
+        assert_eq!(body.bytes, b"name\nFixture\n");
+        Ok("/downloads/review.csv".into())
+    }));
+    assert_eq!(saved, 1);
+    assert!(agent.look().text.contains("Saved /downloads/review.csv"));
+    assert!(!agent.finish_downloads(|_| panic!("the download is consumed once")));
+    assert!(agent.run("key F10 Enter").ok);
+    assert!(agent.finish_downloads(|_| Err("test destination is read only".into())));
+    assert!(agent
+        .look()
+        .text
+        .contains("Could not save the file: test destination is read only"));
+}
+
+#[test]
 fn elements_are_found_by_label_id_and_number() {
     let mut agent = Agent::open(gallery_link(), GALLERY_LIST_PATH, 100, 40);
     let listed = agent.run("elements");

@@ -191,7 +191,7 @@ fn downloads_dir() -> PathBuf {
 
 /// Save a file the server sent under its own name (made safe), not over one already there. In local mode the client
 /// runs on the user's machine, so this is their downloads directory (section 1.6).
-fn save_download(body: &RawBody) -> Result<String, String> {
+pub fn save_download(body: &RawBody) -> Result<String, String> {
     let dir = downloads_dir();
     std::fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
     let name: String = body

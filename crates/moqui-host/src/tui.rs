@@ -27,8 +27,8 @@ use moqui_core::user::CodeLogin;
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 use moqui_tui::{
-    counts_of, query_parameters, Choice, CodeAsk, LinkError, MenuItem, Messages, Push, PushSink, RawBody, ScreenLink,
-    ScreenModel, Sendable, ShellAction, ShellInfo, Subscription, TransitionOutcome, ValidationError,
+    counts_of, query_parameters, Choice, CodeAsk, LinkError, MenuItem, Messages, Push, PushSink, RawBody, Reply,
+    ScreenLink, ScreenModel, Sendable, ShellAction, ShellInfo, Subscription, TransitionOutcome, ValidationError,
 };
 
 /// Redirects a level or a fragment follows before it gives up: a transition answers its screen with one.
@@ -88,6 +88,11 @@ pub struct Link<T> {
     last_path: Arc<Mutex<String>>,
 }
 
+enum NavigationReply {
+    Screen(ScreenModel),
+    Attachment(RawBody),
+}
+
 /// The link in this process.
 pub type HostLink = Link<InProcess>;
 
@@ -140,6 +145,41 @@ impl<T: Transport> Link<T> {
     fn absolute(&self, url: &str) -> String {
         let base = lock(&self.last_path).clone();
         resolve_url(&base, url)
+    }
+
+    fn navigation_reply(
+        &self,
+        path: &str,
+        parameters: &BTreeMap<String, String>,
+    ) -> Result<NavigationReply, LinkError> {
+        let mut path = self.absolute(path);
+        let mut parameters = parameters.clone();
+        let mut carried = Messages::default();
+        for _ in 0..FRAGMENT_REDIRECTS {
+            let output = self.render_tui(path.clone(), &parameters, true)?;
+            if !(300..400).contains(&output.status)
+                && output.header("Content-Disposition").is_some_and(|value| {
+                    value
+                        .split(';')
+                        .next()
+                        .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("attachment"))
+                })
+            {
+                check_status(&output)?;
+                return Ok(NavigationReply::Attachment(raw_body(output)));
+            }
+            if let Some(redirect) = redirect_of(&output)? {
+                (path, parameters) = (redirect.path, redirect.parameters);
+                carry(&mut carried, redirect.messages);
+                continue;
+            }
+            let mut model = model_from(&output)?;
+            carry(&mut carried, std::mem::take(&mut model.messages));
+            model.messages = carried;
+            *lock(&self.last_path) = model.screen.path.clone();
+            return Ok(NavigationReply::Screen(model));
+        }
+        Err(LinkError::Remote(format!("{path} redirected too many times")))
     }
 
     /// `url` resolved against the level that rendered last, as each request resolves it.
@@ -458,23 +498,18 @@ impl<T: Transport> ScreenLink for Link<T> {
     /// A screen, or a transition a link goes to (an anchor to `runJob`), whose redirect to its screen is followed as the
     /// browser follows it.
     fn level(&self, path: &str, parameters: &BTreeMap<String, String>) -> Result<ScreenModel, LinkError> {
-        let mut path = self.absolute(path);
-        let mut parameters = parameters.clone();
-        let mut carried = Messages::default();
-        for _ in 0..FRAGMENT_REDIRECTS {
-            let output = self.render_tui(path.clone(), &parameters, true)?;
-            if let Some(redirect) = redirect_of(&output)? {
-                (path, parameters) = (redirect.path, redirect.parameters);
-                carry(&mut carried, redirect.messages);
-                continue;
-            }
-            let mut model = model_from(&output)?;
-            carry(&mut carried, std::mem::take(&mut model.messages));
-            model.messages = carried;
-            *lock(&self.last_path) = model.screen.path.clone();
-            return Ok(model);
+        match self.navigation_reply(path, parameters)? {
+            NavigationReply::Screen(model) => Ok(model),
+            NavigationReply::Attachment(_) => Err(LinkError::Remote("The server returned a file, not a screen".into())),
         }
-        Err(LinkError::Remote(format!("{path} redirected too many times")))
+    }
+
+    fn navigation(&self, path: &str, parameters: &BTreeMap<String, String>) -> Reply {
+        match self.navigation_reply(path, parameters) {
+            Ok(NavigationReply::Screen(model)) => Reply::Level(Ok(model)),
+            Ok(NavigationReply::Attachment(body)) => Reply::Raw(Ok(body)),
+            Err(err) => Reply::Level(Err(err)),
+        }
     }
 
     /// A transition that answers JSON, or text (a default value, a value url's label), as a JSON string.
@@ -523,18 +558,7 @@ impl<T: Transport> ScreenLink for Link<T> {
     fn raw(&self, url: &str, parameters: &BTreeMap<String, String>) -> Result<RawBody, LinkError> {
         let output = self.transport.send(self.ask(url, "", "GET", parameters, false))?;
         check_status(&output)?;
-        let disposition = output.header("Content-Disposition").unwrap_or("");
-        let file_name = disposition
-            .split(';')
-            .filter_map(|part| part.trim().strip_prefix("filename="))
-            .map(|name| name.trim_matches('"').to_string())
-            .next()
-            .unwrap_or_default();
-        Ok(RawBody {
-            content_type: output.header("Content-Type").unwrap_or("").to_string(),
-            file_name,
-            bytes: output.body,
-        })
+        Ok(raw_body(output))
     }
 
     fn transition(
@@ -616,6 +640,21 @@ impl<T: Transport> ScreenLink for Link<T> {
 
     fn subscribe(&self, sink: PushSink) -> Option<Subscription> {
         self.transport.subscribe(sink)
+    }
+}
+
+fn raw_body(output: RenderOutput) -> RawBody {
+    let disposition = output.header("Content-Disposition").unwrap_or("");
+    let file_name = disposition
+        .split(';')
+        .filter_map(|part| part.trim().strip_prefix("filename="))
+        .map(|name| name.trim_matches('"').to_string())
+        .next()
+        .unwrap_or_default();
+    RawBody {
+        content_type: output.header("Content-Type").unwrap_or("").to_string(),
+        file_name,
+        bytes: output.body,
     }
 }
 

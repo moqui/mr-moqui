@@ -230,6 +230,7 @@ fn agent_lines<L: moqui_tui::ScreenLink>(link: L, path: &str, columns: u16, rows
     use std::io::{BufRead, Write};
 
     let mut agent = moqui_tui::Agent::open(link, path, columns, rows);
+    agent.finish_downloads(moqui_tui::save_download);
     let mut out = std::io::stdout().lock();
     writeln!(out, "{}", agent.look().text)?;
     out.flush()?;
@@ -238,7 +239,15 @@ fn agent_lines<L: moqui_tui::ScreenLink>(link: L, path: &str, columns: u16, rows
         if line.trim().is_empty() {
             continue;
         }
-        writeln!(out, "{}", agent.run(&line).text)?;
+        let mut answer = agent.run(&line);
+        if agent.finish_downloads(moqui_tui::save_download) {
+            answer = if line.split_whitespace().any(|word| word == "--json") {
+                agent.run("look --json")
+            } else {
+                agent.look()
+            };
+        }
+        writeln!(out, "{}", answer.text)?;
         out.flush()?;
         if agent.closed() {
             break;

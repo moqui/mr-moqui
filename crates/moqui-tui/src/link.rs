@@ -263,6 +263,12 @@ pub type Subscription = Box<dyn Send>;
 pub trait ScreenLink: Send + Sync {
     fn level(&self, path: &str, parameters: &BTreeMap<String, String>) -> Result<ScreenModel, LinkError>;
 
+    /// Follow a navigation link. A server may answer with an attachment instead of a screen; then the answer is
+    /// [`Reply::Raw`] and the session keeps its current screen while the caller saves the file.
+    fn navigation(&self, path: &str, parameters: &BTreeMap<String, String>) -> Reply {
+        Reply::Level(self.level(path, parameters))
+    }
+
     fn transition(
         &self,
         url: &str,
@@ -316,7 +322,7 @@ pub trait ScreenLink: Send + Sync {
     /// Run one call.
     fn call(&self, call: &LinkCall) -> Reply {
         match call {
-            LinkCall::Level { path, parameters } => Reply::Level(self.level(path, parameters)),
+            LinkCall::Level { path, parameters } => self.navigation(path, parameters),
             LinkCall::Transition { url, method, fields } => Reply::Transition(self.transition(url, method, fields)),
             LinkCall::Options { url, parameters } => Reply::Options(self.options(url, parameters)),
             LinkCall::Shell { path } => Reply::Shell(self.shell(path)),
@@ -344,6 +350,10 @@ pub trait ScreenLink: Send + Sync {
 impl<L: ScreenLink + ?Sized> ScreenLink for Arc<L> {
     fn level(&self, path: &str, parameters: &BTreeMap<String, String>) -> Result<ScreenModel, LinkError> {
         (**self).level(path, parameters)
+    }
+
+    fn navigation(&self, path: &str, parameters: &BTreeMap<String, String>) -> Reply {
+        (**self).navigation(path, parameters)
     }
 
     fn transition(

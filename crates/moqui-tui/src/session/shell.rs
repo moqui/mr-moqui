@@ -150,7 +150,7 @@ pub enum PromptThen {
 
 /// The shared shell publishes browser links; terminal screens live under the matching apps mount.
 /// Only the local Material root changes, leaving other mounts, relative links and outside addresses intact.
-fn terminal_url(url: &str) -> String {
+pub(super) fn terminal_url(url: &str) -> String {
     match url.strip_prefix("/qapps") {
         Some(rest) if rest.is_empty() || rest.starts_with('/') || rest.starts_with('?') || rest.starts_with('#') => {
             format!("/apps{rest}")
@@ -579,6 +579,20 @@ impl Session {
                 label: format!("{title}…"),
                 act: MenuAct::Dialog(dialog.clone()),
             });
+        }
+        let page = self.list_page(list_id);
+        if let Some(row) = page.get(self.row_at(list_id)) {
+            let nodes = row.cells.iter().flat_map(crate::model::Cell::nodes);
+            for node in nodes {
+                if let Some(link) = self.index.links.get(node.id()) {
+                    if !link.disabled && (link.posts() || link.writes) {
+                        items.push(MenuEntry {
+                            label: link.text.clone(),
+                            act: MenuAct::Link(link.id.clone()),
+                        });
+                    }
+                }
+            }
         }
         if self.index.rows.contains_key(&row) {
             items.push(MenuEntry {

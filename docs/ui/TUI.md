@@ -47,7 +47,9 @@ carries a login key. `--agent`, `--snapshot`, `--ascii` and `--no-color` work wi
   gets its code asked for in the dialog ("The login dialog", above).
 - **https.** Plain `http://` is refused except to this machine (`localhost`, `127.0.0.1`, `::1`), since the login
   would cross the network in the clear.
-- **Files.** Exports are saved to `XDG_DOWNLOAD_DIR` (else `~/Downloads`) on the user's machine, as in local mode.
+- **Files.** Exports and attachment links are saved to `XDG_DOWNLOAD_DIR` (else `~/Downloads`) on the user's machine,
+  as in local mode, including `--agent`. An attachment leaves the current screen and focus in place; its saved path or
+  write error appears on the message line. The server's attachment response is kept as bytes, even for JSON files.
 - **Counters.** The client opens `/notws` with its key, so the counters change when a notification comes, and the
   notification's title shows on the message line. A dropped socket connects again after a wait that doubles up to a minute, at a random point
   in the upper half of each step, so the clients of a restarted server do not all connect at once. Without the socket it reads them each minute, as before.
@@ -255,7 +257,10 @@ picker the arrows move a day or a week, PgUp and PgDn a month, Home is today and
 
 A list row with fields (a list with a `transition`) opens in the row editor with Enter or `e`: its fields under their
 column titles; Enter or Ctrl+S saves the row, or every row of a `multi` list. A row action (`row-selection` `action`)
-is on F10, and its form posts the rows selected with Space. In the Columns dialog Space shows or hides a field,
+is on F10, and its form posts the rows selected with Space. F10 also offers the current row's dialogs and write links,
+including those inside a cell container; each keeps its own row's values and confirmation. Ordinary navigation links
+remain on Enter, Right and numbered links. Nested cell labels and links retain their authored order and names.
+In the Columns dialog Space shows or hides a field,
 Alt+Up and Alt+Down move it, Enter saves and `r` puts back the list's own columns. An export saves a file to
 `XDG_DOWNLOAD_DIR` (else `~/Downloads`), with its path on the message line; the text export shows in a dialog.
 
@@ -283,6 +288,13 @@ A row of buttons wider than the screen goes on as many lines as it needs.
 
 Leaving a changed form (a link, F3, Ctrl+Q) asks: Stay, Discard or Save. A button or link with a `confirmation` asks
 No or Yes, starting at No.
+
+A successful write and F5 refresh the current screen and its cached parent screens, so a record's header and actions
+reflect child-screen changes. Moving between child tabs reuses those parents. Internal screen links under `/qapps`
+use the terminal's `/apps` mount; explicitly opening a link in the browser preserves its browser address, as do external
+links. Form, JSON and download endpoints keep their authored routes.
+An explicit `renderMode=html-print` link also opens its print view in the browser, keeping its filters and the current
+terminal screen.
 
 ## The mouse
 

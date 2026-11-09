@@ -28,7 +28,7 @@ use serde_json::{json, Value};
 
 use crate::forms::{parameter_keys, FocusItem, FocusKind, Scope};
 use crate::keys::{Key, KeyPress, ACTIONS};
-use crate::link::ScreenLink;
+use crate::link::{RawBody, ScreenLink};
 use crate::model::{walk, Widget};
 use crate::session::{Overlay, Session};
 use crate::state::{Confirm, ConfirmKind};
@@ -153,6 +153,17 @@ impl<L: ScreenLink> Agent<L> {
 
     pub fn session(&self) -> &Session {
         self.view.session()
+    }
+
+    /// Hand pending files to the caller's download policy and report its result on the message line. The CLI saves
+    /// on the user's machine; a server-hosted agent can refuse file writes instead.
+    pub fn finish_downloads(&mut self, mut save: impl FnMut(&RawBody) -> Result<String, String>) -> bool {
+        let downloads = self.view.session_mut().take_downloads();
+        let any = !downloads.is_empty();
+        for body in downloads {
+            self.view.session_mut().saved(save(&body));
+        }
+        any
     }
 
     /// The answer for the screen as it is: `look`.

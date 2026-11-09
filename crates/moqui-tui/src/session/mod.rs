@@ -359,6 +359,13 @@ impl Session {
         }
         match (purpose, reply) {
             (Purpose::Level, Reply::Level(result)) => self.level_reply(id, result),
+            (Purpose::Level, Reply::Raw(result)) => {
+                self.intents.remove(&id);
+                match result {
+                    Ok(body) => self.downloads.push(body),
+                    Err(err) => self.set_message(format!("The download failed: {err}"), true),
+                }
+            }
             (Purpose::Parent(_), Reply::Level(result)) => {
                 let parameters = self.intents.remove(&id).map(|(_, params)| params).unwrap_or_default();
                 // A parent that does not load leaves the leaf as it is: the header is extra.
@@ -1550,12 +1557,15 @@ impl Session {
         true
     }
 
-    /// Open a url: a screen in the client; an outside address is the browser's.
+    /// Open a url: a screen in the client; an outside address or an explicit print view is the browser's.
     fn follow_url(&mut self, url: &str) {
         if url.is_empty() {
             return;
         }
-        if url.contains("://") || url.starts_with("mailto:") {
+        if url.contains("://")
+            || url.starts_with("mailto:")
+            || Location::of_url(url).parameters.get("renderMode").map(String::as_str) == Some("html-print")
+        {
             self.set_message(format!("Open in browser: {url}"), false);
             self.open = Some(url.to_string());
             return;
@@ -1578,6 +1588,27 @@ impl Session {
     pub fn reload(&mut self) {
         let location = self.nav.location();
         self.request_level(&location.path, location.parameters, Intent::Reload);
+        self.reload_parents();
+    }
+
+    /// A record's header is a separate level. Refresh it after a write or explicit reload, while normal tab
+    /// navigation can keep the cached header.
+    fn reload_parents(&mut self) {
+        let parents: Vec<(String, BTreeMap<String, String>)> = self
+            .nav
+            .parents()
+            .iter()
+            .map(|level| (level.model.screen.path.clone(), level.parameters.clone()))
+            .collect();
+        for (path, parameters) in parents {
+            let call = LinkCall::Level {
+                path: level_path(&path),
+                parameters: parameters.clone(),
+            };
+            if let Some(id) = self.lanes.push(Purpose::Parent(path), call) {
+                self.intents.insert(id, (Intent::Reload, parameters));
+            }
+        }
     }
 
     fn reload_with(&mut self, parameters: BTreeMap<String, String>) {
@@ -1598,7 +1629,7 @@ impl Session {
             sent.insert("_uiType".to_string(), "mobile".to_string());
         }
         let call = LinkCall::Level {
-            path: path.to_string(),
+            path: shell::terminal_url(path),
             parameters: sent,
         };
         if let Some(id) = self.lanes.push(Purpose::Level, call) {

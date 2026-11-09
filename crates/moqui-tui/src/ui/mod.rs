@@ -40,7 +40,7 @@ use crate::theme::Theme;
 pub use agent::{Agent, AgentAnswer, ChangedField, Snapshot as AgentSnapshot, AGENT_HELP};
 pub use encode::{Screen, ENTER, LEAVE, MOUSE_OFF, MOUSE_ON};
 pub use paint::{Hit, Hits};
-pub use run::{from_revue, run_local, snapshot, LocalOptions};
+pub use run::{from_revue, run_local, save_download, snapshot, LocalOptions};
 pub use session_loop::{run_session, SessionEvent, SessionOptions};
 
 pub struct AppView<L: ScreenLink = FakeLink> {

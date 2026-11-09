@@ -72,7 +72,7 @@ pub use state::{AssistApproval, Confirm, ConfirmKind, Edits, Finished, Lanes, Pu
 pub use theme::{Depth, Glyph, Role, Theme};
 #[cfg(feature = "ui")]
 pub use ui::{
-    from_revue, render_text, run_local, run_session, snapshot, Agent, AgentAnswer, AgentSnapshot, AppView,
-    ChangedField, Hit, Hits, LocalOptions, Screen, Selection, SessionEvent, SessionOptions, AGENT_HELP, ENTER, LEAVE,
-    MOUSE_OFF, MOUSE_ON,
+    from_revue, render_text, run_local, run_session, save_download, snapshot, Agent, AgentAnswer, AgentSnapshot,
+    AppView, ChangedField, Hit, Hits, LocalOptions, Screen, Selection, SessionEvent, SessionOptions, AGENT_HELP, ENTER,
+    LEAVE, MOUSE_OFF, MOUSE_ON,
 };
