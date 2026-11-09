@@ -14,8 +14,8 @@
 
 //! `dev/Repositories` (plans/design-dev-aide.md 4.7): every root as `./moq git-status` lists it (kind, path,
 //! components, branch, upstream, ahead and behind, changes, last fetch), Fetch all and Pull all root by root (one that
-//! fails is reported in its row and the others go on), and Get a component through `./moq component-get` from the
-//! names of `addons.xml` and `myaddons.xml` when the runtime has `moq`.
+//! fails is reported in its row and the others go on), and Get a component through `moq component-get` (`moq.cmd` on
+//! Windows) from the names of `addons.xml` and `myaddons.xml` when this platform can run that launcher.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -161,10 +161,32 @@ fn pull_all(
     every_root(ec, service, crate::vcs::pull_remote)
 }
 
-/// The runtime's `moq`, beside the runtime directory, when there is one.
+/// The runtime's moq, beside the runtime directory, when this platform can run it.
 fn moq(context: &Context) -> Option<PathBuf> {
-    let script = context.factory.runtime_dir().parent()?.join("moq");
-    script.is_file().then_some(script)
+    moq_program(context.factory.runtime_dir().parent()?, cfg!(windows))
+}
+
+/// The moq `Command` can start in `checkout`: the `moq` script on Unix, `moq.cmd` on Windows.
+///
+/// The script is bash. Windows cannot execute it, so a checkout without `moq.cmd` has no launcher there even when
+/// `moq` itself is present. `windows` is an argument so both choices can be tested on either platform.
+fn moq_program(checkout: &Path, windows: bool) -> Option<PathBuf> {
+    let script = checkout.join("moq");
+    if !script.is_file() {
+        return None;
+    }
+    if windows {
+        let launcher = checkout.join("moq.cmd");
+        launcher.is_file().then_some(launcher)
+    } else {
+        Some(script)
+    }
+}
+
+/// What `get#Component` says when this platform has no launcher beside the runtime.
+fn missing_moq() -> String {
+    let file = if cfg!(windows) { "moq.cmd" } else { "./moq" };
+    format!("This runtime has no {file} beside it to get components with")
 }
 
 /// `get#Addons`: the components `addons.xml` and `myaddons.xml` name, each with whether it is here already.
@@ -203,9 +225,9 @@ fn get_addons(
     Ok(out)
 }
 
-/// `get#Component`: `./moq component-get <name>` (with `--dev` for `runtime/dev-component`), which gets the component
-/// and those it depends on. Out: `restart` true when it loads only after a restart, else `loadable` and
-/// `componentName` for System › Components' load (see [`offer_load`]). The full tier's, with network git allowed.
+/// `get#Component`: `moq component-get <name>` (`moq.cmd` on Windows, with `--dev` for `runtime/dev-component`), which
+/// gets the component and those it depends on. Out: `restart` true when it loads only after a restart, else `loadable`
+/// and `componentName` for System › Components' load (see [`offer_load`]). The full tier's, with network git allowed.
 fn get_component(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -223,19 +245,22 @@ fn get_component(
     {
         return Err(LibError::new(format!("{name} is not a component name")));
     }
-    let script =
-        moq(&context).ok_or_else(|| LibError::new("This runtime has no ./moq beside it to get components with"))?;
-    let mut command = Command::new(&script);
+    let program = moq(&context).ok_or_else(|| LibError::new(missing_moq()))?;
+    let launch = program
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "moq".to_string());
+    let mut command = Command::new(&program);
     command.arg("component-get");
     if flag(parameters, "dev") {
         command.arg("--dev");
     }
     command
         .arg(&name)
-        .current_dir(script.parent().unwrap_or(Path::new(".")))
+        .current_dir(program.parent().unwrap_or(Path::new(".")))
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(std::process::Stdio::null());
-    let output = run_with_timeout(command, context.settings.git_network_timeout)?;
+    let output = run_with_timeout(command, &launch, context.settings.git_network_timeout)?;
     audit::record(
         &context.facade,
         &Write {
@@ -248,7 +273,7 @@ fn get_component(
     );
     if !output.0 {
         return Err(LibError::new(format!(
-            "./moq component-get {name}: {}",
+            "{launch} component-get {name}: {}",
             output.1.trim()
         )));
     }
@@ -303,12 +328,19 @@ pub(crate) fn offer_load(context: &Context, location: &Path, out: &mut Parameter
 }
 
 /// Run `command`, killed past `timeout`: whether it succeeded and its output, both streams.
-fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<(bool, String), LibError> {
+/// `program` is the launcher's file name (`moq` or `moq.cmd`), named in the errors.
+fn run_with_timeout(mut command: Command, program: &str, timeout: Duration) -> Result<(bool, String), LibError> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        // CREATE_NEW_PROCESS_GROUP, so `taskkill /T` reaches the bash and git that `moq.cmd` starts.
+        command.creation_flags(0x0000_0200);
+    }
     let child = command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|err| LibError::new(format!("could not run ./moq: {err}")))?;
+        .map_err(|err| LibError::new(format!("could not run {program}: {err}")))?;
     let id = child.id();
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -323,16 +355,26 @@ fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<(bool, St
                 String::from_utf8_lossy(&output.stderr)
             ),
         )),
-        Ok(Err(err)) => Err(LibError::new(format!("./moq: {err}"))),
+        Ok(Err(err)) => Err(LibError::new(format!("{program}: {err}"))),
         Err(_) => {
             #[cfg(unix)]
             let _ = Command::new("kill").arg(id.to_string()).status();
-            #[cfg(not(unix))]
+            #[cfg(windows)]
+            let _ = Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &id.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status();
+            // `id` is only named above. A host that is neither still has to mention it.
+            #[cfg(not(any(unix, windows)))]
             let _ = id;
             Err(LibError::new(format!(
-                "./moq ran past {} s and was stopped",
+                "{program} ran past {} s and was stopped",
                 timeout.as_secs()
             )))
         }
     }
 }
+
+#[cfg(test)]
+#[path = "repos_tests.rs"]
+mod tests;

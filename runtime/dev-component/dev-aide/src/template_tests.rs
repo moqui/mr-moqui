@@ -161,6 +161,8 @@ fn a_part_leaves_out_the_other() {
 }
 
 /// `./moq component-create` and the Dev AIDE make the same component, file for file, for each part.
+/// Unix only: it runs `moq` through bash and links the template, which this test does not do on Windows.
+#[cfg(unix)]
 #[test]
 fn moq_makes_the_same_component() {
     if std::process::Command::new("bash").arg("--version").output().is_err() {
