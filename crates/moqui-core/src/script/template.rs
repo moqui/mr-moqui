@@ -120,7 +120,7 @@ impl TemplateRenderer for FancyRenderer {
 impl TemplateRenderer for LockedRenderer {
     fn render(&self, source: &str, data: Option<&Value>) -> Result<String, Error> {
         let compiled = compiled(source, self.escape, Scope::Snapshot)?;
-        let json = data.map_or_else(|| "{}".to_string(), |value| unwrap_json(value).to_string());
+        let json = data.map_or_else(|| "{}".to_string(), snapshot_json);
         render_locked(&compiled, &json)
     }
 
@@ -1140,6 +1140,113 @@ fn check_expression(expr: &str, _source: &str) -> Result<(), Error> {
 
 // ---- unwrap snapshot ----
 
+/// The text of [`unwrap_json`]'s value, as `serde_json` writes it (an object's keys in order, as its map sorts them),
+/// written straight from `value` with no tree of its own.
+pub fn snapshot_json(value: &Value) -> String {
+    let mut out = String::new();
+    write_snapshot(value, &mut out);
+    out
+}
+
+fn write_snapshot(value: &Value, out: &mut String) {
+    use std::fmt::Write;
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
+        Value::I32(number) => {
+            let _ = write!(out, "{number}");
+        }
+        Value::I64(number) => {
+            let _ = write!(out, "{number}");
+        }
+        Value::String(text) => write_json_text(text, out),
+        Value::Decimal(number) => write_json_text(&number.to_string(), out),
+        Value::Date(date) => write_json_text(&date.strftime("%Y-%m-%d").to_string(), out),
+        Value::Time(time) => write_json_text(&time.strftime("%H:%M:%S").to_string(), out),
+        Value::List(items) => write_snapshot_items(items, out),
+        Value::Map(entries) => write_snapshot_entries(entries, out),
+        Value::Object(_) => {
+            if let Some(entries) = super::value_map(value) {
+                write_snapshot_entries(&entries, out);
+            } else if let Some(items) = super::value_items(value) {
+                write_snapshot_items(&items, out);
+            } else {
+                tracing::warn!("a host object is not part of a locked-down template snapshot and was dropped");
+                out.push_str("null");
+            }
+        }
+        // a float, a time stamp and bytes as `serde_json` writes their JSON
+        other => out.push_str(&moqui_lib::json::to_json(other).to_string()),
+    }
+}
+
+fn write_snapshot_items(items: &[Value], out: &mut String) {
+    out.push('[');
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        write_snapshot(item, out);
+    }
+    out.push(']');
+}
+
+fn write_snapshot_entries(entries: &indexmap::IndexMap<String, Value>, out: &mut String) {
+    let write = |out: &mut String, index: usize, key: &str, item: &Value| {
+        if index > 0 {
+            out.push(',');
+        }
+        write_json_text(key, out);
+        out.push(':');
+        write_snapshot(item, out);
+    };
+    out.push('{');
+    if entries.keys().is_sorted() {
+        for (index, (key, item)) in entries.iter().enumerate() {
+            write(out, index, key, item);
+        }
+    } else {
+        let mut sorted: Vec<(&String, &Value)> = entries.iter().collect();
+        sorted.sort_unstable_by(|left, right| left.0.cmp(right.0));
+        for (index, (key, item)) in sorted.into_iter().enumerate() {
+            write(out, index, key, item);
+        }
+    }
+    out.push('}');
+}
+
+/// `text` as a JSON string, escaped as `serde_json` escapes it.
+fn write_json_text(text: &str, out: &mut String) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    out.reserve(text.len() + 2);
+    out.push('"');
+    let mut start = 0;
+    for (at, byte) in text.bytes().enumerate() {
+        let escape = match byte {
+            b'"' => "\\\"",
+            b'\\' => "\\\\",
+            b'\n' => "\\n",
+            b'\r' => "\\r",
+            b'\t' => "\\t",
+            0x08 => "\\b",
+            0x0c => "\\f",
+            0x00..=0x1f => "",
+            _ => continue,
+        };
+        out.push_str(&text[start..at]);
+        if escape.is_empty() {
+            out.push_str("\\u00");
+            out.push(char::from(HEX[usize::from(byte >> 4)]));
+            out.push(char::from(HEX[usize::from(byte & 0xf)]));
+        } else {
+            out.push_str(escape);
+        }
+        start = at + 1;
+    }
+    out.push_str(&text[start..]);
+    out.push('"');
+}
+
 /// The plain projection of a value: strings, booleans and numbers pass through, a decimal is a
 /// string, timestamps are text, an entity value is its field map and an entity list is a list of
 /// those. Anything else (`ec`, `sri`, finds) is dropped.
@@ -1279,7 +1386,7 @@ pub(super) fn snapshot_text(key: Option<String>) -> String {
     })
 }
 
-fn render_locked(compiled: &str, json: &str) -> Result<String, Error> {
+fn render_locked(compiled: &Arc<str>, json: &str) -> Result<String, Error> {
     render_locked_until(compiled, json, Instant::now() + LOCKED_TIME_LIMIT, LOCKED_MEMORY_LIMIT)
 }
 
@@ -1325,7 +1432,7 @@ impl Drop for TextsSet {
     }
 }
 
-fn render_locked_until(compiled: &str, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {
+fn render_locked_until(compiled: &Arc<str>, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {
     super::oxide::templates::render_locked(compiled, json, deadline, memory)
 }
 

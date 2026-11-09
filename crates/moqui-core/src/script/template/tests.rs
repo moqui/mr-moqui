@@ -214,7 +214,10 @@ fn a_locked_down_render_leaves_nothing_on_the_template_function_on() {
                   catch (e) { return 'refused' } })()}<#else>${(() => { try { return String(arguments.callee.s) } \
                   catch (e) { return 'refused' } })()}${String($t.s)}${typeof this}\
                   </#if>";
-    assert_eq!(render_locked_with(source, Escape::None, &alice).unwrap(), "refusedrefused");
+    assert_eq!(
+        render_locked_with(source, Escape::None, &alice).unwrap(),
+        "refusedrefused"
+    );
     assert_eq!(
         render_locked_with(source, Escape::None, &bob).unwrap(),
         "refusedundefinedundefined"
@@ -278,7 +281,11 @@ fn locked_down_format_and_localize_are_plain_functions_on() {
     for pattern in ["5", "null", "undefined", "{}"] {
         let source = format!("${{format(5, {pattern})}}");
         let err = render_locked_with(&source, Escape::None, &data).expect_err(&source);
-        assert!(err.message().contains("into type 'string'"), "{source}: {}", err.message());
+        assert!(
+            err.message().contains("into type 'string'"),
+            "{source}: {}",
+            err.message()
+        );
     }
 }
 
@@ -657,4 +664,25 @@ fn tag_rows_take_the_first_cell_of_placeholders_alone() {
     assert_eq!(tag_row_text("<tr><td>p9x</td></tr>", "p", &held), None);
     assert_eq!(tag_row_text("<tr><td>p0x</tr>", "p", &held), None);
     assert_eq!(tag_row_text("<tr><td></td></tr>", "p", &held), None);
+}
+
+#[test]
+fn the_snapshot_text_is_the_unwrapped_value_as_serde_json_writes_it() {
+    let text = "a \"quoted\" \\ back\nslash\r\t\u{8}\u{c}\u{1}\u{1f}\u{7f} é ✓ 𝄞";
+    let value = moqui_lib::json::from_json(&serde_json::json!({
+        "zeta": [1, -2, 3.5, 1e300, 0.1, null, true, false, "x"],
+        "alpha": {"b": text, "a": {"y": [], "x": {}}},
+        "big": 9_007_199_254_740_993_i64,
+        text: "key with escapes",
+    }));
+    let Value::Map(mut entries) = value else {
+        panic!("a map")
+    };
+    entries.insert("price".into(), Value::Decimal("12.50".parse().unwrap()));
+    entries.insert("f".into(), Value::F64(f64::NAN));
+    entries.insert("g".into(), Value::F64(-0.0));
+    entries.insert("n".into(), Value::I32(i32::MIN));
+    let value = Value::Map(entries);
+    assert_eq!(snapshot_json(&value), unwrap_json(&value).to_string());
+    assert_eq!(snapshot_json(&Value::List(vec![Value::Null])), "[null]");
 }
