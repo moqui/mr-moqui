@@ -137,10 +137,14 @@ acceptance suite when adding or changing an acceptance test. Measured theme and 
 belong in an offline acceptance client suite (a `suite.js` with no server, such as webroot's `ThemeLayout`), which
 `./moq accept` runs with `--offline`.
 
-Finish each bounded batch by rerunning affected activities, running the required regression/lint checks, updating
-the running notes, and committing the changes with their notes. Notes identify findings addressed, design decisions,
-test commands/results, evidence and remaining gaps. Keep a coverage ledger so later reviewers can continue the work
-without repeating completed checks or treating unverified paths as passed.
+During a review pass, rerun affected activities and localized regression/lint checks for each batch, then update
+the running notes and commit the batch. Run the applicable full application/framework suites once at the end of
+the planned pass. Record that boundary in the component plan; a multi-wave pass finishes after its last planned
+wave. This user-directed review cadence applies to future review iterations as well.
+
+Notes identify findings addressed, design decisions, test commands/results, evidence and remaining gaps. Keep a
+coverage ledger so later reviewers can continue without repeating completed checks or treating unverified paths
+as passed. Preserve regression budgets and the separate acceptance-run rules above.
 
 ## Framework verification details
 
