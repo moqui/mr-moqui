@@ -1,6 +1,6 @@
 # Performance: where it stands, what remains, and the ideas
 
-Status 2026-11-08. This file replaces four running logs, now in `archive/`:
+Status 2026-11-09. This file replaces four running logs, now in `archive/`:
 - [Profiling](archive/Profiling.md): Rounds 1 to 49.
 - [TX-Cache](archive/TX-Cache.md): the transaction cache, Phases 0 to 6 and Censuses 1 to 9.
 - [Script-Engine-Oxide](archive/Script-Engine-Oxide.md): quickjs-oxide in and rquickjs out, Phases 0 to 4.
@@ -37,6 +37,7 @@ R52). It rises as the apps add code and data.
 | Script engine | js_speed's 59 rows ×0.913 of R51 (×0.90 of R49 in R50); a simple `<set>` ×0.16 to ×0.20, `echo#Data` ×0.71, the locked template ×0.63, walk itemList ×0.82, cached finds ×0.88 | R52 |
 | Runtime start | 1.42 ms, 6,182 allocations (R50: 1.57 ms, 9,277; R49: 8.96 ms, 47,436) | R51 |
 | Script heap | test-apps process peaks 15 to 62 MB, all under the gate of 73 MB (with a 0.5 s idle release; 77 MB at 1 s); mr-mantle 65 → 54 MB | R52 |
+| Screen renders | Tools Entities (1,482 rows) html 92 ms, qvt 153, tui 80 (from 196, 263, 287); Cache List html 9.0 ms; Moqui Java's Cache List 7.6 ms warm | R53 |
 | Startup | first start 5.63 s (the empty-database load about 1.15 s), restart 268 ms | R9 |
 | Definitions and XML | entity model 5.3 ms, service definitions 8.7 ms, 112 µs a screen definition; MNode parse 76 µs a file | R4, R8 |
 
@@ -461,10 +462,12 @@ against the base, html ×0.58, qvt ×0.68, tui ×0.27, outputs the same.
   result for each character (the tui `$clean` loop).
 
 **The second batch** (`work/r53/m2.log`):
-- **A script sampling profiler** (quickjs-oxide branch `perf/js-sampler`, 992e6368 and 5d1a303a, not merged): a poll
-  that finds the embedder's flag set counts the running stack as `name:line` frames (`Runtime::start_sampling`,
-  `take_samples`). The mr-moqui side (`MOQUI_JS_SAMPLE=<file>`, a 1 ms ticker, folded stacks under each render's
-  path) is `rounds/r53/js-sampler-mr-moqui.patch` until the pin moves; `samples_table.py` sums a file. A poll comes
+- **A script sampling profiler** (quickjs-oxide `perf/js-sampler`, merged as 223a2047 and pinned, Sweep
+  `r53-sampler`: V8 ×1.0000, memory ×1.005): a poll that finds the embedder's flag set counts the running stack as
+  `name:line` frames (`Runtime::start_sampling`, `take_samples`). In mr-moqui `MOQUI_JS_SAMPLE=<file>` starts a 1 ms
+  ticker and writes folded stacks under each render's path (`script/oxide/sampler.rs`); `samples_table.py` sums a
+  file. The counts here were taken before the sampler was made honest (the third batch), so they lean to functions
+  entered often. A poll comes
   at a call or a back-edge, so the counts lean to functions entered often; read the inclusive column. Entities html:
   `link` 45%, `w` (the writes) 17%, `rowCellOpen` 12%, `fid` 9%; qvt: `displayWidget` 26%, `rowValues` 15%, `fid` and
   `fname` 10% each; tui: `$addPart` 26%, `$writes` 13%, `$cellOf` 13%.
@@ -483,7 +486,8 @@ against the base, html ×0.58, qvt ×0.68, tui ×0.27, outputs the same.
 
 **The third batch** (`work/r53/m3.log`; quickjs-oxide pinned at 223a2047 with the sampler):
 - **The sampler made honest** (fork `perf/sampler-natives`, merged as f873d7e7, Sweep `r53-natives`: V8 ×1.0001,
-  memory ×0.994): while a sampler runs the loop polls at every call and back-edge (the counts follow time, where every
+  memory ×0.994; **mr-moqui's pin moves to f873d7e7 once the fork is pushed**: Cargo.toml's rev, then
+  `cargo update -p quickjs-oxide`; until then a sampling build patches the fork's path, `rounds/r53/README.md`): while a sampler runs the loop polls at every call and back-edge (the counts follow time, where every
   thousandth event weighted them by calls), and a sample asked while a native runs is the native's (`name (native)`),
   where it went to the script that ran next. Entities html then: script 38%, host calls 42%, builtins 20%
   (`RegExp.test` 3.6%, `String` 2.4%, `Object.keys` 2.1%); qvt 46/30/25 (`test` 6.6%, `String` 4.3%); tui 31/50/19.
@@ -583,8 +587,11 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
 - **Not measured since F4:** a short compile (an expression from new text ×2.24, R31) (Oxide §6 F4, Zipp §2). HTML
   escape has a row since R50 (`$esc over 100 strings`).
 - **A runtime start:** 1.4 ms and 6.2k allocations since R51, from 8.4 ms; the idle release is a half second since R52.
-- **Screens:** adjacent constant `sri.write` calls are not merged; they come from literal code in many macros, at most
-  14 pairs a screen (R50).
+- **Screens** (R53, its "What is left"): a form-list row is written once when its widgets allow (`bufferRows`); other
+  rows, headers and html's hidden row forms still write piece by piece. By the sampler, host calls are the largest
+  part of a list render (`makeUrlByType`, `startFormListRow`, `getFieldValueTexts`), then the builtins of the escapes
+  (`RegExp.test`, `String`) and tui's stringify replacer. Measure with `rounds/r53/screen_bench.py` and the
+  sampler.
 - **In the fork:** `using` and `await using` are a SyntaxError (the parser).
 - **F1 step 3:** instructions are shared through the image bodies with unit-local key tables, and R51 shares the key
   tables themselves. Still open: the process store's byte cap and when a text counts as one-off (Oxide §10).
