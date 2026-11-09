@@ -3,9 +3,7 @@ const $l1 = $list(rows);
 for (let row_index = 0; row_index < $l1.length; row_index++) {
 const row = $l1[row_index];
 const row_has_next = row_index < $l1.length - 1;
-$o.push($s(row_index));
-$o.push(": ");
-$o.push($s(row.name));
+$o.push(`${$s(row_index)}: ${$s(row.name)}`);
 if (row_has_next) {
 $o.push(",");
 }
@@ -15,9 +13,7 @@ const $l2 = $list(row.tags);
 for (let tag_index = 0; tag_index < $l2.length; tag_index++) {
 const tag = $l2[tag_index];
 const tag_has_next = tag_index < $l2.length - 1;
-$o.push("  - ");
-$o.push($s(tag));
-$o.push("\n");
+$o.push(`  - ${$s(tag)}\n`);
 }
 }
 }

@@ -133,6 +133,21 @@ fn tag_only_lines_leave_no_blank_lines_on() {
 }
 
 #[test]
+fn a_run_of_text_and_interpolations_keeps_every_character() {
+    on_template_engines(a_run_of_text_and_interpolations_keeps_every_character_on);
+}
+
+/// A run of text and `${}` is one template literal: its backticks, backslashes, `$`, carriage returns and control
+/// characters come out as written.
+fn a_run_of_text_and_interpolations_keeps_every_character_on() {
+    let source = "a`b\\c$d ${'x'} \\`\r\n\t\u{1}${'y'}$\\ \\${z}";
+    let expected = "a`b\\c$d x \\`\r\n\t\u{1}y$\\ ${z}";
+    assert_eq!(render_trusted(source, Escape::None).unwrap(), expected);
+    let data = Value::Map(Default::default());
+    assert_eq!(render_locked_with(source, Escape::None, &data).unwrap(), expected);
+}
+
+#[test]
 fn trusted_reads_the_live_context_and_locked_down_cannot_reach_ec() {
     on_template_engines(trusted_reads_the_live_context_and_locked_down_cannot_reach_ec_on);
 }

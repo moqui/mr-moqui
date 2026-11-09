@@ -588,20 +588,22 @@ fn text_stamp(text: &str) -> i64 {
 
 // ---- cache of compiled functions, by source text ----
 
-type CompiledCache = Mutex<super::bounded::BoundedMap<(Escape, bool, String), Arc<str>>>;
+/// One map for each escape and scope, so a render looks its source up by `&str`, with no key made per render. Each
+/// map holds at most `MAX_COMPILED` entries.
+type CompiledCache = Mutex<[super::bounded::BoundedMap<String, Arc<str>>; 4]>;
 
 fn cache() -> &'static CompiledCache {
     static CACHE: std::sync::OnceLock<CompiledCache> = std::sync::OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(super::bounded::BoundedMap::new(MAX_COMPILED)))
+    CACHE.get_or_init(|| Mutex::new(std::array::from_fn(|_| super::bounded::BoundedMap::new(MAX_COMPILED))))
 }
 
 fn compiled(source: &str, escape: Escape, scope: Scope) -> Result<Arc<str>, Error> {
-    let key = (escape, scope == Scope::Snapshot, source.to_string());
-    if let Some(found) = lock(cache()).get(&key) {
+    let slot = usize::from(escape == Escape::Html) * 2 + usize::from(scope == Scope::Snapshot);
+    if let Some(found) = lock(cache())[slot].get(source) {
         return Ok(found);
     }
     let made: Arc<str> = Arc::from(compile(source, escape, scope)?);
-    lock(cache()).insert(key, Arc::clone(&made));
+    lock(cache())[slot].insert(source.to_string(), Arc::clone(&made));
     Ok(made)
 }
 
@@ -998,21 +1000,87 @@ fn js_string(text: &str) -> String {
     serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_string())
 }
 
+/// A straight run of text and interpolations, which the generator writes as one `$o.push`: a template literal when
+/// it has more than one piece, which quickjs-oxide joins in one allocation (`String.prototype.concat`), instead of a
+/// push of each piece joined at the end.
+#[derive(Default)]
+struct Run {
+    pieces: Vec<RunPiece>,
+}
+
+enum RunPiece {
+    Text(String),
+    Expr(String),
+}
+
+impl Run {
+    fn text(&mut self, text: &str) {
+        match self.pieces.last_mut() {
+            Some(RunPiece::Text(last)) => last.push_str(text),
+            _ => self.pieces.push(RunPiece::Text(text.to_string())),
+        }
+    }
+
+    fn expr(&mut self, expr: String) {
+        self.pieces.push(RunPiece::Expr(expr));
+    }
+
+    fn flush(&mut self, out: &mut String) {
+        match self.pieces.as_slice() {
+            [] => {}
+            [RunPiece::Text(text)] => out.push_str(&format!("$o.push({});\n", js_string(text))),
+            [RunPiece::Expr(expr)] => out.push_str(&format!("$o.push({expr});\n")),
+            pieces => {
+                out.push_str("$o.push(`");
+                for piece in pieces {
+                    match piece {
+                        RunPiece::Text(text) => push_template_text(out, text),
+                        RunPiece::Expr(expr) => out.push_str(&format!("${{{expr}}}")),
+                    }
+                }
+                out.push_str("`);\n");
+            }
+        }
+        self.pieces.clear();
+    }
+}
+
+/// `text` as the characters of a template literal: a backslash, a backtick and `$` escaped, and a control character
+/// (a carriage return would be read as a newline) as its escape.
+fn push_template_text(out: &mut String, text: &str) {
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '`' => out.push_str("\\`"),
+            '$' => out.push_str("\\$"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if u32::from(ch) < 0x20 => out.push_str(&format!("\\u{:04x}", u32::from(ch))),
+            ch => out.push(ch),
+        }
+    }
+}
+
 fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Error> {
     let encode = if escape == Escape::Html { "$h" } else { "$s" };
     let mut out = String::new();
     // `true` for an open list, `false` for an open if, with whether an else was seen.
     let mut stack: Vec<(bool, bool)> = Vec::new();
     let mut lists = 0usize;
+    let mut run = Run::default();
     for token in tokens {
         match token {
-            Token::Text(text) => {
-                out.push_str(&format!("$o.push({});\n", js_string(text)));
-            }
+            Token::Text(text) => run.text(text),
             Token::Interp(expr) => {
                 check_expression(expr, source)?;
-                out.push_str(&format!("$o.push({encode}({expr}));\n"));
+                run.expr(format!("{encode}({expr})"));
             }
+            Token::Comment => {}
+            _ => run.flush(&mut out),
+        }
+        match token {
+            Token::Text(_) | Token::Interp(_) | Token::Comment => {}
             Token::If(cond) => {
                 check_expression(cond, source)?;
                 out.push_str(&format!("if ({cond}) {{\n"));
@@ -1052,13 +1120,13 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
                 Some((true, _)) => out.push_str("}\n}\n"),
                 _ => return Err(Error::new("template: </#list> without an open <#list>")),
             },
-            Token::Comment => {}
             Token::Assign(name, value) => {
                 check_expression(value, source)?;
                 out.push_str(&format!("var {name} = {value};\n"));
             }
         }
     }
+    run.flush(&mut out);
     if let Some((is_list, _)) = stack.last() {
         let open = if *is_list { "<#list>" } else { "<#if>" };
         return Err(Error::new(format!("template: {open} is not closed")));
