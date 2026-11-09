@@ -114,8 +114,11 @@ pub(super) fn remove_stale(install: &Path) {
             "Removing the scratch runtime {} of process {pid}, which is gone",
             dir.display()
         );
-        if let Err(err) = std::fs::remove_dir_all(&dir) {
-            tracing::warn!("could not remove the scratch runtime {}: {err}", dir.display());
+        match std::fs::remove_dir_all(&dir) {
+            Ok(()) => {}
+            // another run's sweep removed it first (test runs start side by side)
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => tracing::warn!("could not remove the scratch runtime {}: {err}", dir.display()),
         }
     }
 }
