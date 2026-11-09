@@ -1716,6 +1716,17 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
     let server = starting.ready();
     let sip_at = server.address("sip");
     assert!(local.server.sip_address().is_none(), "the local node has no SIP engine");
+    let live_sip = |status: &Json| {
+        status["sipNodeList"].as_array().is_some_and(|nodes| {
+            nodes.iter().any(|row| {
+                row["instanceId"].as_str() == Some(server.node.as_str()) && row["live"].as_bool() == Some(true)
+            })
+        })
+    };
+    // A bound socket may precede the live SipNode row that store#VoiceTrunk uses as its reload target.
+    wait_until(Duration::from_secs(5), "the server's live SIP reload target", || {
+        live_sip(&server.ok("john.doe", "org.moqui.impl.VoiceServices.get#VoiceStatus", json!({})))
+    });
 
     // the server's own trunk and number, to john, who is in a call: his calls go to voicemail
     let own_trunk = Trunk::new();
@@ -1747,6 +1758,11 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
 
     // the node's: its trunk, number and fallback, replicated to the server
     let mut link = Link::up(&server, &local);
+    // Linked transport starts the row keeper asynchronously; wait for the local database's reload target too.
+    wait_until(Duration::from_secs(5), "the local node's live SIP reload target", || {
+        let status = local_ok(&local, "john.doe", "org.moqui.impl.VoiceServices.get#VoiceStatus", &[]);
+        live_sip(&to_json(&Value::Map(status.into_iter().collect())))
+    });
     let node_trunk = Trunk::new();
     let node_trunk_id = text(
         &local_ok(
