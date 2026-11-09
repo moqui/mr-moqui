@@ -15,7 +15,12 @@ feature("field feedback and selected navigation retain readable text in both the
             <q-card><m-form ref="form" action="/unused" :fields-initial="{name:'Original', explicit:'Original'}" v-slot="form">
                 <m-text-line id="feedback-field" name="name" label="Customer name" v-model="form.fields.name"></m-text-line>
                 <m-text-line id="explicit-field" name="explicit" label="Explicit fill" bg-color="blue-10" v-model="form.fields.explicit"></m-text-line>
-            </m-form></q-card>
+            </m-form>
+                <q-chip dense square class="m-tonal text-grey-8" data-palette="planned-chip">Planned</q-chip>
+                <q-chip dense square class="m-tonal text-blue" data-palette="label-chip">UI</q-chip>
+                <q-badge class="m-tonal text-grey-8" data-palette="planned-badge">Planned</q-badge>
+                <q-badge class="m-tonal text-blue" data-palette="label-badge">UI</q-badge>
+            </q-card>
             <div class="q-layout"><aside class="q-drawer" :class="{'q-dark':$q.dark.isActive}" style="position:static;width:240px"><nav class="m-drawer">
                 <span id="drawer-start" tabindex="-1"></span>
                 <q-item id="drawer-app" clickable tag="a" class="m-drawer-app m-drawer-in-app m-drawer-on-path" href="#">Comms</q-item>
@@ -92,6 +97,9 @@ feature("field feedback and selected navigation retain readable text in both the
                     results.push({role:row.id,ratio:measureContrast(row,'rgb('+rgb.join(',')+')'),
                         foreground:getComputedStyle(row).color,background:rgb,
                         surfaces:ancestors.map(node=>[node.tagName,node.className,getComputedStyle(node).backgroundColor])});
+                }
+                for (const row of document.querySelectorAll('[data-palette]')) {
+                    results.push({role:row.dataset.palette,ratio:measureContrast(row,drawerBackground(row,false))});
                 }
                 return {results,explicit:getComputedStyle(document.getElementById('explicit-field').closest('.q-field').querySelector('.q-field__control')).backgroundColor,
                     custom:getComputedStyle(document.querySelector('[data-feedback="custom"]')).backgroundColor,

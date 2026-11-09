@@ -266,6 +266,8 @@ Further patterns established during the review:
 - Selected navigation text uses a readable foreground independently of its brand-colored fill and selection bar.
   Measure translucent fills against their painted ancestor backgrounds. Preserve explicit theme overrides and
   retest the default light/dark cycle plus representative alternative schemes.
+- Tonal status chips and badges need theme-specific text colors. Check their painted foreground against the
+  composited surface in both themes; utility color names alone do not guarantee readable status text.
 - Multiple-choice fields show each selected label while submitting its ID. Inspect the settled field before saving,
   after an unrelated render and after refusal; a hidden native select alone does not prove usable selection feedback.
 - Identify quick-create and tray context through the loader's supplied screen context. A loaded QVue component may
