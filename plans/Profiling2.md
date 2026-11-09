@@ -761,6 +761,8 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
 - moqui-git `mirror_fetches_and_opted_in_writes_raise_events` and `the_tree_refs_compare_and_merge_methods_through_services`:
   timing under a full run, pass alone (R48, R49).
 - mr-boss `WorkCenters` load of a released operation: intermittent (R22, R27, R28, R49).
+- moqui-host `devaide::the_index_follows_reloads_and_extensions`: a restart re-read 9 files in a full
+  `test-framework` run, passes alone (R53).
 - mr-mantle `SupportAssignment` round robin: fails under both engines and alone ("Customer Service is not set up for
   Assignment Spec Org"), from the Customer Service P5 work of 2026-11-05. Needs a look outside performance (R48).
 - Contacts, Consent and CustomerServiceAccess (state from earlier specs), ShopCart and SupportAccess

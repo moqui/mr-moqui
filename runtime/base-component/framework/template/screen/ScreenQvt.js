@@ -892,7 +892,7 @@
                     alignClass: align === "center" ? "text-center" : align === "right" ? "text-right" : null,
                     labelWrapper: !!(field.parent && field.parent.name === "form-single"), unit: at(n, "currency-unit-field"),
                     text: at(n, "text"), encode: at(n, "encode") !== "false", style: at(n, "style"), tooltip: at(sub, "tooltip"),
-                    label: titled ? null : label(n)
+                    label: titled ? null : label(n), fieldName: fname(n), formName: formName(n)
                 };
                 displays.set(n, d);
             }
@@ -902,8 +902,9 @@
         const displayWidget = (n) => {
             const d = displayOf(n);
             const field = d.field;
-            const id = fid(n);
-            const name = fnm(n);
+            // fid and fnm of n, from the names read once for the element
+            const id = (st.fieldForm || xn(d.formName)) + "_" + d.fieldName + entry() + sec();
+            const name = d.fieldName + (st.multi && st.entry !== "" && /^\d+$/.test(st.entry) ? "_" + st.entry : "");
             const alsoHidden = d.alsoHidden && !st.skipForm;
             const dyn = d.dyn;
             const labelWrapper = d.labelWrapper;
@@ -1006,6 +1007,17 @@
                 links.set(n, l);
             }
             return l;
+        };
+
+        // The id of a link in a field: fid's, then the url, its parts read once for each element (a list asks it on every row).
+        const linkFieldId = (n) => {
+            const l = linkOf(n);
+            if (l.fieldName === undefined) {
+                l.fieldName = fname(n);
+                l.formName = formName(n);
+                l.urlId = "_" + l.url.replace(/\./g, "_");
+            }
+            return (st.fieldForm || xn(l.formName)) + "_" + l.fieldName + entry() + sec() + l.urlId;
         };
 
         // The link text and URL of a link element, or null when the link shows nothing; whether the link is disabled is asked
@@ -1138,7 +1150,7 @@
             const open = labelWrapper ? "<m-field" + A({ label: label(n) }) + ">" : "";
             const close = labelWrapper ? "</m-field>" : "";
             if (inField) {
-                const id = fid(n) + "_" + at(n, "url").replace(/\./g, "_");
+                const id = linkFieldId(n);
                 const form = linkForm(n, parts, id);
                 if (form) sri.appendToAfterScreenWriter(form);
                 w(open + linkElement(n, parts, id) + close);

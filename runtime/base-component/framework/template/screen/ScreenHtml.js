@@ -702,6 +702,17 @@
             return l;
         };
 
+        // The id of a link in a field: fid's, then the url, its parts read once for each element (a list asks it on every row).
+        const linkFieldId = (n) => {
+            const l = linkOf(n);
+            if (l.fieldName === undefined) {
+                l.fieldName = fname(n);
+                l.formName = formName(n);
+                l.urlId = "_" + l.url.replace(/\./g, "_");
+            }
+            return (st.fieldForm || xn(l.formName)) + "_" + l.fieldName + entry() + sec() + l.urlId;
+        };
+
         // The link text and URL of a link element, or null when the link shows nothing; whether the link is disabled is asked
         // once, for the element and its form.
         const linkParts = (n) => {
@@ -795,7 +806,7 @@
                 return;
             }
             if (inField) {
-                const id = fid(n) + "_" + at(n, "url").replace(/\./g, "_");
+                const id = linkFieldId(n);
                 const form = linkForm(n, parts, id);
                 if (form) sri.appendToAfterScreenWriter(form);
                 w(linkElement(n, parts, id));
@@ -1566,7 +1577,10 @@
         // A list cell for one field: a block with the container style and alignment of the field. The final row
         // of a multi form has none.
         const rowCellOpen = (style, align, final) => {
-            if (!final) w("<div" + a1("class", style || null) + a1("data-align", align && align !== "left" ? align : null) + ">");
+            if (final) return;
+            // most cells have neither, and their div is the same text every time
+            if (!style && (!align || align === "left")) w("<div>");
+            else w("<div" + a1("class", style || null) + a1("data-align", align && align !== "left" ? align : null) + ">");
         };
         const rowCellClose = (final) => {
             if (!final) w("</div>");
