@@ -516,7 +516,57 @@ fn matches_in_place<J: Js>(
             let Value::Object(object) = value else {
                 return Ok(Some(false));
             };
-            // read in one step when every element is an own data property; anything else as below
+            // the elements visited where they lie when the array is dense: text and scalars compared there, objects
+            // after, walked; anything else as below
+            let mut verdict = None;
+            let mut lifted = false;
+            let mut deferred = Vec::with_capacity(items.len());
+            let mut expected = items.iter();
+            let visited = js.visit_dense_array(object, &mut |element| {
+                let Some(item) = expected.next() else {
+                    verdict = Some(false);
+                    return false;
+                };
+                match (element, item) {
+                    (DataRef::Text(text), HostValue::String(held)) => {
+                        if !text.eq_str(held) {
+                            verdict = Some(false);
+                            return false;
+                        }
+                    }
+                    (DataRef::Value(element), item) => match scalar_matches(&element, item) {
+                        Some(true) => {}
+                        Some(false) => {
+                            verdict = Some(false);
+                            return false;
+                        }
+                        None => deferred.push((element, item)),
+                    },
+                    // text against a host value shown as text, or a function: compared as before
+                    (DataRef::Text(_) | DataRef::Callable, _) => {
+                        lifted = true;
+                        return false;
+                    }
+                }
+                true
+            })?;
+            match visited {
+                None => return matches_in_place_slow(js, engine, value, host, depth),
+                Some(false) if !lifted => return Ok(Some(verdict.unwrap_or(false))),
+                Some(true) => {
+                    if expected.next().is_some() {
+                        return Ok(Some(false));
+                    }
+                    for (element, item) in &deferred {
+                        match matches_in_place(js, engine, element, item, depth + 1)? {
+                            Some(true) => {}
+                            other => return Ok(other),
+                        }
+                    }
+                    return Ok(Some(true));
+                }
+                Some(false) => {}
+            }
             let Some(elements) = js.dense_array_values(object)? else {
                 return matches_in_place_slow(js, engine, value, host, depth);
             };
@@ -543,19 +593,17 @@ fn matches_in_place<J: Js>(
             let mut lifted = false;
             let mut deferred = Vec::new();
             let mut expected = entries.iter();
+            // each key's text compared where it lies too; an object with a symbol key is read as below
             let visited =
-                js.visit_plain_own_data(object, Some(&engine.protos.object_prototype), &mut |property| {
+                js.visit_plain_own_text(object, Some(&engine.protos.object_prototype), &mut |property| {
                     if !property.enumerable || matches!(property.value, DataRef::Callable) {
                         return true;
                     }
-                    let Some(name) = property.key.to_js_string() else {
-                        return true;
-                    };
                     let Some((held_name, held_item)) = expected.next() else {
                         verdict = Some(false);
                         return false;
                     };
-                    if !super::convert::text_is(&name, held_name) {
+                    if !property.key.eq_str(held_name) {
                         verdict = Some(false);
                         return false;
                     }

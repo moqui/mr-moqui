@@ -24,7 +24,7 @@
         <code-view text="${errorGroup.stacktrace || ''}" language="text"/>
         <section-iterate name="SampleTraces" list="sampleTraces" entry="sampleTrace"><widgets>
             <container>
-                <link url="trace" text="Trace ${sampleTrace}" link-type="anchor" parameter-map="{traceId:sampleTrace,from:from,thru:thru}"/>
+                <link url="trace" text="${ec.l10n.localize('Trace')} ${sampleTrace}" link-type="anchor" parameter-map="{traceId:sampleTrace,from:from,thru:thru}"/>
                 <label text=" · " type="span"/>
                 <link url="logs" text="Logs for this trace" link-type="anchor" parameter-map="{queryString:'trace_id:'+sampleTrace,from:from || 'now-7d',thru:thru || 'now'}"/>
             </container>

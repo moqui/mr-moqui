@@ -335,11 +335,57 @@ impl EntityFind {
         self.offset
     }
 
-    pub fn list(self) -> Result<EntityList, Error> {
+    /// The rows found. The find stays as it was, so it can run again, as Java's.
+    pub fn list(&self) -> Result<EntityList, Error> {
         self.list_internal("list")
     }
 
-    fn list_internal(self, operation: &str) -> Result<EntityList, Error> {
+    /// The entity cache's answer to [`Self::list`], or `None` when the find must run: a miss, or anything that could
+    /// read the database or run a script (authorization filters that apply, a sim, a transaction cache frame, an
+    /// entity defined at run time, a find the cache does not answer). The answer is authorized as `list`'s is.
+    pub fn list_from_cache(&self) -> Result<Option<EntityList>, Error> {
+        self.cached_list("list")
+    }
+
+    /// The entity cache's answer to [`Self::one`], or `None` when the find must run, as [`Self::list_from_cache`].
+    pub fn one_from_cache(&self) -> Result<Option<Option<EntityValue>>, Error> {
+        // the finds `one` answers without a query, or narrows first, run in full
+        if !self.facade.with_model(|model| model.entity(&self.entity_name).is_ok())
+            || self.conditions.is_empty()
+            || self.has_empty_pk()
+            || self.narrows_to_full_pk()
+        {
+            return Ok(None);
+        }
+        Ok(self
+            .cached_list("one")?
+            .map(|list| list.into_values().into_iter().next()))
+    }
+
+    /// [`Self::list_from_cache`], the hit authorized as `operation`. The cache is read before the artifact is pushed,
+    /// so a miss pushes nothing and counts no hit; the find that runs then does.
+    fn cached_list(&self, operation: &str) -> Result<Option<EntityList>, Error> {
+        if self.bypasses_cache()
+            || (self.require_search_parameters && !self.has_search_parameters)
+            || !self.facade.with_model(|model| model.entity(&self.entity_name).is_ok())
+        {
+            return Ok(None);
+        }
+        let _authz = self.authz_guard();
+        if authorization_filters() && (crate::hooks::get().entity_filters_apply)(&self.entity_name) {
+            return Ok(None);
+        }
+        // with no filter that applies, the combined condition is the find's own
+        let condition = self.unfiltered();
+        let lookup = self.lookup(condition.as_ref());
+        let Some(cached) = cache::shared_cache_hit(&self.facade, &lookup)? else {
+            return Ok(None);
+        };
+        let _artifact = EntityArtifact::push(&self.facade, &self.entity_name, "view", operation)?;
+        Ok(Some(self.attach_l10n(cached)))
+    }
+
+    fn list_internal(&self, operation: &str) -> Result<EntityList, Error> {
         if self.require_search_parameters && !self.has_search_parameters {
             (crate::hooks::get().note_no_search_params)();
             return Ok(EntityList::new(Vec::new()));
@@ -413,11 +459,12 @@ impl EntityFind {
         })
     }
 
-    pub fn one(self) -> Result<Option<EntityValue>, Error> {
+    /// The row found, or `None`. The find stays as it was, so it can run again, as Java's.
+    pub fn one(&self) -> Result<Option<EntityValue>, Error> {
         self.one_internal("one")
     }
 
-    pub(crate) fn one_internal(mut self, operation: &str) -> Result<Option<EntityValue>, Error> {
+    pub(crate) fn one_internal(&self, operation: &str) -> Result<Option<EntityValue>, Error> {
         // Java `oneInternal`: a find one with no condition, or with a primary key field set to null or empty, is null
         // without a query.
         if self.conditions.is_empty() || self.has_empty_pk() {
@@ -426,13 +473,17 @@ impl EntityFind {
             let _artifact = EntityArtifact::push(&self.facade, &self.entity_name, "view", operation)?;
             return Ok(None);
         }
-        self.narrow_to_full_pk();
-        let entity_name = self.entity_name.clone();
-        let list = self.list_internal(operation)?;
+        let list = if self.narrows_to_full_pk() {
+            let mut narrowed = self.clone();
+            narrowed.narrow_to_full_pk();
+            narrowed.list_internal(operation)?
+        } else {
+            self.list_internal(operation)?
+        };
         // As Java `oneExtended`: the first row, more than one only traced. A find one with a partial key, such as
         // Mantle's `entity-find-one` of an OrderPart with only the customer in the context, takes the first match.
         if list.len() > 1 {
-            tracing::trace!(entity = %entity_name, rows = list.len(), "found more than one result for find one");
+            tracing::trace!(entity = %self.entity_name, rows = list.len(), "found more than one result for find one");
         }
         Ok(list.into_values().into_iter().next())
     }
@@ -459,28 +510,6 @@ impl EntityFind {
     /// its own stays: a caller that names `reportPending = Y` or an owner beside the key means it. Other kinds of
     /// condition stay.
     fn narrow_to_full_pk(&mut self) {
-        let equals_on = |condition: &Condition, name: &str| match condition {
-            Condition::Equals(field, value) => {
-                field.entity_alias.is_none() && field.name == name && !moqui_lib::object::is_empty(value)
-            }
-            _ => false,
-        };
-        // A null in the map is an `IS NULL` here; Java keeps it in the same simple map as the equalities.
-        let equalities = self
-            .conditions
-            .iter()
-            .filter(|condition| matches!(condition, Condition::Equals(..) | Condition::IsNull(..)))
-            .count();
-        // Most finds have no more equalities than key fields, and leave here without copying the key names.
-        let narrows = self.facade.with_entity(&self.entity_name, |entity, _, _| {
-            let count = pk_names(entity).count();
-            let has_full_pk = count > 0
-                && pk_names(entity).all(|name| self.conditions.iter().any(|condition| equals_on(condition, name)));
-            Ok(has_full_pk && equalities > count)
-        });
-        if !narrows.unwrap_or(false) {
-            return;
-        }
         let pk_names: Vec<String> = match self.facade.with_entity(&self.entity_name, |entity, _, _| {
             Ok(pk_names(entity).map(str::to_string).collect())
         }) {
@@ -512,7 +541,28 @@ impl EntityFind {
         self.conditions = kept;
     }
 
-    pub fn count(self) -> Result<i64, Error> {
+    /// Whether [`Self::narrow_to_full_pk`] changes this find: its field equalities hold the full primary key, with
+    /// more besides.
+    fn narrows_to_full_pk(&self) -> bool {
+        // A null in the map is an `IS NULL` here; Java keeps it in the same simple map as the equalities.
+        let equalities = self
+            .conditions
+            .iter()
+            .filter(|condition| matches!(condition, Condition::Equals(..) | Condition::IsNull(..)))
+            .count();
+        // Most finds have no more equalities than key fields, and leave here without copying the key names.
+        self.facade
+            .with_entity(&self.entity_name, |entity, _, _| {
+                let count = pk_names(entity).count();
+                let has_full_pk = count > 0
+                    && pk_names(entity).all(|name| self.conditions.iter().any(|condition| equals_on(condition, name)));
+                Ok(has_full_pk && equalities > count)
+            })
+            .unwrap_or(false)
+    }
+
+    /// How many rows the find matches. The find stays as it was, as [`Self::list`].
+    pub fn count(&self) -> Result<i64, Error> {
         if self.require_search_parameters && !self.has_search_parameters {
             return Ok(0);
         }
@@ -861,6 +911,16 @@ impl EntityFind {
                 .map(|value| value.with_l10n(Some(&targets)))
                 .collect(),
         )
+    }
+}
+
+/// An equality of the plain field `name` to a value that is not empty.
+fn equals_on(condition: &Condition, name: &str) -> bool {
+    match condition {
+        Condition::Equals(field, value) => {
+            field.entity_alias.is_none() && field.name == name && !moqui_lib::object::is_empty(value)
+        }
+        _ => false,
     }
 }
 

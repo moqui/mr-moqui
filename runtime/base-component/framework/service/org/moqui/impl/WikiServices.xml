@@ -135,7 +135,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (ref != null && ref.exists && ref.supportsVersion()) {
                         let version = null
                         try { version = ref.getVersion(String(publishedVersionName)) } catch (e) { version = null }
-                        if (version == null) ec.message.addError(ec.resource.expand('This page has no version ${name}', '', {name: String(publishedVersionName)}))
+                        if (version == null) ec.message.addError(ec.resource.expand('This page has no version ${versionName}', '', {versionName: String(publishedVersionName)}))
                         else publishedVersionName = version.versionName
                     }
                 ]]></script>
@@ -2607,7 +2607,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!versionName) { ec.message.addError(ec.l10n.localize('The page has no version to review')); return }
                 if (ref?.supportsVersion()) {
                     const version = ref.getVersion(versionName)
-                    if (version == null) { ec.message.addError(ec.resource.expand('This page has no version ${name}', '', {name: String(versionName)})); return }
+                    if (version == null) { ec.message.addError(ec.resource.expand('This page has no version ${versionName}', '', {versionName: String(versionName)})); return }
                     versionName = version.versionName
                 }
                 const nameOf = (userId) => {

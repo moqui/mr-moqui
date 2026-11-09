@@ -36,6 +36,9 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="toolCallList" from="audit?.toolCallList ?? []"/>
         <set field="eventList" from="audit?.eventList ?? []"/>
         <set field="approvalList" from="audit?.approvalList ?? []"/>
+        <set field="stepOfLimit" from="ec.resource.expand('${used} of ${limit}', '', {used: agentRun?.stepCount ?? 0, limit: agentRun?.maxSteps ?? '-'})"/>
+        <set field="toolOfLimit" from="ec.resource.expand('${used} of ${limit}', '', {used: agentRun?.toolCallCount ?? 0, limit: agentRun?.maxToolCalls ?? '-'})"/>
+        <set field="secondsOfLimit" from="ec.resource.expand('${used} of ${limit}', '', {used: agentRun?.activeSeconds ?? 0, limit: agentRun?.maxRunSeconds ?? '-'})"/>
     </actions>
     <widgets>
         <container-box><box-header title="Run ${runId ?? ''}"/><box-toolbar>
@@ -65,15 +68,15 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="attempt"><default-field><display/></default-field></field>
                 <field name="cancelRequested"><default-field title="Cancel Asked"><display/></default-field></field>
                 <field name="lastEventSeq"><default-field title="Events"><display/></default-field></field>
-                <field name="stepCount"><default-field title="Steps"><display text="${stepCount ?? 0} of ${maxSteps ?? '-'}"/></default-field></field>
-                <field name="toolCallCount"><default-field title="Tool Calls"><display text="${toolCallCount ?? 0} of ${maxToolCalls ?? '-'}"/></default-field></field>
+                <field name="stepCount"><default-field title="Steps"><display text="${stepOfLimit}"/></default-field></field>
+                <field name="toolCallCount"><default-field title="Tool Calls"><display text="${toolOfLimit}"/></default-field></field>
                 <field name="inputTokens"><default-field title="Input Tokens"><display/></default-field></field>
                 <field name="cachedInputTokens"><default-field title="Cached Input"><display/></default-field></field>
                 <field name="outputTokens"><default-field title="Output Tokens"><display/></default-field></field>
                 <field name="maxTokens"><default-field title="Token Cap"><display/></default-field></field>
                 <field name="cost"><default-field><display/></default-field></field>
                 <field name="maxCost"><default-field title="Cost Cap"><display/></default-field></field>
-                <field name="activeSeconds"><default-field title="Seconds Working"><display text="${activeSeconds ?? 0} of ${maxRunSeconds ?? '-'}"/></default-field></field>
+                <field name="activeSeconds"><default-field title="Seconds Working"><display text="${secondsOfLimit}"/></default-field></field>
                 <field name="capsText"><default-field title="Capabilities"><display/></default-field></field>
                 <field name="submittedDate"><default-field title="Submitted"><display/></default-field></field>
                 <field name="startedDate"><default-field title="Started"><display/></default-field></field>

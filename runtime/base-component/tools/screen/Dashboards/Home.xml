@@ -51,7 +51,7 @@
     ]]></script></actions>
     <widgets>
         <container style="row items-center q-gutter-sm q-mb-md">
-            <link url="new" text="New ${definitionType || 'dashboard'}" btn-type="primary" parameter-map="{definitionType:definitionType || 'dashboard'}" condition="homeOffers.edit"/>
+            <link url="new" text="${ec.l10n.localize('New')} ${definitionType || 'dashboard'}" btn-type="primary" parameter-map="{definitionType:definitionType || 'dashboard'}" condition="homeOffers.edit"/>
             <link url="explore" text="Explore data" condition="homeOffers.explore"/>
         </container>
         <form-single name="DashboardFolders" transition=".">

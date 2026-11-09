@@ -103,7 +103,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <!-- see if emailAddress already in use (instead of catching on unique index) -->
                 <entity-find entity-name="moqui.security.UserAccount" list="existingUaList">
                     <econdition field-name="emailAddress" ignore-case="true"/></entity-find>
-                <if condition="existingUaList.length"><return error="true" message="Email ${emailAddress} is already in use. Login with username ${existingUaList.get(0).get('username')}"/></if>
+                <if condition="existingUaList.length"><return error="true" message="Email ${emailAddress} is already in use. Login with username ${existingUaList[0].username}"/></if>
             </if>
 
             <service-call name="create#moqui.security.UserAccount" out-map="context" in-map="context"/>
@@ -140,7 +140,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <!-- see if emailAddress already in use (instead of catching on unique index) -->
                 <entity-find entity-name="moqui.security.UserAccount" list="existingUaList">
                     <econdition field-name="emailAddress" ignore-case="true"/></entity-find>
-                <if condition="existingUaList.length"><return error="true" message="Email ${emailAddress} is already in use. Login with username ${existingUaList.get(0).get('username')}"/></if>
+                <if condition="existingUaList.length"><return error="true" message="Email ${emailAddress} is already in use. Login with username ${existingUaList[0].username}"/></if>
             </if>
 
             <service-call name="update#moqui.security.UserAccount" in-map="context"/>
@@ -823,7 +823,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field-map field-name="bodyParameters" from="{code: createSuFactorOut.code,
                         thruDateString: ec.l10n.format(createSuFactorOut.thruDate, null)}"/>
             </service-call>
-            <message>Authentication code sent to ${emailAddress}</message>
+            <set field="authCodeSentTo" from="emailAddress"/><message>Authentication code sent to ${authCodeSentTo}</message>
 
             <!-- if the email just sent to is not the main email address for the user send the main email address a notification email that an email with a code was sent -->
             <if condition="userAccount.get('emailAddress') &amp;&amp; userAccount.get('emailAddress') != emailAddress">
@@ -860,7 +860,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <field-map field-name="bodyParameters" from="{code: createSuFactorOut.code,
                         thruDateString: ec.l10n.format(createSuFactorOut.thruDate, null)}"/>
             </service-call>
-            <message>Authentication code sent to ${emailAddress}</message>
+            <set field="authCodeSentTo" from="emailAddress"/><message>Authentication code sent to ${authCodeSentTo}</message>
         </actions>
     </service>
     <service verb="send" noun="AuthcCodeSms">
@@ -891,7 +891,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <!-- NOTE: uses LocalizedMessage with original=UserAuthcOtpMessage, defined in CommonL10nData.xml -->
                 <field-map field-name="message" from="ec.resource.expand('UserAuthcOtpMessage', null, {code: createSuFactorOut.code})"/>
             </service-call>
-            <message public="true" type="success">Authentication code sent to ${contactNumber}</message>
+            <set field="authCodeSentTo" from="contactNumber"/><message public="true" type="success">Authentication code sent to ${authCodeSentTo}</message>
 
             <!-- TODO consider always sending email to account address to let them know a code was sent, need variation in email text for SMS
             <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount">

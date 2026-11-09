@@ -24,6 +24,8 @@
 //! Every method that reads or writes the database, or reads an entity definition, may run a nested script (an entity
 //! ECA rule, an authorization filter), so it is not a leaf; the builder steps and the list's cursor are. `find` and
 //! `condition` are leaves that lend the engine only for the step that may nest: a definition made at run time from rows.
+//! `list` and `one` are leaves that answer a hit of the shared entity cache without the lend, when no authorization
+//! filter applies and nothing reads the database (`EntityFind::list_from_cache`), and lend it for any other find.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -84,8 +86,8 @@ static TEMP_RESET_SEQUENCED_ID_PRIMARY: Method = method!(
     temp_reset_sequenced_id_primary
 );
 
-/// The find builder (`ec.entity.find(name)`). A chained call uses its find up and returns a new builder over it, so a
-/// second call on the same builder is refused.
+/// The find builder (`ec.entity.find(name)`). A chained call changes its find and returns the same builder, and a run
+/// (`list()`, `one()`, `count()`) can be repeated, as on Java's `EntityFind`.
 pub(crate) static FIND: HostClass = HostClass {
     name: "host:EntityFind",
     methods: &[
@@ -111,8 +113,8 @@ pub(crate) static FIND: HostClass = HostClass {
         method!("EntityFind", "useClone", [Value], None, leaf, use_clone),
         method!("EntityFind", "selectField", [Text], None, leaf, select_field),
         method!("EntityFind", "selectFormFields", [Text], None, leaf, select_form_fields),
-        method!("EntityFind", "list", [], list),
-        method!("EntityFind", "one", [], one),
+        method!("EntityFind", "list", [], None, leaf, list),
+        method!("EntityFind", "one", [], None, leaf, one),
         method!("EntityFind", "oneMaster", [OptText], one_master),
         method!("EntityFind", "count", [], count),
         method!("EntityFind", "getQueryTextList", [], None, leaf, get_query_text_list),
@@ -121,7 +123,7 @@ pub(crate) static FIND: HostClass = HostClass {
         method!("EntityFind", "copy", [], None, leaf, copy),
         method!("EntityFind", "deleteAll", [], delete_all),
         method!("EntityFind", "purge", [OptValue, OptValue], purge),
-        method!("EntityFind", "iterator", [], list),
+        method!("EntityFind", "iterator", [], None, leaf, list),
         method!("EntityFind", "havingCondition", [Value], None, leaf, having_condition),
         method!(
             "EntityFind",
@@ -392,10 +394,12 @@ fn temp_reset_sequenced_id_primary(call: &mut Call<'_>) -> Result<Ret, HostError
 
 // the find builder
 
-/// The state of a find builder: its find, until a call uses it up.
+/// The state of a find builder: its find, which each chained call changes in place, as Java's `EntityFind` builder
+/// returns `this`. A run (`list()`, `one()`, `count()`) leaves it as it was, so it can run again.
 pub(crate) struct FindState {
+    /// `None` only while the find runs: a nested script that reaches the same builder then is refused, not blocked.
     find: Mutex<Option<EntityFind>>,
-    /// The SQL the find ran, shared with its clones, so it can be read after `list()`, `one()` or `count()` used it up.
+    /// The SQL the find ran, shared with its clones.
     query_texts: Arc<Mutex<Vec<String>>>,
 }
 
@@ -407,24 +411,49 @@ impl FindState {
         }
     }
 
-    /// A clone of the find, which stays usable; `None` once it was used up.
+    /// A clone of the find; `None` only while it runs.
     pub(crate) fn peek(&self) -> Option<EntityFind> {
         lock(&self.find).as_ref().cloned()
     }
 }
 
-/// The receiver's find, taken: the builder is used up.
-fn take_find(call: &Call<'_>) -> Result<EntityFind, HostError> {
+fn running() -> HostError {
+    HostError::message("entity find is running")
+}
+
+/// Change the receiver's find in place with `step` and return the receiver.
+fn chain(call: &Call<'_>, step: impl FnOnce(EntityFind) -> EntityFind) -> Result<Ret, HostError> {
+    let state = call.this::<FindState>()?;
+    let mut slot = lock(&state.find);
+    let find = slot.take().ok_or_else(running)?;
+    *slot = Some(step(find));
+    Ok(Ret::This)
+}
+
+/// The receiver's find, taken out of its builder while it runs; [`put_back`] returns it.
+fn take_find(call: &Call<'_>) -> Result<(Arc<FindState>, EntityFind), HostError> {
     let state = call.this::<FindState>()?;
     let taken = lock(&state.find).take();
-    taken.ok_or_else(|| HostError::message("entity find was already used"))
+    let find = taken.ok_or_else(running)?;
+    Ok((state, find))
+}
+
+fn put_back(state: &FindState, find: EntityFind) {
+    *lock(&state.find) = Some(find);
+}
+
+/// `body` over the receiver's find, which stays the builder's: a run, as Java's, does not use the find up. No lock is
+/// held while it runs, so a nested script it runs may use other finds.
+fn run_find<T>(call: &Call<'_>, body: impl FnOnce(&EntityFind) -> T) -> Result<T, HostError> {
+    let (state, find) = take_find(call)?;
+    let result = body(&find);
+    put_back(&state, find);
+    Ok(result)
 }
 
 /// A clone of the receiver's find, which stays usable.
 fn peek_find(call: &Call<'_>) -> Result<EntityFind, HostError> {
-    call.this::<FindState>()?
-        .peek()
-        .ok_or_else(|| HostError::message("this find was already run"))
+    call.this::<FindState>()?.peek().ok_or_else(running)
 }
 
 /// The text of a value argument that must be a string.
@@ -436,7 +465,6 @@ fn string_arg(value: &Value) -> Result<String, HostError> {
 }
 
 fn condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let mut find = take_find(call)?;
     let first = call.value_or_null(0);
     // `condition(field, operator, value)`: the operator is a name Java's factory knows, an empty one is equals.
     if call.passed(1) && call.passed(2) {
@@ -446,20 +474,20 @@ fn condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
             Some(operator) => string_arg(operator)?,
         };
         let condition = comparison(&field, &operator, call.value_or_null(2)).map_err(lib)?;
-        return Ok(find_object(find.condition(condition)));
+        return chain(call, |find| find.condition(condition));
     }
     if !call.passed(1) {
         if first.is_null() {
-            return Ok(find_object(find));
+            return chain(call, |find| find);
         }
         if let Some(condition) = condition_in(&first) {
-            return Ok(find_object(find.condition(condition)));
+            return chain(call, |find| find.condition(condition));
         }
     }
     if call.passed(1) {
         let field = string_arg(&first)?;
         let condition = comparison(&field, "equals", call.value_or_null(1)).map_err(lib)?;
-        return Ok(find_object(find.condition(condition)));
+        return chain(call, |find| find.condition(condition));
     }
     let entries = match &first {
         Value::List(_) => IndexMap::new(),
@@ -469,32 +497,54 @@ fn condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
     // A map such as `context` carries names that are not fields. Only fields (a view's aliases) apply. The definition
     // of an entity defined at run time may be read from rows, so it is read with the engine lent (`find`).
     let facade = entity_facade()?;
+    let (state, mut find) = take_find(call)?;
     let mut fields = None;
-    call.ops.lend(&mut || {
+    let lent = call.ops.lend(&mut || {
         fields = Some(facade.with_entity(find.entity_name(), |entity, _, _| {
             Ok(entity.field_names().into_iter().map(str::to_string).collect())
         }));
-    })?;
-    let known: std::collections::BTreeSet<String> = fields
-        .ok_or_else(|| HostError::message("entity fields were not read"))?
-        .map_err(lib)?;
+    });
+    let known: Result<std::collections::BTreeSet<String>, HostError> = lent.and_then(|()| {
+        fields
+            .ok_or_else(|| HostError::message("entity fields were not read"))?
+            .map_err(lib)
+    });
+    let known = match known {
+        Ok(known) => known,
+        Err(err) => {
+            put_back(&state, find);
+            return Err(err);
+        }
+    };
+    let mut failed = None;
     for (key, value) in entries {
         if !known.contains(&key) {
             continue;
         }
-        let condition = comparison(&key, "equals", value).map_err(lib)?;
-        find = find.condition_from_map(condition);
+        match comparison(&key, "equals", value) {
+            Ok(condition) => find = find.condition_from_map(condition),
+            Err(err) => {
+                failed = Some(err);
+                break;
+            }
+        }
     }
-    Ok(find_object(find))
+    put_back(&state, find);
+    match failed {
+        Some(err) => Err(lib(err)),
+        None => Ok(Ret::This),
+    }
 }
 
 /// Comma separated fields, each with an optional `-` for descending, `+`, or `^` for ignore case.
 fn order_by(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let mut find = take_find(call)?;
-    for part in call.text_or_empty(0).split(',') {
-        find = find.order_by_text(part);
-    }
-    Ok(find_object(find))
+    let fields = call.text_or_empty(0);
+    chain(call, |mut find| {
+        for part in fields.split(',') {
+            find = find.order_by_text(part);
+        }
+        find
+    })
 }
 
 /// The integer of a `limit` or `offset` argument, `what`. A number is itself. Text is what an entity-find's
@@ -528,36 +578,35 @@ fn find_count(what: &str, value: &Value) -> Result<Option<i64>, HostError> {
 
 /// `limit(count)`: a number, or the text an expanded `limit="${expr}"` of an entity-find gives (see [`find_count`]).
 fn limit(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let find = take_find(call)?;
-    Ok(find_object(match find_count("limit", &call.value_or_null(0))? {
+    let count = find_count("limit", &call.value_or_null(0))?;
+    chain(call, |find| match count {
         Some(number) => find.limit(number),
         None => find,
-    }))
+    })
 }
 
 /// `offset(offset)`, or `offset(pageIndex, pageSize)` for the offset `pageIndex * pageSize`, as Java's. The page size
 /// is not kept: `limit` sets it.
 fn offset(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let find = take_find(call)?;
     let Some(mut number) = find_count("offset", &call.value_or_null(0))? else {
-        return Ok(find_object(find));
+        return chain(call, |find| find);
     };
     if let Some(size) = call.value(1) {
         if let Some(size) = find_count("page size", size)? {
             number = number.saturating_mul(size);
         }
     }
-    Ok(find_object(find.offset(number)))
+    chain(call, |find| find.offset(number))
 }
 
 /// `conditionDate(fromField, thruField, moment)`: the rows in effect at the moment, or now when it is empty.
 fn condition_date(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let moment = call.value_or_null(2);
-    let mut find = take_find(call)?;
-    if let Some(condition) = date_range_condition(&call.text_or_empty(0), &call.text_or_empty(1), moment, false) {
-        find = find.condition(condition);
-    }
-    Ok(find_object(find))
+    let condition = date_range_condition(&call.text_or_empty(0), &call.text_or_empty(1), moment, false);
+    chain(call, |find| match condition {
+        Some(condition) => find.condition(condition),
+        None => find,
+    })
 }
 
 /// `getPageIndex()`: `offset / pageSize`, 0 with no offset.
@@ -580,7 +629,7 @@ fn update_all(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let Value::Map(fields) = call.value_or_null(0) else {
         return Err(HostError::message("updateAll needs a map of fields to set"));
     };
-    let updated = take_find(call)?.update_all(fields).map_err(lib)?;
+    let updated = peek_find(call)?.update_all(fields).map_err(lib)?;
     Ok(Ret::Value(Value::I64(updated)))
 }
 
@@ -596,13 +645,12 @@ fn flag_on(value: &Value) -> bool {
 /// `useCache(flag)`: through the entity cache for any entity not marked `never`, as Java's `EntityFind.useCache`. A null
 /// or undefined flag leaves the entity's own setting.
 fn use_cache(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let find = take_find(call)?;
     let flag = call.value_or_null(0);
-    Ok(find_object(if flag.is_null() {
-        find
-    } else {
-        find.use_cache(flag_on(&flag))
-    }))
+    if flag.is_null() {
+        return chain(call, |find| find);
+    }
+    let on = flag_on(&flag);
+    chain(call, |find| find.use_cache(on))
 }
 
 /// A flag as `forUpdate` and `distinct` read it: a boolean, true for anything else.
@@ -615,49 +663,74 @@ fn flag_or_true(call: &Call<'_>) -> bool {
 
 fn for_update(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let on = flag_or_true(call);
-    Ok(find_object(take_find(call)?.for_update(on)))
+    chain(call, |find| find.for_update(on))
 }
 
 fn distinct(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let on = flag_or_true(call);
-    Ok(find_object(take_find(call)?.distinct(on)))
+    chain(call, |find| find.distinct(on))
 }
 
 fn disable_authz(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    Ok(find_object(take_find(call)?.disable_authz()))
+    chain(call, EntityFind::disable_authz)
 }
 
 /// `useClone(flag)`: read from a clone datasource of the entity's group when one is open.
 fn use_clone(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let on = flag_on(&call.value_or_null(0));
-    Ok(find_object(take_find(call)?.use_clone(on)))
+    chain(call, |find| find.use_clone(on))
 }
 
 fn select_field(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let field = call.text_or_empty(0);
-    Ok(find_object(take_find(call)?.select_field(&field)))
+    chain(call, |find| find.select_field(&field))
 }
 
 /// The shown and hidden fields of a form-list, for its `entity-find` (generated code only).
 fn select_form_fields(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let fields = call.text_or_empty(0);
-    Ok(find_object(take_find(call)?.select_form_fields(&fields)))
+    chain(call, |find| find.select_form_fields(&fields))
 }
 
+/// `list()`, a leaf: a hit of the entity cache that nothing on the way could turn into a nested script (see
+/// [`EntityFind::list_from_cache`]) is answered without lending the engine; any other find runs with it lent, as a
+/// read may run a nested script (an authorization filter, a definition made from rows).
 fn list(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let found = take_find(call)?.list().map_err(lib)?;
-    Ok(Ret::Value(list_of(found)))
+    let (state, find) = take_find(call)?;
+    let found = run_lent(call, &find, EntityFind::list_from_cache, EntityFind::list);
+    put_back(&state, find);
+    Ok(Ret::Value(list_of(found?)))
 }
 
+/// `one()`, a leaf as [`list`].
 fn one(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let found = take_find(call)?.one().map_err(lib)?;
-    Ok(Ret::Value(found.map_or(Value::Null, value_of)))
+    let (state, find) = take_find(call)?;
+    let found = run_lent(call, &find, EntityFind::one_from_cache, EntityFind::one);
+    put_back(&state, find);
+    Ok(Ret::Value(found?.map_or(Value::Null, value_of)))
+}
+
+/// `cached(find)` when it answers, else `run(find)` with the engine lent.
+fn run_lent<T>(
+    call: &mut Call<'_>,
+    find: &EntityFind,
+    cached: fn(&EntityFind) -> Result<Option<T>, moqui_lib::error::Error>,
+    run: fn(&EntityFind) -> Result<T, moqui_lib::error::Error>,
+) -> Result<T, HostError> {
+    if let Some(hit) = cached(find).map_err(lib)? {
+        return Ok(hit);
+    }
+    let mut found = None;
+    call.ops.lend(&mut || found = Some(run(find)))?;
+    found
+        .ok_or_else(|| HostError::message("entity find did not run"))?
+        .map_err(lib)
 }
 
 fn one_master(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let facade = entity_facade()?;
     let master = call.text(0).unwrap_or("default").to_string();
-    match take_find(call)?.one().map_err(lib)? {
+    match run_find(call, EntityFind::one)?.map_err(lib)? {
         Some(value) => Ok(Ret::Value(
             crate::entity::query_rest::master_value(&facade, &value, &master).map_err(lib)?,
         )),
@@ -666,7 +739,7 @@ fn one_master(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 fn count(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    Ok(Ret::Value(Value::I64(take_find(call)?.count().map_err(lib)?)))
+    Ok(Ret::Value(Value::I64(run_find(call, EntityFind::count)?.map_err(lib)?)))
 }
 
 /// `getQueryTextList()`: the SQL the find ran, without its bound values; there after the find was used up.
@@ -697,7 +770,7 @@ fn copy(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// Delete the rows the find matches. Returns how many, as Java's `deleteAll`.
 fn delete_all(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    Ok(Ret::Value(Value::I64(take_find(call)?.delete_all().map_err(lib)?)))
+    Ok(Ret::Value(Value::I64(peek_find(call)?.delete_all().map_err(lib)?)))
 }
 
 /// The number a value argument holds, `None` for anything else.
@@ -719,7 +792,7 @@ fn purge(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let deadline = number_arg(call, 0)
         .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
         .map(|seconds| std::time::Instant::now() + std::time::Duration::from_secs_f64(seconds));
-    let mut find = take_find(call)?;
+    let mut find = peek_find(call)?;
     if let Some(rows) = number_arg(call, 1).filter(|rows| rows.is_finite() && *rows >= 1.0) {
         // A finite number of at least 1: the cast saturates at most.
         #[allow(clippy::cast_possible_truncation)]
@@ -732,11 +805,11 @@ fn purge(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// A condition on an aggregate alias of a view-entity. A null condition is skipped.
 fn having_condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let mut find = take_find(call)?;
-    if let Some(condition) = condition_in(&call.value_or_null(0)) {
-        find = find.having(condition);
-    }
-    Ok(find_object(find))
+    let condition = condition_in(&call.value_or_null(0));
+    chain(call, |find| match condition {
+        Some(condition) => find.having(condition),
+        None => find,
+    })
 }
 
 /// `searchFormMap(inputFields, defaultParameters, skipFields, defaultOrderBy, paginate)`. The defaults and `orderByField`
@@ -754,7 +827,7 @@ fn search_form_map(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let input = map_arg(0)?;
     let defaults = map_arg(1)?;
     let paginate = matches!(call.value(4), Some(Value::Bool(true)));
-    let found = take_find(call)?
+    let found = peek_find(call)?
         .search_form_map(&input, &defaults, &text_arg(2), &text_arg(3), paginate)
         .map_err(lib)?;
     for (name, value) in found.context {
@@ -762,12 +835,14 @@ fn search_form_map(call: &mut Call<'_>) -> Result<Ret, HostError> {
             .with(|stack| stack.borrow_mut().put(&name, value).map(|_| ()))
             .map_err(|err| HostError::message(err.message()))?;
     }
-    Ok(find_object(found.find))
+    let state = call.this::<FindState>()?;
+    *lock(&state.find) = Some(found.find);
+    Ok(Ret::This)
 }
 
 fn require_search_form_parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let require = call.bool(0).unwrap_or(true);
-    Ok(find_object(take_find(call)?.require_search_form_parameters(require)))
+    chain(call, |find| find.require_search_form_parameters(require))
 }
 
 // the entity list

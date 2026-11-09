@@ -195,7 +195,7 @@ fn generated_scripts_are_shared_by_threads() {
         .join()
         .unwrap();
     assert!(
-        std::ptr::eq(here.text(), there.text()),
+        std::ptr::eq(here.script.text(), there.script.text()),
         "one generated text for every thread"
     );
 }

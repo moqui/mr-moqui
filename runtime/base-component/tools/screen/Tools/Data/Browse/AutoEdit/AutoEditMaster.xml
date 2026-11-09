@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="edit"><default-response url="."/></transition>
     <transition name="update">
         <actions>
-            <if condition="WebUtilities.isRestrictedGenericEntity(aen)"><message error="true">Entity ${aen} is not available through this tool</message><return/></if>
+            <set field="entityName" from="aen"/><if condition="WebUtilities.isRestrictedGenericEntity(aen)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
             <service-call name="update#${aen}" in-map="true"/></actions>
         <default-response url="." parameter-map="ec.entity.getEntityDefinition(aen).getPrimaryKeys(context)"/>
     </transition>
@@ -81,14 +81,14 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
 
     <actions>
-        <if condition="WebUtilities.isRestrictedGenericEntity(aen)"><message error="true">Entity ${aen} is not available through this tool</message><return/></if>
+        <set field="entityName" from="aen"/><if condition="WebUtilities.isRestrictedGenericEntity(aen)"><message error="true">Entity ${entityName} is not available through this tool</message><return/></if>
         <entity-find-one entity-name="${aen}" value-field="fieldValues"/>
         <set field="entityDefinition" from="ec.entity.getEntityDefinition(aen)"/>
         <set field="masterNames" from="Object.keys(entityDefinition.getMasterDefinitionMap()).sort()"/>
     </actions>
     <widgets>
         <link url="list" text="Entity List" link-type="hidden-form"/>
-        <link url="find" text="Find ${ec.entity.getEntityDefinition(aen).getPrettyName(null, null)}" link-type="hidden-form"/>
+        <link url="find" text="${ec.l10n.localize('Find')} ${ec.entity.getEntityDefinition(aen).getPrettyName(null, null)}" link-type="hidden-form"/>
         <container-dialog id="ExportMasterEntityDialog" button-text="Export">
             <form-single name="ExportMasterEntity" transition="export" dynamic="true">
                 <auto-fields-entity entity-name="${aen}" include="pk" field-type="hidden"/>

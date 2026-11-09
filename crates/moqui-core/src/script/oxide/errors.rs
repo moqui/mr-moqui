@@ -38,22 +38,11 @@ pub(super) fn runtime_error<J: Js>(js: &mut J, err: RuntimeError) -> Error {
     }
 }
 
-/// A compile's error as the heap cap's own: quickjs-oxide gives a compile that ran out of heap while it lowered the
-/// code as `RuntimeError::Internal("out of memory")` (its `LowerError::Heap`), where the parse's is `OutOfMemory`.
-/// As `Internal`, the run would neither try the compile again once the caches went nor count it as running out.
-pub(super) fn compile_out_of_memory(err: RuntimeError) -> RuntimeError {
-    match err {
-        RuntimeError::Internal(message) if message == "out of memory" => RuntimeError::OutOfMemory,
-        other => other,
-    }
-}
-
 /// Whether `err` is the runtime running out of heap: the engine's own error, or its `InternalError: out of memory`,
 /// which a script can catch and throw on.
 pub(super) fn is_out_of_memory<J: Js>(js: &mut J, err: &RuntimeError) -> bool {
     let thrown = match err {
         RuntimeError::OutOfMemory => return true,
-        RuntimeError::Internal(message) => return message == "out of memory",
         RuntimeError::Exception(Value::Object(thrown)) => thrown,
         _ => return false,
     };

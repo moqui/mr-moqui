@@ -1181,3 +1181,41 @@ fn a_held_time_stamp_is_kept_at_the_precision_its_database_stores() {
         stamp(1_001_000_000_000)
     );
 }
+
+#[test]
+fn a_cached_find_answers_from_the_cache_alone_only_on_a_hit() {
+    let facade = testing::open();
+    let mut made = facade.make_value("moqui.basic.Enumeration").unwrap();
+    made.set("enumId", Value::string("Probe1"));
+    made.set("description", Value::string("probe"));
+    made.create(&facade).unwrap();
+    let find = facade
+        .find("moqui.basic.Enumeration")
+        .unwrap()
+        .eq("enumId", Value::string("Probe1"))
+        .use_cache(true);
+    assert!(find.one_from_cache().unwrap().is_none(), "a miss runs the find");
+    assert!(find.list_from_cache().unwrap().is_none());
+    // the find stays as it was after a run, and its rows are now cached
+    assert_eq!(
+        find.one().unwrap().unwrap().get("description").and_then(Value::as_str),
+        Some("probe")
+    );
+    let hit = find.one_from_cache().unwrap().expect("a hit").expect("the row");
+    assert_eq!(hit.get("description").and_then(Value::as_str), Some("probe"));
+    assert_eq!(find.list_from_cache().unwrap().expect("a hit").len(), 1);
+    assert!(
+        find.clone().distinct(true).list_from_cache().unwrap().is_none(),
+        "a distinct find reads the database"
+    );
+    assert!(find.clone().use_cache(false).one_from_cache().unwrap().is_none());
+    let more_than_the_key = facade
+        .find("moqui.basic.Enumeration")
+        .unwrap()
+        .eq("enumId", Value::string("Probe1"))
+        .eq("description", Value::string("probe"));
+    assert!(
+        more_than_the_key.use_cache(true).one_from_cache().unwrap().is_none(),
+        "a find one that narrows runs"
+    );
+}

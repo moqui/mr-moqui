@@ -48,6 +48,49 @@ fn written(source: &str) -> Result<Value, Error> {
     }
 }
 
+/// Lists and maps are compared and converted where they lie: a list of text and a list of maps read and left as they
+/// were stay the stack's, one changed in place is written back, and a plain object's text, numbers, nested list and
+/// null convert with their types; a symbol key is left out, and a function in an array cannot convert.
+#[test]
+fn lists_and_maps_compare_and_convert_in_place() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    set_context_name("names", Value::List(vec![Value::string("a"), Value::string("b")]))?;
+    let row = |name: &str, qty: i32| {
+        let mut map = indexmap::IndexMap::new();
+        map.insert("name".to_string(), Value::string(name));
+        map.insert("qty".to_string(), Value::I32(qty));
+        Value::Map(map)
+    };
+    set_context_name("rows", Value::List(vec![row("x", 1), row("y", 3)]))?;
+    assert_eq!(written("names.length + rows.length")?, Value::I32(4));
+    assert_eq!(
+        crate::script::context_value("names"),
+        Some(Value::List(vec![Value::string("a"), Value::string("b")]))
+    );
+    written("names[1] = 'c'; rows[1].name = 'z'")?;
+    assert_eq!(
+        crate::script::context_value("names"),
+        Some(Value::List(vec![Value::string("a"), Value::string("c")]))
+    );
+    assert_eq!(
+        crate::script::context_value("rows"),
+        Some(Value::List(vec![row("x", 1), row("z", 3)]))
+    );
+    let made = value("({ text: 'x', n: 2, half: 2.5, [Symbol('s')]: 1, list: ['y', 3, null] })")?;
+    let mut expected = indexmap::IndexMap::new();
+    expected.insert("text".to_string(), Value::string("x"));
+    expected.insert("n".to_string(), Value::I32(2));
+    expected.insert("half".to_string(), Value::F64(2.5));
+    expected.insert(
+        "list".to_string(),
+        Value::List(vec![Value::string("y"), Value::I32(3), Value::Null]),
+    );
+    assert_eq!(made, Value::Map(expected));
+    assert!(value("[1, () => 1]").is_err());
+    Ok(())
+}
+
 /// A list or map a run read by name and changed is written back at its end; one it did not change is left as the
 /// stack holds it; a bare assignment puts the value on the top frame, and a plain object stays the script's.
 #[test]

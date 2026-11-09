@@ -1500,7 +1500,7 @@ function openLink(p) {
 /** A guest opens a link with their name: they are in the meeting, or wait in its lobby. The credential is for their page. */
 function guestJoin(p) {
   const link = linkByToken(p.token)
-  if (!link) return refuse('notFound', 'This link has expired or was not found')
+  if (!link) return refuse('notFound', 'This link has expired or was not found.')
   // W8: a guest has no crypto device, so an end-to-end encrypted meeting takes none (checked again below, for a meeting
   // that became encrypted by its room's policy)
   if (link.e2eeRequired === 'Y') return refuse('encryptedNoGuests', 'This meeting is end-to-end encrypted: guests cannot join it')

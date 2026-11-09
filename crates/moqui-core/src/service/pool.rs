@@ -1078,7 +1078,7 @@ fn next_work(shared: &Shared) -> Option<Work> {
 }
 
 /// How long a worker waits for work before it lets its script runtime go, when [`KEEP_WARM`] others are idle too.
-const IDLE_RUNTIME: Duration = Duration::from_secs(1);
+const IDLE_RUNTIME: Duration = Duration::from_millis(500);
 /// The idle workers that keep their script runtime, so a quiet pool's next call does not start one.
 const KEEP_WARM: usize = 2;
 

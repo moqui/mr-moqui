@@ -44,7 +44,7 @@ pub(crate) use factor::{CODE_NOT_VALID, FACTOR_INFO, SEND_CODE, VALIDATE_CODE};
 #[cfg(test)]
 pub(crate) use factor::totp_code_now;
 pub(crate) use filter::apply_view_filters;
-pub use filter::{apply_entity_filters, find_filters_for_user};
+pub use filter::{apply_entity_filters, entity_filters_apply, find_filters_for_user};
 pub use login::app_password_key;
 pub(crate) use login::login_user_local;
 pub use login::stamp_value;

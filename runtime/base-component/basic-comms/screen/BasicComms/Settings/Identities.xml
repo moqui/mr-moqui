@@ -91,7 +91,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="signatureText"><default-field title="Signature"><display style="text-caption m-muted"/></default-field></field>
                         <field name="placementText"><default-field title="In replies"><display style="text-caption"/></default-field></field>
                         <field name="tools" align="right"><conditional-field condition="canManage" title="">
-                            <container-dialog id="EditIdentityDialog" button-text="Edit" icon="sym_o_edit" width="640" title="Edit ${nameText}">
+                            <container-dialog id="EditIdentityDialog" button-text="Edit" icon="sym_o_edit" width="640" title="${ec.l10n.localize('Edit')} ${nameText}">
                                 <form-single name="EditIdentity" transition="storeIdentity">
                                     <field name="emailIdentityId" from="emailIdentityId"><default-field><hidden/></default-field></field>
                                     <field name="displayName" from="displayName"><default-field title="Name"><text-line size="30"/></default-field></field>

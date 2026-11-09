@@ -107,17 +107,6 @@ fn a_unit_that_runs_out_inside_a_render_has_the_render_relieve_the_heap() -> Res
     Ok(())
 }
 
-/// quickjs-oxide gives a compile that ran out of heap while it lowered the code as an internal error; the bindings
-/// take it as the heap cap's, so the compile is tried again once the caches went and the run counts as running out.
-#[test]
-fn a_compile_that_ran_out_is_out_of_memory() {
-    use quickjs_oxide::engine::api::core::RuntimeError;
-    let lowered = super::errors::compile_out_of_memory(RuntimeError::Internal("out of memory".to_string()));
-    assert!(matches!(lowered, RuntimeError::OutOfMemory), "{lowered:?}");
-    let other = super::errors::compile_out_of_memory(RuntimeError::Internal("internal lowering error: x".to_string()));
-    assert!(matches!(other, RuntimeError::Internal(_)), "{other:?}");
-}
-
 /// A script that runs out of heap fails with `out of memory`, alone: the caches go and the runtime collects, and one
 /// that left its heap near the cap (a global holding what it made) is dropped and started again, so the scripts after
 /// it run.

@@ -2684,7 +2684,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             valid = false; passwordOk = false; grant = null; share = null
             const check = ec.service.sync().name('org.moqui.impl.FileServices.check#PublicShareToken').parameter('token', token).call()
-            if (!check.valid) { ec.message.addError(ec.l10n.localize('This link has expired or was not found')); return }
+            if (!check.valid) { ec.message.addError(ec.l10n.localize('This link has expired or was not found.')); return }
             valid = true
             share = check.routeContext
             const row = ec.entity.find('moqui.resource.ResourceShare').condition('linkTokenHash', ec.user.singleUseCodeHash(String(token))).disableAuthz().one()
@@ -2719,7 +2719,7 @@ along with this software (see the LICENSE.md file). If not, see
             fileList = []
             uploadOnly = false
             const check = ec.service.sync().name('org.moqui.impl.FileServices.check#PublicShareToken').parameter('token', token).call()
-            if (!check.valid) { ec.message.addError(ec.l10n.localize('This link has expired or was not found')); return }
+            if (!check.valid) { ec.message.addError(ec.l10n.localize('This link has expired or was not found.')); return }
             const row = ec.entity.find('moqui.resource.ResourceShare').condition('linkTokenHash', ec.user.singleUseCodeHash(String(token))).disableAuthz().one()
             if (row.passwordHash != null && !ec.resource.checkGrant(`${row.linkTokenHash}\n${row.passwordHash}`, `share:${row.shareId}`, grant)) {
                 ec.message.addError(ec.l10n.localize('Enter the password of the link')); return
@@ -2782,7 +2782,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             location = null; fileName = null; contentType = null
             const check = ec.service.sync().name('org.moqui.impl.FileServices.check#PublicShareToken').parameter('token', token).call()
-            if (!check.valid) { ec.message.addError(ec.l10n.localize('This link has expired or was not found')); return }
+            if (!check.valid) { ec.message.addError(ec.l10n.localize('This link has expired or was not found.')); return }
             const row = ec.entity.find('moqui.resource.ResourceShare').condition('linkTokenHash', ec.user.singleUseCodeHash(String(token))).disableAuthz().one()
             if (row.passwordHash != null && !ec.resource.checkGrant(`${row.linkTokenHash}\n${row.passwordHash}`, `share:${row.shareId}`, grant)) {
                 ec.message.addError(ec.l10n.localize('Enter the password of the link')); return
@@ -2848,7 +2848,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             uploadedList = []
             const check = ec.service.sync().name('org.moqui.impl.FileServices.check#PublicShareToken').parameter('token', token).call()
-            if (!check.valid) { ec.message.addError(ec.l10n.localize('This link has expired or was not found')); return }
+            if (!check.valid) { ec.message.addError(ec.l10n.localize('This link has expired or was not found.')); return }
             const row = ec.entity.find('moqui.resource.ResourceShare').condition('linkTokenHash', ec.user.singleUseCodeHash(String(token))).disableAuthz().one()
             if (row.passwordHash != null && !ec.resource.checkGrant(`${row.linkTokenHash}\n${row.passwordHash}`, `share:${row.shareId}`, grant)) {
                 ec.message.addError(ec.l10n.localize('Enter the password of the link')); return
