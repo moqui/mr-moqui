@@ -7,7 +7,8 @@ Status 2026-11-08. This file replaces four running logs, now in `archive/`:
 - [Script-Engine-Zipp-Ideas](archive/Script-Engine-Zipp-Ideas.md): ideas from zipp.org.
 
 It keeps the latest numbers, what is still open and the ideas not yet built. Round 50 (2026-11-08, [below](#round-50-tiers-0-to-2))
-built §5's tiers 0 to 2, and Round 51 ([below](#round-51-shared-atoms)) the shared atoms. Each one cites where it was measured or proposed: "R*n*" is a Profiling round, "TX §*name*" or "TX D*n*" a section or decision of TX-Cache, "Oxide §*n*" a
+built §5's tiers 0 to 2, Round 51 ([below](#round-51-shared-atoms)) the shared atoms, and Round 52
+([below](#round-52-the-boundary-rows-and-native-sets)) the boundary rows and native sets. Each one cites where it was measured or proposed: "R*n*" is a Profiling round, "TX §*name*" or "TX D*n*" a section or decision of TX-Cache, "Oxide §*n*" a
 section of Script-Engine-Oxide, and "Zipp *n*" an item of Script-Engine-Zipp-Ideas §3.
 
 Most of the database and service work is done:
@@ -17,9 +18,9 @@ Most of the database and service work is done:
 - The script engine is quickjs-oxide alone (Oxide §7, Phase 4 result). Its screen rows are within ×1.10 of QuickJS's
   last numbers, and plain JavaScript is faster than it was (R48).
 
-What is left is mostly at the boundary between host and engine: two script rows still lose to QuickJS (walk itemList
-×1.15, cached finds ×1.04, R50). The heap of the script runtimes was under its gate in every test-apps process after the
-shared atoms (R51); the tree's growth since has the largest process 4 MB over it again.
+No js_speed row loses to QuickJS's last numbers since R52: walk itemList ×0.94, cached finds ×0.91, the locked
+template ×0.56. The heap of the script runtimes is under its gate in every test-apps process (the largest 62 MB of 73,
+R52). It rises as the apps add code and data.
 
 ## 1. Headline numbers
 
@@ -32,9 +33,9 @@ shared atoms (R51); the tree's growth since has the largest process 4 MB over it
 | External Postgres | a statement waits 1 round trip, a service in its own transaction 2; iterating 100 rows waits 3 (1,087 µs at 200 µs) | R5 |
 | Transaction cache | waited round trips of the 45 services 324,548 → 207,658 (−36%); 42 early flushes in Census 9, all past the size caps | R25, R26 |
 | Mantle operations (200 µs to the database) | 6,037 → 3,954 ms with the cache; oxide 3400 ms against QuickJS's 3380 (+0.6%) | R27, R48 |
-| Script engine | js_speed's 59 rows ×0.90 of R49 (geometric mean); screen rows ×0.89 to ×0.97 of R49; the locked template ×0.75, fancy ×0.73; cached finds ×0.90; numbers to text and one-character strings ×0.40, the regexp scan ×0.58 | R50 |
-| Runtime start | 1.57 ms, 9,277 allocations, 2.9 MB allocated (8.96 ms, 47,436, 12.3 MB before) | R50 |
-| Script heap | test-apps process peaks 13 to 77 MB, one of six over the gate of 73 MB (the same tree on the R51 phase 2 pin: 81 MB; R50: 15 to 86 MB, three over); mr-mantle's runtimes at the peak 99.7 → 74 MB | R51 |
+| Script engine | js_speed's 59 rows ×0.913 of R51 (×0.90 of R49 in R50); a simple `<set>` ×0.16 to ×0.20, `echo#Data` ×0.71, the locked template ×0.63, walk itemList ×0.82, cached finds ×0.88 | R52 |
+| Runtime start | 1.42 ms, 6,182 allocations (R50: 1.57 ms, 9,277; R49: 8.96 ms, 47,436) | R51 |
+| Script heap | test-apps process peaks 15 to 62 MB, all under the gate of 73 MB (with a 0.5 s idle release; 77 MB at 1 s); mr-mantle 65 → 54 MB | R52 |
 | Startup | first start 5.63 s (the empty-database load about 1.15 s), restart 268 ms | R9 |
 | Definitions and XML | entity model 5.3 ms, service definitions 8.7 ms, 112 µs a screen definition; MNode parse 76 µs a file | R4, R8 |
 
@@ -149,7 +150,7 @@ ms, the mail store with two attachments 14.8 → 8.7 ms, all at 200 µs to the d
 
 ### The script engine
 
-quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` 34ef6147
+quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` ddba97fe
 (R51; 1cdb77e2 in R50, 7cf1f530 before, Oxide §7, Phase 4 result).
 
 The fork's changes:
@@ -264,9 +265,9 @@ made of:
 - **The main runtime's value heap** reserves 6.0 MB for 0.37 MB used: a few live ranges near its end hold it, and arenas
   give back only their ends.
 
-R49's change: a service worker idle a second, while two others are idle too, lets its runtime go
-(`script::release_idle_runtime`). Its next script starts one again: 8.4 ms and 47k allocations in R49, 1.57 ms and 9.3k
-since R50.
+R49's change: a service worker idle a second (half a second since R52), while two others are idle too, lets its runtime
+go (`script::release_idle_runtime`). Its next script starts one again: 8.4 ms and 47k allocations in R49, 1.4 ms and
+6.2k since R51.
 - **mr-mantle:** the peak went 116 → 96 MB, with the suite time unchanged.
 - **test-apps:** the process peaks went to 16 to 83 MB (from 91 to 118).
 - **Earlier:** R44 drops a runtime whose reserved heap is more than 2.5 times its live bytes, at most every 30 s, and R45
@@ -332,6 +333,52 @@ process peaks at 80.7 MB on 3c741ee8 and 76.8 MB on 34ef6147, against the gate's
 MB. The growth is the tree's, not the engine's: what that merge added to the largest process's main runtime and
 workers is the next thing to look at.
 
+### Round 52: the boundary rows and native sets
+
+The quiet pass, the round's base (mr-moqui fb0e5f78 on fork 34ef6147) against e36b0c9b on ddba97fe, the best of two
+runs (quickjs-oxide-bench `rounds/r52/final`): ×0.913 over the 59 rows.
+
+| Row | Base µs | R52 µs | ÷ | Allocations |
+|---|---:|---:|---:|---|
+| one set | 0.93 | 0.19 | 0.20 | 6 → 2 |
+| four sets (the echo#Data body) | 2.91 | 0.48 | 0.16 | 26 → 4 |
+| BasicServices.echo#Data | 11.79 | 8.40 | 0.71 | 120 → 94 |
+| echo#Inline | 13.35 | 10.49 | 0.79 | 144 → 121 |
+| fancy, locked down | 62.22 | 39.01 | 0.63 | 350 → 228 |
+| walk itemList, 100 context maps | 67.29 | 55.02 | 0.82 | 706 → 406 |
+| 10 noop service calls, itemList tracked | 187.07 | 163.24 | 0.87 | 1,931 → 1,331 |
+| 10 cached entity finds | 45.13 | 39.87 | 0.88 | 576 → 486 |
+| find#Cached | 56.38 | 50.78 | 0.90 | 657 → 567 |
+| loop#Actions | 340.94 | 306.97 | 0.90 | 3,390 → 2,475 |
+| iterate 100 context maps with if and set | 260.71 | 233.44 | 0.90 | 2,500 → 1,675 |
+
+The fork:
+- **F1** (570f5b59): a frozen `RegExp.prototype` whose methods are untouched stays pristine. The sandbox's lockdown
+  froze it, which gave it a new shape, and the fast paths compared the shape: the locked template −38.9% instructions.
+- **F2** (c64d537d): `visit_plain_own_data` reads a plain object from its shape and slots; new
+  `visit_plain_own_text` and `visit_dense_array` show keys as text and elements in place. walk itemList −13%.
+- **F3** (ddba97fe): a back-reference compare counts toward the regexp interrupt poll. The regexp row flat.
+
+mr-moqui:
+- **Native `<set>`** (9629dcdb, `script/actions_set.rs`): an actions body of only simple `<set>`s runs as a plan with no
+  script engine. A literal or `${name}` value, a bare-name, dotted or literal `from`, `type`, `default-value` and
+  `set-if-empty`; anything else, or a value the plan cannot answer as the script would, runs the generated script.
+- **Java's `<set>` rules** (e36b0c9b): `default-value` where Groovy's `?:` takes it, and `set-if-empty="false"` where
+  `ObjectUtilities.isEmpty` says empty, in the plan and the macro alike.
+- **Cached finds** (2ffd2725): a chained `EntityFind` call returns the same find, as Java's builder does, and a find
+  runs again; `list`, `one` and `iterator` answer a shared-cache hit without lending the engine. −11.4% instructions.
+- **Tracked values** (e7041354): the end-of-run compare and the conversion use F2's visitors.
+- **The OOM translation** (6304f480) is gone: the fork reports a compile that runs out of heap as `OutOfMemory`.
+- **The idle release** (ef319839): `IDLE_RUNTIME` 1 s → 500 ms. test-apps' largest process 75.5 to 76.9 → 56.9 to
+  58.2 MB, the processes' sum 317 to 363 → 269 MB, runtimes started 910 to 1022 → 1861 to 1983, the suite time 263 to
+  279 → 258 to 270 s; mr-mantle 65.2 → 53.5 MB (`rounds/r52/m1`).
+
+**Code placement.** The pass showed +7 to +19% on rows with no host work (1000 adds to a local, 100 objects, Plain.qvt)
+with the instructions flat. The bisect (`rounds/r52/layout-bisect`) put it on where `vm::interp::run_at` starts in its
+cache line: every build with it at offset 0x30 ran the adds row about 10% slower, whatever the edit, and the final
+source built another way ran at the base's speed. Wall times of the interpreter rows move about 10% with unrelated
+edits; read instructions for them, and PGO (§5, tier 3) would steady them.
+
 ### Startup and threads
 
 A first start takes 5.63 s and a restart 268 ms. The table check is 2.1 s of a first start, and initdb 1.8 s (R9). A
@@ -396,28 +443,19 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
   - allocations are up with the cache on (S4 29k → 48k a call, TX §Reads).
 
 **The script engine and screens**
-- **The rows still behind QuickJS** (R50 profiles, frame pointers):
-  - walk itemList (×1.15): the end-of-run compare is about 45% of the row, and 60% of that is
-    `View::visit_plain_own_data` (own keys, then a get and a key lift each); a walk by shape members, as `JSON.stringify`
-    now has, would fix it. `dense_array_values` makes an `Rc<Slot>` per element; `new_array_from_inits` defines each
-    property one at a time.
-  - cached finds (×1.04): `one()` still lends; a chained call still makes a new host object (the "already used" check,
-    `entities_tests.rs`).
-  - the locked template (now ×0.87): `$esc`'s replace is 45% of a render, and the `flags` getter 27%; the sandbox's
-    frozen `RegExp.prototype` may keep it off the pristine path (not confirmed).
+- **walk itemList's read side** (R52 profile, `rounds/r52/m2`): `to_js_at` is 52% of the row, and 36% is
+  `new_array_from_inits`: `View::object_from` makes each map's object and defines each property with a full descriptor
+  (32%), and each text value gets a new string record. Build the objects by shape transitions, or one shape per key
+  list as `JSON.parse` does. On mr-moqui's side, `to_init` could reuse the previous map's keys when a list's maps share
+  them.
 - **Not measured since F4:** a short compile (an expression from new text ×2.24, R31) (Oxide §6 F4, Zipp §2). HTML
   escape has a row since R50 (`$esc over 100 strings`).
-- **A runtime start:** 1.57 ms and 9.3k allocations (2.9 MB) since R50, from 8.4 ms. With starts this cheap the idle
-  release (`IDLE_RUNTIME`, 1 s) is worth re-weighing: a half second took mr-mantle's peak to 67 MB in R49.
+- **A runtime start:** 1.4 ms and 6.2k allocations since R51, from 8.4 ms; the idle release is a half second since R52.
 - **Screens:** adjacent constant `sri.write` calls are not merged; they come from literal code in many macros, at most
   14 pairs a screen (R50).
-- **In the fork:**
-  - `fix/lower-heap-oom` (3f5d5809) is not in the pin; the bindings map the error already (Oxide §7, Phase 3 memory);
-  - `using` and `await using` are a SyntaxError (the parser);
-  - a back-reference is compared in one unpolled step (Oxide §6).
-- **F1 step 3,** instructions shared by the process, and its open decision: unit-local key tables or process-wide atom
-  ids (Oxide §6, §10). Also open: the process store's byte cap and when a text counts as one-off, which was to be set
-  by the census, now gone (Oxide §10).
+- **In the fork:** `using` and `await using` are a SyntaxError (the parser).
+- **F1 step 3:** instructions are shared through the image bodies with unit-local key tables, and R51 shares the key
+  tables themselves. Still open: the process store's byte cap and when a text counts as one-off (Oxide §10).
 - **Older leftovers:**
   - bare-name writes still convert (R11);
   - script object keys and strings are one copy each (R18).
@@ -426,8 +464,8 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
 - Shared atoms: built in R51 ([Round 51](#round-51-shared-atoms)), phases 1 to 3, with the embedder's declared keys.
 - The inline-cache table: trimmed and compacted at a collection since R50 (80a91e10).
 - A compacting value heap: the arenas give back only their ends.
-- Gate status: every test-apps process under it after R51's phase 2 (the largest 68 MB of 73); after the localization
-  merge the largest is 77 MB (81 MB on the phase 2 pin).
+- Gate status: every test-apps process under it since R52 (the largest 62 MB of 73, with the half-second idle
+  release). It rises as the apps add code and data.
 
 **Engine differences to settle** (Oxide "Engine differences under `oxide`", "Phase 3: engine differences")
 
@@ -517,8 +555,8 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
   - table creation in parallel at a first start;
   - a template cluster;
   - the transaction cache on by default for some kinds of service (Further work, R9, TX §Later rounds).
-- **QuickJS for trivial actions:** a native path for `<set>` that would change value types, so it needs a decision
-  (Further work 8).
+- **More native actions:** R52's plan covers bodies of only simple `<set>`s; `<if>`, `<iterate>` and
+  `entity-find-one` over the same plan would take loop#Actions and the screens' actions off the engine.
 
 ## 6. Measured and dropped: do not retry
 
@@ -580,7 +618,8 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
 - quickjs-oxide is the only engine; the `script_engine` setting is gone and an old value is ignored.
 - Each thread has one runtime, shared by the scripts nested in a run; the test harness's specs have a runtime of their
   own. A runtime's compiled code comes from the process's code images.
-- A service worker idle a second, with two others idle, lets its runtime go; its next script starts one.
+- A service worker idle half a second (a second before R52), with two others idle, lets its runtime go; its next
+  script starts one.
 - A runtime its heap leaves far past its live bytes is dropped and started fresh (R44, R45).
 - Inert modules are kept for an outermost run (`script_module_cache`).
 - A runtime's start texts are compiled by the process's first runtime and loaded from its code images by later ones
@@ -591,9 +630,13 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
 - `ec.entity.find` and `EntityFind.condition` run without lending the engine, except for a definition made from rows
   (R50).
 - A list or map read by bare name keeps its host type. A decimal read twice is the same object until a releasing flush.
-
-**Open question**
-- `echo#Data` returns `timestampOut` as millisecond text, where Java returns a Timestamp: undecided (R11).
+- An actions body of only simple `<set>`s runs without the engine, and its values keep their host types: a Timestamp,
+  Date or Time stays one (the script made it text), an F64 or I64 stays one. `echo#Data` returns `timestampOut` as a
+  Timestamp, as Java does (R52; the question open since R11).
+- `<set>`'s `default-value` applies where Groovy's `?:` does (null, "", 0, false, an empty list or map), and
+  `set-if-empty="false"` skips what `ObjectUtilities.isEmpty` calls empty (null, "", an empty list or map) (R52).
+- A chained `EntityFind` call returns the same find, which can run again; "entity find was already used" is gone, and a
+  find is refused only while it runs (R52).
 
 ## 8. Known flaky tests
 
