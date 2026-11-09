@@ -1273,36 +1273,87 @@ fn row_extras_of(
                 }
             }
             for widget in sub.child_iter() {
-                match plain_temporal(&widget) {
-                    Ok(Some((key, value))) => {
-                        extras.insert(key, value);
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        tracing::error!(%error, form = form_name, field = %field_name, "plain field value unavailable")
-                    }
-                }
-                if widget.has_name("link") {
-                    extras.insert(
-                        disable_key(&lit_of(&widget, true)),
-                        Value::Bool(disabled(state, &widget)),
-                    );
-                }
-                let entity_text = widget.has_name("display-entity")
-                    || (widget.has_name("link")
-                        && widget.attribute("entity-name").is_some_and(|text| !text.is_empty()));
-                if entity_text {
-                    match sri::get_field_entity_value(&lit_of(&widget, true)) {
-                        Ok(text) => {
-                            extras.insert(format!("{field_name}_display"), Value::String(text));
-                        }
-                        Err(err) => tracing::warn!("{} {field_name} of {form_name}: {err}", widget.name()),
-                    }
+                match row_widget_extras(state, &widget, form_name, &field_name, &mut extras, 0) {
+                    Ok(()) => {}
+                    Err(err) if is_security(&err) => return Err(err),
+                    Err(err) => tracing::warn!(form = form_name, field = %field_name, error = %err,
+                        "static cell state unavailable; continuing other cells"),
                 }
             }
         }
     }
     Ok(extras)
+}
+
+/// Match the static template's action-free cell wrappers without losing the assembled parents used by availability keys.
+/// A nested form, iteration or section with actions needs its own scope; unavailable state continues to deny its controls.
+fn row_widget_extras(
+    state: &RenderState,
+    widget: &MNode,
+    form_name: &str,
+    field_name: &str,
+    extras: &mut IndexMap<String, Value>,
+    depth: usize,
+) -> Result<(), Error> {
+    if depth > MAX_WALK_DEPTH {
+        return Err(Error::new(format!(
+            "cell wrappers of {field_name} in {form_name} are nested too deeply"
+        )));
+    }
+    if widget.has_name("container") {
+        for child in widget.child_iter() {
+            row_widget_extras(state, &child, form_name, field_name, extras, depth + 1)?;
+        }
+        return Ok(());
+    }
+    if widget.has_name("section") {
+        if widget.first_named("actions").is_some() {
+            tracing::warn!(
+                form = form_name,
+                field = field_name,
+                section = widget.attribute("name"),
+                "static cell section actions need a separate scope; controls remain unavailable"
+            );
+            return Ok(());
+        }
+        let holds = match widget.attribute("condition").filter(|value| !value.is_empty()) {
+            Some(expression) => script::eval_condition(&expression)?,
+            None => match widget.first_named("condition") {
+                Some(node) => match Condition::from_element(&node, "static cell section")? {
+                    Some(condition) => super::render::check_condition(&condition)?,
+                    None => true,
+                },
+                None => true,
+            },
+        };
+        if let Some(branch) = widget.first_named(if holds { "widgets" } else { "fail-widgets" }) {
+            for child in branch.child_iter() {
+                row_widget_extras(state, &child, form_name, field_name, extras, depth + 1)?;
+            }
+        }
+        return Ok(());
+    }
+    match plain_temporal(widget) {
+        Ok(Some((key, value))) => {
+            extras.insert(key, value);
+        }
+        Ok(None) => {}
+        Err(error) => tracing::error!(%error, form = form_name, field = field_name, "plain field value unavailable"),
+    }
+    if widget.has_name("link") {
+        extras.insert(disable_key(&lit_of(widget, true)), Value::Bool(disabled(state, widget)));
+    }
+    let entity_text = widget.has_name("display-entity")
+        || (widget.has_name("link") && widget.attribute("entity-name").is_some_and(|text| !text.is_empty()));
+    if entity_text {
+        match sri::get_field_entity_value(&lit_of(widget, true)) {
+            Ok(text) => {
+                extras.insert(format!("{field_name}_display"), Value::String(text));
+            }
+            Err(err) => tracing::warn!("{} {field_name} of {form_name}: {err}", widget.name()),
+        }
+    }
+    Ok(())
 }
 
 /// The `actions` transition: the pre-actions of the path (the always-actions have run), then the data of the screen or of one form.

@@ -161,6 +161,55 @@ fn cached_templates_get_request_and_row_specific_disabled_controls() {
     }
     assert!(disables(&rows["rows"][0]).iter().all(|value| !value));
     assert!(disables(&rows["rows"][1]).iter().all(|value| *value));
+    let nested_key = |label: &str| -> String {
+        let marker = format!("localize('{label}')");
+        let control = html.split("</m-form>").find(|part| part.contains(&marker)).unwrap();
+        control
+            .rsplit_once(":disable=\"$scope['")
+            .unwrap()
+            .1
+            .split("']")
+            .next()
+            .unwrap()
+            .to_string()
+    };
+    let true_key = nested_key("Nested true");
+    let false_key = nested_key("Nested false");
+    let contained_key = nested_key("Contained");
+    let unscoped_key = nested_key("Unscoped");
+    assert_ne!(true_key, false_key, "each branch retains its authored identity");
+    assert_eq!(rows["rows"][0].get(&true_key), Some(&serde_json::Value::Bool(false)));
+    assert_eq!(
+        rows["rows"][1].get(&false_key),
+        Some(&serde_json::Value::Bool(true)),
+        "{false_key} in {rows}"
+    );
+    assert!(
+        rows["rows"][0].get(&false_key).is_none(),
+        "inactive branch is not projected"
+    );
+    assert!(
+        rows["rows"][1].get(&true_key).is_none(),
+        "another row's branch is not reused"
+    );
+    assert_eq!(
+        rows["rows"][0].get(&contained_key),
+        Some(&serde_json::Value::Bool(false))
+    );
+    assert_eq!(
+        rows["rows"][1].get(&contained_key),
+        Some(&serde_json::Value::Bool(true))
+    );
+    for row in rows["rows"].as_array().unwrap() {
+        assert!(
+            row.get(&unscoped_key).is_none(),
+            "section actions have no representable cell scope"
+        );
+        assert!(
+            row.get("rowActionLeak").is_none(),
+            "unscoped section actions are not executed"
+        );
+    }
     crate::user::session::set_user("second", "second");
     let second = render(factory, "/Disabled.qvt", &[("allowed", "no")]);
     assert_eq!(

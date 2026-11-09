@@ -23,6 +23,23 @@
         <form-list name="Rows" list="rows" transition="rowAction">
             <field name="id"><default-field><display/></default-field></field>
             <field name="action"><default-field><link url="rowAction" text="Act"/></default-field></field>
+            <field name="nestedAction"><default-field>
+                <section name="RowNested" condition="id === 'A'"><widgets>
+                    <container><link url="rowAction" link-type="hidden-form-link" text="Nested true" parameter-map="{recordId:id}"/></container>
+                </widgets><fail-widgets>
+                    <container><link url="rowAction" link-type="hidden-form-link" text="Nested false" parameter-map="{recordId:id}"/></container>
+                </fail-widgets></section>
+            </default-field></field>
+            <field name="unscopedAction"><default-field>
+                <section name="UnscopedRow" condition="true"><actions><set field="rowActionLeak" value="must not run"/></actions><widgets>
+                    <link url="rowAction" link-type="hidden-form-link" text="Unscoped" parameter-map="{recordId:id}"/>
+                </widgets></section>
+            </default-field></field>
+            <field name="containedAction"><default-field>
+                <container><section name="RowXml"><condition><compare field="id" operator="not-equals" value="Z"/></condition><widgets>
+                    <link url="rowAction" link-type="hidden-form-link" text="Contained" parameter-map="{recordId:id}"/>
+                </widgets></section></container>
+            </default-field></field>
         </form-list>
     </widgets>
 </screen>
