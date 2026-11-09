@@ -402,16 +402,16 @@ parameters for long runs: Entities (`pageSize=3000`, 1,482 rows, three links a r
 `l10n.message` (330 rows), Artifact Stats (`levels=3`) and the System dashboard, each in html, qvt and tui.
 
 Medians of the third round and `perf stat` instructions a request, base against the end of the round (bench
-`rounds/r53`, `work/r53/{base,m1}.log`). Wall times of the small pages moved up to 20% between builds with their
-instructions flat or lower (the code placement of R52); read the instruction ratios:
+`rounds/r53`, `work/r53/{base,m2}.log`). Wall times of the small pages move up to 20% between builds with their
+instructions flat (the code placement of R52); read the instruction ratios:
 
 | Screen | html ms | qvt ms | tui ms | html Mi ÷ | qvt Mi ÷ | tui Mi ÷ |
 |---|---:|---:|---:|---:|---:|---:|
-| Entities, 1,482 rows | 196 → 112 | 263 → 176 | 287 → 90 | 0.58 | 0.68 | 0.27 |
-| Cache List | 12.0 → 11.1 | 13.0 → 11.7 | 11.6 → 5.5 | 0.82 | 0.85 | 0.36 |
-| Cache Elements, 330 rows | 23.6 → 21.1 | 28.6 → 25.5 | 27.9 → 11.0 | 0.84 | 0.87 | 0.33 |
-| Artifact Stats | 160 → 163 | 179 → 181 | 176 → 152 | 0.97 | 0.97 | 0.80 |
-| Dashboard | 6.7 → 7.9 | 5.3 → 5.8 | 7.4 → 5.0 | 0.92 | 0.91 | 0.46 |
+| Entities, 1,482 rows | 196 → 107 | 263 → 165 | 287 → 84 | 0.56 | 0.66 | 0.27 |
+| Cache List | 12.0 → 9.6 | 13.0 → 10.7 | 11.6 → 4.9 | 0.79 | 0.82 | 0.36 |
+| Cache Elements, 330 rows | 23.6 → 19.8 | 28.6 → 23.9 | 27.9 → 10.5 | 0.80 | 0.84 | 0.33 |
+| Artifact Stats | 160 → 95 | 179 → 108 | 176 → 81 | 0.49 | 0.54 | 0.40 |
+| Dashboard | 6.7 → 6.5 | 5.3 → 4.9 | 7.4 → 4.4 | 0.92 | 0.91 | 0.45 |
 
 Outputs are the same as before, live values (memory, hit counts, times) aside.
 
@@ -455,8 +455,30 @@ against the base, html ×0.58, qvt ×0.68, tui ×0.27, outputs the same.
   plain value split only for the kinds that read its parts, and `fieldValues`, `jsAttr` and the cell loop on indexed
   loops. A probe with the row values left out put them at 312 M instructions of 2366 (13%) and their writing at 107 M.
 - **html's row forms:** the token and hidden inputs every row's form has, made once a list.
-- **In this engine** a `for...of` step makes an iterator result object and a `forEach` or `map` callback is a call;
-  indexed loops in the per-row code are cheaper (the tui `$clean` loop was the extreme case).
+- **In this engine** a `forEach` or `map` callback is a call, so indexed loops are cheaper in per-row code. A `for...of`
+  over a plain array is walked by index already (the fork's pristine-array path); over a string it makes an iterator
+  result for each character (the tui `$clean` loop).
+
+**The second batch** (`work/r53/m2.log`):
+- **A script sampling profiler** (quickjs-oxide branch `perf/js-sampler`, 992e6368 and 5d1a303a, not merged): a poll
+  that finds the embedder's flag set counts the running stack as `name:line` frames (`Runtime::start_sampling`,
+  `take_samples`). The mr-moqui side (`MOQUI_JS_SAMPLE=<file>`, a 1 ms ticker, folded stacks under each render's
+  path) is `rounds/r53/js-sampler-mr-moqui.patch` until the pin moves; `samples_table.py` sums a file. A poll comes
+  at a call or a back-edge, so the counts lean to functions entered often; read the inclusive column. Entities html:
+  `link` 45%, `w` (the writes) 17%, `rowCellOpen` 12%, `fid` 9%; qvt: `displayWidget` 26%, `rowValues` 15%, `fid` and
+  `fname` 10% each; tui: `$addPart` 26%, `$writes` 13%, `$cellOf` 13%.
+- **A form-list row written once** (html and qvt `bufferRows`): when every field's widgets write through the mode's
+  own writer (display, display-entity, link, hidden, ignored, label, image; `ScreenSupport.bufferedListRows`), a row's
+  writes gather in script and go out once at its end, also when a cell throws. About 34 host writes a row become one:
+  −3.5 to −4.5% instructions on every list.
+- **The known service names once a file** (`service/define.rs` `names_in_file`): kept by path with the file's
+  modification time and length, so a listing reads only changed files. Artifact Stats asked twice a render, 36 ms
+  each: its renders ×0.49 to ×0.54 instructions.
+- **Looked at, not changed:** `makeUrlByType`'s URL build (a per-render memo of the resolved path would save about 1%:
+  the URL cache answers it already); Artifact Stats' `openFormList` (9 ms a list) is its seven `from` expressions a
+  row, three of them plain paths a native read could take, about 2%, but a native read keeps host types where the
+  script gives text and the narrowest number, which a display shows differently; a `for...of` fast path (arrays are
+  walked by index already).
 
 **Fancy templates** are compiled in Rust (`script/template.rs`: the tags, `${}` and the generated function, cached by
 text) and `${}` in an expand is a template literal compiled once by its hash; nothing parses template text in script
@@ -464,16 +486,13 @@ on a render. `sri.renderText` was 0.6 ms of Cache Elements (four templates) and 
 
 **What is left** (Entities html after the changes, 171 ms with the profile on):
 - **The macros' own code:** after the macro pass units are 43% of html (59 ms with the profile on), 58% of qvt (115
-  ms) and 44% of tui. The interpreter has no function names in a profile: a sampling profiler in the fork (the current
-  function and line at the interrupt poll) would show which macro functions to take next.
+  ms) and 44% of tui. The sampler's next targets: the field ids and names a cell makes (`fid`, `fname`, `fnmWith`:
+  10 to 17% of qvt), `rowCellOpen`'s attributes, the qvt display widget, and tui's `$addPart` and `$cellOf`.
 - **`makeUrlByType` at 4 µs a link** (9% of html, 15% of tui): the `parameter-map` evaluated as a nested script (3.7%)
   and the URL's parameters built from the screen and transition definitions (3.2%). The macro could pass the map it
   already has in script.
-- **`sri.write`:** 50k calls a render (34 a row) at 0.2 µs, 16 ms with its conversions; writes could gather in script
-  and cross once a cell or row.
+- **`sri.write`** outside buffered rows: rows with other widgets, headers, and the hidden row forms of html.
 - **The host boundary:** argument and result conversions are 11% of html.
-- **Artifact Stats is framework work:** `getAllServiceInfo` 37.6 ms, `getKnownServiceNames` 36 ms and `openFormList`
-  8.9 ms a list, 100 of its 156 ms.
 
 ### Startup and threads
 

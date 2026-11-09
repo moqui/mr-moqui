@@ -454,6 +454,14 @@
         return !childrenNamed(field, "conditional-field").some(shown);
     };
 
+    // Whether a form-list's rows may be written once a row (a mode's bufferRows): each field's row parts hold only widgets
+    // whose macros write through the mode's own writer and render nothing through the server (no section, include, dialog
+    // or template), so nothing reaches the output in between.
+    const BUFFERED_WIDGETS = new Set(["display", "display-entity", "link", "hidden", "ignored", "label", "image", "set"]);
+    const bufferedListRows = (fields) => fields.every((field) => (field.children || [])
+        .filter((sub) => sub.name === "default-field" || sub.name === "conditional-field")
+        .every((sub) => (sub.children || []).every((widget) => BUFFERED_WIDGETS.has(widget.name))));
+
     // The columns of a form-list as arrays of field nodes: the columns element of the type (a _uiType such as mobile) when
     // one is asked and the form has it, else the untyped columns element, else the form-list-column elements, else one
     // column for each field that is not hidden.
@@ -517,6 +525,6 @@
     return {
         beginLits, endLits, hoist, allElements, opaqueElements, unknownElementCode, expandExpr, expandNoL10nExpr, reportPropsExpr, reportRenderExpr, htmlViewTextFn, htmlViewTextExpr, markdownTextExpr, statusTextExpr, nodeLit, bareLit, write, indent, widgetsSource,
         setCode, widgetless, fieldChain, hideGuard, titleText, localizedTitle, fieldLit, renderTextCode, renderModeHelpers, renderModeTypeMatches, chooseRenderModeText, anyMacros,
-        displayValueExpr, linkTextExpr, labelTextExpr, dateTimeFormat, listFieldHiddenWidget, formListColumns, headerSub, heldCode, parseOrder, noops
+        displayValueExpr, linkTextExpr, labelTextExpr, dateTimeFormat, listFieldHiddenWidget, bufferedListRows, formListColumns, headerSub, heldCode, parseOrder, noops
     };
 })

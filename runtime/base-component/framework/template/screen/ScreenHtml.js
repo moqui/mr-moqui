@@ -121,7 +121,17 @@
         // One attribute as A writes it, for the code of every form-list cell, where an object for A costs more than the text.
         const a1 = (key, value) => (value === null || value === undefined || value === false ? "" : value === true ? " " + key : " " + key + '="' + e(value) + '"');
         const cls = (...parts) => parts.filter((part) => part).join(" ") || null;
-        const w = (text) => sri.write(text);
+        // While a form-list row is buffered (bufferRows), its writes gather here and go out once at the row's end.
+        let rowBuf = null;
+        const w = (text) => {
+            if (rowBuf !== null) rowBuf += text;
+            else sri.write(text);
+        };
+        const flushRow = () => {
+            const text = rowBuf;
+            rowBuf = null;
+            if (text) sri.write(text);
+        };
         const at = (n, key) => {
             const value = n && n.attrs ? n.attrs[key] : null;
             return value === null || value === undefined ? "" : String(value);
@@ -1496,6 +1506,7 @@
             for (let place = 0; place < info.count; place++) {
                 const i = tree ? tree.order[place] : place;
                 sri.startFormListRow(info, i);
+                if (cfg.bufferRows) rowBuf = "";
                 try {
                     st.entry = String(i);
                     if (!(multi || skipForm)) st.owner = formId + "_" + i;
@@ -1531,6 +1542,7 @@
                         w("</tbody></table></td></tr>\n");
                     }
                 } finally {
+                    if (rowBuf !== null) flushRow();
                     sri.endFormListRow();
                 }
             }
@@ -2095,6 +2107,7 @@
         const cfg = js`
             {
                 "tree": ${treeCfg},
+                "bufferRows": ${S.bufferedListRows(fields)},
                 "hasFirst": ${hasRow("first-row-field")},
                 "hasSecond": ${hasRow("second-row-field")},
                 "hasLast": ${hasRow("last-row-field")},

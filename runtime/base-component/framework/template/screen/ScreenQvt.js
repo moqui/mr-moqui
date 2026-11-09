@@ -136,7 +136,17 @@
         // One attribute as A writes it, for the code of every form-list cell, where an object for A costs more than the text.
         const a1 = (key, value) => (value === null || value === undefined || value === false ? "" : value === true ? " " + key : " " + key + '="' + e(value) + '"');
         const cls = (...parts) => parts.filter((part) => part).join(" ") || null;
-        const w = (text) => sri.write(text);
+        // While a form-list row is buffered (bufferRows), its writes gather here and go out once at the row's end.
+        let rowBuf = null;
+        const w = (text) => {
+            if (rowBuf !== null) rowBuf += text;
+            else sri.write(text);
+        };
+        const flushRow = () => {
+            const text = rowBuf;
+            rowBuf = null;
+            if (text) sri.write(text);
+        };
         const at = (n, key) => {
             const value = n && n.attrs ? n.attrs[key] : null;
             return value === null || value === undefined ? "" : String(value);
@@ -501,7 +511,7 @@
 
         // descs: [{name, field, subs: [{cond, sets, widgets}]}]. Row kind r picks the first conditional-field that holds
         // and else the default-field. The other kinds have one sub-node.
-        // Indexed loops: this runs for every row of a list, and a for-of step or a forEach callback costs more in the interpreter.
+        // Indexed loops: this runs for every row of a list, and each forEach callback is a call in the interpreter.
         const fieldValues = (out, descs) => {
             for (let d = 0; d < descs.length; d++) {
                 const desc = descs[d];
@@ -1829,6 +1839,7 @@
 
             for (let i = 0; i < info.count; i++) {
                 sri.startFormListRow(info, i);
+                if (cfg.bufferRows) rowBuf = "";
                 try {
                     st.entry = String(i);
                     // in a list with a peek-url the row's index, by which the peek pane finds its key
@@ -1882,6 +1893,7 @@
                         st.inForm = was;
                     }
                 } finally {
+                    if (rowBuf !== null) flushRow();
                     st.entry = "";
                     sri.endFormListRow();
                 }
@@ -2717,6 +2729,7 @@
         const cfg = js`
             {
                 "views": ${viewsConfig(node, fields)},
+                "bufferRows": ${S.bufferedListRows(fields)},
                 "hasFirst": ${hasRow("first-row-field")},
                 "hasSecond": ${hasRow("second-row-field")},
                 "hasLast": ${hasRow("last-row-field")},

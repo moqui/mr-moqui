@@ -201,6 +201,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rich] -->\n"
         }]
     ], {
     "tree": null,
+    "bufferRows": false,
     "hasFirst": false,
     "hasSecond": false,
     "hasLast": false,
@@ -544,6 +545,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Multi] -->\n
         }]
     ], {
     "tree": null,
+    "bufferRows": false,
     "hasFirst": false,
     "hasSecond": false,
     "hasLast": false,
@@ -700,6 +702,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Edge] -->\n"
         }]
     ], {
     "tree": null,
+    "bufferRows": true,
     "hasFirst": true,
     "hasSecond": false,
     "hasLast": true,

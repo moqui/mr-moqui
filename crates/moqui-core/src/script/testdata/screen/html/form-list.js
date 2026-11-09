@@ -206,6 +206,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
         }]
     ], {
     "tree": null,
+    "bufferRows": false,
     "hasFirst": false,
     "hasSecond": false,
     "hasLast": false,
@@ -550,6 +551,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Cols] -->\n"
         }]
     ], {
     "tree": null,
+    "bufferRows": true,
     "hasFirst": false,
     "hasSecond": false,
     "hasLast": false,
