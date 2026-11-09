@@ -4,7 +4,7 @@
     <transition name="options"><default-response type="none"/></transition>
     <transition name="open"><default-response type="none"/></transition>
     <actions>
-        <set field="fv" from="{firstName: 'Ada &lt;L>', email: 'a@b.c', status: 'A', multi: 'A,B', kind: 'Y', flag: 'Y', stamp: ec.l10n.parseTimestamp('2024-03-05 14:07'),
+        <set field="fv" from="{firstName: 'Ada &lt;L>', email: 'a@b.c', status: 'A', multi: 'A,B', kind: 'Y', flag: 'N', flagOn: 'Y', flags: 'A,Z,B', stamp: ec.l10n.parseTimestamp('2024-03-05 14:07'),
             amount: 1234.5, bio: 'line1\nline2', find: 'ada', range: 4, secret: 'sh', mode: 'z', tail: 'T'}"/>
         <set field="uom" value="USD"/>
         <set field="total" value="12"/>
@@ -22,6 +22,9 @@
                 <dynamic-options transition="options" server-search="true" min-length="2" label-field="text" value-field="id"><depends-on field="status" parameter="st"/></dynamic-options></drop-down></default-field></field>
             <field name="kind"><default-field><radio no-current-selected-key="X"><option key="X"/><option key="Y" text="Why"/></radio></default-field></field>
             <field name="flag"><default-field><check><option key="Y" text="Yes"/></check></default-field></field>
+            <field name="flagOn"><default-field><check><option key="Y" text="On"/></check></default-field></field>
+            <field name="flags"><default-field><check><option key="A"/><option key="B"/></check></default-field></field>
+            <field name="allFlags"><default-field><check all-checked="true"><option key="A"/><option key="B"/></check></default-field></field>
             <field name="stamp"><default-field><date-time/></default-field></field>
             <field name="day"><default-field><date-time type="date"/></default-field></field>
             <field name="at"><default-field><date-time type="time" default-value="12:00"/></default-field></field>

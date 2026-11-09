@@ -387,8 +387,9 @@
                 out[name + "_scanText"] = "";
                 out[at(widget, "scan-id-field") || "scanId"] = "";
             } else if (kind === "check") {
-                if (xn(at(widget, "all-checked")) === "true") out[name] = Array.from(sri.getFieldOptions(widget).keys());
-                else out[name] = current || [];
+                const keys = Array.from(sri.getFieldOptions(widget).keys());
+                if (xn(at(widget, "all-checked")) === "true") out[name] = keys;
+                else out[name] = (current || []).filter((value) => keys.includes(value));
             } else if (kind === "date-find") {
                 const type = at(widget, "type");
                 const format = type === "date" ? "yyyy-MM-dd" : type === "time" ? "HH:mm" : "yyyy-MM-dd HH:mm";

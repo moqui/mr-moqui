@@ -102,6 +102,14 @@ fn form_single_with_every_field_type() {
     let out = check("fields", &[("_openDialog", "none")]);
     assert!(out.contains("v-slot:default=\"formProps\""), "{out}");
     assert!(out.contains(":fields-initial=\""), "{out}");
+    for initial in [
+        "'flag':[]",
+        "'flagOn':['Y']",
+        "'flags':['A','B']",
+        "'allFlags':['A','B']",
+    ] {
+        assert!(out.contains(initial), "{initial} in {out}");
+    }
     assert!(
         out.contains(r#"<div class="q-my-md"><m-form name="Everything""#),
         "{out}"

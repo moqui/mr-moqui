@@ -128,14 +128,23 @@ feature("find and compact checkbox controls name their field and preserve keyboa
                 <m-check v-model="compact" name="notify" :options="[{value:'Y',label:' '},{value:'N',label:'Keep visible'}]" tooltip="Email notifications for Mentions"></m-check>
                 <m-check v-model="direct" name="digest" :options="[{value:'Y',label:'  '}]" tooltip="Daily digest for Mentions" no-wrapper></m-check>
             </form>
+            <m-form id="saved-checks" action="/check-save" :fields-initial="{sharing:[],enabled:['Y'],tags:['A','B']}" no-validate v-slot:default="formProps">
+                <m-check v-model="formProps.fields.sharing" name="sharing" :options="[{value:'Y',label:'Share repositories'}]"></m-check>
+                <m-check v-model="formProps.fields.enabled" name="enabled" :options="[{value:'Y',label:'Enable sign in'}]"></m-check>
+                <m-check v-model="formProps.fields.tags" name="tags" :options="[{value:'A',label:'Alpha'},{value:'B',label:'Beta'}]"></m-check>
+                <q-btn id="save-checks" type="submit" label="Save checks"></q-btn>
+                <q-btn id="save-checks-again" type="submit" label="Save checks again"></q-btn>
+            </m-form>
             </div><script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
             <script src="/js/MoquiLib.js"></script><script src="/js/MoquiL10n.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
             Quasar.QMenu.props.transitionDuration.default=0;
             moqui.l10n.loadCatalog('en-US',()=>({messages:{'Find options for {field}':'Options for {field}',
                 'Clear {field} filter':'Clear filter: {field}'}})).then(()=>{
                 const app=Vue.createApp({data(){return {compact:[],direct:[],fields:{entity:'Order',user:'john.doe',changedDate_period:'day',
-                    changedDate_poffset:'0',changedDate_pdate:'2026-11-04',createdDate_pdate:'2026-11-01'}};}});
-                app.use(Quasar);['m-text-find','m-text-line','m-date-period','m-date-time','m-check','m-field'].forEach(name=>app.component(name,moqui.qvt.components[name]));
+                    changedDate_poffset:'0',changedDate_pdate:'2026-11-04',createdDate_pdate:'2026-11-01'},loading:0,appRootPath:'',moquiSessionToken:'fixture'};},methods:{getCsrfToken(){}}});
+                const fetchPage=window.fetch;window.checkSaves=[];
+                window.fetch=(url,init)=>url==='/check-save'?(checkSaves.push(Array.from(init.body.entries())),Promise.resolve(new Response('{}'))):fetchPage(url,init);
+                app.use(Quasar);['m-text-find','m-text-line','m-date-period','m-date-time','m-check','m-field','m-form'].forEach(name=>app.component(name,moqui.qvt.components[name]));
                 window.vm=app.mount('#app');
             });
             </script></body></html>`)
@@ -175,6 +184,18 @@ feature("find and compact checkbox controls name their field and preserve keyboa
         compact.press('Enter')
         assert.equal(page.evaluate(() => JSON.stringify(vm.compact)), '[]')
         assert.equal(page.evaluate(() => new FormData(document.getElementById('compact-checks')).has('notify')), false, 'an unchecked option stays absent from native submission')
+        const sharing = page.getByRole('checkbox', {name:'Share repositories', exact:true})
+        sharing.click()
+        page.locator('#save-checks').click()
+        page.waitFor(() => window.checkSaves.length === 1)
+        assert.deepEqual(page.evaluate(() => checkSaves[0].filter(([key]) => key !== 'moquiSessionToken')),
+            [['sharing','Y'],['enabled','Y'],['tags','A'],['tags','B']], 'm-form submits one scalar Y per enabled flag and preserves valid multi-choice values')
+        sharing.click()
+        page.getByRole('checkbox', {name:'Enable sign in', exact:true}).click()
+        page.locator('#save-checks-again').click()
+        page.waitFor(() => window.checkSaves.length === 2)
+        assert.deepEqual(page.evaluate(() => checkSaves[1].filter(([key]) => key !== 'moquiSessionToken')),
+            [['tags','A'],['tags','B']], 'unchecked flags submit no stale N or Y values')
     },
 })
 
