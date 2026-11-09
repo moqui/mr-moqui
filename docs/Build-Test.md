@@ -466,6 +466,18 @@ specs of webroot and dev-aide, and the served client specs of those components. 
 `moqui test-client --serve` over the components of `runtime/component` only, with no cargo build or test; it builds the
 binary only when it is missing. `./moq test-all` is both in turn. `./moq help <task>` lists each one's suites.
 
+### The script engine
+
+The engine is [moqui/quickjs-oxide](https://github.com/moqui/quickjs-oxide), pinned by `rev` in `Cargo.toml`.
+- **Building against a local checkout:** pass a patch on the command line, so that no committed file names a path:
+  `cargo --config 'patch."https://github.com/moqui/quickjs-oxide".quickjs-oxide.path="../quickjs-oxide"' ...`.
+- **Moving the pin:** the fork is pushed first. Then the `rev` changes and `cargo update -p quickjs-oxide` runs.
+- **Its speed tests** are `crates/moqui-host/tests/js_speed.rs` and the other `*_speed.rs` tests
+  ([plans/Profiling2.md](../plans/Profiling2.md) §2).
+- **The fork's own tooling:** its benchmark tools, Sweep results and round records are in
+  [moqui/quickjs-oxide-bench](https://github.com/moqui/quickjs-oxide-bench), checked out as `../quickjs-oxide-bench`.
+  Measurement output goes there (its `rounds/` and `work/`), not under `target/`, which `cargo clean` removes.
+
 ### The two suites
 
 | | Regression suite | Acceptance suite |

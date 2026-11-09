@@ -85,22 +85,30 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
     restarted, the heap at its peak, and `heap_at_max_by_runtime`, each runtime's share of the peak by thread (R49).
   - `MOQUI_SCRIPT_HEAP_LOG=<file>` writes a line per spec with the main thread's runtimes' arenas, code and caches.
   - A round's changes go behind a temporary `MOQUI_OXIDE_OFF` switch, so one release build measures each
-    (`../oxide-bench/round33/run-variants.sh`, `table.py`).
-- **The fork** (`../oxide-bench`, outside any repository, its `README.md`):
-  - **The Sweep.** Build a base from the fork's current `main`, then `bench.py sweep` and `bench.py memory` over
-    `suite-matrix/manifest.json`, in a quiet window. The gates: each of the eight V8 v7 programs at most ×1.02 of the
-    base's instructions, and `run_at` under 16384 bytes.
-  - **`gates.sh <worktree>`** runs upstream's CI steps, GC stress included.
+    (`rounds/r33/run-variants.sh`, `table.py` in the bench repository).
+- **The fork's bench repository,** [moqui/quickjs-oxide-bench](https://github.com/moqui/quickjs-oxide-bench), checked out
+  as `../quickjs-oxide-bench` (its `README.md`; it was the `../oxide-bench` workspace until R50):
+  - its tools: `tools/gates.sh`, `tools/run-sweep.sh`, `tools/mantle-pg/` and `tools/ngrun/`;
+  - the Sweep and memory results (`sweeps/`), the gates and Test262 logs;
+  - each round's scripts, notes and tables (`rounds/r32` to `rounds/r50`).
+
+  Binaries, worktrees, the suites and traces go in its `work/`, which git ignores.
+  - **The Sweep.** Build a base from the fork's current `main` (`work/base-<sha>`), then `tools/run-sweep.sh`:
+    `bench.py sweep` and `bench.py memory` over `work/suite-matrix/manifest.json`, in a quiet window. The gates: each of
+    the eight V8 v7 programs at most ×1.02 of the base's instructions, and `run_at` under 16384 bytes.
+  - **`tools/gates.sh <worktree>`** runs upstream's CI steps, GC stress included.
   - **Merging.** A branch merges `--no-ff` into the fork's `main` with the Sweep's numbers in the message. The user
     pushes the fork, then mr-moqui's pin moves and `cargo update -p quickjs-oxide` runs.
   - No upstream issues or pull requests without asking.
-  - **`mantle-pg/`** times the nine Mantle operations against `moqui-pg18` 200 µs away: `setup.sh`, `run.sh`,
+  - **`tools/mantle-pg/`** times the nine Mantle operations against `moqui-pg18` 200 µs away: `setup.sh`, `run.sh`,
     `table.py`, `teardown.sh`. It ran two engines in turn; it now runs one.
 - **Rules learned:**
   - Prove locally (the rows, a profile, the touched tests), then commit. The Sweep, Mantle runs and full suites are for
     an acceptance.
   - Nothing else builds while a timing runs. Run two of each and compare them at the better one.
-  - Binaries and traces go under `target/profiling`, not `/tmp` (a tmpfs filled up once).
+  - A round's text results go in the bench repository's `rounds/rNN/`, and its binaries and traces in its `work/rNN/`.
+    Not `/tmp` (a tmpfs filled up once), and not under mr-moqui's `target/`, which `cargo clean` removes (R50's raw
+    outputs went that way).
   - Under low load, memory matters more than the last millisecond; under high load, speed does.
 
 ## 3. Where things stand
@@ -177,7 +185,7 @@ the Sweep was not run for it.
 
 §5's tiers 0 to 2, built in three lanes, each item measured by its js_speed rows (allocations and `instructions:u`) and
 its own tests. The quiet pass, the best of two runs of the R49 build (fork 7cf1f530, 16 codegen units) against R50
-(`target/profiling/r50/final/table.md`):
+(the raw outputs were lost to a `cargo clean`; see the bench repository's `rounds/r50/README.md`):
 
 | Row | R49 µs | R50 µs | ÷ | Allocations |
 |---|---:|---:|---:|---|
