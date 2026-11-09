@@ -191,6 +191,36 @@ test("a message's edit, reaction and deletion wait in the app's outbox where the
     const vm = await openRoom();
     // UI097: the real bundled Chat caller must give selected and unselected previews readable text.
     const chat=root.$refs.view, previousDark=Quasar.Dark.isActive, previousDraft=chat.drafts.R1;
+    // The actual room and room-list helpers use the user's calendar day and clock, including DST boundaries.
+    const priorZone=moqui.l10n.timeZone, priorLocale=moqui.l10n.locale, priorNow=Date.now;
+    try {
+        moqui.l10n.setLocale('en_US');moqui.l10n.setTimeZone('America/Los_Angeles');
+        Date.now=()=>Date.parse('2026-11-09T08:05:00Z');
+        const beforeMidnight=Date.parse('2026-11-09T07:55:00Z'), afterMidnight=Date.parse('2026-11-09T08:01:00Z');
+        const events=[message(1,'',{sentDate:beforeMidnight}),message(2,'',{type:'system',sentDate:afterMidnight,content:{action:'created'}})];
+        const items=()=>vm.buildItems(events,{divider:false});
+        assert.deepEqual(items().filter(item=>item.kind==='day').map(item=>item.label),['Yesterday','Today']);
+        assert.equal(items().find(item=>item.kind==='message').timeText,'11:55 PM');
+        assert.ok(items().find(item=>item.kind==='message').fullTime.startsWith('Sunday, November 8, 2026 11:55 PM'));
+        assert.equal(items().find(item=>item.kind==='system').time,'12:01 AM');
+        assert.equal(chat.shortWhen(beforeMidnight),'Sun');
+        assert.equal(chat.shortWhen(afterMidnight),'12:01 AM');
+        moqui.l10n.setTimeZone('Europe/Berlin');
+        assert.deepEqual(items().filter(item=>item.kind==='day').map(item=>item.label),['Today']);
+        assert.equal(chat.shortWhen(afterMidnight),'9:01 AM','the same instant follows the configured zone');
+        moqui.l10n.setTimeZone('America/Los_Angeles');
+        Date.now=()=>Date.parse('2026-11-02T07:30:00Z');
+        const priorDay=vm.buildItems([message(1,'',{sentDate:Date.parse('2026-10-31T20:00:00Z')})],{divider:false});
+        assert.equal(priorDay[0].label,'Yesterday','subtracting 24 hours near the end of a 25-hour day would pick today');
+        Date.now=()=>Date.parse('2026-03-09T07:30:00Z');
+        const springDay=vm.buildItems([message(1,'',{sentDate:Date.parse('2026-03-08T20:00:00Z')})],{divider:false});
+        assert.equal(springDay[0].label,'Yesterday','yesterday also survives a 23-hour day');
+        moqui.l10n.setTimeZone('Not/AZone');
+        const browserClock=new Date(Date.now()).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+        assert.equal(chat.shortWhen(Date.now()),browserClock,'an invalid zone retains the browser fallback');
+    } finally {
+        Date.now=priorNow;moqui.l10n.setLocale(priorLocale);moqui.l10n.setTimeZone(priorZone);
+    }
     const previewContrast=element=>{
         const context=document.createElement('canvas').getContext('2d',{willReadFrequently:true}), ancestors=[];
         for (let node=element;node;node=node.parentElement) ancestors.unshift(node);

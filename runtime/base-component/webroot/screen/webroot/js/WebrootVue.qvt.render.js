@@ -2624,8 +2624,8 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-check": { hash: "2b541cd8", make: function (Vue) {
-            const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, mergeProps: _mergeProps } = Vue
+        "m-check": { hash: "c2046068", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createElementBlock: _createElementBlock, Fragment: _Fragment, createSlots: _createSlots, createVNode: _createVNode, mergeProps: _mergeProps } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_toggle = _resolveComponent("q-toggle")
@@ -2693,7 +2693,24 @@
                             name: _ctx.name,
                             id: _ctx.id,
                             disable: _ctx.disable
-                          }, null, 8, ["options", "model-value", "onUpdate:modelValue", "name", "id", "disable"])
+                          }, _createSlots({ _: 2 }, [
+                            (_ctx.needsOptionName)
+                              ? {
+                                  name: "label",
+                                  fn: _withCtx((option) => [
+                                    (_ctx.blankOptionLabel(option))
+                                      ? (_openBlock(), _createElementBlock("span", {
+                                          key: 0,
+                                          class: "m-visually-hidden"
+                                        }, _toDisplayString(_ctx.tooltip || _ctx.label), 1))
+                                      : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                                          _createTextVNode(_toDisplayString(option.label), 1)
+                                        ], 64))
+                                  ]),
+                                  key: "0"
+                                }
+                              : undefined
+                          ]), 1032, ["options", "model-value", "onUpdate:modelValue", "name", "id", "disable"])
                         ]),
                         _: 1
                       }, 16, ["label", "bg-color", "disable"]))
@@ -2709,7 +2726,24 @@
                         name: _ctx.name,
                         id: _ctx.id,
                         disable: _ctx.disable
-                      }, null, 8, ["options", "model-value", "onUpdate:modelValue", "name", "id", "disable"]))
+                      }, _createSlots({ _: 2 }, [
+                        (_ctx.needsOptionName)
+                          ? {
+                              name: "label",
+                              fn: _withCtx((option) => [
+                                (_ctx.blankOptionLabel(option))
+                                  ? (_openBlock(), _createElementBlock("span", {
+                                      key: 0,
+                                      class: "m-visually-hidden"
+                                    }, _toDisplayString(_ctx.tooltip || _ctx.label), 1))
+                                  : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                                      _createTextVNode(_toDisplayString(option.label), 1)
+                                    ], 64))
+                              ]),
+                              key: "0"
+                            }
+                          : undefined
+                      ]), 1032, ["options", "model-value", "onUpdate:modelValue", "name", "id", "disable"]))
             }
         } },
         "m-checkbox-set": { hash: "94e2c135", make: function (Vue) {

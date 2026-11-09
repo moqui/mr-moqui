@@ -299,15 +299,23 @@ fn dropdown(paint: &mut Painter, session: &Session, canvas: Rect) {
     };
     let choices = session.dropdown_choices();
     let current = session.buffer(&drop.field).to_string();
+    let check_group = matches!(session.field_widget(&drop.field),
+        Some(crate::model::Widget::Check { options, .. }) if options.len() > 1);
+    let multiple = check_group
+        || matches!(
+            session.field_widget(&drop.field),
+            Some(crate::model::Widget::DropDown { multiple: true, .. })
+        );
     let widest = choices
         .iter()
         .map(|choice| display_width(&choice.label))
         .max()
         .unwrap_or(10)
         .clamp(12, 50);
-    let width = u16::try_from(widest + 4).unwrap_or(40);
+    let width = u16::try_from(if multiple { (widest + 6).max(27) } else { widest + 4 }).unwrap_or(40);
     let visible = choices.len().clamp(1, 10);
-    let height = u16::try_from(visible + 2 + usize::from(!drop.filter.is_empty())).unwrap_or(12);
+    let height =
+        u16::try_from(visible + 2 + usize::from(!drop.filter.is_empty()) + usize::from(multiple)).unwrap_or(12);
     let (sx, sy) = paint_spot(paint, &drop.field).unwrap_or((canvas.x + 2, canvas.y));
     let below = sy + 1;
     let y = if below + height <= canvas.y + canvas.height {
@@ -332,10 +340,6 @@ fn dropdown(paint: &mut Painter, session: &Session, canvas: Rect) {
     }
     let start = drop.at.saturating_sub(visible - 1);
     for (at, choice) in choices.iter().enumerate().skip(start).take(visible) {
-        let multiple = matches!(
-            session.field_widget(&drop.field),
-            Some(crate::model::Widget::DropDown { multiple: true, .. })
-        );
         let on = if multiple {
             current.split(',').any(|part| part == choice.value)
         } else {
@@ -370,6 +374,15 @@ fn dropdown(paint: &mut Painter, session: &Session, canvas: Rect) {
             row,
             "no matches",
             Look::role(Role::Muted).italic(),
+            usize::from(width - 2),
+        );
+    }
+    if multiple {
+        paint.fixed(
+            x + 1,
+            y + height - 2,
+            "Space=Toggle  Enter=Done",
+            Look::role(Role::Muted),
             usize::from(width - 2),
         );
     }

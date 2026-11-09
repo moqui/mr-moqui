@@ -48,9 +48,9 @@ $s.label({"name":"label","attrs":{"text":"in dialog"}});
 }
 $s.label({"name":"label","attrs":{"text":"first"}});
 {
-sri.write($s.vFor({"name":"section-iterate","attrs":{"name":"Each","list":"rows","entry":"row"}}));
+sri.write($s.sectionIterateOpen({"name":"section-iterate","attrs":{"name":"Each","list":"rows","entry":"row"}}));
 $s.label({"name":"label","attrs":{"text":"${row}"}});
-sri.write("</template>");
+sri.write("</m-scope></template>");
 }
 sri.staticNote("section-include", "section-include", "section-include First was not resolved");
 $s.subscreensTabs({"name":"subscreens-menu","attrs":{}});

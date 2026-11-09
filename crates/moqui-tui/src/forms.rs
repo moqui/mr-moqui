@@ -982,9 +982,9 @@ fn initial_parts(id: &str, widget: &Widget) -> Vec<(String, String)> {
         Widget::TextLine { value, .. }
         | Widget::TextArea { value, .. }
         | Widget::DateTime { value, .. }
-        | Widget::Check { value, .. }
         | Widget::Radio { value, .. }
         | Widget::Hidden { value } => main(value),
+        Widget::Check { value, .. } => main(&choice_buffer(value)),
         Widget::Password {} => main(""),
         Widget::TextFind { value, op, not, ic, .. } => vec![
             (id.to_string(), value.clone()),
@@ -993,9 +993,13 @@ fn initial_parts(id: &str, widget: &Widget) -> Vec<(String, String)> {
             part("ic", yes(*ic)),
         ],
         Widget::DropDown {
-            value, show_not, not, ..
+            value,
+            multiple,
+            show_not,
+            not,
+            ..
         } => {
-            let mut out = main(value);
+            let mut out = main(&if *multiple { choice_buffer(value) } else { value.clone() });
             if *show_not {
                 out.push(part("not", yes(*not)));
             }
@@ -1012,6 +1016,15 @@ fn initial_parts(id: &str, widget: &Widget) -> Vec<(String, String)> {
         | Widget::Image { .. }
         | Widget::Editable { .. } => Vec::new(),
     }
+}
+
+/// List-valued choices arrive as JSON text; the picker and painter share comma-separated edit buffers.
+/// Scalar Y/N and existing comma-separated values retain their representation.
+fn choice_buffer(value: &str) -> String {
+    let values: Result<Vec<String>, _> = serde_json::from_str(value);
+    values
+        .map(|values| values.join(","))
+        .unwrap_or_else(|_| value.to_string())
 }
 
 /// The request parameters of one field, from its buffers.

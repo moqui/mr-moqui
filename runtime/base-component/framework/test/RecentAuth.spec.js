@@ -124,3 +124,58 @@ feature("with a second factor the password, then the code: a wrong code counted,
         after.recent == true
     }
 })
+
+feature("factor presentation omits authenticator secrets and recovery hashes; explicit setup and code verification retain them", {
+    when() {
+        const users = "org.moqui.impl.UserServices."
+        try {
+            const totp = as(B, users + "create#UserAuthcFactorTotp", {userId: B})
+            const email = as(null, users + "create#UserAuthcFactorEmail", {userId: B, factorOption: "recent.auth@example.invalid"})
+            const sms = as(null, users + "create#UserAuthcFactorSms", {userId: B, factorOption: "+15555550123"})
+            const child = as(null, users + "create#SingleUseAuthcFactor", {userId: B, fromFactorId: email.factorId})
+            const hash = sys(() => ec.entity.find("moqui.security.UserAuthcFactor").condition("factorId", child.factorId).one()).factorOption
+            const expired = as(null, users + "create#UserAuthcFactorTotp", {userId: B, thruDate: Date.now() - 1000})
+            const info = as(null, users + "get#UserAuthcFactorInfo", {userId: B})
+            const rows = info.userAuthcFactorList || []
+            const app = rows.find(row => row.factorId === totp.factorId) || {}
+            const recovery = rows.find(row => row.factorId === child.factorId) || {}
+            const setup = as(null, users + "setup#UserAuthcFactorTotp", {userId: B, factorId: totp.factorId})
+            const verified = as(null, users + "validate#UserAuthcFactorCode", {userId: B, code: child.code})
+            // The same app row stays redacted when verified, while its presentation metadata is retained.
+            sys(() => ec.service.sync().name("update#moqui.security.UserAuthcFactor")
+                .parameters({factorId: totp.factorId, needsValidation: "N"}).call())
+            const after = as(null, users + "get#UserAuthcFactorInfo", {userId: B})
+            const appAfter = (after.userAuthcFactorList || []).find(row => row.factorId === totp.factorId) || {}
+            // Return only booleans: failed assertions must not print even the generated fixture secrets.
+            return {
+                created: [totp, email, sms, child, expired].every(out => out.errors === "" && !!out.factorId),
+                noErrors: [info, setup, verified, after].every(out => out.errors === ""),
+                redacted: app.factorOption == null && recovery.factorOption == null &&
+                    !JSON.stringify(info).includes(totp.factorOption) && !JSON.stringify(info).includes(hash),
+                metadata: app.userId === B && app.factorTypeEnumId === "UafTotp" && app.fromDate != null &&
+                    app.thruDate != null && app.needsValidation === "Y" && recovery.fromFactorId === email.factorId,
+                onlyActive: rows.length === 4 && !rows.some(row => row.factorId === expired.factorId),
+                parentSummary: JSON.stringify(info.factorTypeEnumIds) === JSON.stringify(["UafEmail", "UafSms", "UafTotp"]),
+                destinations: info.sendableFactors.length === 2 && info.sendableFactors.some(row => row.factorId === email.factorId && row.factorOption === "recent.auth@example.invalid") &&
+                    info.sendableFactors.some(row => row.factorId === sms.factorId && row.factorOption === "+15555550123"),
+                setupSecret: setup.qrSecret === totp.factorOption && setup.qrUri.includes(encodeURIComponent(totp.factorOption)),
+                codeVerified: verified.verified === true && verified.factorId === child.factorId,
+                verifiedRedacted: appAfter.needsValidation === "N" && appAfter.factorOption == null && !JSON.stringify(after).includes(totp.factorOption)
+            }
+        } finally {
+            sys(() => ec.entity.find("moqui.security.UserAuthcFactor").condition("userId", B).deleteAll())
+        }
+    },
+    then({created, noErrors, redacted, metadata, onlyActive, parentSummary, destinations, setupSecret, codeVerified, verifiedRedacted}) {
+        created == true
+        noErrors == true
+        redacted == true
+        metadata == true
+        onlyActive == true
+        parentSummary == true
+        destinations == true
+        setupSecret == true
+        codeVerified == true
+        verifiedRedacted == true
+    }
+})

@@ -524,7 +524,10 @@ fn radio_labels_wrap_without_covering_the_next_field_or_changing_keyboard_select
             { "value": "internal", "label": "Only people inside the organization" }
           ] } },
         { "t": "field", "id": "R.after", "name": "after", "title": "Next field",
-          "w": { "kind": "textLine", "value": "AFTER_RADIO" } }
+          "w": { "kind": "textLine", "value": "AFTER_RADIO" } },
+        { "t": "field", "id": "R.days", "name": "days", "title": "Days",
+          "w": { "kind": "check", "value": "[\"1\"]", "options": [
+            { "value": "1", "label": "Monday" }, { "value": "7", "label": "Sunday" } ] } }
       ] }
     ] }"#;
     let mut beside: serde_json::Value = serde_json::from_str(json).unwrap();
@@ -546,6 +549,7 @@ fn radio_labels_wrap_without_covering_the_next_field_or_changing_keyboard_select
         assert!(view.session_mut().focus_key("R.audience"));
         let text = view.screen_text(width, 30);
         let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(words.contains("[x] Monday") && words.contains("[ ] Sunday"), "{text}");
         for label in [
             "Everyone who writes",
             "My contacts and people inside the organization",
@@ -590,6 +594,13 @@ fn radio_labels_wrap_without_covering_the_next_field_or_changing_keyboard_select
             assert_eq!(view.session().buffer("R.audience"), "everyone");
             press(&mut view, Key::Tab);
             assert_eq!(view.session().focus_id(), "R.after");
+        }
+        if width == 100 {
+            assert!(view.session_mut().focus_key("R.days"));
+            press(&mut view, Key::Char(' '));
+            let picker = view.screen_text(width, 30);
+            assert_eq!(picker.matches("[x] Monday").count(), 2, "{picker}");
+            assert!(picker.contains("Space=Toggle  Enter=Done"), "{picker}");
         }
     }
 }

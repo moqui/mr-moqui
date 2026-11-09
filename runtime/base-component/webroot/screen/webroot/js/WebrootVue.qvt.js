@@ -3379,9 +3379,19 @@
                 ' :label="singleLabel" :name="name" :id="id" :form="form" :disable="disable"></q-checkbox>' +
             '<m-field v-else-if="!noWrapper" borderless class="m-field-group" :label="label" :bg-color="bg" :disable="disable" v-bind="errorAttrs">' +
                 '<q-tooltip v-if="tooltip">{{tooltip}}</q-tooltip>' +
-                '<q-option-group type="checkbox" inline dense size="sm" :options="options" :model-value="local" @update:model-value="onInput" :name="name" :id="id" :disable="disable"></q-option-group>' +
+                '<q-option-group type="checkbox" inline dense size="sm" :options="options" :model-value="local" @update:model-value="onInput" :name="name" :id="id" :disable="disable">' +
+                    '<template v-if="needsOptionName" v-slot:label="option"><span v-if="blankOptionLabel(option)" class="m-visually-hidden">{{tooltip || label}}</span><template v-else>{{option.label}}</template></template>' +
+                '</q-option-group>' +
             '</m-field>' +
-            '<q-option-group v-else type="checkbox" inline dense size="sm" :options="options" :model-value="local" @update:model-value="onInput" :name="name" :id="id" :disable="disable"></q-option-group>'
+            '<q-option-group v-else type="checkbox" inline dense size="sm" :options="options" :model-value="local" @update:model-value="onInput" :name="name" :id="id" :disable="disable">' +
+                '<template v-if="needsOptionName" v-slot:label="option"><span v-if="blankOptionLabel(option)" class="m-visually-hidden">{{tooltip || label}}</span><template v-else>{{option.label}}</template></template>' +
+            '</q-option-group>',
+        computed: {
+            needsOptionName() { return !!(this.tooltip || this.label) && this.options.some((option) => this.blankOptionLabel(option)); }
+        },
+        methods: {
+            blankOptionLabel(option) { return !String(option.label == null ? "" : option.label).trim(); }
+        }
     });
 
     component("m-radio", {

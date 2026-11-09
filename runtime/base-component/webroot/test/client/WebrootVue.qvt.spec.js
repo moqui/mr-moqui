@@ -116,22 +116,26 @@ feature("quick-create success links wait for modal hide and refusals keep the dr
     },
 })
 
-feature("find controls name their field and keyboard actions retain the other filters", {
+feature("find and compact checkbox controls name their field and preserve keyboard values", {
     expect() {
         const page = browser.newPage()
-        page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css"></head><body><div id="app">
+        page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css"><link rel="stylesheet" href="/css/WebrootVue.qvt.css"></head><body><div id="app">
             <m-text-find id="entity-find" name="entity" label="Entity" :fields="fields"></m-text-find>
             <m-text-find id="user-find" name="user" label="User" :fields="fields"></m-text-find>
             <m-date-period id="date-find" name="changedDate" label="Date" :fields="fields"></m-date-period>
             <m-date-period id="created-find" name="createdDate" label="Created" :fields="fields"></m-date-period>
+            <form id="compact-checks">
+                <m-check v-model="compact" name="notify" :options="[{value:'Y',label:' '},{value:'N',label:'Keep visible'}]" tooltip="Email notifications for Mentions"></m-check>
+                <m-check v-model="direct" name="digest" :options="[{value:'Y',label:'  '}]" tooltip="Daily digest for Mentions" no-wrapper></m-check>
+            </form>
             </div><script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
             <script src="/js/MoquiLib.js"></script><script src="/js/MoquiL10n.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
             Quasar.QMenu.props.transitionDuration.default=0;
             moqui.l10n.loadCatalog('en-US',()=>({messages:{'Find options for {field}':'Options for {field}',
                 'Clear {field} filter':'Clear filter: {field}'}})).then(()=>{
-                const app=Vue.createApp({data(){return {fields:{entity:'Order',user:'john.doe',changedDate_period:'day',
+                const app=Vue.createApp({data(){return {compact:[],direct:[],fields:{entity:'Order',user:'john.doe',changedDate_period:'day',
                     changedDate_poffset:'0',changedDate_pdate:'2026-11-04',createdDate_pdate:'2026-11-01'}};}});
-                app.use(Quasar);['m-text-find','m-text-line','m-date-period','m-date-time'].forEach(name=>app.component(name,moqui.qvt.components[name]));
+                app.use(Quasar);['m-text-find','m-text-line','m-date-period','m-date-time','m-check','m-field'].forEach(name=>app.component(name,moqui.qvt.components[name]));
                 window.vm=app.mount('#app');
             });
             </script></body></html>`)
@@ -160,6 +164,17 @@ feature("find controls name their field and keyboard actions retain the other fi
         page.waitFor(() => document.getElementById('date-find'))
         assert.equal(page.locator('button[aria-label="Choose a period for Date"]').count(), 1, 'the empty period control is still named')
         assert.equal(page.locator('button[aria-label="Clear filter: Created"]').count(), 1)
+        const compact = page.getByRole('checkbox', {name:'Email notifications for Mentions', exact:true})
+        assert.equal(compact.count(), 1, 'the blank option uses its authored tooltip as its accessible name')
+        assert.equal(page.getByRole('checkbox', {name:'Daily digest for Mentions', exact:true}).count(), 1, 'unwrapped checkboxes use the same fallback')
+        assert.equal(page.getByRole('checkbox', {name:'Keep visible', exact:true}).count(), 1, 'a visible option label stays authoritative')
+        assert.equal(page.locator('#compact-checks .m-visually-hidden').evaluate(el => getComputedStyle(el).position), 'absolute', 'the fallback preserves the compact layout')
+        compact.click()
+        assert.equal(page.evaluate(() => JSON.stringify(vm.compact)), '["Y"]')
+        assert.equal(page.evaluate(() => new FormData(document.getElementById('compact-checks')).get('notify')), 'Y', 'the authored checkbox value submits unchanged')
+        compact.press('Enter')
+        assert.equal(page.evaluate(() => JSON.stringify(vm.compact)), '[]')
+        assert.equal(page.evaluate(() => new FormData(document.getElementById('compact-checks')).has('notify')), false, 'an unchecked option stays absent from native submission')
     },
 })
 

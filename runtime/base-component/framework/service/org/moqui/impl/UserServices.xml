@@ -509,6 +509,9 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
     <service verb="get" noun="UserAuthcFactorInfo">
+        <description>Factor types and sendable destinations, plus active factor metadata for account lists. Secret factor
+            material is never returned: factorOption is present only for email/SMS destinations. Explicit authenticator
+            setup and code validation read the factor entity separately.</description>
         <in-parameters>
             <parameter name="userId" required="true"/>
             <parameter name="getFactorsIfNotRequired" type="Boolean" default="true"/>
@@ -517,6 +520,12 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="secondFactorRequired" type="Boolean"/>
             <parameter name="factorTypeEnumIds" type="Set"/>
             <parameter name="factorTypeDescriptions" type="List"/>
+            <parameter name="userAuthcFactorList" type="List"><parameter name="factor" type="Map">
+                <parameter name="factorId"/><parameter name="userId"/><parameter name="fromFactorId"/>
+                <parameter name="factorTypeEnumId"/><parameter name="fromDate" type="Timestamp"/>
+                <parameter name="thruDate" type="Timestamp"/><parameter name="needsValidation"/>
+                <parameter name="factorOption"/>
+            </parameter></parameter>
             <parameter name="sendableFactors" type="List"><parameter name="sendableFactor" type="Map">
                 <parameter name="factorId"/>
                 <parameter name="factorTypeEnumId"/>
@@ -531,17 +540,20 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="!getFactorsIfNotRequired &amp;&amp; !secondFactorRequired">
                 <return/></if>
 
-            <entity-find entity-name="moqui.security.UserAuthcFactor" list="userAuthcFactorList">
-                <date-filter/><econdition field-name="userId"/>
-                <econdition field-name="fromFactorId" operator="is-null"/>
-                <!-- was condition in post-find iterate: userAuthcFactor.factorTypeEnumId != UafSingleUse &amp;&amp; !userAuthcFactor.fromFactorId -->
-            </entity-find>
+            <script><![CDATA[
+                userAuthcFactorList = Array.from(ec.entity.find('moqui.security.UserAuthcFactor').condition('userId', userId)
+                    .conditionDate('fromDate', 'thruDate', null).orderBy('factorTypeEnumId,fromDate').list()).map(factor => ({
+                        factorId: factor.factorId, userId: factor.userId, fromFactorId: factor.fromFactorId ?? null,
+                        factorTypeEnumId: factor.factorTypeEnumId, fromDate: factor.fromDate ?? null, thruDate: factor.thruDate ?? null,
+                        needsValidation: factor.needsValidation ?? null,
+                        factorOption: ['UafEmail', 'UafSms'].includes(factor.factorTypeEnumId) ? factor.factorOption : null
+                    }))
+            ]]></script>
 
             <!-- if user has no authc factors configured allow code via UserAccount.emailAddress -->
             <!-- NOTE: org.moqui.impl.UserServices.send#AuthcCode looks for a special factorId of 'UserAccountEmail' for this purpose -->
-            <set field="factors" from="[]"/>
-            <iterate list="userAuthcFactorList" entry="factor"><script>factors.push({factorId: factor.get('factorId'),
-                factorTypeEnumId: factor.get('factorTypeEnumId'), factorOption: factor.get('factorOption')})</script></iterate>
+            <set field="factors" from="userAuthcFactorList.filter(factor =&gt; factor.fromFactorId == null).map(factor =&gt; ({
+                factorId: factor.factorId, factorTypeEnumId: factor.factorTypeEnumId, factorOption: factor.factorOption}))"/>
             <if condition="factors.length == 0">
                 <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount"/>
                 <if condition="userAccount?.get('emailAddress')">

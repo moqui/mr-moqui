@@ -2085,25 +2085,36 @@ const needsConnection = () => {
 // the drafts of encrypted rooms: in this page only (C7)
 const sealedDrafts = {};
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
-const timeText = (millis) => (millis ? new Date(Number(millis)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '');
-const fullTime = (millis) => (millis ? new Date(Number(millis)).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' }) : '');
+const dateText = (millis, pattern, fallback) => {
+    const date = new Date(Number(millis));
+    try {
+        if (moqui.l10n && moqui.l10n.formatTimestamp) return moqui.l10n.formatTimestamp(date, pattern);
+    } catch (err) { /* An invalid configured zone keeps the browser's display usable. */ }
+    return fallback(date);
+};
+const dayKey = (millis) => dateText(millis, 'yyyy-MM-dd', (date) =>
+    [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-'));
+// Local calendar dates, rather than elapsed 24-hour periods, keep boundaries correct through daylight saving changes.
+const dayNumber = (millis) => Date.parse(dayKey(millis) + 'T00:00:00Z') / DAY;
+const timeText = (millis) => (millis ? dateText(millis, 'h:mm a', (date) => date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })) : '');
+const fullTime = (millis) => (millis ? dateText(millis, 'EEEE, MMMM d, yyyy h:mm a', (date) => date.toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' })) : '');
 const dayLabel = (millis) => {
-    const d = new Date(Number(millis));
-    const now = new Date();
-    if (d.toDateString() === now.toDateString()) return t('Today');
-    if (d.toDateString() === new Date(now.getTime() - DAY).toDateString()) return t('Yesterday');
+    const now = Date.now(), day = dayNumber(millis), today = dayNumber(now);
+    if (day === today) return t('Today');
+    if (day === today - 1) return t('Yesterday');
+    const withYear = dayKey(millis).slice(0, 4) !== dayKey(now).slice(0, 4);
     const opts = { weekday: 'long', month: 'long', day: 'numeric' };
-    if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
-    return d.toLocaleDateString(undefined, opts);
+    if (withYear) opts.year = 'numeric';
+    return dateText(millis, withYear ? 'EEEE, MMMM d, yyyy' : 'EEEE, MMMM d', (date) => date.toLocaleDateString(undefined, opts));
 };
 const shortWhen = (millis) => {
     if (!millis) return '';
-    const d = new Date(Number(millis));
-    const now = new Date();
-    if (d.toDateString() === now.toDateString()) return timeText(millis);
-    if (now.getTime() - d.getTime() < 6 * DAY) return d.toLocaleDateString(undefined, { weekday: 'short' });
-    if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    const now = Date.now(), days = dayNumber(now) - dayNumber(millis);
+    if (days === 0) return timeText(millis);
+    if (days < 6) return dateText(millis, 'EEE', (date) => date.toLocaleDateString(undefined, { weekday: 'short' }));
+    if (dayKey(millis).slice(0, 4) === dayKey(now).slice(0, 4))
+        return dateText(millis, 'MMM d', (date) => date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+    return dateText(millis, 'MMM d, yyyy', (date) => date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }));
 };
 const sizeText = (bytes) => {
     const n = Number(bytes || 0);
@@ -3199,7 +3210,7 @@ const chatRoom = {
             let dividerPlaced = false;
             for (const event of events) {
                 const sent = Number(event.sentDate || 0);
-                const day = new Date(sent).toDateString();
+                const day = dayKey(sent);
                 if (day !== lastDay) { out.push({ kind: 'day', key: 'd' + event.eventSeq, label: dayLabel(sent) }); lastDay = day; prev = null; }
                 if (opts.divider && !dividerPlaced && this.dividerSeq != null && Number(event.eventSeq) > this.dividerSeq && event.type === 'message' && event.senderUserId !== me) {
                     out.push({ kind: 'unread', key: 'unread' });

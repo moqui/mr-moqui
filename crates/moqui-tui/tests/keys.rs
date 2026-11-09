@@ -687,6 +687,15 @@ const WIDGETS_JSON: &str = r#"{
       "w": { "kind": "textLine", "value": "" } },
     { "t": "field", "id": "W.count", "name": "count", "title": "Count", "rules": [{ "kind": "integer", "message": "Whole number" }],
       "w": { "kind": "textLine", "value": "" } },
+    { "t": "field", "id": "W.days", "name": "days", "title": "Working days",
+      "w": { "kind": "check", "value": "[\"1\",\"2\",\"3\",\"4\",\"5\"]", "options": [
+        { "value": "1", "label": "Monday" }, { "value": "2", "label": "Tuesday" }, { "value": "3", "label": "Wednesday" },
+        { "value": "4", "label": "Thursday" }, { "value": "5", "label": "Friday" }, { "value": "6", "label": "Saturday" } ] } },
+    { "t": "field", "id": "W.groups", "name": "groups", "title": "Groups",
+      "w": { "kind": "dropDown", "multiple": true, "value": "[\"staff\",\"ops\"]", "options": [
+        { "value": "staff", "label": "Staff" }, { "value": "ops", "label": "Operations" } ] } },
+    { "t": "field", "id": "W.legacy", "name": "legacy", "title": "Legacy",
+      "w": { "kind": "check", "value": "A,B", "options": [{ "value": "A", "label": "A" }, { "value": "B", "label": "B" }] } },
     { "t": "field", "id": "W.html", "name": "html", "title": "HTML body",
       "w": { "kind": "textArea", "value": "<p>Keep <strong>HTML</strong></p>", "editorType": "rich", "readOnly": true } },
     { "t": "field", "id": "W.go", "name": "go", "title": "Go", "w": { "kind": "submit", "text": "Go", "confirm": "Really?" } }
@@ -697,6 +706,10 @@ const WIDGETS_JSON: &str = r#"{
 fn dates_checks_radios_rules_and_visible_when() {
     let link = FakeLink::from_json(&[WIDGETS_JSON]).unwrap();
     let mut session = Session::new(ScreenModel::from_json(WIDGETS_JSON).unwrap());
+    assert_eq!(session.buffer("W.days"), "1,2,3,4,5");
+    assert_eq!(session.buffer("W.groups"), "staff,ops");
+    assert_eq!(session.buffer("W.legacy"), "A,B");
+    assert!(!session.is_dirty("W.days") && !session.is_dirty("W.groups"));
     assert_eq!(session.buffer("W.html"), "<p>Keep <strong>HTML</strong></p>");
     assert!(!session.focus_order().iter().any(|item| item.key == "W.html"));
     // F4 opens the picker on the field's date; Right is the next day.
@@ -723,6 +736,53 @@ fn dates_checks_radios_rules_and_visible_when() {
     press(&mut session, &link, Key::Tab);
     press(&mut session, &link, Key::Right);
     assert_eq!(session.buffer("W.size"), "L");
+    // A checkbox group uses the multiple picker's Space-to-toggle, Enter-to-finish convention.
+    assert!(session.focus_key("W.days"));
+    press(&mut session, &link, Key::Char(' '));
+    typed(&mut session, &link, "Sat");
+    assert_eq!(session.dropdown_choices().len(), 1);
+    press(&mut session, &link, Key::Enter);
+    assert!(session.dropdown().is_none());
+    assert_eq!(session.buffer("W.days"), "1,2,3,4,5");
+    // Filtering then cancelling makes no selection. Space can also toggle while keeping the picker open.
+    press(&mut session, &link, Key::Char(' '));
+    typed(&mut session, &link, "Sat");
+    press(&mut session, &link, Key::Escape);
+    assert_eq!(session.buffer("W.days"), "1,2,3,4,5");
+    press(&mut session, &link, Key::Char(' '));
+    typed(&mut session, &link, "Sat");
+    press(&mut session, &link, Key::Char(' '));
+    assert!(session.dropdown().is_some());
+    assert_eq!(session.buffer("W.days"), "1,2,3,4,5,6");
+    // Enter finishes explicit Space toggles without replacing the other selected values.
+    press(&mut session, &link, Key::Enter);
+    assert!(session.dropdown().is_none());
+    assert_eq!(session.buffer("W.days"), "1,2,3,4,5,6");
+    press(&mut session, &link, Key::Char(' '));
+    typed(&mut session, &link, "Sat");
+    press(&mut session, &link, Key::Char(' '));
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(session.buffer("W.days"), "1,2,3,4,5");
+    press(&mut session, &link, Key::Char(' '));
+    typed(&mut session, &link, "Sat");
+    press(&mut session, &link, Key::Char(' '));
+    assert_eq!(session.buffer("W.days"), "1,2,3,4,5,6");
+    press(&mut session, &link, Key::Char(' '));
+    press(&mut session, &link, Key::Escape);
+    assert_eq!(session.buffer("W.days"), "1,2,3,4,5");
+    assert!(!session.is_dirty("W.days"));
+    // Multiple drop-downs retain their existing Space-to-toggle, Enter-to-finish behavior.
+    assert!(session.focus_key("W.groups"));
+    press(&mut session, &link, Key::Char(' '));
+    typed(&mut session, &link, "Staff");
+    press(&mut session, &link, Key::Char(' '));
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(session.buffer("W.groups"), "ops");
+    press(&mut session, &link, Key::Char(' '));
+    typed(&mut session, &link, "Staff");
+    press(&mut session, &link, Key::Char(' '));
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(session.buffer("W.groups"), "ops,staff");
     session.set_buffer("W.count", "1.5".to_string());
     while session.focus_id() != "W.go" {
         press(&mut session, &link, Key::Tab);
@@ -741,6 +801,9 @@ fn dates_checks_radios_rules_and_visible_when() {
     assert_eq!(posted[0].1.get("when").map(String::as_str), Some("2026-10-22"));
     assert_eq!(posted[0].1.get("flag").map(String::as_str), Some("Y"));
     assert_eq!(posted[0].1.get("size").map(String::as_str), Some("L"));
+    assert_eq!(posted[0].1.get("days").map(String::as_str), Some("1,2,3,4,5"));
+    assert_eq!(posted[0].1.get("groups").map(String::as_str), Some("ops,staff"));
+    assert_eq!(posted[0].1.get("legacy").map(String::as_str), Some("A,B"));
     assert!(
         !posted[0].1.contains_key("html"),
         "read-only rich text is omitted, not posted as empty HTML"
