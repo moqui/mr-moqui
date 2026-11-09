@@ -1305,7 +1305,7 @@ fn webhooks_are_signed_logged_and_retried() {
             ],
         );
     }
-    let (url, seen) = webhook_receiver(vec![500, 200]);
+    let (url, seen) = webhook_receiver(vec![500, 200, 503, 200]);
     let stored = ok(
         &fixture,
         WRITER,
@@ -1402,6 +1402,28 @@ fn webhooks_are_signed_logged_and_retried() {
     let delivery = &list(&deliveries, "deliveryList")[0];
     assert_eq!(text_of(entry(delivery, "statusId")), "SmsgSent");
     assert!(matches!(entry(delivery, "errorList"), Value::List(errors) if errors.len() == 1));
+
+    let failed = ok(
+        &fixture,
+        WRITER,
+        "org.moqui.impl.GitServices.test#GitWebhook",
+        &[("webhookId", s(&webhook_id))],
+    );
+    assert_eq!(failed.get("delivered"), Some(&Value::Bool(false)), "{failed:?}");
+    assert_eq!(get(&failed, "statusCode"), "503");
+    assert!(get(&failed, "errorText").contains("HTTP 503"), "{failed:?}");
+    assert_eq!(
+        field(
+            &row(
+                &fixture,
+                "moqui.service.message.SystemMessage",
+                "systemMessageId",
+                get(&failed, "systemMessageId")
+            ),
+            "statusId"
+        ),
+        "SmsgProduced"
+    );
 
     let tested = ok(
         &fixture,

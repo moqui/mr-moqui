@@ -1517,19 +1517,44 @@ fn test_webhook(parameters: &Parameters, facade: &EntityFacade) -> Out {
         text
     })
     .unwrap_or_default();
-    let status = {
+    let (status, delivered, recorded_error) = {
         let _rows = rows_guard();
-        facade
-            .find(GIT_WEBHOOK)?
-            .eq("webhookId", Value::string(&webhook_id))
-            .one()?
-            .and_then(|row| field(&row, "lastDeliveryStatus"))
+        let delivery = facade
+            .find(SYSTEM_MESSAGE)?
+            .eq("systemMessageId", Value::string(&message_id))
+            .one()?;
+        let delivered = delivery
+            .as_ref()
+            .is_some_and(|row| field(row, "statusId").as_deref() == Some("SmsgSent"));
+        let status = delivery
+            .as_ref()
+            .and_then(|row| field(row, "remoteMessageId"))
+            .or(facade
+                .find(GIT_WEBHOOK)?
+                .eq("webhookId", Value::string(&webhook_id))
+                .one()?
+                .and_then(|row| field(&row, "lastDeliveryStatus")));
+        let recorded_error = facade
+            .find("moqui.service.message.SystemMessageError")?
+            .eq("systemMessageId", Value::string(&message_id))
+            .order_by("errorDate", true)
+            .limit(1)
+            .list()?
+            .iter()
+            .next()
+            .and_then(|row| field(row, "errorText"));
+        (status, delivered, recorded_error)
     };
-    let delivered = sent.is_ok() && errors.is_empty();
-    let error_text = match sent {
-        Err(err) => Some(err.to_string()),
-        Ok(_) if !errors.is_empty() => Some(errors),
-        Ok(_) => None,
+    // SystemMessage records delivery errors and returns normally so its retry remains scheduled. Its saved outcome,
+    // rather than the wrapper call returning Ok, says whether the ping reached its receiver.
+    let error_text = if delivered {
+        None
+    } else {
+        match sent {
+            Err(err) => Some(err.to_string()),
+            Ok(_) if !errors.is_empty() => Some(errors),
+            Ok(_) => Some(recorded_error.unwrap_or_else(|| "The test delivery was not sent".to_string())),
+        }
     };
     if let Some(error) = &error_text {
         add_message(format!("Test delivery failed: {error}"));
