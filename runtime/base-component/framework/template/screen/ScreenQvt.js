@@ -190,12 +190,21 @@
             }
             return text;
         };
+        // Indexed loops, not map and join: this writes every row's fields-initial, and each callback is a call in the interpreter.
         const jsAttr = (value) => {
             if (value === null || value === undefined) return "null";
-            if (typeof value === "string") return sqa(value);
-            if (typeof value === "number" || typeof value === "boolean") return String(value);
-            if (Array.isArray(value)) return "[" + value.map(jsAttr).join(",") + "]";
-            return "{" + Object.keys(value).map((key) => keyText(key) + ":" + jsAttr(value[key])).join(",") + "}";
+            const type = typeof value;
+            if (type === "string") return sqa(value);
+            if (type === "number" || type === "boolean") return String(value);
+            if (Array.isArray(value)) {
+                let out = "[";
+                for (let i = 0; i < value.length; i++) out += (i ? "," : "") + jsAttr(value[i]);
+                return out + "]";
+            }
+            const keys = Object.keys(value);
+            let out = "{";
+            for (let i = 0; i < keys.length; i++) out += (i ? "," : "") + keyText(keys[i]) + ":" + jsAttr(value[keys[i]]);
+            return out + "}";
         };
         const quasarColor = (color) => (color === "success" ? "positive" : color === "danger" ? "negative" : color === "default" ? "" : color || "");
         // An icon attribute: a value with a space or a Font Awesome prefix (fa fa-plus, fa-plus) is a class list on an i element; any
@@ -238,8 +247,13 @@
         // the outermost unit of a render ($depth 0) starts afresh and gives back the state of a render it ran inside
         const enter = (depth) => {
             secText = null;
-            units.push({ st: Object.assign({}, st), saved: saved.slice(), displays });
-            if (!depth) { reset(); displays = new WeakMap(); }
+            units.push({ st: Object.assign({}, st), saved: saved.slice(), displays, renderTexts, renderIcons });
+            if (!depth) {
+                reset();
+                displays = new WeakMap();
+                renderTexts = new Map();
+                renderIcons = new Map();
+            }
         };
         const leave = (depth) => {
             secText = null;
@@ -250,6 +264,31 @@
             saved.length = 0;
             outer.saved.forEach((item) => saved.push(item));
             displays = outer.displays;
+            renderTexts = outer.renderTexts;
+            renderIcons = outer.renderIcons;
+        };
+
+        // Texts that come out the same on every row of a render: a text with no ${ expanded and localized, and the theme's
+        // icon for a link text. New at each render's outermost unit, as displays is.
+        let renderTexts = new Map();
+        let renderIcons = new Map();
+        const xc = (text) => {
+            if (!text) return "";
+            if (text.indexOf("${") >= 0) return x(text);
+            let found = renderTexts.get(text);
+            if (found === undefined) {
+                found = x(text);
+                renderTexts.set(text, found);
+            }
+            return found;
+        };
+        const themeIcon = (text) => {
+            let found = renderIcons.get(text);
+            if (found === undefined) {
+                found = sri.getThemeIconClass(text) || "";
+                renderIcons.set(text, found);
+            }
+            return found;
         };
 
         // The id suffix of a section-iterate entry, read once a unit: each entry is a unit of its own (enter and leave
@@ -357,22 +396,57 @@
             return sri.getFieldValueString(n);
         };
 
+        // What addValue reads of a widget, once for each widget: a list row asks it of every field on every row.
+        const valueWidgets = new WeakMap();
+        const valueWidgetOf = (widget) => {
+            let v = valueWidgets.get(widget);
+            if (!v) {
+                const kind = widget.name;
+                v = {
+                    kind, plainDisplay: kind === "display" && !at(widget, "text") && !at(widget, "currency-unit-field"),
+                    noCurrent: at(widget, "no-current-selected-key"),
+                    alsoHidden: !at(widget, "also-hidden") || at(widget, "also-hidden") === "true",
+                    entityName: at(widget, "entity-name"), text: at(widget, "text")
+                };
+                valueWidgets.set(widget, v);
+            }
+            return v;
+        };
+
         // The widget's contribution to the values of its field: the named values of ScreenRenderImpl.addFormFieldValue.
         const addValue = (out, widget, field, name, plainSub) => {
+            const v = valueWidgetOf(widget);
             // a display's value string comes with its plain value, from one lookup of the field; in a list row whose field part
             // sets nothing, the display's cell reads the same values in the same frame, so it takes them from rowTexts
-            const shown = widget.name === "display" && !at(widget, "text") && !at(widget, "currency-unit-field")
-                ? sri.getFieldValueTexts(widget, true) : null;
+            const shown = v.plainDisplay ? sri.getFieldValueTexts(widget, true) : null;
             if (shown && plainSub && st.rowTexts) st.rowTexts.set(widget, shown);
             let plain = shown ? shown[1] : sri.getFieldValuePlainString(field, "");
-            if (blank(plain)) plain = xn(at(widget, "no-current-selected-key"));
+            if (blank(plain)) plain = xn(v.noCurrent);
             if (plain && plain.charAt(0) === "[") plain = plain.substring(1, plain.length - 1).replace(/ /g, "");
-            const current = plain ? plain.split(",") : null;
-            const kind = widget.name;
+            const kind = v.kind;
+            // the two kinds of a list's cells first, with no list of the plain value's parts
             if (kind === "display") {
-                if (!at(widget, "also-hidden") || at(widget, "also-hidden") === "true") out[name] = plain;
+                if (v.alsoHidden) out[name] = plain;
                 out[name + "_display"] = shown ? shown[0] : display(widget, field);
-            } else if (kind === "drop-down") {
+                return;
+            }
+            if (kind === "link") {
+                if (blank(plain)) return;
+                out[name] = plain;
+                let text = null;
+                if (v.entityName) {
+                    try { text = sri.getFieldEntityValue(widget); } catch (err) { text = null; }
+                } else if (v.text) text = xc(v.text);
+                if (text !== null && text !== undefined) {
+                    text = String(text).trim();
+                    // A display or display-entity before the link in the same field keeps its text (Java let the link replace it, so
+                    // `display-entity` + `link` showed the id twice).
+                    if (text && text !== "null" && text.indexOf("null:") !== 0 && !(name + "_display" in out)) out[name + "_display"] = text;
+                }
+                return;
+            }
+            const current = plain ? plain.split(",") : null;
+            if (kind === "drop-down") {
                 if (xn(at(widget, "allow-multiple")) === "true") {
                     out[name] = current;
                     out[name + "_op"] = "in";
@@ -420,19 +494,6 @@
                 let ic = ctx(name + "_ic");
                 if (blank(ic) && (!at(widget, "ignore-case") || at(widget, "ignore-case") === "true")) ic = "Y";
                 out[name + "_ic"] = ic || "N";
-            } else if (kind === "link") {
-                if (blank(plain)) return;
-                out[name] = plain;
-                let text = null;
-                if (at(widget, "entity-name")) {
-                    try { text = sri.getFieldEntityValue(widget); } catch (err) { text = null; }
-                } else if (at(widget, "text")) text = ec.resource.expand(at(widget, "text"), "");
-                if (text !== null && text !== undefined) {
-                    text = String(text).trim();
-                    // A display or display-entity before the link in the same field keeps its text (Java let the link replace it, so
-                    // `display-entity` + `link` showed the id twice).
-                    if (text && text !== "null" && text.indexOf("null:") !== 0 && !(name + "_display" in out)) out[name + "_display"] = text;
-                }
             } else if (kind !== "submit" && kind !== "reset" && kind !== "label" && kind !== "image") {
                 out[name] = plain;
             }
@@ -440,22 +501,28 @@
 
         // descs: [{name, field, subs: [{cond, sets, widgets}]}]. Row kind r picks the first conditional-field that holds
         // and else the default-field. The other kinds have one sub-node.
+        // Indexed loops: this runs for every row of a list, and a for-of step or a forEach callback costs more in the interpreter.
         const fieldValues = (out, descs) => {
-            descs.forEach((desc) => {
+            for (let d = 0; d < descs.length; d++) {
+                const desc = descs[d];
+                const subs = desc.subs;
                 let active = null;
-                for (const sub of desc.subs) {
+                for (let s = 0; s < subs.length; s++) {
+                    const sub = subs[s];
                     if (sub.cond === null || sub.cond === undefined) { if (!active) active = sub; continue; }
                     try { if (ec.resource.condition(sub.cond, "")) { active = sub; break; } } catch (err) { /* a bad condition does not hold */ }
                 }
-                if (!active) return;
-                const pushed = active.sets && active.sets.length;
-                if (pushed) { sri.pushContext(); active.sets.forEach((set) => sri.setInContext(set)); }
+                if (!active) continue;
+                const sets = active.sets;
+                const pushed = sets && sets.length;
+                if (pushed) { sri.pushContext(); for (let i = 0; i < sets.length; i++) sri.setInContext(sets[i]); }
                 try {
-                    active.widgets.forEach((widget) => addValue(out, widget, desc.field, desc.name, !pushed));
+                    const widgets = active.widgets;
+                    for (let i = 0; i < widgets.length; i++) addValue(out, widgets[i], desc.field, desc.name, !pushed);
                 } finally {
                     if (pushed) sri.popContext();
                 }
-            });
+            }
             return out;
         };
 
@@ -837,7 +904,7 @@
             // The value's type, currency and the alignment are class names that need no escaping.
             const style = d.style ? xn(d.style) : "";
             let attrs = a1("name", name) + a1("id", id + "_display") + a1("label", d.label === null ? label(n) : d.label) +
-                a1("label-wrapper", labelWrapper || null) + (d.tooltip ? a1("tooltip", x(d.tooltip)) : "") +
+                a1("label-wrapper", labelWrapper || null) + (d.tooltip ? a1("tooltip", xc(d.tooltip)) : "") +
                 ' class="' + texts[2] + (d.unit ? " currency" : "") + (d.alignClass ? " " + d.alignClass : "") + (style ? " " + e(style) : "") + '"';
             if (dyn) {
                 const remoteInfo = remote(n, at(n, "dynamic-transition"));
@@ -913,60 +980,83 @@
             }) + ">" + text + "</" + type + "> ");
         };
 
+        // The attributes of a link element, read once for each element: a form-list row reads its links again on every row.
+        const links = new WeakMap();
+        const linkOf = (n) => {
+            let l = links.get(n);
+            if (!l) {
+                l = {
+                    condition: at(n, "condition"), entityName: at(n, "entity-name"), textMap: at(n, "text-map"), text: at(n, "text"),
+                    image: first(n, "image"), icon: at(n, "icon"), encode: at(n, "encode") !== "false", url: at(n, "url"),
+                    urlType: at(n, "url-type") || "transition", expand: at(n, "expand-transition-url") || "true",
+                    passThrough: at(n, "pass-through-parameters") === "true", badge: at(n, "badge"), tooltip: at(n, "tooltip"),
+                    confirmation: at(n, "confirmation"), style: at(n, "style"), linkType: at(n, "link-type"), btnType: at(n, "btn-type"),
+                    noParam: at(n, "url-noparam") === "true", target: at(n, "target-window"), load: at(n, "dynamic-load-id")
+                };
+                links.set(n, l);
+            }
+            return l;
+        };
+
+        // The link text and URL of a link element, or null when the link shows nothing; whether the link is disabled is asked
+        // once, for the element and its form.
         const linkParts = (n) => {
-            if (at(n, "condition") && !cond(at(n, "condition"))) return null;
+            const l = linkOf(n);
+            if (l.condition && !cond(l.condition)) return null;
             let text;
-            if (at(n, "entity-name")) text = sri.getFieldEntityValue(n);
+            if (l.entityName) text = sri.getFieldEntityValue(n);
             else {
-                const map = at(n, "text-map") ? ec.resource.expression(at(n, "text-map"), "") : null;
-                text = map ? ec.resource.expand(at(n, "text"), "", map) : ec.resource.expand(at(n, "text"), "");
+                const map = l.textMap ? ec.resource.expression(l.textMap, "") : null;
+                text = map ? ec.resource.expand(l.text, "", map) : xc(l.text);
             }
             if (text === "null" || text === null || text === undefined) text = "";
-            const img = first(n, "image");
-            if (!(text || img || at(n, "icon"))) return null;
-            if (at(n, "encode") !== "false") text = t(text);
-            let url = sri.makeUrlByType(at(n, "url"), at(n, "url-type") || "transition", n, at(n, "expand-transition-url") || "true");
-            if (at(n, "pass-through-parameters") === "true") url = url.addParameters(sri.getScreenUrlInstance().getPassThroughParameterMap());
-            return { text, url, img, anchor: sri.isAnchorLink(n, url) };
+            const img = l.image;
+            if (!(text || img || l.icon)) return null;
+            if (l.encode) text = t(text);
+            let url = sri.makeUrlByType(l.url, l.urlType, n, l.expand);
+            if (l.passThrough) url = url.addParameters(sri.getScreenUrlInstance().getPassThroughParameterMap());
+            return { text, url, img, anchor: sri.isAnchorLink(n, url), disabled: url.getDisableLink() };
         };
 
         const linkBody = (n, text, img) => {
-            let iconClass = at(n, "icon");
-            if (!iconClass && at(n, "text")) iconClass = sri.getThemeIconClass(at(n, "text")) || "";
+            const l = linkOf(n);
+            let iconClass = l.icon;
+            if (!iconClass && l.text) iconClass = themeIcon(l.text);
             iconClass = xn(iconClass);
-            const badge = x(at(n, "badge"));
-            const tooltip = at(n, "tooltip") ? tooltipTag(x(at(n, "tooltip"))) : "";
+            const badge = xc(l.badge);
+            const tooltip = l.tooltip ? tooltipTag(xc(l.tooltip)) : "";
             const hasText = !!String(text).trim();
             return tooltip + (iconClass ? icon(iconClass, hasText) : "") +
                 (img ? imageTag(img) : text) + (badge ? ' <q-badge class="on-right" transparent>' + t(badge) + "</q-badge>" : "");
         };
 
         // A link with no text or image (an icon only) is named by its tooltip.
-        const iconOnlyLabel = (n, parts) => (!parts.text && !parts.img ? x(at(n, "tooltip")) || null : null);
+        const iconOnlyLabel = (n, parts) => (!parts.text && !parts.img ? xc(linkOf(n).tooltip) || null : null);
         const linkElement = (n, parts, formId) => {
-            const style = xn(at(n, "style")) || null;
+            const l = linkOf(n);
+            const style = xn(l.style) || null;
             const accessibleLabel = iconOnlyLabel(n, parts);
-            const linkType = at(n, "link-type");
-            const btnType = xn(at(n, "btn-type"));
+            const linkType = l.linkType;
+            const btnType = xn(l.btnType);
             // A screen link in a form-list cell is text (as is link-type anchor anywhere); the others are tonal buttons, or the filled
             // primary button with btn-type="primary".
             const textLink = linkType === "anchor" || (st.inList && linkType !== "anchor-button");
-            if (parts.url.getDisableLink()) {
+            if (parts.disabled) {
                 if (parts.anchor && textLink) return '<span class="text-grey-5">' + linkBody(n, parts.text, parts.img) + "</span>";
                 return "<span><q-btn" + A({
                     dense: true, "no-caps": true, disabled: true, flat: true, class: cls("m-link", style), id: formId || null,
                     label: parts.text || null, "aria-label": accessibleLabel
-                }) + ">" + (xn(at(n, "icon")) ? iconTag(xn(at(n, "icon")), false) : "") + "</q-btn></span>";
+                }) + ">" + (xn(l.icon) ? iconTag(xn(l.icon), false) : "") + "</q-btn></span>";
             }
-            const confirmation = x(at(n, "confirmation"));
+            const confirmation = xc(l.confirmation);
             if (parts.anchor) {
                 const screen = parts.url.isScreenUrl();
-                const noParam = at(n, "url-noparam") === "true";
+                const noParam = l.noParam;
                 const href = screen ? (noParam ? parts.url.path : parts.url.pathWithParams) : (noParam ? parts.url.url : parts.url.getUrlWithParams());
                 const tag = screen ? "m-link" : "a";
                 const inner = linkBody(n, parts.text, parts.img) + "";
                 return "<" + tag + A({
-                    href, id: formId || null, target: xn(at(n, "target-window")) || null, "load-id": xn(at(n, "dynamic-load-id")) || null,
+                    href, id: formId || null, target: xn(l.target) || null, "load-id": xn(l.load) || null,
                     "data-confirm": confirmation || null, "aria-label": accessibleLabel, class: textLink ? cls("m-link-text", style) : null
                 }) + ">" + (textLink ? inner : "<q-btn" + A(Object.assign({ dense: true, unelevated: true, "no-caps": true,
                     "aria-label": accessibleLabel }, btnKind(btnType, "m-link", style))) + ">" + inner + "</q-btn>") + "</" + tag + ">";
@@ -996,7 +1086,7 @@
         // The form a transition link posts: an m-form for a transition, an m-form-link for a screen. With a form id it
         // holds only the hidden fields and a button elsewhere points to it.
         const linkForm = (n, parts, formId) => {
-            if (parts.url.getDisableLink() || parts.anchor) return "";
+            if (parts.disabled || parts.anchor) return "";
             const isForm = parts.url.isTransition();
             const tag = isForm ? "m-form" : "m-form-link";
             const params = parts.url.getParameterMap();
@@ -1757,11 +1847,13 @@
                         st.owner = formId;
                         st.inForm = true;
                     } else st.inForm = false;
-                    visible.forEach((col) => {
+                    const mode = multi ? 1 : 0;
+                    for (let c = 0; c < visible.length; c++) {
+                        const col = visible[c];
                         w('<div class="td">');
-                        col.forEach((f) => f.cell(multi ? 1 : 0));
+                        for (let k = 0; k < col.length; k++) col[k].cell(mode);
                         w("</div>");
-                    });
+                    }
                     st.rowTexts = null;
                     if (!(multi || skipForm)) w("</m-form>");
                     w("</div>\n");

@@ -144,6 +144,29 @@
             return Object.keys(out).length ? JSON.stringify(out) : null;
         };
 
+        // Texts that come out the same on every row of a render: a text with no ${ expanded and localized, and the theme's
+        // icon for a link text. New at each render's outermost unit, so a later render sees its own locale and theme.
+        let renderTexts = new Map();
+        let renderIcons = new Map();
+        const xc = (text) => {
+            if (!text) return "";
+            if (text.indexOf("${") >= 0) return x(text);
+            let found = renderTexts.get(text);
+            if (found === undefined) {
+                found = x(text);
+                renderTexts.set(text, found);
+            }
+            return found;
+        };
+        const themeIcon = (text) => {
+            let found = renderIcons.get(text);
+            if (found === undefined) {
+                found = sri.getThemeIconClass(text) || "";
+                renderIcons.set(text, found);
+            }
+            return found;
+        };
+
         // Per-unit state of the form being written.
         const st = {};
         const reset = () => {
@@ -159,15 +182,21 @@
         const units = [];
         const enter = (depth) => {
             secText = null;
-            units.push(Object.assign({}, st));
-            if (!depth) reset();
+            units.push({ st: Object.assign({}, st), renderTexts, renderIcons });
+            if (!depth) {
+                reset();
+                renderTexts = new Map();
+                renderIcons = new Map();
+            }
         };
         const leave = (depth) => {
             secText = null;
             const outer = units.pop();
             if (!outer) return;
             Object.keys(st).forEach((key) => { delete st[key]; });
-            Object.assign(st, outer);
+            Object.assign(st, outer.st);
+            renderTexts = outer.renderTexts;
+            renderIcons = outer.renderIcons;
         };
 
         // The id suffix of a section-iterate entry, read once a unit: each entry is a unit of its own (enter and leave
@@ -594,7 +623,7 @@
             // the value's type as a class, as Java's html display writes sri.getFieldValueClass; a class name needs no escaping
             const style = d.style ? xn(d.style) : "";
             let out = '<span class="display ' + texts[2] + (unit ? " currency" : "") + (style ? " " + e(style) : "") + '"' +
-                (d.tooltip ? a1("title", x(d.tooltip)) : "") + (dyn ? a1("id", id + "_display") : "") + ">" + body + "</span>";
+                (d.tooltip ? a1("title", xc(d.tooltip)) : "") + (dyn ? a1("id", id + "_display") : "") + ">" + body + "</span>";
             if (alsoHidden) {
                 out += '<input type="hidden"' + a1("id", id) + a1("name", fnm(n)) + a1("value", dyn ? "" : texts[1]) + a1("form", owner()) + ">";
             }
@@ -642,29 +671,53 @@
             w("<" + type + A({ id: nodeId(n) || null, class: xn(at(n, "style")) || null, title: at(n, "tooltip") ? x(at(n, "tooltip")) : null }) + ">" + text + "</" + type + ">\n");
         };
 
-        // The link text and URL of a link element, or null when the link shows nothing.
+        // The attributes of a link element, read once for each element, as displayOf does: a form-list row reads its links
+        // again on every row.
+        const links = new WeakMap();
+        const linkOf = (n) => {
+            let l = links.get(n);
+            if (!l) {
+                l = {
+                    condition: at(n, "condition"), entityName: at(n, "entity-name"), textMap: at(n, "text-map"), text: at(n, "text"),
+                    image: first(n, "image"), icon: at(n, "icon"), encode: at(n, "encode") !== "false", url: at(n, "url"),
+                    urlType: at(n, "url-type") || "transition", expand: at(n, "expand-transition-url") || "true",
+                    passThrough: at(n, "pass-through-parameters") === "true", badge: at(n, "badge"), tooltip: at(n, "tooltip"),
+                    confirmation: at(n, "confirmation"), style: at(n, "style"), urlNoparam: at(n, "url-noparam") === "true",
+                    load: at(n, "dynamic-load-id"), target: at(n, "target-window"), btnType: at(n, "btn-type"),
+                    // a btn-type with ${ can differ by row, so it is expanded each time
+                    btn: at(n, "btn-type").indexOf("${") >= 0 ? undefined : btnAttr(n)
+                };
+                links.set(n, l);
+            }
+            return l;
+        };
+
+        // The link text and URL of a link element, or null when the link shows nothing; whether the link is disabled is asked
+        // once, for the element and its form.
         const linkParts = (n) => {
-            if (at(n, "condition") && !cond(at(n, "condition"))) return null;
+            const l = linkOf(n);
+            if (l.condition && !cond(l.condition)) return null;
             let text;
-            if (at(n, "entity-name")) text = sri.getFieldEntityValue(n);
+            if (l.entityName) text = sri.getFieldEntityValue(n);
             else {
-                const map = at(n, "text-map") ? ec.resource.expression(at(n, "text-map"), "") : null;
-                text = map ? ec.resource.expand(at(n, "text"), "", map) : ec.resource.expand(at(n, "text"), "");
+                const map = l.textMap ? ec.resource.expression(l.textMap, "") : null;
+                text = map ? ec.resource.expand(l.text, "", map) : xc(l.text);
             }
             if (text === "null" || text === null || text === undefined) text = "";
-            const img = first(n, "image");
-            if (!(text || img || at(n, "icon"))) return null;
-            if (at(n, "encode") !== "false") text = e(text);
-            let url = sri.makeUrlByType(at(n, "url"), at(n, "url-type") || "transition", n, at(n, "expand-transition-url") || "true");
-            if (at(n, "pass-through-parameters") === "true") url = url.addParameters(sri.getScreenUrlInstance().getPassThroughParameterMap());
-            return { text, url, img, anchor: sri.isAnchorLink(n, url) };
+            const img = l.image;
+            if (!(text || img || l.icon)) return null;
+            if (l.encode) text = e(text);
+            let url = sri.makeUrlByType(l.url, l.urlType, n, l.expand);
+            if (l.passThrough) url = url.addParameters(sri.getScreenUrlInstance().getPassThroughParameterMap());
+            return { text, url, img, anchor: sri.isAnchorLink(n, url), disabled: url.getDisableLink() };
         };
 
         const linkContent = (n, text, img) => {
-            let iconClass = at(n, "icon");
-            if (!iconClass && at(n, "text")) iconClass = sri.getThemeIconClass(at(n, "text")) || "";
+            const l = linkOf(n);
+            let iconClass = l.icon;
+            if (!iconClass && l.text) iconClass = themeIcon(l.text);
             iconClass = xn(iconClass);
-            const badge = x(at(n, "badge"));
+            const badge = xc(l.badge);
             return icon(iconClass) + (img ? imageTag(img) : text) + (badge ? ' <span class="badge">' + e(badge) + "</span>" : "");
         };
 
@@ -672,31 +725,32 @@
 
         // The element that follows the link: an anchor, or for a transition with actions a button for its form.
         const linkElement = (n, parts, formId) => {
+            const l = linkOf(n);
             const body = linkContent(n, parts.text, parts.img);
-            const tooltip = at(n, "tooltip") ? x(at(n, "tooltip")) : null;
-            const confirmation = x(at(n, "confirmation"));
-            const style = xn(at(n, "style")) || null;
-            if (parts.url.getDisableLink()) {
-                return "<a" + A({ href: "#", id: formId || null, class: cls("disabled", style), "data-btn": btnAttr(n), "aria-disabled": "true" }) + ">" + body + "</a>";
+            const tooltip = l.tooltip ? xc(l.tooltip) : null;
+            const confirmation = xc(l.confirmation);
+            const style = xn(l.style) || null;
+            if (parts.disabled) {
+                return "<a" + A({ href: "#", id: formId || null, class: cls("disabled", style), "data-btn": l.btn === undefined ? btnAttr(n) : l.btn, "aria-disabled": "true" }) + ">" + body + "</a>";
             }
             if (parts.anchor) {
-                let href = at(n, "url-noparam") === "true" ? parts.url.url : parts.url.getUrlWithParams();
-                const load = at(n, "dynamic-load-id");
+                const href = l.urlNoparam ? parts.url.url : parts.url.getUrlWithParams();
+                const load = l.load;
                 return "<a" + A({
-                    href: load ? parts.url.getUrlWithParams() : href, id: formId || null, target: at(n, "target-window") || null,
-                    "data-confirm": confirmation || null, class: style, "data-btn": btnAttr(n), title: tooltip, "data-load-into": load || null
+                    href: load ? parts.url.getUrlWithParams() : href, id: formId || null, target: l.target || null,
+                    "data-confirm": confirmation || null, class: style, "data-btn": l.btn === undefined ? btnAttr(n) : l.btn, title: tooltip, "data-load-into": load || null
                 }) + ">" + body + "</a>";
             }
             if (!formId) return "";
             return "<button" + A({
-                type: "submit", form: formId, id: formId + "_button", "data-btn": xn(at(n, "btn-type")) || "primary", class: style,
+                type: "submit", form: formId, id: formId + "_button", "data-btn": xn(l.btnType) || "primary", class: style,
                 "data-confirm": confirmation || null, title: tooltip
             }) + ">" + body + "</button>";
         };
 
         // The form a transition link posts. With a form id it holds only the hidden fields and a button elsewhere points to it.
         const linkForm = (n, parts, formId) => {
-            if (parts.url.getDisableLink() || parts.anchor) return "";
+            if (parts.disabled || parts.anchor) return "";
             const params = parts.url.getParameterMap();
             // the background-* attributes of a form-single; any of them posts the link in the background
             const reload = at(n, "background-reload-id") || null;
@@ -1323,11 +1377,15 @@
 
             // The row forms sit outside the table and the inputs of a row point to its form.
             if (!(multi || skipForm) && info.count > 0) {
+                // the inputs every row's form has, written once (the token and the list's hidden parameters do not change)
+                const rowInputs = hiddenInput("moquiSessionToken", token()) + hiddenInputs();
+                const rowAction = a1("method", "post") + a1("action", listUrl.url) + ">" + rowInputs;
                 for (let i = 0; i < info.count; i++) {
                     sri.startFormListRow(info, i);
                     try {
                         st.entry = String(i);
-                        w("<form" + A({ name: formId + "_" + i, id: formId + "_" + i, method: "post", action: listUrl.url }) + ">" + hiddenInput("moquiSessionToken", token()) + hiddenInputs());
+                        // as A writes name, id, method and action
+                        w("<form" + a1("name", formId + "_" + i) + a1("id", formId + "_" + i) + rowAction);
                         hiddenRows(cfg.hiddenCells);
                         w("</form>\n");
                         st.entry = "";
@@ -1442,11 +1500,14 @@
                     st.entry = String(i);
                     if (!(multi || skipForm)) st.owner = formId + "_" + i;
                     w("<tr" + a1("data-total", ec.context.get("_moquiRowType") === "total" ? "" : null) + a1("data-level", tree ? String(tree.depth[i] + 1) : null) + ">");
-                    visible.forEach((col, c) => {
+                    // indexed loops: each forEach callback is a call in the interpreter, for every cell of every row
+                    const mode = multi ? 1 : 0;
+                    for (let c = 0; c < visible.length; c++) {
+                        const col = visible[c];
                         w(tree && c === 0 && tree.depth[i] ? '<td style="padding-left:' + (tree.depth[i] * 20 + 4) + 'px">' : "<td>");
-                        col.forEach((f) => f.cell(multi ? 1 : 0));
+                        for (let k = 0; k < col.length; k++) col[k].cell(mode);
                         w("</td>");
-                    });
+                    }
                     w("</tr>\n");
                     const subRows = subCols.length ? sri.formListSubRowCount(info, i) : 0;
                     if (subRows) {

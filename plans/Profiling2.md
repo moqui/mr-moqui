@@ -94,6 +94,8 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
   - The bench repository's `rounds/r53/`: `screen_bench.py` times screens over HTTP as john.doe (3 × 100, single
     threaded, `perf stat` of the server's instructions), `table.py` compares runs, `compare_bodies.py` diffs the
     outputs, `profile_table.py` sums a render profile, and `inclusive.py` gives inclusive shares from `perf script`.
+  - `MOQUI_UNIT_DUMP=<dir>` writes each screen unit's generated source when it is made, named by screen and section, and
+    each mode runtime as `runtime-<id>.js`: what a render runs, to read beside the macros.
   - The screen tarpit (`AT_XML_SCREEN`, 120 hits a minute in the demo data) answers a loop with error pages: turn it
     off in the conf for a timing (`<artifact-execution type="AT_XML_SCREEN" tarpit-enabled="false"/>`).
   - A round's changes go behind a temporary `MOQUI_OXIDE_OFF` switch, so one release build measures each
@@ -399,15 +401,17 @@ over HTTP on the release server, splits each render by phase, and takes the larg
 parameters for long runs: Entities (`pageSize=3000`, 1,482 rows, three links a row), Cache List, Cache Elements of
 `l10n.message` (330 rows), Artifact Stats (`levels=3`) and the System dashboard, each in html, qvt and tui.
 
-Medians of the third round and `perf stat` instructions a request (bench `rounds/r53`, `work/r53/{base,c2}.log`):
+Medians of the third round and `perf stat` instructions a request, base against the end of the round (bench
+`rounds/r53`, `work/r53/{base,m1}.log`). Wall times of the small pages moved up to 20% between builds with their
+instructions flat or lower (the code placement of R52); read the instruction ratios:
 
 | Screen | html ms | qvt ms | tui ms | html Mi ÷ | qvt Mi ÷ | tui Mi ÷ |
 |---|---:|---:|---:|---:|---:|---:|
-| Entities, 1,482 rows | 196 → 135 | 263 → 202 | 287 → 83 | 0.74 | 0.81 | 0.27 |
-| Cache List | 12.0 → 10.4 | 13.0 → 11.5 | 11.6 → 4.9 | 0.89 | 0.90 | 0.36 |
-| Cache Elements, 330 rows | 23.6 → 20.6 | 28.6 → 25.4 | 27.9 → 9.8 | 0.89 | 0.92 | 0.32 |
-| Artifact Stats | 160 → 156 | 179 → 173 | 176 → 143 | 0.98 | 0.98 | 0.80 |
-| Dashboard | 6.7 → 6.4 | 5.3 → 5.1 | 7.4 → 4.3 | 0.95 | 0.96 | 0.45 |
+| Entities, 1,482 rows | 196 → 112 | 263 → 176 | 287 → 90 | 0.58 | 0.68 | 0.27 |
+| Cache List | 12.0 → 11.1 | 13.0 → 11.7 | 11.6 → 5.5 | 0.82 | 0.85 | 0.36 |
+| Cache Elements, 330 rows | 23.6 → 21.1 | 28.6 → 25.5 | 27.9 → 11.0 | 0.84 | 0.87 | 0.33 |
+| Artifact Stats | 160 → 163 | 179 → 181 | 176 → 152 | 0.97 | 0.97 | 0.80 |
+| Dashboard | 6.7 → 7.9 | 5.3 → 5.8 | 7.4 → 5.0 | 0.92 | 0.91 | 0.46 |
 
 Outputs are the same as before, live values (memory, hit counts, times) aside.
 
@@ -440,14 +444,28 @@ script.
 
 js_speed runs with authorization off, so its links gain less than a signed-in user's.
 
+**The macro pass** (`MOQUI_UNIT_DUMP` to read the units). A list cell's unit code is thin (push a context, call the
+runtime's `display` or `link`, pop); the time is in the runtime functions. What came out, Entities instructions a
+request against the first changes (`work/r53/m1.log`): html 1831 → 1438 M (×0.79), qvt 2617 → 2203 M (×0.84); in all,
+against the base, html ×0.58, qvt ×0.68, tui ×0.27, outputs the same.
+- **A link's attributes once for each element** (`linkOf`, as R12's `displayOf`), its disabled check once a link (html
+  asked twice), and per render the texts with no `${` (link text, badge, tooltip, confirmation; `xc`) and the theme's
+  icon for a text, kept with the unit stack so a render inside a unit keeps its own (html and qvt).
+- **qvt's row values** (`fields-initial`): a widget's attributes once (`valueWidgetOf`), the link text per render, the
+  plain value split only for the kinds that read its parts, and `fieldValues`, `jsAttr` and the cell loop on indexed
+  loops. A probe with the row values left out put them at 312 M instructions of 2366 (13%) and their writing at 107 M.
+- **html's row forms:** the token and hidden inputs every row's form has, made once a list.
+- **In this engine** a `for...of` step makes an iterator result object and a `forEach` or `map` callback is a call;
+  indexed loops in the per-row code are cheaper (the tui `$clean` loop was the extreme case).
+
 **Fancy templates** are compiled in Rust (`script/template.rs`: the tags, `${}` and the generated function, cached by
 text) and `${}` in an expand is a template literal compiled once by its hash; nothing parses template text in script
 on a render. `sri.renderText` was 0.6 ms of Cache Elements (four templates) and 0.2 ms of the dashboard.
 
 **What is left** (Entities html after the changes, 171 ms with the profile on):
-- **The macros' own code:** units are 50% in html, 61% in qvt and 49% in tui. qvt costs 1.4 to 1.8 times html for the
-  same rows. The interpreter has no function names in a profile, so the next step is to read the generated units of
-  Entities and time the macro functions a cell calls.
+- **The macros' own code:** after the macro pass units are 43% of html (59 ms with the profile on), 58% of qvt (115
+  ms) and 44% of tui. The interpreter has no function names in a profile: a sampling profiler in the fork (the current
+  function and line at the interrupt poll) would show which macro functions to take next.
 - **`makeUrlByType` at 4 µs a link** (9% of html, 15% of tui): the `parameter-map` evaluated as a nested script (3.7%)
   and the URL's parameters built from the screen and transition definitions (3.2%). The macro could pass the map it
   already has in script.
@@ -658,6 +676,8 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
 | `ROPE_MIN` 128 or 256 (from 64) | neutral to worse on every row: concatenations +0.7%/+2.1%, qvt rows +0.9%/+1.1% | R50 |
 | zipp's regex engine, WTF-8 strings, its object layout, a thread that frees large payloads, a `"prefix"+int` cache | listed as not taken | Zipp §4 |
 | Java's `knownLocked` shortcut; Java's stale view reads | not kept, by design | TX D4, TX §How it works today |
+| `UrlInstance` getters and `sri.isAnchorLink` as leaves (no lend) | instructions flat on every screen (×0.998 to ×1.011) | R53 |
+| A link's `parameter-map` evaluated in the unit and passed to `makeUrlByType` | flat (×0.993 to ×1.003): the nested script costs what the inline code does | R53 |
 
 ## 7. Behaviour changes to know
 
