@@ -161,13 +161,7 @@ impl Session {
 
     pub(super) fn dropdown_key(&mut self, mut drop: DropDown, press: &KeyPress) {
         let choices = self.drop_choices(&drop.field, &drop.filter);
-        let check_group =
-            matches!(self.field_widget(&drop.field), Some(Widget::Check { options, .. }) if options.len() > 1);
-        let multiple = check_group
-            || matches!(
-                self.field_widget(&drop.field),
-                Some(Widget::DropDown { multiple: true, .. })
-            );
+        let multiple = self.is_multi_choice(&drop.field);
         let combo = matches!(
             self.field_widget(&drop.field),
             Some(Widget::DropDown { combo: true, .. })

@@ -51,7 +51,8 @@ base64 = "0.23"
 # The PDF engine's timeout on the app's runtime (src/pdf.rs), the same Tokio as Tauri's.
 tokio = { version = "1", features = ["time"] }
 tauri = { version = "=3.0.0-alpha.5", features = ["unstable", "tray-icon"] }
-# Tauri alpha5 and CEF alpha6 need dispatcher callbacks removed by tauri-runtime alpha5.
+# tauri-runtime alpha.5 removed dispatcher callbacks that tauri alpha.5 still calls (and CEF alpha.6 implements); a fresh
+# resolve picks it, so keep alpha.4 here until tauri moves past alpha.5.
 tauri-runtime = "=3.0.0-alpha.4"
 # Native notifications for the page bridge (src/bridge.rs), with clicks; notify-rust under it on desktop.
 tauri-plugin-notification = "=3.0.0-alpha.3"

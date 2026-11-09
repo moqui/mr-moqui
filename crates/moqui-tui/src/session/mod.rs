@@ -853,6 +853,16 @@ impl Session {
         self.index.fields.get(node).map(|field| &field.widget)
     }
 
+    /// Whether a choice field holds several values: a check group (more than one option) or a multiple drop-down. Its picker
+    /// toggles with Space and closes with Enter, and its buffer is the values separated by commas.
+    pub fn is_multi_choice(&self, id: &str) -> bool {
+        match self.field_widget(id) {
+            Some(Widget::Check { options, .. }) => options.len() > 1,
+            Some(Widget::DropDown { multiple, .. }) => *multiple,
+            _ => false,
+        }
+    }
+
     /// An `editor-type="md"` text area: its source is drawn styled, and Alt+B, Alt+I and Alt+K wrap the word at the cursor.
     pub fn markdown_field(&self, id: &str) -> bool {
         matches!(self.field_widget(id), Some(Widget::TextArea { editor_type, .. }) if editor_type == "md")

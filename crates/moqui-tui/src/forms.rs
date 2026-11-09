@@ -1021,10 +1021,17 @@ fn initial_parts(id: &str, widget: &Widget) -> Vec<(String, String)> {
 /// List-valued choices arrive as JSON text; the picker and painter share comma-separated edit buffers.
 /// Scalar Y/N and existing comma-separated values retain their representation.
 fn choice_buffer(value: &str) -> String {
-    let values: Result<Vec<String>, _> = serde_json::from_str(value);
-    values
-        .map(|values| values.join(","))
-        .unwrap_or_else(|_| value.to_string())
+    match serde_json::from_str::<Vec<serde_json::Value>>(value) {
+        Ok(values) => values
+            .iter()
+            .map(|value| match value {
+                serde_json::Value::String(text) => text.clone(),
+                other => other.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        Err(_) => value.to_string(),
+    }
 }
 
 /// The request parameters of one field, from its buffers.
@@ -1329,6 +1336,15 @@ mod tests {
         assert_eq!(row_suffix("orgId_3a"), "");
         assert_eq!(row_suffix("orgId"), "");
         assert_eq!(row_suffix("名前_7"), "_7");
+    }
+
+    #[test]
+    fn a_json_list_of_choices_is_a_comma_buffer() {
+        assert_eq!(choice_buffer(r#"["1","2","3"]"#), "1,2,3");
+        assert_eq!(choice_buffer("[1,2,3]"), "1,2,3");
+        assert_eq!(choice_buffer("[]"), "");
+        assert_eq!(choice_buffer("Y"), "Y");
+        assert_eq!(choice_buffer("1,2"), "1,2");
     }
 
     #[test]

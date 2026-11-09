@@ -59,7 +59,6 @@ pub const PAGE_SUFFIXES: [&str; 6] = [
     "PageRangeHigh",
 ];
 
-#[path = "statics_prepare.rs"]
 mod prepare;
 use prepare::prepare_screen;
 

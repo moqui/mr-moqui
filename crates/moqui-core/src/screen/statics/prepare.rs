@@ -18,11 +18,16 @@ use moqui_lib::node::MNode;
 use moqui_lib::object::{is_empty, Value};
 
 use super::{disable_key, disabled, editable_options, lit_of, MAX_WALK_DEPTH};
+
 use crate::context::Error;
 use crate::screen::definition::{Condition, ScreenDef, SectionDef, SectionKind};
 use crate::screen::render::{check_condition, RenderState};
 use crate::screen::sri;
 use crate::script::{self, ContextFrame};
+
+/// The request-specific names a section-iterate entry keeps in its own scope: control availability (disable_key and its
+/// plain twin), options (option_key, editable_options) and nested section-iterate scopes.
+const ENTRY_SCOPE_PREFIXES: [&str; 4] = ["mqDisable_", "mqOpt_", "mqPlain_", "mqSection_"];
 
 /// Run the data preparation of a screen as the render does, without writing anything: the root actions, then the actions of
 /// the sections the render reaches. A section-iterate runs its actions for each entry, and the list is kept as those actions left it.
@@ -137,12 +142,7 @@ fn prepare_section(state: &RenderState, owner: &ScreenDef, section: &SectionDef,
                 // These request-specific values belong to this iteration, not the cached template or another entry.
                 let extras = script::top_context_entries()
                     .into_iter()
-                    .filter(|(name, _)| {
-                        name.starts_with("mqDisable_")
-                            || name.starts_with("mqOpt_")
-                            || name.starts_with("mqPlain_")
-                            || name.starts_with("mqSection_")
-                    })
+                    .filter(|(name, _)| ENTRY_SCOPE_PREFIXES.iter().any(|prefix| name.starts_with(prefix)))
                     .collect();
                 Ok((script::context_value(entry).unwrap_or(item), Value::Map(extras)))
             })();

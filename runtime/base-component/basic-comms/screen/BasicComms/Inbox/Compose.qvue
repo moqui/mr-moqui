@@ -318,7 +318,7 @@ module.exports = {
             if (this.dirty) return t('Unsaved changes');
             if (this.mode === 'internal') return this.dirty ? '' : (this.savedAt ? t('Kept in this browser') : '');
             if (this.offlineDraft && this.savedAt) return t('Kept on this computer');
-            return this.savedAt ? t('Saved') + ' ' + moqui.l10n.formatTimestamp(this.savedAt, 'h:mm a') : '';
+            return this.savedAt ? t('Saved') + ' ' + moqui.l10n.formatZoned(this.savedAt, { hour: 'numeric', minute: '2-digit' }) : '';
         },
         shownBlocks() {
             const term = String(this.blockSearch || '').toLowerCase();

@@ -91,3 +91,31 @@ test("localize reads the catalog of the locale, drops a ## suffix, and returns t
     assert.equal(l10n.localize(""), "");
     l10n.setCatalog({});
 });
+
+test("formatZoned and the calendar day follow the user's language and zone, through daylight saving and an unknown zone", () => {
+    const priorLocale = l10n.locale, priorZone = l10n.timeZone;
+    const plain = (text) => String(text).replace(/[  ]/g, " ");
+    try {
+        l10n.setLocale("de_DE");
+        l10n.setTimeZone("Europe/Berlin");
+        const at = Date.parse("2026-11-08T22:30:00Z");
+        assert.equal(l10n.formatZoned(at, { hour: "numeric", minute: "2-digit" }), "23:30");
+        assert.ok(l10n.formatZoned(at, { dateStyle: "full" }).startsWith("Sonntag, 8. November 2026"));
+        l10n.setLocale("en_US");
+        assert.equal(plain(l10n.formatZoned(at, { hour: "numeric", minute: "2-digit" })), "11:30 PM");
+        assert.equal(l10n.dayKey(at), "2026-11-08");
+        l10n.setTimeZone("Asia/Tokyo");
+        assert.equal(l10n.dayKey(at), "2026-11-09", "the same instant is the next day in Tokyo");
+        // 2026-11-01 in New York has 25 hours: its last hour is still that day, one day after October 31.
+        l10n.setTimeZone("America/New_York");
+        assert.equal(l10n.dayNumber(Date.parse("2026-11-02T04:30:00Z")) - l10n.dayNumber(Date.parse("2026-10-31T16:00:00Z")), 1);
+        // 2026-03-08 has 23 hours: its first and last minutes are one calendar day.
+        assert.equal(l10n.dayNumber(Date.parse("2026-03-09T03:59:00Z")), l10n.dayNumber(Date.parse("2026-03-08T05:00:00Z")));
+        l10n.setTimeZone("Not/AZone");
+        const browser = new Date(at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+        assert.equal(plain(l10n.formatZoned(at, { hour: "numeric", minute: "2-digit" })), plain(browser), "an unknown zone is the browser's");
+    } finally {
+        l10n.setLocale(priorLocale);
+        l10n.setTimeZone(priorZone);
+    }
+});

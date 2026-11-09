@@ -299,20 +299,20 @@ fn dropdown(paint: &mut Painter, session: &Session, canvas: Rect) {
     };
     let choices = session.dropdown_choices();
     let current = session.buffer(&drop.field).to_string();
-    let check_group = matches!(session.field_widget(&drop.field),
-        Some(crate::model::Widget::Check { options, .. }) if options.len() > 1);
-    let multiple = check_group
-        || matches!(
-            session.field_widget(&drop.field),
-            Some(crate::model::Widget::DropDown { multiple: true, .. })
-        );
+    let multiple = session.is_multi_choice(&drop.field);
     let widest = choices
         .iter()
         .map(|choice| display_width(&choice.label))
         .max()
         .unwrap_or(10)
         .clamp(12, 50);
-    let width = u16::try_from(if multiple { (widest + 6).max(27) } else { widest + 4 }).unwrap_or(40);
+    // A multiple choice has a check mark column and a hint line, which sets its least width.
+    let width = u16::try_from(if multiple {
+        (widest + 6).max(display_width(MULTI_HINT) + 3)
+    } else {
+        widest + 4
+    })
+    .unwrap_or(40);
     let visible = choices.len().clamp(1, 10);
     let height =
         u16::try_from(visible + 2 + usize::from(!drop.filter.is_empty()) + usize::from(multiple)).unwrap_or(12);
@@ -381,12 +381,14 @@ fn dropdown(paint: &mut Painter, session: &Session, canvas: Rect) {
         paint.fixed(
             x + 1,
             y + height - 2,
-            "Space=Toggle  Enter=Done",
+            MULTI_HINT,
             Look::role(Role::Muted),
             usize::from(width - 2),
         );
     }
 }
+
+const MULTI_HINT: &str = "Space=Toggle  Enter=Done";
 
 /// A month grid at the field: arrows move a day or a week, PgUp and PgDn a month, Home today, Enter picks.
 fn date_picker(paint: &mut Painter, picker: &crate::session::Picker, canvas: Rect, spot: Option<(u16, u16)>) {

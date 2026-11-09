@@ -13,6 +13,8 @@
  *   moqui.l10n.formatCurrency(amount, uomId, fractionDigits)
  *   moqui.l10n.formatCurrencyNoSymbol(amount, uomId, fractionDigits)
  *   moqui.l10n.localize(original)                 from the catalog of the locale (loadCatalog), else the text itself
+ *   moqui.l10n.formatZoned(value, intlOptions)    a time stamp in the user's language and zone (Intl options, not a pattern)
+ *   moqui.l10n.dayKey(value), dayNumber(value)    its calendar day in the user's zone: yyyy-MM-dd, and a day count to compare
  */
 (function (root, factory) {
     "use strict";
@@ -409,6 +411,41 @@
     const formatTimestamp = (value, pattern, zone) =>
         formatFields(zonedFields(toInstant(value), zone || state.timeZone), pattern && pattern.length ? pattern : "yyyy-MM-dd HH:mm");
 
+    // ---- display in the user's zone and language ----
+
+    // The zone for display: the user's when one was set and the browser knows it, else the browser's own.
+    const validZones = {};
+    const browserZone = () => {
+        try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch (err) { return "UTC"; }
+    };
+    const displayZone = () => {
+        const zone = state.zoneSet ? state.timeZone : null;
+        if (!zone) return browserZone();
+        if (validZones[zone] === undefined) {
+            try { new Intl.DateTimeFormat("en-US", { timeZone: zone }); validZones[zone] = true; } catch (err) { validZones[zone] = false; }
+        }
+        return validZones[zone] ? zone : browserZone();
+    };
+    const intlFormatters = {};
+    // A time stamp as Intl.DateTimeFormat words it in the user's language and zone: the options are Intl's (a weekday, a month,
+    // dateStyle, timeStyle, hour and minute), so month names and the 12 or 24 hour clock follow the language, not a pattern.
+    const formatZoned = (value, options) => {
+        const locale = String(state.locale || "en_US").replace(/_/g, "-");
+        const zone = displayZone();
+        const key = locale + "|" + zone + "|" + JSON.stringify(options || {});
+        let formatter = intlFormatters[key];
+        if (!formatter) {
+            try { formatter = new Intl.DateTimeFormat(locale, Object.assign({}, options, { timeZone: zone })); }
+            catch (err) { formatter = new Intl.DateTimeFormat(undefined, Object.assign({}, options, { timeZone: zone })); }
+            intlFormatters[key] = formatter;
+        }
+        return formatter.format(toInstant(value));
+    };
+    // The calendar day of a time stamp in the display zone, as yyyy-MM-dd, and as a day number that counts calendar days
+    // (not 24 hour periods), so Today, Yesterday and day groups hold across a daylight saving change.
+    const dayKey = (value) => formatFields(zonedFields(toInstant(value), displayZone()), "yyyy-MM-dd");
+    const dayNumber = (value) => Date.parse(dayKey(value) + "T00:00:00Z") / 86400000;
+
     const formatDate = (value, pattern) => {
         const match = /^(\d{4})-(\d\d)-(\d\d)/.exec(String(value));
         if (!match) throw new Error("cannot format " + String(value) + " as a date");
@@ -513,9 +550,10 @@
 
     return {
         format, formatNumber, formatCurrency: formatCurrencyWith(false), formatCurrencyNoSymbol: formatCurrencyWith(true),
-        formatCurrencyAmount, formatTimestamp, formatDate, formatTime, isDatePattern, localize, loadCatalog, parseDecimal, roundHalfEven,
+        formatCurrencyAmount, formatTimestamp, formatDate, formatTime, formatZoned, dayKey, dayNumber, isDatePattern, localize, loadCatalog,
+        parseDecimal, roundHalfEven,
         setLocale: (locale) => { state.locale = String(locale || "en_US").replace("-", "_"); },
-        setTimeZone: (zone) => { state.timeZone = zone || "UTC"; },
+        setTimeZone: (zone) => { state.timeZone = zone || "UTC"; state.zoneSet = !!zone; },
         setCurrencies: (currencies) => { state.currencies = currencies || {}; },
         setCatalog: (catalog) => { state.catalog = catalog || {}; },
         get locale() { return state.locale; },

@@ -193,6 +193,8 @@ test("a message's edit, reaction and deletion wait in the app's outbox where the
     const chat=root.$refs.view, previousDark=Quasar.Dark.isActive, previousDraft=chat.drafts.R1;
     // The actual room and room-list helpers use the user's calendar day and clock, including DST boundaries.
     const priorZone=moqui.l10n.timeZone, priorLocale=moqui.l10n.locale, priorNow=Date.now;
+    // Intl may put a narrow no-break space before AM and PM.
+    const plain=text=>String(text).replace(/[\u202f\u00a0]/g,' ');
     try {
         moqui.l10n.setLocale('en_US');moqui.l10n.setTimeZone('America/Los_Angeles');
         Date.now=()=>Date.parse('2026-11-09T08:05:00Z');
@@ -200,14 +202,20 @@ test("a message's edit, reaction and deletion wait in the app's outbox where the
         const events=[message(1,'',{sentDate:beforeMidnight}),message(2,'',{type:'system',sentDate:afterMidnight,content:{action:'created'}})];
         const items=()=>vm.buildItems(events,{divider:false});
         assert.deepEqual(items().filter(item=>item.kind==='day').map(item=>item.label),['Yesterday','Today']);
-        assert.equal(items().find(item=>item.kind==='message').timeText,'11:55 PM');
-        assert.ok(items().find(item=>item.kind==='message').fullTime.startsWith('Sunday, November 8, 2026 11:55 PM'));
-        assert.equal(items().find(item=>item.kind==='system').time,'12:01 AM');
+        assert.equal(plain(items().find(item=>item.kind==='message').timeText),'11:55 PM');
+        const fullTime=plain(items().find(item=>item.kind==='message').fullTime);
+        assert.ok(fullTime.startsWith('Sunday, November 8, 2026') && fullTime.includes('11:55 PM'),fullTime);
+        assert.equal(plain(items().find(item=>item.kind==='system').time),'12:01 AM');
         assert.equal(chat.shortWhen(beforeMidnight),'Sun');
-        assert.equal(chat.shortWhen(afterMidnight),'12:01 AM');
+        assert.equal(plain(chat.shortWhen(afterMidnight)),'12:01 AM');
         moqui.l10n.setTimeZone('Europe/Berlin');
         assert.deepEqual(items().filter(item=>item.kind==='day').map(item=>item.label),['Today']);
-        assert.equal(chat.shortWhen(afterMidnight),'9:01 AM','the same instant follows the configured zone');
+        assert.equal(plain(chat.shortWhen(afterMidnight)),'9:01 AM','the same instant follows the configured zone');
+        // The user's language words the clock and the day: German has a 24-hour clock and German day names.
+        moqui.l10n.setLocale('de_DE');
+        assert.equal(chat.shortWhen(afterMidnight),'9:01');
+        assert.equal(chat.shortWhen(beforeMidnight - 2*86400000),'Sa','Saturday in Berlin');
+        moqui.l10n.setLocale('en_US');
         moqui.l10n.setTimeZone('America/Los_Angeles');
         Date.now=()=>Date.parse('2026-11-02T07:30:00Z');
         const priorDay=vm.buildItems([message(1,'',{sentDate:Date.parse('2026-10-31T20:00:00Z')})],{divider:false});
@@ -217,7 +225,7 @@ test("a message's edit, reaction and deletion wait in the app's outbox where the
         assert.equal(springDay[0].label,'Yesterday','yesterday also survives a 23-hour day');
         moqui.l10n.setTimeZone('Not/AZone');
         const browserClock=new Date(Date.now()).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
-        assert.equal(chat.shortWhen(Date.now()),browserClock,'an invalid zone retains the browser fallback');
+        assert.equal(plain(chat.shortWhen(Date.now())),plain(browserClock),'an invalid zone retains the browser fallback');
     } finally {
         Date.now=priorNow;moqui.l10n.setLocale(priorLocale);moqui.l10n.setTimeZone(priorZone);
     }
@@ -517,20 +525,25 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
     const inbox = root.$refs.view;
     // The same instant follows the signed-in user's zone, including the local-day label, rather than the browser's.
     const priorZone = moqui.l10n.timeZone, priorLocale = moqui.l10n.locale, priorNow = Date.now;
+    // Intl may put a narrow no-break space before AM and PM.
+    const plain = (text) => String(text).replace(/[\u202f\u00a0]/g, " ");
     try {
         Date.now = () => Date.parse("2026-11-09T00:30:00Z");
         moqui.l10n.setLocale("en_US");
         const messageAt = Date.parse("2026-11-08T12:00:00Z");
         const groupsFor = (dates) => inbox.$options.computed.groups.call({ threads: dates.map(date => ({ sortDate: Date.parse(date) })) });
         moqui.l10n.setTimeZone("America/New_York");
-        assert.equal(inbox.shortDate(messageAt), "7:00 AM", "the message is today in the user's zone");
-        assert.ok(inbox.fullDate(messageAt).startsWith("Sun, Nov 8, 7:00 AM"), "the header agrees with the server's reply quote");
-        assert.ok(inbox.longDate(messageAt).includes("7:00 AM"), "message details use the same zone");
+        assert.equal(plain(inbox.shortDate(messageAt)), "7:00 AM", "the message is today in the user's zone");
+        assert.ok(plain(inbox.fullDate(messageAt)).startsWith("Sun, Nov 8, 7:00 AM"), "the header agrees with the server's reply quote");
+        assert.ok(plain(inbox.longDate(messageAt)).includes("7:00 AM"), "message details use the same zone");
         assert.equal(groupsFor(["2026-11-08T12:00:00Z"])[0].key, "today", "the list group uses the user's current day too");
         moqui.l10n.setTimeZone("Europe/Berlin");
         assert.equal(inbox.shortDate(messageAt), "Nov 8", "the same instant is yesterday in Berlin");
-        assert.ok(inbox.fullDate(messageAt).startsWith("Sun, Nov 8, 1:00 PM"), "the browser zone cannot pin the header's time");
-        assert.ok(inbox.longDate(messageAt).includes("1:00 PM"));
+        assert.ok(plain(inbox.fullDate(messageAt)).startsWith("Sun, Nov 8, 1:00 PM"), "the browser zone cannot pin the header's time");
+        assert.ok(plain(inbox.longDate(messageAt)).includes("1:00 PM"));
+        moqui.l10n.setLocale("de_DE");
+        assert.equal(inbox.longDate(messageAt).includes("13:00") && inbox.longDate(messageAt).startsWith("Sonntag"), true, inbox.longDate(messageAt));
+        moqui.l10n.setLocale("en_US");
         const groups = groupsFor(["2026-11-09T00:15:00Z", "2026-11-08T12:00:00Z", "2026-11-03T12:00:00Z", "2026-11-02T12:00:00Z", "2026-10-31T12:00:00Z"]);
         assert.equal(groups.map(group => group.key).join(","), "today,yesterday,week,month,m2026-10", "local-day grouping preserves the six-day and month boundaries");
         assert.equal(groups[4].label, "October 2026");
@@ -821,9 +834,9 @@ test("Compose keeps unsaved changes open without an identity or after storage fa
             moqui.l10n.setLocale("en_US");
             const saved = {savedAt: Date.parse("2026-11-09T05:26:00Z"), mode: "email"};
             moqui.l10n.setTimeZone("America/New_York");
-            assert.equal(compose.$options.computed.savedText.call(saved), "Saved 12:26 AM", "the saved status uses the signed-in user's zone");
+            assert.equal(compose.$options.computed.savedText.call(saved).replace(/[\u202f\u00a0]/g, " "), "Saved 12:26 AM", "the saved status uses the signed-in user's zone");
             moqui.l10n.setTimeZone("Europe/Berlin");
-            assert.equal(compose.$options.computed.savedText.call(saved), "Saved 6:26 AM", "the browser zone cannot pin the saved status");
+            assert.equal(compose.$options.computed.savedText.call(saved).replace(/[\u202f\u00a0]/g, " "), "Saved 6:26 AM", "the browser zone cannot pin the saved status");
         } finally {
             moqui.l10n.setLocale(priorLocale);
             moqui.l10n.setTimeZone(priorZone);

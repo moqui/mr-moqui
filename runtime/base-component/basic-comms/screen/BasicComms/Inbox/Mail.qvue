@@ -1052,24 +1052,23 @@ module.exports = {
             return String(this.params.q || '').replace(/-?[a-z_]+:("[^"]*"|\([^)]*\)|\S+)/gi, ' ').replace(/\s+/g, ' ').trim();
         },
         groups() {
+            // Calendar days in the user's zone, without assuming every local day lasts 24 hours.
             const l10n = moqui.l10n;
-            const today = l10n.formatTimestamp(Date.now(), 'yyyy-MM-dd');
-            // Compare calendar days in the user's zone, without assuming every local day lasts 24 hours.
-            const dayNumber = (date) => Date.parse(date + 'T00:00:00Z') / DAY;
-            const startToday = dayNumber(today);
+            const today = l10n.dayKey(Date.now());
+            const startToday = l10n.dayNumber(Date.now());
             const startWeek = startToday - 6;
-            const startMonth = dayNumber(today.slice(0, 7) + '-01');
+            const startMonth = Date.parse(today.slice(0, 7) + '-01T00:00:00Z') / DAY;
             const out = [];
             let current = null;
             this.threads.forEach((row) => {
                 const at = Number(row.sortDate) || 0;
-                const date = l10n.formatTimestamp(at, 'yyyy-MM-dd'), day = dayNumber(date);
+                const date = l10n.dayKey(at), day = l10n.dayNumber(at);
                 let key, label;
                 if (day >= startToday) { key = 'today'; label = t('Today'); }
                 else if (day >= startToday - 1) { key = 'yesterday'; label = t('Yesterday'); }
                 else if (day >= startWeek) { key = 'week'; label = t('This week'); }
                 else if (day >= startMonth) { key = 'month'; label = t('Earlier this month'); }
-                else { key = 'm' + date.slice(0, 7); label = l10n.formatTimestamp(at, 'MMMM yyyy'); }
+                else { key = 'm' + date.slice(0, 7); label = l10n.formatZoned(at, { month: 'long', year: 'numeric' }); }
                 if (!current || current.key !== key) { current = { key, label, rows: [] }; out.push(current); }
                 current.rows.push(row);
             });
@@ -2548,9 +2547,10 @@ module.exports = {
             if (!millis) return '';
             // Use the signed-in user's zone, as the server does for reply quotations.
             const at = Number(millis), now = Date.now(), l10n = moqui.l10n;
-            if (l10n.formatTimestamp(at, 'yyyy-MM-dd') === l10n.formatTimestamp(now, 'yyyy-MM-dd')) return l10n.formatTimestamp(at, 'h:mm a');
-            if (l10n.formatTimestamp(at, 'yyyy') === l10n.formatTimestamp(now, 'yyyy')) return l10n.formatTimestamp(at, 'MMM d');
-            return l10n.formatTimestamp(at, 'MMM d, yyyy');
+            const day = l10n.dayKey(at), today = l10n.dayKey(now);
+            if (day === today) return l10n.formatZoned(at, { hour: 'numeric', minute: '2-digit' });
+            if (day.slice(0, 4) === today.slice(0, 4)) return l10n.formatZoned(at, { month: 'short', day: 'numeric' });
+            return l10n.formatZoned(at, { year: 'numeric', month: 'short', day: 'numeric' });
         },
         fullDate(millis) {
             if (!millis) return '';
@@ -2559,10 +2559,10 @@ module.exports = {
             let ago = '';
             if (minutes >= 0 && minutes < 60) ago = minutes <= 1 ? t('just now') : minutes + ' ' + t('min ago');
             else if (minutes >= 60 && minutes < 24 * 60) ago = Math.round(minutes / 60) + ' ' + t('h ago');
-            const text = moqui.l10n.formatTimestamp(d, 'EEE, MMM d, h:mm a');
+            const text = moqui.l10n.formatZoned(d, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
             return ago ? text + ' (' + ago + ')' : text;
         },
-        longDate(millis) { return millis ? moqui.l10n.formatTimestamp(Number(millis), 'EEEE, MMMM d, yyyy h:mm a') : ''; }
+        longDate(millis) { return millis ? moqui.l10n.formatZoned(Number(millis), { dateStyle: 'full', timeStyle: 'short' }) : ''; }
     },
     mounted() {
         this.restoreDocks();

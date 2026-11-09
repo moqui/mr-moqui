@@ -172,6 +172,9 @@ along with this software (see the LICENSE.md file). If not, see
         memberRows = Array.from(detail.memberList || [])
         showSetupDone = setup === 'done'
         deliveredHere = account.deliveredHere === true
+        deliveredHereText = account.hasServer
+            ? L('The mail gateway delivers mail for this address. There is no incoming mailbox to sync; the outgoing server sends mail.')
+            : L('The mail gateway delivers mail for this address. There is no mail server and no password.')
         setupDoneSyncText = account.problemText || (!account.hasIncomingServer
             ? L('The account is ready. Open the Inbox to read its mail.')
             : account.lastSyncText ? L('Your mail is ready in the Inbox. New mail appears as the account syncs.')
@@ -411,7 +414,7 @@ along with this software (see the LICENSE.md file). If not, see
 
                     <section name="DeliveredHere" condition="canManage &amp;&amp; deliveredHere"><widgets>
                         <container-box><box-header title="How mail arrives"/><box-body>
-                            <label type="p" text="${account.hasServer ? 'The mail gateway delivers mail for this address. There is no incoming mailbox to sync; the outgoing server sends mail.' : 'The mail gateway delivers mail for this address. There is no mail server and no password.'}"/>
+                            <label type="p" text="${deliveredHereText}"/>
                             <label type="p" text="A tag after a plus sign still arrives here: sales+news@example.com goes to sales@example.com." style="m-muted q-mb-none"/>
                         </box-body></container-box>
                     </widgets></section>
