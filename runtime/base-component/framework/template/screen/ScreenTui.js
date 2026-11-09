@@ -714,6 +714,12 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
     };
     // One widget of a list cell: a text, a link, or a field node (an editable; an input or a button of a row form).
     const cellPiece = (field, sub, widget, list) => {
+        if (widget.name === "render-mode") {
+            const chosen = S.chooseRenderModeText(widget, "tui");
+            // Only an authored terminal representation belongs in a cell; browser markup is not a cell value.
+            if (!chosen || !typeNames(attr(chosen, "type")).includes("tui")) return '""';
+            return `(() => {\n${tuiText(chosen, true)}})()`;
+        }
         if (widget.name === "editable") return fieldObject(field, sub, widget, rowFieldOpts(field, false)) || '""';
         // A container-dialog of a row (an Edit per row): the dialog node its statements write, with the row's values,
         // its id made the row's; the client offers it on F10 and Enter.
@@ -1280,7 +1286,7 @@ ${actionDialogs ? "        " + ifSelOn(actionDialogs) : ""}    } finally {
     };
     // A tui text is one node or an array of nodes. Text that is not JSON, or JSON of another shape, becomes an
     // error node naming the screen and the text, and the rest of the page is kept.
-    const tuiText = (node) => {
+    const tuiText = (node, cell = false) => {
         if (!attr(node, "location") && !(node.text || "").trim()) return "";
         const where = `String((sri.getActiveScreenDef() && sri.getActiveScreenDef().location) || "") + " " + ${jsString(attr(node, "location") || "inline")}`;
         return `{
@@ -1316,9 +1322,20 @@ ${actionDialogs ? "        " + ifSelOn(actionDialogs) : ""}    } finally {
     if ($problem) {
         const $text = ${where} + $problem;
         ec.logger.warn("tui text in " + $text);
-        $emit({t:"error",id:$uid(${jsString(idOf(node))}),text:$text});
+        ${cell ? `return [{t:"error",id:$uid(${jsString(idOf(node))}),text:$text}];` : `$emit({t:"error",id:$uid(${jsString(idOf(node))}),text:$text});`}
     } else {
-        $emit({t:"fragment",id:$uid(${jsString(idOf(node))}),c:$parsed});
+        ${cell ? `// Authored cells need the same document-wide identity guarantee as native row links.
+        const $cellIds = ($items, $path) => {
+            for (let $at = 0; $at < $items.length; $at++) {
+                const $item = $items[$at];
+                if (!$item || typeof $item !== "object" || Array.isArray($item)) continue;
+                const $nodePath = $path + "." + $at;
+                $item.id = $uid(String($item.id || $nodePath));
+                if (Array.isArray($item.c)) $cellIds($item.c, $nodePath);
+            }
+        };
+        $cellIds($parsed, ${jsString(idOf(node) + ".")} + $rowKey);
+        return $parsed;` : `$emit({t:"fragment",id:$uid(${jsString(idOf(node))}),c:$parsed});`}
     }
 }
 `;

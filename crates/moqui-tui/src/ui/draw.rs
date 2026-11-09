@@ -614,7 +614,11 @@ pub fn draw_piece(paint: &mut Painter, session: &Session, piece: &Piece, x: u16,
         }
         Piece::Row(placed) => {
             for item in placed {
-                draw_piece(paint, session, &item.piece, x + item.x, y);
+                let child_x = x.saturating_add(item.x);
+                let right = paint.right;
+                paint.right = right.min(child_x.saturating_add(item.w));
+                draw_piece(paint, session, &item.piece, child_x, y);
+                paint.right = right;
             }
         }
         Piece::Box(laid) => draw_box(paint, session, laid, x, y, piece.height()),

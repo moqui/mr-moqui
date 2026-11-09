@@ -91,10 +91,12 @@ fn reads_go_to_the_replica_and_fresh_reads_wait_or_use_the_primary() {
         std::thread::sleep(Duration::from_millis(50));
     }
     assert_eq!(ids(&eventual), vec!["N1"]);
+    // Initial schema replay may fall back; measure the fresh reads independently of that startup race.
+    let initial_fallbacks = backend.replica_status().unwrap().primary_fallbacks;
     // A fresh read right after a write sees it, by waiting for replay.
     backend.index_documents(&mapping, &[note("N2", "second")]).unwrap();
     assert_eq!(ids(&fresh(5000)), vec!["N1", "N2"]);
-    assert_eq!(backend.replica_status().unwrap().primary_fallbacks, 0);
+    assert_eq!(backend.replica_status().unwrap().primary_fallbacks, initial_fallbacks);
 
     // With replay paused, the replica stays behind: an eventual read misses the new document, and a
     // fresh read that cannot wait runs on the primary.
@@ -107,7 +109,7 @@ fn reads_go_to_the_replica_and_fresh_reads_wait_or_use_the_primary() {
         "the fresh read ran on the primary"
     );
     let status = backend.replica_status().unwrap();
-    assert_eq!(status.primary_fallbacks, 1);
+    assert_eq!(status.primary_fallbacks, initial_fallbacks + 1);
     assert!(status.lag_seconds.is_some(), "{status:?}");
     standby.sql("SELECT pg_wal_replay_resume()");
     let deadline = Instant::now() + Duration::from_secs(10);

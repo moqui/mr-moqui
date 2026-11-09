@@ -271,3 +271,14 @@ Further patterns established during the review:
   or losing the draft, selection or focus.
 - Reset links explicitly clear inherited filter parameters and pagination. Distinguish clearing all filters from
   changing one dimension, such as switching voicemail folders while retaining heard/unheard.
+- Authored terminal list cells keep their native text and actions. Give every emitted action a document-wide unique
+  ID, including empty or repeated authored IDs. Verify that two numbered rows open their own records; readable text
+  alone does not establish correct navigation. Clip each native column's text and mouse targets to its allocated pane,
+  even when a child list has a larger intrinsic width; restore the parent clip before painting the next column.
+- Reactive selections can wrap source objects. Guard asynchronous summaries with a stable record/occurrence key,
+  request generation and open state, including failures and repeated requests for the same occurrence.
+- A full-width row can leave a popup positioner no room on either side. Anchor at a useful point and constrain
+  contents to the actual menu width. Compare client and scroll widths, inspect complete actions, and retest the
+  phone dialog branch separately.
+- Send mutation context in the POST body while retaining read context in the URL. In shared mounts, keep the owning
+  record's identity separate from the action's target; preserve the framework write guard and service authorization.

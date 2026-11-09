@@ -21,8 +21,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use moqui_tui::{
-    gallery_link, AppView, FakeLink, Key, KeyPress, MenuItem, Role, ScreenLink, ScreenModel, Session, ShellInfo, Theme,
-    GALLERY_DETAIL_PATH, GALLERY_LIST_PATH,
+    gallery_link, AppView, FakeLink, Key, KeyPress, MenuItem, Role, ScreenLink, ScreenModel, Session, ShellInfo,
+    Target, Theme, GALLERY_DETAIL_PATH, GALLERY_LIST_PATH,
 };
 use revue::layout::Rect;
 use revue::render::{Buffer, Modifier};
@@ -141,6 +141,59 @@ fn a_painted_list_keeps_unicode_pages_and_caps_a_long_description() {
     let scrolled = view.screen_text(72, 24);
     assert!(scrolled.contains('◂'), "{scrolled}");
     assert!(scrolled.contains("ENUM_10"), "{scrolled}");
+}
+
+#[test]
+fn numbered_list_links_and_hit_targets_stay_inside_their_split_pane() {
+    let model = ScreenModel::from_json(
+        r#"{"v":1,"screen":{"path":"/split","title":"Split"},"c":[
+            {"t":"split","id":"Split","sideWidth":320,"c":[
+                {"t":"region","id":"side","name":"side","c":[
+                    {"t":"formList","id":"Links","name":"Links","rowSelection":{},
+                     "columns":[{"title":"Contact"}],"rows":[
+                        {"id":"a","cells":[{"t":"link","id":"a","text":"Alpha contact with a long description that must stay in its pane","url":"/a"}]},
+                        {"id":"b","cells":[{"t":"link","id":"b","text":"Beta contact with a long description that must stay in its pane","url":"/b"}]}
+                     ]}
+                ]},
+                {"t":"region","id":"main","name":"main","c":[
+                    {"t":"text","text":"RIGHT_PANE_IS_PRESERVED"}
+                ]}
+            ]}
+        ]}"#,
+    )
+    .unwrap();
+    let mut view = view_of(model, FakeLink::from_json(&[]).unwrap());
+    press(&mut view, Key::Char('#'));
+    assert!(view.session().numbering());
+    let mut buffer = Buffer::new(180, 40);
+    view.render(&mut RenderContext::new(&mut buffer, Rect::new(0, 0, 180, 40)));
+    let (main_x, main_y) = (0..40)
+        .find_map(|y| {
+            let line: String = (0..180).map(|x| buffer.get(x, y).unwrap().symbol).collect();
+            line.find("RIGHT_PANE_IS_PRESERVED")
+                .map(|at| (line[..at].chars().count() as u16, y))
+        })
+        .expect("the adjacent pane still paints after the side pane's clip is restored");
+    let side_edge = main_x - 1;
+    let side_x = side_edge - 40;
+    for (offset, numbered_name) in [(2, "[1]Alpha"), (3, "[2]Beta")] {
+        let y = main_y + offset;
+        let inside: String = (side_x..side_edge).map(|x| buffer.get(x, y).unwrap().symbol).collect();
+        assert!(inside.contains(numbered_name), "{inside}");
+        assert!(matches!(view.target_at(side_x + 6, y), Some(Target::RowLink { list, .. }) if list == "Links"));
+        for x in side_edge..main_x + 10 {
+            let cell = buffer.get(x, y).unwrap();
+            assert_eq!(cell.symbol, ' ', "list text crossed its pane at {x},{y}");
+            assert!(
+                !cell.modifier.contains(Modifier::UNDERLINE),
+                "link underline crossed its pane at {x},{y}"
+            );
+            assert!(
+                !matches!(view.target_at(x, y), Some(Target::RowLink { list, .. } | Target::ListRow { list, .. }) if list == "Links"),
+                "list hit target crossed its pane at {x},{y}"
+            );
+        }
+    }
 }
 
 #[test]

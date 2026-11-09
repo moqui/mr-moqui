@@ -45,7 +45,9 @@ fn document(output: &RenderOutput) -> Json {
 fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conversion() {
     let output = render(
         "mode-selection",
-        r#"<screen require-authentication="false"><widgets>
+        r#"<screen require-authentication="false"><actions><script><![CDATA[
+            rows = [{id: 'P&1', name: 'A "quoted" <&> 東京'}, {id: 'P2', name: 'Second'}]
+        ]]></script></actions><widgets>
         <render-mode>
             <text type="tui">{"t":"text","text":"first typed"}</text>
             <text type="csv, tui">{"t":"text","text":"last typed"}</text>
@@ -53,6 +55,25 @@ fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conver
         </render-mode>
         <render-mode><text>first fallback</text><text type="any">last fallback</text>
             <text type="qvt">unmatched</text></render-mode>
+        <form-list name="Modes" list="rows" skip-form="true" paginate="false">
+            <field name="name"><default-field><render-mode>
+                <text type="qvt">browser name only</text>
+                <text type="tui"><![CDATA[${JSON.stringify([{t:'text', text:name}, {t:'text', text:'Tail ' + id}])}]]></text>
+            </render-mode></default-field></field>
+            <field name="contact"><default-field><render-mode>
+                <text type="tui">{"t":"text","text":"unused cell match"}</text>
+                <text type="csv, tui"><![CDATA[${JSON.stringify([
+                    {t:'link', id:'', text:name, url:'/contact?partyId=' + encodeURIComponent(id)},
+                    {t:'link', id:'repeated', text:'More ' + name, url:'/more?partyId=' + encodeURIComponent(id)}
+                ])}]]></text>
+            </render-mode></default-field></field>
+            <field name="literal"><default-field><render-mode>
+                <text type="tui" template="false"><![CDATA[{"t":"text","text":"Literal ${name}"}]]></text>
+            </render-mode></default-field></field>
+            <field name="browser"><default-field><render-mode>
+                <text type="qvt">browser cell only</text>
+            </render-mode></default-field></field>
+        </form-list>
         </widgets></screen>"#,
         BTreeMap::new(),
     );
@@ -70,9 +91,56 @@ fn render_modes_choose_the_last_typed_match_before_fallbacks_and_keep_tui_conver
             .any(|node| node.get("t") == Some(&json!("html")) && json!(node).to_string().contains("last fallback")),
         "{doc}"
     );
-    for absent in ["first typed", "unused fallback", "first fallback", "unmatched"] {
+    for absent in [
+        "first typed",
+        "unused fallback",
+        "first fallback",
+        "unmatched",
+        "unused cell match",
+        "browser name only",
+        "browser cell only",
+    ] {
         assert!(!text.contains(absent), "{absent}: {doc}");
     }
+    let model = client_model(&output.body_text());
+    let list = client_nodes(&model)
+        .into_iter()
+        .find_map(|node| match node {
+            moqui_tui::Node::FormList { list } if list.name == "Modes" => Some(list),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(list.rows.len(), 2);
+    let index = moqui_tui::Index::of([&model]);
+    assert_eq!(index.links.len(), 4);
+    let mut link_ids = std::collections::BTreeSet::new();
+    for (row, name, url, tail) in [
+        (
+            &list.rows[0],
+            "A \"quoted\" <&> 東京",
+            "/contact?partyId=P%261",
+            "Tail P&1",
+        ),
+        (&list.rows[1], "Second", "/contact?partyId=P2", "Tail P2"),
+    ] {
+        assert_eq!(row.cells[0].text(), name);
+        assert_eq!(row.cells[0].parts()[1].text(), tail);
+        assert_eq!(row.cells[1].text(), name);
+        assert_eq!(row.cells[1].link_url(), Some(url));
+        let links = row.cells[1].parts();
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[1].link_url(), Some(url.replace("/contact?", "/more?").as_str()));
+        for cell in links {
+            for node in cell.nodes() {
+                assert!(!node.id().is_empty());
+                assert!(link_ids.insert(node.id()));
+                assert_eq!(index.links[node.id()].url, cell.link_url().unwrap());
+            }
+        }
+        assert_eq!(row.cells[2].text(), "Literal ${name}");
+        assert_eq!(row.cells[3].text(), "");
+    }
+    assert_eq!(link_ids.len(), 4);
 }
 
 fn objects<'a>(value: &'a Json, found: &mut Vec<&'a serde_json::Map<String, Json>>) {
