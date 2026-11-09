@@ -21,7 +21,7 @@ fn path_helpers_split_at_the_last_slash() {
     assert_eq!(parent_path("a/b"), "a");
     assert_eq!(parent_path("a"), "");
     assert_eq!(file_tail("a/b"), "b");
-    assert_eq!(file_tail(r"a\b"), "b");
+    assert_eq!(file_tail(r"a\b"), if cfg!(windows) { "b" } else { r"a\b" });
     assert_eq!(file_tail("b"), "b");
     assert_eq!(file_tail("a/"), "");
     assert_eq!(strip_extension_after_slash("a/b.c/d.tar.gz"), "a/b.c/d");
@@ -53,6 +53,15 @@ fn memory_tree_finds_children_under_a_matching_directory() {
     assert!(children.iter().any(|child| child.file_name() == "sub.xml"));
     assert!(screen_file.is_text());
     assert_eq!(content_type_for_name("page.xml"), Some("application/xml"));
+}
+
+/// Off Windows `\` is a character of a file name: the location keeps it, and it does not split the name.
+#[cfg(not(windows))]
+#[test]
+fn a_backslash_stays_in_a_unix_file_name() {
+    let resource = FileResource::new(r"/tmp/moqui\a.xml");
+    assert_eq!(resource.location(), r"/tmp/moqui\a.xml");
+    assert_eq!(resource.file_name(), r"moqui\a.xml");
 }
 
 #[cfg(windows)]

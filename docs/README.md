@@ -6,7 +6,7 @@ area. Designs, status and reviews are in [`plans/`](../plans/README.md). The sec
 
 | Guide | What it covers |
 |---|---|
-| [Build-Test.md](Build-Test.md) | Building from source, native code and C libraries, the build packages and their features, the `./moq` tasks, the Rust tests and the component specs of `moqui test` |
+| [Build-Test.md](Build-Test.md) | Building from source, native code and C libraries, Windows, the build packages and their features, the `./moq` tasks, the Rust tests and the component specs of `moqui test` |
 | [Run-Deploy.md](Run-Deploy.md) | Running and deploying: the runtime and conf, data and databases, HTTPS, one server, containers, clusters, PASS servers with a BOSS server, and dev instances with a group server |
 
 ## data: Data and Resources

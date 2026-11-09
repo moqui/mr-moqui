@@ -5,6 +5,9 @@
 #   scripts/nasm.sh ensure    print the directory that holds nasm.exe (a POSIX path; moq prepends it)
 # MOQUI_NASM, a directory containing nasm.exe or the path of nasm.exe, is used as it is
 # and nothing is downloaded. MOQ_DRY_RUN=1 prints the curl that would download and prints no directory.
+# This may no longer be needed: AWS-LC is now built once, with aws-lc-rs's prebuilt-nasm feature on, which links the
+# objects aws-lc-sys ships when nasm is not on PATH. docs/Build-Test.md (Windows) says how to check; if it holds, this
+# script and moq's ensure_nasm go.
 set -euo pipefail
 
 NASM_VERSION=3.02

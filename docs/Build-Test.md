@@ -4,7 +4,7 @@ How to build MR Moqui from source, the build packages and their features, the `.
 and the component specs that `moqui test` runs. Running and deploying are in [Run-Deploy](Run-Deploy.md), and the specs
 that test a running server from outside are in [Client-Testing](dev/Client-Testing.md).
 
-- [Build](#build): [native code and C libraries](#native-code-and-c-libraries)
+- [Build](#build): [Windows](#windows), [native code and C libraries](#native-code-and-c-libraries)
 - [Packages](#packages): [features](#features), [profiles](#profiles), the [embedded Postgres
   archive](#embedded-postgres-archive), the [instance archive](#instance-archive), [build cost](#build-cost), the [compile cache](#compile-cache), the
   [desktop app](#desktop-app), the [Android app](#android-app)
@@ -18,15 +18,9 @@ that test a running server from outside are in [Client-Testing](dev/Client-Testi
 ## Build
 
 Prerequisites: Rust 1.99 or newer (`rustc --version`; `rust-toolchain.toml` pins 1.99.0, which quickjs-oxide
-declares) and bash, on Linux, macOS, or Windows. On Windows the host is `x86_64-pc-windows-msvc`, Visual Studio
-Build Tools supplies the C compiler (the "Desktop development with C++" workload; aws-lc and QuickJS compile C, and
-the embedded Postgres binaries load that workload's `VCRUNTIME140.dll`), and Git for Windows supplies bash. The first
-build that needs it downloads NASM 3.02 to `%USERPROFILE%\.moqui\nasm` (aws-lc assembles with it). Set `MOQUI_NASM`
-to a directory that contains `nasm.exe`, or to `nasm.exe` itself, to use that copy instead. A `cargo build` that does
-not go through `moq` still needs NASM on `PATH`. From PowerShell or cmd, `moq.cmd` runs `moq`; the binary is
-`target\release\moqui.exe`. A build with embedded Postgres embeds the 18.6.0 archive that `scripts/pg-payload.sh strip`
-downloads once and strips of psql (it links GPL readline); `./moq build` runs that when the archive is missing. Node
-is not needed to build or test.
+declares) and bash, on Linux, macOS, or Windows ([Windows](#windows) has what a Windows build needs). A build with
+embedded Postgres embeds the 18.6.0 archive that `scripts/pg-payload.sh strip` downloads once and strips of psql (it
+links GPL readline); `./moq build` runs that when the archive is missing. Node is not needed to build or test.
 
 ```sh
 ./moq build                            # Maximal with the dev tools, target/release/moqui; --lite, --debug or
@@ -40,6 +34,26 @@ scripts/pg-payload.sh check            # before a distribution: no psql or readl
 
 Tasks that run moqui build a missing binary themselves. `./moq build` also links the crates of native components
 ([Native-Components](dev/Native-Components.md)), which plain `cargo build` does not.
+
+### Windows
+
+- **Toolchain.** The host is `x86_64-pc-windows-msvc`. Visual Studio Build Tools supplies the C compiler (the
+  "Desktop development with C++" workload; aws-lc and QuickJS compile C, and the embedded Postgres binaries load that
+  workload's `VCRUNTIME140.dll`), and Git for Windows supplies bash. From PowerShell or cmd, `moq.cmd` runs `moq`; the
+  binary is `target\release\moqui.exe`.
+- **NASM.** The first build that needs it downloads NASM 3.02 to `%USERPROFILE%\.moqui\nasm` (aws-lc assembles with
+  it). Set `MOQUI_NASM` to a directory that contains `nasm.exe`, or to `nasm.exe` itself, to use that copy instead. A
+  `cargo build` that does not go through `moq` still needs NASM on `PATH`.
+- **NASM may no longer be needed (to check on Windows).** What needed it was the second copy of aws-lc-sys, the one
+  mail-auth built with its default features off. AWS-LC is now built once ([Native code and C
+  libraries](#native-code-and-c-libraries)), and that one aws-lc-sys has the `prebuilt-nasm` feature aws-lc-rs turns
+  on: on Windows x86-64 it links the objects it ships whenever `nasm` is not on `PATH`. To check, with no NASM on
+  `PATH`: `cargo clean --release -p aws-lc-sys`, then `MOQ_NASM_CHECKED=1 ./moq build` (the variable skips `moq`'s
+  NASM step). If that builds, `scripts/nasm.sh`, `ensure_nasm` in `moq` and these NASM notes can go.
+- **Debug info.** The dev profile keeps debug info unpacked in the object files ([Profiles](#profiles)), which is
+  not a Windows option, and cargo has no per-target profile, so `moq` sets `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=packed`
+  on Windows (a PDB beside the binary). A dev `cargo build` or `cargo test` that does not go through `moq` needs that
+  variable set too.
 
 ### Native code and C libraries
 
@@ -187,11 +201,10 @@ The profiles are in `.cargo/config.toml`, so the generated `target/moqui-app` cr
 has its own, so the artifacts of one never replace another's and switching packages does not rebuild.
 
 - `dev` (Debug, and every `cargo test`): the workspace crates at opt-level 0 with debug info, the dependencies at
-  opt-level 3 with line tables only (file and line in a backtrace). On Unix, `moq` exports
-  `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=unpacked` (Cargo has no per-target profile, and `unpacked` is not a Windows
-  option), so the debug info stays in the object files under `target/debug`, where debuggers read it, instead of
-  being copied into each binary: a host test binary was 1.5 GB, 83% of it debug info. A direct `cargo test` on Unix
-  does the same when that variable is set. A Windows dev build keeps the compiler default, a PDB beside the binary.
+  opt-level 3 with line tables only (file and line in a backtrace). The debug info stays in the object files under
+  `target/debug` (`split-debuginfo = "unpacked"`), where debuggers read it, instead of being copied into each binary:
+  a host test binary was 1.5 GB, 83% of it debug info. Windows has no `unpacked`: there `moq` sets
+  `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=packed`, a PDB beside the binary ([Windows](#windows)).
 - `lite` (Lite): `release` with `incremental = true` and 256 codegen units for the workspace and path crates
   (Cargo applies `incremental` only to those), so a rebuild after an edit to the framework is quick; the dependencies
   keep the release settings and are built once.

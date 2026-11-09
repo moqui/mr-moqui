@@ -1477,7 +1477,12 @@ fn load_subscreens(
         let mut entries = directory.children()?;
         entries.sort_by(|left, right| left.location().cmp(right.location()));
         for entry in entries {
-            let file = entry.location().rsplit(['/', '\\']).next().unwrap_or("").to_string();
+            let file = entry
+                .location()
+                .rsplit(moqui_lib::resource::PATH_SEPARATORS)
+                .next()
+                .unwrap_or("")
+                .to_string();
             let Some(name) = file.strip_suffix(".xml") else {
                 continue;
             };

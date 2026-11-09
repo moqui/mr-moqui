@@ -29,7 +29,8 @@ git and bash, on Linux, macOS, or Windows. On Windows, install the MSVC toolchai
 Studio Build Tools with the "Desktop development with C++" workload, and Git for Windows, then use `moq.cmd` instead
 of `./moq` (the binary is `target\release\moqui.exe`). The first build that needs it downloads NASM 3.02 to
 `%USERPROFILE%\.moqui\nasm`; set `MOQUI_NASM` to an existing directory or `nasm.exe` to skip that download. A
-`cargo build` that does not go through `moq` still needs NASM on `PATH`.
+`cargo build` that does not go through `moq` still needs NASM on `PATH`, and for a dev build or `cargo test`,
+`CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=packed`. NASM may no longer be needed at all: [Windows](Build-Test.md#windows).
 
 ```sh
 git clone https://github.com/moqui/mr-moqui.git

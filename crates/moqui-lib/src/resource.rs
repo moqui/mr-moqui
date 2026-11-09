@@ -295,15 +295,23 @@ pub struct FileResource {
     path: PathBuf,
 }
 
+/// What ends a directory in a file location: `/`, and on Windows `\` too. Elsewhere `\` is a character of a file name.
+pub const PATH_SEPARATORS: &[char] = if cfg!(windows) { &['/', '\\'] } else { &['/'] };
+
 impl FileResource {
     pub fn new(location: impl Into<String>) -> Self {
         let raw = location.into();
         // A location is a `/`-separated name, as `component://` and `runtime://` are. Windows
         // canonicalize yields `\\?\` and `\`. A child is built by joining the location and parsing
         // it back into a path, and that prefix does not accept `/`, so the subscreen directory
-        // beside a screen would not be listed. Drop the prefix when the path fits in MAX_PATH.
+        // beside a screen would not be listed. Drop the prefix when the path fits in MAX_PATH, and
+        // write Windows separators as `/`. Off Windows the location is the name as given.
         let path = plain_fs_path(PathBuf::from(&raw));
-        let location = path.to_string_lossy().replace('\\', "/");
+        let location = if cfg!(windows) {
+            path.to_string_lossy().replace('\\', "/")
+        } else {
+            raw
+        };
         Self { location, path }
     }
 }
@@ -699,7 +707,7 @@ fn parent_path(path: &str) -> &str {
 }
 
 fn file_tail(path: &str) -> &str {
-    path.rsplit(['/', '\\']).next().unwrap_or(path)
+    path.rsplit(PATH_SEPARATORS).next().unwrap_or(path)
 }
 
 fn now_millis() -> i64 {

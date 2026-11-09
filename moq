@@ -20,10 +20,10 @@ moq_on_windows() {
     esac
 }
 
-# unpacked is Unix DWARF. Cargo has no per-target profile, so Unix exports it and Windows keeps
-# the compiler default (a PDB beside the binary). `unpacked` is not a Windows option.
-if ! moq_on_windows; then
-    : "${CARGO_PROFILE_DEV_SPLIT_DEBUGINFO:=unpacked}"
+# .cargo/config.toml keeps the dev profile's debug info unpacked in the object files, which is not a Windows option,
+# and cargo has no per-target profile: on Windows the dev profile takes the compiler default, a PDB beside the binary.
+if moq_on_windows; then
+    : "${CARGO_PROFILE_DEV_SPLIT_DEBUGINFO:=packed}"
     export CARGO_PROFILE_DEV_SPLIT_DEBUGINFO
 fi
 
@@ -320,8 +320,10 @@ need_tool() {
     done
 }
 
-# aws-lc-sys 0.46 looks up nasm.exe on PATH. On Windows, download a pinned NASM once
+# aws-lc-sys looks up nasm.exe on PATH. On Windows, download a pinned NASM once
 # (scripts/nasm.sh) and prepend it. A dry run prints the curl and does not download.
+# It may no longer be needed, now that AWS-LC is built once with prebuilt-nasm on: docs/Build-Test.md (Windows)
+# says how to check. MOQ_NASM_CHECKED=1 skips it.
 # `moq run` does not call need_cargo, so starting the server does not fetch it.
 ensure_nasm() {
     [ -z "${MOQ_NASM_CHECKED:-}" ] || return 0
