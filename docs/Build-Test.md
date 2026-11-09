@@ -4,7 +4,7 @@ How to build MR Moqui from source, the build packages and their features, the `.
 and the component specs that `moqui test` runs. Running and deploying are in [Run-Deploy](Run-Deploy.md), and the specs
 that test a running server from outside are in [Client-Testing](dev/Client-Testing.md).
 
-- [Build](#build)
+- [Build](#build): [native code and C libraries](#native-code-and-c-libraries)
 - [Packages](#packages): [features](#features), [profiles](#profiles), the [embedded Postgres
   archive](#embedded-postgres-archive), the [instance archive](#instance-archive), [build cost](#build-cost), the [compile cache](#compile-cache), the
   [desktop app](#desktop-app), the [Android app](#android-app)
@@ -40,6 +40,30 @@ scripts/pg-payload.sh check            # before a distribution: no psql or readl
 
 Tasks that run moqui build a missing binary themselves. `./moq build` also links the crates of native components
 ([Native-Components](dev/Native-Components.md)), which plain `cargo build` does not.
+
+### Native code and C libraries
+
+MR Moqui stays in memory-safe Rust as far as it can. That also keeps the build and the deployment the same on every
+platform.
+
+- **No JIT.** The script engine, quickjs-oxide, interprets its bytecode and forbids `unsafe` in every crate. Generated
+  machine code would make the code generator responsible for the engine's memory safety, and needs executable memory,
+  which iOS refuses and macOS allows only with an entitlement. Heavy work in scripts moves to framework APIs or native
+  services instead ([Practices-App-Dev](dev/Practices-App-Dev.md#heavy-work-scripts-or-rust)).
+- **`unsafe` only where nothing else works,** such as a foreign-function boundary (the browser build's exports), with
+  the reason beside it.
+- **No C libraries in new dependencies.** Choose a pure-Rust crate, or a crate's pure-Rust backend.
+  `cargo tree -e build -i cc` lists the crates that compile C. The exceptions:
+
+| Library | For | Why |
+|---|---|---|
+| AWS-LC (`aws-lc-sys`, through `aws-lc-rs`) | Crypto: rustls (every TLS connection), SSH (russh), certificates (rcgen), WebRTC (str0m), DNSSEC (hickory), DKIM and ARC (mail-auth), and the framework's own signatures | Vetted constant-time C and assembly, the provider rustls defaults to. It is the one crypto library, built once: a dependency that brings ring or a second AWS-LC is fixed or replaced |
+| jemalloc (`tikv-jemallocator`) | The binaries' global allocator, not on MSVC | 5 to 15% off script-heavy rows ([Profiling Round 37](../plans/archive/Profiling.md#round-37-the-allocator-measured-a-proposal-nothing-changed)); the alternatives are C too |
+| SQLite (`rusqlite`, bundled) | The local databases of moqui-client and moqui-browser; not the server | No pure-Rust database matches it yet. Public domain; the browser build compiles it to WebAssembly |
+| CEF, GTK 4, the system WebViews | The desktop and mobile app shells (Tauri) | A desktop or mobile UI runs on the platform's |
+
+Programs that run as their own processes are not linked and are outside this list: the embedded Postgres, Chromium
+for PDF, and the system `ssh` for git remotes.
 
 ## Packages
 
