@@ -6424,7 +6424,7 @@ dependencies = [
 [[package]]
 name = "quickjs-oxide"
 version = "0.4.1"
-source = "git+https://github.com/moqui/quickjs-oxide?rev=7cf1f530fd47c58dfcdeca7f4160e78cb259785a#7cf1f530fd47c58dfcdeca7f4160e78cb259785a"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=1cdb77e2a8c7c2411b48c1f3d975391d785cc46c#1cdb77e2a8c7c2411b48c1f3d975391d785cc46c"
 dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
@@ -6435,7 +6435,7 @@ dependencies = [
 [[package]]
 name = "quickjs-oxide-core"
 version = "0.4.1"
-source = "git+https://github.com/moqui/quickjs-oxide?rev=7cf1f530fd47c58dfcdeca7f4160e78cb259785a#7cf1f530fd47c58dfcdeca7f4160e78cb259785a"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=1cdb77e2a8c7c2411b48c1f3d975391d785cc46c#1cdb77e2a8c7c2411b48c1f3d975391d785cc46c"
 dependencies = [
  "quickjs-oxide-regexp",
 ]
@@ -6443,7 +6443,7 @@ dependencies = [
 [[package]]
 name = "quickjs-oxide-regexp"
 version = "0.4.1"
-source = "git+https://github.com/moqui/quickjs-oxide?rev=7cf1f530fd47c58dfcdeca7f4160e78cb259785a#7cf1f530fd47c58dfcdeca7f4160e78cb259785a"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=1cdb77e2a8c7c2411b48c1f3d975391d785cc46c#1cdb77e2a8c7c2411b48c1f3d975391d785cc46c"
 
 [[package]]
 name = "quinn"
