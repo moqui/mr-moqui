@@ -581,10 +581,6 @@ Each is to be fixed in the fork or listed in [Parity-Diffs](Parity-Diffs.md):
 - Span names copied, and the transaction span's attributes set per call (R21).
 - A data-feed touch keeps two `String`s; an entity with cached finds keeps the values written (Further work 9).
 
-**Dependencies**
-- `croner` brings derive_builder, darling 0.20 and strum, about eight crates. Replacing it means matching Quartz's `L`,
-  `W` and `#`. It is left for a decision: the audit after Phase 4, in the TOTP commit 5cba8100.
-
 **Tests**
 - Check day-keyed snapshots on a rebuilt binary, and why `test-apps` once kept a binary older than its sources (R30).
 

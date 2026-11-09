@@ -434,7 +434,7 @@ fn readiness(
         let cron = super::schedule::cached_cron(cron_text)?;
         let zoned = now.to_zoned(job_time_zone());
         // A schedule with nothing before now has not come due yet.
-        let Ok(last_schedule) = cron.find_previous_occurrence(&zoned, true) else {
+        let Some(last_schedule) = cron.last_at_or_before(&zoned) else {
             return Ok(None);
         };
         if last_run_ms.is_some_and(|last_run| last_schedule.timestamp().as_millisecond() < last_run) {

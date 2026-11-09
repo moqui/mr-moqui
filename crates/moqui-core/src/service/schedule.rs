@@ -12,17 +12,15 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The scheduler thread and the Quartz cron parser. The thread only sleeps and starts passes; a
-//! pass is in `jobs`.
+//! The scheduler thread and the parsed Quartz cron expressions it reads ([`moqui_lib::cron`]). The thread only
+//! sleeps and starts passes; a pass is in `jobs`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use moqui_lib::cron::Cron;
 use moqui_lib::sync::{lock, wait_timeout};
-
-use croner::parser::{CronParser, Seconds};
-use croner::Cron;
 
 use super::pool::Shared;
 use crate::context::Error;
@@ -114,15 +112,10 @@ pub(crate) fn cached_cron(pattern: &str) -> Result<Arc<Cron>, Error> {
     Ok(cron)
 }
 
-/// Quartz syntax: optional seconds, Sunday is day 1, `?` `L` `W` `#` allowed.
+/// A Quartz expression: six or seven fields, seconds first, Sunday day 1, with `?`, `L`, `W` and `#`
+/// ([`moqui_lib::cron`]).
 pub(crate) fn parse_cron(pattern: &str) -> Result<Cron, Error> {
-    CronParser::builder()
-        .seconds(Seconds::Optional)
-        .alternative_weekdays(true)
-        .sloppy_ranges(true)
-        .build()
-        .parse(pattern)
-        .map_err(|err| Error::new(format!("cron pattern: {err}")))
+    Cron::parse(pattern).map_err(|err| Error::new(format!("cron pattern: {err}")))
 }
 
 #[cfg(test)]

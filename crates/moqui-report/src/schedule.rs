@@ -68,11 +68,7 @@ fn create_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
         return Err(fail("a schedule requires a dashboard or report definition"));
     }
     let cron = text(p, "cronExpression");
-    croner::parser::CronParser::builder()
-        .seconds(croner::parser::Seconds::Required)
-        .build()
-        .parse(cron)
-        .map_err(fail)?;
+    moqui_lib::cron::Cron::parse(cron).map_err(fail)?;
     if text(p, "emailTemplateId").is_empty() && text(p, "saveToLocation").is_empty() {
         return Err(fail("a report schedule needs an email template or save location"));
     }
@@ -1031,17 +1027,13 @@ fn deliver(
             .one()?
             .ok_or_else(|| fail("report schedule has no lease record"))?;
         if scheduled {
-            let cron = croner::parser::CronParser::builder()
-                .seconds(croner::parser::Seconds::Optional)
-                .alternative_weekdays(true)
-                .sloppy_ranges(true)
-                .build()
-                .parse(current.get("cronExpression").and_then(Value::as_str).unwrap_or(""))
-                .map_err(fail)?;
+            let cron =
+                moqui_lib::cron::Cron::parse(current.get("cronExpression").and_then(Value::as_str).unwrap_or(""))
+                    .map_err(fail)?;
             let zoned = jiff::Timestamp::from_millisecond(now)
                 .map_err(fail)?
                 .to_zoned(moqui_core::service::job_time_zone());
-            let Ok(previous) = cron.find_previous_occurrence(&zoned, true) else {
+            let Some(previous) = cron.last_at_or_before(&zoned) else {
                 return Ok(None);
             };
             if lock

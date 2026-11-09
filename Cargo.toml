@@ -219,8 +219,6 @@ webpki = { package = "rustls-webpki", version = "0.103", default-features = fals
 # Self-signed cluster certificate. ring and pem stay off. aws-lc-rs is the crypto provider.
 # x509-parser and fips stay off. time is certificate validity only; clocks stay jiff.
 rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs"] }
-# Default feature is chrono. Quartz parsing uses jiff.
-croner = { version = "4", default-features = false, features = ["jiff"] }
 # No std feature on 0.6. Defaults are alloc, getrandom, and password-hash.
 argon2 = { version = "0.6", features = ["password-hash"] }
 csv = "1"

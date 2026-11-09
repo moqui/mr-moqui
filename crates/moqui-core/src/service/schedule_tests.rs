@@ -41,18 +41,22 @@ fn the_first_job_pass_waits_the_initial_delay_and_none_runs_without_a_runner() {
     assert_eq!(off.due(start + Duration::from_secs(600)), (false, true));
 }
 
+/// The parser itself is tested in moqui-lib (`cron/tests.rs`); this is the framework's use of it.
 #[test]
 fn quartz_patterns_parse_and_describe() {
     parse_cron("0 0/15 * * * ?").unwrap();
-    let nightly = parse_cron("0 0 2 * * ?").unwrap();
-    assert!(!nightly.describe().is_empty());
+    assert_eq!(parse_cron("0 0 2 * * ?").unwrap().describe(), "At 02:00.");
     let every = parse_cron("* * * * * *").unwrap();
     let now = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::system());
-    let next = every.find_next_occurrence(&now, true).unwrap();
+    let next = every.next_after(&now).unwrap();
     let wait = next.timestamp().as_second() - now.timestamp().as_second();
     assert!((0..=1).contains(&wait), "{wait}");
     // Sunday is day 1 and Monday day 2, as in Quartz.
     parse_cron("0 0 8 ? * 2").unwrap();
+    assert!(parse_cron("*/5 * * * *")
+        .unwrap_err()
+        .to_string()
+        .contains("6 or 7 fields"));
 }
 
 #[test]
