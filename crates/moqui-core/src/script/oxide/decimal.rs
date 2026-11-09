@@ -172,6 +172,24 @@ pub(super) fn install_to_decimal(context: &Context) -> Result<(), RuntimeError> 
         &super::convert::key("basicConvert").map_err(|_| RuntimeError::Invariant("a key"))?,
         &quickjs_oxide::engine::api::core::OrdinaryPropertyDescriptor::data(Value::from(convert), false, true, false),
     )?;
+    // the actions `set`'s tests, as Java's template makes them: `ObjectUtilities.isEmpty` for `set-if-empty="false"`,
+    // Groovy truth for the `?:` of a `default-value`
+    for (name, groovy) in [("__isEmpty", false), ("__isGroovyFalse", true)] {
+        let test = context.new_function(
+            quickjs_oxide::engine::api::core::FunctionOptions::new(name).length(1),
+            move |scope: &mut Scope<'_>| -> JsResult<Value> {
+                guarded(scope, |scope| {
+                    let value = scope.arg(0);
+                    Ok(Value::Bool(empty_by(scope, &value, groovy)?))
+                })
+            },
+        )?;
+        context.define_own_property(
+            &global,
+            &super::convert::key(name).map_err(|_| RuntimeError::Invariant("a key"))?,
+            &quickjs_oxide::engine::api::core::OrdinaryPropertyDescriptor::data(Value::from(test), false, true, false),
+        )?;
+    }
     Ok(())
 }
 
@@ -261,6 +279,53 @@ fn operand(scope: &mut Scope<'_>, index: usize) -> Result<Operand, Conv> {
             "a decimal method takes a decimal, a number or a numeric string, not {}",
             moqui_lib::object::to_plain_string(&host)
         ))
+    })
+}
+
+/// Whether `value` is empty as Java's `ObjectUtilities.isEmpty` has it, or with `groovy` false by Groovy truth
+/// ([`crate::script::is_empty_value`], [`crate::script::is_groovy_false`]). A plain array or object is looked at in
+/// place, to its first element; anything else is converted and asked as the host value.
+fn empty_by(scope: &mut Scope<'_>, value: &Value, groovy: bool) -> Result<bool, Conv> {
+    use quickjs_oxide::engine::api::core::DataRef;
+    let object = match value {
+        Value::Undefined | Value::Null => return Ok(true),
+        Value::Bool(flag) => return Ok(groovy && !flag),
+        Value::Int(number) => return Ok(groovy && *number == 0),
+        Value::Float(number) => return Ok(groovy && *number == 0.0),
+        Value::String(text) => return Ok(text.to_utf8_lossy().is_empty()),
+        Value::Object(object) => object,
+        _ => return Ok(false),
+    };
+    let engine: std::rc::Rc<OxideEngine> = super::engine::current().ok_or(Conv::Unsupported("no oxide engine"))?;
+    let mut any = false;
+    if scope
+        .visit_dense_array(object, &mut |_| {
+            any = true;
+            false
+        })?
+        .is_some()
+    {
+        return Ok(!any);
+    }
+    let mut any = false;
+    let plain = scope.visit_plain_own_text(object, Some(&engine.protos.object_prototype), &mut |property| {
+        if property.enumerable && !matches!(property.value, DataRef::Callable) {
+            any = true;
+            return false;
+        }
+        true
+    })?;
+    if plain.is_some() {
+        return Ok(!any);
+    }
+    if let Some(decimal) = scope.host_data::<OxDecimal>(object)? {
+        return Ok(groovy && crate::script::is_groovy_false(&decimal.inner));
+    }
+    let host = super::convert::to_host(scope, &engine, value)?;
+    Ok(if groovy {
+        crate::script::is_groovy_false(&host)
+    } else {
+        crate::script::is_empty_value(&host)
     })
 }
 
