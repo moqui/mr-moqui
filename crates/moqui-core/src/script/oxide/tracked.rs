@@ -410,24 +410,26 @@ fn matches_host<J: Js>(
     if depth >= MAX_NESTING {
         return Ok(false);
     }
+    if let Some(same) = scalar_matches(value, host) {
+        return Ok(same);
+    }
+    // an object from here
     Ok(match host {
-        HostValue::Null => matches!(value, Value::Null | Value::Undefined),
-        HostValue::Bool(flag) => matches!(value, Value::Bool(found) if found == flag),
-        HostValue::String(text) => text_is(value, text),
-        HostValue::I32(number) => matches!(value, Value::Int(found) if found == number),
-        HostValue::I64(number) => match i32::try_from(*number) {
-            Ok(small) => matches!(value, Value::Int(found) if *found == small),
-            #[allow(clippy::cast_precision_loss)]
-            Err(_) => matches!(value, Value::Float(found) if *found == *number as f64),
-        },
-        HostValue::F64(number) => matches!(value, Value::Float(found) if found == number),
+        HostValue::Null
+        | HostValue::Bool(_)
+        | HostValue::String(_)
+        | HostValue::I32(_)
+        | HostValue::I64(_)
+        | HostValue::F64(_)
+        | HostValue::Timestamp(_)
+        | HostValue::Date(_)
+        | HostValue::Time(_) => false,
         HostValue::Decimal(_) => match value {
             Value::Object(object) => js
                 .host_data::<OxDecimal>(object)?
                 .is_some_and(|decimal| decimal.inner == *host),
             _ => false,
         },
-        HostValue::Timestamp(_) | HostValue::Date(_) | HostValue::Time(_) => text_is(value, &temporal_text(host)),
         HostValue::List(items) => {
             let Value::Object(object) = value else {
                 return Ok(false);
@@ -569,7 +571,15 @@ fn matches_in_place<J: Js>(
                             lifted = true;
                             return false;
                         }
-                        (DataRef::Value(item), held_item) => deferred.push((item, held_item)),
+                        // a number, a flag or null compared here; an object after, walked
+                        (DataRef::Value(item), held_item) => match scalar_matches(&item, held_item) {
+                            Some(true) => {}
+                            Some(false) => {
+                                verdict = Some(false);
+                                return false;
+                            }
+                            None => deferred.push((item, held_item)),
+                        },
                         (DataRef::Callable, _) => {}
                     }
                     true
@@ -721,6 +731,29 @@ fn matches_in_place_slow<J: Js>(
         // the rest reads no property (a decimal's host data at most), so runs no code: as `matches_host`
         _ => matches_host(js, engine, value, host, depth)?,
     }))
+}
+
+/// [`matches_host`] of a value that is not an object, which reads nothing of the engine; `None` for an object.
+fn scalar_matches(value: &Value, host: &HostValue) -> Option<bool> {
+    if matches!(value, Value::Object(_)) {
+        return None;
+    }
+    Some(match host {
+        HostValue::Null => matches!(value, Value::Null | Value::Undefined),
+        HostValue::Bool(flag) => matches!(value, Value::Bool(found) if found == flag),
+        HostValue::String(text) => text_is(value, text),
+        HostValue::I32(number) => matches!(value, Value::Int(found) if found == number),
+        HostValue::I64(number) => match i32::try_from(*number) {
+            Ok(small) => matches!(value, Value::Int(found) if *found == small),
+            #[allow(clippy::cast_precision_loss)]
+            Err(_) => matches!(value, Value::Float(found) if *found == *number as f64),
+        },
+        HostValue::F64(number) => matches!(value, Value::Float(found) if found == number),
+        HostValue::Timestamp(_) | HostValue::Date(_) | HostValue::Time(_) => text_is(value, &temporal_text(host)),
+        HostValue::Decimal(_) | HostValue::List(_) | HostValue::Map(_) | HostValue::Bytes(_) | HostValue::Object(_) => {
+            false
+        }
+    })
 }
 
 fn text_is(value: &Value, text: &str) -> bool {

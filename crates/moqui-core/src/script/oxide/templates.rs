@@ -25,6 +25,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Instant;
 
 use quickjs_oxide::engine::api::core::{
@@ -140,7 +141,9 @@ impl Host for SandboxHost {
 
 struct Sandbox {
     cap: usize,
-    functions: RefCell<BoundedMap<String, CallableRef>>,
+    /// By the address of the compiled text the template cache holds (`template::compiled`), so a render looks its
+    /// function up with no hash of the text. The entry holds the text, so the address is not reused while it is kept.
+    functions: RefCell<BoundedMap<usize, (Arc<str>, CallableRef)>>,
     fixed: Cell<(usize, usize)>,
     context: Context,
     runtime: Runtime,
@@ -188,8 +191,9 @@ impl Sandbox {
     }
 
     /// The compiled template function for `compiled`, kept or compiled now.
-    fn function(&self, compiled: &str) -> JsResult<CallableRef> {
-        if let Some(function) = self.functions.borrow_mut().get(compiled) {
+    fn function(&self, compiled: &Arc<str>) -> JsResult<CallableRef> {
+        let at = Arc::as_ptr(compiled).cast::<u8>() as usize;
+        if let Some((_, function)) = self.functions.borrow_mut().get(&at) {
             return Ok(function);
         }
         let (units, bytes) = self.fixed.get();
@@ -209,7 +213,7 @@ impl Sandbox {
         }
         self.functions
             .borrow_mut()
-            .insert(compiled.to_string(), function.clone());
+            .insert(at, (Arc::clone(compiled), function.clone()));
         Ok(function)
     }
 }
@@ -327,7 +331,12 @@ impl Drop for DeadlineSet {
 /// # Errors
 ///
 /// The template's own error, `interrupted` past the deadline, or `out of memory` past the cap.
-pub(crate) fn render_locked(compiled: &str, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {
+pub(crate) fn render_locked(
+    compiled: &Arc<str>,
+    json: &str,
+    deadline: Instant,
+    memory: usize,
+) -> Result<String, Error> {
     let Some(cap) = bucket(memory) else {
         return Err(Error::script("Error: out of memory"));
     };
@@ -385,7 +394,7 @@ mod tests {
         ];
         for memory in limits {
             let out = render_locked(
-                "(function(){ return function(){ return 'x'; }; })()",
+                &Arc::from("(function(){ return function(){ return 'x'; }; })()"),
                 "{}",
                 deadline,
                 memory,

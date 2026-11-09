@@ -22,7 +22,8 @@
 //! class over a [`FindState`].
 //!
 //! Every method that reads or writes the database, or reads an entity definition, may run a nested script (an entity
-//! ECA rule, an authorization filter), so it is not a leaf; the builder steps and the list's cursor are.
+//! ECA rule, an authorization filter), so it is not a leaf; the builder steps and the list's cursor are. `find` and
+//! `condition` are leaves that lend the engine only for the step that may nest: a definition made at run time from rows.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -58,7 +59,7 @@ pub(super) static PATHS: &[Path] = &[
     Path::object("ec.entity.conditionFactory", &super::conditions::CONDITION_FACTORY),
 ];
 
-static FIND_FN: Method = method!("ec.entity", "find", [Text], find);
+static FIND_FN: Method = method!("ec.entity", "find", [Text], None, leaf, find);
 static MAKE_VALUE: Method = method!("ec.entity", "makeValue", [Text], make_value);
 static START_TX_CACHE_DB: Method = method!("ec.entity", "startTxCacheDb", [Bool], start_tx_cache_db);
 static STOP_TX_CACHE: Method = method!("ec.entity", "stopTxCache", [], stop_tx_cache);
@@ -88,7 +89,7 @@ static TEMP_RESET_SEQUENCED_ID_PRIMARY: Method = method!(
 pub(crate) static FIND: HostClass = HostClass {
     name: "host:EntityFind",
     methods: &[
-        method!("EntityFind", "condition", [Value, OptValue, OptValue], condition),
+        method!("EntityFind", "condition", [Value, OptValue, OptValue], None, leaf, condition),
         method!("EntityFind", "orderBy", [Text], None, leaf, order_by),
         method!("EntityFind", "limit", [Value], None, leaf, limit),
         method!("EntityFind", "offset", [Value, OptValue], None, leaf, offset),
@@ -296,10 +297,19 @@ fn list_of(list: EntityList) -> Value {
 
 // ec.entity
 
+/// `find(name)`, a leaf: the builder over an entity of the model is made from its definition, with nothing that could
+/// run a script. Another name (a DB view entity, a data document's view) is defined at run time from rows, whose find
+/// may run a nested script (an entity ECA rule), so it is made with the engine lent.
 fn find(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let name = call.text_or_empty(0);
-    let find = entity_facade()?.find(&name).map_err(lib)?;
-    Ok(find_object(find))
+    let facade = entity_facade()?;
+    if facade.with_model(|model| model.entity(&name).is_ok()) {
+        return Ok(find_object(facade.find(&name).map_err(lib)?));
+    }
+    let mut found = None;
+    call.ops.lend(&mut || found = Some(facade.find(&name)))?;
+    let find = found.ok_or_else(|| HostError::message("entity find was not made"))?;
+    Ok(find_object(find.map_err(lib)?))
 }
 
 /// A new builder over `find`.
@@ -456,11 +466,17 @@ fn condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
         other => crate::script::value_map(other)
             .ok_or_else(|| HostError::message("entity condition needs a field and a value"))?,
     };
-    // A map such as `context` carries names that are not fields. Only fields (a view's aliases) apply.
-    let known: std::collections::BTreeSet<String> = entity_facade()?
-        .with_entity(find.entity_name(), |entity, _, _| {
+    // A map such as `context` carries names that are not fields. Only fields (a view's aliases) apply. The definition
+    // of an entity defined at run time may be read from rows, so it is read with the engine lent (`find`).
+    let facade = entity_facade()?;
+    let mut fields = None;
+    call.ops.lend(&mut || {
+        fields = Some(facade.with_entity(find.entity_name(), |entity, _, _| {
             Ok(entity.field_names().into_iter().map(str::to_string).collect())
-        })
+        }));
+    })?;
+    let known: std::collections::BTreeSet<String> = fields
+        .ok_or_else(|| HostError::message("entity fields were not read"))?
         .map_err(lib)?;
     for (key, value) in entries {
         if !known.contains(&key) {

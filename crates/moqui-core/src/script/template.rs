@@ -120,7 +120,7 @@ impl TemplateRenderer for FancyRenderer {
 impl TemplateRenderer for LockedRenderer {
     fn render(&self, source: &str, data: Option<&Value>) -> Result<String, Error> {
         let compiled = compiled(source, self.escape, Scope::Snapshot)?;
-        let json = data.map_or_else(|| "{}".to_string(), |value| unwrap_json(value).to_string());
+        let json = data.map_or_else(|| "{}".to_string(), snapshot_json);
         render_locked(&compiled, &json)
     }
 
@@ -588,20 +588,22 @@ fn text_stamp(text: &str) -> i64 {
 
 // ---- cache of compiled functions, by source text ----
 
-type CompiledCache = Mutex<super::bounded::BoundedMap<(Escape, bool, String), Arc<str>>>;
+/// One map for each escape and scope, so a render looks its source up by `&str`, with no key made per render. Each
+/// map holds at most `MAX_COMPILED` entries.
+type CompiledCache = Mutex<[super::bounded::BoundedMap<String, Arc<str>>; 4]>;
 
 fn cache() -> &'static CompiledCache {
     static CACHE: std::sync::OnceLock<CompiledCache> = std::sync::OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(super::bounded::BoundedMap::new(MAX_COMPILED)))
+    CACHE.get_or_init(|| Mutex::new(std::array::from_fn(|_| super::bounded::BoundedMap::new(MAX_COMPILED))))
 }
 
 fn compiled(source: &str, escape: Escape, scope: Scope) -> Result<Arc<str>, Error> {
-    let key = (escape, scope == Scope::Snapshot, source.to_string());
-    if let Some(found) = lock(cache()).get(&key) {
+    let slot = usize::from(escape == Escape::Html) * 2 + usize::from(scope == Scope::Snapshot);
+    if let Some(found) = lock(cache())[slot].get(source) {
         return Ok(found);
     }
     let made: Arc<str> = Arc::from(compile(source, escape, scope)?);
-    lock(cache()).insert(key, Arc::clone(&made));
+    lock(cache())[slot].insert(source.to_string(), Arc::clone(&made));
     Ok(made)
 }
 
@@ -998,21 +1000,87 @@ fn js_string(text: &str) -> String {
     serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_string())
 }
 
+/// A straight run of text and interpolations, which the generator writes as one `$o.push`: a template literal when
+/// it has more than one piece, which quickjs-oxide joins in one allocation (`String.prototype.concat`), instead of a
+/// push of each piece joined at the end.
+#[derive(Default)]
+struct Run {
+    pieces: Vec<RunPiece>,
+}
+
+enum RunPiece {
+    Text(String),
+    Expr(String),
+}
+
+impl Run {
+    fn text(&mut self, text: &str) {
+        match self.pieces.last_mut() {
+            Some(RunPiece::Text(last)) => last.push_str(text),
+            _ => self.pieces.push(RunPiece::Text(text.to_string())),
+        }
+    }
+
+    fn expr(&mut self, expr: String) {
+        self.pieces.push(RunPiece::Expr(expr));
+    }
+
+    fn flush(&mut self, out: &mut String) {
+        match self.pieces.as_slice() {
+            [] => {}
+            [RunPiece::Text(text)] => out.push_str(&format!("$o.push({});\n", js_string(text))),
+            [RunPiece::Expr(expr)] => out.push_str(&format!("$o.push({expr});\n")),
+            pieces => {
+                out.push_str("$o.push(`");
+                for piece in pieces {
+                    match piece {
+                        RunPiece::Text(text) => push_template_text(out, text),
+                        RunPiece::Expr(expr) => out.push_str(&format!("${{{expr}}}")),
+                    }
+                }
+                out.push_str("`);\n");
+            }
+        }
+        self.pieces.clear();
+    }
+}
+
+/// `text` as the characters of a template literal: a backslash, a backtick and `$` escaped, and a control character
+/// (a carriage return would be read as a newline) as its escape.
+fn push_template_text(out: &mut String, text: &str) {
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '`' => out.push_str("\\`"),
+            '$' => out.push_str("\\$"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if u32::from(ch) < 0x20 => out.push_str(&format!("\\u{:04x}", u32::from(ch))),
+            ch => out.push(ch),
+        }
+    }
+}
+
 fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Error> {
     let encode = if escape == Escape::Html { "$h" } else { "$s" };
     let mut out = String::new();
     // `true` for an open list, `false` for an open if, with whether an else was seen.
     let mut stack: Vec<(bool, bool)> = Vec::new();
     let mut lists = 0usize;
+    let mut run = Run::default();
     for token in tokens {
         match token {
-            Token::Text(text) => {
-                out.push_str(&format!("$o.push({});\n", js_string(text)));
-            }
+            Token::Text(text) => run.text(text),
             Token::Interp(expr) => {
                 check_expression(expr, source)?;
-                out.push_str(&format!("$o.push({encode}({expr}));\n"));
+                run.expr(format!("{encode}({expr})"));
             }
+            Token::Comment => {}
+            _ => run.flush(&mut out),
+        }
+        match token {
+            Token::Text(_) | Token::Interp(_) | Token::Comment => {}
             Token::If(cond) => {
                 check_expression(cond, source)?;
                 out.push_str(&format!("if ({cond}) {{\n"));
@@ -1052,13 +1120,13 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
                 Some((true, _)) => out.push_str("}\n}\n"),
                 _ => return Err(Error::new("template: </#list> without an open <#list>")),
             },
-            Token::Comment => {}
             Token::Assign(name, value) => {
                 check_expression(value, source)?;
                 out.push_str(&format!("var {name} = {value};\n"));
             }
         }
     }
+    run.flush(&mut out);
     if let Some((is_list, _)) = stack.last() {
         let open = if *is_list { "<#list>" } else { "<#if>" };
         return Err(Error::new(format!("template: {open} is not closed")));
@@ -1071,6 +1139,113 @@ fn check_expression(expr: &str, _source: &str) -> Result<(), Error> {
 }
 
 // ---- unwrap snapshot ----
+
+/// The text of [`unwrap_json`]'s value, as `serde_json` writes it (an object's keys in order, as its map sorts them),
+/// written straight from `value` with no tree of its own.
+pub fn snapshot_json(value: &Value) -> String {
+    let mut out = String::new();
+    write_snapshot(value, &mut out);
+    out
+}
+
+fn write_snapshot(value: &Value, out: &mut String) {
+    use std::fmt::Write;
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
+        Value::I32(number) => {
+            let _ = write!(out, "{number}");
+        }
+        Value::I64(number) => {
+            let _ = write!(out, "{number}");
+        }
+        Value::String(text) => write_json_text(text, out),
+        Value::Decimal(number) => write_json_text(&number.to_string(), out),
+        Value::Date(date) => write_json_text(&date.strftime("%Y-%m-%d").to_string(), out),
+        Value::Time(time) => write_json_text(&time.strftime("%H:%M:%S").to_string(), out),
+        Value::List(items) => write_snapshot_items(items, out),
+        Value::Map(entries) => write_snapshot_entries(entries, out),
+        Value::Object(_) => {
+            if let Some(entries) = super::value_map(value) {
+                write_snapshot_entries(&entries, out);
+            } else if let Some(items) = super::value_items(value) {
+                write_snapshot_items(&items, out);
+            } else {
+                tracing::warn!("a host object is not part of a locked-down template snapshot and was dropped");
+                out.push_str("null");
+            }
+        }
+        // a float, a time stamp and bytes as `serde_json` writes their JSON
+        other => out.push_str(&moqui_lib::json::to_json(other).to_string()),
+    }
+}
+
+fn write_snapshot_items(items: &[Value], out: &mut String) {
+    out.push('[');
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        write_snapshot(item, out);
+    }
+    out.push(']');
+}
+
+fn write_snapshot_entries(entries: &indexmap::IndexMap<String, Value>, out: &mut String) {
+    let write = |out: &mut String, index: usize, key: &str, item: &Value| {
+        if index > 0 {
+            out.push(',');
+        }
+        write_json_text(key, out);
+        out.push(':');
+        write_snapshot(item, out);
+    };
+    out.push('{');
+    if entries.keys().is_sorted() {
+        for (index, (key, item)) in entries.iter().enumerate() {
+            write(out, index, key, item);
+        }
+    } else {
+        let mut sorted: Vec<(&String, &Value)> = entries.iter().collect();
+        sorted.sort_unstable_by(|left, right| left.0.cmp(right.0));
+        for (index, (key, item)) in sorted.into_iter().enumerate() {
+            write(out, index, key, item);
+        }
+    }
+    out.push('}');
+}
+
+/// `text` as a JSON string, escaped as `serde_json` escapes it.
+fn write_json_text(text: &str, out: &mut String) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    out.reserve(text.len() + 2);
+    out.push('"');
+    let mut start = 0;
+    for (at, byte) in text.bytes().enumerate() {
+        let escape = match byte {
+            b'"' => "\\\"",
+            b'\\' => "\\\\",
+            b'\n' => "\\n",
+            b'\r' => "\\r",
+            b'\t' => "\\t",
+            0x08 => "\\b",
+            0x0c => "\\f",
+            0x00..=0x1f => "",
+            _ => continue,
+        };
+        out.push_str(&text[start..at]);
+        if escape.is_empty() {
+            out.push_str("\\u00");
+            out.push(char::from(HEX[usize::from(byte >> 4)]));
+            out.push(char::from(HEX[usize::from(byte & 0xf)]));
+        } else {
+            out.push_str(escape);
+        }
+        start = at + 1;
+    }
+    out.push_str(&text[start..]);
+    out.push('"');
+}
 
 /// The plain projection of a value: strings, booleans and numbers pass through, a decimal is a
 /// string, timestamps are text, an entity value is its field map and an entity list is a list of
@@ -1211,7 +1386,7 @@ pub(super) fn snapshot_text(key: Option<String>) -> String {
     })
 }
 
-fn render_locked(compiled: &str, json: &str) -> Result<String, Error> {
+fn render_locked(compiled: &Arc<str>, json: &str) -> Result<String, Error> {
     render_locked_until(compiled, json, Instant::now() + LOCKED_TIME_LIMIT, LOCKED_MEMORY_LIMIT)
 }
 
@@ -1257,7 +1432,7 @@ impl Drop for TextsSet {
     }
 }
 
-fn render_locked_until(compiled: &str, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {
+fn render_locked_until(compiled: &Arc<str>, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {
     super::oxide::templates::render_locked(compiled, json, deadline, memory)
 }
 

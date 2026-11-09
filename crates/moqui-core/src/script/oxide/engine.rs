@@ -750,11 +750,13 @@ impl OxideEngine {
         // QuickJS's builtins quickjs-oxide lacks: builtins here too, not frozen host globals
         super::builtins::install(&context)?;
         // the runtime's own globals, before the host adds its own ([`FREEZE_HOST_GLOBALS_JS`])
-        let builtins = match context.eval("Object.getOwnPropertyNames(globalThis)")? {
+        let names = super::compiled::eval_start(&mut context.clone(), "Object.getOwnPropertyNames(globalThis)")?;
+        let builtins = match names {
             Value::Object(names) => names,
             _ => return Err(RuntimeError::Invariant("the builtin names")),
         };
-        let helpers = context.eval(
+        let helpers = super::compiled::eval_start(
+            &mut context.clone(),
             "({set: Set, setPrototype: Set.prototype, objectPrototype: Object.prototype, \
              datePrototype: Date.prototype, getTime: Date.prototype.getTime, arrayFrom: Array.from, error: Error})",
         )?;
@@ -807,7 +809,7 @@ impl OxideEngine {
         )?;
         super::bind::install_ec(&mut context.clone(), &ec, std::rc::Rc::new(EngineHooks))?;
         super::resource::install(&context, &ec)?;
-        let extras = context.eval(EC_EXTRAS_JS)?;
+        let extras = super::compiled::eval_start(&mut context.clone(), EC_EXTRAS_JS)?;
         let extras = match &extras {
             Value::Object(object) => context.as_callable(object)?,
             _ => None,
@@ -815,7 +817,7 @@ impl OxideEngine {
         .ok_or(RuntimeError::Invariant("the ec extras"))?;
         context.call(&extras, Value::Undefined, &[Value::Object(ec), Value::Object(stack_object)])?;
         super::decimal::install_to_decimal(&context)?;
-        context.eval(TO_NUMBER_JS)?;
+        super::compiled::eval_start(&mut context.clone(), TO_NUMBER_JS)?;
         counts::STARTED.fetch_add(1, Relaxed);
         let live = counts::LIVE.fetch_add(1, Relaxed) + 1;
         counts::LIVE_MAX.fetch_max(live, Relaxed);
@@ -862,7 +864,7 @@ impl OxideEngine {
             &crate::script::host::globals::SHIM,
             std::rc::Rc::new(EngineHooks),
         )?;
-        context.eval(crate::script::runtime::HELPERS_JS)?;
+        super::compiled::eval_start(&mut context, crate::script::runtime::HELPERS_JS)?;
         let global = context.global_object()?;
         // a script names the helper objects as QuickJS's bare names answered them. Frozen below.
         for name in ["ObjectUtilities", "CollectionUtilities", "StringUtilities", "WebUtilities", "UserSecurityChecks"] {
@@ -879,7 +881,7 @@ impl OxideEngine {
             }
             _ => return Err(RuntimeError::Invariant("the tools shim made no __moquiWrap")),
         }
-        let freeze = match context.eval(FREEZE_HOST_GLOBALS_JS)? {
+        let freeze = match super::compiled::eval_start(&mut context, FREEZE_HOST_GLOBALS_JS)? {
             Value::Object(object) => context.as_callable(&object)?,
             _ => None,
         }
