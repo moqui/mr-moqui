@@ -164,8 +164,8 @@ ms, the mail store with two attachments 14.8 → 8.7 ms, all at 200 µs to the d
 
 ### The script engine
 
-quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` ddba97fe
-(R51; 1cdb77e2 in R50, 7cf1f530 before, Oxide §7, Phase 4 result).
+quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` f873d7e7
+(R53, the sampling profiler; ddba97fe in R51, 1cdb77e2 in R50, 7cf1f530 before, Oxide §7, Phase 4 result).
 
 The fork's changes:
 - **F1:** compiled code shared by the process. Code images (step 1) and shared unit bodies (step 2) are done; shared
@@ -484,10 +484,9 @@ against the base, html ×0.58, qvt ×0.68, tui ×0.27, outputs the same.
   script gives text and the narrowest number, which a display shows differently; a `for...of` fast path (arrays are
   walked by index already).
 
-**The third batch** (`work/r53/m3.log`; quickjs-oxide pinned at 223a2047 with the sampler):
+**The third batch** (`work/r53/m3.log`; quickjs-oxide pinned at 223a2047, then f873d7e7):
 - **The sampler made honest** (fork `perf/sampler-natives`, merged as f873d7e7, Sweep `r53-natives`: V8 ×1.0001,
-  memory ×0.994; **mr-moqui's pin moves to f873d7e7 once the fork is pushed**: Cargo.toml's rev, then
-  `cargo update -p quickjs-oxide`; until then a sampling build patches the fork's path, `rounds/r53/README.md`): while a sampler runs the loop polls at every call and back-edge (the counts follow time, where every
+  memory ×0.994; pinned at f873d7e7): while a sampler runs the loop polls at every call and back-edge (the counts follow time, where every
   thousandth event weighted them by calls), and a sample asked while a native runs is the native's (`name (native)`),
   where it went to the script that ran next. Entities html then: script 38%, host calls 42%, builtins 20%
   (`RegExp.test` 3.6%, `String` 2.4%, `Object.keys` 2.1%); qvt 46/30/25 (`test` 6.6%, `String` 4.3%); tui 31/50/19.

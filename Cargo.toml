@@ -245,7 +245,7 @@ protox = "0.10"
 getrandom = { version = "0.4", features = ["std"] }
 # The script engine, in safe Rust (plans/archive/Script-Engine-Oxide.md). The moqui fork, by exact revision;
 # local work on the fork patches it to ../quickjs-oxide outside committed files. Declares rust-version 1.99.
-quickjs-oxide = { git = "https://github.com/moqui/quickjs-oxide", rev = "223a204757b0a221e35e357a3622311db7019abb", default-features = false }
+quickjs-oxide = { git = "https://github.com/moqui/quickjs-oxide", rev = "f873d7e7ce9b6fe211805fcf8ba63c56b73e0384", default-features = false }
 # 0.156.0 declares rust-version 1.97.0.
 oxc_parser = "0.156"
 # The parser's arena, kept per thread and reset after each parse. Already in the tree under oxc_parser.
