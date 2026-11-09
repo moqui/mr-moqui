@@ -85,6 +85,20 @@ thread_local! {
     static LAST_FRAGMENTED_DROP: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
     /// When this thread last collected to look for one.
     static LAST_FRAGMENTED_CHECK: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+    #[cfg(test)]
+    static SKIP_FRAGMENTATION_FOR_CACHE_TEST: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Isolate the cache-bound test from timed fragmentation drops, while retaining pressure and out-of-memory relief.
+#[cfg(test)]
+pub(super) fn suspend_fragmentation_for_cache_test() -> impl Drop {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SKIP_FRAGMENTATION_FOR_CACHE_TEST.with(|skip| skip.set(self.0));
+        }
+    }
+    Restore(SKIP_FRAGMENTATION_FOR_CACHE_TEST.with(|skip| skip.replace(true)))
 }
 
 /// `toNumber(x)`, as the QuickJS host's (`runtime/helpers.rs`): a JavaScript number from a decimal, a number or
@@ -1135,6 +1149,10 @@ impl OxideEngine {
     /// collection: at most every [`FRAGMENTED_CHECK_EVERY`] on the thread (the last collection's live bytes may be a
     /// burst's, still live then), and no drop within [`FRAGMENTED_EVERY`] of the last.
     fn fragmented(&self) -> bool {
+        #[cfg(test)]
+        if SKIP_FRAGMENTATION_FOR_CACHE_TEST.with(Cell::get) {
+            return false;
+        }
         if self.heap.get() < FRAGMENTED_BYTES {
             return false;
         }

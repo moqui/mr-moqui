@@ -44,6 +44,7 @@ fn unit_source(index: usize, statements: usize) -> String {
 fn many_distinct_units_and_texts_keep_the_heap_bounded() -> Result<(), Error> {
     clear_context_stack();
     push_context_frame();
+    let _fragmentation = super::engine::suspend_fragmentation_for_cache_test();
     // the runtime the units and texts run on: bounded by its caches, not by a restart
     assert_eq!(crate::script::eval_value("1")?, Value::I32(1));
     let started = super::engine::start_for_tests()?;
@@ -153,7 +154,7 @@ fn a_runtime_its_peak_left_fragmented_starts_fresh() -> Result<(), Error> {
     // the next outermost run past the sample interval sees it, collects, and drops the runtime
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert_eq!(value("[].kept.length")?, Value::I32(450));
-    assert_eq!(shed(), before + 1, "dropped as fragmented");
+    assert!(shed() > before, "dropped as fragmented; other threads may also shed");
     assert_eq!(value("typeof [].marker")?, Value::string("undefined"), "a fresh runtime");
     assert_eq!(value("3 * 3")?, Value::I32(9));
     let memory = super::engine_memory(true);
