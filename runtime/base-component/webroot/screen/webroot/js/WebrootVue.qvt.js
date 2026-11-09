@@ -2152,24 +2152,29 @@
                 });
             },
             handleResponse(resp) {
-                let notified = false;
+                let rest = null;
                 // the step form of a wizard: the wizard goes where the answer says (docs/ui/Qvt-Client.md, Wizard and stack panels)
                 const wizard = this.mWizard && this.mWizard.isStepForm(this) ? this.mWizard : null;
                 if (resp && moqui.isPlainObject(resp)) {
-                    const rest = moqui.placeFieldErrors(this, resp);
-                    notified = moqui.notifyMessages(rest.messageInfos, rest.errors, rest.validationErrors);
-                    if (wizard) notified = true;
-                    else if (resp.screenUrl && resp.screenUrl.length > 0) this.$root.setUrl(resp.screenUrl);
-                    else if (resp.redirectUrl && resp.redirectUrl.length > 0) root.location.href = resp.redirectUrl;
+                    rest = moqui.placeFieldErrors(this, resp);
+                    if (!wizard && resp.screenUrl && resp.screenUrl.length > 0) this.$root.setUrl(resp.screenUrl);
+                    else if (!wizard && resp.redirectUrl && resp.redirectUrl.length > 0) root.location.href = resp.redirectUrl;
                 // an empty answer is a transition's type="none" response; other text that is not JSON is worth a warning
                 } else if (resp) console.warn("m-form non-JSON response");
+                let hidden;
                 if (this.submitHideId && this.submitHideId.length > 0) this.$root.hideContainer(this.submitHideId);
-                else if (this.mSubmitHide && !moqui.responseHasErrors(resp)) this.mSubmitHide.hide();
+                else if (this.mSubmitHide && !moqui.responseHasErrors(resp)) hidden = this.mSubmitHide.hide();
                 if (this.submitReloadId && this.submitReloadId.length > 0) this.$root.reloadContainer(this.submitReloadId);
-                if (this.submitMessage && this.submitMessage.length) {
-                    notify(Object.assign({}, moqui.notifyOpts, { message: this.submitMessage }));
-                    addNotify(this.submitMessage, "success");
-                } else if (!notified) notify(Object.assign({}, moqui.notifyOpts, { message: "Submit successful" }));
+                const showMessages = () => {
+                    const notified = rest && moqui.notifyMessages(rest.messageInfos, rest.errors, rest.validationErrors);
+                    if (this.submitMessage && this.submitMessage.length) {
+                        notify(Object.assign({}, moqui.notifyOpts, { message: this.submitMessage }));
+                        addNotify(this.submitMessage, "success");
+                    } else if (!notified && !wizard) notify(Object.assign({}, moqui.notifyOpts, { message: "Submit successful" }));
+                };
+                // A closing modal still owns its focus and hit targets. Offer actionable success messages once it is gone.
+                if (hidden && typeof hidden.then === "function") hidden.then(showMessages);
+                else showMessages();
                 if (wizard) wizard.stepAnswered(this, resp);
                 if (!moqui.responseHasErrors(resp)) this.$emit("submitted", resp);
                 moqui.formAnswered(this, { ok: !moqui.responseHasErrors(resp), json: moqui.isPlainObject(resp) ? resp : null, status: 200 });
@@ -9004,14 +9009,20 @@
     // takes when it has no submit-hide-id of its own); it is also the container m-quick-create while open.
     component("m-shell-quick-create", {
         name: "mShellQuickCreate",
+        data() { return { isShown: false, hideResolvers: [] }; },
         provide() { return { mSubmitHide: this }; },
         template:
-            '<m-dialog :model-value="$root.quickCreateShow" @update:model-value="$root.quickCreateShow = $event" id="m-quick-create" :title="$root.quickCreateTitle" width="560" @on-show="onShow">' +
+            '<m-dialog :model-value="$root.quickCreateShow" @update:model-value="$root.quickCreateShow = $event" id="m-quick-create" :title="$root.quickCreateTitle" width="560" @on-show="onShow" @on-hide="onHide">' +
                 '<m-dynamic-container v-if="$root.quickCreateShow && $root.quickCreateUrl" id="m-quick-create-body" :url="$root.quickCreateUrl"></m-dynamic-container>' +
             '</m-dialog>',
         methods: {
-            onShow() { this.$root.addContainer("m-quick-create", this); },
-            hide() { this.$root.quickCreateShow = false; },
+            onShow() { this.isShown = true; this.$root.addContainer("m-quick-create", this); },
+            onHide() { this.isShown = false; this.hideResolvers.splice(0).forEach((resolve) => resolve()); },
+            hide() {
+                const waiting = this.$root.quickCreateShow || this.isShown;
+                this.$root.quickCreateShow = false;
+                return waiting ? new Promise((resolve) => { this.hideResolvers.push(resolve); }) : Promise.resolve();
+            },
             reload() { const url = this.$root.quickCreateUrl; this.$root.quickCreateUrl = ""; this.$nextTick(() => { this.$root.quickCreateUrl = url; }); },
             load(url) { this.$root.quickCreateUrl = url; }
         }

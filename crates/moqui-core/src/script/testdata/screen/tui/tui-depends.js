@@ -71,8 +71,12 @@ $emit((() => {
             const $value = String(sri.getFieldValueString({"name":"drop-down","attrs":{},"parent":{"name":"default-field","attrs":{"title":"State"},"parent":{"name":"field","attrs":{"name":"stateGeoId"},"parent":{"name":"form-single","attrs":{"name":"Find","transition":"search"},"parent":{"name":"widgets","attrs":{}}}}}}) || "" || "");
             let $label = $value;
             if ($value) {
-                const $found = sri.getFieldTransitionValue("getGeoCountryStates", {"name":"dynamic-options","attrs":{"transition":"getGeoCountryStates","value-field":"geoId","label-field":"geoName"},"children":[{"name":"depends-on","attrs":{"field":"countryGeoId"}}],"parent":{"name":"drop-down","attrs":{},"parent":{"name":"default-field","attrs":{"title":"State"},"parent":{"name":"field","attrs":{"name":"stateGeoId"},"parent":{"name":"form-single","attrs":{"name":"Find","transition":"search"},"parent":{"name":"widgets","attrs":{}}}}}}}, $value, "geoName", false);
-                if ($found) $label = String($found);
+                const $description = "";
+                if ($description) $label = String($description);
+                else {
+                    const $found = sri.getFieldTransitionValue("getGeoCountryStates", {"name":"dynamic-options","attrs":{"transition":"getGeoCountryStates","value-field":"geoId","label-field":"geoName"},"children":[{"name":"depends-on","attrs":{"field":"countryGeoId"}}],"parent":{"name":"drop-down","attrs":{},"parent":{"name":"default-field","attrs":{"title":"State"},"parent":{"name":"field","attrs":{"name":"stateGeoId"},"parent":{"name":"form-single","attrs":{"name":"Find","transition":"search"},"parent":{"name":"widgets","attrs":{}}}}}}}, $value, "geoName", false);
+                    if ($found) $label = String($found);
+                }
             }
             const $w = $withRemote({kind:"dropDown",value:$value,options:$value ? [{value:$value,label:$label}] : []}, $remote(sri.makeUrlByType("getGeoCountryStates", "transition", {"name":"dynamic-options","attrs":{"transition":"getGeoCountryStates","value-field":"geoId","label-field":"geoName"},"children":[{"name":"depends-on","attrs":{"field":"countryGeoId"}}],"parent":{"name":"drop-down","attrs":{},"parent":{"name":"default-field","attrs":{"title":"State"},"parent":{"name":"field","attrs":{"name":"stateGeoId"},"parent":{"name":"form-single","attrs":{"name":"Find","transition":"search"},"parent":{"name":"widgets","attrs":{}}}}}}}, "false"), {"countryGeoId":"countryGeoId"}), "optionsUrl", "optionsParameters");
             $w.optionsParameters = Object.assign({}, $w.optionsParameters || {}, {"_valueField":"geoId","_labelField":"geoName"});

@@ -55,6 +55,62 @@ feature("Material confirmations cancel cleanly and approve the original validate
     },
 })
 
+feature("quick-create success links wait for modal hide and refusals keep the draft open", {
+    expect() {
+        const page = browser.newPage()
+        page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css"></head><body><div id="app">
+            <m-form ref="noteForm" action="/quick-note" :fields-initial="{noteText:''}" @submitted="submitted++" v-slot="form">
+                <m-text-line id="note-body" name="noteText" label="Note" v-model="form.fields.noteText"></m-text-line>
+                <q-btn id="save-note" type="submit" label="Save"></q-btn>
+            </m-form></div><script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
+            window.saves=[];window.routes=[];window.answered=0;
+            const realFetch=window.fetch;window.fetch=async(url,init)=>{
+                if(String(url)==='/quick-note'){saves.push(Object.fromEntries(init.body.entries()));return new Response(JSON.stringify({
+                    messageInfos:[{message:'Note saved',type:'success',link:'/qapps/Commons/Notes?wikiPageId=review-note'}]
+                }),{status:200});}return realFetch(url,init);
+            };
+            const closeMethods=moqui.qvt.components['m-shell-quick-create'].methods;
+            const app=Vue.createApp({data(){return {appRootPath:'',moquiSessionToken:'fixture-token',loading:0,quickCreateShow:true,submitted:0};},
+                provide(){return {mSubmitHide:{hide:()=>closeMethods.hide.call(window.closeFrame)}};},
+                methods:{getCsrfToken(){},addNotify(){},setUrl(url){routes.push(url);}}});
+            app.use(Quasar,{plugins:moqui.qvt.quasarPlugins(Quasar)});app.config.globalProperties.moqui=moqui;
+            ['m-form','m-text-line'].forEach(name=>app.component(name,moqui.qvt.components[name]));
+            window.vm=moqui.webrootVue=app.mount('#app');
+            window.closeFrame={$root:vm,isShown:true,hideResolvers:[]};
+            window.finishHide=()=>closeMethods.onHide.call(closeFrame);
+            moqui.onFormAnswer(()=>answered++);
+            </script></body></html>`)
+        page.waitFor(() => window.vm && document.querySelector('#save-note'))
+        page.locator('#note-body').fill('Submitted note')
+        page.locator('#save-note').click()
+        page.waitFor(() => saves.length === 1 && vm.submitted === 1 && !vm.quickCreateShow)
+        assert.equal(page.locator('.q-notification').count(), 0, 'Open is not offered while the modal still owns focus and hit targets')
+        assert.deepEqual(page.evaluate(() => saves), [{noteText:'Submitted note',moquiSessionToken:'fixture-token'}])
+        assert.equal(page.evaluate(() => answered), 1)
+        page.locator('#note-body').fill('Further draft edits')
+        page.evaluate(() => {finishHide();return true})
+        page.waitFor(() => document.querySelector('.q-notification button'))
+        assert.equal(page.evaluate(() => vm.$refs.noteForm.fields.noteText), 'Further draft edits')
+        page.locator('.q-notification button').click()
+        page.waitFor(() => routes.length === 1)
+        assert.deepEqual(page.evaluate(() => routes), ['/qapps/Commons/Notes?wikiPageId=review-note'])
+        page.evaluate(() => {finishHide();return true})
+        assert.equal(page.evaluate(() => vm.submitted), 1)
+        assert.equal(page.evaluate(() => saves.length), 1)
+        page.evaluate(() => {
+            vm.quickCreateShow=true;closeFrame.isShown=true;vm.$refs.noteForm.answerTold=false;
+            vm.$refs.noteForm.handleResponse({errors:['Save refused']});return true;
+        })
+        page.waitFor(() => Array.from(document.querySelectorAll('.q-notification')).some(node => node.textContent.includes('Save refused')))
+        assert.equal(page.evaluate(() => vm.quickCreateShow), true)
+        assert.equal(page.evaluate(() => closeFrame.hideResolvers.length), 0)
+        assert.equal(page.evaluate(() => vm.$refs.noteForm.fields.noteText), 'Further draft edits')
+        assert.equal(page.evaluate(() => vm.submitted), 1)
+        assert.equal(page.evaluate(() => saves.length), 1)
+    },
+})
+
 feature("find controls name their field and keyboard actions retain the other filters", {
     expect() {
         const page = browser.newPage()

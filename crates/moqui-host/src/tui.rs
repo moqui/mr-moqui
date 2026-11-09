@@ -1030,7 +1030,9 @@ fn shell_values(data: &serde_json::Value, shell: &mut ShellInfo) {
         ] {
             for item in list(providers.and_then(|providers| providers.get(key))) {
                 let url = json_field(&item, "url");
-                if url.is_empty() {
+                // ShellAction carries no record context, so a record-required creation has no usable form here.
+                let needs_record = item.get("requiresRecord").and_then(serde_json::Value::as_bool) == Some(true);
+                if url.is_empty() || (key == "quickCreate" && needs_record) {
                     continue;
                 }
                 out.push(ShellAction {
@@ -1164,57 +1166,5 @@ fn split_segments(path: &str) -> Vec<&str> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_redirect_location_keeps_what_follows_its_host() {
-        assert_eq!(
-            local_path("https://erp.example.com/qapps/Order?id=1"),
-            "/qapps/Order?id=1"
-        );
-        assert_eq!(local_path("https://erp.example.com"), "/");
-        assert_eq!(local_path("/qapps/Order"), "/qapps/Order");
-    }
-
-    #[test]
-    fn a_relative_url_drops_the_last_segment_before_dot_dot() {
-        assert_eq!(resolve_url("/apps/gallery/List", "../Detail"), "/apps/Detail");
-        assert_eq!(
-            resolve_url("/apps/gallery/Wizard/Options", "../Contact?contactId=1"),
-            "/apps/gallery/Contact?contactId=1"
-        );
-        assert_eq!(
-            resolve_url("/apps/gallery/List", "/apps/gallery/Detail?enumId=A"),
-            "/apps/gallery/Detail?enumId=A"
-        );
-        assert_eq!(
-            resolve_url("/apps/gallery/List?pageIndex=1", "detail"),
-            "/apps/gallery/detail"
-        );
-        assert_eq!(resolve_url("/apps/gallery/List", "./Detail"), "/apps/gallery/Detail");
-    }
-
-    #[test]
-    fn a_failed_transition_is_never_a_navigation_and_keeps_its_errors() {
-        let output = |status: u16, body: &str| RenderOutput {
-            status,
-            headers: Vec::new(),
-            body: body.as_bytes().to_vec(),
-        };
-        let failed = outcome_from(&output(
-            500,
-            r#"{"errorCode":500,"errors":"Party is locked","screenUrl":"/x"}"#,
-        ))
-        .unwrap();
-        assert!(failed.screen_url.is_empty());
-        assert_eq!(failed.messages.errors, ["Party is locked"]);
-        assert!(matches!(outcome_from(&output(401, "{}")), Err(LinkError::Auth(_))));
-        let saved = outcome_from(&output(200, r#"{"messages":"Saved","screenUrl":"/y"}"#)).unwrap();
-        assert_eq!(saved.messages.info, ["Saved"]);
-        assert_eq!(saved.screen_url, "/y");
-        let repost = screen_repost("/apps/x?a=%C3%A9&b=100%", &BTreeMap::new());
-        assert_eq!(repost.parameters.get("a").map(String::as_str), Some("é"));
-        assert_eq!(repost.parameters.get("b").map(String::as_str), Some("100%"));
-    }
-}
+#[path = "tui_tests.rs"]
+mod tests;

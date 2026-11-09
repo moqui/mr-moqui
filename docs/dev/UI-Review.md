@@ -51,6 +51,12 @@ The test runner owns its scratch database and prints its actual path. Keep this 
 stopped cleanly. The linked component directories are source: all Dev AIDE write activities must target separate
 fixture sites, never these links. Choose other free listener ports if local configuration enables secondary services.
 
+For a review that survives binary restarts, stop a `--keep` fixture runner and its database, then move the entire kept
+runtime to a stable review path outside the runner's `/tmp/mt-<pid>-*` namespace before serving it with `--db existing`.
+Retain its configuration, `.env`, resources and bootstrap directory targeted by symlinks. A retained scratch path
+still names its original process: later fixture cleanup can stop its Postgres after that process exits, even when
+the keep marker preserves its files. Keep the fixture `--spec` explicit when restarting the served runner.
+
 Use a unique hostname as well as a separate port for independent browser reviewers (for example
 `review.localhost:8090` and `terminal-review.localhost:8091`). Cookies are not isolated by port. One coordinator owns
 server lifecycle and shared files. Use separate disposable repositories and a local remote for Dev AIDE writing and

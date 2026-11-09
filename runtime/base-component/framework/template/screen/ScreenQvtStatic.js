@@ -791,7 +791,16 @@
             }, idAttrs(n));
             labelAttr(n, out);
             tipOf(n, out);
+            const none = at(n, "no-current-selected-key") ? exp(at(n, "no-current-selected-key"), n, "no-current-selected-key", false) : "''";
+            const current = "$mq.cur(" + baseValue(field, "") + "," + multiple + "," + none + ")";
             out[":options"] = optionsExpr(n);
+            // As in the server-merged renderer, a selected remote value can supply its authorized label
+            // before the user searches. Keep an existing option's label authoritative.
+            if (!multiple && at(n, "current-description")) {
+                const description = exp(at(n, "current-description"), n, "current-description", false);
+                out[":options"] = "((options,current,label)=>current&&!options.some(option=>$mq.str(option.value)===current)?" +
+                    "[{value:current,label:label||current}].concat(options):options)(" + out[":options"] + "," + current + "," + description + ")";
+            }
             if (dyn) {
                 const info = remote(dyn, at(dyn, "transition"));
                 Object.assign(out, {
@@ -802,8 +811,6 @@
                 });
                 if (!out["options-load-init"]) delete out["options-load-init"];
             }
-            const none = at(n, "no-current-selected-key") ? exp(at(n, "no-current-selected-key"), n, "no-current-selected-key", false) : "''";
-            const current = "$mq.cur(" + baseValue(field, "") + "," + multiple + "," + none + ")";
             Object.assign(out, st.inForm ? { "v-model": fieldRef(name) } : { ":model-value": current });
             let body = "<m-drop-down" + A(out) + ">";
             if (at(n, "show-not") === "true") {

@@ -344,6 +344,8 @@ fn links_keep_their_parameters_and_options_send_fixed_and_dependent_ones() {
         "params",
         r#"<screen require-authentication="false"><actions><script>
             rows = [{enumId:'E1'}, {enumId:'E2'}]
+            assignee = 'EX_JOHN_DOE'
+            assigneeName = 'John Doe'
         </script></actions><widgets>
             <link url="/apps/Detail" url-type="plain" text="Open"><parameter name="enumId" value="E0"/></link>
             <link url="/apps/Views" url-type="plain" text="Board" parameter-map="{view:'board'}"/>
@@ -354,6 +356,9 @@ fn links_keep_their_parameters_and_options_send_fixed_and_dependent_ones() {
             </form-list>
             <form-single name="Geo">
                 <field name="country"><default-field><text-line/></default-field></field>
+                <field name="assignee"><default-field title="Assignee"><drop-down current-description="${assigneeName}">
+                    <dynamic-options transition="/apps/people" server-search="true" min-length="1"/>
+                </drop-down></default-field></field>
                 <field name="state"><default-field><drop-down>
                     <dynamic-options transition="/apps/states" value-field="geoId" label-field="geoName"
                             parameter-map="{geoTypeEnumId:'GEOT_STATE'}">
@@ -396,6 +401,15 @@ fn links_keep_their_parameters_and_options_send_fixed_and_dependent_ones() {
         json!({"geoTypeEnumId": "GEOT_STATE", "_valueField": "geoId", "_labelField": "geoName"})
     );
     assert!(!state["w"]["optionsUrl"].as_str().unwrap().contains('?'), "{state:?}");
+    let assignee = nodes(&doc)
+        .into_iter()
+        .find(|node| node.get("name").and_then(Json::as_str) == Some("assignee"))
+        .unwrap();
+    assert_eq!(assignee["w"]["value"], json!("EX_JOHN_DOE"));
+    assert_eq!(
+        assignee["w"]["options"],
+        json!([{ "value": "EX_JOHN_DOE", "label": "John Doe" }])
+    );
     let model = moqui_tui::ScreenModel::from_json(&output.body_text()).unwrap_or_else(|err| panic!("{err}"));
     assert_eq!(model.v, 1);
 }

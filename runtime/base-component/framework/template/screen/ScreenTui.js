@@ -341,8 +341,12 @@ ${kind === "check" ? "" : `        if ($value && !$options.some(($opt) => $opt.v
             const $value = String(${valueCall(widget)} || "");
             let $label = $value;
             if ($value) {
-                const $found = sri.getFieldTransitionValue(${jsString(attr(dynamic, "transition") || "")}, ${S.nodeLit(dynamic, true)}, $value, ${jsString(labelField)}, false);
-                if ($found) $label = String($found);
+                const $description = ${attr(widget, "current-description") ? `ec.resource.expand(${jsString(attr(widget, "current-description"))}, "")` : '""'};
+                if ($description) $label = String($description);
+                else {
+                    const $found = sri.getFieldTransitionValue(${jsString(attr(dynamic, "transition") || "")}, ${S.nodeLit(dynamic, true)}, $value, ${jsString(labelField)}, false);
+                    if ($found) $label = String($found);
+                }
             }
             const $w = $withRemote({kind:"dropDown",value:$value,options:$value ? [{value:$value,label:$label}] : []}, ${remoteExpr(dynamic, attr(dynamic, "transition"))}, "optionsUrl", "optionsParameters");
             ${extra.map((line) => line + "\n            ").join("")}return $w;

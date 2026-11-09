@@ -75,6 +75,41 @@ function dialog(html, id) {
     return html.match(new RegExp('<m-container-dialog id="' + id + '"[^>]*>([\\s\\S]*?)</m-container-dialog>'))?.[1];
 }
 
+feature('server-static remote choices preserve the current description before searching', { expect() { (function () {
+    const T = readModule('../TemplateSupport.js');
+    const module = readModule('ScreenQvtStatic.js')(T, readModule('ScreenSupport.js')(T));
+    const optionsFor = (value, fixed, multiple) => {
+        let html = '';
+        const form = { name: 'form-single', attrs: { name: 'QuickTask' }, children: [] };
+        const field = { name: 'field', attrs: { name: 'assignToPartyId', from: 'myPartyId' }, parent: form, children: [] };
+        const sub = { name: 'default-field', attrs: { title: 'Assignee' }, parent: field, children: [] };
+        const widget = { name: 'drop-down', attrs: { 'current-description': '${myName}', 'allow-multiple': String(!!multiple) },
+            parent: sub, children: [] };
+        if (fixed) widget.children.push({ name: 'option', attrs: { key: 'EX_JOHN_DOE', text: 'Existing authorized name' }, children: [], parent: widget });
+        widget.children.push({ name: 'dynamic-options', attrs: { transition: 'searchPeople', 'server-search': 'true', 'min-length': '1' }, children: [], parent: widget });
+        sub.children.push(widget);
+        field.children.push(sub);
+        form.children.push(field);
+        const context = { sri: { write: text => { html += text; }, staticCheck() {},
+            staticUrl: () => ({ path: '/qapps/Commons/QuickCreate/searchPeople', parameters: [] }) } };
+        runInContext(module.runtime, context);
+        context.$mqQvtS.widgetFns['drop-down'](widget);
+        const encoded = html.match(/:options="([^"]*)"/)[1];
+        const expression = encoded.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+        return runInContext('(' + expression + ')', {
+            $scope: {}, myPartyId: value, myName: 'John Doe',
+            $mq: { cur: (current, many, fallback) => current || fallback, str: current => current == null ? '' : String(current) },
+            ec: { l10n: { localize: text => text }, resource: {
+                expandNoL10n: (pattern, expressions) => pattern.replace(/\$\{([^}]+)\}/g, (_, key) => expressions[key]())
+            } }
+        });
+    };
+    assert.deepEqual(optionsFor('EX_JOHN_DOE', false, false), [{ value: 'EX_JOHN_DOE', label: 'John Doe' }]);
+    assert.deepEqual(optionsFor('EX_JOHN_DOE', true, false), [{ value: 'EX_JOHN_DOE', label: 'Existing authorized name' }]);
+    assert.deepEqual(optionsFor('', false, false), []);
+    assert.deepEqual(optionsFor('EX_JOHN_DOE', false, true), []);
+})(); } });
+
 feature('sortable headers separate title and sort links with whitespace like Java', { expect() { (function () {
     const html = renderList({ headerColumns: [
         { name: 'projectId', title: () => 'Project <ID>', orderBy: 'true' },

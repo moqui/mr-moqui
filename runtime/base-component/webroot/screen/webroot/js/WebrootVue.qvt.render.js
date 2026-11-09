@@ -8894,7 +8894,7 @@
               }, 8, ["model-value", "onUpdate:modelValue", "onShow", "onHide"]))
             }
         } },
-        "m-shell-quick-create": { hash: "9b22e439", make: function (Vue) {
+        "m-shell-quick-create": { hash: "dca2cdd9", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, withCtx: _withCtx } = Vue
 
             return function render(_ctx, _cache) {
@@ -8907,7 +8907,8 @@
                 id: "m-quick-create",
                 title: _ctx.$root.quickCreateTitle,
                 width: "560",
-                onOnShow: _ctx.onShow
+                onOnShow: _ctx.onShow,
+                onOnHide: _ctx.onHide
               }, {
                 default: _withCtx(() => [
                   (_ctx.$root.quickCreateShow && _ctx.$root.quickCreateUrl)
@@ -8919,7 +8920,7 @@
                     : _createCommentVNode("", true)
                 ]),
                 _: 1
-              }, 8, ["model-value", "onUpdate:modelValue", "title", "onOnShow"]))
+              }, 8, ["model-value", "onUpdate:modelValue", "title", "onOnShow", "onOnHide"]))
             }
         } },
         "m-shell-tray": { hash: "613fab4f", make: function (Vue) {
