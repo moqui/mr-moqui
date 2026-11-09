@@ -22,6 +22,7 @@
 #[cfg(feature = "postgres")]
 mod driver {
     use std::collections::VecDeque;
+    #[cfg(unix)]
     use std::path::PathBuf;
     use std::sync::Arc;
 

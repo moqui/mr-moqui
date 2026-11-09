@@ -739,6 +739,8 @@ impl TempDir {
         let mut bytes = [0u8; 8];
         getrandom::fill(&mut bytes).map_err(|err| Error::new(format!("could not read random bytes: {err}")))?;
         let path = std::env::temp_dir().join(format!("{prefix}-{:016x}", u64::from_le_bytes(bytes)));
+        // `mode` needs a mutable builder. Windows creates the directory as it is.
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);

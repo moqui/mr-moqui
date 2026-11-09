@@ -23,7 +23,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use base64::Engine as _;
 use std::net::TcpStream;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -182,13 +181,14 @@ impl Browser {
         args.push(format!("--window-size={},{}", launch.window.0, launch.window.1));
         args.push(format!("--user-data-dir={}", profile.display()));
         args.push("about:blank".to_string());
-        let spawned = Command::new(&launch.binary)
+        let mut command = Command::new(&launch.binary);
+        command
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn();
+            .stderr(Stdio::null());
+        isolate_process_group(&mut command);
+        let spawned = command.spawn();
         let child = match spawned {
             Ok(child) => child,
             Err(err) => {
@@ -1228,11 +1228,36 @@ impl Drop for Browser {
     }
 }
 
+/// Put the browser in its own process group so its renderer and GPU children die with it.
+fn isolate_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        // CREATE_NEW_PROCESS_GROUP. `taskkill /T` then reaches the renderer and GPU processes.
+        command.creation_flags(0x0000_0200);
+    }
+}
+
 fn kill_group(child: &mut Child) {
-    let _ = Command::new("kill")
-        .args(["-KILL", &format!("-{}", child.id())])
-        .stderr(Stdio::null())
-        .status();
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-KILL", &format!("-{}", child.id())])
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &child.id().to_string()])
+            .stderr(Stdio::null())
+            .status();
+    }
     let _ = child.kill();
     let _ = child.wait();
 }

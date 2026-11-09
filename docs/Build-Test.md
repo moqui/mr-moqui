@@ -18,9 +18,15 @@ that test a running server from outside are in [Client-Testing](dev/Client-Testi
 ## Build
 
 Prerequisites: Rust 1.99 or newer (`rustc --version`; `rust-toolchain.toml` pins 1.99.0, which quickjs-oxide
-declares). A build with embedded Postgres embeds the 18.6.0 archive that `scripts/pg-payload.sh strip` downloads once
-and strips of psql (it links GPL readline); `./moq build` runs that when the archive is missing. Node is not needed to
-build or test.
+declares) and bash, on Linux, macOS, or Windows. On Windows the host is `x86_64-pc-windows-msvc`, Visual Studio
+Build Tools supplies the C compiler (the "Desktop development with C++" workload; aws-lc and QuickJS compile C, and
+the embedded Postgres binaries load that workload's `VCRUNTIME140.dll`), and Git for Windows supplies bash. The first
+build that needs it downloads NASM 3.02 to `%USERPROFILE%\.moqui\nasm` (aws-lc assembles with it). Set `MOQUI_NASM`
+to a directory that contains `nasm.exe`, or to `nasm.exe` itself, to use that copy instead. A `cargo build` that does
+not go through `moq` still needs NASM on `PATH`. From PowerShell or cmd, `moq.cmd` runs `moq`; the binary is
+`target\release\moqui.exe`. A build with embedded Postgres embeds the 18.6.0 archive that `scripts/pg-payload.sh strip`
+downloads once and strips of psql (it links GPL readline); `./moq build` runs that when the archive is missing. Node
+is not needed to build or test.
 
 ```sh
 ./moq build                            # Maximal with the dev tools, target/release/moqui; --lite, --debug or
@@ -49,6 +55,8 @@ flag and uses that binary. `moqui version` prints a binary's package and feature
 | Maximal | (none) or `--release` | `release` | `target/release/moqui` | Every feature, Postgres embedded, and the dev tools (`devtools`) |
 | Enterprise | `--enterprise` | `enterprise` | `target/enterprise/moqui` | Every feature, with the databases external (Postgres and MySQL drivers, no embedded Postgres) |
 | Browser | `scripts/wasm-build.sh [--release]` | `dev` / `release` | `target/browser/wasm-pkg/<profile>` | The framework on SQLite in a Web Worker; none of the optional features |
+
+On Windows each of those binaries is `moqui.exe` (`target\release\moqui.exe` for Maximal).
 
 Plain `cargo build -p moqui`, `cargo test` and `cargo lint` use the Maximal feature set with `devtools`, so they cover
 everything.
@@ -142,9 +150,11 @@ The profiles are in `.cargo/config.toml`, so the generated `target/moqui-app` cr
 has its own, so the artifacts of one never replace another's and switching packages does not rebuild.
 
 - `dev` (Debug, and every `cargo test`): the workspace crates at opt-level 0 with debug info, the dependencies at
-  opt-level 3 with line tables only (file and line in a backtrace). The debug info stays in the object files under
-  `target/debug` (`split-debuginfo = "unpacked"`), where debuggers read it, instead of being copied into each binary:
-  a host test binary was 1.5 GB, 83% of it debug info.
+  opt-level 3 with line tables only (file and line in a backtrace). On Unix, `moq` exports
+  `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=unpacked` (Cargo has no per-target profile, and `unpacked` is not a Windows
+  option), so the debug info stays in the object files under `target/debug`, where debuggers read it, instead of
+  being copied into each binary: a host test binary was 1.5 GB, 83% of it debug info. A direct `cargo test` on Unix
+  does the same when that variable is set. A Windows dev build keeps the compiler default, a PDB beside the binary.
 - `lite` (Lite): `release` with `incremental = true` and 256 codegen units for the workspace and path crates
   (Cargo applies `incremental` only to those), so a rebuild after an edit to the framework is quick; the dependencies
   keep the release settings and are built once.
@@ -157,12 +167,13 @@ has its own, so the artifacts of one never replace another's and switching packa
 The `embedded-postgres` feature embeds the theseus Postgres archive (the version `.cargo/config.toml` forces through
 `POSTGRESQL_VERSION`) and unpacks it once into `install/postgres/<version>` in the runtime directory (or under
 `MOQUI_INSTALL`), shared by the entity, search and sim clusters. An install an earlier build unpacked in
-`runtime/db/install` is moved there on the first start. `crates/moqui-drivers/build.rs` stages it from `~/.theseus/postgresql/postgresql-<version>-<target>.tar.gz`, or
+`runtime/db/install` is moved there on the first start. `crates/moqui-drivers/build.rs` stages it from `~/.theseus/postgresql/postgresql-<version>-<target>.tar.gz` (`%USERPROFILE%\.theseus\postgresql` on Windows; the build reads `USERPROFILE`, not Git Bash's `HOME`), or
 the file `MOQUI_PG_ARCHIVE` names, and downloads nothing. It refuses an archive that still holds `bin/psql` or a
 readline library (GPL, plans/archive/License-Review.md).
 
 `scripts/pg-payload.sh strip` downloads the archive when it is missing (checking its sha256) and repacks it without
-psql; `./moq build` runs it the first time. A plain `cargo build` of a package with embedded Postgres asks for it.
+psql; `./moq build` runs it the first time. curl uses `https_proxy` when it is set, and otherwise git's `http.proxy`.
+A plain `cargo build` of a package with embedded Postgres asks for it.
 `scripts/pg-payload.sh check` checks an archive, and every one staged under `target/`, for psql and readline.
 
 ### Instance archive
@@ -412,7 +423,7 @@ In the Play Console, once:
 
 The `./moq` script runs the built binaries in place and replaces the Java Moqui Gradle tasks: run, load, save and reload
 of the database, clean, OpenSearch, Chromium for PDF, git across all repositories, and component get, create and zip.
-It needs only bash (3.2 or newer), so it works on a fresh checkout on Linux or macOS. `./moq` with no arguments lists
+It needs only bash (3.2 or newer), so it works on a fresh checkout on Linux, macOS, or Windows (Git Bash; `moq.cmd` from PowerShell or cmd). `./moq` with no arguments lists
 the tasks, and `./moq help <task>` describes one. Task names match by partial parts, ignoring case, so `./moq r-p` and
 `./moq runProduction` both mean `run-production`.
 
