@@ -676,6 +676,33 @@ fn engine() -> Result<Rc<OxideEngine>, Error> {
     }
 }
 
+/// Declares the entity model's names (entity names, field and alias names, relationship short aliases) as the
+/// process's shared keys, once a process: the code images that name them then share their key tables in every runtime,
+/// and a runtime that reads an entity's fields finds the shared atoms. The list is bounded by the model; a key made from
+/// run-time data is never declared. Skipped while no entity facade is installed (tried again at the next start).
+fn declare_model_keys(runtime: &quickjs_oxide::engine::api::core::Runtime) {
+    static DECLARED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if DECLARED.load(Relaxed) {
+        return;
+    }
+    let Ok(facade) = crate::script::host::entity_facade() else { return };
+    let names: std::collections::BTreeSet<String> = facade.with_model(|model| {
+        let mut names = std::collections::BTreeSet::new();
+        for entity in model.entities() {
+            names.insert(entity.entity_name.clone());
+            names.insert(entity.full_name.clone());
+            names.extend(entity.short_alias.iter().cloned());
+            names.extend(entity.fields.iter().map(|field| field.name.clone()));
+            names.extend(entity.aliases.iter().map(|alias| alias.name.clone()));
+            names.extend(entity.relationships.iter().filter_map(|relationship| relationship.short_alias.clone()));
+        }
+        names
+    });
+    if runtime.share_keys(names.iter().map(String::as_str)).is_ok() {
+        DECLARED.store(true, Relaxed);
+    }
+}
+
 fn start_engine() -> Result<Rc<OxideEngine>, RuntimeError> {
     #[cfg(test)]
     if FAIL_START.with(Cell::get) {
@@ -746,6 +773,9 @@ impl OxideEngine {
             ..RuntimeOptions::default()
         };
         let runtime = quickjs_oxide::engine::api::core::Runtime::with_host(MoquiHost, options);
+        // the start's keys and code are the same in every runtime: shared atoms of the process, until
+        // [`Self::finish_start`] ends the start (a key made from run-time data later stays this runtime's)
+        runtime.set_share_atoms(true)?;
         let context = runtime.context();
         // QuickJS's builtins quickjs-oxide lacks: builtins here too, not frozen host globals
         super::builtins::install(&context)?;
@@ -855,6 +885,17 @@ impl OxideEngine {
     /// a global a shim makes (`EdiHandler`, `__moquiWrap`) is the global object's own rather than a write to the
     /// context stack.
     fn finish_start(&self, builtins: &ObjectRef) -> Result<(), RuntimeError> {
+        let finished = self.install_host(builtins);
+        // from here keys come from run-time data: this runtime's own, collected as any atom
+        let shared = self.runtime.set_share_atoms(false);
+        finished?;
+        shared?;
+        declare_model_keys(&self.runtime);
+        Ok(())
+    }
+
+    /// [`Self::finish_start`]'s installs.
+    fn install_host(&self, builtins: &ObjectRef) -> Result<(), RuntimeError> {
         let mut context = self.context.clone();
         super::bind::install_shims(&mut context, &self.protos.helpers, std::rc::Rc::new(EngineHooks))?;
         // the host's globals and helper functions QuickJS installs outside the table, then its helper script over them
