@@ -1,0 +1,291 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Conf › Edit, served by Edit.xml in the qvue render mode over its file, check and save transitions: one conf file in
+    the framework's code editor (m-code-editor) with completion from the conf schema. A gutter marks each element's
+    class: L live (in effect when saved), A apply (built again when saved), R restart (waits for a restart); its tooltip
+    says why and names the attributes whose class differs. Above an element the default conf describes, its comments show
+    two lines until clicked. The lint (check#ConfFile) reports problems, and each change the save would leave waiting for
+    a restart, on its line. Review and save shows the diff and every change the reload would make (a change another file
+    holds that is not running yet is applied with it), then saves and reloads. -->
+<template><div class="q-pa-sm" data-conf-edit>
+    <div class="row items-center q-col-gutter-sm q-mb-sm">
+        <div class="col-12 col-md-5">
+            <q-select dense outlined emit-value map-options v-model="fileIndex" :options="fileOptions" label="Conf file"
+                    @update:model-value="chooseFile" data-conf-file-select>
+                <template v-slot:option="scope"><q-item v-bind="scope.itemProps"><q-item-section>
+                    <q-item-label>{{scope.opt.label}}</q-item-label>
+                    <q-item-label caption class="text-mono">{{scope.opt.path}}</q-item-label>
+                </q-item-section><q-item-section side v-if="!scope.opt.editable"><q-chip dense square class="m-tonal">read only</q-chip></q-item-section></q-item></template>
+            </q-select>
+        </div>
+        <div class="col-12 col-md text-caption m-muted text-mono" style="word-break:break-all">{{file.path}}</div>
+        <div class="col-12 col-md-auto row q-gutter-xs items-center">
+            <q-chip v-if="dirty" dense square class="q-ma-none m-tonal text-warning">not saved</q-chip>
+            <q-btn flat dense no-caps icon="sym_o_account_tree" label="Settings" @click="go('View')"></q-btn>
+            <q-btn v-if="file.editable" unelevated no-caps color="primary" icon="sym_o_rate_review" label="Review and save"
+                    :disable="busy || !dirty" @click="review" data-conf-review></q-btn>
+        </div>
+    </div>
+    <p v-if="error" role="alert" class="text-negative" data-conf-error>{{error}}
+        <q-btn v-if="stale" flat dense no-caps color="primary" label="Read the file again" @click="reread"></q-btn></p>
+    <q-banner v-if="loaded && !file.editable" dense rounded class="m-tonal q-mb-sm" data-conf-readonly>
+        {{file.role === 'default' ? 'The default conf is read only here: a framework update replaces it. Override a setting in the runtime conf.'
+            : 'The server cannot write this file.'}}
+        <template v-slot:action><q-btn v-if="runtimeIndex != null && runtimeIndex !== fileIndex" flat dense no-caps label="Open the runtime conf"
+                @click="chooseFile(runtimeIndex)"></q-btn></template>
+    </q-banner>
+    <q-banner v-if="waiting.length" dense rounded class="m-tonal text-warning q-mb-sm" data-conf-waiting>
+        Saved. {{waiting.length}} change(s) wait for a restart: {{waiting.map(changeText).join('; ')}}
+        <template v-slot:action><q-btn flat dense no-caps label="Changes and restart" @click="go('Changes')"></q-btn></template>
+    </q-banner>
+    <div class="row q-gutter-sm items-center text-caption m-muted q-mb-xs" v-if="loaded">
+        <span><span class="m-conf-mark m-conf-mark-live">L</span> live: in effect when saved</span>
+        <span><span class="m-conf-mark m-conf-mark-apply">A</span> apply: built again when saved</span>
+        <span><span class="m-conf-mark m-conf-mark-restart">R</span> restart: waits for a restart</span>
+    </div>
+    <m-code-editor v-if="codeReady && loaded" :key="'conf-' + fileIndex + '-' + generation" v-model="text" language="xml" :schema="schema"
+            :read-only="!file.editable" :lint="file.editable ? lint : null" :extensions="extensions" :highlight-lines="highlight"
+            height="70vh" aria-label="Conf file" @save="review" @ready="onReady" data-conf-editor></m-code-editor>
+    <q-input v-else-if="loaded" type="textarea" outlined autogrow v-model="text" :readonly="!file.editable" class="text-mono"></q-input>
+    <p v-else-if="!error" class="m-muted">Reading the conf file…</p>
+
+    <q-dialog v-model="reviewing" maximized-on-mobile>
+        <q-card style="width:min(1100px,96vw);max-width:96vw" data-conf-review-dialog>
+            <q-card-section><div class="text-h6">Review and save {{file.label}}</div>
+                <div class="text-caption m-muted">Saving writes the file and reloads the conf: live and apply changes are in effect at once,
+                    restart changes wait for a restart.</div></q-card-section>
+            <q-card-section class="q-pt-none">
+                <m-diff-view v-if="codeReady" :original="savedText" :modified="text" file-name="MoquiConf.xml" height="40vh"></m-diff-view>
+            </q-card-section>
+            <q-card-section class="q-pt-none">
+                <p v-if="!reviewReport" class="m-muted">Checking what the reload would change…</p>
+                <p v-else-if="!reviewChanges.length" class="m-muted">The running conf does not change: the files already make it.</p>
+                <q-markup-table v-else dense flat bordered separator="horizontal" data-conf-review-changes>
+                    <thead><tr><th class="text-left">Setting</th><th class="text-left">Change</th><th class="text-left">Class</th><th class="text-left">When</th></tr></thead>
+                    <tbody><tr v-for="(change, index) in reviewChanges" :key="index">
+                        <td class="text-mono" style="word-break:break-all">{{change.unit}}{{change.attribute ? '@' + change.attribute : ''}}
+                            <div v-if="!change.here" class="text-caption m-muted">from another file, not running yet</div></td>
+                        <td class="text-mono" style="word-break:break-all">{{change.kind}}{{change.new != null && change.attribute ? ' "' + change.new + '"' : ''}}</td>
+                        <td><q-chip dense square class="q-ma-none m-tonal" :class="classColor(change.class)">{{change.class}}</q-chip></td>
+                        <td>{{change.outcome === 'pending-restart' ? 'after a restart' : change.outcome === 'no-effect' ? 'no effect' : 'when saved'}}
+                            <div v-if="change.reason" class="text-caption m-muted">{{change.reason}}</div></td>
+                    </tr></tbody>
+                </q-markup-table>
+            </q-card-section>
+            <q-card-actions align="right">
+                <q-btn flat no-caps label="Keep editing" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="primary" icon="sym_o_save" :label="'Save ' + file.label" :disable="busy || !reviewReport || !savable"
+                        @click="save" data-conf-save></q-btn>
+            </q-card-actions>
+        </q-card>
+    </q-dialog>
+</div></template>
+<script>
+module.exports = {
+    data() {
+        return {files: [], file: {}, fileIndex: null, text: '', savedText: '', textHash: '', lines: [], problems: [], schema: null,
+            savable: true, loaded: false, busy: false, error: '', stale: false, codeReady: !!(moqui.codeEditor && moqui.codeEditor.components),
+            generation: 0, highlight: [], reviewing: false, reviewReport: null, waiting: []};
+    },
+    computed: {
+        screenPath() { return this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
+        dirty() { return this.loaded && this.text !== this.savedText; },
+        fileOptions() {
+            return this.files.map(file => ({value: file.index, label: file.label + (file.editable ? '' : ' (read only)'), path: file.path, editable: file.editable}));
+        },
+        runtimeIndex() { const found = this.files.find(file => file.role === 'runtime'); return found ? found.index : null; },
+        // the changes of the review, each marked whether an element of this file makes it
+        reviewChanges() {
+            const units = new Set(this.lines.map(line => line.path));
+            return ((this.reviewReport && this.reviewReport.changes) || []).filter(change => change.kind !== 'property')
+                .map(change => Object.assign({here: units.has(change.unit)}, change));
+        }
+    },
+    methods: {
+        async request(name, params, post) {
+            const r = await moqui.request(this.screenPath + '/' + name, {method: post ? 'POST' : 'GET', params});
+            const out = r.json || {};
+            if (out.errors) { const error = new Error(typeof out.errors === 'string' ? out.errors : JSON.stringify(out.errors)); error.out = out; throw error; }
+            return out;
+        },
+        async load(index, line) {
+            this.busy = true; this.error = ''; this.stale = false;
+            try {
+                const out = await this.request('file', index != null ? {fileIndex: index} : {});
+                Object.assign(this, {files: out.files || [], file: out.file || {}, fileIndex: (out.file || {}).index, text: out.text || '',
+                    savedText: out.text || '', textHash: out.textHash || '', lines: out.lines || [], problems: out.problems || [],
+                    schema: out.schema || null, savable: out.savable !== false, loaded: true, highlight: line ? [Number(line)] : [],
+                    waiting: [], generation: this.generation + 1});
+            } catch (e) { this.error = String(e.message || e); } finally { this.busy = false; }
+        },
+        async chooseFile(index) {
+            if (this.dirty && !(await moqui.confirmAction('Leave ' + this.file.label + ' without saving it?', document.activeElement))) {
+                this.fileIndex = this.file.index; return;
+            }
+            await this.load(index, 0);
+        },
+        async reread() {
+            if (this.dirty && !(await moqui.confirmAction('Read ' + this.file.label + ' again? Your changes here are lost.', document.activeElement))) return;
+            await this.load(this.fileIndex, 0);
+        },
+        go(name) { this.$root.setUrl(this.$root.linkBasePath + '/' + this.$root.currentPathList.slice(0, -1).concat(name).join('/')); },
+        classColor(cls) { return cls === 'live' ? 'text-positive' : cls === 'apply' ? 'text-primary' : 'text-warning'; },
+        changeText(change) { return change.unit + (change.attribute ? '@' + change.attribute : ''); },
+        // the editor's lint: the server's problems, and on its line each change saving would leave waiting for a restart
+        async lint(text) {
+            if (!this.file.editable) return [];
+            const out = await this.request('check', {fileIndex: this.fileIndex, fileText: text}, true).catch(e => ({problems: [{line: 1, severity: 'error', message: String(e.message || e)}]}));
+            if (text !== this.text) return [];
+            this.problems = out.problems || [];
+            this.savable = out.savable !== false;
+            if (out.lines) { this.lines = out.lines; this.pushLines(); }
+            const restart = [];
+            if (text !== this.savedText) {
+                for (const change of (out.report && out.report.changes) || []) {
+                    if (change.outcome !== 'pending-restart') continue;
+                    const line = this.lines.find(info => info.unit && info.path === change.unit) || this.lines.find(info => info.path === change.unit);
+                    if (line) restart.push({line: line.line, severity: 'info', rule: 'conf.restart',
+                        message: 'Takes effect after a restart: ' + this.changeText(change) + (change.reason ? ' (' + change.reason + ')' : '')});
+                }
+            }
+            return this.problems.concat(restart);
+        },
+        // the gutter of classes and the default conf's comments above elements, from the lines the server last answered
+        extensions(CM) {
+            const vm = this;
+            const setLines = CM.StateEffect.define();
+            // the elements of a line: the outermost marks the gutter, the others are named in its tooltip
+            const byLine = (lines) => {
+                const map = {};
+                for (const info of lines || []) {
+                    const held = map[info.line];
+                    if (!held) map[info.line] = Object.assign({inner: []}, info);
+                    else held.inner.push(info);
+                }
+                return map;
+            };
+            const linesField = CM.StateField.define({
+                create: () => byLine(vm.lines),
+                update(value, tr) { for (const effect of tr.effects) if (effect.is(setLines)) return byLine(effect.value); return value; }
+            });
+            const letter = {live: 'L', apply: 'A', restart: 'R'};
+            class ClassMarker extends CM.GutterMarker {
+                constructor(info) { super(); this.info = info; }
+                eq(other) { return other.info === this.info; }
+                toDOM() {
+                    const span = document.createElement('span');
+                    span.className = 'm-conf-mark m-conf-mark-' + this.info.class;
+                    span.textContent = letter[this.info.class] || '?';
+                    const describe = (info) => info.name + ': ' + info.class + (info.reason ? ' (' + info.reason + ')' : '')
+                        + (info.attrs || []).map(attr => '\n  ' + attr[0] + ': ' + attr[1] + (attr[2] ? ' (' + attr[2] + ')' : '')).join('');
+                    span.title = [this.info].concat(this.info.inner || []).map(describe).join('\n');
+                    return span;
+                }
+            }
+            const classGutter = CM.gutter({
+                class: 'cm-m-conf-class',
+                lineMarker(view, line) {
+                    const info = view.state.field(linesField)[view.state.doc.lineAt(line.from).number];
+                    return info ? new ClassMarker(info) : null;
+                },
+                lineMarkerChange: (update) => update.transactions.some(tr => tr.effects.some(effect => effect.is(setLines))),
+                initialSpacer: () => new ClassMarker({class: 'restart', name: ''})
+            });
+            class CommentWidget extends CM.WidgetType {
+                constructor(text) { super(); this.text = text; }
+                eq(other) { return other.text === this.text; }
+                toDOM() {
+                    const div = document.createElement('div');
+                    div.className = 'm-conf-comment';
+                    div.textContent = this.text;
+                    div.title = 'From the default conf; click to show all';
+                    div.addEventListener('mousedown', (event) => { event.preventDefault(); div.classList.toggle('m-conf-comment-open'); });
+                    return div;
+                }
+                ignoreEvent() { return true; }
+            }
+            const comments = (state, lines) => {
+                const builder = new CM.RangeSetBuilder();
+                if (vm.file.role === 'default') return builder.finish();
+                const sorted = (lines || []).filter(info => info.comments && info.comments.length && info.line <= state.doc.lines)
+                    .sort((a, b) => a.line - b.line);
+                // after the line before the element, so the gutter's line numbers stay beside their lines (a block before
+                // a line takes the line's number to its top); before the first line only when the element is on it
+                for (const info of sorted) {
+                    const after = info.line > 1;
+                    const at = after ? state.doc.line(info.line - 1).to : 0;
+                    builder.add(at, at, CM.Decoration.widget({widget: new CommentWidget(info.comments.join('\n\n')), block: true,
+                        side: after ? 1 : -1}));
+                }
+                return builder.finish();
+            };
+            const commentField = CM.StateField.define({
+                create: (state) => comments(state, vm.lines),
+                update(value, tr) {
+                    for (const effect of tr.effects) if (effect.is(setLines)) return comments(tr.state, effect.value);
+                    return value.map(tr.changes);
+                },
+                provide: (field) => CM.EditorView.decorations.from(field)
+            });
+            // kept off the reactive data: the editor's state is CodeMirror's
+            vm.setLinesEffect = setLines;
+            return [linesField, classGutter, commentField];
+        },
+        onReady(view) { this.editorView = view; },
+        pushLines() { if (this.editorView && this.setLinesEffect) this.editorView.dispatch({effects: this.setLinesEffect.of(this.lines)}); },
+        async review() {
+            if (!this.file.editable || !this.dirty) return;
+            this.reviewReport = null; this.reviewing = true;
+            try {
+                const out = await this.request('check', {fileIndex: this.fileIndex, fileText: this.text}, true);
+                this.problems = out.problems || []; this.savable = out.savable !== false;
+                if (out.lines) this.lines = out.lines;
+                if (!this.savable) { this.reviewing = false; this.error = 'Fix the errors the editor marks before saving: ' + this.problems.filter(p => p.severity === 'error').map(p => 'line ' + p.line + ': ' + p.message).join('; '); return; }
+                this.reviewReport = out.report || {changes: []};
+            } catch (e) { this.reviewing = false; this.error = String(e.message || e); }
+        },
+        async save() {
+            this.busy = true; this.error = '';
+            try {
+                const out = await this.request('save', {fileIndex: this.fileIndex, fileText: this.text, expectedHash: this.textHash}, true);
+                const report = out.report || {changes: []};
+                this.savedText = this.text; this.textHash = out.textHash || this.textHash; this.reviewing = false;
+                this.waiting = (report.changes || []).filter(change => change.outcome === 'pending-restart');
+                moqui.notifyMessages('Saved ' + this.file.label + ': ' + (report.applied || 0) + ' change(s) in effect, '
+                    + (report.pendingRestart || 0) + ' wait for a restart.');
+            } catch (e) {
+                this.reviewing = false;
+                this.error = String(e.message || e);
+                this.stale = this.error.includes('changed since it was read');
+            } finally { this.busy = false; }
+        }
+    },
+    mounted() {
+        if (!this.codeReady) moqui.loadScript('/js/WebrootCode.js', null, () => !!(moqui.codeEditor && moqui.codeEditor.components))
+            .then(() => { this.codeReady = true; }, () => {});
+        const params = this.$root.currentParameters || {};
+        this.load(params.fileIndex != null && params.fileIndex !== '' ? params.fileIndex : null, params.line);
+    }
+};
+</script>
+<style>
+.cm-m-conf-class { min-width: 18px; }
+.m-conf-mark { display: inline-block; min-width: 14px; text-align: center; font-size: 10px; font-weight: 700; border-radius: 3px; padding: 0 2px; }
+.m-conf-mark-live { color: #2e7d32; background: rgba(46,125,50,.14); }
+.m-conf-mark-apply { color: #1565c0; background: rgba(21,101,192,.14); }
+.m-conf-mark-restart { color: #e65100; background: rgba(230,81,0,.16); }
+.m-conf-comment { margin: 4px 0 2px 0; padding: 2px 8px; border-left: 3px solid rgba(127,127,127,.35); white-space: pre-wrap; font-size: 12px;
+    font-family: inherit; opacity: .75; cursor: pointer; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.m-conf-comment-open { display: block; -webkit-line-clamp: unset; }
+</style>

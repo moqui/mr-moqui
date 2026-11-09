@@ -157,6 +157,10 @@ along with this software (see the LICENSE.md file). If not, see
         docs/tools/Component-Deploy.md); sealed, and in production also needs component_deploy_enabled=true. -->
     <moqui.security.UserPermission userPermissionId="COMPONENT_DEPLOY" description="System: deploy a component from git"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="COMPONENT_DEPLOY" fromDate="0"/>
+    <!-- Reading and saving the conf files on System > Conf > Edit; a save reloads the conf (docs/tools/Component-Deploy.md).
+        The conf names the code the server runs, so it is sealed. -->
+    <moqui.security.UserPermission userPermissionId="CONF_EDIT" description="System: edit the conf files"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="CONF_EDIT" fromDate="0"/>
     <!-- The built-in SSH server (ssh_port): SFTP over ssh-server sftp-root, and the admin command shell, which runs JavaScript. -->
     <moqui.security.UserPermission userPermissionId="SSH_SFTP" description="SSH: SFTP file access"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="SSH_SFTP" fromDate="0"/>

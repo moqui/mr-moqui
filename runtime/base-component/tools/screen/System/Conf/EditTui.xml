@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Conf › Edit's terminal twin, and the browser's form view of it: the conf file to work on (fileIndex, the runtime conf
+    when none is named), its text in the framework's text editor with Save (save#ConfFile: written, then the conf
+    reloaded), and its problems. The message after a save names the changes that wait for a restart. The default conf is
+    shown read only. CONF_EDIT, checked by the services. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Edit as a form" default-menu-include="false">
+    <parameter name="fileIndex"/>
+
+    <transition name="saveFile">
+        <actions>
+            <service-call name="org.moqui.impl.ComponentServices.save#ConfFile" out-map="saved"
+                    in-map="{fileIndex:fileIndex, text:fileText, expectedHash:expectedHash}"/>
+            <if condition="!ec.message.hasError()">
+                <set field="waiting" from="(saved.report?.changes || []).filter(change =&gt; change.outcome == 'pending-restart')
+                        .map(change =&gt; change.unit + (change.attribute ? '@' + change.attribute : ''))"/>
+                <message type="success">Saved: ${saved.report?.applied ?? 0} change(s) in effect, ${waiting.length} wait for a restart${waiting.length ? ' (' + waiting.join(', ') + ')' : ''}</message>
+            </if>
+        </actions>
+        <default-response url="."><parameter name="fileIndex"/></default-response>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <set field="canEditConf" from="ec.user.hasPermission('CONF_EDIT')"/>
+        <if condition="canEditConf">
+            <service-call name="org.moqui.impl.ComponentServices.get#ConfFile" out-map="confFile" transaction="force-new" ignore-error="true"
+                    in-map="{fileIndex:fileIndex}"/>
+            <set field="readError" from="ec.message.hasError() ? ec.message.errorsString : null"/>
+            <script>ec.message.clearErrors()</script>
+        </if>
+        <set field="fileFound" from="!!confFile?.file"/>
+        <set field="fileRows" from="(confFile?.files || []).map(file =&gt; ({fileIndex: String(file.index),
+                label: file.label + (file.editable ? '' : ' (read only)') + ' · ' + file.path}))"/>
+        <set field="fileValues" from="{fileIndex: confFile?.file ? String(confFile.file.index) : fileIndex}"/>
+        <set field="sourceValues" from="{fileIndex: confFile?.file ? String(confFile.file.index) : fileIndex, expectedHash: confFile?.textHash,
+                fileText: confFile?.text || ''}"/>
+        <set field="problemRows" from="(confFile?.problems || []).map(problem =&gt; ({line: problem.line, severity: problem.severity,
+                message: problem.message}))"/>
+    </actions>
+    <widgets>
+        <label text="Editing the conf files needs the CONF_EDIT permission." type="p" style="text-negative" condition="!canEditConf"/>
+        <label text="${readError}" type="p" style="text-negative" condition="canEditConf &amp;&amp; readError"/>
+        <section name="ConfFileForms" condition="fileFound"><widgets>
+            <form-single name="ConfFiles" transition="." map="fileValues">
+                <field name="fileIndex">
+                    <default-field title="Conf file">
+                        <drop-down allow-empty="false"><list-options list="fileRows" key="${fileIndex}" text="${label}"/></drop-down>
+                    </default-field>
+                </field>
+                <field name="submitButton"><default-field title="Open"><submit/></default-field></field>
+                <field-layout><field-row-big><field-ref name="fileIndex"/><field-ref name="submitButton"/></field-row-big></field-layout>
+            </form-single>
+            <section name="EditableSource" condition="confFile.file.editable"><widgets>
+                <form-single name="ConfSource" transition="saveFile" map="sourceValues">
+                    <field name="fileIndex"><default-field><hidden/></default-field></field>
+                    <field name="expectedHash"><default-field><hidden/></default-field></field>
+                    <field name="fileText"><default-field title="${confFile.file.path}"><text-area rows="24" cols="100" editor-type="code" language="xml"/></default-field></field>
+                    <field name="submitButton"><default-field title="Save and reload"><submit confirmation="Save ${confFile.file.label} and reload the conf?"/></default-field></field>
+                </form-single>
+            </widgets><fail-widgets>
+                <label type="p" text="${confFile.file.role == 'default' ? 'The default conf is read only here: a framework update replaces it. Override a setting in the runtime conf.' : 'The server cannot write this file.'}"/>
+                <form-single name="ConfSourceReadOnly" map="sourceValues">
+                    <field name="fileText"><default-field title="${confFile.file.path}"><text-area rows="24" cols="100" editor-type="code" language="xml" read-only="true"/></default-field></field>
+                </form-single>
+            </fail-widgets></section>
+            <section name="Problems" condition="problemRows.length"><widgets>
+                <form-list name="ConfProblems" list="problemRows" skip-form="true" paginate="false">
+                    <field name="line"><default-field title="Line"><display/></default-field></field>
+                    <field name="severity"><default-field title="Severity"><display/></default-field></field>
+                    <field name="message"><default-field title="Problem"><display/></default-field></field>
+                </form-list>
+            </widgets></section>
+        </widgets></section>
+    </widgets>
+</screen>

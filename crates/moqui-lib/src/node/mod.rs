@@ -50,6 +50,23 @@ pub(crate) struct NodeInner {
     location: Option<Rc<str>>,
     line: u32,
     column: u32,
+    /// Where a merge took this element's values from, kept only by a merge run in [`with_merge_sources`].
+    merged: Option<Box<MergeSources>>,
+}
+
+/// The file and line of an element in it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Source {
+    pub location: Rc<str>,
+    pub line: u32,
+}
+
+/// What a merge recorded on an element: the elements of other files merged into it, and for each attribute one of
+/// them set, the element that set it last.
+#[derive(Clone, Debug, Default)]
+struct MergeSources {
+    touched: Vec<Source>,
+    attrs: Vec<(Rc<str>, Source)>,
 }
 
 /// Called with the base node and the override node when a merge visits both.
@@ -67,6 +84,27 @@ thread_local! {
     static NAMES: RefCell<HashSet<Rc<str>>> = RefCell::new(HashSet::new());
     /// Documents this thread parsed for [`MNode::parse_shared`], by their text, the most recently used last.
     static SHARED: RefCell<Vec<(Rc<str>, MNode)>> = const { RefCell::new(Vec::new()) };
+    /// Whether merges on this thread record where values came from ([`with_merge_sources`]).
+    static TRACK_SOURCES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `body` with merges recording where each merged element's values came from: the elements of other files merged
+/// into it ([`MNode::merge_sources`]) and the element each attribute was last set from ([`MNode::attribute_source`]).
+/// Other merges record nothing, so a merge for a screen or an entity costs nothing more. The System › Conf view uses
+/// it (docs/tools/Component-Deploy.md, "Viewing and editing the conf").
+pub fn with_merge_sources<R>(body: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TRACK_SOURCES.with(|track| track.set(self.0));
+        }
+    }
+    let _reset = Reset(TRACK_SOURCES.with(|track| track.replace(true)));
+    body()
+}
+
+fn tracking_sources() -> bool {
+    TRACK_SOURCES.with(std::cell::Cell::get)
 }
 
 /// The one `Rc` of `name` on this thread, element and attribute names alike.
@@ -104,6 +142,7 @@ impl MNode {
                 location,
                 line,
                 column,
+                merged: None,
             })),
         };
         if !children.is_empty() {
@@ -218,6 +257,72 @@ impl MNode {
         self.inner.borrow().column
     }
 
+    /// The element's own file and line; `None` for an element made without a file.
+    pub fn source(&self) -> Option<Source> {
+        let inner = self.inner.borrow();
+        inner.location.as_ref().map(|location| Source {
+            location: Rc::clone(location),
+            line: inner.line,
+        })
+    }
+
+    /// The elements of other files a merge in [`with_merge_sources`] merged into this one, in merge order; empty when
+    /// none did.
+    pub fn merge_sources(&self) -> Vec<Source> {
+        self.inner
+            .borrow()
+            .merged
+            .as_ref()
+            .map(|merged| merged.touched.clone())
+            .unwrap_or_default()
+    }
+
+    /// The element attribute `name` was last set from: the override element a merge in [`with_merge_sources`] took it
+    /// from, else this element itself.
+    pub fn attribute_source(&self, name: &str) -> Option<Source> {
+        let recorded = self.inner.borrow().merged.as_ref().and_then(|merged| {
+            merged
+                .attrs
+                .iter()
+                .find(|(attr, _)| **attr == *name)
+                .map(|(_, source)| source.clone())
+        });
+        recorded.or_else(|| self.source())
+    }
+
+    /// Record, in a merge in [`with_merge_sources`], that `other` was merged into this element, and the attributes it
+    /// set.
+    fn record_merge(&self, other: &MNode, attributes: bool) {
+        if !tracking_sources() {
+            return;
+        }
+        let Some(source) = other.source() else {
+            return;
+        };
+        let names: Vec<Rc<str>> = if attributes {
+            other
+                .inner
+                .borrow()
+                .attributes
+                .iter()
+                .map(|(name, _)| Rc::clone(name))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut inner = self.inner.borrow_mut();
+        let merged = inner.merged.get_or_insert_with(Box::default);
+        if !merged.touched.contains(&source) {
+            merged.touched.push(source.clone());
+        }
+        for name in names {
+            match merged.attrs.iter_mut().find(|(held, _)| *held == name) {
+                Some(slot) => slot.1 = source.clone(),
+                None => merged.attrs.push((name, source.clone())),
+            }
+        }
+    }
+
     pub fn attribute(&self, name: &str) -> Option<String> {
         self.with_attribute(name, |value| value.map(str::to_string))
     }
@@ -282,6 +387,7 @@ impl MNode {
         if Rc::ptr_eq(&self.inner, &other.inner) {
             return;
         }
+        self.record_merge(other, true);
         let other = other.inner.borrow();
         let mut inner = self.inner.borrow_mut();
         for (key, value) in &other.attributes {
@@ -456,6 +562,7 @@ impl MNode {
     }
 
     pub fn replace_children_from(&self, other: &MNode) {
+        self.record_merge(other, false);
         self.clear_children();
         for child in other.children() {
             self.append_node(child.deep_copy());
@@ -471,9 +578,12 @@ impl MNode {
         let location = inner.location.clone();
         let line = inner.line;
         let column = inner.column;
+        let merged = inner.merged.clone();
         drop(inner);
         let copied_children: Vec<MNode> = children.iter().map(MNode::deep_copy).collect();
-        Self::from_parts(name, attributes, text, copied_children, location, line, column)
+        let copy = Self::from_parts(name, attributes, text, copied_children, location, line, column);
+        copy.inner.borrow_mut().merged = merged;
+        copy
     }
 
     /// Same structure, ignoring file location and shared identity.

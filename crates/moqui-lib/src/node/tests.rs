@@ -311,3 +311,60 @@ fn collect_xml(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
         }
     }
 }
+
+#[test]
+fn merge_sources_record_each_file_only_when_asked() {
+    let default = MNode::parse_text(
+        "default.xml",
+        "<conf>\n  <cache-list warm=\"false\">\n    <cache name=\"a\" expire=\"60\"/>\n  </cache-list>\n</conf>",
+    )
+    .unwrap();
+    let component = MNode::parse_text(
+        "component.xml",
+        "<conf>\n  <cache-list warm=\"true\">\n    <cache name=\"a\" expire=\"90\"/>\n    <cache name=\"b\"/>\n  </cache-list>\n</conf>",
+    )
+    .unwrap();
+    let runtime = MNode::parse_text("runtime.xml", "<conf>\n\n  <cache-list warm=\"maybe\"/>\n</conf>").unwrap();
+
+    // without the switch a merge records nothing
+    let untracked = default.deep_copy();
+    untracked.merge_child_with_child_key(&component, "cache-list", "cache", &["name"], None);
+    let list = untracked.first_named("cache-list").unwrap();
+    assert!(list.merge_sources().is_empty());
+    assert_eq!(list.attribute_source("warm").unwrap().location.as_ref(), "default.xml");
+
+    with_merge_sources(|| {
+        default.merge_child_with_child_key(&component, "cache-list", "cache", &["name"], None);
+        default.merge_child_with_child_key(&runtime, "cache-list", "cache", &["name"], None);
+    });
+    let list = default.first_named("cache-list").unwrap();
+    assert_eq!(list.source().unwrap().location.as_ref(), "default.xml");
+    let touched: Vec<(String, u32)> = list
+        .merge_sources()
+        .into_iter()
+        .map(|source| (source.location.to_string(), source.line))
+        .collect();
+    assert_eq!(
+        touched,
+        [("component.xml".to_string(), 2), ("runtime.xml".to_string(), 3)]
+    );
+    assert_eq!(list.attribute_source("warm").unwrap().location.as_ref(), "runtime.xml");
+    let caches = list.children_named("cache");
+    // a keyed child merged in place: its own file is the default, its expire from the component
+    assert_eq!(
+        caches[0].attribute_source("name").unwrap().location.as_ref(),
+        "component.xml"
+    );
+    assert_eq!(
+        caches[0].attribute_source("expire").unwrap().location.as_ref(),
+        "component.xml"
+    );
+    assert_eq!(caches[0].source().unwrap().location.as_ref(), "default.xml");
+    // a child appended whole is the component's
+    assert_eq!(caches[1].source().unwrap().location.as_ref(), "component.xml");
+    assert!(caches[1].merge_sources().is_empty());
+    // a deep copy keeps what was recorded
+    assert_eq!(list.deep_copy().merge_sources().len(), 2);
+    // the switch is off again
+    assert!(!tracking_sources());
+}

@@ -21,6 +21,7 @@
 
 pub mod catalog;
 mod diff;
+pub mod view;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -96,6 +97,11 @@ struct Hooks(Mutex<Vec<(Group, Hook)>>);
 #[derive(Default)]
 struct Pending(Mutex<Vec<ConfChange>>);
 
+/// Held while a reload applies, so a save on System › Conf, the dev file watcher and SIGHUP do not each read the
+/// running conf and replace it at once.
+#[derive(Default)]
+struct Applying(Mutex<()>);
+
 /// Run `hook` after a conf reload that changed a unit of `group`.
 pub fn on_apply(
     factory: &ExecutionContextFactory,
@@ -117,12 +123,28 @@ pub fn pending_restart(factory: &ExecutionContextFactory) -> Vec<ConfChange> {
 ///
 /// When a conf file does not parse, or the runtime conf named is missing.
 pub fn merged_from_files(factory: &ExecutionContextFactory, components: &[ComponentInfo]) -> Result<MNode, Error> {
-    let dirs: Vec<PathBuf> = components.iter().map(|info| info.location.clone()).collect();
-    let (framework, runtime) = (factory.framework_dir(), factory.runtime_dir());
-    match conf::merge_component_confs(framework, runtime, &dirs, factory.test_confs())? {
-        Some(merged) => Ok(merged),
-        None => conf::load_merged_conf(framework, runtime),
-    }
+    conf::merge_files(&conf_files(factory, components)?, None)
+}
+
+/// The files the conf of `components` is merged from, in merge order, as boot merges them.
+///
+/// # Errors
+///
+/// When the runtime conf named is missing.
+pub fn conf_files(
+    factory: &ExecutionContextFactory,
+    components: &[ComponentInfo],
+) -> Result<Vec<conf::ConfFile>, Error> {
+    let named: Vec<(String, PathBuf)> = components
+        .iter()
+        .map(|info| (info.name.clone(), info.location.clone()))
+        .collect();
+    conf::conf_files_of(
+        factory.framework_dir(),
+        factory.runtime_dir(),
+        &named,
+        factory.test_confs(),
+    )
 }
 
 /// What a reload of the conf files would change, changing nothing.
@@ -172,6 +194,8 @@ struct Decided {
 }
 
 fn run(factory: &ExecutionContextFactory, disk: &MNode, apply: bool) -> Result<ConfReport, Error> {
+    let applying = apply.then(|| factory.extension(|_| Applying::default()));
+    let _applying = applying.as_ref().map(|held| lock(&held.0));
     let started = std::time::Instant::now();
     let running = MNode::parse_text("running", &factory.conf_text())?;
     let mut decided: Vec<Decided> = diff::diff(&running, disk)

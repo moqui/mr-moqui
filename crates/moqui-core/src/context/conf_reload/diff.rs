@@ -212,7 +212,7 @@ fn diff_units(
 }
 
 /// The elements of `name` under `parent` by their key, a repeated key numbered from its second: `name#2`.
-fn keyed(parent: Option<&MNode>, name: &str, attrs: &[&str]) -> Vec<(String, MNode)> {
+pub(super) fn keyed(parent: Option<&MNode>, name: &str, attrs: &[&str]) -> Vec<(String, MNode)> {
     let mut out: Vec<(String, MNode)> = Vec::new();
     let Some(parent) = parent else {
         return out;
@@ -403,7 +403,7 @@ fn kind_of(old: &str, new: &str) -> Kind {
     }
 }
 
-fn join(path: &str, name: &str) -> String {
+pub(super) fn join(path: &str, name: &str) -> String {
     if path.is_empty() {
         name.to_string()
     } else {

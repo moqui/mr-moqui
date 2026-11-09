@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Conf › Changes (plans/archive/Component-Deploy.md, Phase 1; guide docs/tools/Component-Deploy.md): the running conf
+    against the conf the files make now (org.moqui.impl.ComponentServices.preview#ConfReload), each change with its class
+    (live: read on each use; apply: state built again; restart: read once at boot) and what applying it would do. Apply
+    Changes reloads the conf (reload#Conf), as SIGHUP does: what can be live is applied, the rest stays out of the running
+    conf and is listed under Waiting for a Restart until the server restarts. Restart Now restarts the server
+    (restart#Server) where it can for this user: a dev instance, DEV_AIDE or the ADMIN group, a server that can restart
+    itself. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Changes" default-menu-index="3">
+
+    <transition name="reloadConf" authz-action="update">
+        <service-call name="org.moqui.impl.ComponentServices.reload#Conf" out-map="reloadOut"/>
+        <actions><if condition="!ec.message.hasError()">
+            <message type="success">Conf reloaded: ${reloadOut.report?.applied ?? 0} change(s) live, ${reloadOut.report?.pendingRestart ?? 0} waiting for a restart</message>
+        </if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="restartServer" authz-action="update">
+        <service-call name="org.moqui.impl.DevToolsServices.restart#Server" out-map="restartOut"/>
+        <actions><if condition="restartOut.restarting">
+            <message type="success">The server is restarting; this page comes back when it is up</message>
+        </if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.impl.ComponentServices.preview#ConfReload" out-map="previewOut"/>
+        <service-call name="org.moqui.impl.ComponentServices.get#PendingRestart" out-map="pendingOut"/>
+        <script><![CDATA[
+            const report = previewOut.report || {}
+            changeList = report.changes || []
+            liveCount = report.applied || 0
+            restartCount = report.pendingRestart || 0
+            pendingList = pendingOut.changes || []
+            restartAllowed = !!pendingOut.restartAllowed
+        ]]></script>
+    </actions>
+    <widgets>
+        <container-row><row-col lg="8">
+            <label text="The conf files against the running conf: ${changeList.length} change(s), ${liveCount} can be live, ${restartCount} need a restart" type="p"/>
+        </row-col><row-col lg="4">
+            <link text="Apply Changes" url="reloadConf" btn-type="primary" condition="liveCount > 0"
+                    tooltip="Apply what can be live; the rest waits for a restart"/>
+        </row-col></container-row>
+
+        <section name="ChangesSection" condition="changeList.length > 0"><widgets>
+            <form-list name="ChangeList" list="changeList" skip-form="true">
+                <field name="unit"><default-field title="Unit"><display/></default-field></field>
+                <field name="attribute"><default-field><display/></default-field></field>
+                <field name="kind"><default-field><display/></default-field></field>
+                <field name="class"><default-field title="Class"><display/></default-field></field>
+                <field name="outcome"><default-field><display/></default-field></field>
+                <field name="reason"><default-field><display/></default-field></field>
+                <field name="old"><default-field title="Running"><display/></default-field></field>
+                <field name="new"><default-field title="Files"><display/></default-field></field>
+            </form-list>
+        </widgets><fail-widgets>
+            <label text="The conf files and the running conf are the same." type="p"/>
+        </fail-widgets></section>
+
+        <section name="PendingSection" condition="pendingList.length > 0"><widgets>
+            <container-row><row-col lg="8"><label text="Waiting for a Restart" type="h5"/></row-col><row-col lg="4">
+                <link text="Restart Now" url="restartServer" link-type="hidden-form" btn-type="danger" condition="restartAllowed"
+                        confirmation="Restart the server now? Sessions and the sim overlay are lost; it comes back with the conf files as they are."/>
+            </row-col></container-row>
+            <form-list name="PendingList" list="pendingList" skip-form="true">
+                <field name="unit"><default-field title="Unit"><display/></default-field></field>
+                <field name="attribute"><default-field><display/></default-field></field>
+                <field name="kind"><default-field><display/></default-field></field>
+                <field name="reason"><default-field><display/></default-field></field>
+            </form-list>
+        </widgets></section>
+    </widgets>
+</screen>

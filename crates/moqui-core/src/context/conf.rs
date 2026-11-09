@@ -72,33 +72,126 @@ pub fn load_merged_conf(framework_dir: &Path, runtime_dir: &Path) -> Result<MNod
 /// The conf with each component's `MoquiConf.xml` merged in component order, then the runtime conf on top again, as
 /// Java merges them: default, components, runtime. `components` come from the conf `load_merged_conf` returned.
 /// `test_confs` (a `moqui test` run, [`super::BootOptions::test_confs`]) merges each component's `test/MoquiConf.xml`
-/// right after its own `MoquiConf.xml` (plans/archive/ClientTestHarness.md 6).
+/// right after its own `MoquiConf.xml` (plans/archive/ClientTestHarness.md 6). `None` when no component has a conf.
 pub fn merge_component_confs(
     framework_dir: &Path,
     runtime_dir: &Path,
     components: &[std::path::PathBuf],
     test_confs: bool,
 ) -> Result<Option<MNode>, Error> {
-    let files: Vec<_> = components
+    let named: Vec<(String, PathBuf)> = components
         .iter()
-        .flat_map(|dir| {
-            let test = test_confs.then(|| dir.join("test/MoquiConf.xml"));
-            std::iter::once(dir.join("MoquiConf.xml")).chain(test)
-        })
-        .filter(|file| file.is_file())
+        .map(|dir| (component_name(dir), dir.clone()))
         .collect();
-    if files.is_empty() {
+    let files = conf_files_of(framework_dir, runtime_dir, &named, test_confs)?;
+    if !files.iter().any(|file| file.role.component().is_some()) {
         return Ok(None);
     }
-    let base = MNode::parse_file(framework_dir.join("conf/MoquiDefaultConf.xml"))?;
-    for file in &files {
-        tracing::info!("Merging component conf {}", file.display());
-        merge_conf(&base, &MNode::parse_file(file)?);
+    merge_files(&files, None).map(Some)
+}
+
+/// What a conf file is to the merge.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConfRole {
+    /// `framework/conf/MoquiDefaultConf.xml`, merged first.
+    Default,
+    /// A component's `MoquiConf.xml`, by the component's name.
+    Component(String),
+    /// A component's `test/MoquiConf.xml`, merged under `moqui test` only.
+    ComponentTest(String),
+    /// The runtime conf, merged last ([`runtime_conf_file`]).
+    Runtime,
+}
+
+impl ConfRole {
+    /// The component of a component's conf.
+    #[must_use]
+    pub fn component(&self) -> Option<&str> {
+        match self {
+            Self::Component(name) | Self::ComponentTest(name) => Some(name),
+            Self::Default | Self::Runtime => None,
+        }
     }
-    if let Some(runtime_conf) = runtime_conf(runtime_dir)? {
-        merge_conf(&base, &MNode::parse_file(&runtime_conf)?);
+}
+
+/// One file of the merged conf.
+#[derive(Clone, Debug)]
+pub struct ConfFile {
+    pub path: PathBuf,
+    pub role: ConfRole,
+}
+
+impl ConfFile {
+    /// The location its elements carry when parsed ([`MNode::parse_file`]).
+    #[must_use]
+    pub fn location(&self) -> String {
+        self.path.display().to_string()
     }
-    Ok(Some(base))
+}
+
+/// The files the conf is merged from, in merge order, as boot merges them: the default conf, each component's
+/// `MoquiConf.xml` (and with `test_confs` its `test/MoquiConf.xml`) in component order, then the runtime conf.
+/// `components` are (name, directory) in component order.
+///
+/// # Errors
+///
+/// When the runtime conf `MOQUI_CONF` names is missing.
+pub fn conf_files_of(
+    framework_dir: &Path,
+    runtime_dir: &Path,
+    components: &[(String, PathBuf)],
+    test_confs: bool,
+) -> Result<Vec<ConfFile>, Error> {
+    let mut files = vec![ConfFile {
+        path: framework_dir.join("conf/MoquiDefaultConf.xml"),
+        role: ConfRole::Default,
+    }];
+    for (name, dir) in components {
+        let own = Some((dir.join("MoquiConf.xml"), ConfRole::Component(name.clone())));
+        let test = test_confs.then(|| (dir.join("test/MoquiConf.xml"), ConfRole::ComponentTest(name.clone())));
+        for (path, role) in own.into_iter().chain(test) {
+            if path.is_file() {
+                files.push(ConfFile { path, role });
+            }
+        }
+    }
+    if let Some(path) = runtime_conf(runtime_dir)? {
+        files.push(ConfFile {
+            path,
+            role: ConfRole::Runtime,
+        });
+    }
+    Ok(files)
+}
+
+/// Merge `files` in order ([`conf_files_of`]): the first is the base. `replace` stands in a text for the file at its
+/// path, to see what an edit would make before it is saved.
+///
+/// # Errors
+///
+/// When a file cannot be read or does not parse.
+pub fn merge_files(files: &[ConfFile], replace: Option<(&Path, &str)>) -> Result<MNode, Error> {
+    let parse = |file: &ConfFile| match replace {
+        Some((path, text)) if path == file.path => MNode::parse_text(&file.location(), text),
+        _ => MNode::parse_file(&file.path),
+    };
+    let Some((first, rest)) = files.split_first() else {
+        return Err(Error::new("no conf files to merge"));
+    };
+    let base = parse(first)?;
+    for file in rest {
+        if file.role.component().is_some() {
+            tracing::info!("Merging component conf {}", file.path.display());
+        }
+        merge_conf(&base, &parse(file)?);
+    }
+    Ok(base)
+}
+
+fn component_name(dir: &Path) -> String {
+    dir.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default()
 }
 
 /// Merge `over` into `base`. `component-list` children are appended.

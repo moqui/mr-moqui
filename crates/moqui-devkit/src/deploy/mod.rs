@@ -16,6 +16,7 @@
 //! of a component without a restart. The conf reload itself is `moqui_core::context::conf_reload`; this crate holds
 //! what uses the reload pipeline ([`crate::reload`]). Guide: docs/tools/Component-Deploy.md.
 
+pub mod conf_edit;
 #[cfg(feature = "git")]
 pub mod git;
 #[cfg(not(feature = "git"))]
