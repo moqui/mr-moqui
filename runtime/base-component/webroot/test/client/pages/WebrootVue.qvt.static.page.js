@@ -73,7 +73,7 @@ const stubs = {
     "m-form-paginate": { props: ["paginate", "formList"], render() { if (this.formList) captured.lists[this.formList.name] = this.formList; return Vue.h("m-form-paginate", { paginate: this.paginate }); } },
     "m-form-go-page": { props: ["idVal", "formList"], render() { return Vue.h("m-form-go-page"); } }
 };
-["m-display", "m-text-line", "m-text-area", "m-drop-down", "m-link", "q-btn", "m-form-link", "m-container-box", "m-container-dialog",
+["m-display", "m-text-line", "m-text-area", "m-drop-down", "m-check", "m-link", "q-btn", "m-form-link", "m-container-box", "m-container-dialog",
     "q-list", "q-item", "q-item-section", "q-expansion-item", "q-badge", "q-tooltip"].forEach((tag) => { stubs[tag] = leaf(tag); });
 stubs["q-btn-dropdown"] = { inheritAttrs: false, render() {
     return Vue.h("q-btn-dropdown", this.$attrs, [this.$slots.label ? Vue.h("label", {}, this.$slots.label()) : null].concat(this.$slots.default ? this.$slots.default() : []));
@@ -182,6 +182,11 @@ test("the screen is fetched from actions, and renders with the package and the f
     assert.match(text, /<m-form name='ItemForm' fields=/);
     assert.match(text, /"name":"ZEBRA Widget"/);
     assert.match(text, /"itemId":"ZEBRA-I1"/);
+    // An unchecked Y-only field must not retain its stored N in the model and then submit both N and Y.
+    assert.match(text, /"enabled":\[\]/);
+    assert.match(text, /"enabledOn":\["Y"\]/);
+    assert.match(text, /"selectedFlags":\["A","B"\]/);
+    assert.match(text, /"missingFlags":\["B"\]/);
     // the decimal price of the item is formatted from text; the conditional field picks the branch that holds
     assert.match(text, /"price_display":"1,234.50"/);
     assert.match(text, /"mode_display":"is active: ZEBRA Widget"/);

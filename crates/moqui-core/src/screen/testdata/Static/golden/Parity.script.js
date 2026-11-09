@@ -733,11 +733,18 @@ return function render(_ctx, _cache) {
         }, null, 8, ["paginate"]))
       : _createCommentVNode("", true),
     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList((_ctx.lines), (line, line_index) => {
-      return (_openBlock(), _createElementBlock("div", {
+      return (_openBlock(), _createBlock(_component_m_scope, {
         key: line_index,
-        class: "text-inline",
-        textContent: _toDisplayString(_ctx.ec.resource.expand('line ${line.lineId}',{'line.lineId':()=>(line.lineId)}))
-      }, null, 8, ["textContent"]))
+        extra: (_ctx.$scope['mqSection_Lines']||[])[line_index]
+      }, {
+        default: _withCtx((_ctx) => [
+          _createElementVNode("div", {
+            class: "text-inline",
+            textContent: _toDisplayString(_ctx.ec.resource.expand('line ${line.lineId}',{'line.lineId':()=>(line.lineId)}))
+          }, null, 8, ["textContent"])
+        ]),
+        _: 2
+      }, 1032, ["extra"]))
     }), 128))
   ], 64))
 }

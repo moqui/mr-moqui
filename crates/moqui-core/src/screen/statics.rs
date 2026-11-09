@@ -26,12 +26,12 @@ use std::sync::{Arc, Mutex};
 use indexmap::IndexMap;
 use moqui_lib::codec::{fnv1a, fnv1a_extend};
 use moqui_lib::node::MNode;
-use moqui_lib::object::{is_empty, Value};
+use moqui_lib::object::Value;
 
 use super::definition::{Condition, ScreenDef, SectionDef, SectionKind};
 use super::form;
 use super::generate::UnitRequest;
-use super::render::{check_condition, Frames, RenderState};
+use super::render::{Frames, RenderState};
 use super::sri::{self, NodeLit, Runner};
 use crate::context::{Error, ErrorKind, ExecutionContextFactory};
 use crate::script::{self, ContextFrame};
@@ -58,6 +58,12 @@ pub const PAGE_SUFFIXES: [&str; 6] = [
     "PageRangeLow",
     "PageRangeHigh",
 ];
+
+#[path = "statics_prepare.rs"]
+mod prepare;
+use prepare::prepare_screen;
+
+const MAX_WALK_DEPTH: usize = 12;
 
 // ---- eligibility ----
 
@@ -575,155 +581,6 @@ fn list_forms(state: &RenderState, def: &ScreenDef) -> Vec<(String, Arc<form::Fo
         }
     }
     out
-}
-
-/// Run the data preparation of a screen as the render does, without writing anything: the root actions, then the actions of
-/// the sections the render reaches. A section-iterate runs its actions for each entry, and the list is kept as those actions left it.
-fn prepare_screen(state: &RenderState, def: &ScreenDef) -> Result<(), Error> {
-    if let Some(actions) = &def.root.actions {
-        script::run_actions(&actions.xml)?;
-    }
-    if let Some(widgets) = &def.root.widgets {
-        walk_widgets(state, def, &widgets.shared_node()?, 0)?;
-    }
-    Ok(())
-}
-
-const MAX_WALK_DEPTH: usize = 12;
-
-fn walk_widgets(state: &RenderState, owner: &ScreenDef, node: &MNode, depth: usize) -> Result<(), Error> {
-    if depth > MAX_WALK_DEPTH {
-        return Err(Error::new(format!(
-            "sections of {} are nested too deeply",
-            owner.location
-        )));
-    }
-    for child in node.child_iter() {
-        let name = child.name();
-        match name.as_str() {
-            "link" => {
-                let key = disable_key(&lit_of(&child, true));
-                script::set_context_name(&key, Value::Bool(disabled(state, &child)))?;
-            }
-            "section" | "section-iterate" => {
-                let section_name = child.attribute("name").unwrap_or_default();
-                match owner.sections.get(&section_name) {
-                    Some(section) => prepare_section(state, owner, section, depth)?,
-                    None => walk_widgets(state, owner, &child, depth)?,
-                }
-            }
-            "section-include" => {
-                let given = child.attribute("name").unwrap_or_default();
-                let location = child.attribute("location").unwrap_or_default();
-                let section_name = if given.is_empty() {
-                    location
-                        .split_once('#')
-                        .map_or(String::new(), |(_, section)| section.to_string())
-                } else {
-                    given
-                };
-                if let Some(section) = owner.sections.get(&section_name) {
-                    prepare_section(state, owner, section, depth)?;
-                }
-            }
-            "include-screen" => {
-                let location = child.attribute("location").unwrap_or_default();
-                if location.contains("${") {
-                    continue;
-                }
-                let other = state.facade.screen_def(&state.factory, &location)?;
-                if let Some(actions) = &other.root.actions {
-                    script::run_actions(&actions.xml)?;
-                }
-                if let Some(widgets) = &other.root.widgets {
-                    walk_widgets(state, &other, &widgets.shared_node()?, depth + 1)?;
-                }
-            }
-            "editable" => {
-                if let Some((key, options)) = editable_options(state, &child) {
-                    script::set_context_name(&key, moqui_lib::json::from_json(&options))?;
-                }
-            }
-            // A form reads its own scope, and the rest of these hold no widgets with actions.
-            "form-single" | "form-list" | "tree" | "actions" | "condition" | "row-actions" | "entity-find" => {}
-            _ => walk_widgets(state, owner, &child, depth)?,
-        }
-    }
-    Ok(())
-}
-
-fn prepare_section(state: &RenderState, owner: &ScreenDef, section: &SectionDef, depth: usize) -> Result<(), Error> {
-    if let SectionKind::Iterate {
-        list,
-        entry,
-        key,
-        paginate,
-    } = &section.kind
-    {
-        let value = script::eval_value(list)?;
-        if is_empty(&value) {
-            return Ok(());
-        }
-        let mut items = sri::iteration_entries(&value);
-        // paginate: the page keys of the list go in the package, and the list is the page, as ScreenSection renders it.
-        if *paginate && is_name(list) {
-            items = sri::paginate_items(list, items)?;
-        }
-        let mut kept = Vec::with_capacity(items.len());
-        let count = items.len();
-        for (index, (item_key, item)) in items.into_iter().enumerate() {
-            let frame = ContextFrame::push();
-            let outcome = (|| -> Result<Value, Error> {
-                script::set_context_name(entry, item.clone())?;
-                if let (Some(key_name), Some(item_key)) = (key, &item_key) {
-                    script::set_context_name(key_name, Value::string(item_key))?;
-                }
-                let index_value = Value::I64(i64::try_from(index).unwrap_or(0));
-                script::set_context_name("sectionEntryIndex", index_value.clone())?;
-                script::set_context_name(&format!("{entry}_index"), index_value)?;
-                script::set_context_name(&format!("{entry}_has_next"), Value::Bool(index + 1 < count))?;
-                if let Some(actions) = &section.actions {
-                    script::run_actions(&actions.xml)?;
-                }
-                if let Some(widgets) = &section.widgets {
-                    walk_widgets(state, owner, &widgets.shared_node()?, depth + 1)?;
-                }
-                Ok(script::context_value(entry).unwrap_or(item))
-            })();
-            drop(frame);
-            kept.push(outcome?);
-        }
-        // The list is what the per-entry actions left, when the list is a name the package holds.
-        if is_name(list) {
-            script::set_context_name(list, Value::List(kept))?;
-        }
-        return Ok(());
-    }
-    let holds = match &section.condition {
-        Some(Condition::Expression(expression)) => script::eval_condition(expression)?,
-        Some(condition) => check_condition(condition)?,
-        None => true,
-    };
-    let fragment = if holds {
-        if let Some(actions) = &section.actions {
-            script::run_actions(&actions.xml)?;
-        }
-        section.widgets.as_ref()
-    } else {
-        section.fail_widgets.as_ref()
-    };
-    if let Some(fragment) = fragment {
-        walk_widgets(state, owner, &fragment.shared_node()?, depth + 1)?;
-    }
-    Ok(())
-}
-
-fn is_name(text: &str) -> bool {
-    !text.is_empty()
-        && text
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
-        && !text.chars().next().is_some_and(|ch| ch.is_ascii_digit())
 }
 
 /// The key under which the options of a widget are kept, which `ScreenQvtStatic.js` reads: the form, the field, the place of the

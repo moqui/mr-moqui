@@ -289,11 +289,17 @@ along with this software (see the LICENSE.md file). If not, see
             failedList = []
             const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess').call()
             if (ec.message.hasError()) return
-            const accounts = Array.from(access.accountList || []).filter((account) => !account.isInternal && account.emailServerId &&
+            const accounts = Array.from(access.accountList || []).filter((account) => !account.isInternal &&
                     !['EasPaused', 'EasRemoved'].includes(account.statusId) && (!emailAccountId || account.emailAccountId === emailAccountId))
             if (emailAccountId && accounts.length === 0) { ec.message.addError(`Email account ${emailAccountId} not found`); return }
             for (const account of accounts) {
                 try {
+                    const server = account.emailServerId ? ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', account.emailServerId)
+                            .selectField('storeHost').one() : null
+                    if (!server?.storeHost) {
+                        if (emailAccountId) ec.message.addError(ec.l10n.localize('This account has no incoming mailbox to sync'))
+                        continue
+                    }
                     ec.service.async().name('org.moqui.impl.EmailClientServices.sync#EmailAccount').parameter('emailAccountId', account.emailAccountId).call()
                     startedList.push(account.emailAccountId)
                 } catch (err) {
@@ -365,7 +371,8 @@ along with this software (see the LICENSE.md file). If not, see
                     canSend: account.canSend === true, accessText: account.isOwner ? L('yours') : ec.resource.expand('shared with you: you may ${what}', '',
                         {what: PERMISSION[account.level] || ''}), unreadCount: account.unreadCount ?? null, outboxErrorCount: account.outboxErrorCount || 0,
                     statusId: account.statusId || 'EasActive', statusLabel: L('Active'), statusColor: 'positive', problemText: null, lastSyncText: null,
-                    lastSyncError: account.lastSyncError ?? null, syncing: false, setupIncomplete: false, hasServer: !!account.emailServerId, isOAuth: false,
+                    lastSyncError: account.lastSyncError ?? null, syncing: false, setupIncomplete: false, hasServer: !!account.emailServerId,
+                    hasIncomingServer: false, isOAuth: false,
                     canSync: false, canPause: false, canResume: false, serverText: null, memberText: null, memberCount: 0,
                     usedBytes: null, storageText: null,
                     folderCount: Array.from(account.folderList || []).filter((folder) => !folder.removed).length,
@@ -384,26 +391,27 @@ along with this software (see the LICENSE.md file). If not, see
                             .selectField('emailAccountId').selectField('syncLockedUntil').selectField('lastSyncDate').one()
                     const lockedUntil = toMillis(row?.syncLockedUntil)
                     const lastSync = toMillis(account.lastSyncDate ?? row?.lastSyncDate)
-                    item.deliveredHere = !item.hasServer && (account.accountKindEnumId === 'EakHosted' || account.accountKindEnumId === 'EakShared')
+                    const server = account.emailServerId ? ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', account.emailServerId)
+                            .selectField('authTypeEnumId,oauthProviderEnumId,storeHost,storePort,storeProtocol,smtpHost,smtpPort,smtpSsl,smtpStartTls').one() : null
+                    item.hasIncomingServer = !!server?.storeHost
+                    item.deliveredHere = !item.hasIncomingServer && (account.accountKindEnumId === 'EakHosted' || account.accountKindEnumId === 'EakShared')
                     try {
                         item.usedBytes = ec.resource.getTreeSize('dbresource://email/' + id)
                         item.storageText = fmtSize(item.usedBytes)
                     } catch (sizeErr) {
                         ec.logger.warn(`Mail account ${id}: its storage could not be sized: ${sizeErr && sizeErr.message ? sizeErr.message : sizeErr}`)
                     }
-                    item.syncing = lockedUntil != null && lockedUntil > nowMillis
+                    item.syncing = item.hasIncomingServer && lockedUntil != null && lockedUntil > nowMillis
                     item.lastSyncText = lastSync != null ? agoText(lastSync) : null
                     item.setupIncomplete = item.statusId === 'EasPaused' && lastSync == null && item.canManage && (item.hasServer || item.deliveredHere)
-                    const auth = account.emailServerId ? ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', account.emailServerId)
-                            .selectField('authTypeEnumId,oauthProviderEnumId').one() : null
-                    item.isOAuth = auth?.authTypeEnumId === 'EatOAuth2'
-                    const providerName = item.isOAuth ? ({EopGoogle: 'Google', EopMicrosoft: 'Microsoft'}[auth.oauthProviderEnumId] || L('the provider')) : null
+                    item.isOAuth = server?.authTypeEnumId === 'EatOAuth2'
+                    const providerName = item.isOAuth ? ({EopGoogle: 'Google', EopMicrosoft: 'Microsoft'}[server.oauthProviderEnumId] || L('the provider')) : null
                     const status = item.statusId
                     if (item.deliveredHere && item.setupIncomplete) Object.assign(item, {statusLabel: L('Setup not finished'), statusColor: 'warning',
                         problemText: L('The account is not on until its setup is finished')})
                     else if (item.deliveredHere) Object.assign(item, {statusLabel: L('Delivered here'), statusColor: 'positive', problemText: null})
-                    else if (!item.hasServer) Object.assign(item, {statusLabel: L('Local only'), statusColor: 'info',
-                        problemText: L('No server: the mail here is kept only here and does not sync')})
+                    else if (!item.hasIncomingServer) Object.assign(item, {statusLabel: L('Local only'), statusColor: 'info',
+                        problemText: L('No incoming mailbox: the mail here is kept only here and does not sync')})
                     else if (item.setupIncomplete) Object.assign(item, {statusLabel: L('Setup not finished'), statusColor: 'warning',
                         problemText: L('The account is not syncing until its setup is finished')})
                     else if (status === 'EasPaused') Object.assign(item, {statusLabel: L('Paused'), statusColor: 'grey-7', problemText: L('Sync is paused')})
@@ -415,12 +423,10 @@ along with this software (see the LICENSE.md file). If not, see
                     else if (item.syncing) Object.assign(item, {statusLabel: L('Syncing'), statusColor: 'info'})
                     else if (lastSync == null) Object.assign(item, {statusLabel: L('Waiting for the first sync'), statusColor: 'info'})
                     if (['EasAuthFailed', 'EasError'].includes(status) || item.setupIncomplete) problemCount++
-                    item.canSync = item.hasServer && !['EasPaused', 'EasRemoved'].includes(status) && !item.syncing
-                    item.canPause = item.canManage && item.hasServer && status !== 'EasPaused'
-                    item.canResume = item.canManage && item.hasServer && status === 'EasPaused' && !item.setupIncomplete
+                    item.canSync = item.hasIncomingServer && !['EasPaused', 'EasRemoved'].includes(status) && !item.syncing
+                    item.canPause = item.canManage && item.hasIncomingServer && status !== 'EasPaused'
+                    item.canResume = item.canManage && item.hasIncomingServer && status === 'EasPaused' && !item.setupIncomplete
                     if (item.canManage && account.emailServerId) {
-                        const server = ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', account.emailServerId)
-                                .selectField('storeHost,storePort,storeProtocol,smtpHost,smtpPort,smtpSsl,smtpStartTls').one()
                         if (server) {
                             const store = server.storeHost ? (String(server.storeProtocol || 'imaps').startsWith('pop') ? 'POP' : 'IMAP') + ' ' + server.storeHost : null
                             const smtp = server.smtpHost ? 'SMTP ' + server.smtpHost + ' (' + SECURITY(server.smtpSsl, server.smtpStartTls) + ')' : null

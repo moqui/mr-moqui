@@ -9500,20 +9500,24 @@ module.exports = {
             return String(this.params.q || '').replace(/-?[a-z_]+:("[^"]*"|\([^)]*\)|\S+)/gi, ' ').replace(/\s+/g, ' ').trim();
         },
         groups() {
-            const now = new Date();
-            const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-            const startWeek = startToday - 6 * DAY;
-            const startMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+            const l10n = moqui.l10n;
+            const today = l10n.formatTimestamp(Date.now(), 'yyyy-MM-dd');
+            // Compare calendar days in the user's zone, without assuming every local day lasts 24 hours.
+            const dayNumber = (date) => Date.parse(date + 'T00:00:00Z') / DAY;
+            const startToday = dayNumber(today);
+            const startWeek = startToday - 6;
+            const startMonth = dayNumber(today.slice(0, 7) + '-01');
             const out = [];
             let current = null;
             this.threads.forEach((row) => {
                 const at = Number(row.sortDate) || 0;
+                const date = l10n.formatTimestamp(at, 'yyyy-MM-dd'), day = dayNumber(date);
                 let key, label;
-                if (at >= startToday) { key = 'today'; label = t('Today'); }
-                else if (at >= startToday - DAY) { key = 'yesterday'; label = t('Yesterday'); }
-                else if (at >= startWeek) { key = 'week'; label = t('This week'); }
-                else if (at >= startMonth) { key = 'month'; label = t('Earlier this month'); }
-                else { const d = new Date(at); key = 'm' + d.getFullYear() + '-' + d.getMonth(); label = d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }); }
+                if (day >= startToday) { key = 'today'; label = t('Today'); }
+                else if (day >= startToday - 1) { key = 'yesterday'; label = t('Yesterday'); }
+                else if (day >= startWeek) { key = 'week'; label = t('This week'); }
+                else if (day >= startMonth) { key = 'month'; label = t('Earlier this month'); }
+                else { key = 'm' + date.slice(0, 7); label = l10n.formatTimestamp(at, 'MMMM yyyy'); }
                 if (!current || current.key !== key) { current = { key, label, rows: [] }; out.push(current); }
                 current.rows.push(row);
             });
@@ -10264,7 +10268,7 @@ module.exports = {
         closeThread() { this.setThreadParam(null); },
         isExpanded(message) { return !!this.expanded[message.key]; },
         messageControlLabel(message, label) {
-            const named = t(label).replace('{sender}', () => this.personName(message.from));
+            const named = t(label).replace('{sender}', () => this.senderName(message));
             const date = this.fullDate(message.date);
             return named + (date ? ', ' + date : '');
         },
@@ -10296,7 +10300,13 @@ module.exports = {
             const el = document.getElementById('inbox-msg-' + first.key.replace(/[^A-Za-z0-9_-]/g, '_'));
             if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start' });
         },
-        avatarName(person) { return person && person.isMe ? (this.me.name || person.name || person.address) : this.personName(person); },
+        avatarName(person) { return person ? (person.name || person.address || (person.isMe ? this.me.name : person.partyId) || this.personName(person)) : this.personName(person); },
+        senderName(message) {
+            // An accessible account alias counts as isMe for reply routing, but its sender may be someone else.
+            const person = message && message.from;
+            return message && message.store === 'email'
+                ? (person && (person.name || person.address || person.partyId) || t('Unknown')) : this.personName(person);
+        },
         personName(person) { return person ? (person.isMe ? t('me') : (person.name || person.address || person.partyId || '')) : t('Unknown'); },
         personFull(person) { return person ? (person.name && person.address ? person.name + ' <' + person.address + '>' : (person.name || person.address || person.partyId || '')) : ''; },
         recipientsText(message) {
@@ -10984,11 +10994,11 @@ module.exports = {
         // ---- dates ----
         shortDate(millis) {
             if (!millis) return '';
-            const d = new Date(Number(millis));
-            const now = new Date();
-            if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-            if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-            return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            // Use the signed-in user's zone, as the server does for reply quotations.
+            const at = Number(millis), now = Date.now(), l10n = moqui.l10n;
+            if (l10n.formatTimestamp(at, 'yyyy-MM-dd') === l10n.formatTimestamp(now, 'yyyy-MM-dd')) return l10n.formatTimestamp(at, 'h:mm a');
+            if (l10n.formatTimestamp(at, 'yyyy') === l10n.formatTimestamp(now, 'yyyy')) return l10n.formatTimestamp(at, 'MMM d');
+            return l10n.formatTimestamp(at, 'MMM d, yyyy');
         },
         fullDate(millis) {
             if (!millis) return '';
@@ -10997,10 +11007,10 @@ module.exports = {
             let ago = '';
             if (minutes >= 0 && minutes < 60) ago = minutes <= 1 ? t('just now') : minutes + ' ' + t('min ago');
             else if (minutes >= 60 && minutes < 24 * 60) ago = Math.round(minutes / 60) + ' ' + t('h ago');
-            const text = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + ', ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+            const text = moqui.l10n.formatTimestamp(d, 'EEE, MMM d, h:mm a');
             return ago ? text + ' (' + ago + ')' : text;
         },
-        longDate(millis) { return millis ? new Date(Number(millis)).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' }) : ''; }
+        longDate(millis) { return millis ? moqui.l10n.formatTimestamp(Number(millis), 'EEEE, MMMM d, yyyy h:mm a') : ''; }
     },
     mounted() {
         this.restoreDocks();
@@ -13609,7 +13619,7 @@ module.exports = {
                                                         _createElementVNode("span", {
                                                           class: _normalizeClass(["text-weight-medium q-mr-sm ellipsis", item.message.isUnread ? 'text-weight-bold' : '']),
                                                           style: {"max-width":"30%"}
-                                                        }, _toDisplayString(_ctx.personName(item.message.from)), 3),
+                                                        }, _toDisplayString(_ctx.senderName(item.message)), 3),
                                                         _createElementVNode("span", { class: "col ellipsis m-muted text-caption" }, _toDisplayString(_ctx.plainSnippet(item.message)), 1),
                                                         (item.message.attachmentList.length)
                                                           ? (_openBlock(), _createBlock(_component_q_icon, {
@@ -13652,7 +13662,7 @@ module.exports = {
                                                                 onMouseenter: $event => (_ctx.hoverContact(item.message.from, $event)),
                                                                 onMouseleave: _ctx.leaveContact,
                                                                 onClick: _withModifiers($event => (_ctx.openContact(item.message.from, $event)), ["stop"])
-                                                              }, _toDisplayString(_ctx.personName(item.message.from)), 41, ["onMouseenter", "onMouseleave", "onClick"]),
+                                                              }, _toDisplayString(_ctx.senderName(item.message)), 41, ["onMouseenter", "onMouseleave", "onClick"]),
                                                               (item.message.from && item.message.from.address)
                                                                 ? (_openBlock(), _createElementBlock("span", {
                                                                     key: 0,
@@ -16500,7 +16510,7 @@ module.exports = {
             if (this.dirty) return t('Unsaved changes');
             if (this.mode === 'internal') return this.dirty ? '' : (this.savedAt ? t('Kept in this browser') : '');
             if (this.offlineDraft && this.savedAt) return t('Kept on this computer');
-            return this.savedAt ? t('Saved') + ' ' + new Date(this.savedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+            return this.savedAt ? t('Saved') + ' ' + moqui.l10n.formatTimestamp(this.savedAt, 'h:mm a') : '';
         },
         shownBlocks() {
             const term = String(this.blockSearch || '').toLowerCase();
@@ -17683,7 +17693,7 @@ module.exports = {
                                             dense: "",
                                             size: "sm",
                                             icon: "sym_o_more_horiz",
-                                            "aria-label": _ctx.t('Show the quoted text'),
+                                            "aria-label": _ctx.showQuote ? _ctx.t('Hide the quoted text') : _ctx.t('Show the quoted text'),
                                             onClick: $event => (_ctx.showQuote = !_ctx.showQuote)
                                           }, {
                                             default: _withCtx(() => [

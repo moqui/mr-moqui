@@ -5,6 +5,7 @@ return function render(_ctx, _cache) {
   const _component_m_display = _resolveComponent("m-display")
   const _component_m_text_line = _resolveComponent("m-text-line")
   const _component_m_drop_down = _resolveComponent("m-drop-down")
+  const _component_m_check = _resolveComponent("m-check")
   const _component_q_btn = _resolveComponent("q-btn")
   const _component_m_form = _resolveComponent("m-form")
   const _component_m_scope = _resolveComponent("m-scope")
@@ -38,7 +39,7 @@ return function render(_ctx, _cache) {
                 action: "/Items/saveItem",
                 disable: _ctx.$scope['mqDisable_cd5a8b388beaa866']!==false,
                 "read-only": "",
-                "fields-initial": {'itemId':_ctx.$mq.dflt(_ctx.$scope['mqPlain_541ae8f3787c841b'],_ctx.$mq.str(_ctx.$scope['itemId'])),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'status':_ctx.$mq.cur(_ctx.$scope['status'],false,''),'price':_ctx.$mq.dflt(_ctx.$scope['mqPlain_8feffd86b3edf876'],_ctx.$mq.str(_ctx.$scope['price'])),'price_display':_ctx.$mq.fmt(_ctx.$scope['price'],'#,##0.00'),'mode':((_ctx.status == 'ACTIVE')?_ctx.$mq.dflt(_ctx.$scope['mqPlain_20fb1963fb63fe1a'],_ctx.$mq.str(_ctx.$scope['mode'])):_ctx.$mq.dflt(_ctx.$scope['mqPlain_e971d0cef3f41c5a'],_ctx.$mq.str(_ctx.$scope['mode']))),'mode_display':((_ctx.status == 'ACTIVE')?_ctx.ec.resource.expand('is active: ${name}',{'name':()=>(_ctx.name)}):_ctx.ec.l10n.localize('not active')),'moquiFormName':'ItemForm'}
+                "fields-initial": {'itemId':_ctx.$mq.dflt(_ctx.$scope['mqPlain_541ae8f3787c841b'],_ctx.$mq.str(_ctx.$scope['itemId'])),'itemId_display':_ctx.$mq.str(_ctx.$scope['itemId']),'name':_ctx.$mq.str(_ctx.$scope['name']),'status':_ctx.$mq.cur(_ctx.$scope['status'],false,''),'price':_ctx.$mq.dflt(_ctx.$scope['mqPlain_8feffd86b3edf876'],_ctx.$mq.str(_ctx.$scope['price'])),'price_display':_ctx.$mq.fmt(_ctx.$scope['price'],'#,##0.00'),'enabled':_ctx.$mq.cur(_ctx.$scope['enabled'],true,'').filter((value) => ([{value:'Y',label:_ctx.ec.l10n.localize('Enabled')}]).some((item) => item.value === value)),'enabledOn':_ctx.$mq.cur(_ctx.$scope['enabledOn'],true,'').filter((value) => ([{value:'Y',label:_ctx.ec.l10n.localize('Enabled on')}]).some((item) => item.value === value)),'selectedFlags':_ctx.$mq.cur(_ctx.$scope['selectedFlags'],true,'').filter((value) => ([{value:'A',label:_ctx.ec.l10n.localize('A')},{value:'B',label:_ctx.ec.l10n.localize('B')}]).some((item) => item.value === value)),'missingFlags':_ctx.$mq.cur(_ctx.$scope['missingFlags'],true,'B').filter((value) => ([{value:'A',label:_ctx.ec.l10n.localize('A')},{value:'B',label:_ctx.ec.l10n.localize('B')}]).some((item) => item.value === value)),'mode':((_ctx.status == 'ACTIVE')?_ctx.$mq.dflt(_ctx.$scope['mqPlain_20fb1963fb63fe1a'],_ctx.$mq.str(_ctx.$scope['mode'])):_ctx.$mq.dflt(_ctx.$scope['mqPlain_e971d0cef3f41c5a'],_ctx.$mq.str(_ctx.$scope['mode']))),'mode_display':((_ctx.status == 'ACTIVE')?_ctx.ec.resource.expand('is active: ${name}',{'name':()=>(_ctx.name)}):_ctx.ec.l10n.localize('not active')),'moquiFormName':'ItemForm'}
               }, {
                 default: _withCtx((formProps) => [
                   _createElementVNode("div", { class: "q-ma-sm" }, [
@@ -86,6 +87,46 @@ return function render(_ctx, _cache) {
                       display: formProps.fields.price_display,
                       fields: formProps.fields
                     }, null, 8, ["label", "modelValue", "onUpdate:modelValue", "display", "fields"])
+                  ]),
+                  _createElementVNode("div", { class: "q-ma-sm" }, [
+                    _createVNode(_component_m_check, {
+                      name: "enabled",
+                      id: "ItemForm_enabled",
+                      label: _ctx.ec.l10n.localize('Enabled'),
+                      options: [{value:'Y',label:_ctx.ec.l10n.localize('Enabled')}],
+                      modelValue: formProps.fields.enabled,
+                      "onUpdate:modelValue": $event => ((formProps.fields.enabled) = $event)
+                    }, null, 8, ["label", "options", "modelValue", "onUpdate:modelValue"])
+                  ]),
+                  _createElementVNode("div", { class: "q-ma-sm" }, [
+                    _createVNode(_component_m_check, {
+                      name: "enabledOn",
+                      id: "ItemForm_enabledOn",
+                      label: _ctx.ec.l10n.localize('Enabled On'),
+                      options: [{value:'Y',label:_ctx.ec.l10n.localize('Enabled on')}],
+                      modelValue: formProps.fields.enabledOn,
+                      "onUpdate:modelValue": $event => ((formProps.fields.enabledOn) = $event)
+                    }, null, 8, ["label", "options", "modelValue", "onUpdate:modelValue"])
+                  ]),
+                  _createElementVNode("div", { class: "q-ma-sm" }, [
+                    _createVNode(_component_m_check, {
+                      name: "selectedFlags",
+                      id: "ItemForm_selectedFlags",
+                      label: _ctx.ec.l10n.localize('Selected Flags'),
+                      options: [{value:'A',label:_ctx.ec.l10n.localize('A')},{value:'B',label:_ctx.ec.l10n.localize('B')}],
+                      modelValue: formProps.fields.selectedFlags,
+                      "onUpdate:modelValue": $event => ((formProps.fields.selectedFlags) = $event)
+                    }, null, 8, ["label", "options", "modelValue", "onUpdate:modelValue"])
+                  ]),
+                  _createElementVNode("div", { class: "q-ma-sm" }, [
+                    _createVNode(_component_m_check, {
+                      name: "missingFlags",
+                      id: "ItemForm_missingFlags",
+                      label: _ctx.ec.l10n.localize('Missing Flags'),
+                      options: [{value:'A',label:_ctx.ec.l10n.localize('A')},{value:'B',label:_ctx.ec.l10n.localize('B')}],
+                      modelValue: formProps.fields.missingFlags,
+                      "onUpdate:modelValue": $event => ((formProps.fields.missingFlags) = $event)
+                    }, null, 8, ["label", "options", "modelValue", "onUpdate:modelValue"])
                   ]),
                   ((_ctx.status == 'ACTIVE'))
                     ? (_openBlock(), _createElementBlock("div", {
@@ -151,11 +192,18 @@ return function render(_ctx, _cache) {
           textContent: _toDisplayString(_ctx.ec.l10n.localize('No item'))
         }, null, 8, ["textContent"])),
     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList((_ctx.tags), (tag, tag_index) => {
-      return (_openBlock(), _createElementBlock("div", {
+      return (_openBlock(), _createBlock(_component_m_scope, {
         key: tag_index,
-        class: "text-inline",
-        textContent: _toDisplayString(_ctx.ec.resource.expand('Tag ${tag} of ${item.name}',{'tag':()=>(tag),'item.name':()=>(_ctx.item.name)}))
-      }, null, 8, ["textContent"]))
+        extra: (_ctx.$scope['mqSection_TagSection']||[])[tag_index]
+      }, {
+        default: _withCtx((_ctx) => [
+          _createElementVNode("div", {
+            class: "text-inline",
+            textContent: _toDisplayString(_ctx.ec.resource.expand('Tag ${tag} of ${item.name}',{'tag':()=>(tag),'item.name':()=>(_ctx.item.name)}))
+          }, null, 8, ["textContent"])
+        ]),
+        _: 2
+      }, 1032, ["extra"]))
     }), 128)),
     _createElementVNode("a", {
       href: (_ctx.$scope['mqDisable_1ab7368ac2a0790f']!==false)?undefined:(_ctx.$mq.url('/Items/viewItem',{'itemId':(_ctx.item.itemId)},_ctx.$mq.merge({'pageIndex':_ctx.$scope['pageIndex']},null))),

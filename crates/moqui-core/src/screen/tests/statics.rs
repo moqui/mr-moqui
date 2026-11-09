@@ -104,6 +104,51 @@ fn cached_templates_get_request_and_row_specific_disabled_controls() {
     };
     assert!(!disables(&yes).is_empty());
     assert!(disables(&yes).contains(&false));
+    let entries = &yes["mqSection_Entries"];
+    assert_eq!(entries.as_array().map(Vec::len), Some(2));
+    assert!(disables(&entries[0]).iter().all(|value| !value));
+    assert!(
+        disables(&entries[1]).contains(&false),
+        "navigation stays available: {entries}"
+    );
+    assert!(
+        disables(&entries[1]).contains(&true),
+        "the second action is refused: {entries}"
+    );
+    assert_eq!(disables(&entries[0]["mqSection_Children"][0]), vec![true]);
+    assert_eq!(disables(&entries[1]["mqSection_Children"][0]), vec![false]);
+    assert_eq!(yes["entries"][0]["id"], "A");
+    assert_eq!(yes["entries"][1]["id"], "B");
+    assert!(
+        html.contains("<m-scope :extra=\"($scope['mqSection_Entries']||[])[item_index]\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("<m-scope :extra=\"($scope['mqSection_Children']||[])[kid_index]\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("({entryId:item.id})"),
+        "each entry keeps its own URL parameters: {html}"
+    );
+    assert!(
+        html.contains("({entryId:kid.id})"),
+        "nested URL parameters stay local: {html}"
+    );
+    for entry in entries.as_array().unwrap() {
+        for key in entry
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|key| key.starts_with("mqDisable_"))
+        {
+            assert!(
+                html.contains(&format!("$scope['{key}']!==false")),
+                "missing availability still denies: {html}"
+            );
+            assert!(yes.get(key).is_none(), "entry state must not escape to another entry");
+        }
+    }
     let row_keys: Vec<_> = rows["rows"][0]
         .as_object()
         .unwrap()

@@ -107,7 +107,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 :placeholder="t('Write your message… (/ for text blocks)')" @submit="send()"></m-rich-text>
                     </div>
                     <div v-if="draft.quoteHtml" class="q-mt-xs">
-                        <q-btn flat dense size="sm" icon="sym_o_more_horiz" :aria-label="t('Show the quoted text')" @click="showQuote = !showQuote">
+                        <q-btn flat dense size="sm" icon="sym_o_more_horiz" :aria-label="showQuote ? t('Hide the quoted text') : t('Show the quoted text')" @click="showQuote = !showQuote">
                             <q-tooltip>{{showQuote ? t('Hide the quoted text') : t('Show the quoted text')}}</q-tooltip></q-btn>
                         <template v-if="showQuote">
                             <m-html-view :html="draft.quoteHtml" :collapse-quotes="false" :images-bar="false" title="Quoted text"></m-html-view>
@@ -318,7 +318,7 @@ module.exports = {
             if (this.dirty) return t('Unsaved changes');
             if (this.mode === 'internal') return this.dirty ? '' : (this.savedAt ? t('Kept in this browser') : '');
             if (this.offlineDraft && this.savedAt) return t('Kept on this computer');
-            return this.savedAt ? t('Saved') + ' ' + new Date(this.savedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+            return this.savedAt ? t('Saved') + ' ' + moqui.l10n.formatTimestamp(this.savedAt, 'h:mm a') : '';
         },
         shownBlocks() {
             const term = String(this.blockSearch || '').toLowerCase();

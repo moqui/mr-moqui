@@ -7,7 +7,7 @@
     <always-actions><set field="alwaysTag" value="always-ran"/></always-actions>
     <actions>
         <set field="greeting" value="ZEBRA greeting for Ada Lovelace"/>
-        <set field="item" from="{itemId: 'ZEBRA-I1', name: 'ZEBRA Widget', status: 'ACTIVE', price: 1234.5, currentPassword: 'ZEBRA-HASH', note: 'ZEBRA note'}"/>
+        <set field="item" from="{itemId: 'ZEBRA-I1', name: 'ZEBRA Widget', status: 'ACTIVE', price: 1234.5, currentPassword: 'ZEBRA-HASH', note: 'ZEBRA note', enabled: 'N', enabledOn: 'Y', selectedFlags: 'A,N,B'}"/>
         <set field="tags" from="['ZEBRA-t1', 'ZEBRA-t2']"/>
         <set field="itemList" from="[{itemId: 'ZEBRA-R1', name: 'ZEBRA row one', price: 12.5, owner: 'ada.lovelace'}, {itemId: 'ZEBRA-R2', name: 'ZEBRA row two', price: 3, owner: 'ada.lovelace'}]"/>
         <set field="amount" value="1234.50" type="BigDecimal"/>
@@ -23,6 +23,10 @@
                     <field name="status"><default-field>
                         <drop-down><option key="NONE" text="None"/><option key="ACTIVE" text="Active"/></drop-down></default-field></field>
                     <field name="price"><default-field><display format="#,##0.00"/></default-field></field>
+                    <field name="enabled"><default-field><check><option key="Y" text="Enabled"/></check></default-field></field>
+                    <field name="enabledOn"><default-field><check><option key="Y" text="Enabled on"/></check></default-field></field>
+                    <field name="selectedFlags"><default-field><check><option key="A"/><option key="B"/></check></default-field></field>
+                    <field name="missingFlags"><default-field><check no-current-selected-key="B"><option key="A"/><option key="B"/></check></default-field></field>
                     <field name="mode">
                         <conditional-field condition="status == 'ACTIVE'"><display text="is active: ${name}"/></conditional-field>
                         <default-field><display text="not active"/></default-field>

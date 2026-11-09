@@ -485,6 +485,33 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
     await until(() => !document.querySelector(".m-inbox-outbox").textContent.includes("change waits"), "the later change made");
     // and one made on the server from here since (online, not queued) asks too
     const inbox = root.$refs.view;
+    // The same instant follows the signed-in user's zone, including the local-day label, rather than the browser's.
+    const priorZone = moqui.l10n.timeZone, priorLocale = moqui.l10n.locale, priorNow = Date.now;
+    try {
+        Date.now = () => Date.parse("2026-11-09T00:30:00Z");
+        moqui.l10n.setLocale("en_US");
+        const messageAt = Date.parse("2026-11-08T12:00:00Z");
+        const groupsFor = (dates) => inbox.$options.computed.groups.call({ threads: dates.map(date => ({ sortDate: Date.parse(date) })) });
+        moqui.l10n.setTimeZone("America/New_York");
+        assert.equal(inbox.shortDate(messageAt), "7:00 AM", "the message is today in the user's zone");
+        assert.ok(inbox.fullDate(messageAt).startsWith("Sun, Nov 8, 7:00 AM"), "the header agrees with the server's reply quote");
+        assert.ok(inbox.longDate(messageAt).includes("7:00 AM"), "message details use the same zone");
+        assert.equal(groupsFor(["2026-11-08T12:00:00Z"])[0].key, "today", "the list group uses the user's current day too");
+        moqui.l10n.setTimeZone("Europe/Berlin");
+        assert.equal(inbox.shortDate(messageAt), "Nov 8", "the same instant is yesterday in Berlin");
+        assert.ok(inbox.fullDate(messageAt).startsWith("Sun, Nov 8, 1:00 PM"), "the browser zone cannot pin the header's time");
+        assert.ok(inbox.longDate(messageAt).includes("1:00 PM"));
+        const groups = groupsFor(["2026-11-09T00:15:00Z", "2026-11-08T12:00:00Z", "2026-11-03T12:00:00Z", "2026-11-02T12:00:00Z", "2026-10-31T12:00:00Z"]);
+        assert.equal(groups.map(group => group.key).join(","), "today,yesterday,week,month,m2026-10", "local-day grouping preserves the six-day and month boundaries");
+        assert.equal(groups[4].label, "October 2026");
+        moqui.l10n.setTimeZone("America/New_York");
+        Date.now = () => Date.parse("2026-11-02T05:30:00Z");
+        assert.equal(groupsFor(["2026-11-01T04:15:00Z"])[0].key, "yesterday", "yesterday includes the full 25-hour autumn day");
+    } finally {
+        Date.now = priorNow;
+        moqui.l10n.setLocale(priorLocale);
+        moqui.l10n.setTimeZone(priorZone);
+    }
     await inbox.post("state", { targetsJson: JSON.stringify([{ store: "email", threadId: "T1", rowKey: "email:T1" }]), action: "flag" });
     button(document.querySelector(".m-inbox-outbox-change[data-outbox='conflict']"), "Retry").click();
     await answerDialog("Retry anyway");
@@ -500,7 +527,7 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
     // The existing mounted Inbox also checks its message disclosures, using two local bodies and no send action.
     const threadPath = "/apps/BasicComms/Inbox/Mail/thread", listPath = "/apps/BasicComms/Inbox/Mail/threads";
     const oldThreadAnswer = answers[threadPath], oldListAnswer = answers[listPath];
-    const pat = { name: "Pat Sender", address: "pat@example.invalid" }, alex = { name: "Alex Reviewer", address: "alex@example.invalid" };
+    const pat = { name: "Pat Sender", address: "pat@example.invalid" }, alex = { name: "Alex Reviewer", address: "alex@example.invalid", isMe: true };
     const to = [{ name: "Ann", address: "ann@example.com", isMe: true }];
     const mail = (id, from, body, date) => ({ key: "email:" + id, emailMessageId: id, store: "email", from, toList: to,
         ccList: [], bccList: [], attachmentList: [], linkList: [], subject: "Keyboard review", text: body, date });
@@ -526,6 +553,16 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
         assert.ok(threadRow.querySelector("button"), "the concise row name preserves its individual actions");
         threadRow.click();
         let disclosure = await until(() => document.getElementById("inbox-toggle-email_KEY1"), "the collapsed older message");
+        // An accessible account's sender is not necessarily this viewer, even when routing marks its alias isMe.
+        const sharedSender = await until(() => document.getElementById("inbox-msg-email_KEY2"), "the shared-account message");
+        assert.ok(sharedSender.textContent.includes("Alex Reviewer"), "the header shows the actual email sender");
+        assert.ok(document.getElementById("inbox-toggle-email_KEY2").getAttribute("aria-label").startsWith("Collapse message from Alex Reviewer"));
+        assert.equal(inbox.$options.methods.avatarName.call({me: {name: "Ann"}, personName: inbox.personName}, alex), "Alex Reviewer", "the viewer does not replace the sender avatar");
+        assert.equal(inbox.senderName({store: "email", from: {address: "alias@example.invalid", isMe: true}}), "alias@example.invalid", "an unnamed alias uses its own address");
+        assert.equal(inbox.senderName({store: "internal", from: {partyId: "ann", name: "Ann", isMe: true}}), "me", "internal self presentation stays intact");
+        assert.equal(inbox.personName(to[0]), "me", "recipient and reply identity semantics stay intact");
+        assert.equal(inbox.thread.messageList[1].from.isMe, true, "presentation does not rewrite the routing identity");
+        assert.equal(sharedSender.querySelector('button[aria-label="Reply"]'), null, "the shared reader still cannot reply");
         assert.equal(disclosure.tagName, "BUTTON");
         assert.equal(disclosure.tabIndex, 0);
         assert.equal(disclosure.getAttribute("aria-expanded"), "false");
@@ -749,6 +786,18 @@ test("Compose keeps unsaved changes open without an identity or after storage fa
         assert.ok(!document.querySelector(".m-compose-save-error"));
         assert.equal(asked("/apps/BasicComms/Inbox/Compose/saveDraft", "POST").slice(-1)[0].params.body,
             "<p>Keep these words until they are saved.</p>");
+        const priorZone = moqui.l10n.timeZone, priorLocale = moqui.l10n.locale;
+        try {
+            moqui.l10n.setLocale("en_US");
+            const saved = {savedAt: Date.parse("2026-11-09T05:26:00Z"), mode: "email"};
+            moqui.l10n.setTimeZone("America/New_York");
+            assert.equal(compose.$options.computed.savedText.call(saved), "Saved 12:26 AM", "the saved status uses the signed-in user's zone");
+            moqui.l10n.setTimeZone("Europe/Berlin");
+            assert.equal(compose.$options.computed.savedText.call(saved), "Saved 6:26 AM", "the browser zone cannot pin the saved status");
+        } finally {
+            moqui.l10n.setLocale(priorLocale);
+            moqui.l10n.setTimeZone(priorZone);
+        }
         await compose.close();
         assert.equal(closed.length, 1, "closing now keeps the saved draft");
         assert.ok(closed[0].endsWith("/Inbox"));

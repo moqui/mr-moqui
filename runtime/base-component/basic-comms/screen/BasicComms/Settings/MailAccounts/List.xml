@@ -113,7 +113,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <label type="div" text="${account.serverText}" style="text-caption m-muted q-mt-sm ellipsis" condition="account.serverText"/>
                         <label type="div" text="Members: ${account.memberText}" style="text-caption m-muted" condition="account.memberText"/>
                         <label type="div" text="${account.filingText}" style="text-caption m-muted" condition="account.filingText"/>
-                        <section name="CardSyncProgress" condition="account.hasServer"><widgets>
+                        <section name="CardSyncProgress" condition="account.hasIncomingServer"><widgets>
                             <dynamic-container id="CardSyncProgress" transition="../SyncProgress">
                                 <parameter name="emailAccountId" from="account.emailAccountId"/>
                             </dynamic-container>

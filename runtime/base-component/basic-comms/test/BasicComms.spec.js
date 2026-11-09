@@ -74,15 +74,55 @@ feature("a user with no party sees the mail settings, the wizard and no Internal
         accounts.errors = ec.message.hasError() ? ec.message.errorsString : ""
         ec.message.clearErrors()
         const providers = sys(() => call("org.moqui.impl.ShellServices.get#Providers", {hook: "inbox-source"})) || {}
-        // This account has no external server: the first Account render checks its route back to this mount's Inbox.
+        // SMTP alone is not an incoming mailbox. The existing Account render also checks its route back to this mount's Inbox.
         const hosted = sys(() => call("org.moqui.impl.EmailClientServices.create#EmailAccount", {
             accountKindEnumId: "EakHosted", emailAddress: "basic.comms.spec@example.invalid", accountName: "Spec hosted mail",
-            statusId: "EasActive"
+            statusId: "EasActive", smtpHost: "127.0.0.1", smtpPort: "1", smtpStartTls: "N", smtpSsl: "N"
         })) || {}
         const accountErrors = ec.message.hasError() ? ec.message.errorsString : ""
         ec.message.clearErrors()
         const hostedAccountId = hosted.emailAccountId
         const accountDetail = render(root, "Settings/MailAccounts/Account", "qvt", {lastStandalone:"-3", emailAccountId: hostedAccountId, setup: "done"})
+        const shared = sys(() => call("org.moqui.impl.EmailClientServices.create#EmailAccount", {
+            accountKindEnumId: "EakShared", emailAddress: "basic.comms.shared@example.invalid", statusId: "EasActive",
+            smtpHost: "127.0.0.1", smtpPort: "1", smtpStartTls: "N", smtpSsl: "N"
+        })) || {}
+        const remote = sys(() => call("org.moqui.impl.EmailClientServices.create#EmailAccount", {
+            accountKindEnumId: "EakExternal", emailAddress: "basic.comms.remote@example.invalid", statusId: "EasActive",
+            storeHost: "127.0.0.1", storePort: "1", storeProtocol: "imap"
+        })) || {}
+        const classified = sys(() => call("org.moqui.comms.MailSettingsServices.get#MailAccountList", {})) || {}
+        const capabilities = {
+            errors: ec.message.hasError() ? ec.message.errorsString : "",
+            hosted: classified.accountList?.find(account => account.emailAccountId === hostedAccountId),
+            shared: classified.accountList?.find(account => account.emailAccountId === shared.emailAccountId),
+            remote: classified.accountList?.find(account => account.emailAccountId === remote.emailAccountId)
+        }
+        ec.message.clearErrors()
+        let refusedSync = {}, refusalThrown = ""
+        try { refusedSync = sys(() => call("org.moqui.comms.MailSettingsServices.sync#UserAccounts", {emailAccountId: hostedAccountId})) || {} }
+        catch (error) { refusalThrown = String(error.message || error) }
+        capabilities.refusedSyncError = refusalThrown + (ec.message.hasError() ? ec.message.errorsString : "")
+        capabilities.started = refusedSync.startedList || []
+        ec.message.clearErrors()
+        // Exercise the actual banner action for first-sync states without another Account render.
+        const accountSource = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Settings/MailAccounts/Account.xml", false)
+        const setupBannerAction = /        setupDoneSyncText = [\s\S]*?(?=\n        \/\/ how it signs in:)/.exec(accountSource)?.[0]
+        assert.ok(setupBannerAction, "the Account setup banner action exists")
+        const setupBannerProblems = []
+        for (const scenario of [
+            {account: capabilities.remote, expected: "The first sync is under way"},
+            {account: Object.assign({}, capabilities.remote, {lastSyncText: "just now"}), expected: "Your mail is ready in the Inbox"},
+            {account: Object.assign({}, capabilities.remote, {statusId: "EasError", problemText: "The last sync failed"}), expected: "The last sync failed"},
+            {account: Object.assign({}, capabilities.remote, {statusId: "EasPaused", problemText: "Sync is paused"}), expected: "Sync is paused"},
+            {account: {hasIncomingServer: false}, expected: "The account is ready"}
+        ]) {
+            const state = {account: scenario.account, L: text => text, setupDoneSyncText: null}
+            runInContext(setupBannerAction, state)
+            if (!String(state.setupDoneSyncText).startsWith(scenario.expected)) setupBannerProblems.push(scenario.expected)
+            if (scenario.expected !== "The first sync is under way" && String(state.setupDoneSyncText).includes("under way"))
+                setupBannerProblems.push("stale first-sync message")
+        }
         const inboxLinkProblems = []
         const links = accountDetail.output.match(/<m-link\b[^>]*>[\s\S]*?<\/m-link>/g) || []
         for (const label of ["Open the Inbox", "Open in the Inbox"]) {
@@ -94,16 +134,17 @@ feature("a user with no party sees the mail settings, the wizard and no Internal
             if (!parameters.includes("account=" + encodeURIComponent(hostedAccountId))) inboxLinkProblems.push(label + ": account not retained")
         }
         // the account is this run's own: its owner deletes it, so a later run starts with no mail account again
-        if (hostedAccountId) sys(() => call("org.moqui.impl.EmailClientServices.delete#EmailAccount", {emailAccountId: hostedAccountId, deleteLocalCopies: true}))
+        for (const emailAccountId of [hostedAccountId, shared.emailAccountId, remote.emailAccountId])
+            if (emailAccountId) sys(() => call("org.moqui.impl.EmailClientServices.delete#EmailAccount", {emailAccountId, deleteLocalCopies: true}))
         const deleteErrors = ec.message.hasError() ? ec.message.errorsString : ""
         ec.message.clearErrors()
         const accountLeft = sys(() => ec.entity.find("moqui.basic.email.EmailAccount").condition("emailAccountId", hostedAccountId).count())
         login("john.doe")
         const internalShown = Array.from(accounts.accountList || []).some(account => account.isInternal)
         const internalSource = Array.from(providers.providerList || []).length > 0
-        return {index, list, wizard, accounts, internalShown, internalSource, accountDetail, hostedAccountId, accountErrors, inboxLinkProblems, deleteErrors, accountLeft}
+        return {index, list, wizard, accounts, internalShown, internalSource, accountDetail, hostedAccountId, accountErrors, capabilities, setupBannerProblems, inboxLinkProblems, deleteErrors, accountLeft}
     },
-    then({index, list, wizard, accounts, internalShown, internalSource, accountDetail, hostedAccountId, accountErrors, inboxLinkProblems, deleteErrors, accountLeft}) {
+    then({index, list, wizard, accounts, internalShown, internalSource, accountDetail, hostedAccountId, accountErrors, capabilities, setupBannerProblems, inboxLinkProblems, deleteErrors, accountLeft}) {
         index.status == 200
         index.output.includes("Identities and signatures")
         list.status == 200
@@ -126,6 +167,30 @@ feature("a user with no party sees the mail settings, the wizard and no Internal
         accountDetail.errors == ""
         !accountDetail.broken
         accountDetail.output.includes("Spec hosted mail")
+        accountDetail.output.includes("Delivered here")
+        accountDetail.output.includes("Outgoing server (SMTP)")
+        !accountDetail.output.includes("Waiting for the first sync")
+        !accountDetail.output.includes("Sync now")
+        capabilities.errors == ""
+        capabilities.hosted.deliveredHere
+        capabilities.hosted.hasServer
+        !capabilities.hosted.hasIncomingServer
+        capabilities.hosted.canSend
+        capabilities.hosted.serverText.includes("SMTP 127.0.0.1")
+        !capabilities.hosted.canSync
+        !capabilities.hosted.canPause
+        !capabilities.hosted.canResume
+        capabilities.shared.deliveredHere
+        capabilities.shared.statusLabel == "Delivered here"
+        !capabilities.shared.canSync
+        capabilities.remote.hasIncomingServer
+        !capabilities.remote.deliveredHere
+        capabilities.remote.statusLabel == "Waiting for the first sync"
+        capabilities.remote.canSync
+        capabilities.remote.canPause
+        capabilities.refusedSyncError.includes("no incoming mailbox to sync")
+        capabilities.started.length == 0
+        setupBannerProblems.length == 0
         inboxLinkProblems.length == 0
         deleteErrors == ""
         accountLeft == 0

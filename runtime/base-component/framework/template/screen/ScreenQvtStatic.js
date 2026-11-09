@@ -433,6 +433,12 @@
 
         // ---- the values a field starts with ----
 
+        const checkValue = (widget, field) => {
+            const none = at(widget, "no-current-selected-key") ? exp(at(widget, "no-current-selected-key"), widget, "no-current-selected-key", false) : "''";
+            // A stored off sentinel is not a selected checkbox option, as in the merged renderer.
+            return "$mq.cur(" + baseValue(field, "") + ",true," + none + ").filter((value) => (" + optionsExpr(widget) + ").some((item) => item.value === value))";
+        };
+
         const plainValue = (widget, field, fallback) => {
             const key = sri.staticDisableKey(hostLit(widget)).replace("mqDisable_", "mqPlain_");
             return "$mq.dflt(" + scopeRef(key) + ",$mq.str(" + baseValue(field, fallback) + "))";
@@ -469,7 +475,7 @@
             } else if (kind === "check") {
                 // all-checked seeds every option key, ignoring the field's current value, as the merged mode does.
                 if (at(widget, "all-checked") === "true") out.push([name, "(" + optionsExpr(widget) + ").map((item) => item.value)"]);
-                else out.push([name, "$mq.cur(" + baseValue(field, "") + ",true," + (at(widget, "no-current-selected-key") ? exp(at(widget, "no-current-selected-key"), widget, "no-current-selected-key", false) : "''") + ")"]);
+                else out.push([name, checkValue(widget, field)]);
             } else if (kind === "radio") {
                 out.push([name, "$mq.cur(" + baseValue(field, "") + ",false," + (at(widget, "no-current-selected-key") ? exp(at(widget, "no-current-selected-key"), widget, "no-current-selected-key", false) : "''") + ")"]);
             } else if (kind === "date-time") {
@@ -830,7 +836,7 @@
             tipOf(n, out);
             out[":options"] = optionsExpr(n);
             const none = at(n, "no-current-selected-key") ? exp(at(n, "no-current-selected-key"), n, "no-current-selected-key", false) : "''";
-            const current = "$mq.cur(" + baseValue(field, "") + "," + (kind === "checkbox") + "," + none + ")";
+            const current = kind === "checkbox" ? checkValue(n, field) : "$mq.cur(" + baseValue(field, "") + ",false," + none + ")";
             Object.assign(out, st.inForm ? { "v-model": fieldRef(name) } : { ":model-value": current });
             w("<" + tag + A(out) + "></" + tag + ">");
         };
@@ -1177,6 +1183,11 @@
             const head = key ? "(" + entry + ", " + key + ", " + idx + ")" : "(" + entry + ", " + idx + ")";
             return '<template v-for="' + e(head + " in " + list) + '" :key="' + idx + '">';
         };
+        const sectionIterateOpen = (n) => {
+            const scopes = scopeRef("mqSection_" + at(n, "name"));
+            const extra = "(" + scopes + "||[])[" + at(n, "entry") + "_index]";
+            return vFor(n) + '<m-scope :extra="' + e(extra) + '" v-slot="_ctx">';
+        };
 
         // ---- forms ----
 
@@ -1499,14 +1510,14 @@
             } else if (name === "section-iterate") {
                 const condition = sectionCondition(n);
                 if (at(n, "paginate") === "true") w(sectionPaginate(n));
-                w(vFor(n));
+                w(sectionIterateOpen(n));
                 if (condition) w(vIf(n, condition));
                 nodesOf(n, "widgets").forEach(renderNode);
                 if (condition) {
                     if (first(n, "fail-widgets")) { w("</template><template v-else>"); nodesOf(n, "fail-widgets").forEach(renderNode); }
                     w("</template>");
                 }
-                w("</template>");
+                w("</m-scope></template>");
             } else if (name === "container-dialog") {
                 const wrapped = containerDialog(n);
                 n.children.forEach(renderNode);
@@ -2318,7 +2329,7 @@
             reset, enter, leave, push, pop, e, A, cls, at, X, exp, st, sq, w, note, vIf, vFor, withCondition, urlOf, textOf,
             containerDialog, dynamicDialog, dynamicContainer, tree, subscreensPanel, subscreensTabs, image, label: labelWidget,
             link: (n, inField) => link(n, inField), editable, formSingle, formList, rowOpen, colOpen, fieldGroup, fieldGroupClose, quasarColor,
-            split, js: js_, widgetFns, imageTag, xmlCondition, sectionPaginate, buttonMenuOpen, buttonMenuItem, buttonMenuClose, screenContext,
+            split, js: js_, widgetFns, imageTag, xmlCondition, sectionPaginate, sectionIterateOpen, buttonMenuOpen, buttonMenuItem, buttonMenuClose, screenContext,
             numberCard, dashboardOpen, chatter, recordFiles, splitOpen, htmlView, markdownView, statusBar,
             codeView, reportWidget
         };
@@ -2363,7 +2374,7 @@
         const condition = conditionCode(node);
         let code = "";
         if (attr(node, "paginate") === "true") code += `sri.write($s.sectionPaginate(${wlit(node, false)}));\n`;
-        code += `sri.write($s.vFor(${wlit(node, false)}));\n`;
+        code += `sri.write($s.sectionIterateOpen(${wlit(node, false)}));\n`;
         if (condition) code += `const $cond = ${condition};\nif ($cond) sri.write($s.vIf(${wlit(node, false)}, $cond));\n`;
         code += widgets ? widgets.source || "" : "";
         if (condition) {
@@ -2371,7 +2382,7 @@
             if (fail) code += `sri.write("</template><template v-else>");\n${fail.source || ""}`;
             code += `sri.write("</template>");\n}\n`;
         }
-        return "{\n" + code + `sri.write("</template>");\n}\n`;
+        return "{\n" + code + `sri.write("</m-scope></template>");\n}\n`;
     });
 
     const containerMacro = stmt((node, children) => `$s.containerOpen(${wlit(node, false)});\n${children}sri.write(${lit(`</${attr(node, "type") || "div"}>\n`)});\n`);

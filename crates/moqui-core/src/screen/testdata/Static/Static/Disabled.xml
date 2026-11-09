@@ -3,12 +3,22 @@
     <actions>
         <set field="canUse" from="allowed === 'yes'"/>
         <set field="rows" from="[{id:'A', rowAllowed:true}, {id:'B', rowAllowed:false}]"/>
+        <set field="entries" from="[{id:'A', rowAllowed:true, children:[{id:'A1', rowAllowed:false}]}, {id:'B', rowAllowed:false, children:[{id:'B1', rowAllowed:true}]}]"/>
     </actions>
     <transition name="conditional"><condition><expression>canUse === true</expression></condition><default-response type="none"/></transition>
     <transition name="rowAction"><condition><expression>rowAllowed === true</expression></condition><default-response type="none"/></transition>
+    <transition name="iterationAction"><condition><expression>item.rowAllowed === true</expression></condition><default-response type="none"/></transition>
+    <transition name="childAction"><condition><expression>kid.rowAllowed === true</expression></condition><default-response type="none"/></transition>
     <widgets>
         <link url="conditional" text="Conditional"/>
         <link url="missing" text="Missing"/>
+        <section-iterate name="Entries" list="entries" entry="item"><widgets>
+            <link url="." text="Entry ${item.id}" parameter-map="{entryId:item.id}"/>
+            <link url="iterationAction" text="Act ${item.id}" parameter-map="{entryId:item.id}"/>
+            <section-iterate name="Children" list="item.children" entry="kid"><widgets>
+                <link url="childAction" text="Child ${kid.id}" parameter-map="{entryId:kid.id}"/>
+            </widgets></section-iterate>
+        </widgets></section-iterate>
         <form-single name="Edit" transition="conditional"><field name="save"><default-field><submit text="Save"/></default-field></field></form-single>
         <form-list name="Rows" list="rows" transition="rowAction">
             <field name="id"><default-field><display/></default-field></field>

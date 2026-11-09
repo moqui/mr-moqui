@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- A mail account's page (mr-boss design-drawers-commons.md §17 AccountEdit): its status and last sync with Sync now, Pause and
-    Resume; after the wizard (setup=done) that the first sync is under way, with the way to the Inbox; a sign-in that
+    Resume; after the wizard (setup=done) the current sync state, with the way to the Inbox; a sign-in that
     failed (or fix=Y, the list's and the Inbox's Fix) asks for the password again and tests it at once, or for an account that
     signs in with Google or Microsoft (and needs a new sign-in, get#OAuthStatus) shows the SignIn screen's button, whose popup
     signs it in again and then tests it; an account signed in with its provider says so in Sign-in and servers, with Sign
@@ -172,6 +172,10 @@ along with this software (see the LICENSE.md file). If not, see
         memberRows = Array.from(detail.memberList || [])
         showSetupDone = setup === 'done'
         deliveredHere = account.deliveredHere === true
+        setupDoneSyncText = account.problemText || (!account.hasIncomingServer
+            ? L('The account is ready. Open the Inbox to read its mail.')
+            : account.lastSyncText ? L('Your mail is ready in the Inbox. New mail appears as the account syncs.')
+            : L('The first sync is under way: your mail shows in the Inbox as it arrives, the newest first. A large mailbox takes a while; you can use the Inbox meanwhile.'))
         // how it signs in: a password, or a provider's sign-in (get#OAuthStatus), and whether this server offers that sign-in
         const signInState = detail.signIn || {}
         isOAuth = signInState.isOAuth === true
@@ -268,7 +272,7 @@ along with this software (see the LICENSE.md file). If not, see
                 </container>
             </container>
             <!-- while it syncs: how far it is -->
-            <section name="AccountSyncProgress" condition="account.hasServer"><widgets>
+            <section name="AccountSyncProgress" condition="account.hasIncomingServer"><widgets>
                 <dynamic-container id="AccountSyncProgress" transition="../SyncProgress">
                     <parameter name="emailAccountId" from="emailAccountId"/>
                 </dynamic-container>
@@ -280,7 +284,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <label type="p" text="The account is on. The mail gateway delivers its mail. A tag after a plus sign still arrives here: sales+news@example.com goes to sales@example.com."/>
                     </widgets></section>
                     <section name="SetupDoneSync" condition="!deliveredHere"><widgets>
-                        <label type="p" text="The first sync is under way: your mail shows in the Inbox as it arrives, the newest first. A large mailbox takes a while; you can use the Inbox meanwhile."/>
+                        <label type="p" text="${setupDoneSyncText}"/>
                     </widgets></section>
                     <container style="row q-gutter-sm">
                         <link url="../../../Inbox" text="Open the Inbox" icon="sym_o_inbox" btn-type="primary" parameter-map="{account:emailAccountId}"/>
@@ -407,11 +411,11 @@ along with this software (see the LICENSE.md file). If not, see
 
                     <section name="DeliveredHere" condition="canManage &amp;&amp; deliveredHere"><widgets>
                         <container-box><box-header title="How mail arrives"/><box-body>
-                            <label type="p" text="The mail gateway delivers mail for this address. There is no mail server and no password."/>
+                            <label type="p" text="${account.hasServer ? 'The mail gateway delivers mail for this address. There is no incoming mailbox to sync; the outgoing server sends mail.' : 'The mail gateway delivers mail for this address. There is no mail server and no password.'}"/>
                             <label type="p" text="A tag after a plus sign still arrives here: sales+news@example.com goes to sales@example.com." style="m-muted q-mb-none"/>
                         </box-body></container-box>
                     </widgets></section>
-                    <section name="Servers" condition="canManage &amp;&amp; !deliveredHere"><widgets>
+                    <section name="Servers" condition="canManage &amp;&amp; (!deliveredHere || account.hasServer)"><widgets>
                         <container-box><box-header title="Sign-in and servers"/><box-body>
                             <section name="OAuthSignedIn" condition="isOAuth"><widgets>
                                 <container style="row items-center q-gutter-sm q-mb-sm">
@@ -473,7 +477,7 @@ along with this software (see the LICENSE.md file). If not, see
 
                     <container-box><box-header title="Folders"/><box-body-nopad>
                         <!-- a manager: each server folder's use and whether the sync reads it (the Inbox is fixed and always read) -->
-                        <section name="FoldersManage" condition="canManage &amp;&amp; account.hasServer"><widgets>
+                        <section name="FoldersManage" condition="canManage &amp;&amp; account.hasIncomingServer"><widgets>
                             <form-list name="AccountFolderUse" list="folderRows" transition="saveFolder" paginate="false">
                                 <field name="emailAccountId"><default-field><hidden/></default-field></field>
                                 <field name="emailFolderId"><default-field><hidden/></default-field></field>
@@ -490,7 +494,7 @@ along with this software (see the LICENSE.md file). If not, see
                             </form-list>
                             <label type="p" text="The sync maps the server's folders by their kind (and INBOX); choose here which folder is your Sent, Drafts, Archive, Spam or Trash when the server does not say, and the sync keeps your choice. A folder that is not synced is not read again: its mail here stays." style="text-caption m-muted q-pa-sm q-mb-none"/>
                         </widgets></section>
-                        <section name="FoldersView" condition="!(canManage &amp;&amp; account.hasServer)"><widgets>
+                        <section name="FoldersView" condition="!(canManage &amp;&amp; account.hasIncomingServer)"><widgets>
                             <form-list name="AccountFolders" list="folderRows" skip-form="true" paginate="false">
                                 <field name="folderName"><default-field title="Folder"><display/></default-field></field>
                                 <field name="kindLabel"><default-field title="Kind"><display style="text-caption"/></default-field></field>
