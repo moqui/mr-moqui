@@ -2885,7 +2885,7 @@
               }, 8, ["class"]))
             }
         } },
-        "m-container-dialog": { hash: "416fea64", make: function (Vue) {
+        "m-container-dialog": { hash: "eb983cc2", make: function (Vue) {
             const { renderSlot: _renderSlot, resolveComponent: _resolveComponent, normalizeClass: _normalizeClass, createVNode: _createVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, createElementBlock: _createElementBlock } = Vue
 
             return function render(_ctx, _cache) {
@@ -2904,8 +2904,9 @@
                       "no-caps": "",
                       icon: _ctx.buttonIcon,
                       label: _ctx.buttonText,
+                      "aria-label": !_ctx.buttonText ? (_ctx.tooltip || _ctx.title) : undefined,
                       class: _normalizeClass(_ctx.moqui.tonalClass(_ctx.color, _ctx.buttonClass))
-                    }, null, 8, ["icon", "label", "class"])
+                    }, null, 8, ["icon", "label", "aria-label", "class"])
                   ]),
                   (_ctx.tooltip)
                     ? (_openBlock(), _createBlock(_component_q_tooltip, { key: 0 }, {
@@ -8923,7 +8924,7 @@
               }, 8, ["model-value", "onUpdate:modelValue", "title", "onOnShow", "onOnHide"]))
             }
         } },
-        "m-shell-tray": { hash: "613fab4f", make: function (Vue) {
+        "m-shell-tray": { hash: "f4ca1179", make: function (Vue) {
             const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createVNode: _createVNode, createElementVNode: _createElementVNode, vShow: _vShow, withDirectives: _withDirectives } = Vue
 
             return function render(_ctx, _cache) {
@@ -9000,18 +9001,19 @@
                               round: "",
                               dense: "",
                               icon: "sym_o_close",
+                              "aria-label": _ctx.$root.labels.closeTray,
                               onClick: $event => (_ctx.$root.closeTray())
                             }, {
                               default: _withCtx(() => [
                                 _createVNode(_component_q_tooltip, null, {
                                   default: _withCtx(() => [
-                                    _createTextVNode(_toDisplayString(_ctx.$root.labels.close), 1)
+                                    _createTextVNode(_toDisplayString(_ctx.$root.labels.closeTray), 1)
                                   ]),
                                   _: 1
                                 })
                               ]),
                               _: 1
-                            }, 8, ["onClick"])
+                            }, 8, ["aria-label", "onClick"])
                           ]),
                           _createVNode(_component_q_separator),
                           (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.$root.trayTabs, (tab) => {

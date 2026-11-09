@@ -197,6 +197,48 @@ test("a message: sending, then the run's or queued; a queued one folds into the 
     assert.deepEqual([failed.local, failed.error], ["failed", "network"]);
 });
 
+test("a user-only failed run shows its reason and terminal turn answers refresh stored recovery data", async () => {
+    const reason = "feature assist has no usable model: model default has no provider model name";
+    const snapshot = { conversation: { conversationId: "C-failed" },
+        runs: [{runId: "R-failed", state: "TASK_STATE_FAILED", errorCode: "model_unavailable", errorText: reason}],
+        items: [{messageId: "U-failed", role: "user", runId: "R-failed", clientMessageId: "m-failed",
+            parts: [{kind: "text", text: "Explain this record"}]}] };
+    const reopened = assist.emptyState();
+    assist.snapshot(reopened, snapshot, ctx);
+    const rows = assist.threadRows(reopened);
+    assert.deepEqual(rows.map(row => row.kind), ["user", "done"]);
+    assert.deepEqual([rows[1].failed, rows[1].errorText, rows[1].runId], [true, reason, "R-failed"]);
+    assert.match(assist.components["m-assist-thread"].template, /v-if="row.failed"[^>]*data-assist-action="retry"/);
+
+    const saved = {};
+    ["state", "call", "refresh", "refreshTasks", "ensureStream", "currentPageState"].forEach(key => { saved[key] = assist[key]; });
+    const calls = [];
+    let refreshed = Promise.resolve(), streams = 0, taskRefreshes = 0;
+    try {
+        assist.state = Object.assign({}, saved.state, {convo: assist.emptyState(), error: ""});
+        assist.addOutgoing(assist.state.convo, "m-failed", "Explain this record");
+        assist.currentPageState = () => ({});
+        assist.call = (name) => {
+            calls.push(name);
+            return Promise.resolve(name === "turn"
+                ? {conversationId: "C-failed", runId: "R-failed", state: "TASK_STATE_FAILED"} : snapshot);
+        };
+        assist.refresh = () => { refreshed = assist.load("C-failed", {onlyIf: "C-failed"}); };
+        assist.refreshTasks = () => { taskRefreshes++; };
+        assist.ensureStream = () => { if (assist.state.convo.activeRunId) streams++; };
+        await assist.sendTurn("m-failed", "Explain this record", []);
+        await refreshed;
+        assert.deepEqual(calls, ["turn", "conversation"]);
+        assert.equal(streams, 0);
+        assert.equal(taskRefreshes, 1);
+        const current = assist.threadRows(assist.state.convo);
+        assert.deepEqual(current.map(row => row.kind), ["user", "done"]);
+        assert.equal(current[1].errorText, reason);
+    } finally {
+        Object.assign(assist, saved);
+    }
+});
+
 test("card lifecycles: an approval requested and decided, a question asked and answered, a hand-off started and done", () => {
     const state = streaming();
     let seq = 0;

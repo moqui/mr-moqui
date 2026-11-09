@@ -468,6 +468,8 @@ test("the shell components compile and the header has each element of the design
     assert.match(shell, /icon="help_outline" :aria-label="labels.documentation"/);
     assert.match(shell, /id="m-account" :aria-label="userFullName \|\| labels.account"/);
     assert.match(qvt.components["m-shell-tray"].template, /<q-card id="m-tray"/);
+    assert.match(qvt.components["m-shell-tray"].template, /:aria-label="\$root\.labels\.closeTray"/);
+    assert.match(qvt.components["m-container-dialog"].template, /:aria-label="!buttonText \? \(tooltip \|\| title\) : undefined"/);
     assert.match(qvt.components["m-shell-quick-create"].template, /id="m-quick-create"/);
 });
 

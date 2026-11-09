@@ -848,7 +848,7 @@
         threadRows(state) {
             const rows = [];
             const lastOfRun = {};
-            state.items.forEach((item, index) => { if (item.runId && item.role !== "user") lastOfRun[item.runId] = index; });
+            state.items.forEach((item, index) => { if (item.runId) lastOfRun[item.runId] = index; });
             const doneRow = (runId) => {
                 const run = state.runs[runId];
                 if (!run || !assist.isEnded(run.state) || state.activeRunId === runId) return;
@@ -1738,7 +1738,9 @@
                 assist.turnAnswered(convo, clientMessageId, json, assist.ctx());
                 keep("sessionStorage", "moqui.assist.conversation", convo.conversationId);
                 // a queued message's input id, and an earlier send's run, come from the conversation
-                if (json.queued || json.existing) assist.refresh();
+                // A run that ended before this answer has no stream; the conversation carries its persisted failure reason.
+                if (json.queued || json.existing || assist.isEnded(json.state)) assist.refresh();
+                if (assist.isEnded(json.state)) assist.refreshTasks();
                 assist.ensureStream();
                 return json;
             }, (err) => {

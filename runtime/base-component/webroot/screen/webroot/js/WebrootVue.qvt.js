@@ -1541,7 +1541,7 @@
         data() { return { isShown: false }; },
         template:
             '<span>' +
-                '<span @click="show()"><slot name="button"><q-btn dense unelevated no-caps :icon="buttonIcon" :label="buttonText" :class="moqui.tonalClass(color, buttonClass)"></q-btn></slot>' +
+                '<span @click="show()"><slot name="button"><q-btn dense unelevated no-caps :icon="buttonIcon" :label="buttonText" :aria-label="!buttonText ? (tooltip || title) : undefined" :class="moqui.tonalClass(color, buttonClass)"></q-btn></slot>' +
                     '<q-tooltip v-if="tooltip">{{tooltip}}</q-tooltip></span>' +
                 '<m-dialog v-model="isShown" :id="id" :title="title" :color="color" :width="width"><slot></slot></m-dialog>' +
             '</span>',
@@ -8970,7 +8970,7 @@
                             '<q-tab v-for="tab in $root.trayTabs" :key="tab.key" :name="tab.key" :icon="tab.icon" :label="tab.label">' +
                                 '<q-badge v-if="$root.countOf(tab.key)" color="negative" rounded floating>{{$root.countText(tab.key)}}</q-badge></q-tab>' +
                         '</q-tabs>' +
-                        '<q-btn flat round dense icon="sym_o_close" @click="$root.closeTray()"><q-tooltip>{{$root.labels.close}}</q-tooltip></q-btn>' +
+                        '<q-btn flat round dense icon="sym_o_close" :aria-label="$root.labels.closeTray" @click="$root.closeTray()"><q-tooltip>{{$root.labels.closeTray}}</q-tooltip></q-btn>' +
                     '</div>' +
                     '<q-separator></q-separator>' +
                     '<div v-for="tab in $root.trayTabs" :key="tab.key" v-show="$root.trayTab === tab.key" :ref="(el) => { bodies[tab.key] = el; }"' +
@@ -9420,7 +9420,7 @@
 
     // The text of the suite shell when the page's labels (qapps.xml, localized there) do not have it.
     qvt.shellLabels = { terminal: "Terminal UI", menu: "Menu", applications: "Applications", allApplications: "All applications", search: "Search", quickCreate: "Create",
-        quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", dialer: "Dialer", trayNotifications: "Alerts", trayDialer: "Call", missedCalls: "Missed calls", close: "Close",
+        quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", dialer: "Dialer", trayNotifications: "Alerts", trayDialer: "Call", missedCalls: "Missed calls", close: "Close", closeTray: "Close tray",
         closeTopmost: "Close the dialog, menu or panel", keyboardShortcuts: "Keyboard shortcuts", keysEverywhere: "Everywhere", recent: "Recent",
         screens: "Screens", savedFinds: "Saved finds", actions: "Actions", more: "More", noResults: "Nothing found",
         paletteHint: "Search screens, records and actions", paletteEmpty: "Type to search screens, records, people and actions",

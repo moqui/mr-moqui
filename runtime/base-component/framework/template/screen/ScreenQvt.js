@@ -943,6 +943,7 @@
 
         const linkElement = (n, parts, formId) => {
             const style = xn(at(n, "style")) || null;
+            const accessibleLabel = !parts.text && !parts.img ? x(at(n, "tooltip")) || null : null;
             const linkType = at(n, "link-type");
             const btnType = xn(at(n, "btn-type"));
             // A screen link in a form-list cell is text (as is link-type anchor anywhere); the others are tonal buttons, or the filled
@@ -951,7 +952,8 @@
             if (parts.url.getDisableLink()) {
                 if (parts.anchor && textLink) return '<span class="text-grey-5">' + linkBody(n, parts.text, parts.img) + "</span>";
                 return "<span><q-btn" + A({
-                    dense: true, "no-caps": true, disabled: true, flat: true, class: cls("m-link", style), id: formId || null, label: parts.text || null
+                    dense: true, "no-caps": true, disabled: true, flat: true, class: cls("m-link", style), id: formId || null,
+                    label: parts.text || null, "aria-label": accessibleLabel
                 }) + ">" + (xn(at(n, "icon")) ? iconTag(xn(at(n, "icon")), false) : "") + "</q-btn></span>";
             }
             const confirmation = x(at(n, "confirmation"));
@@ -963,20 +965,21 @@
                 const inner = linkBody(n, parts.text, parts.img) + "";
                 return "<" + tag + A({
                     href, id: formId || null, target: xn(at(n, "target-window")) || null, "load-id": xn(at(n, "dynamic-load-id")) || null,
-                    "data-confirm": confirmation || null, class: textLink ? cls("m-link-text", style) : null
-                }) + ">" + (textLink ? inner : "<q-btn" + A(Object.assign({ dense: true, unelevated: true, "no-caps": true }, btnKind(btnType, "m-link", style))) + ">" + inner + "</q-btn>") + "</" + tag + ">";
+                    "data-confirm": confirmation || null, "aria-label": accessibleLabel, class: textLink ? cls("m-link-text", style) : null
+                }) + ">" + (textLink ? inner : "<q-btn" + A(Object.assign({ dense: true, unelevated: true, "no-caps": true,
+                    "aria-label": accessibleLabel }, btnKind(btnType, "m-link", style))) + ">" + inner + "</q-btn>") + "</" + tag + ">";
             }
             if (!formId) return "";
             // hidden-form-link is the flat (minor) button in its color, its text at the left as a text link's (m-link-left)
             if (linkType === "hidden-form-link") {
                 const color = quasarColor(btnType || "primary") || null;
                 return "<q-btn" + A({
-                    dense: true, flat: true, "no-caps": true, type: "submit", form: formId, id: formId + "_button",
+                    dense: true, flat: true, "no-caps": true, type: "submit", form: formId, id: formId + "_button", "aria-label": accessibleLabel,
                     class: cls("m-link", "m-link-left", color ? "text-" + color : null, style), "data-confirm": confirmation || null
                 }) + ">" + linkBody(n, parts.text, parts.img) + "</q-btn>";
             }
             return "<q-btn" + A(Object.assign({
-                dense: true, unelevated: true, "no-caps": true, type: "submit", form: formId, id: formId + "_button"
+                dense: true, unelevated: true, "no-caps": true, type: "submit", form: formId, id: formId + "_button", "aria-label": accessibleLabel
             }, btnKind(btnType, style), { "data-confirm": confirmation || null })) + ">" + linkBody(n, parts.text, parts.img) + "</q-btn>";
         };
 
@@ -1015,7 +1018,8 @@
                     // hidden-form-link is the flat (minor) button in its color; the others are tonal, or filled with btn-type="primary"
                     const flat = linkType === "hidden-form-link";
                     out += "<q-btn" + A(Object.assign({
-                        dense: true, "no-caps": true, type: "submit", flat: flat ? true : null, unelevated: flat ? null : true
+                        dense: true, "no-caps": true, type: "submit", flat: flat ? true : null, unelevated: flat ? null : true,
+                        "aria-label": !parts.text ? x(at(n, "tooltip")) || null : null
                     }, flat ? { class: cls("m-link", "m-link-left", color ? "text-" + color : null, style) } : btnKind(btnType, "m-link", style), { "data-confirm": confirmation || null })) + ">" + linkBody(n, parts.text, null) + "</q-btn>";
                 }
             }

@@ -213,9 +213,9 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 .m-palette .q-item.m-palette-active { color:inherit; background:color-mix(in srgb, var(--q-primary) 12%, transparent); }
 .body--dark .m-palette .q-item.m-palette-active { background:color-mix(in srgb, var(--q-primary) 24%, transparent); }
 /* the tray panel: at the right of the canvas between the header and the footer, over the screen; the full width on a phone */
-.q-page-sticky.m-tray-sticky { z-index:1000; align-items:stretch; justify-content:flex-end; }
-.m-tray { width:400px; height:100%; border-top:none; border-bottom:none; border-right:none; }
-@media (max-width: 599.98px) { .m-tray { width:100vw; } }
+.q-page-sticky.m-tray-sticky { z-index:1000; align-items:stretch; justify-content:flex-end; max-width:100%; }
+.m-tray { width:400px; max-width:100%; height:100%; border-top:none; border-bottom:none; border-right:none; }
+@media (max-width: 599.98px) { .q-page-sticky.m-tray-sticky, .m-tray { width:100%; } }
 .m-tray .q-tab { padding:0 10px; min-height:40px; }
 .m-tray-body { overflow-y:auto; min-height:0; }
 @media print { .m-tray-sticky { display:none!important; } }

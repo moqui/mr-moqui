@@ -110,6 +110,32 @@ feature('server-static remote choices preserve the current description before se
     assert.deepEqual(optionsFor('EX_JOHN_DOE', false, true), []);
 })(); } });
 
+feature('icon-only action links use their tooltip as an accessible name in both qvt renderers', { expect() { (function () {
+    const T = readModule('../TemplateSupport.js');
+    for (const file of ['ScreenQvt.js', 'ScreenQvtStatic.js']) {
+        const module = readModule(file)(T, readModule('ScreenSupport.js')(T));
+        const render = (text) => {
+            let html = '';
+            const url = { path: '/qapps/Commons/Panel/Today/markDone', getDisableLink: () => false,
+                isTransition: () => true, getTransitionMethod: () => 'post', isReadOnly: () => false,
+                getParameterMap: () => ({workEffortId: 'review-task'}) };
+            const context = {
+                sri: { write: value => { html += value; }, makeUrlByType: () => url, isAnchorLink: () => false,
+                    staticUrl: () => ({ path: url.path, exists: true, isScreen: false, parameters: [] }), staticDisableKey: () => 'mqDisable_action' },
+                ec: { context: { get: () => null }, l10n: { localize: value => value }, resource: { expand: value => value } }
+            };
+            runInContext(module.runtime, context);
+            const node = { name: 'link', attrs: { id: 'TaskDone', url: 'markDone', 'link-type': 'hidden-form-link',
+                icon: 'sym_o_check', text, tooltip: 'Complete review task' }, children: [] };
+            const renderer = file === 'ScreenQvt.js' ? context.$mqQvt : context.$mqQvtS;
+            renderer.link(node, false);
+            return html;
+        };
+        assert.match(render(''), /aria-label="(?:ec\.l10n\.localize\(')?Complete review task/);
+        assert.doesNotMatch(render('Complete'), /aria-label=/);
+    }
+})(); } });
+
 feature('sortable headers separate title and sort links with whitespace like Java', { expect() { (function () {
     const html = renderList({ headerColumns: [
         { name: 'projectId', title: () => 'Project <ID>', orderBy: 'true' },

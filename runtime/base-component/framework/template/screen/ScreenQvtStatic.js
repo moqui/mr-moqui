@@ -982,6 +982,8 @@
                 (img ? imageTag(img) : '<span v-text="' + e(label) + '"></span>') +
                 (at(n, "badge") ? ' <q-badge class="on-right" transparent><span v-text="' + e(exp(at(n, "badge"), n, "badge", true)) + '"></span></q-badge>' : "");
             const tooltip = at(n, "tooltip") ? '<q-tooltip><span v-text="' + e(exp(at(n, "tooltip"), n, "tooltip", true)) + '"></span></q-tooltip>' : "";
+            const accessibleLabel = !at(n, "text") && !at(n, "entity-name") && !img && at(n, "tooltip")
+                ? exp(at(n, "tooltip"), n, "tooltip", true) : null;
             const confirmation = at(n, "confirmation");
             const confirmAttr = {};
             if (confirmation) textAttr(confirmAttr, "data-confirm", confirmation, n, true);
@@ -1002,7 +1004,7 @@
                 const tag = toScreen ? "m-link" : "a";
                 // A screen link in a form-list cell is text (as is link-type anchor anywhere); the others are tonal buttons.
                 const textLink = linkType === "anchor" || (st.inList && linkType !== "anchor-button");
-                const attrs = Object.assign({ ":href": href, ":disable": disable, target: at(n, "target-window") || null, "load-id": at(n, "dynamic-load-id") || null, class: textLink ? cls("m-link-text", style) : null }, confirmAttr);
+                const attrs = Object.assign({ ":href": href, ":disable": disable, ":aria-label": accessibleLabel, target: at(n, "target-window") || null, "load-id": at(n, "dynamic-load-id") || null, class: textLink ? cls("m-link-text", style) : null }, confirmAttr);
                 if (!toScreen) {
                     attrs[":href"] = "(" + disable + ")?undefined:(" + href + ")";
                     attrs[":aria-disabled"] = disable;
@@ -1010,7 +1012,7 @@
                     attrs["@click"] = "(" + disable + ") && $event.preventDefault()";
                 }
                 plainAttr(attrs, "id", at(n, "id"), n);
-                out = "<" + tag + A(attrs) + ">" + (textLink ? tooltip + body : "<q-btn" + A(Object.assign({ dense: true, unelevated: true, "no-caps": true, ":disable": disable }, btnKindOf(n, "m-link", style))) + ">" + tooltip + body + "</q-btn>") + "</" + tag + ">";
+                out = "<" + tag + A(attrs) + ">" + (textLink ? tooltip + body : "<q-btn" + A(Object.assign({ dense: true, unelevated: true, "no-caps": true, ":disable": disable, ":aria-label": accessibleLabel }, btnKindOf(n, "m-link", style))) + ">" + tooltip + body + "</q-btn>") + "</" + tag + ">";
             } else {
                 const fieldsInitial = allParams(n, null, found && !noParam ? withInline(found, found.parameters) : null);
                 const isForm = found ? !found.isScreen : true;
@@ -1018,7 +1020,7 @@
                 const hiddenLink = linkType === "hidden-form-link";
                 const button = img ?
                     "<input" + A({ type: "image", ":disabled": disable, ":src": exp(at(img, "url"), img, "url", false), ":alt": exp(at(img, "alt") || "image", img, "alt", true) }) + ">" :
-                    "<q-btn" + A(Object.assign({ dense: true, "no-caps": true, type: "submit", ":disable": disable, flat: hiddenLink ? true : null, unelevated: hiddenLink ? null : true },
+                    "<q-btn" + A(Object.assign({ dense: true, "no-caps": true, type: "submit", ":disable": disable, ":aria-label": accessibleLabel, flat: hiddenLink ? true : null, unelevated: hiddenLink ? null : true },
                         hiddenLink ? btnTextOf(n, "m-link", "m-link-left", style) : btnKindOf(n, "m-link", style), confirmAttr)) + ">" + tooltip + body + "</q-btn>";
                 const attrs = { ":disable": disable, action: found && !dynamic ? found.path : at(n, "url"), ":fields-initial": fieldsInitial, "v-slot:default": "formProps", "read-only": isForm && found && found.readOnly ? true : null, target: at(n, "target-window") || null };
                 if (dynamic) {

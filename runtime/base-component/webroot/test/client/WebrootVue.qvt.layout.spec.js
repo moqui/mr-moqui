@@ -7,6 +7,45 @@ browser.runInPage({
     test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.layout.page.js",
 })
 
+feature("the tray fits its layout when a scrollbar reduces the available width", {
+    expect() {
+        // A constrained component fixture, not an application phone walk: the outer viewport remains desktop-sized.
+        const page = browser.newPage({viewport: {width: 1920, height: 1080}})
+        page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
+            <link rel="stylesheet" href="/css/WebrootVue.qvt.css"><style>
+            .q-layout-container .scroll {overflow-y:scroll!important;} *::-webkit-scrollbar {width:15px;}
+            </style></head><body><div id="app">
+            <q-layout container style="width:390px;height:320px"><q-page-container><q-page style="min-height:1000px">
+                <m-shell-tray></m-shell-tray>
+            </q-page></q-page-container></q-layout></div>
+            <script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
+            const app=Vue.createApp({data(){return {trayMounted:true,trayOpen:true,trayTab:'today',trayLoaded:{},trayScroll:{},shellTray:null,
+                trayTabs:[{key:'today',label:'Today',icon:'sym_o_today'}],labels:{closeTray:'Close tray'}};},
+                methods:{countOf(){return 0;},countText(){return '';},openTray(key){this.trayTab=key;this.trayOpen=true;},
+                    closeTray(){this.trayOpen=false;},keepTrayScroll(){}}});
+            app.use(Quasar);app.config.globalProperties.moqui=moqui;
+            app.component('m-shell-tray',moqui.qvt.components['m-shell-tray']);window.trayApp=app.mount('#app');
+            window.trayGeometry=()=>{const canvas=document.querySelector('.q-page-container').getBoundingClientRect();
+                const sticky=document.querySelector('.m-tray-sticky').getBoundingClientRect();
+                const card=document.getElementById('m-tray').getBoundingClientRect();return {canvasLeft:canvas.left,canvasRight:canvas.right,
+                    canvasWidth:canvas.width,stickyLeft:sticky.left,stickyRight:sticky.right,cardLeft:card.left,cardRight:card.right,cardWidth:card.width};};
+            </script></body></html>`)
+        page.waitFor(() => window.trayApp && document.getElementById('m-tray') && trayGeometry().canvasWidth === 375 && trayGeometry().cardWidth > 0)
+        const first = page.evaluate(() => trayGeometry())
+        assert.equal(first.canvasWidth, 375, 'the fixture reserves a 15px scrollbar inside its 390px layout')
+        assert.ok(first.stickyLeft >= first.canvasLeft - 1 && first.stickyRight <= first.canvasRight + 1)
+        assert.ok(first.cardLeft >= first.canvasLeft - 1 && first.cardRight <= first.canvasRight + 1)
+        assert.ok(first.cardWidth <= first.canvasWidth)
+        page.evaluate(() => {trayApp.closeTray();document.querySelector('.q-layout-container').style.width='340px';return true;})
+        page.evaluate(() => {trayApp.openTray('today');return true;})
+        page.waitFor(() => trayGeometry().canvasWidth === 325)
+        const resized = page.evaluate(() => trayGeometry())
+        assert.ok(resized.stickyLeft >= resized.canvasLeft - 1 && resized.stickyRight <= resized.canvasRight + 1)
+        assert.ok(resized.cardLeft >= resized.canvasLeft - 1 && resized.cardRight <= resized.canvasRight + 1)
+    },
+})
+
 feature("the compact wizard retains named previous steps and prevents forward header navigation", {
     expect() {
         const page = browser.newPage({ viewport: { width: 1920, height: 1080 } })
