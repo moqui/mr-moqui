@@ -6,8 +6,8 @@ Status 2026-11-08. This file replaces four running logs, now in `archive/`:
 - [Script-Engine-Oxide](archive/Script-Engine-Oxide.md): quickjs-oxide in and rquickjs out, Phases 0 to 4.
 - [Script-Engine-Zipp-Ideas](archive/Script-Engine-Zipp-Ideas.md): ideas from zipp.org.
 
-It keeps the latest numbers, what is still open and the ideas not yet built. Each one cites where it was measured or
-proposed: "R*n*" is a Profiling round, "TX §*name*" or "TX D*n*" a section or decision of TX-Cache, "Oxide §*n*" a
+It keeps the latest numbers, what is still open and the ideas not yet built. Round 50 (2026-11-08, [below](#round-50-tiers-0-to-2))
+built §5's tiers 0 to 2. Each one cites where it was measured or proposed: "R*n*" is a Profiling round, "TX §*name*" or "TX D*n*" a section or decision of TX-Cache, "Oxide §*n*" a
 section of Script-Engine-Oxide, and "Zipp *n*" an item of Script-Engine-Zipp-Ideas §3.
 
 Most of the database and service work is done:
@@ -17,8 +17,9 @@ Most of the database and service work is done:
 - The script engine is quickjs-oxide alone (Oxide §7, Phase 4 result). Its screen rows are within ×1.10 of QuickJS's
   last numbers, and plain JavaScript is faster than it was (R48).
 
-What is left is mostly two things. Three script rows still lose to QuickJS at the boundary between host and engine. And
-the heap of the script runtimes is still over its gate in half the test processes (R49).
+What is left is mostly two things. Two script rows still lose to QuickJS at the boundary between host and engine (walk
+itemList ×1.15, cached finds ×1.04, R50). And the heap of the script runtimes is still over its gate in some test
+processes (R49, R50).
 
 ## 1. Headline numbers
 
@@ -31,8 +32,9 @@ the heap of the script runtimes is still over its gate in half the test processe
 | External Postgres | a statement waits 1 round trip, a service in its own transaction 2; iterating 100 rows waits 3 (1,087 µs at 200 µs) | R5 |
 | Transaction cache | waited round trips of the 45 services 324,548 → 207,658 (−36%); 42 early flushes in Census 9, all past the size caps | R25, R26 |
 | Mantle operations (200 µs to the database) | 6,037 → 3,954 ms with the cache; oxide 3400 ms against QuickJS's 3380 (+0.6%) | R27, R48 |
-| Script engine | screen rows ×0.82 to ×1.10 of QuickJS; walk itemList, cached finds and the locked-down template ×1.16; plain JS ×0.67 to ×0.96 | R48 |
-| Script heap | test-apps process peaks 16 to 83 MB (91 to 118 before), three of six under the gate of 73 MB | R49 |
+| Script engine | js_speed's 59 rows ×0.90 of R49 (geometric mean); screen rows ×0.89 to ×0.97 of R49; the locked template ×0.75, fancy ×0.73; cached finds ×0.90; numbers to text and one-character strings ×0.40, the regexp scan ×0.58 | R50 |
+| Runtime start | 1.57 ms, 9,277 allocations, 2.9 MB allocated (8.96 ms, 47,436, 12.3 MB before) | R50 |
+| Script heap | test-apps process peaks 15 to 86 MB, three of six under the gate of 73 MB (R49: 16 to 83 MB, also three) | R50 |
 | Startup | first start 5.63 s (the empty-database load about 1.15 s), restart 268 ms | R9 |
 | Definitions and XML | entity model 5.3 ms, service definitions 8.7 ms, 112 µs a screen definition; MNode parse 76 µs a file | R4, R8 |
 
@@ -139,8 +141,8 @@ ms, the mail store with two attachments 14.8 → 8.7 ms, all at 200 µs to the d
 
 ### The script engine
 
-quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` 7cf1f530
-(Oxide §7, Phase 4 result).
+quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` 1cdb77e2
+(R50; 7cf1f530 before, Oxide §7, Phase 4 result).
 
 The fork's changes:
 - **F1:** compiled code shared by the process. Code images (step 1) and shared unit bodies (step 2) are done; shared
@@ -168,7 +170,77 @@ R48's rows (µs a call, QuickJS's last numbers against oxide now):
 | List.qvt, 100 rows | 13254 | 13316 | 1.00 |
 
 Before Round 33, oxide was ×1.3 to ×3.3 slower at host calls (R32). The fork's Sweep of 7cf1f530 passes its gates
-(V8 v7 ×0.989, `run_at` 15,251 bytes) and so does `gates.sh` (R48).
+(V8 v7 ×0.989, `run_at` 15,251 bytes) and so does `gates.sh` (R48). R50's rows are in [Round 50](#round-50-tiers-0-to-2);
+the Sweep was not run for it.
+
+### Round 50: tiers 0 to 2
+
+§5's tiers 0 to 2, built in three lanes, each item measured by its js_speed rows (allocations and `instructions:u`) and
+its own tests. The quiet pass, the best of two runs of the R49 build (fork 7cf1f530, 16 codegen units) against R50
+(`target/profiling/r50/final/table.md`):
+
+| Row | R49 µs | R50 µs | ÷ | Allocations |
+|---|---:|---:|---:|---|
+| engine start (a thread's first script) | 8958 | 1568 | 0.18 | 47,436 → 9,277 |
+| 1000 numbers to text | 377.9 | 149.3 | 0.40 | 5,883 → 994 |
+| `split('')` + `charAt`, 1000 characters | 111.9 | 44.8 | 0.40 | 4,005 → 5 |
+| regexp scan of a 200-line log | 301.1 | 175.2 | 0.58 | 2,179 → 1,578 |
+| JSON stringify + parse of 100 objects | 94.6 | 69.2 | 0.73 | 1,215 → 421 |
+| fancy, trusted | 65.9 | 47.8 | 0.73 | 325 → 304 |
+| fancy, locked down | 81.2 | 60.8 | 0.75 | 824 → 350 |
+| `JSON.parse` of the locked snapshot | 9.28 | 6.95 | 0.75 | 124 → 42 |
+| `$esc` over 100 strings | 48.6 | 39.9 | 0.82 | 510 → 320 |
+| List, text, 100 rows | 2432 | 2174 | 0.89 | 26,582 → 23,871 |
+| 10 cached entity finds | 50.6 | 45.8 | 0.90 | 576 both |
+| Single, html | 332.2 | 318.1 | 0.96 | 2,612 → 2,410 |
+| List.qvt, 100 rows | 13107 | 12613 | 0.96 | 83,062 → 80,323 |
+| List, html, 100 rows | 8288 | 7911 | 0.95 | 66,972 → 65,872 |
+| walk itemList, 100 context maps | 67.5 | 67.6 | 1.00 | 806 → 706 |
+| 100 objects made and walked | 21.8 | 22.9 | 1.05 | 100 both |
+
+All 59 rows: ×0.901. The heap did not move: test-apps' six large processes peak at 15, 44, 59, 76, 82 and 86 MB (R49: 16
+to 83 MB), with the main thread's runtimes 7 to 33 MB of a peak and 29 to 32 runtimes live at most. The inline-cache
+trim did not lower these peaks; where they go now is not yet profiled (a `MOQUI_SCRIPT_HEAP_LOG` run is next). Against QuickJS's last numbers (R48's table), walk itemList is ×1.15, cached finds ×1.04 and the
+locked template ×0.87.
+
+The fork (each a `perf/` branch merged into `main`):
+- **Numbers to text** (c83824fd): composed on the stack; integers from a `u64`, short decimals by one multiply, the rest
+  by Rust's shortest `{:e}`; checked against the old walk over 10M doubles once (40k by default).
+- **One-character strings** (2021d373): a per-runtime table of the 256 Latin-1 units, made on first use.
+- **`replace`, `indexOf` and `includes`** (b33d2ebb) search a string where it lies.
+- **Native `name` and `length`** (949b405e) pending until read: a fork runtime's start −8.8% instructions; no change in
+  mr-moqui's start.
+- **Regexp loops** (4c4e70de): a greedy one-character loop is one instruction with one backtrack record, none when its
+  follower cannot match its characters; `FirstUnits` looks through loops. Differential test against split loops; the
+  Test262 RegExp vector unchanged. Lazy loops and zipp's failed-run skip are not done.
+- **A shared one-byte builder** (f29def49, with 3bcbe5a6 restoring the regexp files that merge undid) for join, pad,
+  replace and case conversion: 6 to 14% fewer bytes in the template rows.
+- **`JSON.stringify`** (7e665004) walks an ordinary object by a per-shape plan of slots and quoted keys, skips the
+  `toJSON` lookup on an ordinary prototype chain, writes bytes: −15% instructions.
+- **Inline caches** (80a91e10): a collection trims the cache store and compacts dynamic units' caches; a probe of 4000
+  one-off units: 124 KB → 25 KB. js_speed keeps all its units, so no change there.
+- **`JSON.parse`** (5a601429): integers of up to 15 digits into a `u64`, short keys and numbers from a stack copy:
+  −9% instructions, the locked snapshot 124 → 42 allocations. Scanning a Latin-1 source in place and key plans are not
+  done: the parser is UTF-16 throughout.
+- **The lend** (362cf9ed): `Runtime` holds its `Heap` and `Services` in boxes, so a lend swaps pointers: cached finds
+  −11.4% instructions, walk itemList +1.1%, 100 objects +1.7%.
+- **Clippy** (1cdb77e2) on Rust 1.99.
+
+mr-moqui:
+- **Rows** (c497d59a): `$esc`, the locked snapshot's `JSON.parse`, numbers to text, `split('')`/`charAt`, a regexp
+  scan; the engine start a row.
+- **Release profile** (dd276100): one codegen unit for the three engine crates, ×0.994 over the rows at no build cost.
+- **Templates** (bbdd62c5): one `$o.push` of a template literal for each run of output (a `+` chain makes an
+  intermediate at each `+`, as `ConcatN` fuses only constants after the first); the compiled cache looked up by `&str`.
+  fancy −26% instructions, locked −8%.
+- **Tracked values** (2c426aef): a flush compares numbers, flags and nulls in place: walk itemList 806 → 706
+  allocations.
+- **Leaf finds** (f6479132): `ec.entity.find` and `condition` lend only for a definition made from rows: −5.6%.
+- **Locked templates** (91fd453d): the snapshot's JSON written straight from the value; the sandbox's function found by
+  the compiled text's address: −8.5%, 495 → 350 allocations.
+- **Runtime start** (361f4c8e): the framework's start texts (shims, helpers, globals, ec's extras, the freeze) run from
+  the process's code images after the first runtime: 8.67 → 1.54 ms, 47,455 → 9,277 allocations, 12.3 → 2.9 MB.
+  The images cost the process about 0.7 MB once.
 
 ### The script heap
 
@@ -176,7 +248,7 @@ The gate (Oxide §7, Phase 3) is under half of 139 MiB of reserved runtime heap 
 made of:
 - **Workers' runtimes.** At mr-mantle's peak of 113 MB, 23 service-pool workers' runtimes held 87 MB, 2.9 to 5.3 MB
   each. A condition variable wakes any worker, so every worker ends up with a runtime.
-- **A fresh runtime** reserves 0.87 MB (0.41 MB live).
+- **A fresh runtime** reserves 0.87 MB (0.41 MB live). Its start costs 1.57 ms and 9,277 allocations since R50.
 - **A worker's runtime** reserves 1.5 MB at the median and 5.4 MB at the most. The largest held: strings 1.6 MB, mostly
   atoms (11k of them); the tables beside the arenas 1.1 MB (37k inline-cache entries and the atoms); the value heap
   0.86 MB; objects 0.77 MB.
@@ -185,7 +257,8 @@ made of:
   give back only their ends.
 
 R49's change: a service worker idle a second, while two others are idle too, lets its runtime go
-(`script::release_idle_runtime`). Its next script starts one again, 8.4 ms and 47k allocations.
+(`script::release_idle_runtime`). Its next script starts one again: 8.4 ms and 47k allocations in R49, 1.57 ms and 9.3k
+since R50.
 - **mr-mantle:** the peak went 116 → 96 MB, with the suite time unchanged.
 - **test-apps:** the process peaks went to 16 to 83 MB (from 91 to 118).
 - **Earlier:** R44 drops a runtime whose reserved heap is more than 2.5 times its live bytes, at most every 30 s, and R45
@@ -255,15 +328,21 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
   - allocations are up with the cache on (S4 29k → 48k a call, TX §Reads).
 
 **The script engine and screens**
-- **The three rows at ×1.16** (R48), all at the boundary:
-  - walk itemList: a host map's conversion;
-  - cached finds: a find's arguments;
-  - the locked-down template: a snapshot's copy and its `JSON.parse`.
-- **Not measured since F4:**
-  - HTML escape (×1.45 before F4);
-  - a short compile (an expression from new text ×2.24, R31) (Oxide §6 F4, Zipp §2).
-- **A runtime start:** 8.4 ms and 47k allocations (12 MB allocated) (R49). It is the cost of each idle release, and of
-  each new thread.
+- **The rows still behind QuickJS** (R50 profiles, frame pointers):
+  - walk itemList (×1.15): the end-of-run compare is about 45% of the row, and 60% of that is
+    `View::visit_plain_own_data` (own keys, then a get and a key lift each); a walk by shape members, as `JSON.stringify`
+    now has, would fix it. `dense_array_values` makes an `Rc<Slot>` per element; `new_array_from_inits` defines each
+    property one at a time.
+  - cached finds (×1.04): `one()` still lends; a chained call still makes a new host object (the "already used" check,
+    `entities_tests.rs`).
+  - the locked template (now ×0.87): `$esc`'s replace is 45% of a render, and the `flags` getter 27%; the sandbox's
+    frozen `RegExp.prototype` may keep it off the pristine path (not confirmed).
+- **Not measured since F4:** a short compile (an expression from new text ×2.24, R31) (Oxide §6 F4, Zipp §2). HTML
+  escape has a row since R50 (`$esc over 100 strings`).
+- **A runtime start:** 1.57 ms and 9.3k allocations (2.9 MB) since R50, from 8.4 ms. With starts this cheap the idle
+  release (`IDLE_RUNTIME`, 1 s) is worth re-weighing: a half second took mr-mantle's peak to 67 MB in R49.
+- **Screens:** adjacent constant `sri.write` calls are not merged; they come from literal code in many macros, at most
+  14 pairs a screen (R50).
 - **In the fork:**
   - `fix/lower-heap-oom` (3f5d5809) is not in the pin; the bindings map the error already (Oxide §7, Phase 3 memory);
   - `using` and `await using` are a SyntaxError (the parser);
@@ -276,8 +355,12 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
   - script object keys and strings are one copy each (R18).
 
 **The script heap, in the fork** (R49 "Next")
-- Each runtime has its own atoms, about 11k in a busy worker; share them, as F1 step 3 shares code.
-- The inline-cache table keeps its capacity after its units go (37k entries, about 1 MB).
+- Each runtime has its own atoms, about 11k in a busy worker. The design is on the fork's branch `perf/shared-atoms`
+  (`docs/shared-atoms.md`, about two weeks, a process-wide `Sync` table), with `Runtime::atom_census`
+  (`QJS_ATOM_CENSUS`). R50's counts on js_speed: 4,188 atoms on the main thread and 3,081 on a new one; builtin and code
+  atoms are about 90%, string literals the largest class, host keys and the rest about 400. Count an mr-mantle worker
+  before deciding.
+- The inline-cache table: trimmed and compacted at a collection since R50 (80a91e10).
 - A compacting value heap: the arenas give back only their ends.
 - Gate status: the three largest test-apps processes are 3 to 10 MB over it (R49).
 
@@ -311,11 +394,13 @@ Each is to be fixed in the fork or listed in [Parity-Diffs](Parity-Diffs.md):
 Tiers by cost and evidence. A fork item is a branch of the fork, measured from mr-moqui behind a switch, then the Sweep
 and `gates.sh`. An mr-moqui item is proved locally and committed.
 
-**Tier 0: measure first** (Zipp 0)
+Tiers 0 to 2 were built in R50 ([Round 50](#round-50-tiers-0-to-2)), apart from the items marked open below.
+
+**Tier 0: measure first** (Zipp 0), done in R50
 - `js_speed` rows for `$esc` over 100 strings, the locked template's `JSON.parse`, 1000 numbers to text, and the engine
   start as a row with time and bytes. Every tier 1 and 2 item needs a row to show it.
 
-**Tier 1: cheap, with clear evidence**
+**Tier 1: cheap, with clear evidence**, done in R50 except the rope threshold (§6)
 - **Release profile:** `codegen-units=1` for the oxide crates, then thin or fat LTO. zipp recorded about 2%; measure the
   build time too (Zipp 1).
 - **Numbers to text** (the fork's `radix.rs`): a short-decimal path in place of format-and-parse, written into the
@@ -329,7 +414,8 @@ and `gates.sh`. An mr-moqui item is proved locally and committed.
 - **The template generator:** one `$o.push(a+b+…)` per straight run of output, so `ConcatN` joins it in one allocation.
   zipp B124 (Zipp 6). Check the screen generators too.
 
-**Tier 2: aimed at the losing rows and the heap**
+**Tier 2: aimed at the losing rows and the heap**, done in R50 except: `JSON.parse`'s in-place Latin-1 scan and key
+plans; the regexp's lazy loops and failed-run skip; shared atoms (designed, not built) and the compacting heap
 - **A one-byte string builder:** Latin-1 until a wide unit arrives, for `join`, `JSON.stringify`, `concat`, `repeat`,
   `pad` and case conversion. It removes the narrowing scan R43 found (Zipp 7).
 - **`JSON.parse`:** scan Latin-1 in place, build each object at its final shape (zipp 57bbb00f, −11.9% instructions),
@@ -387,6 +473,8 @@ and `gates.sh`. An mr-moqui item is proved locally and committed.
 | A smaller static code cache (2 MiB, 1 MiB of source) | more transient compiles; peak 116 → 141 MB at 1 MiB | R49 |
 | An idle release after 2 s or 10 s | releases almost nothing in the suites; a half second releases 426 runtimes but starts one for most calls | R49 |
 | zipp itself as the engine | one host channel, no re-entry, no shared code, 2 to 6.6 times QuickJS's memory, a JIT panic aborts | Zipp §1 |
+| `codegen-units = 1` plus thin LTO for the release profile | ×0.988 on the screen rows over one codegen unit alone (under the 1.5% bar); a rebuild after a moqui-core edit 12% slower | R50 |
+| `ROPE_MIN` 128 or 256 (from 64) | neutral to worse on every row: concatenations +0.7%/+2.1%, qvt rows +0.9%/+1.1% | R50 |
 | zipp's regex engine, WTF-8 strings, its object layout, a thread that frees large payloads, a `"prefix"+int` cache | listed as not taken | Zipp §4 |
 | Java's `knownLocked` shortcut; Java's stale view reads | not kept, by design | TX D4, TX §How it works today |
 
@@ -430,6 +518,10 @@ and `gates.sh`. An mr-moqui item is proved locally and committed.
 - A service worker idle a second, with two others idle, lets its runtime go; its next script starts one.
 - A runtime its heap leaves far past its live bytes is dropped and started fresh (R44, R45).
 - Inert modules are kept for an outermost run (`script_module_cache`).
+- A runtime's start texts are compiled by the process's first runtime and loaded from its code images by later ones
+  (R50).
+- `ec.entity.find` and `EntityFind.condition` run without lending the engine, except for a definition made from rows
+  (R50).
 - A list or map read by bare name keeps its host type. A decimal read twice is the same object until a releasing flush.
 
 **Open question**
@@ -449,6 +541,8 @@ and `gates.sh`. An mr-moqui item is proved locally and committed.
   Assignment Spec Org"), from the Customer Service P5 work of 2026-11-05. Needs a look outside performance (R48).
 - Contacts, Consent and CustomerServiceAccess (state from earlier specs), ShopCart and SupportAccess
   (`record#Attempt`'s rate limit), `ProductsMethods` (its budget, from earlier data): R23, R25.
+- mr-boss `Resources` team planner on a Sunday evening in the Americas: the spec's `monday()` is the next day's week
+  (2026-11-09) where the server's `today` is still 11-08 (R50).
 - `AccountingCollections` and `SupportCases` after 23:00 local time; the day-keyed snapshots (R30) likely fix them, not
   yet seen in a run (R28).
 
