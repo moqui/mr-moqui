@@ -135,8 +135,10 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 # Signer stand-ins. Stay in RustCrypto (or aws-lc). No OpenSSL.
 hmac = "0.13"
 # Ed25519 webhook signatures (moqui-channels): the aws-lc-rs that rustls, rcgen and str0m already link, with the default
-# features they turn on.
-aws-lc-rs = "1.19"
+# features they turn on. Held at 1.18.2, the release on aws-lc-sys 0.46, which mail-auth 0.15 names itself, so AWS-LC
+# is built once (1.19 is on 0.47 and adds features only). Lift it when mail-auth moves past 0.46; deny.toml refuses a
+# second aws-lc-sys.
+aws-lc-rs = "=1.18.2"
 sha2 = "0.11"
 # Substring search of multipart bodies (crates/moqui-core/src/web/multipart.rs). Already in the graph.
 memchr = "2.8"
@@ -193,8 +195,9 @@ imap = { version = "=3.0.0-alpha.15", default-features = false }
 # below.
 mail-parser = { version = "1", default-features = false }
 # Mail authentication (moqui-mail `auth`, plans/Edge-Node.md §5.4 E5b): SPF, DKIM, DMARC and ARC verified, DKIM signed,
-# MTA-STS records. aws-lc-rs is its crypto (it pins aws-lc-sys 0.46 beside the 0.47 aws-lc-rs links, so AWS-LC is built
-# twice; rust-crypto would add a second rsa instead) and hickory its DNS. It turns on mail-parser's full_encoding.
+# MTA-STS records. aws-lc-rs is its crypto (it names aws-lc-sys 0.46 itself, for ML-DSA, so aws-lc-rs is held to the
+# release on 0.46 above; rust-crypto would add a second rsa instead) and hickory its DNS. It turns on mail-parser's
+# full_encoding.
 mail-auth = { version = "0.15", default-features = false, features = ["aws-lc-rs", "arc"] }
 # The DNS resolver mail-auth queries through, configured here (moqui-mail `dns`: MX, TXT, A and AAAA, for the MTA and
 # E10's DNS checks). Its defaults are system-config and the Tokio runtime.
@@ -311,9 +314,10 @@ postgres-protocol = "0.6"
 postgres-types = { version = "0.2", default-features = false }
 fallible-iterator = "0.2"
 # minimal (not minimal-rust) links system zlib. On this crate rustls-tls means aws-lc.
-# time and chrono stay off. rustls-tls still pulls webpki 0.22, which pulls ring.
+# time and chrono stay off. moqui's fork (docs/Build-Test.md, Forks): upstream's rustls feature pulls webpki 0.22, which
+# links ring, for two error types.
 socket2 = "0.6"
-mysql = { version = "28", default-features = false, features = [
+mysql = { git = "https://github.com/moqui/rust-mysql-simple", rev = "622ddf83a6ce648957725ebc4bb4c96ad8f4825a", default-features = false, features = [
     "minimal-rust",
     "derive",
     "buffer-pool",
@@ -378,9 +382,12 @@ sframe = { version = "2.1.0", default-features = false, features = ["rust-crypto
 opus-rs = "0.1.40"
 # SIP for phone calls (moqui-sip, plans/Comms-Framework.md §5.2, "The V1 gate"): transactions, dialogs and the UDP, TCP
 # and TLS transports, on Tokio. default-features off leaves out WebSocket (tokio-tungstenite) and SRV lookup
-# (hickory-resolver). Its TLS turns on rustls's ring provider beside aws-lc-rs and builds its configs from the process
-# default, so moqui-sip installs aws-lc-rs as that default before a TLS transport starts.
-rsipstack = { version = "0.7.12", default-features = false, features = ["platform-tokio", "rustls"] }
+# (hickory-resolver). Its TLS builds its configs from rustls's process default. moqui's fork (docs/Build-Test.md,
+# Forks): its rustls feature has no crypto provider of its own, where upstream's turns on ring beside aws-lc-rs.
+rsipstack = { git = "https://github.com/moqui/rsipstack", rev = "a64b33d561b6427a14bf2c937edd146a4f21a7b9", default-features = false, features = [
+    "platform-tokio",
+    "rustls",
+] }
 tokio-util = { version = "0.7", default-features = false }
 # XMPP for local users (moqui-xmpp, plans/Comms-Framework.md §4.3 "XMPP server (C3)", D-C3): rxml parses the client's
 # stream (MIT; no DTDs, entities or processing instructions), minidom holds each stanza as an element tree and jid parses

@@ -57,13 +57,26 @@ platform.
 
 | Library | For | Why |
 |---|---|---|
-| AWS-LC (`aws-lc-sys`, through `aws-lc-rs`) | Crypto: rustls (every TLS connection), SSH (russh), certificates (rcgen), WebRTC (str0m), DNSSEC (hickory), DKIM and ARC (mail-auth), and the framework's own signatures | Vetted constant-time C and assembly, the provider rustls defaults to. It is the one crypto library, built once: a dependency that brings ring or a second AWS-LC is fixed or replaced |
+| AWS-LC (`aws-lc-sys`, through `aws-lc-rs`) | Crypto: rustls (every TLS connection), SSH (russh), certificates (rcgen), WebRTC (str0m), DNSSEC (hickory), DKIM and ARC (mail-auth), and the framework's own signatures | Vetted constant-time C and assembly, the provider rustls defaults to. It is the one crypto library, built once: `deny.toml` refuses ring and a second `aws-lc-sys`, and a dependency that brings either is forked ([Forks](#forks)), pinned or replaced |
 | jemalloc (`tikv-jemallocator`) | The binaries' global allocator, not on MSVC | 5 to 15% off script-heavy rows ([Profiling Round 37](../plans/archive/Profiling.md#round-37-the-allocator-measured-a-proposal-nothing-changed)); the alternatives are C too |
 | SQLite (`rusqlite`, bundled) | The local databases of moqui-client and moqui-browser; not the server | No pure-Rust database matches it yet. Public domain; the browser build compiles it to WebAssembly |
 | CEF, GTK 4, the system WebViews | The desktop and mobile app shells (Tauri) | A desktop or mobile UI runs on the platform's |
 
 Programs that run as their own processes are not linked and are outside this list: the embedded Postgres, Chromium
 for PDF, and the system `ssh` for git remotes.
+
+#### Forks
+
+Two dependencies are pinned by `rev` to a branch of moqui's fork, as quickjs-oxide is, because neither keeps ring out
+through a feature. Each branch is one commit on the release we use; its `pr/` branch is the same commit on upstream's
+own branch, for a pull request. Go back to the crates.io release once upstream publishes the change.
+
+| Crate | Fork and branch (`pr/` branch) | Change |
+|---|---|---|
+| rsipstack 0.7.12 | [moqui/rsipstack](https://github.com/moqui/rsipstack) `moqui/0.7.12-crypto-features` (`pr/rustls-provider-features`) | `rustls` has no crypto provider of its own; `rustls-ring` (the default) and `rustls-aws-lc-rs` choose one. Its TLS configs come from rustls's process default, here the aws-lc-rs provider |
+| mysql 28.0.4 | [moqui/rust-mysql-simple](https://github.com/moqui/rust-mysql-simple) `moqui/28.0.4-no-webpki` (`pr/no-webpki-0.22`) | `rustls` no longer pulls webpki 0.22 (unmaintained, links ring) for two error types: `TlsError::InvalidDnsName` holds rustls's own error, and the unused `TlsError::Pki` is gone |
+
+Moving a pin: push the fork's branch first, then change the `rev` in `Cargo.toml` and run `cargo update -p <crate>`.
 
 ## Packages
 
