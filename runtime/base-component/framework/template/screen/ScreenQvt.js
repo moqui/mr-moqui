@@ -941,9 +941,11 @@
                 (img ? imageTag(img) : text) + (badge ? ' <q-badge class="on-right" transparent>' + t(badge) + "</q-badge>" : "");
         };
 
+        // A link with no text or image (an icon only) is named by its tooltip.
+        const iconOnlyLabel = (n, parts) => (!parts.text && !parts.img ? x(at(n, "tooltip")) || null : null);
         const linkElement = (n, parts, formId) => {
             const style = xn(at(n, "style")) || null;
-            const accessibleLabel = !parts.text && !parts.img ? x(at(n, "tooltip")) || null : null;
+            const accessibleLabel = iconOnlyLabel(n, parts);
             const linkType = at(n, "link-type");
             const btnType = xn(at(n, "btn-type"));
             // A screen link in a form-list cell is text (as is link-type anchor anywhere); the others are tonal buttons, or the filled
@@ -1019,7 +1021,7 @@
                     const flat = linkType === "hidden-form-link";
                     out += "<q-btn" + A(Object.assign({
                         dense: true, "no-caps": true, type: "submit", flat: flat ? true : null, unelevated: flat ? null : true,
-                        "aria-label": !parts.text ? x(at(n, "tooltip")) || null : null
+                        "aria-label": iconOnlyLabel(n, parts)
                     }, flat ? { class: cls("m-link", "m-link-left", color ? "text-" + color : null, style) } : btnKind(btnType, "m-link", style), { "data-confirm": confirmation || null })) + ">" + linkBody(n, parts.text, null) + "</q-btn>";
                 }
             }

@@ -9011,6 +9011,7 @@
         name: "mShellQuickCreate",
         data() { return { isShown: false, hideResolvers: [] }; },
         provide() { return { mSubmitHide: this }; },
+        beforeUnmount() { this.onHide(); },
         template:
             '<m-dialog :model-value="$root.quickCreateShow" @update:model-value="$root.quickCreateShow = $event" id="m-quick-create" :title="$root.quickCreateTitle" width="560" @on-show="onShow" @on-hide="onHide">' +
                 '<m-dynamic-container v-if="$root.quickCreateShow && $root.quickCreateUrl" id="m-quick-create-body" :url="$root.quickCreateUrl"></m-dynamic-container>' +
@@ -9018,8 +9019,9 @@
         methods: {
             onShow() { this.isShown = true; this.$root.addContainer("m-quick-create", this); },
             onHide() { this.isShown = false; this.hideResolvers.splice(0).forEach((resolve) => resolve()); },
+            // Resolves once the dialog is gone; only a dialog that finished showing emits on-hide, so only it is waited for.
             hide() {
-                const waiting = this.$root.quickCreateShow || this.isShown;
+                const waiting = this.isShown;
                 this.$root.quickCreateShow = false;
                 return waiting ? new Promise((resolve) => { this.hideResolvers.push(resolve); }) : Promise.resolve();
             },

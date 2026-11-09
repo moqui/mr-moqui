@@ -108,6 +108,11 @@ feature("quick-create success links wait for modal hide and refusals keep the dr
         assert.equal(page.evaluate(() => vm.$refs.noteForm.fields.noteText), 'Further draft edits')
         assert.equal(page.evaluate(() => vm.submitted), 1)
         assert.equal(page.evaluate(() => saves.length), 1)
+        // A dialog closed before it finished showing emits no on-hide: its messages are not left waiting.
+        assert.equal(page.evaluate(async () => {
+            vm.quickCreateShow=true;closeFrame.isShown=false;
+            await closeMethods.hide.call(closeFrame);return closeFrame.hideResolvers.length === 0 && !vm.quickCreateShow
+        }), true)
     },
 })
 

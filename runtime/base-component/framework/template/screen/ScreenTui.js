@@ -337,16 +337,19 @@ ${kind === "check" ? "" : `        if ($value && !$options.some(($opt) => $opt.v
         if (attr(dynamic, "value-field")) fieldNames._valueField = attr(dynamic, "value-field");
         if (attr(dynamic, "label-field")) fieldNames._labelField = attr(dynamic, "label-field");
         if (Object.keys(fieldNames).length) extra.push(`$w.optionsParameters = Object.assign({}, $w.optionsParameters || {}, ${JSON.stringify(fieldNames)});`);
+        // current-description, when given, is the selected value's label; otherwise the transition looks it up
+        const lookup = `const $found = sri.getFieldTransitionValue(${jsString(attr(dynamic, "transition") || "")}, ${S.nodeLit(dynamic, true)}, $value, ${jsString(labelField)}, false);
+                if ($found) $label = String($found);`;
+        const description = attr(widget, "current-description");
         return `(() => {
             const $value = String(${valueCall(widget)} || "");
             let $label = $value;
             if ($value) {
-                const $description = ${attr(widget, "current-description") ? `ec.resource.expand(${jsString(attr(widget, "current-description"))}, "")` : '""'};
+                ${description ? `const $description = ${S.expandExpr(description)};
                 if ($description) $label = String($description);
                 else {
-                    const $found = sri.getFieldTransitionValue(${jsString(attr(dynamic, "transition") || "")}, ${S.nodeLit(dynamic, true)}, $value, ${jsString(labelField)}, false);
-                    if ($found) $label = String($found);
-                }
+                    ${lookup}
+                }` : lookup}
             }
             const $w = $withRemote({kind:"dropDown",value:$value,options:$value ? [{value:$value,label:$label}] : []}, ${remoteExpr(dynamic, attr(dynamic, "transition"))}, "optionsUrl", "optionsParameters");
             ${extra.map((line) => line + "\n            ").join("")}return $w;
@@ -717,8 +720,8 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
         if (widget.name === "render-mode") {
             const chosen = S.chooseRenderModeText(widget, "tui");
             // Only an authored terminal representation belongs in a cell; browser markup is not a cell value.
-            if (!chosen || !typeNames(attr(chosen, "type")).includes("tui")) return '""';
-            return `(() => {\n${tuiText(chosen, true)}})()`;
+            const body = chosen && typeNames(attr(chosen, "type")).includes("tui") ? tuiText(chosen, true) : "";
+            return body ? `(() => {\n${body}})()` : '""';
         }
         if (widget.name === "editable") return fieldObject(field, sub, widget, rowFieldOpts(field, false)) || '""';
         // A container-dialog of a row (an Edit per row): the dialog node its statements write, with the row's values,
@@ -1303,39 +1306,31 @@ ${actionDialogs ? "        " + ifSelOn(actionDialogs) : ""}    } finally {
     if (!$problem) {
         const $baseUrl = sri.getScreenUrlInstance();
         const $base = ($baseUrl && $baseUrl.path) || "/";
-        const $components = ($items) => {
-            for (const $item of $items) {
+        const $components = ($items, $path) => {
+            for (let $at = 0; $at < $items.length; $at++) {
+                const $item = $items[$at];
                 if ($problem) return;
                 if (!$item || typeof $item !== "object" || Array.isArray($item)) continue;
-                if ($item.t === "component") {
+                ${cell ? `// a cell repeats on every row: each id is made unique under the row's key, an authored one kept in it
+                $item.id = $uid($path + "." + $at + ($item.id ? ":" + $item.id : ""));
+                ` : ""}if ($item.t === "component") {
                     if (typeof $item.name !== "string" || !$item.name.trim()) {
                         $problem = " has a component with no name";
                         return;
                     }
                     if (typeof $item.base !== "string" || !$item.base) $item.base = $base;
                 }
-                if (Array.isArray($item.c)) $components($item.c);
+                if (Array.isArray($item.c)) $components($item.c, $path + "." + $at);
             }
         };
-        $components($parsed);
+        $components($parsed, ${cell ? `${jsString(idOf(node) + ".")} + $rowKey` : '""'});
     }
     if ($problem) {
         const $text = ${where} + $problem;
         ec.logger.warn("tui text in " + $text);
         ${cell ? `return [{t:"error",id:$uid(${jsString(idOf(node))}),text:$text}];` : `$emit({t:"error",id:$uid(${jsString(idOf(node))}),text:$text});`}
     } else {
-        ${cell ? `// Authored cells need the same document-wide identity guarantee as native row links.
-        const $cellIds = ($items, $path) => {
-            for (let $at = 0; $at < $items.length; $at++) {
-                const $item = $items[$at];
-                if (!$item || typeof $item !== "object" || Array.isArray($item)) continue;
-                const $nodePath = $path + "." + $at;
-                $item.id = $uid(String($item.id || $nodePath));
-                if (Array.isArray($item.c)) $cellIds($item.c, $nodePath);
-            }
-        };
-        $cellIds($parsed, ${jsString(idOf(node) + ".")} + $rowKey);
-        return $parsed;` : `$emit({t:"fragment",id:$uid(${jsString(idOf(node))}),c:$parsed});`}
+        ${cell ? "return $parsed;" : `$emit({t:"fragment",id:$uid(${jsString(idOf(node))}),c:$parsed});`}
     }
 }
 `;

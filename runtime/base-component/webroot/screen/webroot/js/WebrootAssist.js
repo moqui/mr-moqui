@@ -1739,8 +1739,9 @@
                 keep("sessionStorage", "moqui.assist.conversation", convo.conversationId);
                 // a queued message's input id, and an earlier send's run, come from the conversation
                 // A run that ended before this answer has no stream; the conversation carries its persisted failure reason.
-                if (json.queued || json.existing || assist.isEnded(json.state)) assist.refresh();
-                if (assist.isEnded(json.state)) assist.refreshTasks();
+                const ended = assist.isEnded(json.state);
+                if (json.queued || json.existing || ended) assist.refresh();
+                if (ended) assist.refreshTasks();
                 assist.ensureStream();
                 return json;
             }, (err) => {

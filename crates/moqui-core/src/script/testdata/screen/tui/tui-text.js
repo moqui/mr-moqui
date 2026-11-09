@@ -12,8 +12,9 @@
     if (!$problem) {
         const $baseUrl = sri.getScreenUrlInstance();
         const $base = ($baseUrl && $baseUrl.path) || "/";
-        const $components = ($items) => {
-            for (const $item of $items) {
+        const $components = ($items, $path) => {
+            for (let $at = 0; $at < $items.length; $at++) {
+                const $item = $items[$at];
                 if ($problem) return;
                 if (!$item || typeof $item !== "object" || Array.isArray($item)) continue;
                 if ($item.t === "component") {
@@ -23,10 +24,10 @@
                     }
                     if (typeof $item.base !== "string" || !$item.base) $item.base = $base;
                 }
-                if (Array.isArray($item.c)) $components($item.c);
+                if (Array.isArray($item.c)) $components($item.c, $path + "." + $at);
             }
         };
-        $components($parsed);
+        $components($parsed, "");
     }
     if ($problem) {
         const $text = String((sri.getActiveScreenDef() && sri.getActiveScreenDef().location) || "") + " " + "inline" + $problem;
