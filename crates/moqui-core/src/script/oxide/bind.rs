@@ -269,7 +269,7 @@ fn install_shim(
         let made = function(js, binder, method)?;
         js.set_property(&hidden, &key(method.name)?, JsValue::Object(made.into_object()))?;
     }
-    let install = js.eval(shim.js)?;
+    let install = super::compiled::eval_start(js, shim.js)?;
     let install = match &install {
         JsValue::Object(object) => js.as_callable(object)?,
         _ => None,
@@ -383,7 +383,7 @@ fn prototype(js: &mut impl Js, binder: &Rc<Binder>, class: &'static HostClass) -
             let made = function(js, binder, method)?;
             js.set_property(&hidden, &key(method.name)?, JsValue::Object(made.into_object()))?;
         }
-        let install = js.eval(shim)?;
+        let install = super::compiled::eval_start(js, shim)?;
         let install = match &install {
             JsValue::Object(object) => js.as_callable(object)?,
             _ => None,

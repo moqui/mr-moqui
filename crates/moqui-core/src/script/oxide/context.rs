@@ -163,7 +163,7 @@ pub(super) fn make(context: &Context) -> Result<(ObjectRef, ObjectRef), RuntimeE
             })
         },
     )?;
-    let make = context.eval(METHODS_JS)?;
+    let make = super::compiled::eval_start(&mut context.clone(), METHODS_JS)?;
     let make = match &make {
         Value::Object(made) => context.as_callable(made)?,
         _ => None,

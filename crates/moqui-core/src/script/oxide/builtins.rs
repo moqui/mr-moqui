@@ -265,6 +265,6 @@ const QUICKJS_GLOBALS_JS: &str = r#"(function () {
 
 /// Make the QuickJS-only builtins on a whole runtime's global object, before its own globals are counted.
 pub(super) fn install(context: &Context) -> Result<(), RuntimeError> {
-    context.eval(QUICKJS_GLOBALS_JS)?;
+    super::compiled::eval_start(&mut context.clone(), QUICKJS_GLOBALS_JS)?;
     Ok(())
 }

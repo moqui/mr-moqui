@@ -30,7 +30,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
 use std::sync::{Arc, LazyLock, Mutex};
 
-use quickjs_oxide::engine::api::core::{CodeImage, CompileOptions, Context, FunctionBytecodeRef, RuntimeError};
+use quickjs_oxide::engine::api::core::{
+    CodeImage, CompileOptions, Context, FunctionBytecodeRef, Js, RuntimeError, Value,
+};
 
 use crate::script::BoundedMap;
 
@@ -56,6 +58,38 @@ static IMAGES: LazyLock<Mutex<Images>> =
 
 /// The texts some runtime compiled once and no image holds yet, by the same key: a second sighting makes the image.
 static SEEN: LazyLock<Mutex<BoundedMap<(u64, bool), ()>>> = LazyLock::new(|| Mutex::new(BoundedMap::new(64 * 1024)));
+
+/// The images of the framework's fixed texts a runtime runs as it starts (the shims, the helpers, the freeze), by the
+/// address and length of the `&'static str`: a few dozen, made by the process's first runtime.
+static START_IMAGES: LazyLock<Mutex<HashMap<(usize, usize), CodeImage>>> = LazyLock::new(Mutex::default);
+
+/// `js.eval(text)` of a fixed framework text a runtime runs as it starts. The first runtime of the process compiles it
+/// and keeps its image; each later one loads the image, with no parse. Parsing these texts was most of a start
+/// (plans/Profiling2.md, Round 50 C4). The code is static, named `<input>`, as `eval` makes it.
+pub(super) fn eval_start(js: &mut impl Js, text: &'static str) -> Result<Value, RuntimeError> {
+    let at = (text.as_ptr() as usize, text.len());
+    let kept = moqui_lib::sync::lock(&START_IMAGES).get(&at).cloned();
+    if let Some(image) = kept {
+        match js.load_image(&image) {
+            Ok(loaded) => {
+                counts::LOADS.fetch_add(1, Relaxed);
+                return js.execute(&loaded);
+            }
+            Err(err) => {
+                counts::FAILED.fetch_add(1, Relaxed);
+                tracing::warn!(error = ?err, "a start text's code image did not load; compiling the text");
+            }
+        }
+    }
+    let compiled = js.compile(text)?;
+    match js.encode_image(&compiled) {
+        Ok(image) => {
+            moqui_lib::sync::lock(&START_IMAGES).insert(at, image);
+        }
+        Err(err) => tracing::debug!(error = ?err, "a start text did not encode as a quickjs-oxide code image"),
+    }
+    js.execute(&compiled)
+}
 
 /// Oxide compiles run sloppy, as QuickJS's expressions and actions do; the key keeps the strictness as QuickJS's does.
 const STRICT: bool = false;
