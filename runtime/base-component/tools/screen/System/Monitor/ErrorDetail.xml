@@ -2,8 +2,8 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Error detail">
     <parameter name="fingerprint" required="true"/><parameter name="from"/><parameter name="thru"/>
-    <transition name="trace"><default-response url="//apps/monitor/TraceDetail"/></transition>
-    <transition name="logs"><default-response url="//apps/monitor/Logs"/></transition>
+    <transition name="trace"><default-response url="//apps/system/Monitor/TraceDetail"/></transition>
+    <transition name="logs"><default-response url="//apps/system/Monitor/Logs"/></transition>
     <actions><script><![CDATA[
         const result = ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters({datasetId:'otel_errors',
             queryString:'fingerprint:'+JSON.stringify(String(fingerprint)),from:from || 'now-7d',thru:thru || 'now',pageSize:1}).call()

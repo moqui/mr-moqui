@@ -5,7 +5,7 @@
 // Run: ./moq test tools --spec MonitorSettings
 const SERVICES = "org.moqui.monitor.MonitorServices."
 const KEY = "telemetry/receiver@requests-per-minute"
-const monitorRoot = "component://tools/screen/Monitor.xml"
+const monitorRoot = "component://tools/screen/System.xml"
 const CHANGE = {key: KEY, value: "42", minutes: 15, reason: "monitor settings spec"}
 const USER = "MONITOR_SETTINGS_SPEC"
 const USERNAME = "monitor.settings.spec"
@@ -36,7 +36,7 @@ function setting(key) {
 }
 function render() {
     const test = ec.screen.makeTest().rootScreen(monitorRoot).renderMode("qvt").withStaticData()
-    const str = test.render("Settings", {lastStandalone: "-2"}, null)
+    const str = test.render("Monitor/Settings", {lastStandalone: "-2"}, null)
     const output = String(str.output || "")
     ec.message.clearErrors()
     return {status: str.status, errors: str.errorMessages.join(" | "), output, broken: /Error rendering|Exception in render/.test(output)}
@@ -58,7 +58,7 @@ spec({
                 make("moqui.security.UserAccount", {userId: USER, username: USERNAME, userFullName: "Monitor Settings Spec", disabled: "N"})
                 make("moqui.security.UserGroup", {userGroupId: GROUP, description: "Monitor app only (MonitorSettings spec)"})
                 make("moqui.security.UserGroupMember", {userGroupId: GROUP, userId: USER, fromDate: new Date(Date.now() - 60000)})
-                make("moqui.security.ArtifactAuthz", {artifactAuthzId: GROUP, artifactGroupId: "MONITOR_APP", userGroupId: GROUP,
+                make("moqui.security.ArtifactAuthz", {artifactAuthzId: GROUP, artifactGroupId: "SYSTEM_APP", userGroupId: GROUP,
                     authzTypeEnumId: "AUTHZT_ALLOW", authzActionEnumId: "AUTHZA_ALL"})
             }
         })

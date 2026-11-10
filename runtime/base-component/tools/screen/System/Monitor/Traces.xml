@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Traces" default-menu-index="3">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Traces" default-menu-index="4" menu-image="sym_o_timeline" menu-image-type="icon">
     <parameter name="from"/><parameter name="thru"/><parameter name="queryString"/>
     <parameter name="pageIndex"/><parameter name="pageSize"/><parameter name="order"/><parameter name="spanKind"/>
     <parameter name="serviceName"/><parameter name="spanName"/><parameter name="statusCode"/><parameter name="minDuration"/><parameter name="maxDuration"/><parameter name="userId"/>
-    <transition name="traceDetail"><default-response url="//apps/monitor/TraceDetail"/></transition>
-    <transition name="logs"><default-response url="//apps/monitor/Logs"/></transition>
+    <transition name="traceDetail"><default-response url="//apps/system/Monitor/TraceDetail"/></transition>
+    <transition name="logs"><default-response url="//apps/system/Monitor/Logs"/></transition>
     <actions><script><![CDATA[
         from = from || 'now-7d'; thru = thru || 'now'
         queryNotices = []

@@ -4,7 +4,7 @@
     levels and target rules, sampling, artifact types, metric attributes, operations, browser RUM and the receiver, each
     with its on-disk value beside its value now. A change is in memory on every running instance, expires on its own and
     is gone on restart. Seeing it needs Monitor access; changing it MONITOR_SETTINGS, which the services check. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Settings" default-menu-index="18">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Settings" default-menu-index="18" menu-image="sym_o_tune" menu-image-type="icon">
     <parameter name="changeKey"/>
     <transition name="setSetting">
         <service-call name="org.moqui.monitor.MonitorServices.set#RuntimeSetting"/>

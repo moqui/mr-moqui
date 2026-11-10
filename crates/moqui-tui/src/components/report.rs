@@ -1112,6 +1112,9 @@ fn span_stamp(span: &Value) -> u64 {
 }
 
 /// The time picker's quick ranges, as the web picker lists them: from, through and label.
+/// The route of System › Monitor, where a trace opens.
+const MONITOR_PATH: &str = "/apps/system/Monitor";
+
 const QUICK_RANGES: [(&str, &str, &str); 22] = [
     ("now-5m", "now", "Last 5 minutes"),
     ("now-15m", "now", "Last 15 minutes"),
@@ -1985,7 +1988,7 @@ impl Component for LogTail {
                         .and_then(|hit| hit["body"]["trace_id"].as_str())
                         .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
                     {
-                        return Some(vec![Act::Follow(format!("/apps/monitor/TraceDetail?traceId={trace}"))]);
+                        return Some(vec![Act::Follow(format!("{MONITOR_PATH}/TraceDetail?traceId={trace}"))]);
                     }
                 }
                 _ => {}

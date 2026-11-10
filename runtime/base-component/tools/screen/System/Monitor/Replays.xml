@@ -2,7 +2,7 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- Browser session replays (telemetry/browser replay-enabled): masked rrweb recordings of a sample of signed-in sessions. Only
     users with MONITOR_REPLAY see them; the services check it. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Replays" default-menu-index="13">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Replays" default-menu-index="10" menu-image="sym_o_replay" menu-image-type="icon">
     <parameter name="userId"/><parameter name="visitId"/>
     <transition name="replayDetail"><default-response url="../ReplayDetail"/></transition>
     <actions><script><![CDATA[

@@ -20,7 +20,7 @@ spec({
 
 feature("recovery editors load configuration, keep rejected blanks and separate new IDs from updates", {
     expect() {
-        const source = ec.resource.getLocationText("component://tools/screen/Monitor/Recovery.xml")
+        const source = ec.resource.getLocationText("component://tools/screen/System/Monitor/Recovery.xml")
         const actions = /^    <actions><script><!\[CDATA\[([\s\S]*?)\]\]><\/script><\/actions>/m.exec(source)[1]
         const policy = {policyId: "UI_RECOVERY_EDIT", description: "Loaded recovery policy", enabled: "N", sequenceNum: 1000000,
             serviceName: "example.*", minSeverity: "critical", mode: "advisory", ladderJson: '[{"action":"escalate"}]',
@@ -91,7 +91,7 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
                 value.create()
             }
         })
-        const page = render("Recovery", "Monitor", {editPolicyId: policy.policyId, editAdapterId: adapter.adapterId})
+        const page = render("Monitor/Recovery", "System", {editPolicyId: policy.policyId, editAdapterId: adapter.adapterId})
         assert.equal(page.status, 200)
         assert.equal(page.errors, "")
         assert(!/Error rendering|Exception in render/.test(page.output))
@@ -110,13 +110,13 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
         assert(page.output.includes("Review the incident before doing anything."))
         // Exercise the actual transition boundary: a message + check-errors must skip the store, redirect,
         // and save the rejected inputs. An isolated script throw would bypass this entire recovery path.
-        const test = ec.screen.makeTest().rootScreen("component://tools/screen/Monitor.xml").renderMode("html")
+        const test = ec.screen.makeTest().rootScreen("component://tools/screen/System.xml").renderMode("html")
         // The adapter transition has the same shape; one duplicate POST covers the boundary.
         for (const [kind, id, entityName] of [["Policy", policy.policyId, "moqui.monitor.RecoveryPolicy"]]) {
             const idName = kind === "Policy" ? "policyId" : "adapterId"
             const submitted = {moquiFormName: "Store" + kind, [idName]: id, ["recovery" + kind + "Mode"]: "create",
                 description: "", enabled: "N", ladderJson: "[]", adapterType: "manual", instructions: "Rejected instructions"}
-            const rejected = test.render("Recovery/store" + kind, submitted, "post")
+            const rejected = test.render("Monitor/Recovery/store" + kind, submitted, "post")
             assert.equal(rejected.status, 302, kind + " duplicate uses its error response")
             assert(rejected.errorMessages.join(" | ").includes("ID already exists"))
             assert(String(rejected.header("Location")).includes("_openDialog=" + kind + "Dialog"))
@@ -140,7 +140,7 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
 feature("the instance overview formats its start time and names unavailable metrics", {
     when() {
         const status = ec.factory.getStatusMap(true)
-        const page = render("dashboard")
+        const page = render("Home")
         return {
             page,
             started: ec.l10n.format(status.Runtime.Start, null),
@@ -483,7 +483,7 @@ feature("incident display dates preserve raw values and missing records retain t
     expect() {
         // The existing Monitoring acceptance owns the screens' renders. Exercise their actual data mapping only.
         const scripts = Object.fromEntries(["Incidents", "IncidentDetail"].map(name => {
-            const source = ec.resource.getLocationText("component://tools/screen/Monitor/" + name + ".xml")
+            const source = ec.resource.getLocationText("component://tools/screen/System/Monitor/" + name + ".xml")
             return [name, /<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(source)[1]]
         }))
         const instant = new Date("2026-11-04T18:28:00.123Z"), epoch = instant.getTime()

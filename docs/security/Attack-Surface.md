@@ -47,7 +47,7 @@ From `runtime/base-component/tools/data/MonitoringSecurityData.xml` ([Monitoring
 
 | Group | Artifacts |
 | --- | --- |
-| `MONITOR_APP` | `component://tools/screen/Monitor.xml` (`inheritAuthz` Y), the `org.moqui.report.dataset.otel_*` datasets, `org.moqui.report.dataset.monitor_annotations`, `org.moqui.monitor.MonitorServices.*` |
+| `MONITOR_APP` | `component://tools/screen/System/Monitor.xml` (`inheritAuthz` Y), the `org.moqui.report.dataset.otel_*` datasets, `org.moqui.report.dataset.monitor_annotations`, `org.moqui.monitor.MonitorServices.*` |
 | `DASHBOARDS_APP` | `component://tools/screen/Dashboards.xml` and `/moqui/reports` (`inheritAuthz` Y), `org.moqui.report.ReportServices.*` |
 | `REPORT_DATASETS_ADMIN` | every `org.moqui.report.dataset.*`: unrestricted dataset access |
 | `REPORT_CONTACT_ADMIN` | `org.moqui.report.contact.webhook`: alert webhooks |

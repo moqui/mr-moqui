@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="AI" default-menu-index="6">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="AI" default-menu-index="11" menu-image="sym_o_psychology" menu-image-type="icon">
     <parameter name="from"/><parameter name="thru"/><parameter name="provider"/><parameter name="model"/><parameter name="agent"/><parameter name="errorsOnly"/>
-    <transition name="traceDetail"><default-response url="//apps/monitor/TraceDetail"/></transition>
+    <transition name="traceDetail"><default-response url="//apps/system/Monitor/TraceDetail"/></transition>
     <transition name="dashboard"><default-response url="//apps/dashboards/Dashboard"/></transition>
     <transition name="usage"><default-response url="//apps/system/Llm/Usage"/></transition>
     <actions><script><![CDATA[

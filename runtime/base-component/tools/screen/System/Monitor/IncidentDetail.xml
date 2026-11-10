@@ -72,8 +72,8 @@
             const result = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#Incident').parameters({incidentId}).call()
             const original = result.incident || {}
             incident = Object.assign({}, original, {onsetText: displayTime(original.onsetDate), detectedText: displayTime(original.detectedDate)})
-            const linkOf = row => row.kind == 'trace' ? '/apps/monitor/TraceDetail?traceId=' + encodeURIComponent(row.refId)
-                : row.kind == 'error' ? '/apps/monitor/ErrorDetail?fingerprint=' + encodeURIComponent(row.refId) : ''
+            const linkOf = row => row.kind == 'trace' ? '/apps/system/Monitor/TraceDetail?traceId=' + encodeURIComponent(row.refId)
+                : row.kind == 'error' ? '/apps/system/Monitor/ErrorDetail?fingerprint=' + encodeURIComponent(row.refId) : ''
             evidenceList = (result.evidence || []).map(row => Object.assign({}, row, {link: linkOf(row), evidenceText: displayTime(row.evidenceDate)}))
             causeList = (result.causes || []).map(row => Object.assign({}, row, {
                 support: (row.supporting || []).join('; '), against: (row.contradicting || []).join('; '),

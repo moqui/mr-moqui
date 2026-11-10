@@ -12,7 +12,7 @@
         <default-response url="../DatasetDetail"><parameter name="datasetId"/></default-response>
         <error-response url="."/>
     </transition>
-    <transition name="traces"><default-response url="//apps/monitor/AgentTraces"/></transition>
+    <transition name="traces"><default-response url="//apps/system/Monitor/AgentTraces"/></transition>
     <actions><script><![CDATA[
         canEdit = ec.user.hasPermission('MONITOR_EVAL')
         const num = v => v == null ? null : v.toNumber ? v.toNumber() : Number(v)

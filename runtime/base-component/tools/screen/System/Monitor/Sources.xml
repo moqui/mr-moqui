@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Sources" default-menu-index="9">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Sources" default-menu-index="17" menu-image="sym_o_input" menu-image-type="icon">
     <transition name="createKey" method="post" authz-action="create">
         <actions><script><![CDATA[
             // Only the key's hash is stored, so its token shows once, in a message on the next page (the log masks it).

@@ -3,7 +3,7 @@
 <!-- Recovery (plans/Monitoring.md, Later: Recovery): the emergency stop, the policies (which incidents, which actions least
     disruptive first, advisory, approval or automatic), the adapters that carry actions out, and the newest actions.
     Seeing it needs MONITOR_INCIDENT; changing policies, adapters and the stop MONITOR_RECOVER_ADMIN, which the services check. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Recovery" default-menu-index="17">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Recovery" default-menu-index="16" menu-image="sym_o_healing" menu-image-type="icon">
     <parameter name="editPolicyId"/>
     <parameter name="editAdapterId"/>
     <transition name="setStop">

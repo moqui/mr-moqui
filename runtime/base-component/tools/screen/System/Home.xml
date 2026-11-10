@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-index="1" menu-image="sym_o_dashboard" menu-image-type="icon">
+        default-menu-index="1" menu-image="sym_o_home" menu-image-type="icon" default-menu-title="Home">
 
     <transition name="threadList"><default-response url="../ThreadList"/></transition>
 
@@ -55,7 +55,7 @@ along with this software (see the LICENSE.md file). If not, see
         <container-box id="SystemInformation">
             <box-header title="Instance overview"/>
             <box-toolbar>
-                <link url="//apps/monitor" text="Open Monitor"/>
+                <link url="../Monitor" text="Open Monitor"/>
                 <container-dialog id="RequestHeaders" button-text="Request details">
                     <label text="${requestDetails}" type="pre"/>
                 </container-dialog>
@@ -119,9 +119,9 @@ along with this software (see the LICENSE.md file). If not, see
                     <link url="../Security/ActiveUsers" text="Active users"/>
                 </box-body></container-box>
                 <container-box id="Usage"><box-header title="Diagnostics and history"/><box-body>
-                    <link url="//apps/monitor/Artifacts" text="Artifact performance"/>
-                    <link url="//apps/monitor/Traces" text="Request traces"/>
-                    <link url="//apps/monitor/Logs" text="Logs"/>
+                    <link url="../Monitor/Artifacts" text="Artifact performance"/>
+                    <link url="../Monitor/Traces" text="Request traces"/>
+                    <link url="../Monitor/Logs" text="Logs"/>
                     <link url="../AuditLog" text="Audit log"/>
                     <link url="../Visit" text="Visits"/>
                 </box-body></container-box>
@@ -130,9 +130,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <container-box id="DataDocumentsFeeds"><box-header title="Documents and feeds"/><box-body>
                     <label text="Define document data, maintain indexes and explore results." type="p" style="m-muted"/>
                     <link url="//apps/dashboards/Explore" text="Explore documents" parameter-map="documentDatasetId ? {datasetId:documentDatasetId,from:'now-10y',thru:'now'} : {}"/>
-                    <link url="../DataDocument/Edit" text="Document definitions"/>
+                    <link url="//apps/tools/Data/Documents/Edit" text="Document definitions"/>
                     <link url="//apps/tools/Data/Export" text="Export documents"/>
-                    <link url="../DataDocument/Index" text="Feed indexes"/>
+                    <link url="//apps/tools/Data/Documents/Index" text="Feed indexes"/>
                 </box-body></container-box>
                 <container-box id="DataAdmin"><box-header title="Resources and localization"/><box-body>
                     <link url="../Resource" text="Resources"/>

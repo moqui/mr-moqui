@@ -38,8 +38,6 @@ along with this software (see the LICENSE.md file). If not, see
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
     <!-- Monitor: its checks and scrape targets fetch URLs a user gives, and its sources issue ingest keys; reports keep
         their editing but not git sync or webhook contacts (component://tools/data/MonitoringSecurityData.xml) -->
-    <moqui.security.ArtifactAuthz artifactAuthzId="MONITOR_APP_ADMIN" artifactGroupId="MONITOR_APP" userGroupId="ADMIN"
-            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="REPORT_GIT_SYNC_ADMIN" artifactGroupId="REPORT_GIT_SYNC_ADMIN" userGroupId="ADMIN"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_VIEW"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="REPORT_CONTACT_ADMIN" artifactGroupId="REPORT_CONTACT_ADMIN" userGroupId="ADMIN"
