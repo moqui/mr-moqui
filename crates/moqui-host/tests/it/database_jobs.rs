@@ -26,7 +26,7 @@ use moqui_lib::object::{to_plain_string, Value};
 
 use crate::common;
 
-const SERVICES: &str = "org.moqui.impl.DatabaseServices";
+const SERVICES: &str = "org.moqui.dev.DatabaseServices";
 
 fn call(verb_noun: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
     let parameters: BTreeMap<String, Value> = parameters

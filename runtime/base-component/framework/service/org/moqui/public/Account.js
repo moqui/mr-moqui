@@ -181,7 +181,7 @@ function beginRegistration(p) {
         })
         ec.service
             .sync()
-            .name('org.moqui.impl.EmailServices.send#EmailTemplate')
+            .name('org.moqui.mail.EmailServices.send#EmailTemplate')
             .parameters({
                 emailTemplateId: template,
                 toAddresses: email,

@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Conf › Settings (guide docs/tools/Component-Deploy.md, "Viewing and editing the conf"): the merged conf as a tree
-    (org.moqui.impl.ComponentServices.get#ConfView), each element and attribute with the file and line it came from, its
+    (org.moqui.dev.ComponentServices.get#ConfView), each element and attribute with the file and line it came from, its
     class (live, apply, restart), the default conf's comments, and the values the files hold that are not running yet.
     The component is View.qvue, its data from the confView transition; a source links to Conf › Edit for a holder of
     CONF_EDIT. The terminal shows the same tree. -->
@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="confView" method="get" read-only="true">
         <actions>
-            <service-call name="org.moqui.impl.ComponentServices.get#ConfView" out-map="viewOut"/>
+            <service-call name="org.moqui.dev.ComponentServices.get#ConfView" out-map="viewOut"/>
             <script><![CDATA[
                 const errors = ec.message.hasError() ? ec.message.errorsString : null
                 ec.message.clearErrors()
@@ -37,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
             <text type="qvue" location="component://tools/screen/System/Conf/View.qvue" template="false"/>
             <!-- the terminal: the merged conf as an outline, each element with its attributes, class and files -->
             <text type="tui"><![CDATA[${JSON.stringify((() => {
-                const out = ec.service.sync().name('org.moqui.impl.ComponentServices.get#ConfView').call() || {}
+                const out = ec.service.sync().name('org.moqui.dev.ComponentServices.get#ConfView').call() || {}
                 const error = ec.message.hasError() ? ec.message.errorsString : null
                 ec.message.clearErrors()
                 if (error || !out.view) return [{t: 'text', id: 'ConfViewError', style: 'error', text: error || 'The conf could not be read'}]

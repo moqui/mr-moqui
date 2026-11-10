@@ -1,4 +1,4 @@
-// Call handling (org.moqui.impl.CallHandlingServices and CallHandling.js; the V3 block of framework/entity/VoiceEntities.xml;
+// Call handling (org.moqui.call.CallHandlingServices and CallHandling.js; the V3 block of framework/entity/VoiceEntities.xml;
 // plans/Comms-Framework.md §5.3, §5.4, V3): a user's rules for an inbound phone call, read in order. Anonymous and selective
 // rejection and acceptance by caller list, selective forward, business hours and holidays across a time zone (the plan read
 // at a given time, atMs, not by waiting), do not disturb to voicemail, busy with and without call waiting, forward loops
@@ -34,7 +34,7 @@ function as(userId, name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.impl.CallHandlingServices." + name)
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.CallHandlingServices." + name)
             .parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
@@ -93,11 +93,11 @@ function clean() {
 }
 function nodesUp() {
     sys(() => {
-        ec.service.sync().name("org.moqui.impl.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
-        ec.service.sync().name("org.moqui.impl.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
+        ec.service.sync().name("org.moqui.call.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
+        ec.service.sync().name("org.moqui.call.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
     })
 }
-const receive = (toNumber, fromNumber) => engine("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber, fromNumber: fromNumber === undefined ? CALLER : fromNumber,
+const receive = (toNumber, fromNumber) => engine("org.moqui.call.VoiceServices.receive#PhoneCall", {toNumber, fromNumber: fromNumber === undefined ? CALLER : fromNumber,
     fromName: "Spec Caller", instanceId: NODE})
 const evaluate = (userId, fromNumber, atMs) => engine("evaluate#CallHandling", {userId, fromNumber: fromNumber === undefined ? CALLER : fromNumber, atMs: atMs || null})
 const legsOf = (callSessionId) => sys(() => Array.from(ec.entity.find(LEG).condition("callSessionId", callSessionId).orderBy("offeredDate").list()))
@@ -107,7 +107,7 @@ function userLegs(callSessionId, userId) {
         return p ? Array.from(ec.entity.find(LEG).condition("callParticipantId", p.callParticipantId).list()) : []
     })
 }
-const note = (callSessionId, callLegId, event) => engine("org.moqui.impl.VoiceServices.note#PhoneLeg", {callSessionId, callLegId, event})
+const note = (callSessionId, callLegId, event) => engine("org.moqui.call.VoiceServices.note#PhoneLeg", {callSessionId, callLegId, event})
 const inCall = (userId) => sys(() => ec.entity.find("moqui.security.UserStatus").condition("userId", userId).one()?.inCall || "N")
 const log = (callSessionId, userId) => sys(() => ec.entity.find("moqui.call.CallUserLog").condition({callSessionId, userId}).one())
 const rule = (userId, fields) => as(userId, "store#CallHandlingRule", fields)
@@ -295,7 +295,7 @@ feature("do not disturb sends calls straight to voicemail; busy goes there too u
     when() {
         status(A, {statusEnumId: "UpsDnd"})
         const dnd = receive(NUMBER_A)
-        const begun = engine("org.moqui.impl.VoicemailServices.begin#Voicemail", {callSessionId: dnd.callSessionId, callLegId: dnd.callLegId, reason: "busy"})
+        const begun = engine("org.moqui.call.VoicemailServices.begin#Voicemail", {callSessionId: dnd.callSessionId, callLegId: dnd.callLegId, reason: "busy"})
         // a status that cleared is not do not disturb
         status(A, {statusEnumId: "UpsDnd", clearAtDate: new Date(Date.now() - 60000)})
         const cleared = evaluate(A)
@@ -350,7 +350,7 @@ feature("a forward to an outside number needs the forward permission, and the fi
         const mobileLeg = rung.find((l) => l.legTypeEnumId === "CltPstn")
         const answered = note(call.callSessionId, mobileLeg.callLegId, "answered")
         const after = userLegs(call.callSessionId, A)
-        const tabAnswer = as(A, "org.moqui.impl.CallServices.answer#Call", {callSessionId: call.callSessionId})
+        const tabAnswer = as(A, "org.moqui.call.CallServices.answer#Call", {callSessionId: call.callSessionId})
         const presence = inCall(A)
         return {without, allowed, international, emergency, mobile, call, rung, answered, after, tabAnswer, presence, mobileLeg}
     },
@@ -380,11 +380,11 @@ feature("presence comes from the user's legs: leaving one of two calls keeps the
         // A is in a call on their mobile (the forwarded leg of the last feature) and starts a call from a tab to B
         const phoneCall = {callSessionId: forwardedCall}
         const phoneLeg = userLegs(phoneCall.callSessionId, A).find((l) => l.legTypeEnumId === "CltPstn" && l.statusId === "ClsAnswered")
-        const tabCall = as(A, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [B], video: false})
-        as(B, "org.moqui.impl.CallServices.answer#Call", {callSessionId: tabCall.callSessionId})
+        const tabCall = as(A, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [B], video: false})
+        as(B, "org.moqui.call.CallServices.answer#Call", {callSessionId: tabCall.callSessionId})
         const both = inCall(A)
         // the tab leg ends: the phone call still holds A
-        as(A, "org.moqui.impl.CallServices.leave#Call", {callSessionId: tabCall.callSessionId})
+        as(A, "org.moqui.call.CallServices.leave#Call", {callSessionId: tabCall.callSessionId})
         const afterTab = inCall(A)
         // then the mobile hangs up: A is in no call
         note(phoneCall.callSessionId, phoneLeg.callLegId, "ended")

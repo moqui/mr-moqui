@@ -17,28 +17,28 @@ along with this software (see the LICENSE.md file). If not, see
     reads the record and adds an error naming the item and the node when the paired node's replica has it, so the
     service's transaction rolls back. On any other node the check returns at once. -->
 <secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
-    <seca id="EdgeClaimCreateEmailAccount" service="org.moqui.impl.EmailClientServices.create#EmailAccount" when="post-service">
+    <seca id="EdgeClaimCreateEmailAccount" service="org.moqui.mail.EmailClientServices.create#EmailAccount" when="post-service">
         <condition><expression>emailAccountId</expression></condition>
-        <actions><service-call name="org.moqui.impl.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'EmailAccount', itemId: emailAccountId}"/></actions>
+        <actions><service-call name="org.moqui.edge.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'EmailAccount', itemId: emailAccountId}"/></actions>
     </seca>
-    <seca id="EdgeClaimUpdateEmailAccount" service="org.moqui.impl.EmailClientServices.update#EmailAccount" when="post-service">
+    <seca id="EdgeClaimUpdateEmailAccount" service="org.moqui.mail.EmailClientServices.update#EmailAccount" when="post-service">
         <condition><expression>emailAccountId</expression></condition>
-        <actions><service-call name="org.moqui.impl.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'EmailAccount', itemId: emailAccountId}"/></actions>
+        <actions><service-call name="org.moqui.edge.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'EmailAccount', itemId: emailAccountId}"/></actions>
     </seca>
-    <seca id="EdgeClaimCreateEmailIdentity" service="org.moqui.impl.EmailClientServices.create#EmailIdentity" when="post-service">
+    <seca id="EdgeClaimCreateEmailIdentity" service="org.moqui.mail.EmailClientServices.create#EmailIdentity" when="post-service">
         <condition><expression>emailIdentityId</expression></condition>
-        <actions><service-call name="org.moqui.impl.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'EmailIdentity', itemId: emailIdentityId}"/></actions>
+        <actions><service-call name="org.moqui.edge.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'EmailIdentity', itemId: emailIdentityId}"/></actions>
     </seca>
-    <seca id="EdgeClaimUpdateEmailIdentity" service="org.moqui.impl.EmailClientServices.update#EmailIdentity" when="post-service">
+    <seca id="EdgeClaimUpdateEmailIdentity" service="org.moqui.mail.EmailClientServices.update#EmailIdentity" when="post-service">
         <condition><expression>emailIdentityId &amp;&amp; emailAddress</expression></condition>
-        <actions><service-call name="org.moqui.impl.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'EmailIdentity', itemId: emailIdentityId}"/></actions>
+        <actions><service-call name="org.moqui.edge.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'EmailIdentity', itemId: emailIdentityId}"/></actions>
     </seca>
-    <seca id="EdgeClaimStoreChatBridge" service="org.moqui.impl.ChatBridgeServices.store#Bridge" when="post-service">
+    <seca id="EdgeClaimStoreChatBridge" service="org.moqui.chat.ChatBridgeServices.store#Bridge" when="post-service">
         <condition><expression>chatBridgeId</expression></condition>
-        <actions><service-call name="org.moqui.impl.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'ChatBridge', itemId: chatBridgeId}"/></actions>
+        <actions><service-call name="org.moqui.edge.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'ChatBridge', itemId: chatBridgeId}"/></actions>
     </seca>
-    <seca id="EdgeClaimStorePhoneNumber" service="org.moqui.impl.VoiceServices.store#PhoneNumber" when="post-service">
+    <seca id="EdgeClaimStorePhoneNumber" service="org.moqui.call.VoiceServices.store#PhoneNumber" when="post-service">
         <condition><expression>phoneNumber</expression></condition>
-        <actions><service-call name="org.moqui.impl.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'PhoneNumber', itemId: phoneNumber}"/></actions>
+        <actions><service-call name="org.moqui.edge.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'PhoneNumber', itemId: phoneNumber}"/></actions>
     </seca>
 </secas>

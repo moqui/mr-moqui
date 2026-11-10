@@ -1129,9 +1129,9 @@ pub fn now_value() -> Value {
     stamp_value(now_millis())
 }
 
-/// A `java.sql.Timestamp` value of epoch `millis`.
+/// A `Timestamp` value of epoch `millis`.
 pub fn stamp_value(millis: i64) -> Value {
-    basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
+    basic_convert(&Value::I64(millis), "Timestamp").value
 }
 
 /// Java's `ec.user.nowTimestamp`: the entered context's effective time, or the clock.

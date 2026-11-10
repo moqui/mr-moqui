@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Tools app's database administration (framework/entity/DatabaseEntities.xml, org.moqui.impl.DatabaseServices,
+<!-- The Tools app's database administration (framework/entity/DatabaseEntities.xml, org.moqui.dev.DatabaseServices,
     plans/archive/Tools-Database.md): the kinds and statuses of database jobs and the actions of the audit. The
     permissions are in tools/data/ToolsSecurityData.xml. -->
 <entity-facade-xml type="seed">
@@ -49,7 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- DatabaseAudit rows older than the database_audit_days property (90 by default) go, daily -->
     <moqui.service.job.ServiceJob jobName="DatabaseAuditPurge" description="Delete DatabaseAudit rows older than database_audit_days"
-            serviceName="org.moqui.impl.DatabaseServices.purge#DatabaseAudit" cronExpression="0 41 3 * * ?" paused="N"
+            serviceName="org.moqui.dev.DatabaseServices.purge#DatabaseAudit" cronExpression="0 41 3 * * ?" paused="N"
             errorHistoryOnly="Y"/>
 
     <!-- ========== ETL (crates/moqui-tools/src/etl, plans/archive/Tools-Database.md §10.2) ========== -->
@@ -78,6 +78,6 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== The grid's file source (crates/moqui-tools/src/files.rs, §9.1) ========== -->
     <!-- uploads after seven days, and the grid's export files after a day, daily -->
     <moqui.service.job.ServiceJob jobName="clean_GridUploads_daily" description="Remove old grid uploads and export files"
-            serviceName="org.moqui.impl.EtlServices.clean#GridUploads" cronExpression="0 35 3 * * ?" paused="N"
+            serviceName="org.moqui.dev.EtlServices.clean#GridUploads" cronExpression="0 35 3 * * ?" paused="N"
             errorHistoryOnly="Y"/>
 </entity-facade-xml>

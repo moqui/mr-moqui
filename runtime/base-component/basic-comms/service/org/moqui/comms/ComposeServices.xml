@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     Comms' ComposeServices, mr-boss design-drawers-commons.md §12): the identities the user sends as, what the composer starts
     with (a draft, a reply, a forward, a new message), the recipients, a draft saved, its files (uploaded, or copied from the
     drives), sending with undo and scheduling, and discarding. Every read and write goes through
-    org.moqui.impl.EmailClientServices, which checks the user's access to the account. The screens call
+    org.moqui.mail.EmailClientServices, which checks the user's access to the account. The screens call
     org.moqui.comms.InboxServices.run#Operation, which hands an operation to an app's inbox-source provider when there is one
     (internal messages, contact books and filing on records are IronStone's). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
@@ -34,7 +34,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script><![CDATA[
             identityList = []
-            const accounts = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#UserEmailAccounts').call()
+            const accounts = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#UserEmailAccounts').call()
             if (ec.message.hasError()) return
             const partyId = ec.user.userAccount?.partyId || null
             const name = ec.user.userAccount?.userFullName || ec.user.username
@@ -92,7 +92,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="compose" type="Map"/></out-parameters>
         <actions><script><![CDATA[
-            const MAIL = 'org.moqui.impl.EmailClientServices'
+            const MAIL = 'org.moqui.mail.EmailClientServices'
             const L = (text) => ec.l10n.localize(text)
             const escape = (text) => String(text ?? '').replace(/[<>&"]/g, (ch) => ({'<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;'})[ch])
             const splitAddresses = (text) => {
@@ -313,7 +313,7 @@ along with this software (see the LICENSE.md file). If not, see
                     .selectField('emailAddress').selectField('userFullName').limit(max).disableAuthz().list()) add(account.emailAddress, account.userFullName)
             // the user's recent correspondents: addresses of the latest mail in the accounts the user reaches
             if (optionList.length < max) {
-                const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess').requireNewTransaction(true).call()
+                const access = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#EmailAccountAccess').requireNewTransaction(true).call()
                 ec.message.clearErrors()
                 const accountIds = Array.from(access?.accountList || []).filter((account) => !account.isInternal).map((account) => account.emailAccountId)
                 if (accountIds.length) {
@@ -381,7 +381,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="save" noun="ComposeDraft">
-        <description>Save an email draft (org.moqui.impl.EmailClientServices.save#Draft) from the composer: the identity
+        <description>Save an email draft (org.moqui.mail.EmailClientServices.save#Draft) from the composer: the identity
             (fromValue identity:id or account:id of an account the user may send from), the recipient chips, subject and
             body, with the quoted part of a reply or forward after the body, and for a new draft the message it answers or
             forwards. Its attachments stay as upload#ComposeAttachment and remove#ComposeAttachment keep them. clientRef, the
@@ -445,7 +445,7 @@ along with this software (see the LICENSE.md file). If not, see
                 toAddresses: toText, ccAddresses: ccText, bccAddresses: bccText, subject: subject ?? '', body: fullBody, bodyText: bodyText || null,
                 clientRef: clientRef || null, baseStamp: baseStamp ?? null, saveRef: saveRef || null}
             if (!emailMessageId && parentEmailMessageId) { parameters.parentEmailMessageId = parentEmailMessageId; parameters.isForward = isForward }
-            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.save#Draft').parameters(parameters).call()
+            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.save#Draft').parameters(parameters).call()
             if (ec.message.hasError()) return
             emailMessageId = out.emailMessageId
             rootEmailMessageId = out.rootEmailMessageId
@@ -462,7 +462,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="emailMessageId" required="true"/></in-parameters>
         <out-parameters><parameter name="emailAccountId"/></out-parameters>
         <actions><script><![CDATA[
-            const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess').call()
+            const access = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#EmailAccountAccess').call()
             if (ec.message.hasError()) return
             const draft = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailMessageId', emailMessageId).one()
             if (draft == null || !access.accessMap[draft.emailAccountId]) { ec.message.addError(`Email message ${emailMessageId} not found`); return }
@@ -497,7 +497,7 @@ along with this software (see the LICENSE.md file). If not, see
             const files = (Array.isArray(contentFile) ? contentFile : [contentFile]).filter((file) => file != null && typeof file === 'object')
             if (uploadId) {
                 // a file sent in chunks: read from where the upload joined it
-                const sent = ec.service.sync().name('org.moqui.impl.ClientSyncServices.take#Upload').parameter('uploadId', uploadId).call()
+                const sent = ec.service.sync().name('org.moqui.edge.ClientSyncServices.take#Upload').parameter('uploadId', uploadId).call()
                 if (ec.message.hasError()) return
                 files.push({getName: () => sent.fileName, getSize: () => Number(sent.fileSize || 0), contentType: sent.contentType,
                     getInputStream: () => ec.resource.getLocationReference(sent.location).openStream()})
@@ -515,7 +515,7 @@ along with this software (see the LICENSE.md file). If not, see
             }
             uploadList = []
             if (!emailMessageId && clientRef) {
-                const found = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#MessageByClientRef').parameter('clientRef', clientRef).call()
+                const found = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#MessageByClientRef').parameter('clientRef', clientRef).call()
                 if (ec.message.hasError()) return
                 if (!found.emailMessageId) { ec.message.addError(ec.l10n.localize('No draft has this clientRef') + ': ' + clientRef); return }
                 emailMessageId = found.emailMessageId
@@ -541,7 +541,7 @@ along with this software (see the LICENSE.md file). If not, see
                     existing.push({attachmentLocation: location, fileName: nameOf(file), fileSize: sizeOf(file), contentType: typeOf(file)})
                 }
                 if (existing.length > before) {
-                    ec.service.sync().name('org.moqui.impl.EmailClientServices.save#Draft').parameters({emailMessageId: emailMessageId, attachmentList: existing}).call()
+                    ec.service.sync().name('org.moqui.mail.EmailClientServices.save#Draft').parameters({emailMessageId: emailMessageId, attachmentList: existing}).call()
                     if (ec.message.hasError()) return
                 }
                 attachmentList = Array.from(ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageId', emailMessageId)
@@ -608,11 +608,11 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.pushErrors()
                 try {
                     if (!item || !item.driveId || !item.path) throw new Error(L('No file chosen'))
-                    const found = own('org.moqui.impl.FileServices.get#ResourceInfo', {driveId: item.driveId, path: item.path, opened: true})
+                    const found = own('org.moqui.resource.FileServices.get#ResourceInfo', {driveId: item.driveId, path: item.path, opened: true})
                     if (!found.out || !found.out.resource) throw new Error(found.why || L('File not found'))
                     const resource = found.out.resource
                     if (resource.isDirectory || (resource.size != null && Number(resource.size) > Number(maxAttachBytes || 26214400))) {
-                        const made = own('org.moqui.impl.FileServices.share#Resource', {driveId: item.driveId, path: item.path,
+                        const made = own('org.moqui.resource.FileServices.share#Resource', {driveId: item.driveId, path: item.path,
                             isLink: 'Y', permissionEnumId: 'RspView', linkLabel: L('Sent by email')})
                         if (!made.out) throw new Error(resource.isDirectory ? L('A folder is sent as a link, and you may not share this one')
                                 : L('Too large to attach, and you may not share it by link'))
@@ -638,7 +638,7 @@ along with this software (see the LICENSE.md file). If not, see
             }
             if (draft) {
                 if (existing.length > before) {
-                    ec.service.sync().name('org.moqui.impl.EmailClientServices.save#Draft').parameters({emailMessageId: emailMessageId, attachmentList: existing}).call()
+                    ec.service.sync().name('org.moqui.mail.EmailClientServices.save#Draft').parameters({emailMessageId: emailMessageId, attachmentList: existing}).call()
                     if (ec.message.hasError()) return
                 }
                 attachmentList = Array.from(ec.entity.find('moqui.basic.email.EmailMessageAttachment').condition('emailMessageId', emailMessageId)
@@ -664,7 +664,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!gone) { ec.message.addError(ec.l10n.localize('Attachment not found') + ': ' + emailMessageAttachmentId); return }
             const kept = rows.filter((row) => row !== gone).map((row) => ({attachmentLocation: row.attachmentLocation, fileName: row.fileName, fileSize: row.fileSize,
                 contentType: row.contentType, contentId: row.contentId, isInline: row.isInline}))
-            ec.service.sync().name('org.moqui.impl.EmailClientServices.save#Draft').parameters({emailMessageId: emailMessageId, attachmentList: kept}).call()
+            ec.service.sync().name('org.moqui.mail.EmailClientServices.save#Draft').parameters({emailMessageId: emailMessageId, attachmentList: kept}).call()
             if (ec.message.hasError()) return
             if (String(gone.attachmentLocation || '').startsWith(`dbresource://email/`)) {
                 try { ec.resource.getLocationReference(gone.attachmentLocation).delete() }
@@ -679,7 +679,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="send" noun="Compose">
         <description>
             Send what the composer has: the draft is saved (strict about recipients), then sent through
-            org.moqui.impl.EmailClientServices.send#Draft: at scheduledSendDate, or now after the undo hold of holdSeconds (0
+            org.moqui.mail.EmailClientServices.send#Draft: at scheduledSendDate, or now after the undo hold of holdSeconds (0
             to 300). archiveThread archives the thread answered (Send and archive). An internal message, and filing the mail
             on a record, are an app's (its inbox-source answers this operation).
 
@@ -757,7 +757,7 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 if (saved.duplicate === true) {
                     // a retry of a send that went through: its state as it is now, and nothing else is done
-                    const state = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#SendState').parameter('emailMessageId', emailMessageId).call()
+                    const state = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#SendState').parameter('emailMessageId', emailMessageId).call()
                     if (ec.message.hasError()) return
                     duplicate = true
                     statusId = state.statusId; sent = state.sent === true; sendError = state.sendError ?? null
@@ -766,7 +766,7 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 const hold = scheduledSendDate != null ? null : Math.max(0, Math.min(Number(holdSeconds || 0), 300))
                 const parameters = {emailMessageId: emailMessageId, scheduledSendDate: scheduledSendDate, holdSeconds: hold}
-                const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.send#Draft').parameters(parameters).call()
+                const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.send#Draft').parameters(parameters).call()
                 if (ec.message.hasError()) return
                 statusId = out.statusId
                 sent = out.sent === true
@@ -787,7 +787,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="cancel" noun="ComposeSend">
         <description>Undo send. An email waiting in the Outbox (the undo hold or a scheduled send) goes back to Drafts
-            (org.moqui.impl.EmailClientServices.cancel#ScheduledSend); one sent already cannot come back.</description>
+            (org.moqui.mail.EmailClientServices.cancel#ScheduledSend); one sent already cannot come back.</description>
         <in-parameters>
             <parameter name="emailMessageId"/>
             <parameter name="communicationEventIdList" type="List"/>
@@ -796,7 +796,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="statusId"/></out-parameters>
         <actions><script><![CDATA[
             if (emailMessageId) {
-                const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.cancel#ScheduledSend').parameter('emailMessageId', emailMessageId).call()
+                const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.cancel#ScheduledSend').parameter('emailMessageId', emailMessageId).call()
                 if (ec.message.hasError()) return
                 statusId = out.statusId
                 return
@@ -806,13 +806,13 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="discard" noun="ComposeDraft">
-        <description>Discard an email draft of the user's (org.moqui.impl.EmailClientServices.trash#Messages deletes a draft, its
+        <description>Discard an email draft of the user's (org.moqui.mail.EmailClientServices.trash#Messages deletes a draft, its
             files and its copy on an IMAP server). An internal message has no draft on the server.</description>
         <in-parameters><parameter name="emailMessageId" required="true"/></in-parameters>
         <actions><script><![CDATA[
             ec.service.sync().name('org.moqui.comms.ComposeServices.check#DraftAccess').parameter('emailMessageId', emailMessageId).call()
             if (ec.message.hasError()) return
-            ec.service.sync().name('org.moqui.impl.EmailClientServices.trash#Messages').parameter('emailMessageId', emailMessageId).call()
+            ec.service.sync().name('org.moqui.mail.EmailClientServices.trash#Messages').parameter('emailMessageId', emailMessageId).call()
         ]]></script></actions>
     </service>
 </services>

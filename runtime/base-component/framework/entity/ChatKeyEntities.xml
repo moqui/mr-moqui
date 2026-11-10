@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     browser's end-to-end encryption, Matrix-style. A device is one browser's crypto store (OlmMachine of
     matrix-sdk-crypto, js/WebrootCrypto.js) and belongs to a user, not a chat actor. The server keeps only public keys,
     ciphertext and routing: private keys, Olm sessions and plaintext stay in the browser. The services are
-    org.moqui.impl.ChatKeyServices (ChatKeys.js), which write only the signed-in user's own devices. No Java counterpart.
+    org.moqui.chat.ChatKeyServices (ChatKeys.js), which write only the signed-in user's own devices. No Java counterpart.
 
     Beside them: each device's store revision (its store key, the passphrase its browser store is encrypted with, is derived
     from it under a platform secret, not stored, and answered only to its user), the users' cross-signing keys and the signatures they upload, and key backups (Megolm sessions encrypted

@@ -1,9 +1,9 @@
-// The framework's chat and presence (org.moqui.impl.ChatServices) on the real database: the SQL of the timeline pages
+// The framework's chat and presence (org.moqui.chat.ChatServices) on the real database: the SQL of the timeline pages
 // and the counts (eventSeq ranges, IN and NOT IN lists, IS NOT NULL), the search of the MoquiChatEvent document by
 // membership, files as DbResource files, and the clear-at time of a status (a time stamp condition). The access rules,
 // the pushes and the rest are the Rust tests in crates/moqui-core/src/service/chat_tests.rs.
 
-const SERVICES = "org.moqui.impl.ChatServices"
+const SERVICES = "org.moqui.chat.ChatServices"
 const room = {}
 const seq = {}
 

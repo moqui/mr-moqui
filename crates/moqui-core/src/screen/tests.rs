@@ -186,7 +186,7 @@ impl World {
 }
 
 fn stamp() -> Value {
-    moqui_lib::object::basic_convert(&Value::I64(1_000), "java.sql.Timestamp").value
+    moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value
 }
 
 fn authz_conf() -> &'static str {

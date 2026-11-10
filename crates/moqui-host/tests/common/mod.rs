@@ -336,9 +336,9 @@ pub fn start_token_route(label: &str) -> Gate {
         hash(REVOKED_TOKEN)
     );
     let conf = r#"<webapp-list><webapp name="webroot"><token-route name="tk" screen-location="component://example/screen/PublicLink.xml"
-        token-service="org.moqui.impl.FileServices.check#PublicShareToken" title="Shared with you"/>
+        token-service="org.moqui.resource.FileServices.check#PublicShareToken" title="Shared with you"/>
         <token-route name="tkp" screen-location="component://example/screen/PublicLink.xml"
-        token-service="org.moqui.impl.FileServices.check#PublicShareToken" post-transition="files"/></webapp></webapp-list>"#;
+        token-service="org.moqui.resource.FileServices.check#PublicShareToken" post-transition="files"/></webapp></webapp-list>"#;
     start_seeded(label, false, Some((&data, None)), conf, &[], &[], &[])
 }
 

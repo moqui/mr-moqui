@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Voice (framework/entity/VoiceEntities.xml, org.moqui.impl.VoiceServices, plans/Comms-Framework.md §5.2): the kinds and
+<!-- Voice (framework/entity/VoiceEntities.xml, org.moqui.call.VoiceServices, plans/Comms-Framework.md §5.2): the kinds and
     states of trunks, numbers and emergency locations, the VoiceAdmin permission, and the topic of the fraud and emergency
     alerts. The fraud policy needs no row: without one the defaults apply (international and premium off). -->
 <entity-facade-xml type="seed">
@@ -57,12 +57,12 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="VoiceAlert" inboxEnumId="NinUpdates" description="Phone alert: a blocked SIP source or an emergency call"
             typeString="warning" showAlert="Y" persistOnSend="Y"/>
 
-    <!-- V4: desk and soft phones registered with Moqui's registrar (SipDevice, org.moqui.impl.SipDeviceServices), and the
+    <!-- V4: desk and soft phones registered with Moqui's registrar (SipDevice, org.moqui.call.SipDeviceServices), and the
         cleanup of the bindings whose engine went away. -->
     <moqui.basic.StatusType description="SIP Device" statusTypeId="SipDevice"/>
     <moqui.basic.StatusItem statusId="SdsActive" statusTypeId="SipDevice" sequenceNum="1" description="Active"/>
     <moqui.basic.StatusItem statusId="SdsRevoked" statusTypeId="SipDevice" sequenceNum="2" description="Revoked"/>
     <moqui.service.job.ServiceJob jobName="expire_SipRegistrations" description="Remove expired phone registrations"
-            serviceName="org.moqui.impl.SipDeviceServices.expire#SipRegistrations" cronExpression="0 0/5 * * * ?" paused="N"
+            serviceName="org.moqui.call.SipDeviceServices.expire#SipRegistrations" cronExpression="0 0/5 * * * ?" paused="N"
             errorHistoryOnly="Y"/>
 </entity-facade-xml>

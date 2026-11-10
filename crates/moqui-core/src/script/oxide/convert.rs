@@ -19,9 +19,10 @@
 //! yet (a find, an entity list, an upload) and a tools map pass through as opaque objects whose members fall back; a
 //! Set from the stack is [`Conv::Unsupported`]: the run falls back to QuickJS.
 
-
 use moqui_lib::object::{HostObject, Value as HostValue};
-use quickjs_oxide::engine::api::core::{DataRef, InitValue, Js, JsString, ObjectRef, PropertyKey, RuntimeError, TypedArrayKind, Value};
+use quickjs_oxide::engine::api::core::{
+    DataRef, InitValue, Js, JsString, ObjectRef, PropertyKey, RuntimeError, TypedArrayKind, Value,
+};
 
 use super::decimal::OxDecimal;
 use super::engine::OxideEngine;
@@ -373,7 +374,10 @@ fn to_host_in<J: Js>(
         }
         match property.value {
             DataRef::Text(text) => {
-                map.insert(property.key.to_string_lossy(), HostValue::String(text.to_string_lossy()));
+                map.insert(
+                    property.key.to_string_lossy(),
+                    HostValue::String(text.to_string_lossy()),
+                );
             }
             DataRef::Value(item) => {
                 deferred.push((map.len(), item));
@@ -516,9 +520,7 @@ fn class_to_host<J: Js>(
             if let Some(millis) = millis.as_number().filter(|millis| millis.is_finite()) {
                 #[allow(clippy::cast_possible_truncation)]
                 let millis = HostValue::I64(millis as i64);
-                return Ok(Some(
-                    moqui_lib::object::basic_convert(&millis, "java.sql.Timestamp").value,
-                ));
+                return Ok(Some(moqui_lib::object::basic_convert(&millis, "Timestamp").value));
             }
         }
     }

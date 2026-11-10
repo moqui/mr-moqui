@@ -69,7 +69,7 @@ fn fence_context(name: &str) -> (EntityFacade, ExecutionContext) {
         let paths = vec![
             path,
             framework.join("EmailServices.xml"),
-            framework.join("impl/EmailServices.xml"),
+            framework.join("mail/EmailServices.xml"),
             framework.join("impl/PrintServices.xml"),
         ];
         let failures = crate::service::lint(&paths).unwrap();

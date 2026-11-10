@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The parts of `ec.resource` that drives and file browsers use (`org.moqui.impl.FileServices`): change sets, version
+//! The parts of `ec.resource` that drives and file browsers use (`org.moqui.resource.FileServices`): change sets, version
 //! notes, last changes and change logs, the bytes under a folder, image thumbnails, PDF and spreadsheet previews, the
 //! text of a file for search, zip archives, and signed grants. Guide: `docs/data/Revision-Management.md`.
 //!

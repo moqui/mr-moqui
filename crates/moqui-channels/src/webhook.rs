@@ -234,7 +234,7 @@ fn received(bridge: &BridgeInfo, config: &Config, event: &Json, payload: &Json) 
     if let Some(at) = millis_of(str_at(payload, "/received_at").or_else(|| str_at(event, "/data/occurred_at"))) {
         parameters.insert("originMillis".to_string(), Value::I64(at));
     }
-    match crate::call("org.moqui.impl.SmsServices.receive#Sms", parameters) {
+    match crate::call("org.moqui.call.SmsServices.receive#Sms", parameters) {
         Ok(out) => {
             let text = |key: &str| out.get(key).map(to_plain_string).unwrap_or_default();
             let outcome = text("outcome");
@@ -299,7 +299,7 @@ fn receipt(bridge: &BridgeInfo, event: &Json, payload: &Json) -> WebhookResponse
             parameters.insert("receiptDate".to_string(), Value::Timestamp(stamp));
         }
     }
-    match crate::call("org.moqui.impl.ChatBridgeServices.note#DeliveryReceipt", parameters) {
+    match crate::call("org.moqui.chat.ChatBridgeServices.note#DeliveryReceipt", parameters) {
         Ok(out) => WebhookResponse::json(
             200,
             &json!({"found": out.get("found") == Some(&Value::Bool(true)), "status": status}),

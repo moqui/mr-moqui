@@ -1,0 +1,582 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Voice (plans/Comms-Framework.md §5.2, §5.4, V1): phone calls through SIP trunks. The model is
+    framework/entity/VoiceEntities.xml; the logic is Voice.js beside this file, and a phone call's state is the CallServices
+    state machine's (Calls.js startPhone and phoneEvent). The SIP engine is the host's (crates/moqui-host/src/sip/, the sip
+    feature): it reads its trunks and policy with get#EngineConfig, registers itself with register#SipNode, hands a call that
+    came in to receive#PhoneCall and reports each phone leg with note#PhoneLeg; the services tell it what to do with
+    send#SipControl ({action: dial, answer, dtmf, hold, resume, prompt, voicemail (V2), reload}), after the commit. No Java counterpart.
+
+    Access. place#PhoneCall, send#PhoneDtmf, hold#PhoneCall, resume#PhoneCall, find#MyCallerIds and get#VoiceCapabilities are
+    the current user's; the administration services need the VoiceAdmin permission (ADMIN has it) and refuse others with
+    reasonCode notAllowed; the engine's services are internal. docs/interfaces/SIP.md has the settings, the provider profile,
+    the fraud controls and the emergency readiness checklist. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== Phone calls ========== -->
+
+    <service verb="place" noun="PhoneCall">
+        <description>Call a phone number from the current user's number fromNumber (one of their caller-ID grants;
+            their only one when empty), through its trunk. An emergency number (VoicePolicy emergencyNumbers) is checked first
+            and goes only through an emergency-capable trunk with the user's validated location, its callback number as caller
+            ID and a notification destination, whatever the limits; without them it is refused (emergencyNotReady, with what is
+            missing in the message and in missing). Otherwise the user must be allowed outbound calls, international and premium
+            destinations must be enabled for the deployment and the user, and the limits at once and per day must allow it.
+            Refusals carry reasonCode: notSignedIn, badNumber, notAllowed, callerIdNotAllowed, internationalNotEnabled,
+            premiumNotEnabled, tooManyCalls, dailyLimit, noTrunk, voiceUnavailable, emergencyNotReady. The call is a CskPhone
+            CallSession the user is in at once (callLegId) with the number ringing (phoneLegId); the same idempotencyKey answers
+            the same call.</description>
+        <in-parameters>
+            <parameter name="phoneNumber" required="true"/>
+            <parameter name="fromNumber"/>
+            <parameter name="idempotencyKey"/>
+            <parameter name="hideCallerId"><description>V3: withhold the number on this call (Privacy id); empty: the
+                user's setting (CallHandlingSetting.hideCallerId)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callSessionId"/>
+            <parameter name="callLegId"/>
+            <parameter name="phoneLegId"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="missing" type="List"/>
+            <parameter name="voiceTrunkId"><description>The trunk it went out through</description></parameter>
+            <parameter name="fromNumber"><description>The caller ID it went out with (an emergency call's callback number)</description></parameter>
+            <parameter name="destinationClass"><description>domestic, international, premium or emergency</description></parameter>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('place', context))</script></actions>
+    </service>
+
+    <service verb="send" noun="PhoneDtmf">
+        <description>Send keypad tones (RFC 4733) to the phones in a call the current user is in:
+            digits 0-9, *, # and A-D, up to 32.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="digits" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sent" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('sendDtmf', context))</script></actions>
+    </service>
+
+    <service verb="hold" noun="PhoneCall">
+        <description>Put the phones in a call the current user is in on hold (a re-INVITE).</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('hold', context))</script></actions>
+    </service>
+
+    <service verb="resume" noun="PhoneCall">
+        <description>Take the phones in a call the current user is in off hold.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('resume', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="MyCallerIds">
+        <description>The numbers the current user may present as caller ID.</description>
+        <out-parameters>
+            <parameter name="numberList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('myCallerIds', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="VoiceCapabilities">
+        <description>Whether phone calls can be made here (plans/Comms-Framework.md §3.1):
+            supported (the binary has the sip feature), configured (this server's sip_port or sip_tls_port is set and a trunk is
+            set up) and active (a SIP server is up in the cluster and a trunk has not failed), each on its own; reasonCode
+            notBuilt, notConfigured, noTrunk, noSipServer or trunkFailed when not active. emergencyReady says whether the current
+            user can call emergency services from here, and emergencyReasonCode and emergencyMissing what is missing
+            (noEmergencyTrunk, noLocation, locationNotValidated, noCallbackNumber, noNotification, voiceUnavailable).</description>
+        <out-parameters>
+            <parameter name="supported" type="Boolean"/>
+            <parameter name="configured" type="Boolean"/>
+            <parameter name="active" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="emergencyReady" type="Boolean"/>
+            <parameter name="emergencyReasonCode"/>
+            <parameter name="emergencyMissing" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('capabilities', context))</script></actions>
+    </service>
+
+    <!-- ========== The SIP engine (internal) ========== -->
+
+    <service verb="register" noun="SipNode" authenticate="false" allow-remote="false">
+        <description>Internal (the host, while its SIP engine runs, every 20 seconds): this
+            server's SIP engine is up, listening on sipAddress and tlsAddress with RTP on rtpPorts. stopping: it stopped; the row
+            goes.</description>
+        <in-parameters>
+            <parameter name="instanceId" required="true"/>
+            <parameter name="sipAddress"/>
+            <parameter name="tlsAddress"/>
+            <parameter name="rtpPorts"/>
+            <parameter name="stopping" type="Boolean" default="false"/>
+            <parameter name="sipDomain"><description>The edge node's realm (E8)</description></parameter>
+            <parameter name="registrarEnabled" type="Boolean"><description>The edge node's registrar is on (E8)</description></parameter>
+            <parameter name="edgeLinked" type="Boolean" default="false"><description>The row of this node's edge node,
+                kept by the edge link from its Hello and liveness (plans/Edge-Node.md §5.4, E8). Never a row an engine
+                registered, nor the reverse (refused, notAllowed).</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('registerNode', context))</script></actions>
+    </service>
+
+    <!-- ========== SIP on an edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", E8) ========== -->
+
+    <service verb="refresh" noun="PhoneFallbacks" authenticate="false" allow-remote="false">
+        <description>Internal (the edge link while it is up, every minute, and the services that change a number, a
+            greeting or a box): writes each number's PhoneNumberFallback, what the edge node's SIP engine does with its
+            calls while this node is away: ring forwardNumber first (a ring group's outside fallback, or the user's
+            mobile they ring with their calls and may forward to, checked against the fraud policy), then take a message
+            (voicemailFlag, with the box's greetingLocation). Only the rows that changed are written, and a number with
+            nothing to fall back to has none. On a paired local node, each greeting named is queued to the edge node
+            (callAudio, keyed by its location, so each goes once). phoneNumber: only that number's.</description>
+        <in-parameters><parameter name="phoneNumber"/></in-parameters>
+        <out-parameters>
+            <parameter name="writtenCount" type="Integer"/>
+            <parameter name="removedCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('refreshFallbacks', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="CallAudio" type="rust" location="moqui_core::service::call_media::get_call_audio"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal (the SIP engine of this node's edge node, E8): the bytes of a greeting or a prompt it is to
+            play and does not have (location under dbresource://moqui/call/voicemail/greeting/ or
+            dbresource://moqui/call/prompt/), as audioBase64; nothing for any other location or one with no file. The
+            engine keeps a copy (their names are stamped, never written again).</description>
+        <in-parameters><parameter name="location" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="audioBase64"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+
+    <service verb="store" noun="EdgeCallAudio" type="rust" location="moqui_core::service::call_media::store_edge_call_audio"
+            allow-remote="false">
+        <description>On an edge node, the queue kind callAudio: a greeting or prompt of its local node (the item's
+            content), kept at its own location (payload location, under dbresource://moqui/call/voicemail/greeting/ or
+            dbresource://moqui/call/prompt/; on an all-in-one node the same path under
+            dbresource://moqui/edge-node/(pairedNodeId)/, apart from the server's own), which the SIP engine's fallback
+            plays while the local node is away. Any
+            other location is refused, and so is a local node.</description>
+        <implements service="org.moqui.mail.EmailServices.apply#EdgeQueueItem"/>
+    </service>
+
+    <service verb="get" noun="EngineConfig" authenticate="false" allow-remote="false">
+        <description>Internal (the SIP engine, at start and on reload): the enabled trunks with
+            their credentials decrypted (a trunk whose credentials do not read is logged and left out) and inboundDigest (true
+            only for a PBX's profile: its credentials may sign a call in), the fraud policy, and the source addresses blocked
+            now.</description>
+        <out-parameters>
+            <parameter name="trunkList" type="List"/>
+            <parameter name="policy" type="Map"/>
+            <parameter name="blockedSourceList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('engineConfig', context))</script></actions>
+    </service>
+
+    <service verb="note" noun="TrunkStatus" authenticate="false" allow-remote="false">
+        <description>Internal (the SIP engine): a trunk registered, is reachable (ok), failed
+            (errorText) or unregistered. The voice admins hear of a trunk that fails.</description>
+        <in-parameters>
+            <parameter name="voiceTrunkId" required="true"/>
+            <parameter name="status" required="true"/>
+            <parameter name="errorText"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('trunkStatus', context))</script></actions>
+    </service>
+
+    <service verb="receive" noun="PhoneCall" transaction="cache" authenticate="false" allow-remote="false">
+        <description>Internal (the SIP engine): a call came in on a trunk to toNumber. Its
+            PhoneNumber routes it to a user, who is rung as for any call (the ring bar, Web Push), from the caller's number and
+            name; the phone is in the call at once (callLegId, its leg). reasonCode notFound (no such number, or it routes
+            nowhere: 404), voiceUnavailable (this node takes no phone calls: 480) or busy (the limit of calls at once: 486).
+            Voicemail (V2): voicemail busy (the user is in a call: not rung, the engine sends it to voicemail at once) or
+            access (the voicemail access number, PnrVoicemail); voicemailSeconds, how long it rings before voicemail. V3: a
+            number routed to a user is handled by their rules, one routed to a ring group (PnrRingGroup) by its strategy
+            (CallHandlingServices inbound#PhoneCall); voicemailSeconds is then how long its first step rings, and reasonCode
+            anonymous (433) or declined (603) a refusal by the user's rules. V5: a number routed to an IVR menu (PnrIvr) or a queue
+            (PnrQueue) is answered by the engine, which does what ivr says (IvrServices).</description>
+        <in-parameters>
+            <parameter name="voiceTrunkId"/>
+            <parameter name="toNumber" required="true"/>
+            <parameter name="fromNumber"/>
+            <parameter name="fromName"/>
+            <parameter name="instanceId" required="true"/>
+            <parameter name="sipCallId"/>
+            <parameter name="atMs" type="Long"><description>The time the call handling rules are read at (a spec's); now when empty</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callSessionId"/>
+            <parameter name="callLegId"/>
+            <parameter name="reasonCode"/>
+            <parameter name="voicemail"/>
+            <parameter name="voicemailSeconds" type="Integer"/>
+            <parameter name="stepToken"><description>V3: the token of the plan's first step, which the engine's ring timer carries back to begin#Voicemail</description></parameter>
+            <parameter name="ivr" type="Map"><description>V5: a number routed to an IVR menu or a queue: the engine answers the call and does this first (as route#IvrCall's answer)</description></parameter>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('receive', context))</script></actions>
+    </service>
+
+    <service verb="note" noun="PhoneLeg" authenticate="false" allow-remote="false">
+        <description>Internal (the SIP engine): what a phone leg did: answered, failed or busy (it
+            never answered: the call ends), ended or canceled (the far end hung up), held or resumed (the far end's hold), ringing
+            (nothing to record), or dtmf: a 1 acknowledges the recording notice when the call's recording asks for that
+            (CallRecordingServices.ack#LegRecordingNotice), other keys are the call's own. A repeat answers as it is.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId" required="true"/>
+            <parameter name="event" required="true"/>
+            <parameter name="sipCode" type="Integer"/>
+            <parameter name="reasonText"/>
+            <parameter name="digits"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('noteLeg', context))</script></actions>
+    </service>
+
+    <service verb="notify" noun="PhoneLeg" authenticate="false" allow-remote="false">
+        <description>Internal (CallRecordingServices.notify#LegRecording, CallCaptionServices and Calls.js for a phone
+            that joins later): a call's notice to an answered phone leg, played by the SIP engine of the call's node
+            (send#SipControl, action prompt): notice recording (the recording tone), recordingAck (the recording tone twice:
+            press 1 to acknowledge) or captions (two rising tones), each followed by the deployment's prompt audio when
+            call_recording_prompt_audio or call_captions_prompt_audio names one. Any other leg is skipped (notified false).</description>
+        <in-parameters>
+            <parameter name="callLegId" required="true"/>
+            <parameter name="notice" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="notified" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('notifyPhoneLeg', context))</script></actions>
+    </service>
+
+    <service verb="record" noun="AuthFailure" authenticate="false" allow-remote="false">
+        <description>Internal (the SIP engine): a failed digest attempt from sourceAddress (as
+            username). Counted per source within the policy's window; at its limit the source is blocked for authBlockSeconds
+            and the voice admins are told once per block. The engine counts failures itself and calls this only when it blocks a
+            source (blocked true: block it now), so a flood from many addresses is not a database write each. It never touches
+            a UserAccount: a scanner cannot lock a user out.</description>
+        <in-parameters>
+            <parameter name="sourceAddress" required="true"/>
+            <parameter name="username"/>
+            <parameter name="blocked" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="blocked" type="Boolean"/>
+            <parameter name="blockedUntil" type="Long"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('authFailure', context))</script></actions>
+    </service>
+
+    <!-- ========== Administration (VoiceAdmin) ========== -->
+
+    <service verb="get" noun="VoiceStatus">
+        <description>Voice status for the admin screen: the capabilities, the SIP and media nodes and the phone calls going. The VoiceAdmin permission.</description>
+        <out-parameters>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="sipNodeList" type="List"/>
+            <parameter name="mediaNodeList" type="List"/>
+            <parameter name="activePhoneCalls" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('status', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="VoiceTrunks">
+        <description>The trunks, with their status and last error; never their passwords (hasPassword). The VoiceAdmin permission.</description>
+        <out-parameters>
+            <parameter name="trunkList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('findTrunks', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="VoiceTrunk">
+        <description>Make a trunk, or change one (voiceTrunkId). TLS with SRTP is the default; UDP
+            or TCP signaling, or plain RTP, needs a provider profile that allows them (insecureNotAllowed otherwise). An empty
+            password keeps the old one. algorithms: the digest algorithms the credentials answer (SHA-256, SHA-512-256, MD5),
+            comma separated. inboundAddresses: addresses or ranges no wider than a /8 (IPv4) or a /32 (IPv6), so not 0.0.0.0/0
+            or ::/0 (badInboundAddress otherwise). The SIP engines reload. The VoiceAdmin permission.</description>
+        <in-parameters>
+            <parameter name="voiceTrunkId"/>
+            <parameter name="name"/>
+            <parameter name="host"/>
+            <parameter name="port" type="Integer"/>
+            <parameter name="transportEnumId"/>
+            <parameter name="mediaEncryptionEnumId"/>
+            <parameter name="providerProfileEnumId"/>
+            <parameter name="username"/>
+            <parameter name="password"/>
+            <parameter name="authUsername"/>
+            <parameter name="realm"/>
+            <parameter name="algorithms"/>
+            <parameter name="registerFlag"/>
+            <parameter name="emergencyCapable"/>
+            <parameter name="inboundAddresses"/>
+            <parameter name="fromDomain"/>
+            <parameter name="disabled"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="voiceTrunkId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('storeTrunk', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="VoiceTrunk">
+        <description>Remove a trunk no number uses. The VoiceAdmin permission.</description>
+        <in-parameters>
+            <parameter name="voiceTrunkId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('deleteTrunk', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="PhoneNumbers">
+        <description>The numbers, with their trunk, route and emergency location. The VoiceAdmin permission.</description>
+        <out-parameters>
+            <parameter name="numberList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('findNumbers', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="PhoneNumber">
+        <description>Add or change a number (E.164 from what is given): its trunk, the user it rings, its emergency location,
+            and its messaging bridge (C4-SMS: an SMS ChatBridge its texts go through; empty for none). The VoiceAdmin permission.</description>
+        <in-parameters>
+            <parameter name="phoneNumber" required="true"/>
+            <parameter name="voiceTrunkId"/>
+            <parameter name="messagingBridgeId"/>
+            <parameter name="routeTypeEnumId"/>
+            <parameter name="routeId"/>
+            <parameter name="emergencyLocationId"/>
+            <parameter name="description"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="phoneNumber"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('storeNumber', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="PhoneNumber">
+        <description>Remove a number and its caller-ID grants. The VoiceAdmin permission.</description>
+        <in-parameters>
+            <parameter name="phoneNumber" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('deleteNumber', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="CallerIdGrants">
+        <description>Which users may present which numbers, now. The VoiceAdmin permission.</description>
+        <out-parameters>
+            <parameter name="grantList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('findGrants', context))</script></actions>
+    </service>
+
+    <service verb="grant" noun="CallerId">
+        <description>Let a user present a number as caller ID. The VoiceAdmin permission.</description>
+        <in-parameters>
+            <parameter name="phoneNumber" required="true"/>
+            <parameter name="userId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="phoneNumber"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('grantCallerId', context))</script></actions>
+    </service>
+
+    <service verb="revoke" noun="CallerId">
+        <description>Stop a user presenting a number. The VoiceAdmin permission.</description>
+        <in-parameters>
+            <parameter name="phoneNumber" required="true"/>
+            <parameter name="userId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="revokedCount" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('revokeCallerId', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="EmergencyLocations">
+        <description>The emergency locations, each with whether it is ready and what is missing. The VoiceAdmin permission.</description>
+        <out-parameters>
+            <parameter name="locationList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('findLocations', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="EmergencyLocation">
+        <description>Add or change an emergency location. Changing its address makes it not validated again. The VoiceAdmin permission.</description>
+        <in-parameters>
+            <parameter name="emergencyLocationId"/>
+            <parameter name="name"/>
+            <parameter name="address1"/>
+            <parameter name="address2"/>
+            <parameter name="city"/>
+            <parameter name="stateProvinceGeoId"/>
+            <parameter name="postalCode"/>
+            <parameter name="countryGeoId"/>
+            <parameter name="callbackNumber"/>
+            <parameter name="validationStatusId"/>
+            <parameter name="providerReference"/>
+            <parameter name="notifyEmailAddress"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="emergencyLocationId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('storeLocation', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="EmergencyLocation">
+        <description>Remove an emergency location no number or user has. The VoiceAdmin permission.</description>
+        <in-parameters>
+            <parameter name="emergencyLocationId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('deleteLocation', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="VoicePolicy">
+        <description>The fraud policy, with its defaults. The VoiceAdmin permission.</description>
+        <out-parameters>
+            <parameter name="policy" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('getPolicy', context))</script></actions>
+    </service>
+
+    <service verb="update" noun="VoicePolicy">
+        <description>Change the fraud policy; what is not given stays. The SIP engines reload. The VoiceAdmin permission.</description>
+        <in-parameters>
+            <parameter name="internationalEnabled"/>
+            <parameter name="premiumEnabled"/>
+            <parameter name="maxConcurrentCalls"/>
+            <parameter name="maxConcurrentPerUser"/>
+            <parameter name="maxCallsPerUserPerDay"/>
+            <parameter name="maxCallsPerDay"/>
+            <parameter name="authFailureLimit"/>
+            <parameter name="authFailureWindowSeconds"/>
+            <parameter name="authBlockSeconds"/>
+            <parameter name="homeCountryCode"/>
+            <parameter name="emergencyNumbers"/>
+            <parameter name="premiumPrefixes"/>
+            <parameter name="alertUserGroupId"/>
+            <parameter name="smsMaxPerUserPerDay"><description>C4-SMS: texts a user may send a day</description></parameter>
+            <parameter name="smsMaxPerDay"><description>C4-SMS: texts the users send a day, in all</description></parameter>
+            <parameter name="smsSystemMaxPerDay"><description>The system's own texts (sign-in codes) a day, a budget users' texts do not use</description></parameter>
+            <parameter name="smsSystemNumber"><description>C4-SMS: the number the system's own texts go from (one with messaging)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="policy" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('updatePolicy', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="VoiceUserSettings">
+        <description>The users' phone permissions, limits and emergency locations. The VoiceAdmin permission.</description>
+        <out-parameters>
+            <parameter name="settingList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('findUserSettings', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="VoiceUserSetting">
+        <description>Set a user's phone permissions (outbound, international, premium, forward to outside numbers), limits and emergency location. The VoiceAdmin permission.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="outboundEnabled"/>
+            <parameter name="internationalEnabled"/>
+            <parameter name="premiumEnabled"/>
+            <parameter name="forwardEnabled"><description>V3: calls to them may be forwarded to outside numbers</description></parameter>
+            <parameter name="emergencyLocationId"/>
+            <parameter name="maxConcurrent"/>
+            <parameter name="maxPerDay"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="userId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('storeUserSetting', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="AuthBlocks">
+        <description>The source addresses with failed SIP sign-ins, and those blocked now. The VoiceAdmin permission.</description>
+        <out-parameters>
+            <parameter name="blockList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('findAuthBlocks', context))</script></actions>
+    </service>
+
+    <service verb="clear" noun="AuthBlock">
+        <description>Forget a source address's failures and lift its block. The VoiceAdmin permission.</description>
+        <in-parameters>
+            <parameter name="sourceAddress" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('clearAuthBlock', context))</script></actions>
+    </service>
+
+    <service verb="send" noun="SipControl" type="rust" location="moqui_core::service::call_media::send_sip_control"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal: tell the SIP engine of a node (instanceId) what to do: {action: 'dial', callSessionId, callLegId,
+            voiceTrunkId, toNumber, fromNumber, fromName, destinationClass, emergency, callbackNumber, locationReference, userId},
+            {action: 'answer' | 'hangup' | 'hold' | 'resume', callSessionId, callLegId}, {action: 'dtmf', callSessionId, callLegId,
+            digits}, {action: 'prompt', callSessionId, callLegId, notice} (notify#PhoneLeg) or {action: 'reload'}. It goes to that node only, after the caller's transaction commits; a node that is gone
+            is logged and skipped.</description>
+        <in-parameters>
+            <parameter name="instanceId" required="true"/>
+            <parameter name="message" type="Map"/>
+        </in-parameters>
+    </service>
+</services>

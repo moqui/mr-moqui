@@ -31,14 +31,14 @@ along with this software (see the LICENSE.md file). If not, see
                 communicationEventId: communicationEventId || null}}).call()?.result || {}
             if (!ec.message.hasError() && !out.detail?.canResend) ec.message.addError(ec.l10n.localize('This message cannot be sent again'))
             if (!ec.message.hasError()) {
-                const sent = ec.service.sync().name('org.moqui.impl.EmailServices.send#EmailMessage').parameter('emailMessageId', out.detail.emailMessageId).call()
+                const sent = ec.service.sync().name('org.moqui.mail.EmailServices.send#EmailMessage').parameter('emailMessageId', out.detail.emailMessageId).call()
                 if (!ec.message.hasError()) ec.message.addMessage(sent.sendError ? ec.l10n.localize('Not sent') + ': ' + sent.sendError : ec.l10n.localize('Sent again'),
                         sent.sendError ? 'warning' : 'success')
             }
         ]]></script></actions>
         <default-response url="."/>
     </transition>
-    <!-- the message as an .eml file with its files (org.moqui.impl.EmailClientServices.export#EmailMessage), once
+    <!-- the message as an .eml file with its files (org.moqui.mail.EmailClientServices.export#EmailMessage), once
         get#MessageDetail said the user may see it: mail of an account they reach, or the system's mail for an administrator,
         which the export reads only with authorization disabled -->
     <transition name="downloadEml" read-only="true">
@@ -49,7 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
             const wasDisabled = out.detail.isSystemMail ? ec.artifactExecution.disableAuthz() : true
             let exported = null
             try {
-                exported = ec.service.sync().name('org.moqui.impl.EmailClientServices.export#EmailMessage').parameter('emailMessageId', out.detail.emailMessageId).call()
+                exported = ec.service.sync().name('org.moqui.mail.EmailClientServices.export#EmailMessage').parameter('emailMessageId', out.detail.emailMessageId).call()
             } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
             if (ec.message.hasError()) { ec.web.sendJsonResponse({}); return }
             ec.web.sendTextResponse(exported.mimeText, exported.contentType, exported.fileName)

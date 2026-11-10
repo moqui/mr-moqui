@@ -1,4 +1,4 @@
-// Voicemail (org.moqui.impl.VoicemailServices and Voicemail.js; the V2 block of framework/entity/VoiceEntities.xml;
+// Voicemail (org.moqui.call.VoicemailServices and Voicemail.js; the V2 block of framework/entity/VoiceEntities.xml;
 // plans/Comms-Framework.md §5.3, §5.4, V2): a call to a busy user goes straight to voicemail and one not answered after the
 // box's rings; begin#Voicemail moves the call there (the user missed it); a stored message, its private audio (refused for
 // another user with the same id), the PIN over the phone with its refusal and its limits per box and per source, the
@@ -30,7 +30,7 @@ function as(userId, name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.impl.VoicemailServices." + name)
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.VoicemailServices." + name)
             .parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
@@ -95,11 +95,11 @@ function clean() {
 }
 function nodesUp() {
     sys(() => {
-        ec.service.sync().name("org.moqui.impl.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
-        ec.service.sync().name("org.moqui.impl.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
+        ec.service.sync().name("org.moqui.call.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
+        ec.service.sync().name("org.moqui.call.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
     })
 }
-const receive = (toNumber) => engine("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber, fromNumber: CALLER,
+const receive = (toNumber) => engine("org.moqui.call.VoiceServices.receive#PhoneCall", {toNumber, fromNumber: CALLER,
     fromName: "Spec Caller", instanceId: NODE})
 const boxOf = (userId) => sys(() => ec.entity.find(BOX).condition("userId", userId).one())
 const voicemailRow = (id) => sys(() => ec.entity.find(VOICEMAIL).condition("voicemailId", id).one())
@@ -173,11 +173,11 @@ feature("a box that rings longer than call_ring_seconds keeps its user ringing u
         })
         // rung 50 s: past call_ring_seconds (45), before its voicemail (60) and ring expiry (90)
         backdate("moqui.call.CallLeg", "offeredDate", "callLegId", userLeg(long.callSessionId, A).callLegId, 50)
-        engine("org.moqui.impl.CallServices.expire#Calls")
+        engine("org.moqui.call.CallServices.expire#Calls")
         const ringing = userLeg(long.callSessionId, A).statusId
         // past its ring expiry the call ends as before
         backdate("moqui.call.CallSession", "ringExpireDate", "callSessionId", long.callSessionId, 1)
-        engine("org.moqui.impl.CallServices.expire#Calls")
+        engine("org.moqui.call.CallServices.expire#Calls")
         const expired = userLeg(long.callSessionId, A).statusId
         as(A, "update#VoicemailSettings", {rings: 2})
         return {long, ringing, expired}
@@ -198,7 +198,7 @@ feature("begin#Voicemail moves the call there: the user missed it and the box an
         const session = sys(() => ec.entity.find("moqui.call.CallSession").condition("callSessionId", call.callSessionId).one())
         // a call someone answered does not go: the user answers first, then the engine's timer fires
         const answered = receive(NUMBER_A)
-        as(A, "org.moqui.impl.CallServices.answer#Call", {callSessionId: answered.callSessionId})
+        as(A, "org.moqui.call.CallServices.answer#Call", {callSessionId: answered.callSessionId})
         const late = engine("begin#Voicemail", {callSessionId: answered.callSessionId, callLegId: answered.callLegId, reason: "noAnswer"})
         return {call, begun, session, leg: userLeg(call.callSessionId, A), log: log(call.callSessionId, A), late}
     },
@@ -220,7 +220,7 @@ feature("begin#Voicemail moves the call there: the user missed it and the box an
 feature("a declined call keeps its user's decline and still goes to voicemail", {
     when() {
         const call = receive(NUMBER_A)
-        const declined = as(A, "org.moqui.impl.CallServices.decline#Call", {callSessionId: call.callSessionId})
+        const declined = as(A, "org.moqui.call.CallServices.decline#Call", {callSessionId: call.callSessionId})
         const session = sys(() => ec.entity.find("moqui.call.CallSession").condition("callSessionId", call.callSessionId).one())
         const begun = engine("begin#Voicemail", {callSessionId: call.callSessionId, callLegId: call.callLegId, reason: "declined"})
         return {declined, status: session.statusId, begun, log: log(call.callSessionId, A)}

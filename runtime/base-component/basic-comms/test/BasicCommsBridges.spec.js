@@ -6,7 +6,7 @@
 // Run: ./moq test basic-comms --spec BasicCommsBridges
 const root = "component://basic-comms/screen/BasicComms.xml"
 const systemRoot = "component://tools/screen/System.xml"
-const BRIDGES = "org.moqui.impl.ChatBridgeServices"
+const BRIDGES = "org.moqui.chat.ChatBridgeServices"
 const USER = "BASIC_COMMS_BRIDGES"
 
 function sys(run) {
@@ -55,7 +55,7 @@ feature("a bridged room that is not connected shows its bridge, its external mem
         // a bridge with no adapter in this build, a room mapped to it, and a person on its network
         const bridge = call(BRIDGES + ".store#Bridge", {name: "Spec SMS line", typeEnumId: "CbtSms", adapterName: "spec-missing",
             inboundToken: "spec-token"}).chatBridgeId
-        const room = call("org.moqui.impl.ChatServices.create#Room", {roomTypeEnumId: "private", roomName: "Spec bridged room",
+        const room = call("org.moqui.chat.ChatServices.create#Room", {roomTypeEnumId: "private", roomName: "Spec bridged room",
             memberUserIdList: [USER]}).chatRoomId
         const mapped = call(BRIDGES + ".store#RoomBridge", {chatRoomId: room, chatBridgeId: bridge, externalRoomId: "+15550142"})
         const again = call(BRIDGES + ".store#RoomBridge", {chatRoomId: room, chatBridgeId: bridge, externalRoomId: "+15550142"})
@@ -65,12 +65,12 @@ feature("a bridged room that is not connected shows its bridge, its external mem
         const wrongToken = (call(BRIDGES + ".ingest#Event", {chatBridgeId: bridge, token: "not-it", transactionId: "spec-2",
             itemList: [{itemId: "m2", type: "message", externalRoomId: "+15550142", externalEventId: "sms-2", externalUserId: "+15550199",
                 text: "again"}]}))
-        const sent = call("org.moqui.impl.ChatServices.send#Message", {chatRoomId: room, body: "<p>Yes, today</p>"})
+        const sent = call("org.moqui.chat.ChatServices.send#Message", {chatRoomId: room, body: "<p>Yes, today</p>"})
         // the worker's round: the bridge does not start (no adapter), so it is not connected and the message waits
         call(BRIDGES + ".run#BridgeDeliveries", {})
-        const timeline = call("org.moqui.impl.ChatServices.get#Timeline", {chatRoomId: room})
-        const roomOut = call("org.moqui.impl.ChatServices.get#Room", {chatRoomId: room})
-        const rooms = call("org.moqui.impl.ChatServices.find#Rooms", {})
+        const timeline = call("org.moqui.chat.ChatServices.get#Timeline", {chatRoomId: room})
+        const roomOut = call("org.moqui.chat.ChatServices.get#Room", {chatRoomId: room})
+        const rooms = call("org.moqui.chat.ChatServices.find#Rooms", {})
         const tui = render(root, "ChatTui", "tui", {chatRoomId: room})
         const tuiRooms = render(root, "ChatTui", "tui", {})
         const view = json("roomView", {chatRoomId: room})

@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Pair step 4, apply (plans/Edge-Node.md §5.7): the choices Discover kept in the session, and Apply
-    (org.moqui.impl.EdgeServices.apply#EdgeSetup): it writes this node's rows and settings (the EDGE mail server with
+    (org.moqui.edge.EdgeServices.apply#EdgeSetup): it writes this node's rows and settings (the EDGE mail server with
     smtpHost edge:, the system's and the chosen accounts' mail through it; channels_public_url; the PASS client
     properties), sends the edge node its part (the link's Configure: the host names, refused for a name another node
     holds) and sends every replicated set whole again. Each step is a line, kept in the session for this step. The DNS
@@ -38,7 +38,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!choices) { ec.message.addError(ec.l10n.localize('Choose what to set up first, in Discover')); return }
             const hostList = (choices.passthroughNames || []).map((hostName) => ({hostName, modeEnumId: 'EdgeHostPassthrough'}))
                 .concat((choices.terminateNames || []).map((hostName) => ({hostName, modeEnumId: 'EdgeHostTerminate'})))
-            const out = ec.service.sync().name('org.moqui.impl.EdgeServices.apply#EdgeSetup').parameters({
+            const out = ec.service.sync().name('org.moqui.edge.EdgeServices.apply#EdgeSetup').parameters({
                 webOn: !!choices.webOn, hostList, mailOn: !!choices.mailOn, mailDomains: choices.mailDomains || [],
                 systemMail: !!choices.systemMail, emailAccountIds: choices.emailAccountIds || [],
                 chatOn: !!choices.chatOn, chatBridgeIds: choices.chatBridgeIds || [],
@@ -73,7 +73,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const link = ec.service.sync().name('org.moqui.impl.EdgeServices.get#LinkStatus').call() || {}
+        const link = ec.service.sync().name('org.moqui.edge.EdgeServices.get#LinkStatus').call() || {}
         notBuilt = link.state === 'notBuilt'
         notStarted = link.state === 'notStarted'
         const running = !notBuilt && !notStarted
@@ -115,7 +115,7 @@ along with this software (see the LICENSE.md file). If not, see
         if (!hostNames.length && !choices.mailOn && !choices.xmppOn && !choices.callsOn && !choices.sipOn) return
         ec.message.pushErrors()
         try {
-            const offered = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeOffer').call() || {}
+            const offered = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeOffer').call() || {}
             const offer = offered.offer || {}
             if (!ec.message.hasError()) {
                 // the names an XMPP SRV record may point at: the edge node's own
@@ -129,7 +129,7 @@ along with this software (see the LICENSE.md file). If not, see
                     const authority = String(url).replace(/^turns?:/i, '').split('?')[0]
                     return authority.startsWith('[') ? '' : authority.replace(/:\d*$/, '')
                 }).filter((host) => host) : []
-                const out = ec.service.sync().name('org.moqui.impl.EdgeServices.check#EdgeDns').parameters({
+                const out = ec.service.sync().name('org.moqui.edge.EdgeServices.check#EdgeDns').parameters({
                     domains: choices.mailOn ? choices.mailDomains || [] : [], hostNames,
                     mxHost: offer.mail?.mxHost || '', edgeAddresses: offer.addresses || [],
                     dkimSelector: offer.mail?.dkimSelector || '', dkimRecord: offer.mail?.dkimRecord || '',

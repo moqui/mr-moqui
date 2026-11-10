@@ -240,7 +240,7 @@ fn branch_rules_refuse_pushes_and_an_archived_repository_refuses_all() {
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.store#GitBranchRule",
+        "org.moqui.git.GitServices.store#GitBranchRule",
         &[
             ("repositoryId", s("guarded")),
             ("refPattern", s("main")),
@@ -250,13 +250,13 @@ fn branch_rules_refuse_pushes_and_an_archived_repository_refuses_all() {
     let release = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.store#GitBranchRule",
+        "org.moqui.git.GitServices.store#GitBranchRule",
         &[("repositoryId", s("guarded")), ("refPattern", s("release/*"))],
     );
     let (_, errors) = call(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.store#GitBranchRule",
+        "org.moqui.git.GitServices.store#GitBranchRule",
         &[("repositoryId", s("guarded")), ("refPattern", s("*"))],
     );
     assert!(errors.contains("may not change the branch rules"), "{errors}");
@@ -280,7 +280,7 @@ fn branch_rules_refuse_pushes_and_an_archived_repository_refuses_all() {
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.delete#GitRef",
+        "org.moqui.git.GitServices.delete#GitRef",
         &[("repositoryId", s("guarded")), ("refName", s("release/1"))],
     );
     assert!(errors.contains("may not be deleted"), "{errors}");
@@ -290,7 +290,7 @@ fn branch_rules_refuse_pushes_and_an_archived_repository_refuses_all() {
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.store#GitBranchRule",
+        "org.moqui.git.GitServices.store#GitBranchRule",
         &[
             ("branchRuleId", s(get(&release, "branchRuleId"))),
             ("repositoryId", s("guarded")),
@@ -302,7 +302,7 @@ fn branch_rules_refuse_pushes_and_an_archived_repository_refuses_all() {
     let rules = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.get#GitBranchRules",
+        "org.moqui.git.GitServices.get#GitBranchRules",
         &[("repositoryId", s("guarded"))],
     );
     let main_rule = list(&rules, "ruleList")
@@ -313,7 +313,7 @@ fn branch_rules_refuse_pushes_and_an_archived_repository_refuses_all() {
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.store#GitBranchRule",
+        "org.moqui.git.GitServices.store#GitBranchRule",
         &[
             ("branchRuleId", s(&main_rule)),
             ("repositoryId", s("guarded")),
@@ -331,7 +331,7 @@ fn branch_rules_refuse_pushes_and_an_archived_repository_refuses_all() {
     let archived = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.archive#GitRepository",
+        "org.moqui.git.GitServices.archive#GitRepository",
         &[("repositoryId", s("guarded"))],
     );
     assert_eq!(text_of(archived.get("closedMergeRequestCount").unwrap()), "0");
@@ -341,11 +341,11 @@ fn branch_rules_refuse_pushes_and_an_archived_repository_refuses_all() {
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.create#GitRef",
+        "org.moqui.git.GitServices.create#GitRef",
         &[("repositoryId", s("guarded")), ("refName", s("late"))],
     );
     assert!(errors.contains("archived"), "{errors}");
-    let listed = ok(&fixture, READER, "org.moqui.impl.GitServices.find#GitRepositories", &[]);
+    let listed = ok(&fixture, READER, "org.moqui.git.GitServices.find#GitRepositories", &[]);
     assert!(
         list(&listed, "repositoryList").is_empty(),
         "an archived repository is left out"
@@ -353,14 +353,14 @@ fn branch_rules_refuse_pushes_and_an_archived_repository_refuses_all() {
     let listed = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.find#GitRepositories",
+        "org.moqui.git.GitServices.find#GitRepositories",
         &[("includeArchived", Value::Bool(true))],
     );
     assert_eq!(list(&listed, "repositoryList").len(), 1);
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.unarchive#GitRepository",
+        "org.moqui.git.GitServices.unarchive#GitRepository",
         &[("repositoryId", s("guarded"))],
     );
     work.ok(&["push", "origin", "HEAD:refs/heads/topic"]);
@@ -387,7 +387,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let tree = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.get#GitTree",
+        "org.moqui.git.GitServices.get#GitTree",
         &[("repositoryId", s("code"))],
     );
     let names: Vec<String> = list(&tree, "entryList")
@@ -403,7 +403,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let sub = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.get#GitTree",
+        "org.moqui.git.GitServices.get#GitTree",
         &[
             ("repositoryId", s("code")),
             ("path", s("dir")),
@@ -416,20 +416,20 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let (_, errors) = call(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.create#GitRef",
+        "org.moqui.git.GitServices.create#GitRef",
         &[("repositoryId", s("code")), ("refName", s("feature"))],
     );
     assert!(errors.contains("may not create"), "{errors}");
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.create#GitRef",
+        "org.moqui.git.GitServices.create#GitRef",
         &[("repositoryId", s("code")), ("refName", s("feature"))],
     );
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.create#GitRef",
+        "org.moqui.git.GitServices.create#GitRef",
         &[
             ("repositoryId", s("code")),
             ("refName", s("v1")),
@@ -440,7 +440,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let tags = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.get#GitRefs",
+        "org.moqui.git.GitServices.get#GitRefs",
         &[("repositoryId", s("code")), ("refType", s("tag"))],
     );
     assert_eq!(list(&tags, "refList").len(), 1);
@@ -469,7 +469,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
                 ok(
                     &fixture,
                     WRITER,
-                    "org.moqui.impl.GitServices.create#GitRef",
+                    "org.moqui.git.GitServices.create#GitRef",
                     &[("repositoryId", s("code")), ("refName", s("held"))],
                 );
                 Ok(())
@@ -489,7 +489,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.create#GitRef",
+        "org.moqui.git.GitServices.create#GitRef",
         &[("repositoryId", s("code")), ("refName", s("feature"))],
     );
     assert!(errors.contains("already exists"), "{errors}");
@@ -506,7 +506,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let compared = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.get#GitCompare",
+        "org.moqui.git.GitServices.get#GitCompare",
         &[
             ("repositoryId", s("code")),
             ("base", s("main")),
@@ -540,7 +540,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let (_, errors) = call(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.merge#GitRefs",
+        "org.moqui.git.GitServices.merge#GitRefs",
         &[
             ("repositoryId", s("code")),
             ("source", s("feature")),
@@ -551,7 +551,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let squashed = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.merge#GitRefs",
+        "org.moqui.git.GitServices.merge#GitRefs",
         &[
             ("repositoryId", s("code")),
             ("source", s("feature")),
@@ -603,7 +603,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let trial = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.merge#GitRefs",
+        "org.moqui.git.GitServices.merge#GitRefs",
         &[
             ("repositoryId", s("code")),
             ("source", s("clash")),
@@ -620,7 +620,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let (refused, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.merge#GitRefs",
+        "org.moqui.git.GitServices.merge#GitRefs",
         &[
             ("repositoryId", s("code")),
             ("source", s("clash")),
@@ -639,7 +639,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let rebased = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.merge#GitRefs",
+        "org.moqui.git.GitServices.merge#GitRefs",
         &[
             ("repositoryId", s("code")),
             ("source", s("topic")),
@@ -659,7 +659,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.merge#GitRefs",
+        "org.moqui.git.GitServices.merge#GitRefs",
         &[
             ("repositoryId", s("code")),
             ("source", s(&main_parent)),
@@ -670,7 +670,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.create#GitRef",
+        "org.moqui.git.GitServices.create#GitRef",
         &[
             ("repositoryId", s("code")),
             ("refName", s("behind")),
@@ -680,7 +680,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.merge#GitRefs",
+        "org.moqui.git.GitServices.merge#GitRefs",
         &[
             ("repositoryId", s("code")),
             ("source", s("main")),
@@ -697,13 +697,13 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.delete#GitRef",
+        "org.moqui.git.GitServices.delete#GitRef",
         &[("repositoryId", s("code")), ("refName", s("feature"))],
     );
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.delete#GitRef",
+        "org.moqui.git.GitServices.delete#GitRef",
         &[("repositoryId", s("code")), ("refName", s("main"))],
     );
     assert!(errors.contains("default branch"), "{errors}");
@@ -711,7 +711,7 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     let updates = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.find#GitUpdates",
+        "org.moqui.git.GitServices.find#GitUpdates",
         &[
             ("repositoryId", s("code")),
             ("source", s("write")),
@@ -747,7 +747,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
         row.set("userGroupId", s("GIT_WRITERS"));
         row.set(
             "fromDate",
-            moqui_lib::object::basic_convert(&Value::I64(1_000), "java.sql.Timestamp").value,
+            moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
         );
         row.create(&fixture.entity).unwrap();
     }
@@ -761,7 +761,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.store#GitBranchRule",
+        "org.moqui.git.GitServices.store#GitBranchRule",
         &[
             ("repositoryId", s("review")),
             ("refPattern", s("main")),
@@ -775,7 +775,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let (_, errors) = call(
         &fixture,
         READER,
-        "org.moqui.impl.GitReviewServices.create#MergeRequest",
+        "org.moqui.git.GitReviewServices.create#MergeRequest",
         &[
             ("repositoryId", s("review")),
             ("sourceRef", s("topic")),
@@ -786,7 +786,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let created = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.create#MergeRequest",
+        "org.moqui.git.GitReviewServices.create#MergeRequest",
         &[
             ("repositoryId", s("review")),
             ("sourceRef", s("topic")),
@@ -805,7 +805,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.create#MergeRequest",
+        "org.moqui.git.GitReviewServices.create#MergeRequest",
         &[
             ("repositoryId", s("review")),
             ("sourceRef", s("topic")),
@@ -817,14 +817,14 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let waiting = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitReviewServices.find#MergeRequests",
+        "org.moqui.git.GitReviewServices.find#MergeRequests",
         &[("waitingForUserId", s(READER))],
     );
     assert_eq!(list(&waiting, "mergeRequestList").len(), 1);
     let detail = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitReviewServices.get#MergeRequest",
+        "org.moqui.git.GitReviewServices.get#MergeRequest",
         &[("mergeRequestId", s(&mr_id))],
     );
     let missing: Vec<String> = list(&detail, "missingList").iter().map(text_of).collect();
@@ -835,14 +835,14 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.merge#MergeRequest",
+        "org.moqui.git.GitReviewServices.merge#MergeRequest",
         &[("mergeRequestId", s(&mr_id))],
     );
     assert!(errors.contains("0 of 1 approvals"), "{errors}");
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.submit#MergeRequestReview",
+        "org.moqui.git.GitReviewServices.submit#MergeRequestReview",
         &[("mergeRequestId", s(&mr_id)), ("decision", s("approve"))],
     );
     assert!(errors.contains("your own"), "{errors}");
@@ -850,14 +850,14 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let (_, errors) = call(
         &fixture,
         READER,
-        "org.moqui.impl.GitReviewServices.submit#MergeRequestReview",
+        "org.moqui.git.GitReviewServices.submit#MergeRequestReview",
         &[("mergeRequestId", s(&mr_id)), ("decision", s("approve"))],
     );
     assert!(errors.contains("right to push"), "{errors}");
     ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitReviewServices.submit#MergeRequestReview",
+        "org.moqui.git.GitReviewServices.submit#MergeRequestReview",
         &[
             ("mergeRequestId", s(&mr_id)),
             ("decision", s("comment")),
@@ -868,7 +868,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let detail = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.get#MergeRequest",
+        "org.moqui.git.GitReviewServices.get#MergeRequest",
         &[("mergeRequestId", s(&mr_id))],
     );
     assert_eq!(
@@ -879,14 +879,14 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.merge#MergeRequest",
+        "org.moqui.git.GitReviewServices.merge#MergeRequest",
         &[("mergeRequestId", s(&mr_id))],
     );
     assert!(errors.contains("0 of 1 approvals"), "{errors}");
     ok(
         &fixture,
         APPROVER,
-        "org.moqui.impl.GitReviewServices.submit#MergeRequestReview",
+        "org.moqui.git.GitReviewServices.submit#MergeRequestReview",
         &[
             ("mergeRequestId", s(&mr_id)),
             ("decision", s("approve")),
@@ -896,7 +896,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let approvals = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitReviewServices.get#MergeRequestApprovals",
+        "org.moqui.git.GitReviewServices.get#MergeRequestApprovals",
         &[("mergeRequestId", s(&mr_id))],
     );
     let approvers: Vec<String> = list(&approvals, "approverUserIdList").iter().map(text_of).collect();
@@ -904,7 +904,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.merge#MergeRequest",
+        "org.moqui.git.GitReviewServices.merge#MergeRequest",
         &[("mergeRequestId", s(&mr_id))],
     );
     assert!(errors.contains("checks not passed: ci/build"), "{errors}");
@@ -920,7 +920,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.refresh#MergeRequests",
+        "org.moqui.git.GitReviewServices.refresh#MergeRequests",
         &[
             ("repositoryId", s("review")),
             ("refName", s("refs/heads/topic")),
@@ -952,7 +952,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let (_, errors) = call(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.create#GitCommitStatus",
+        "org.moqui.git.GitServices.create#GitCommitStatus",
         &[
             ("repositoryId", s("review")),
             ("commitId", s(&moved)),
@@ -964,7 +964,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.create#GitCommitStatus",
+        "org.moqui.git.GitServices.create#GitCommitStatus",
         &[
             ("repositoryId", s("review")),
             ("commitId", s(&moved)),
@@ -976,20 +976,20 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     ok(
         &fixture,
         APPROVER,
-        "org.moqui.impl.GitReviewServices.submit#MergeRequestReview",
+        "org.moqui.git.GitReviewServices.submit#MergeRequestReview",
         &[("mergeRequestId", s(&mr_id)), ("decision", s("approve"))],
     );
     let detail = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.get#MergeRequest",
+        "org.moqui.git.GitReviewServices.get#MergeRequest",
         &[("mergeRequestId", s(&mr_id))],
     );
     assert_eq!(detail.get("canMerge"), Some(&Value::Bool(true)), "{detail:?}");
     let merged = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.merge#MergeRequest",
+        "org.moqui.git.GitReviewServices.merge#MergeRequest",
         &[("mergeRequestId", s(&mr_id))],
     );
     let main = head_of(&fixture, "review", "refs/heads/main").unwrap();
@@ -1007,7 +1007,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let diff = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitReviewServices.get#MergeRequestDiff",
+        "org.moqui.git.GitReviewServices.get#MergeRequestDiff",
         &[("mergeRequestId", s(&mr_id))],
     );
     assert_eq!(list(&diff, "fileList").len(), 1, "{diff:?}");
@@ -1020,7 +1020,7 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let created = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.create#MergeRequest",
+        "org.moqui.git.GitReviewServices.create#MergeRequest",
         &[
             ("repositoryId", s("review")),
             ("sourceRef", s("second")),
@@ -1033,20 +1033,20 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.merge#MergeRequest",
+        "org.moqui.git.GitReviewServices.merge#MergeRequest",
         &[("mergeRequestId", s(&second_id))],
     );
     assert!(errors.contains("draft"), "{errors}");
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.close#MergeRequest",
+        "org.moqui.git.GitReviewServices.close#MergeRequest",
         &[("mergeRequestId", s(&second_id))],
     );
     ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.reopen#MergeRequest",
+        "org.moqui.git.GitReviewServices.reopen#MergeRequest",
         &[("mergeRequestId", s(&second_id))],
     );
     // the writers may push to main directly: the request is merged when main holds its head
@@ -1054,14 +1054,14 @@ fn merge_requests_follow_reviews_checks_and_pushes() {
         let rules = ok(
             &fixture,
             READER,
-            "org.moqui.impl.GitServices.get#GitBranchRules",
+            "org.moqui.git.GitServices.get#GitBranchRules",
             &[("repositoryId", s("review")), ("refName", s("main"))],
         );
         let id = text_of(entry(&list(&rules, "ruleList")[0], "branchRuleId"));
         ok(
             &fixture,
             WRITER,
-            "org.moqui.impl.GitServices.delete#GitBranchRule",
+            "org.moqui.git.GitServices.delete#GitBranchRule",
             &[("branchRuleId", s(&id))],
         );
     }
@@ -1119,14 +1119,14 @@ fn a_reviewer_must_be_able_to_view_the_repository() {
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.get#GitRepositoryAccess",
+        "org.moqui.git.GitServices.get#GitRepositoryAccess",
         &[("repositoryId", s("reviewers")), ("userId", s(READER))],
     );
     assert!(errors.contains("only with authorization disabled"), "{errors}");
     let own = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.get#GitRepositoryAccess",
+        "org.moqui.git.GitServices.get#GitRepositoryAccess",
         &[("repositoryId", s("reviewers")), ("userId", s(READER))],
     );
     assert_eq!(own.get("canView"), Some(&Value::Bool(true)));
@@ -1140,7 +1140,7 @@ fn a_reviewer_must_be_able_to_view_the_repository() {
         ]);
         let out = {
             let _authz = fixture.context.disable_authz();
-            moqui_core::service::sync("org.moqui.impl.GitServices.get#GitRepositoryAccess", &parameters).unwrap()
+            moqui_core::service::sync("org.moqui.git.GitServices.get#GitRepositoryAccess", &parameters).unwrap()
         };
         moqui_core::user::logout().unwrap();
         out
@@ -1156,7 +1156,7 @@ fn a_reviewer_must_be_able_to_view_the_repository() {
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.create#MergeRequest",
+        "org.moqui.git.GitReviewServices.create#MergeRequest",
         &[
             ("repositoryId", s("reviewers")),
             ("sourceRef", s("topic")),
@@ -1171,7 +1171,7 @@ fn a_reviewer_must_be_able_to_view_the_repository() {
     let created = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.create#MergeRequest",
+        "org.moqui.git.GitReviewServices.create#MergeRequest",
         &[
             ("repositoryId", s("reviewers")),
             ("sourceRef", s("topic")),
@@ -1184,7 +1184,7 @@ fn a_reviewer_must_be_able_to_view_the_repository() {
     let (_, errors) = call(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.set#MergeRequestReviewers",
+        "org.moqui.git.GitReviewServices.set#MergeRequestReviewers",
         &[
             ("mergeRequestId", s(&mr_id)),
             ("addUserIdList", Value::List(vec![s(READER), s(OUTSIDER)])),
@@ -1199,7 +1199,7 @@ fn a_reviewer_must_be_able_to_view_the_repository() {
     let set = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitReviewServices.set#MergeRequestReviewers",
+        "org.moqui.git.GitReviewServices.set#MergeRequestReviewers",
         &[
             ("mergeRequestId", s(&mr_id)),
             ("addUserIdList", Value::List(vec![s(READER)])),
@@ -1301,7 +1301,7 @@ fn webhooks_are_signed_logged_and_retried() {
             "moqui.service.message.SystemMessageType",
             &[
                 ("systemMessageTypeId", "GitWebhook"),
-                ("sendServiceName", "org.moqui.impl.GitServices.send#GitWebhookDelivery"),
+                ("sendServiceName", "org.moqui.git.GitServices.send#GitWebhookDelivery"),
             ],
         );
     }
@@ -1309,7 +1309,7 @@ fn webhooks_are_signed_logged_and_retried() {
     let stored = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.store#GitWebhook",
+        "org.moqui.git.GitServices.store#GitWebhook",
         &[
             ("repositoryId", s("hooked")),
             ("url", s(&url)),
@@ -1321,7 +1321,7 @@ fn webhooks_are_signed_logged_and_retried() {
     let (_, errors) = call(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.store#GitWebhook",
+        "org.moqui.git.GitServices.store#GitWebhook",
         &[("repositoryId", s("hooked")), ("url", s(&url))],
     );
     assert!(errors.contains("may not change the webhooks"), "{errors}");
@@ -1396,7 +1396,7 @@ fn webhooks_are_signed_logged_and_retried() {
     let deliveries = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.find#GitWebhookDeliveries",
+        "org.moqui.git.GitServices.find#GitWebhookDeliveries",
         &[("webhookId", s(&webhook_id))],
     );
     let delivery = &list(&deliveries, "deliveryList")[0];
@@ -1406,7 +1406,7 @@ fn webhooks_are_signed_logged_and_retried() {
     let failed = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.test#GitWebhook",
+        "org.moqui.git.GitServices.test#GitWebhook",
         &[("webhookId", s(&webhook_id))],
     );
     assert_eq!(failed.get("delivered"), Some(&Value::Bool(false)), "{failed:?}");
@@ -1428,7 +1428,7 @@ fn webhooks_are_signed_logged_and_retried() {
     let tested = ok(
         &fixture,
         WRITER,
-        "org.moqui.impl.GitServices.test#GitWebhook",
+        "org.moqui.git.GitServices.test#GitWebhook",
         &[("webhookId", s(&webhook_id))],
     );
     assert_eq!(tested.get("delivered"), Some(&Value::Bool(true)), "{tested:?}");
@@ -1537,7 +1537,7 @@ fn commit_statuses_post_over_rest_with_an_access_token() {
     let statuses = ok(
         &fixture,
         READER,
-        "org.moqui.impl.GitServices.get#GitCommitStatuses",
+        "org.moqui.git.GitServices.get#GitCommitStatuses",
         &[
             ("repositoryId", s("ci")),
             ("commitId", s("main")),

@@ -1,4 +1,4 @@
-# Co-edited documents (a Yjs document per record, on yrs) and org.moqui.impl.CollabServices, on top of moqui-core
+# Co-edited documents (a Yjs document per record, on yrs) and org.moqui.resource.CollabServices, on top of moqui-core
 # (plans/archive/Crate-Split.md). Its own crate so an edit here does not rebuild the framework, and yrs stays out of
 # core and the browser build. Core reaches it only through moqui_core::extension, which this crate fills with an
 # inventory entry; moqui-host links it in every build and calls the rooms from its notification WebSocket.

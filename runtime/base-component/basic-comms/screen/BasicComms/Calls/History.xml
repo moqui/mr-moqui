@@ -19,12 +19,12 @@ along with this software (see the LICENSE.md file). If not, see
     the missed calls seen, so they no longer count on Home; Recordings opens the call recordings (W5, Recordings.xml). Call links (W3): a link to a meeting for people with no
     account (its address shown once, when it is made), each with Open (its meeting, with the user as host) and Revoke;
     Meetings: the user's meetings of the next week from the apps' meetings-source providers, with Join. The rows come from
-    org.moqui.impl.CallServices find#ActiveCalls, find#Calls and find#CallLinks. Call a number (V1): a phone number from one of
-    the user's caller IDs (org.moqui.impl.VoiceServices place#PhoneCall), opening the Call screen; Text a number (C4-SMS): a
-    number from one of the user's numbers with messaging (org.moqui.impl.SmsServices open#PairRoom), opening the pair's room in
+    org.moqui.call.CallServices find#ActiveCalls, find#Calls and find#CallLinks. Call a number (V1): a phone number from one of
+    the user's caller IDs (org.moqui.call.VoiceServices place#PhoneCall), opening the Call screen; Text a number (C4-SMS): a
+    number from one of the user's numbers with messaging (org.moqui.call.SmsServices open#PairRoom), opening the pair's room in
     Chat; New call and a call link
     may be end-to-end encrypted (W8); the full dialer is V3. An app adds actions to a call with ext-action slot="call-actions" (the
-    item: callSessionId). Voicemail (V2, outcome voicemail): the user's messages (org.moqui.impl.VoicemailServices
+    item: callSessionId). Voicemail (V2, outcome voicemail): the user's messages (org.moqui.call.VoicemailServices
     find#Voicemails) in the Inbox or the Trash (folder), all, unheard or heard, with the unheard count on the tab; each opens
     in Voicemail (the player and transcript), and is marked heard or unheard, deleted (to the Trash, and from it for good) or
     put back; Empty trash. -->
@@ -39,7 +39,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- voicemail (V2): each the owner's own, refused for anyone else by the services -->
     <transition name="markVoicemail">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.VoicemailServices.mark#VoicemailHeard').parameters({voicemailId: voicemailId || '',
+            ec.service.sync().name('org.moqui.call.VoicemailServices.mark#VoicemailHeard').parameters({voicemailId: voicemailId || '',
                 heard: String(heard) !== 'false'}).requireNewTransaction(true).disableAuthz().call()
         ]]></script></actions>
         <default-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder"/></default-response>
@@ -47,7 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="deleteVoicemail">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.delete#Voicemail').parameter('voicemailId', voicemailId || '')
+            const out = ec.service.sync().name('org.moqui.call.VoicemailServices.delete#Voicemail').parameter('voicemailId', voicemailId || '')
                 .requireNewTransaction(true).disableAuthz().call() || {}
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize(out.deleted ? 'Voicemail deleted' : 'Voicemail moved to the Trash'), 'success')
         ]]></script></actions>
@@ -56,7 +56,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="restoreVoicemail">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.VoicemailServices.restore#Voicemail').parameter('voicemailId', voicemailId || '')
+            ec.service.sync().name('org.moqui.call.VoicemailServices.restore#Voicemail').parameter('voicemailId', voicemailId || '')
                 .requireNewTransaction(true).disableAuthz().call()
         ]]></script></actions>
         <default-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></default-response>
@@ -64,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="emptyVoicemailTrash">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.empty#VoicemailTrash').requireNewTransaction(true).disableAuthz().call() || {}
+            const out = ec.service.sync().name('org.moqui.call.VoicemailServices.empty#VoicemailTrash').requireNewTransaction(true).disableAuthz().call() || {}
             if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand('${n} deleted for good', '', {n: out.deletedCount || 0}), 'success')
         ]]></script></actions>
         <default-response url="."><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></default-response>
@@ -74,7 +74,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="newCall">
         <actions><script><![CDATA[
             const list = calleeUserIdList ? (Array.isArray(calleeUserIdList) ? calleeUserIdList : String(calleeUserIdList).split(',')) : []
-            const out = ec.service.sync().name('org.moqui.impl.CallServices.start#Call').parameters({calleeUserIdList: list,
+            const out = ec.service.sync().name('org.moqui.call.CallServices.start#Call').parameters({calleeUserIdList: list,
                 video: String(video) !== 'N', requireE2ee: String(encrypted) === 'Y'}).requireNewTransaction(true).disableAuthz().call() || {}
             newCallSessionId = out.callSessionId || null
         ]]></script></actions>
@@ -85,7 +85,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- a phone number, through a SIP trunk (V1): from one of the user's numbers -->
     <transition name="callNumber">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.VoiceServices.place#PhoneCall').parameters({phoneNumber: phoneNumber || '',
+            const out = ec.service.sync().name('org.moqui.call.VoiceServices.place#PhoneCall').parameters({phoneNumber: phoneNumber || '',
                 fromNumber: fromNumber || null}).requireNewTransaction(true).disableAuthz().call() || {}
             newCallSessionId = out.callSessionId || null
         ]]></script></actions>
@@ -97,7 +97,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="textNumber">
         <actions><script><![CDATA[
             // the form's fields are textTo and textFrom: toNumber is a name the script runtime has already
-            const out = ec.service.sync().name('org.moqui.impl.SmsServices.open#PairRoom').parameters({toNumber: textTo || '',
+            const out = ec.service.sync().name('org.moqui.call.SmsServices.open#PairRoom').parameters({toNumber: textTo || '',
                 fromNumber: textFrom || null}).requireNewTransaction(true).disableAuthz().call() || {}
             textRoomId = out.chatRoomId || null
         ]]></script></actions>
@@ -110,7 +110,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const room = chatRoomId && String(isRoomCall) === 'true' ? chatRoomId : null
             // an end-to-end encrypted call (W8) is called back encrypted, never as a plain call
-            const out = ec.service.sync().name('org.moqui.impl.CallServices.start#Call').parameters({chatRoomId: room,
+            const out = ec.service.sync().name('org.moqui.call.CallServices.start#Call').parameters({chatRoomId: room,
                 calleeUserIdList: room ? null : String(otherUserIds || '').split(',').filter((id) => id),
                 video: String(video) !== 'false', requireE2ee: String(e2ee) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
             newCallSessionId = out.callSessionId || null
@@ -122,7 +122,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- a call link: its address once, in the message -->
     <transition name="createLink">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.CallServices.create#CallLink').parameters({name: name || '',
+            const out = ec.service.sync().name('org.moqui.call.CallServices.create#CallLink').parameters({name: name || '',
                 policy: policy === 'link' ? 'link' : 'lobby', video: video !== 'N', expiryHours: Math.max(1, Number(expiryDays) || 7) * 24,
                 requireE2ee: String(encrypted) === 'Y'})
                 .requireNewTransaction(true).disableAuthz().call() || {}
@@ -134,7 +134,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="openLink">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.CallServices.open#CallLink').parameter('callLinkId', callLinkId || '')
+            const out = ec.service.sync().name('org.moqui.call.CallServices.open#CallLink').parameter('callLinkId', callLinkId || '')
                 .requireNewTransaction(true).disableAuthz().call() || {}
             newCallSessionId = out.callSessionId || null
         ]]></script></actions>
@@ -144,7 +144,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="revokeLink">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.CallServices.revoke#CallLink').parameter('callLinkId', callLinkId || '')
+            ec.service.sync().name('org.moqui.call.CallServices.revoke#CallLink').parameter('callLinkId', callLinkId || '')
                 .requireNewTransaction(true).disableAuthz().call()
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Call link revoked'), 'success')
         ]]></script></actions>
@@ -153,14 +153,14 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="answer">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.CallServices.answer#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()
+            ec.service.sync().name('org.moqui.call.CallServices.answer#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()
         ]]></script></actions>
         <default-response url="../Call"><parameter name="callSessionId"/></default-response>
         <error-response url="."/>
     </transition>
     <transition name="decline">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.CallServices.decline#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()
+            ec.service.sync().name('org.moqui.call.CallServices.decline#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()
         ]]></script></actions>
         <default-response url="."/>
         <error-response url="."/>
@@ -175,12 +175,12 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const caps = ec.service.sync().name('org.moqui.impl.CallServices.get#Capabilities').requireNewTransaction(true).disableAuthz().call() || {}
+        const caps = ec.service.sync().name('org.moqui.call.CallServices.get#Capabilities').requireNewTransaction(true).disableAuthz().call() || {}
         callsActive = !!caps.active
         callsReason = caps.active ? '' : caps.reasonCode === 'notBuilt' ? L('Calls are not built into this server.')
             : L('Calls are not available: no media server is running. An administrator sets rtc_media_port to start one.')
         const when = (millis) => millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : ''
-        const active = ec.service.sync().name('org.moqui.impl.CallServices.find#ActiveCalls').requireNewTransaction(true).disableAuthz().call() || {}
+        const active = ec.service.sync().name('org.moqui.call.CallServices.find#ActiveCalls').requireNewTransaction(true).disableAuthz().call() || {}
         callList = Array.from(active.callList || []).map((call) => {
             const others = Array.from(call.participants || []).filter((p) => p.userId !== ec.user.userId).map((p) => p.displayName)
             return {callSessionId: call.callSessionId, who: others.join(', ') || L('Just you'),
@@ -190,15 +190,15 @@ along with this software (see the LICENSE.md file). If not, see
         })
         newCall = {calleeUserIdList: [], video: 'Y', encrypted: 'N'}
         // Call a number (V1): the user's caller IDs; the full dialer is V3
-        const voice = ec.service.sync().name('org.moqui.impl.VoiceServices.get#VoiceCapabilities').requireNewTransaction(true).disableAuthz().call() || {}
-        const myIds = ec.service.sync().name('org.moqui.impl.VoiceServices.find#MyCallerIds').requireNewTransaction(true).disableAuthz().call() || {}
+        const voice = ec.service.sync().name('org.moqui.call.VoiceServices.get#VoiceCapabilities').requireNewTransaction(true).disableAuthz().call() || {}
+        const myIds = ec.service.sync().name('org.moqui.call.VoiceServices.find#MyCallerIds').requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         callerIdOptions = Array.from(myIds.numberList || []).map((n) => ({key: n.phoneNumber, text: n.phoneNumber + (n.description ? ' · ' + n.description : '')}))
         phoneActive = !!voice.active
         phoneReason = !voice.active ? L('Phone calls are not available here.') : !callerIdOptions.length ? L('You have no number to call from; an administrator can give you one.') : ''
         newPhoneCall = {phoneNumber: '', fromNumber: callerIdOptions.length ? callerIdOptions[0].key : ''}
         // Text a number (C4-SMS): the user's numbers with messaging
-        const texting = ec.service.sync().name('org.moqui.impl.SmsServices.find#MyTextNumbers').requireNewTransaction(true).disableAuthz().call() || {}
+        const texting = ec.service.sync().name('org.moqui.call.SmsServices.find#MyTextNumbers').requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         textNumberOptions = Array.from(texting.numberList || []).map((n) => ({key: n.phoneNumber, text: n.phoneNumber + (n.description ? ' · ' + n.description : '')}))
         newText = {textTo: '', textFrom: textNumberOptions.length ? textNumberOptions[0].key : ''}
@@ -207,14 +207,14 @@ along with this software (see the LICENSE.md file). If not, see
         const OUTCOMES = {placed: L('Placed'), answered: L('Answered'), missed: L('Missed'), declined: L('Declined'), ringing: L('Ringing')}
         shownOutcome = ['missed', 'placed', 'answered', 'voicemail'].includes(outcome) ? outcome : ''
         // voicemail (V2): the tab's unheard count, and its list when it is the tab shown
-        const unheardOut = ec.service.sync().name('org.moqui.impl.VoicemailServices.count#UnheardVoicemails').requireNewTransaction(true).disableAuthz().call() || {}
+        const unheardOut = ec.service.sync().name('org.moqui.call.VoicemailServices.count#UnheardVoicemails').requireNewTransaction(true).disableAuthz().call() || {}
         voicemailText = unheardOut.unheardCount ? L('Voicemail') + ' (' + unheardOut.unheardCount + ')' : L('Voicemail')
         shownFolder = folder === 'trash' ? 'trash' : 'inbox'
         shownHeard = ['heard', 'unheard'].includes(heard) ? heard : ''
         voicemailList = []
         trashCount = 0
         if (shownOutcome === 'voicemail') {
-            const vm = ec.service.sync().name('org.moqui.impl.VoicemailServices.find#Voicemails').parameters({folder: shownFolder,
+            const vm = ec.service.sync().name('org.moqui.call.VoicemailServices.find#Voicemails').parameters({folder: shownFolder,
                 heard: shownHeard || null, pageIndex: Math.max(Number(pageIndex) || 0, 0), pageSize: 25}).requireNewTransaction(true).disableAuthz().call() || {}
             ec.message.clearErrors()
             trashCount = Number(vm.trashCount || 0)
@@ -226,11 +226,11 @@ along with this software (see the LICENSE.md file). If not, see
                 note: v.status === 'audioFailed' ? L('The audio was not stored') : (v.transcriptSnippet || TRANSCRIPTS[v.transcriptStatus] || ''),
                 inTrash: shownFolder === 'trash'}))
         }
-        if (shownOutcome === 'missed') ec.service.sync().name('org.moqui.impl.CallServices.mark#MissedSeen').requireNewTransaction(true).disableAuthz().call()
-        const missedOut = ec.service.sync().name('org.moqui.impl.CallServices.count#MissedCalls').requireNewTransaction(true).disableAuthz().call() || {}
+        if (shownOutcome === 'missed') ec.service.sync().name('org.moqui.call.CallServices.mark#MissedSeen').requireNewTransaction(true).disableAuthz().call()
+        const missedOut = ec.service.sync().name('org.moqui.call.CallServices.count#MissedCalls').requireNewTransaction(true).disableAuthz().call() || {}
         missedText = missedOut.missedCount ? L('Missed') + ' (' + missedOut.missedCount + ')' : L('Missed')
         historyPage = Math.max(Number(pageIndex) || 0, 0)
-        const found = shownOutcome === 'voicemail' ? {} : ec.service.sync().name('org.moqui.impl.CallServices.find#Calls').parameters({outcome: shownOutcome || null,
+        const found = shownOutcome === 'voicemail' ? {} : ec.service.sync().name('org.moqui.call.CallServices.find#Calls').parameters({outcome: shownOutcome || null,
             pageIndex: historyPage, pageSize: 25}).requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         const minutes = (seconds) => !seconds ? '' : seconds < 60 ? seconds + ' s' : Math.floor(seconds / 60) + ' min ' + (seconds % 60) + ' s'
@@ -244,7 +244,7 @@ along with this software (see the LICENSE.md file). If not, see
         historyCount = Number(found.callListCount || 0)
 
         // the call links that still work, and the meetings of the next week from the apps' providers
-        const links = ec.service.sync().name('org.moqui.impl.CallServices.find#CallLinks').requireNewTransaction(true).disableAuthz().call() || {}
+        const links = ec.service.sync().name('org.moqui.call.CallServices.find#CallLinks').requireNewTransaction(true).disableAuthz().call() || {}
         linkList = Array.from(links.linkList || []).map((link) => ({callLinkId: link.callLinkId, name: link.name,
             policyText: link.e2ee ? L('None (end-to-end encrypted)') : link.policy === 'link' ? L('Straight in') : L('Lobby'),
             kindText: (link.video ? L('Video') : L('Audio')) + (link.e2ee ? ' · ' + L('End-to-end encrypted') : ''),
@@ -252,7 +252,7 @@ along with this software (see the LICENSE.md file). If not, see
                 {n: link.waitingCount}) : L('In progress')) : (link.lastUsedDate ? L('Used') + ' ' + when(link.lastUsedDate) : L('Not used yet'))}))
         newLink = {name: '', policy: 'lobby', video: 'Y', expiryDays: '7', encrypted: 'N'}
         const nowMillis = Number(ec.user.nowTimestamp)
-        const meetings = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'meetings-source',
+        const meetings = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'meetings-source',
             parameters: {fromDate: new Date(nowMillis), thruDate: new Date(nowMillis + 7 * 86400000)}}).disableAuthz().call() || {}
         ec.message.clearErrors()
         meetingsAvailable = !meetings.unavailable

@@ -74,13 +74,13 @@ grpc = ["telemetry", "opentelemetry-proto/gen-tonic"]
 default = ["http", "cluster-tls", "image", "xlsx", "web-push"]
 # remote-rest services, http resource locations, and the OpenSearch backend (blocking reqwest).
 http = ["moqui-lib/http"]
-# Web Push to subscribed browsers (org.moqui.impl.NotificationServices.send#WebPush), over blocking HTTP.
+# Web Push to subscribed browsers (org.moqui.ui.NotificationServices.send#WebPush), over blocking HTTP.
 web-push = ["http", "dep:p256", "dep:hkdf", "dep:aes-gcm"]
 # Generated self-signed cluster certificate.
 cluster-tls = ["dep:rcgen"]
 # org.moqui.impl.ImageServices (convert#Image) and elFinder thumbnails.
 image = ["dep:image"]
-# The xlsx render mode and org.moqui.impl.SpreadsheetServices.
+# The xlsx render mode and org.moqui.resource.SpreadsheetServices.
 xlsx = ["dep:rust_xlsxwriter", "dep:calamine"]
 # moqui_core::testing, the in-memory entity facade, and the test helpers of the crates on this one (moqui-llm,
 # moqui-git, moqui-mail).

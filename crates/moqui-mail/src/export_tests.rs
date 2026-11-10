@@ -68,10 +68,10 @@ fn a_sent_message_exports_with_its_files() {
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let failures = moqui_core::service::lint(&[
         framework.join("EmailServices.xml"),
-        framework.join("impl/EmailServices.xml"),
-        framework.join("impl/EmailClientServices.xml"),
+        framework.join("mail/EmailServices.xml"),
+        framework.join("mail/EmailClientServices.xml"),
         framework.join("admin/IdentityServices.xml"),
-        framework.join("impl/ShellServices.xml"),
+        framework.join("ui/ShellServices.xml"),
     ])
     .unwrap();
     assert!(failures.is_empty(), "{failures:?}");
@@ -101,7 +101,7 @@ fn a_sent_message_exports_with_its_files() {
     );
     assert!(errors.is_empty(), "{errors}");
     let account = to_plain_string(created.get("emailAccountId").unwrap());
-    let sent = basic_convert(&Value::I64(1_760_000_000_000), "java.sql.Timestamp").value;
+    let sent = basic_convert(&Value::I64(1_760_000_000_000), "Timestamp").value;
     row(
         &facade,
         super::MESSAGE,

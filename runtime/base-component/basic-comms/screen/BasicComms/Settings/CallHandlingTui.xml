@@ -14,14 +14,14 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The terminal twin of Call handling (style-guide §4.8): do not disturb, call waiting, the mobile that rings too and Hide my
     number; the rules in order with Turn on or off and Remove, Add a rule; the caller lists with their numbers
-    (org.moqui.impl.CallHandlingServices, the signed-in user's own). -->
+    (org.moqui.call.CallHandlingServices, the signed-in user's own). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Call handling" default-menu-include="false">
 
     <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
     <transition name="saveSettings">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.CallHandlingServices.update#CallHandlingSetting').parameters({dnd: dnd === 'Y',
+            const out = ec.service.sync().name('org.moqui.call.CallHandlingServices.update#CallHandlingSetting').parameters({dnd: dnd === 'Y',
                 callWaiting: callWaiting === 'Y', hideCallerId: hideCallerId === 'Y', ringMobile: ringMobile === 'Y', mobileNumber: mobileNumber || '',
                 mobileScheduleId: mobileScheduleId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
             if (!ec.message.hasError()) ec.message.addMessage(out.warning || ec.l10n.localize('Call handling saved'), out.warning ? 'warning' : 'success')
@@ -31,7 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="storeRule">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.CallHandlingServices.store#CallHandlingRule').parameters({kindEnumId: kindEnumId || '',
+            ec.service.sync().name('org.moqui.call.CallHandlingServices.store#CallHandlingRule').parameters({kindEnumId: kindEnumId || '',
                 targetTypeEnumId: targetTypeEnumId || '', targetId: (targetTypeEnumId === 'ChtUser' ? targetUserId : targetTypeEnumId === 'ChtGroup' ? targetGroupId : targetNumber) || '',
                 callerListId: callerListId || '', commsScheduleId: commsScheduleId || '', scheduleWhen: scheduleWhen || 'open'})
                 .requireNewTransaction(true).disableAuthz().call()
@@ -42,41 +42,41 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="toggleRule">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.CallHandlingServices.store#CallHandlingRule').parameters({callHandlingRuleId: callHandlingRuleId || '',
+            ec.service.sync().name('org.moqui.call.CallHandlingServices.store#CallHandlingRule').parameters({callHandlingRuleId: callHandlingRuleId || '',
                 disabled: disabled === 'Y'}).requireNewTransaction(true).disableAuthz().call()
         ]]></script></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
     <transition name="deleteRule">
-        <actions><script>ec.service.sync().name('org.moqui.impl.CallHandlingServices.delete#CallHandlingRule').parameter('callHandlingRuleId', callHandlingRuleId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <actions><script>ec.service.sync().name('org.moqui.call.CallHandlingServices.delete#CallHandlingRule').parameter('callHandlingRuleId', callHandlingRuleId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
     <transition name="storeList">
-        <actions><script>ec.service.sync().name('org.moqui.impl.CallHandlingServices.store#CallerList').parameter('name', name || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <actions><script>ec.service.sync().name('org.moqui.call.CallHandlingServices.store#CallerList').parameter('name', name || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
     <transition name="deleteList">
-        <actions><script>ec.service.sync().name('org.moqui.impl.CallHandlingServices.delete#CallerList').parameter('callerListId', callerListId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <actions><script>ec.service.sync().name('org.moqui.call.CallHandlingServices.delete#CallerList').parameter('callerListId', callerListId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
     <transition name="addEntry">
-        <actions><script>ec.service.sync().name('org.moqui.impl.CallHandlingServices.add#CallerListEntry').parameters({callerListId: callerListId || '', phoneNumber: phoneNumber || ''}).requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <actions><script>ec.service.sync().name('org.moqui.call.CallHandlingServices.add#CallerListEntry').parameters({callerListId: callerListId || '', phoneNumber: phoneNumber || ''}).requireNewTransaction(true).disableAuthz().call()</script></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
     <transition name="removeEntry">
-        <actions><script>ec.service.sync().name('org.moqui.impl.CallHandlingServices.remove#CallerListEntry').parameters({callerListId: callerListId || '', phoneNumber: phoneNumber || ''}).requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <actions><script>ec.service.sync().name('org.moqui.call.CallHandlingServices.remove#CallerListEntry').parameters({callerListId: callerListId || '', phoneNumber: phoneNumber || ''}).requireNewTransaction(true).disableAuthz().call()</script></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
 
     <actions><script><![CDATA[
         const L = (s) => ec.l10n.localize(s)
-        const out = ec.service.sync().name('org.moqui.impl.CallHandlingServices.get#CallHandling').requireNewTransaction(true).disableAuthz().call() || {}
+        const out = ec.service.sync().name('org.moqui.call.CallHandlingServices.get#CallHandling').requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         const s = out.settings || {}
         const yn = (b) => (b ? 'Y' : 'N')

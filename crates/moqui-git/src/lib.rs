@@ -24,7 +24,7 @@
 //! `docs/data/Revision-Management.md`.
 //!
 //! This crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it through the [`moqui_core::extension`]
-//! entry below: the `org.moqui.impl.GitServices` Rust services ([`service`]) and the `git` resource scheme, which the
+//! entry below: the `org.moqui.git.GitServices` Rust services ([`service`]) and the `git` resource scheme, which the
 //! conf's `resource-reference scheme="git"` installs on each factory. The git server ([`server`]) is called by the
 //! host's HTTP and SSH listeners.
 
@@ -194,7 +194,7 @@ struct Repo {
     store: Box<dyn GitStore>,
 }
 
-/// The `git` scheme of the resource facade, and the operations of `org.moqui.impl.GitServices`.
+/// The `git` scheme of the resource facade, and the operations of `org.moqui.git.GitServices`.
 #[derive(Clone)]
 pub struct GitProvider {
     inner: Arc<Inner>,
@@ -351,7 +351,7 @@ impl GitProvider {
             RepositoryKind::Remote => {
                 if !definition.path.join("HEAD").is_file() {
                     return Err(Error::new(format!(
-                        "git repository {} has not been fetched yet (org.moqui.impl.GitServices.fetch#GitRepository)",
+                        "git repository {} has not been fetched yet (org.moqui.git.GitServices.fetch#GitRepository)",
                         definition.id
                     )));
                 }
@@ -823,7 +823,7 @@ impl GitProvider {
         Ok(outcome)
     }
 
-    // ---- operations of org.moqui.impl.GitServices ----
+    // ---- operations of org.moqui.git.GitServices ----
 
     /// Fetch a `remote` repository's branches and tags into its mirror (created on the first fetch), and record the
     /// outcome on its row. The new head of its branch.

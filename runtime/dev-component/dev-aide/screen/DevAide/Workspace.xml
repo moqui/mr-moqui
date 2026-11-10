@@ -144,11 +144,11 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="cancelGit"><service-call name="org.moqui.devaide.VcsServices.cancel#GitOperation" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
-    <transition name="xmlOp"><service-call name="org.moqui.impl.DevToolsServices.apply#XmlOps" in-map="true" web-send-json-response="true"/>
+    <transition name="xmlOp"><service-call name="org.moqui.dev.DevToolsServices.apply#XmlOps" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
-    <transition name="outline" read-only="true"><service-call name="org.moqui.impl.DevToolsServices.get#XmlOutline" in-map="true" web-send-json-response="true"/>
+    <transition name="outline" read-only="true"><service-call name="org.moqui.dev.DevToolsServices.get#XmlOutline" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
-    <transition name="schema" read-only="true"><service-call name="org.moqui.impl.DevToolsServices.get#SchemaDigest" in-map="true" web-send-json-response="true"/>
+    <transition name="schema" read-only="true"><service-call name="org.moqui.dev.DevToolsServices.get#SchemaDigest" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="definition" read-only="true"><service-call name="org.moqui.devaide.ArtifactServices.get#Definition" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
@@ -209,7 +209,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/></transition>
     <transition name="ecaRules" read-only="true"><service-call name="org.moqui.devaide.ServiceWriterServices.list#EcaRules" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
-    <transition name="restart"><service-call name="org.moqui.impl.DevToolsServices.restart#Server" in-map="true" web-send-json-response="true"/>
+    <transition name="restart"><service-call name="org.moqui.dev.DevToolsServices.restart#Server" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
 
     <widgets>

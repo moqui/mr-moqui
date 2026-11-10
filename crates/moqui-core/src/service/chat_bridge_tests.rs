@@ -32,8 +32,8 @@ use super::{
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::EntityFacade;
 
-const CHAT: &str = "org.moqui.impl.ChatServices";
-const BRIDGES: &str = "org.moqui.impl.ChatBridgeServices";
+const CHAT: &str = "org.moqui.chat.ChatServices";
+const BRIDGES: &str = "org.moqui.chat.ChatBridgeServices";
 const MINUTE: i64 = 60_000;
 
 /// What the next delivery of a test adapter does.

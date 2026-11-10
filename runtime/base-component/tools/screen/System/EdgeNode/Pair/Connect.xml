@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Pair step 2, connect (plans/Edge-Node.md §5.7): the edge node at the address, as it answers now
-    (org.moqui.impl.EdgeServices.check#EdgeNode, as step 1 kept it in the session; asked again for an address step 1 did
+    (org.moqui.edge.EdgeServices.check#EdgeNode, as step 1 kept it in the session; asked again for an address step 1 did
     not check): its name, the fingerprint of its link key (told over the
     WebPKI-checked web certificate), its versions, public names and
     features, and whether its link protocol fits this node's. Next (pair#EdgeNode) pairs with the code from step 1, kept
@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const pairingCode = String(code || '').trim() || ec.web.sessionAttributes.edgePairingCode || ''
             if (!pairingCode) { ec.message.addError(ec.l10n.localize('Enter the pairing code made on the edge node')); return }
-            ec.service.sync().name('org.moqui.impl.EdgeServices.pair#EdgeNode')
+            ec.service.sync().name('org.moqui.edge.EdgeServices.pair#EdgeNode')
                 .parameters({url: url, code: pairingCode, expectFingerprint: expectFingerprint}).call()
             if (!ec.message.hasError()) { ec.web.sessionAttributes.remove('edgePairingCode'); ec.web.sessionAttributes.remove('edgeCheck') }
         ]]></script>
@@ -50,7 +50,7 @@ along with this software (see the LICENSE.md file). If not, see
         if (!out) {
             ec.message.pushErrors()
             try {
-                out = ec.service.sync().name('org.moqui.impl.EdgeServices.check#EdgeNode').parameter('url', url).call() || {}
+                out = ec.service.sync().name('org.moqui.edge.EdgeServices.check#EdgeNode').parameter('url', url).call() || {}
                 if (ec.message.hasError()) checkError = ec.message.getErrorsString()
             } finally {
                 ec.message.clearErrors()

@@ -20,7 +20,7 @@ fn email_services_resolve_rust_locations() {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework/service/org/moqui");
     let paths = [
         service_dir.join("EmailServices.xml"),
-        service_dir.join("impl/EmailServices.xml"),
+        service_dir.join("mail/EmailServices.xml"),
     ];
     let (defs, failures) = super::definitions_in(&paths).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
@@ -32,7 +32,7 @@ fn email_services_resolve_rust_locations() {
         ("poll#EmailServer", "moqui_mail::poll_server", "imap"),
     ];
     for (name, location, feature) in expect {
-        let full = format!("org.moqui.impl.EmailServices.{name}");
+        let full = format!("org.moqui.mail.EmailServices.{name}");
         let def = defs.iter().find(|def| def.name == full).expect(name);
         assert_eq!(def.kind, super::ServiceKind::Rust, "{full}");
         assert_eq!(def.location, location, "{full}");
@@ -44,7 +44,7 @@ fn email_services_resolve_rust_locations() {
         );
     }
     for name in ["save#EcaEmailMessage", "send#ScreenRenderEmail"] {
-        let full = format!("org.moqui.impl.EmailServices.{name}");
+        let full = format!("org.moqui.mail.EmailServices.{name}");
         let def = defs.iter().find(|def| def.name == full).expect(name);
         assert_eq!(def.kind, super::ServiceKind::Inline, "{full}");
     }
@@ -164,7 +164,7 @@ fn load_definitions_registers_email_services() {
         explain("Email")
     );
     assert!(
-        super::is_registered("org.moqui.impl.EmailServices.poll#EmailServer"),
+        super::is_registered("org.moqui.mail.EmailServices.poll#EmailServer"),
         "{}",
         explain("poll")
     );
@@ -379,12 +379,20 @@ fn the_known_service_names_follow_an_edited_file() {
         ],
     );
     let _entered = ctx.enter();
-    let known = |name: &str| crate::service::info::known_service_names().iter().any(|known| known == name);
+    let known = |name: &str| {
+        crate::service::info::known_service_names()
+            .iter()
+            .any(|known| known == name)
+    };
     assert!(known("test.ovr.Same.other#Thing"));
     let file = std::env::temp_dir()
         .join(format!("moqui-svc-override-names-edit-{}", std::process::id()))
         .join("second/service/test/ovr/Same.xml");
-    std::fs::write(&file, format!("<services>{}</services>", service_with("renamed", "second"))).unwrap();
+    std::fs::write(
+        &file,
+        format!("<services>{}</services>", service_with("renamed", "second")),
+    )
+    .unwrap();
     assert!(known("test.ovr.Same.renamed#Thing"));
     assert!(!known("test.ovr.Same.other#Thing"));
 }

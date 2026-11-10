@@ -1,4 +1,4 @@
-// Desk and soft phones (org.moqui.impl.SipDeviceServices and SipDevices.js; the V4 block of VoiceEntities.xml;
+// Desk and soft phones (org.moqui.call.SipDeviceServices and SipDevices.js; the V4 block of VoiceEntities.xml;
 // plans/Comms-Framework.md §5.2 "Registrar for phones", V4): the registrar off by default, a phone's credentials shown once
 // with only verifiers kept, another user refused with the same parameters, rotation and revocation ending the old
 // credentials and the registrations, a call ringing a user's registered phone beside their tabs with the first answer
@@ -33,7 +33,7 @@ function as(userId, name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.impl.SipDeviceServices." + name).parameters(parameters || {}).call()) || {}
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.SipDeviceServices." + name).parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
     }
@@ -59,8 +59,8 @@ function makeUser(userId, groupId) {
 }
 function nodesUp() {
     sys(() => {
-        ec.service.sync().name("org.moqui.impl.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
-        ec.service.sync().name("org.moqui.impl.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060", tlsAddress: "127.0.0.1:5061"}).call()
+        ec.service.sync().name("org.moqui.call.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
+        ec.service.sync().name("org.moqui.call.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060", tlsAddress: "127.0.0.1:5061"}).call()
     })
 }
 /** A binding the engine would keep for the device. */
@@ -74,7 +74,7 @@ const registrations = (sipDeviceId) => sys(() => ec.entity.find("moqui.call.SipR
 const deviceRow = (sipDeviceId) => sys(() => ec.entity.find(DEVICE).condition("sipDeviceId", sipDeviceId).one())
 const legsOf = (callSessionId) => sys(() => Array.from(ec.entity.find(LEG).condition("callSessionId", callSessionId).orderBy("offeredDate").list()))
 const deviceLegs = (callSessionId) => legsOf(callSessionId).filter((l) => l.legTypeEnumId === "CltSipDevice")
-const note = (callSessionId, callLegId, event) => internal("org.moqui.impl.VoiceServices.note#PhoneLeg", {callSessionId, callLegId, event})
+const note = (callSessionId, callLegId, event) => internal("org.moqui.call.VoiceServices.note#PhoneLeg", {callSessionId, callLegId, event})
 function clean() {
     sys(() => {
         for (const s of ec.entity.find("moqui.call.CallSession").condition("startedByUserId", "in", [A, B]).condition("statusId", "!=", "CssEnded").list()) {
@@ -115,11 +115,11 @@ feature("the registrar is off by default: phones may be added, but none rings an
         const made = as(A, "create#SipDevice", {name: "Desk"})
         const device = deviceRow(made.sipDeviceId)
         registered(device, "off-1")
-        const call = as(B, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [A]})
+        const call = as(B, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [A]})
         const placed = internal("receive#DeviceCall", {sipDeviceId: made.sipDeviceId, toUser: username(B), instanceId: NODE})
         const listedOn = on(() => as(A, "find#SipDevices"))
         const rung = deviceLegs(call.callSessionId)
-        as(B, "org.moqui.impl.CallServices.end#Call", {callSessionId: call.callSessionId})
+        as(B, "org.moqui.call.CallServices.end#Call", {callSessionId: call.callSessionId})
         as(A, "revoke#SipDevice", {sipDeviceId: made.sipDeviceId})
         return {listed, made, call, rung, placed, listedOn}
     },
@@ -221,13 +221,13 @@ feature("a call rings the user's registered phone beside the tabs, and the phone
         return on(() => {
             nodesUp()
             registered(deviceRow(first.sipDeviceId), "ring-1")
-            const call = as(B, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [A]})
+            const call = as(B, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [A]})
             const offered = deviceLegs(call.callSessionId)
             const answered = note(call.callSessionId, offered[0].callLegId, "answered")
-            const tabAnswer = as(A, "org.moqui.impl.CallServices.answer#Call", {callSessionId: call.callSessionId})
-            const view = as(A, "org.moqui.impl.CallServices.get#Call", {callSessionId: call.callSessionId})
+            const tabAnswer = as(A, "org.moqui.call.CallServices.answer#Call", {callSessionId: call.callSessionId})
+            const view = as(A, "org.moqui.call.CallServices.get#Call", {callSessionId: call.callSessionId})
             const legs = legsOf(call.callSessionId)
-            as(B, "org.moqui.impl.CallServices.end#Call", {callSessionId: call.callSessionId})
+            as(B, "org.moqui.call.CallServices.end#Call", {callSessionId: call.callSessionId})
             return {call, offered, answered, tabAnswer, view, legs}
         })
     },
@@ -250,8 +250,8 @@ feature("a phone registered with another node rings there only with cascading me
         return on(() => {
             nodesUp()
             sys(() => {
-                ec.service.sync().name("org.moqui.impl.CallServices.register#MediaNode").parameters({instanceId: LEG_NODE, mediaAddress: "127.0.0.1:10002"}).call()
-                ec.service.sync().name("org.moqui.impl.VoiceServices.register#SipNode").parameters({instanceId: LEG_NODE, sipAddress: "127.0.0.1:5070"}).call()
+                ec.service.sync().name("org.moqui.call.CallServices.register#MediaNode").parameters({instanceId: LEG_NODE, mediaAddress: "127.0.0.1:10002"}).call()
+                ec.service.sync().name("org.moqui.call.VoiceServices.register#SipNode").parameters({instanceId: LEG_NODE, sipAddress: "127.0.0.1:5070"}).call()
                 // the call's node is the one that registered last
                 for (const n of ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", LEG_NODE).list()) {
                     n.set("heartbeatDate", new Date(Date.now() - 5000))
@@ -265,14 +265,14 @@ feature("a phone registered with another node rings there only with cascading me
                 sipCallId: "reg-leg-node", cseq: 2, credentialRevision: device.credentialRevision || 1, expiresDate: Date.now() + 300000,
                 lastRefreshDate: Date.now(), userAgent: "Spec Phone/1.0"})
             setProperty("rtc_cascade_enabled", "false")
-            const off = as(B, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [A]})
+            const off = as(B, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [A]})
             const offLegs = deviceLegs(off.callSessionId)
-            as(B, "org.moqui.impl.CallServices.end#Call", {callSessionId: off.callSessionId})
+            as(B, "org.moqui.call.CallServices.end#Call", {callSessionId: off.callSessionId})
             setProperty("rtc_cascade_enabled", "true")
-            const onCall = as(B, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [A]})
+            const onCall = as(B, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [A]})
             const onLegs = deviceLegs(onCall.callSessionId)
             const session = sys(() => ec.entity.find("moqui.call.CallSession").condition("callSessionId", onCall.callSessionId).one())
-            as(B, "org.moqui.impl.CallServices.end#Call", {callSessionId: onCall.callSessionId})
+            as(B, "org.moqui.call.CallServices.end#Call", {callSessionId: onCall.callSessionId})
             setProperty("rtc_cascade_enabled", "false")
             sys(() => {
                 ec.entity.find("moqui.call.SipRegistration").condition("sipRegistrationId", "ring-leg-node").deleteAll()
@@ -297,17 +297,17 @@ feature("a tab's answer wins over the phone, and a phone that answers after anot
             const second = as(A, "create#SipDevice", {name: "Soft phone"})
             registered(deviceRow(first.sipDeviceId), "race-1")
             registered(deviceRow(second.sipDeviceId), "race-2")
-            const byTab = as(B, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [A]})
-            const tabAnswer = as(A, "org.moqui.impl.CallServices.answer#Call", {callSessionId: byTab.callSessionId})
+            const byTab = as(B, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [A]})
+            const tabAnswer = as(A, "org.moqui.call.CallServices.answer#Call", {callSessionId: byTab.callSessionId})
             const afterTab = deviceLegs(byTab.callSessionId)
             const late = note(byTab.callSessionId, afterTab[0].callLegId, "answered")
-            as(B, "org.moqui.impl.CallServices.end#Call", {callSessionId: byTab.callSessionId})
-            const byPhones = as(B, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [A]})
+            as(B, "org.moqui.call.CallServices.end#Call", {callSessionId: byTab.callSessionId})
+            const byPhones = as(B, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [A]})
             const two = deviceLegs(byPhones.callSessionId)
             const won = note(byPhones.callSessionId, two[0].callLegId, "answered")
             const lost = note(byPhones.callSessionId, two[1].callLegId, "answered")
             const phonesAfter = deviceLegs(byPhones.callSessionId)
-            as(B, "org.moqui.impl.CallServices.end#Call", {callSessionId: byPhones.callSessionId})
+            as(B, "org.moqui.call.CallServices.end#Call", {callSessionId: byPhones.callSessionId})
             as(A, "revoke#SipDevice", {sipDeviceId: second.sipDeviceId})
             return {tabAnswer, afterTab, late, two, won, lost, phonesAfter}
         })
@@ -338,8 +338,8 @@ feature("with phones and a voicemail box, tabs and phones ring together until vo
             const second = as(A, "create#SipDevice", {name: "Soft phone 2"})
             registered(deviceRow(first.sipDeviceId), "vm-1")
             registered(deviceRow(second.sipDeviceId), "vm-2")
-            const rings = as(A, "org.moqui.impl.VoicemailServices.update#VoicemailSettings", {rings: 10})
-            const receive = () => internal("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: NUMBER_A, fromNumber: CALLER,
+            const rings = as(A, "org.moqui.call.VoicemailServices.update#VoicemailSettings", {rings: 10})
+            const receive = () => internal("org.moqui.call.VoiceServices.receive#PhoneCall", {toNumber: NUMBER_A, fromNumber: CALLER,
                 fromName: "Spec Caller", instanceId: NODE})
             const legsOfA = (callSessionId) => legsOf(callSessionId).filter((l) => l.legTypeEnumId !== "CltPstn")
             const logOf = (callSessionId) => sys(() => ec.entity.find("moqui.call.CallUserLog").condition({callSessionId, userId: A}).one())
@@ -356,9 +356,9 @@ feature("with phones and a voicemail box, tabs and phones ring together until vo
                     leg.update()
                 }
             })
-            internal("org.moqui.impl.CallServices.expire#Calls")
+            internal("org.moqui.call.CallServices.expire#Calls")
             const stillRinging = legsOfA(call.callSessionId)
-            const begun = internal("org.moqui.impl.VoicemailServices.begin#Voicemail", {callSessionId: call.callSessionId,
+            const begun = internal("org.moqui.call.VoicemailServices.begin#Voicemail", {callSessionId: call.callSessionId,
                 callLegId: call.callLegId, reason: "noAnswer"})
             const afterVoicemail = legsOfA(call.callSessionId)
             const lateAnswer = note(call.callSessionId, rung.find((l) => l.legTypeEnumId === "CltSipDevice").callLegId, "answered")
@@ -379,12 +379,12 @@ feature("with phones and a voicemail box, tabs and phones ring together until vo
             const refused = note(declinedCall.callSessionId, phones[0].callLegId, "declined")
             const afterDecline = legsOfA(declinedCall.callSessionId)
             const declinedSession = sessionOf(declinedCall.callSessionId)
-            const declinedBegun = internal("org.moqui.impl.VoicemailServices.begin#Voicemail", {callSessionId: declinedCall.callSessionId,
+            const declinedBegun = internal("org.moqui.call.VoicemailServices.begin#Voicemail", {callSessionId: declinedCall.callSessionId,
                 callLegId: declinedCall.callLegId, reason: "declined"})
             const declinedLog = logOf(declinedCall.callSessionId)
 
             // a colleague's call declined on a phone ends, as one declined in a tab does
-            const direct = as(B, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [A]})
+            const direct = as(B, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [A]})
             const directRefused = note(direct.callSessionId, deviceLegs(direct.callSessionId)[0].callLegId, "declined")
             const directSession = sessionOf(direct.callSessionId)
 
@@ -438,7 +438,7 @@ feature("a registered phone calls another user by username, as its user", {
             const placed = internal("receive#DeviceCall", {sipDeviceId: first.sipDeviceId, toUser: username(B), instanceId: NODE})
             const legs = placed.callSessionId ? legsOf(placed.callSessionId) : []
             const session = placed.callSessionId ? sys(() => ec.entity.find("moqui.call.CallSession").condition("callSessionId", placed.callSessionId).one()) : null
-            if (placed.callSessionId) as(A, "org.moqui.impl.CallServices.end#Call", {callSessionId: placed.callSessionId})
+            if (placed.callSessionId) as(A, "org.moqui.call.CallServices.end#Call", {callSessionId: placed.callSessionId})
             return {placed, legs, session}
         })
     },
@@ -461,9 +461,9 @@ feature("revocation ends the phone: no verifiers, no registrations, no ringing, 
             const again = as(A, "revoke#SipDevice", {sipDeviceId: first.sipDeviceId})
             const auth = internal("get#SipDeviceAuth", {username: first.username, realm: "moqui"})
             const kept = registered(deviceRow(first.sipDeviceId), "rev-2")
-            const call = as(B, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [A]})
+            const call = as(B, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [A]})
             const placed = internal("receive#DeviceCall", {sipDeviceId: first.sipDeviceId, toUser: username(B), instanceId: NODE})
-            as(B, "org.moqui.impl.CallServices.end#Call", {callSessionId: call.callSessionId})
+            as(B, "org.moqui.call.CallServices.end#Call", {callSessionId: call.callSessionId})
             return {revoked, again, auth, rung: deviceLegs(call.callSessionId), placed, listed: as(A, "find#SipDevices"),
                 left: registrations(first.sipDeviceId), kept}
         })

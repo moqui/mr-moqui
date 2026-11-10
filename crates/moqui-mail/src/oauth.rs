@@ -65,7 +65,7 @@ const ENUMERATION: &str = "moqui.basic.Enumeration";
 const IDENTITY: &str = "moqui.basic.email.EmailIdentity";
 /// The stored access token of an EatOAuth2 server, shared by the servers of a cluster.
 const TOKEN: &str = "moqui.basic.email.EmailServerAccessToken";
-const SERVICES: &str = "org.moqui.impl.EmailClientServices";
+const SERVICES: &str = "org.moqui.mail.EmailClientServices";
 /// The authentication type of a server that signs in with OAuth.
 pub(super) const OAUTH: &str = "EatOAuth2";
 /// The session attribute that holds the pending sign-ins, by sign-in id.

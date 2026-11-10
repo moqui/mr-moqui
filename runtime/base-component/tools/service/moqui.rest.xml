@@ -116,7 +116,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <method type="get"><entity name="emailTemplates" masterName="default" operation="one"/></method>
                 <method type="patch"><entity name="emailTemplates" masterName="default" operation="update"/></method>
                 <resource name="send"><method type="post">
-                    <service name="org.moqui.impl.EmailServices.send#Email"/></method></resource>
+                    <service name="org.moqui.mail.EmailServices.send#Email"/></method></resource>
             </id>
         </resource>
         <resource name="servers">
@@ -126,7 +126,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <method type="get"><entity name="moqui.basic.email.EmailServer" operation="one"/></method>
                 <method type="patch"><entity name="moqui.basic.email.EmailServer" operation="update"/></method>
                 <resource name="poll"><method type="post">
-                    <service name="org.moqui.impl.EmailServices.poll#EmailServer"/></method></resource>
+                    <service name="org.moqui.mail.EmailServices.poll#EmailServer"/></method></resource>
             </id>
         </resource>
     </resource>
@@ -251,13 +251,13 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- TODO add more wiki pages and spaces endpoints (see WikiServices.xml) -->
         <resource name="pages">
             <id name="wikiSpaceId"><id name="pagePathList" allow-extra-path="true"><method type="get">
-                <service name="org.moqui.impl.WikiServices.get#PublishedWikiPageText"/></method></id></id>
+                <service name="org.moqui.resource.WikiServices.get#PublishedWikiPageText"/></method></id></id>
 
             <resource name="page">
                 <resource name="info">
-                    <method type="get"><service name="org.moqui.impl.WikiServices.get#WikiPageInfo"/></method>
+                    <method type="get"><service name="org.moqui.resource.WikiServices.get#WikiPageInfo"/></method>
                     <id name="wikiPageId"><method type="get">
-                        <service name="org.moqui.impl.WikiServices.get#WikiPageInfoById"/></method></id>
+                        <service name="org.moqui.resource.WikiServices.get#WikiPageInfoById"/></method></id>
                 </resource>
             </resource>
         </resource>
@@ -270,8 +270,8 @@ along with this software (see the LICENSE.md file). If not, see
             <resource name="commits">
                 <id name="commitId">
                     <resource name="statuses">
-                        <method type="post"><service name="org.moqui.impl.GitServices.create#GitCommitStatus"/></method>
-                        <method type="get"><service name="org.moqui.impl.GitServices.get#GitCommitStatuses"/></method>
+                        <method type="post"><service name="org.moqui.git.GitServices.create#GitCommitStatus"/></method>
+                        <method type="get"><service name="org.moqui.git.GitServices.get#GitCommitStatuses"/></method>
                     </resource>
                 </id>
             </resource>
@@ -285,22 +285,22 @@ along with this software (see the LICENSE.md file). If not, see
         <resource name="projects">
             <id name="projectId">
                 <resource name="artifacts">
-                    <method type="get"><service name="org.moqui.impl.DevToolsServices.find#Artifacts"/></method>
+                    <method type="get"><service name="org.moqui.dev.DevToolsServices.find#Artifacts"/></method>
                 </resource>
                 <resource name="artifact">
-                    <method type="get"><service name="org.moqui.impl.DevToolsServices.get#Artifact"/></method>
+                    <method type="get"><service name="org.moqui.dev.DevToolsServices.get#Artifact"/></method>
                 </resource>
                 <resource name="refs">
-                    <method type="get"><service name="org.moqui.impl.DevToolsServices.get#ArtifactRefs"/></method>
+                    <method type="get"><service name="org.moqui.dev.DevToolsServices.get#ArtifactRefs"/></method>
                 </resource>
                 <resource name="bindings">
-                    <method type="get"><service name="org.moqui.impl.DevToolsServices.get#ArtifactBindings"/></method>
+                    <method type="get"><service name="org.moqui.dev.DevToolsServices.get#ArtifactBindings"/></method>
                 </resource>
                 <resource name="at">
-                    <method type="get"><service name="org.moqui.impl.DevToolsServices.get#ArtifactAt"/></method>
+                    <method type="get"><service name="org.moqui.dev.DevToolsServices.get#ArtifactAt"/></method>
                 </resource>
                 <resource name="extensions">
-                    <method type="get"><service name="org.moqui.impl.DevToolsServices.get#ArtifactExtensions"/></method>
+                    <method type="get"><service name="org.moqui.dev.DevToolsServices.get#ArtifactExtensions"/></method>
                 </resource>
             </id>
         </resource>

@@ -637,7 +637,7 @@ fn the_index_follows_reloads_and_extensions() {
         &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
     );
     let factory = Arc::clone(gate.server.factory());
-    const DT: &str = "org.moqui.impl.DevToolsServices.";
+    const DT: &str = "org.moqui.dev.DevToolsServices.";
     let json = |out: &BTreeMap<String, Value>, key: &str| moqui_lib::json::to_json(&out[key]);
 
     // the build: every component file, timed
@@ -1265,7 +1265,7 @@ fn the_screen_tree_orders_moves_and_removes() {
     call(
         &factory,
         "john.doe",
-        "org.moqui.impl.DevToolsServices.rebuild#ArtifactIndex",
+        "org.moqui.dev.DevToolsServices.rebuild#ArtifactIndex",
         &[],
     )
     .unwrap();
@@ -1545,7 +1545,10 @@ fn new_components_come_from_the_component_template() {
 
     let made = create("john.doe", &[("componentName", "demo-shop")]).unwrap();
     let shop = gate.runtime.join("component/demo-shop");
-    assert_eq!(text(&made, "location"), shop.canonicalize().unwrap().display().to_string());
+    assert_eq!(
+        text(&made, "location"),
+        shop.canonicalize().unwrap().display().to_string()
+    );
     assert_eq!(text(&made, "restart"), "true");
     assert!(shop.join("screen/DemoShop/FindItem.xml").is_file());
     assert!(shop.join("service/demoshop/DemoShopServices.xml").is_file());
@@ -2171,7 +2174,6 @@ fn the_git_depth_writes_on_scratch_repositories() {
     let reasons = moqui_lib::json::to_json(&waits["restartReasons"]).to_string();
     assert!(reasons.contains("Rust code"), "{reasons}");
 
-
     // Repositories: every root with its state; Fetch all and Pull all root by root
     let fetched = call(&factory, "john.doe", &format!("{VCS}fetch#All"), &[]).unwrap();
     assert_eq!(text(&fetched, "failed"), "0", "{fetched:?}");
@@ -2583,7 +2585,7 @@ fn an_allowed_projects_index_is_read_off_dev_by_its_id_and_over_rest() {
     let gate = crate::common::start_with_properties("aide-read", Some(&data), &[]);
     assert!(!moqui_core::devtools::is_dev_instance());
     let factory = Arc::clone(gate.server.factory());
-    const DT: &str = "org.moqui.impl.DevToolsServices.";
+    const DT: &str = "org.moqui.dev.DevToolsServices.";
     let json = |out: &BTreeMap<String, Value>, key: &str| moqui_lib::json::to_json(&out[key]);
     let read =
         |user: &str, verb: &str, parameters: &[(&str, &str)]| call(&factory, user, &format!("{DT}{verb}"), parameters);
@@ -2760,7 +2762,11 @@ fn autodoc_shows_a_doc_and_exports_a_tree_into_the_site() {
 </entity-facade-xml>"#;
     let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml")
         .replace("</entity-facade-xml>", users);
-    let dev_aide = std::fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/../../runtime/dev-component/dev-aide")).unwrap();
+    let dev_aide = std::fs::canonicalize(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../runtime/dev-component/dev-aide"
+    ))
+    .unwrap();
     let entities = r#"<entities>
     <entity entity-name="Widget" package="mysite">
         <description>A widget the site sells, | with a pipe.</description>
@@ -2793,11 +2799,23 @@ fn autodoc_shows_a_doc_and_exports_a_tree_into_the_site() {
     const DOCS: &str = "org.moqui.devaide.DocServices.";
 
     // the view tier reads a doc, made from the server's index
-    let doc = call(&factory, "view.user", &format!("{DOCS}get#ArtifactDoc"), &[("artifactId", "Widget")]).unwrap();
+    let doc = call(
+        &factory,
+        "view.user",
+        &format!("{DOCS}get#ArtifactDoc"),
+        &[("artifactId", "Widget")],
+    )
+    .unwrap();
     assert_eq!(text(&doc, "docPath"), "entity/mysite/Widget.md");
     let markdown = text(&doc, "markdown");
-    assert!(markdown.contains("\n\nA widget the site sells, | with a pipe.\n\n"), "a description is Markdown as written: {markdown}");
-    assert!(markdown.contains("| `statusId` | `id` |  |  |  | Where it is. |"), "{markdown}");
+    assert!(
+        markdown.contains("\n\nA widget the site sells, | with a pipe.\n\n"),
+        "a description is Markdown as written: {markdown}"
+    );
+    assert!(
+        markdown.contains("| `statusId` | `id` |  |  |  | Where it is. |"),
+        "{markdown}"
+    );
     assert!(markdown.contains("```mermaid\nerDiagram"), "{markdown}");
 
     // ... and may not export
@@ -2814,9 +2832,19 @@ fn autodoc_shows_a_doc_and_exports_a_tree_into_the_site() {
     let first = export("ext.user", &[]).unwrap();
     let written: i64 = text(&first, "written").parse().unwrap();
     assert!(written >= 5, "{first:?}");
-    assert!(matches!(first.get("failures"), Some(Value::List(list)) if list.is_empty()), "{first:?}");
+    assert!(
+        matches!(first.get("failures"), Some(Value::List(list)) if list.is_empty()),
+        "{first:?}"
+    );
     assert_eq!(text(&first, "docCount").parse::<i64>().unwrap(), written);
-    for path in ["README.md", "entity/README.md", "entity/mysite/README.md", "entity/mysite/Widget.md", "service/mysite/Things/get-Thing.md", ".autodoc.json"] {
+    for path in [
+        "README.md",
+        "entity/README.md",
+        "entity/mysite/README.md",
+        "entity/mysite/Widget.md",
+        "service/mysite/Things/get-Thing.md",
+        ".autodoc.json",
+    ] {
         assert!(site.join("autodoc").join(path).is_file(), "{path}");
     }
     let widget = std::fs::read_to_string(site.join("autodoc/entity/mysite/Widget.md")).unwrap();
@@ -2843,7 +2871,8 @@ fn autodoc_shows_a_doc_and_exports_a_tree_into_the_site() {
 
     // a stale doc the manifest lists is removed; a file written by hand is not
     let manifest_path = site.join("autodoc/.autodoc.json");
-    let mut manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
     manifest["files"]["entity/mysite/Gone.md"] = serde_json::json!({"title": "Gone", "kind": "entity"});
     std::fs::write(&manifest_path, manifest.to_string()).unwrap();
     std::fs::write(site.join("autodoc/entity/mysite/Gone.md"), "old").unwrap();
@@ -2851,7 +2880,10 @@ fn autodoc_shows_a_doc_and_exports_a_tree_into_the_site() {
     let cleaned = export("ext.user", &[("removeStale", "true")]).unwrap();
     assert_eq!(text(&cleaned, "removed"), "1", "{cleaned:?}");
     assert!(!site.join("autodoc/entity/mysite/Gone.md").exists());
-    assert_eq!(std::fs::read_to_string(site.join("autodoc/entity/NOTES.md")).unwrap(), "mine");
+    assert_eq!(
+        std::fs::read_to_string(site.join("autodoc/entity/NOTES.md")).unwrap(),
+        "mine"
+    );
     assert!(!std::fs::read_to_string(&manifest_path).unwrap().contains("Gone.md"));
 
     // an upstream component takes no docs while the lock is on

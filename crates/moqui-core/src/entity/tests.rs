@@ -1485,7 +1485,7 @@ fn the_stamp_is_the_transaction_start_and_a_changed_stamp_is_kept() {
     assert!(stamp("I1").is_some_and(|stamp| !stamp.is_null()));
     assert_eq!(stamp("I1"), stamp("I2"));
 
-    let chosen = moqui_lib::object::basic_convert(&Value::I64(1_000_000_000_000), "java.sql.Timestamp").value;
+    let chosen = moqui_lib::object::basic_convert(&Value::I64(1_000_000_000_000), "Timestamp").value;
     let mut item = parity_item(&facade, "I1");
     item.set("note", Value::string("x"));
     item.set("lastUpdatedStamp", chosen.clone());

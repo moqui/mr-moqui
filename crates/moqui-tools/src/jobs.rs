@@ -42,7 +42,7 @@ use crate::schema::PlanStatement;
 
 pub const JOB: &str = "moqui.database.DatabaseJob";
 pub const STATEMENT: &str = "moqui.database.DatabaseJobStatement";
-const RUN_SERVICE: &str = "org.moqui.impl.DatabaseServices.run#DatabaseJob";
+const RUN_SERVICE: &str = "org.moqui.dev.DatabaseServices.run#DatabaseJob";
 /// The notification topic of a finished job.
 pub const TOPIC: &str = "DatabaseJob";
 

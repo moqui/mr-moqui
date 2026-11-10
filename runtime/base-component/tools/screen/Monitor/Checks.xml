@@ -16,7 +16,7 @@
     <transition name="scrapeNow" method="post" authz-action="update">
         <actions><script><![CDATA[
             try {
-                const result=ec.service.sync().name('org.moqui.impl.TelemetryServices.scrape#Targets').parameters({targetId}).call()
+                const result=ec.service.sync().name('org.moqui.monitor.TelemetryServices.scrape#Targets').parameters({targetId}).call()
                 ec.message.addPublic((result.failed ? ec.l10n.localize('Scrape of {0} failed') : ec.l10n.localize('Scraped {0}: {1} points written')).replace('{0}',targetId).replace('{1}',result.written || 0),result.failed ? 'warning' : 'success')
             } catch (error) { ec.message.addError(ec.l10n.localize('Scrape of {0} failed').replace('{0}',targetId)+': '+String(error)) }
         ]]></script></actions><default-response url="."/>
@@ -36,7 +36,7 @@
     <transition name="checkNow" method="post" authz-action="update">
         <actions><script><![CDATA[
             try {
-                const result=ec.service.sync().name('org.moqui.impl.TelemetryServices.run#Checks').parameters({checkId}).call()
+                const result=ec.service.sync().name('org.moqui.monitor.TelemetryServices.run#Checks').parameters({checkId}).call()
                 ec.message.addPublic((result.failed ? ec.l10n.localize('Check {0} failed') : ec.l10n.localize('Check {0} passed')).replace('{0}',checkId)+(result.traceId ? ', '+ec.l10n.localize('trace')+' '+result.traceId : ''),result.failed ? 'warning' : 'success')
             } catch (error) { ec.message.addError(ec.l10n.localize('Check {0} could not run').replace('{0}',checkId)+': '+String(error)) }
         ]]></script></actions><default-response url="."/>

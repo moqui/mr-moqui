@@ -1,4 +1,4 @@
-// Ring groups (org.moqui.impl.CallHandlingServices and CallHandling.js, RingGroup and RingGroupMember; plans/Comms-Framework.md
+// Ring groups (org.moqui.call.CallHandlingServices and CallHandling.js, RingGroup and RingGroupMember; plans/Comms-Framework.md
 // §5.3, §5.4, V3): a number routed to a ring group rings its members by strategy. All at once: every free member (one in do not
 // disturb or busy is skipped), each with a CallUserLog row as a ring group member, and the first answer wins across their
 // tabs, phones and mobiles, the others' offers canceled. In order: one member at a time, the next when the SIP engine's
@@ -34,7 +34,7 @@ function as(userId, name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.impl.CallHandlingServices." + name)
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.CallHandlingServices." + name)
             .parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
@@ -106,12 +106,12 @@ function clean() {
 }
 function nodesUp() {
     sys(() => {
-        ec.service.sync().name("org.moqui.impl.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
-        ec.service.sync().name("org.moqui.impl.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
+        ec.service.sync().name("org.moqui.call.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
+        ec.service.sync().name("org.moqui.call.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
     })
 }
-const receive = () => engine("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: GROUP_NUMBER, fromNumber: CALLER, fromName: "Spec Caller", instanceId: NODE})
-const begin = (call, reason, stepToken) => engine("org.moqui.impl.VoicemailServices.begin#Voicemail", {callSessionId: call.callSessionId, callLegId: call.callLegId,
+const receive = () => engine("org.moqui.call.VoiceServices.receive#PhoneCall", {toNumber: GROUP_NUMBER, fromNumber: CALLER, fromName: "Spec Caller", instanceId: NODE})
+const begin = (call, reason, stepToken) => engine("org.moqui.call.VoicemailServices.begin#Voicemail", {callSessionId: call.callSessionId, callLegId: call.callLegId,
     reason: reason || "noAnswer", stepToken: stepToken || null})
 function legsOfUser(callSessionId, userId) {
     return sys(() => {
@@ -121,7 +121,7 @@ function legsOfUser(callSessionId, userId) {
 }
 const offered = (callSessionId) => USERS.filter((userId) => legsOfUser(callSessionId, userId).some((l) => l.statusId === "ClsOffered"))
 const log = (callSessionId, userId) => sys(() => ec.entity.find("moqui.call.CallUserLog").condition({callSessionId, userId}).one())
-const note = (callSessionId, callLegId, event) => engine("org.moqui.impl.VoiceServices.note#PhoneLeg", {callSessionId, callLegId, event})
+const note = (callSessionId, callLegId, event) => engine("org.moqui.call.VoiceServices.note#PhoneLeg", {callSessionId, callLegId, event})
 const status = (userId, fields) => upsert("moqui.security.UserStatus", {userId}, fields)
 const endCall = (callSessionId) => sys(() => {
     const s = ec.entity.find("moqui.call.CallSession").condition("callSessionId", callSessionId).one()
@@ -154,9 +154,9 @@ feature("only a voice admin keeps ring groups and routes a number to one", {
         groupId = made.ringGroupId
         const memberRefused = as(OUT, "store#RingGroupMember", {ringGroupId: groupId, userId: M1})
         for (const [userId, seq] of [[M1, 10], [M2, 20], [M3, 30]]) as(ADMIN, "store#RingGroupMember", {ringGroupId: groupId, userId, sequenceNum: seq})
-        const routed = as(ADMIN, "org.moqui.impl.VoiceServices.store#PhoneNumber", {phoneNumber: GROUP_NUMBER, voiceTrunkId: TRUNK,
+        const routed = as(ADMIN, "org.moqui.call.VoiceServices.store#PhoneNumber", {phoneNumber: GROUP_NUMBER, voiceTrunkId: TRUNK,
             routeTypeEnumId: "PnrRingGroup", routeId: groupId})
-        const badRoute = as(ADMIN, "org.moqui.impl.VoiceServices.store#PhoneNumber", {phoneNumber: GROUP_NUMBER, voiceTrunkId: TRUNK,
+        const badRoute = as(ADMIN, "org.moqui.call.VoiceServices.store#PhoneNumber", {phoneNumber: GROUP_NUMBER, voiceTrunkId: TRUNK,
             routeTypeEnumId: "PnrRingGroup", routeId: "NO_SUCH_GROUP"})
         const badSeconds = as(ADMIN, "store#RingGroup", Object.assign({}, fields, {ringGroupId: groupId, ringSeconds: 2}))
         const found = as(ADMIN, "find#RingGroups")
@@ -182,8 +182,8 @@ feature("all at once: every free member rings (do not disturb skipped), each log
         const call = receive()
         const rung = offered(call.callSessionId)
         const logs = [M1, M2, M3].map((userId) => log(call.callSessionId, userId))
-        const answered = as(M2, "org.moqui.impl.CallServices.answer#Call", {callSessionId: call.callSessionId})
-        const late = as(M1, "org.moqui.impl.CallServices.answer#Call", {callSessionId: call.callSessionId})
+        const answered = as(M2, "org.moqui.call.CallServices.answer#Call", {callSessionId: call.callSessionId})
+        const late = as(M1, "org.moqui.call.CallServices.answer#Call", {callSessionId: call.callSessionId})
         const m1Leg = legsOfUser(call.callSessionId, M1)[0]
         const m1Log = log(call.callSessionId, M1)
         const m2Log = log(call.callSessionId, M2)
@@ -191,7 +191,7 @@ feature("all at once: every free member rings (do not disturb skipped), each log
         const lateTimer = begin(call)
         status(M3, {statusEnumId: "UpsOnline"})
         // M2 hangs up: the call ends and M2 is in no call
-        as(M2, "org.moqui.impl.CallServices.leave#Call", {callSessionId: call.callSessionId})
+        as(M2, "org.moqui.call.CallServices.leave#Call", {callSessionId: call.callSessionId})
         return {call, rung, logs, answered, late, m1Leg, m1Log, m2Log, lateTimer, m2InCall: sys(() => ec.entity.find("moqui.security.UserStatus").condition("userId", M2).one()?.inCall)}
     },
     then({call, rung, logs, answered, late, m1Leg, m1Log, m2Log, lateTimer, m2InCall}) {
@@ -219,7 +219,7 @@ feature("a member's mobile rings with them, and its answer wins over every membe
         const call = receive()
         const mobile = legsOfUser(call.callSessionId, M1).find((l) => l.legTypeEnumId === "CltPstn")
         const answered = note(call.callSessionId, mobile.callLegId, "answered")
-        const tab = as(M2, "org.moqui.impl.CallServices.answer#Call", {callSessionId: call.callSessionId})
+        const tab = as(M2, "org.moqui.call.CallServices.answer#Call", {callSessionId: call.callSessionId})
         const stillOffered = offered(call.callSessionId)
         as(M1, "update#CallHandlingSetting", {ringMobile: "N"})
         // the mobile hangs up: the call ends
@@ -247,7 +247,7 @@ feature("in order: one member at a time, the next when the step's timer ends, th
         const third = begin(call)
         const thirdRung = offered(call.callSessionId)
         // M3 declines: nothing else rings, so the plan goes on to the fallback
-        const declined = as(M3, "org.moqui.impl.CallServices.decline#Call", {callSessionId: call.callSessionId})
+        const declined = as(M3, "org.moqui.call.CallServices.decline#Call", {callSessionId: call.callSessionId})
         const fallback = begin(call, "declined")
         call2 = call
         return {call, first, next, second, m1Log, third, thirdRung, declined, fallback,
@@ -275,22 +275,22 @@ feature("the group's box is its members': a message one of them heard is heard f
         const path = ec.factory.getRuntimePath() + "/tmp/voicemail/rg-spec-1.ogg"
         ec.resource.getLocationReference("file:" + path).putText("OggS a ring group's message")
         const box = sys(() => ec.entity.find("moqui.call.VoicemailBox").condition("ringGroupId", groupId).one())
-        const stored = engine("org.moqui.impl.VoicemailServices.store#Voicemail", {voicemailBoxId: box.voicemailBoxId, callSessionId: call2.callSessionId,
+        const stored = engine("org.moqui.call.VoicemailServices.store#Voicemail", {voicemailBoxId: box.voicemailBoxId, callSessionId: call2.callSessionId,
             tempPath: path, durationMs: 3000, fromNumber: CALLER, fromName: "Spec Caller"})
-        const m1Before = as(M1, "org.moqui.impl.VoicemailServices.count#UnheardVoicemails")
-        const m1List = as(M1, "org.moqui.impl.VoicemailServices.find#Voicemails", {})
-        const heard = as(M2, "org.moqui.impl.VoicemailServices.mark#VoicemailHeard", {voicemailId: stored.voicemailId, heard: true})
-        const m1After = as(M1, "org.moqui.impl.VoicemailServices.get#Voicemail", {voicemailId: stored.voicemailId})
-        const outsider = as(OUT, "org.moqui.impl.VoicemailServices.get#Voicemail", {voicemailId: stored.voicemailId})
-        const outsiderAudio = as(OUT, "org.moqui.impl.VoicemailServices.get#VoicemailAudio", {voicemailId: stored.voicemailId})
+        const m1Before = as(M1, "org.moqui.call.VoicemailServices.count#UnheardVoicemails")
+        const m1List = as(M1, "org.moqui.call.VoicemailServices.find#Voicemails", {})
+        const heard = as(M2, "org.moqui.call.VoicemailServices.mark#VoicemailHeard", {voicemailId: stored.voicemailId, heard: true})
+        const m1After = as(M1, "org.moqui.call.VoicemailServices.get#Voicemail", {voicemailId: stored.voicemailId})
+        const outsider = as(OUT, "org.moqui.call.VoicemailServices.get#Voicemail", {voicemailId: stored.voicemailId})
+        const outsiderAudio = as(OUT, "org.moqui.call.VoicemailServices.get#VoicemailAudio", {voicemailId: stored.voicemailId})
         // a member who leaves the group loses it; back in, they have it again
         as(ADMIN, "delete#RingGroupMember", {ringGroupId: groupId, userId: M3})
-        const former = as(M3, "org.moqui.impl.VoicemailServices.get#Voicemail", {voicemailId: stored.voicemailId})
+        const former = as(M3, "org.moqui.call.VoicemailServices.get#Voicemail", {voicemailId: stored.voicemailId})
         as(ADMIN, "store#RingGroupMember", {ringGroupId: groupId, userId: M3, sequenceNum: 30})
         // one member deletes it and another empties the trash they share
-        const trashed = as(M2, "org.moqui.impl.VoicemailServices.delete#Voicemail", {voicemailId: stored.voicemailId})
-        const emptied = as(M1, "org.moqui.impl.VoicemailServices.empty#VoicemailTrash", {})
-        const gone = as(M2, "org.moqui.impl.VoicemailServices.get#Voicemail", {voicemailId: stored.voicemailId})
+        const trashed = as(M2, "org.moqui.call.VoicemailServices.delete#Voicemail", {voicemailId: stored.voicemailId})
+        const emptied = as(M1, "org.moqui.call.VoicemailServices.empty#VoicemailTrash", {})
+        const gone = as(M2, "org.moqui.call.VoicemailServices.get#Voicemail", {voicemailId: stored.voicemailId})
         endCall(call2.callSessionId)
         return {stored, m1Before, m1List, heard, m1After, outsider, outsiderAudio, former, trashed, emptied, gone}
     },

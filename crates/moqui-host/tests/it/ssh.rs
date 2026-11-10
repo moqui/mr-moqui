@@ -303,10 +303,10 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     assert!(drives.ls_files("/My files/Reports").unwrap().is_empty());
     drives.close();
     moqui_core::user::internal_login_user("no.ssh").unwrap();
-    let (drives_out, _) = sync("org.moqui.impl.FileServices.get#UserDrives", &[]);
+    let (drives_out, _) = sync("org.moqui.resource.FileServices.get#UserDrives", &[]);
     let drive_id = to_plain_string(drives_out.get("personalDriveId").unwrap());
     let (trash, errors) = sync(
-        "org.moqui.impl.FileServices.list#Trash",
+        "org.moqui.resource.FileServices.list#Trash",
         &[("driveId", Value::string(drive_id))],
     );
     moqui_core::user::internal_login_user("john.doe").unwrap();

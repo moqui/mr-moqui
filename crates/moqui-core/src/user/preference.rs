@@ -221,7 +221,7 @@ pub fn user_has_permission(user_id: &str, user_permission_id: &str) -> Result<bo
 }
 
 /// The framework permission of a user from outside the organization that runs the server: a client contact, a vendor's
-/// or partner's user. Such a user reaches no room bound to a record (`org.moqui.impl.ChatServices`: not as a member
+/// or partner's user. Such a user reaches no room bound to a record (`org.moqui.chat.ChatServices`: not as a member
 /// either, and `check#RecordVisible` answers false for them whatever the app's hook says), no public room but as a
 /// member, no record folder of a records drive (`FileServices.get#DriveAccess`, over the screens, WebDAV and SFTP),
 /// sees no other user's presence, and never holds the agent permissions ([`EXTERNAL_WITHHELD`]: no Assist, chat agents,

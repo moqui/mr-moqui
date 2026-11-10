@@ -60,7 +60,7 @@ spec({
     setupSpec() {
         makeUser(CALLER, "basic.comms.caller")
         makeUser(STRANGER, "basic.comms.call.stranger")
-        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: NODE, mediaAddress: "127.0.0.1:10000"}))
+        sys(() => call("org.moqui.call.CallServices.register#MediaNode", {instanceId: NODE, mediaAddress: "127.0.0.1:10000"}))
     },
     cleanupSpec() {
         sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", NODE).deleteAll())
@@ -217,7 +217,7 @@ feature("an end-to-end encrypted call through the transitions: a browser without
             if (s.statusId !== "CssEnded") { s.set("statusId", "CssEnded"); s.update() }
         })
         // History's Call back of the encrypted call starts an encrypted call again, with the row's own parameters
-        const row = (sys(() => call("org.moqui.impl.CallServices.find#Calls", {pageSize: 25})).callList || []).find((c) => c.callSessionId == encryptedId)
+        const row = (sys(() => call("org.moqui.call.CallServices.find#Calls", {pageSize: 25})).callList || []).find((c) => c.callSessionId == encryptedId)
         const before = Date.now() - 1000
         request(root, "Calls/History/callBack", {otherUserIds: row.otherUserIdList.join(","), chatRoomId: row.chatRoomId || "",
             isRoomCall: "false", video: row.video ? "true" : "false", e2ee: row.e2ee ? "true" : "false"}, "post")
@@ -246,7 +246,7 @@ feature("History has Call links, and the Meetings of an app's meetings-source th
         login("john.doe")
         const own = request(root, "Calls/History", {}, null)
         const app = bossInstalled ? request(bossRoot, "Calls/History", {}, null) : null
-        const meetings = sys(() => call("org.moqui.impl.ShellServices.call#Providers", {hook: "meetings-source",
+        const meetings = sys(() => call("org.moqui.ui.ShellServices.call#Providers", {hook: "meetings-source",
             parameters: {fromDate: new Date(), thruDate: new Date(Date.now() + 7 * 86400000)}})) || {}
         return {own, app, meetings}
     },
@@ -386,7 +386,7 @@ feature("call-context: a phone caller's providers answer for the user rung, one 
         const NUMBER = "+15550109101"
         const TRUNK = "BASIC_COMMS_CTX_TRUNK"
         sys(() => {
-            call("org.moqui.impl.VoiceServices.register#SipNode", {instanceId: NODE, sipAddress: "127.0.0.1:5060"})
+            call("org.moqui.call.VoiceServices.register#SipNode", {instanceId: NODE, sipAddress: "127.0.0.1:5060"})
             ec.entity.find("moqui.call.PhoneNumber").condition("phoneNumber", NUMBER).deleteAll()
             ec.entity.find("moqui.call.VoiceTrunk").condition("voiceTrunkId", TRUNK).deleteAll()
             const trunk = ec.entity.makeValue("moqui.call.VoiceTrunk")
@@ -397,7 +397,7 @@ feature("call-context: a phone caller's providers answer for the user rung, one 
             number.setFields({phoneNumber: NUMBER, voiceTrunkId: TRUNK, routeTypeEnumId: "PnrUser", routeId: john()}, true, null, null)
             number.create()
         })
-        const ring = sys(() => call("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: NUMBER, fromNumber: "+15550100666", instanceId: NODE})) || {}
+        const ring = sys(() => call("org.moqui.call.VoiceServices.receive#PhoneCall", {toNumber: NUMBER, fromNumber: "+15550100666", instanceId: NODE})) || {}
         ec.user.internalLoginUser("john.doe")
         const mine = request(root, "Calls/callContext", {callSessionId: ring.callSessionId}, "get")
         ec.user.internalLoginUser("basic.comms.call.stranger")

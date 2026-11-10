@@ -1,4 +1,4 @@
-// Web Push subscriptions (org.moqui.impl.NotificationServices get#WebPushStatus, store#, delete#WebPushSubscription and
+// Web Push subscriptions (org.moqui.ui.NotificationServices get#WebPushStatus, store#, delete#WebPushSubscription and
 // send#WebPush; service/web_push.rs; plans/Comms-Framework.md §7.2 P0): the status gives the VAPID key; a subscription
 // is the signed-in user's only, moves when another user signs in on the same browser, and is deleted only by its user;
 // keys are checked; a failing push counts against the subscription and disables it after 5.
@@ -26,7 +26,7 @@ function attempt(name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => call("org.moqui.impl.NotificationServices." + name, parameters)) || {}
+        out = sys(() => call("org.moqui.ui.NotificationServices." + name, parameters)) || {}
     } catch (err) {
         thrown = String(err.message || err)
     }
@@ -156,18 +156,18 @@ feature("nobody signed in cannot store a subscription", {
 feature("a push that fails counts against the subscription, and the fifth failure in a row disables it", {
     when() {
         store(ENDPOINT)
-        const first = sys(() => call("org.moqui.impl.NotificationServices.send#WebPush", {userIdList: [JOHN], title: "Hi"}))
+        const first = sys(() => call("org.moqui.ui.NotificationServices.send#WebPush", {userIdList: [JOHN], title: "Hi"}))
         const counted = row(ENDPOINT)
         sys(() => {
             const value = ec.entity.find(SUBSCRIPTION).condition("endpoint", ENDPOINT).one()
             value.failureCount = 4
             value.update()
         })
-        sys(() => call("org.moqui.impl.NotificationServices.send#WebPush", {userIdList: [JOHN], title: "Hi"}))
+        sys(() => call("org.moqui.ui.NotificationServices.send#WebPush", {userIdList: [JOHN], title: "Hi"}))
         const disabled = row(ENDPOINT)
         const status = attempt("get#WebPushStatus", {endpoint: ENDPOINT})
         // a disabled subscription is not sent to
-        const none = sys(() => call("org.moqui.impl.NotificationServices.send#WebPush", {userIdList: [JOHN], title: "Hi"}))
+        const none = sys(() => call("org.moqui.ui.NotificationServices.send#WebPush", {userIdList: [JOHN], title: "Hi"}))
         // the browser storing it again enables it
         store(ENDPOINT)
         return {first, counted, disabled, status, none, again: row(ENDPOINT)}

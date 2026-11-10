@@ -70,7 +70,7 @@ fn a_wiki_space_on_a_git_repository_keeps_commits_as_versions() {
     let _entered = context.enter();
     let _authz = context.disable_authz();
     crate::install(context.factory()).unwrap();
-    install(&["EntityServices.xml", "impl/WikiServices.xml", "impl/GitServices.xml"]);
+    install(&["EntityServices.xml", "resource/WikiServices.xml", "git/GitServices.xml"]);
     seed(
         &facade,
         "moqui.resource.GitRepository",
@@ -82,7 +82,7 @@ fn a_wiki_space_on_a_git_repository_keeps_commits_as_versions() {
         out
     };
     sync(
-        "org.moqui.impl.WikiServices.create#WikiSpace",
+        "org.moqui.resource.WikiServices.create#WikiSpace",
         &[
             ("wikiSpaceId", "GTS"),
             ("description", "Git space"),
@@ -91,7 +91,7 @@ fn a_wiki_space_on_a_git_repository_keeps_commits_as_versions() {
     );
     for text in ["one", "two"] {
         sync(
-            "org.moqui.impl.WikiServices.update#WikiPage",
+            "org.moqui.resource.WikiServices.update#WikiPage",
             &[("wikiSpaceId", "GTS"), ("pageName", "Page1"), ("pageText", text)],
         );
     }
@@ -99,13 +99,13 @@ fn a_wiki_space_on_a_git_repository_keeps_commits_as_versions() {
     let history = context.factory().resource().version_history(location).unwrap();
     assert_eq!(history.len(), 2);
     let info = sync(
-        "org.moqui.impl.WikiServices.get#WikiPageInfo",
+        "org.moqui.resource.WikiServices.get#WikiPageInfo",
         &[("wikiSpaceId", "GTS"), ("pagePath", "Page1")],
     );
     assert_eq!(text(&info, "currentVersionName"), history[0].version_name);
     assert_eq!(text(&info, "pageLocation"), location);
     let first = sync(
-        "org.moqui.impl.WikiServices.get#PublishedWikiPageText",
+        "org.moqui.resource.WikiServices.get#PublishedWikiPageText",
         &[
             ("wikiSpaceId", "GTS"),
             ("pagePath", "Page1"),
@@ -117,7 +117,7 @@ fn a_wiki_space_on_a_git_repository_keeps_commits_as_versions() {
     let target = std::env::temp_dir().join(format!("moqui-wiki-git-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&target);
     let exported = sync(
-        "org.moqui.impl.GitServices.export#GitRepository",
+        "org.moqui.git.GitServices.export#GitRepository",
         &[("repositoryId", "wiki"), ("targetPath", &target.to_string_lossy())],
     );
     assert_eq!(text(&exported, "exportPath"), target.to_string_lossy());
@@ -125,7 +125,7 @@ fn a_wiki_space_on_a_git_repository_keeps_commits_as_versions() {
     let _ = std::fs::remove_dir_all(&target);
 
     let out = moqui_core::service::sync(
-        "org.moqui.impl.GitServices.fetch#GitRepository",
+        "org.moqui.git.GitServices.fetch#GitRepository",
         &params(&[("repositoryId", "wiki")]),
     )
     .expect("a business failure is a message, not an Err");
@@ -143,7 +143,7 @@ fn a_wiki_space_in_a_code_repository_subdirectory_keeps_its_pages_beside_the_cod
     let _entered = context.enter();
     let _authz = context.disable_authz();
     crate::install(context.factory()).unwrap();
-    install(&["EntityServices.xml", "impl/WikiServices.xml", "impl/GitServices.xml"]);
+    install(&["EntityServices.xml", "resource/WikiServices.xml", "git/GitServices.xml"]);
     seed(
         &facade,
         "moqui.resource.GitRepository",
@@ -172,7 +172,7 @@ fn a_wiki_space_in_a_code_repository_subdirectory_keeps_its_pages_beside_the_cod
         out
     };
     let made = sync(
-        "org.moqui.impl.WikiServices.create#WikiSpace",
+        "org.moqui.resource.WikiServices.create#WikiSpace",
         &[
             ("wikiSpaceId", "CODEDOCS"),
             ("description", "Code documentation"),
@@ -182,7 +182,7 @@ fn a_wiki_space_in_a_code_repository_subdirectory_keeps_its_pages_beside_the_cod
     assert_eq!(text(&made, "rootPageLocation"), "git://code/docs/CODEDOCS.md");
     assert!(resources.get("git://code/docs/CODEDOCS.md").unwrap().exists());
     let access = sync(
-        "org.moqui.impl.WikiServices.get#WikiPageAccess",
+        "org.moqui.resource.WikiServices.get#WikiPageAccess",
         &[("wikiSpaceId", "CODEDOCS")],
     );
     assert_eq!(text(&access, "storage"), "git");
@@ -191,7 +191,7 @@ fn a_wiki_space_in_a_code_repository_subdirectory_keeps_its_pages_beside_the_cod
 
     for body in ["# Getting started\n\nOne.\n", "# Getting started\n\nTwo.\n"] {
         sync(
-            "org.moqui.impl.WikiServices.update#WikiPage",
+            "org.moqui.resource.WikiServices.update#WikiPage",
             &[
                 ("wikiSpaceId", "CODEDOCS"),
                 ("pageName", "GettingStarted"),
@@ -202,7 +202,7 @@ fn a_wiki_space_in_a_code_repository_subdirectory_keeps_its_pages_beside_the_cod
     }
     // a child page under its parent page (a directory without its page file is not listed)
     sync(
-        "org.moqui.impl.WikiServices.update#WikiPage",
+        "org.moqui.resource.WikiServices.update#WikiPage",
         &[
             ("wikiSpaceId", "CODEDOCS"),
             ("pageName", "Releases"),
@@ -210,7 +210,7 @@ fn a_wiki_space_in_a_code_repository_subdirectory_keeps_its_pages_beside_the_cod
         ],
     );
     sync(
-        "org.moqui.impl.WikiServices.update#WikiPage",
+        "org.moqui.resource.WikiServices.update#WikiPage",
         &[
             ("wikiSpaceId", "CODEDOCS"),
             ("pageName", "1.0"),
@@ -227,7 +227,7 @@ fn a_wiki_space_in_a_code_repository_subdirectory_keeps_its_pages_beside_the_cod
     let history = resources.version_history(page).unwrap();
     assert_eq!(history.len(), 2);
     let info = sync(
-        "org.moqui.impl.WikiServices.get#WikiPageInfo",
+        "org.moqui.resource.WikiServices.get#WikiPageInfo",
         &[("wikiSpaceId", "CODEDOCS"), ("pagePath", "GettingStarted")],
     );
     assert_eq!(text(&info, "pageLocation"), page);
@@ -240,7 +240,7 @@ fn a_wiki_space_in_a_code_repository_subdirectory_keeps_its_pages_beside_the_cod
     assert_eq!(resources.location_text("git://code/README.md").unwrap(), "# Code\n");
 
     let pages = sync(
-        "org.moqui.impl.WikiServices.get#WikiSpacePages",
+        "org.moqui.resource.WikiServices.get#WikiSpacePages",
         &[("wikiSpaceId", "CODEDOCS")],
     );
     let Some(Value::List(flat)) = pages.get("allChildFileFlatList") else {
@@ -257,7 +257,7 @@ fn a_wiki_space_in_a_code_repository_subdirectory_keeps_its_pages_beside_the_cod
     assert_eq!(paths, ["", "GettingStarted", "Releases", "Releases/1.0"]);
 
     let renamed = sync(
-        "org.moqui.impl.WikiServices.update#WikiPage",
+        "org.moqui.resource.WikiServices.update#WikiPage",
         &[
             ("wikiSpaceId", "CODEDOCS"),
             ("pagePath", "GettingStarted"),
@@ -269,7 +269,7 @@ fn a_wiki_space_in_a_code_repository_subdirectory_keeps_its_pages_beside_the_cod
     assert!(resources.get("git://code/docs/CODEDOCS/Start.md").unwrap().exists());
     assert!(!resources.get(page).unwrap().exists());
     sync(
-        "org.moqui.impl.WikiServices.delete#WikiPage",
+        "org.moqui.resource.WikiServices.delete#WikiPage",
         &[("wikiSpaceId", "CODEDOCS"), ("pagePath", "Start")],
     );
     assert!(!resources.get("git://code/docs/CODEDOCS/Start.md").unwrap().exists());
@@ -297,7 +297,7 @@ fn old_done_git_updates_are_removed_and_one_failure_does_not_stop_the_rest() {
     context.factory().set_entity(facade.clone());
     let _entered = context.enter();
     let _authz = context.disable_authz();
-    install(&["impl/GitServices.xml"]);
+    install(&["git/GitServices.xml"]);
     moqui_core::entity::load_feed::add_eca_rules(
         &facade,
         r#"<eecas><eeca id="FailGitUpdate" entity="moqui.resource.GitUpdate" on-delete="true" run-before="true">
@@ -308,7 +308,7 @@ fn old_done_git_updates_are_removed_and_one_failure_does_not_stop_the_rest() {
     .unwrap();
     let ago = |days: i64| {
         let millis = jiff::Timestamp::now().as_millisecond() - days * 86_400_000;
-        moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
+        moqui_lib::object::basic_convert(&Value::I64(millis), "Timestamp").value
     };
     let row = |id: &str, status: &str, when: Value| {
         let mut update = facade.make_value("moqui.resource.GitUpdate").unwrap();
@@ -334,7 +334,7 @@ fn old_done_git_updates_are_removed_and_one_failure_does_not_stop_the_rest() {
     row("NEW_DONE", "done", ago(1));
     git_ref("NEW_DONE");
     row("FAIL", "done", ago(200));
-    let out = moqui_core::service::sync("org.moqui.impl.GitServices.clean#GitUpdates", &params(&[])).unwrap();
+    let out = moqui_core::service::sync("org.moqui.git.GitServices.clean#GitUpdates", &params(&[])).unwrap();
     assert_eq!(errors(&context), "", "{out:?}");
     assert_eq!(text(&out, "recordsRemoved"), "2", "{out:?}");
     let present = |id: &str| {

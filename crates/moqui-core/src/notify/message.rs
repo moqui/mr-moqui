@@ -30,7 +30,7 @@ const MESSAGE: &str = "moqui.security.user.NotificationMessage";
 const MESSAGE_USER: &str = "moqui.security.user.NotificationMessageUser";
 const USER_ACCOUNT: &str = "moqui.security.UserAccount";
 const GROUP_MEMBER: &str = "moqui.security.UserGroupMember";
-const EMAIL_SERVICE: &str = "org.moqui.impl.EmailServices.send#EmailTemplate";
+const EMAIL_SERVICE: &str = "org.moqui.mail.EmailServices.send#EmailTemplate";
 
 /// The fields of a notification that say why it came, what it is about, who did it and from which app (IronStone
 /// design-drawers-commons §19, "Notification fields and approvals"). They are stored on the `NotificationMessage` row
@@ -966,11 +966,7 @@ fn yn(row: &EntityValue, name: &str) -> Option<bool> {
 }
 
 fn now_value() -> Value {
-    basic_convert(
-        &Value::I64(jiff::Timestamp::now().as_millisecond()),
-        "java.sql.Timestamp",
-    )
-    .value
+    basic_convert(&Value::I64(jiff::Timestamp::now().as_millisecond()), "Timestamp").value
 }
 
 fn new_id() -> Result<String, Error> {

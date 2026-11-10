@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.DevToolsServices`: the framework's development tools (this crate) as services, on dev
+//! `org.moqui.dev.DevToolsServices`: the framework's development tools (this crate) as services, on dev
 //! instances only (plans/design-dev-aide.md 17), but for the index reads of an allowed project, which answer on any
 //! instance for `AIDE_READ` (7.4).
 

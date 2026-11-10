@@ -17,16 +17,16 @@ along with this software (see the LICENSE.md file). If not, see
     failed (or fix=Y, the list's and the Inbox's Fix) asks for the password again and tests it at once, or for an account that
     signs in with Google or Microsoft (and needs a new sign-in, get#OAuthStatus) shows the SignIn screen's button, whose popup
     signs it in again and then tests it; an account signed in with its provider says so in Sign-in and servers, with Sign
-    out (org.moqui.impl.EmailClientServices.revoke#OAuthSignIn), and a password account at a provider this server is set up
+    out (org.moqui.mail.EmailClientServices.revoke#OAuthSignIn), and a password account at a provider this server is set up
     for may sign in with it instead; the test of both
     servers (runTest=Y) with what to try; Send a test message to the account's own address (send#AccountTestMessage, which
     says when the sync brings it back); the server settings with the outgoing server's own sign-in (a user and password
     for a provider whose SMTP takes another user, tried before it is saved); the folders as the sync maps them, where a
     manager chooses what a folder is used as (Sent, Drafts, Archive, Spam, Trash; the Inbox is the server's INBOX) and
-    whether the sync reads it (org.moqui.impl.EmailClientServices.update#EmailFolder); the options (name, sync window,
+    whether the sync reads it (org.moqui.mail.EmailClientServices.update#EmailFolder); the options (name, sync window,
     filing policy, personal or shared by the framework's rules: personal again only when one person is left); the members
     of a shared account (add, change what they may do, remove); importing .eml and .mbox files into a folder
-    (org.moqui.impl.EmailClientServices.import#EmailMessages); and removing the account, keeping the mail here or deleting
+    (org.moqui.mail.EmailClientServices.import#EmailMessages); and removing the account, keeping the mail here or deleting
     it (nothing is deleted on the server). While it syncs, how far it is (the SyncProgress screen). A member who does not
     manage the account sees its details and may leave it. Everything through org.moqui.comms.MailSettingsServices and the
     framework's mail services, which check the user's access: an account the user does not reach is "not found". A
@@ -40,7 +40,7 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="runTest"/>
 
     <transition name="signOut">
-        <service-call name="org.moqui.impl.EmailClientServices.revoke#OAuthSignIn" in-map="{emailAccountId:emailAccountId}"/>
+        <service-call name="org.moqui.mail.EmailClientServices.revoke#OAuthSignIn" in-map="{emailAccountId:emailAccountId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Signed out: the account waits for a new sign-in</message></if></actions>
         <default-response url="."><parameter name="emailAccountId"/></default-response>
         <error-response url="."/>
@@ -71,7 +71,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- a folder's use (Sent, Drafts, Archive, Spam, Trash or a folder of its own) and whether the sync reads it -->
     <transition name="saveFolder">
-        <service-call name="org.moqui.impl.EmailClientServices.update#EmailFolder" out-map="folderOut"
+        <service-call name="org.moqui.mail.EmailClientServices.update#EmailFolder" out-map="folderOut"
                 in-map="{emailFolderId:emailFolderId, folderKindEnumId:(folderKindEnumId || null), subscribed:(subscribed || null)}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">${folderOut?.formerFolderDeleted ? 'Folder saved; the empty one kept only here for it is gone' : 'Folder saved'}</message></if></actions>
         <default-response url="."><parameter name="emailAccountId"/></default-response>
@@ -89,18 +89,18 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="setMemberPermission">
-        <service-call name="org.moqui.impl.EmailClientServices.add#EmailAccountUser" in-map="{emailAccountId:emailAccountId, userId:userId,
+        <service-call name="org.moqui.mail.EmailClientServices.add#EmailAccountUser" in-map="{emailAccountId:emailAccountId, userId:userId,
                 permissionEnumId:permissionEnumId}"/>
         <default-response url="."><parameter name="emailAccountId"/></default-response>
         <error-response url="."/>
     </transition>
     <transition name="removeMember">
-        <service-call name="org.moqui.impl.EmailClientServices.remove#EmailAccountUser" in-map="{emailAccountId:emailAccountId, userId:userId}"/>
+        <service-call name="org.moqui.mail.EmailClientServices.remove#EmailAccountUser" in-map="{emailAccountId:emailAccountId, userId:userId}"/>
         <default-response url="."><parameter name="emailAccountId"/></default-response>
         <error-response url="."/>
     </transition>
     <transition name="leaveAccount">
-        <service-call name="org.moqui.impl.EmailClientServices.remove#EmailAccountUser" in-map="{emailAccountId:emailAccountId, userId:ec.user.userId}"/>
+        <service-call name="org.moqui.mail.EmailClientServices.remove#EmailAccountUser" in-map="{emailAccountId:emailAccountId, userId:ec.user.userId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">You left the account</message></if></actions>
         <default-response url="../List"/>
         <error-response url="."/>
@@ -131,7 +131,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             if (!mailFile) { ec.message.addValidationError(null, 'mailFile', null, ec.l10n.localize('Choose a .eml or .mbox file'), null); return }
             if (!emailFolderId) { ec.message.addValidationError(null, 'emailFolderId', null, ec.l10n.localize('Choose the folder'), null); return }
-            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.import#EmailMessages').parameters({emailFolderId: emailFolderId, file: mailFile}).call()
+            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.import#EmailMessages').parameters({emailFolderId: emailFolderId, file: mailFile}).call()
             if (ec.message.hasError()) return
             const text = ec.resource.expand('Imported ${imported}; ${duplicates} already here; ${failed} could not be read', '', {imported: out?.importedCount || 0,
                 duplicates: out?.duplicateCount || 0, failed: out?.failedCount || 0})
@@ -141,7 +141,7 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="removeAccount">
-        <service-call name="org.moqui.impl.EmailClientServices.delete#EmailAccount" in-map="{emailAccountId:emailAccountId,
+        <service-call name="org.moqui.mail.EmailClientServices.delete#EmailAccount" in-map="{emailAccountId:emailAccountId,
                 deleteLocalCopies:(deleteLocalCopies == 'Y')}" out-map="removeOut"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">${deleteLocalCopies == 'Y' ? 'Account removed with its mail here' : 'Account removed; its mail is kept here'}</message></if></actions>
         <default-response url="../List"/>

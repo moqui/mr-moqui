@@ -14,7 +14,7 @@
 
 //! The call recorder on the media node (plans/Comms-Framework.md W5, §6.4): one thread per recording going here.
 //!
-//! The call recording services (`org.moqui.impl.CallRecordingServices`) send `{action: 'recording', op, ...}` by
+//! The call recording services (`org.moqui.call.CallRecordingServices`) send `{action: 'recording', op, ...}` by
 //! `send#MediaControl` to the call's media node; [`control`] takes it. Each carries the `notice` for the legs (the rtc
 //! `recording` frame), which the driver sends to every leg of the room and again to each leg that joins later. `start`
 //! starts a recorder thread: a [`media::Consumer`] of the room with every kind (`Kinds::All`) in a queue of
@@ -59,8 +59,8 @@ use super::{command, command_waiting, Command, NoticeKind};
 /// Where the recorder spools its files, under the runtime directory: the one place `store#RecordingFile` takes a file
 /// from (`RECORDING_SPOOL` in moqui-core `service/call_media.rs`).
 pub(crate) const SPOOL: &str = "tmp/call-recording";
-const STORE_SERVICE: &str = "org.moqui.impl.CallRecordingServices.store#RecordingSegment";
-const END_SERVICE: &str = "org.moqui.impl.CallRecordingServices.note#RecorderEnd";
+const STORE_SERVICE: &str = "org.moqui.call.CallRecordingServices.store#RecordingSegment";
+const END_SERVICE: &str = "org.moqui.call.CallRecordingServices.note#RecorderEnd";
 /// Frames the recorder may lose to a full queue before it fails.
 pub(crate) const MAX_DROPPED: u64 = 100;
 /// Closed segments waiting for the store; past this the recorder fails (the store fell behind).

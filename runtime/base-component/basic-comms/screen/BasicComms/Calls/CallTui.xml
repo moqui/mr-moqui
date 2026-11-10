@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The terminal twin of Call (style-guide §4.8): a call is not live in the terminal. With callSessionId, the call as the user
-    sees it (org.moqui.impl.CallServices get#Call: not found for a call they may not see): its state, kind and start, and its
+    sees it (org.moqui.call.CallServices get#Call: not found for a call they may not see): its state, kind and start, and its
     people with whether each is in it or ringing; Answer and Decline while it rings for the user, Leave while they are in
     it. Its media encryption (W8): an end-to-end encrypted call shows so, and each person's encryption device (the roster
     the browsers send their keys to); the terminal does not answer one, as it cannot encrypt media. -->
@@ -23,24 +23,24 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="callSessionId"/>
 
     <transition name="answer">
-        <actions><script>ec.service.sync().name('org.moqui.impl.CallServices.answer#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <actions><script>ec.service.sync().name('org.moqui.call.CallServices.answer#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
         <default-response url="."><parameter name="callSessionId"/></default-response>
         <error-response url="."><parameter name="callSessionId"/></error-response>
     </transition>
     <transition name="decline">
-        <actions><script>ec.service.sync().name('org.moqui.impl.CallServices.decline#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <actions><script>ec.service.sync().name('org.moqui.call.CallServices.decline#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
         <default-response url="."><parameter name="callSessionId"/></default-response>
         <error-response url="."><parameter name="callSessionId"/></error-response>
     </transition>
     <transition name="leave">
-        <actions><script>ec.service.sync().name('org.moqui.impl.CallServices.leave#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
+        <actions><script>ec.service.sync().name('org.moqui.call.CallServices.leave#Call').parameter('callSessionId', callSessionId || '').requireNewTransaction(true).disableAuthz().call()</script></actions>
         <default-response url="."><parameter name="callSessionId"/></default-response>
         <error-response url="."><parameter name="callSessionId"/></error-response>
     </transition>
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const out = callSessionId ? ec.service.sync().name('org.moqui.impl.CallServices.get#Call').parameter('callSessionId', callSessionId)
+        const out = callSessionId ? ec.service.sync().name('org.moqui.call.CallServices.get#Call').parameter('callSessionId', callSessionId)
             .requireNewTransaction(true).disableAuthz().call() || {} : {}
         ec.message.clearErrors()
         call = out.call || null

@@ -92,13 +92,13 @@ pub(super) fn input_type(java_type: &str) -> &'static str {
 mod tests {
     #[test]
     fn java_types_map_to_the_server_and_input_types() {
-        assert_eq!(super::server_type("java.math.BigDecimal"), "Decimal");
-        assert_eq!(super::input_type("java.math.BigDecimal"), "DecimalInput");
-        assert_eq!(super::server_type("java.sql.Timestamp"), "Timestamp");
-        assert_eq!(super::server_type("java.sql.Date"), "string");
+        assert_eq!(super::server_type("BigDecimal"), "Decimal");
+        assert_eq!(super::input_type("BigDecimal"), "DecimalInput");
+        assert_eq!(super::server_type("Timestamp"), "Timestamp");
+        assert_eq!(super::server_type("Date"), "string");
         assert_eq!(super::server_type("Long"), "number");
         assert_eq!(super::input_type("Integer"), "number | string");
-        assert_eq!(super::server_type("java.sql.Blob"), "never");
+        assert_eq!(super::server_type("Blob"), "never");
         assert_eq!(super::server_type("org.moqui.resource.ResourceReference"), "unknown");
         assert_eq!(super::server_type(""), "unknown");
     }

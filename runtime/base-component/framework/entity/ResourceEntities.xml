@@ -188,7 +188,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- Hosting and code review (docs/interfaces/Git-Hosting.md: Commit statuses, Webhooks, Branch rules, Merge requests). No Java
         counterpart. Entity filters do not apply to moqui.* entities: these rows are read through the services of
-        org.moqui.impl.GitServices and GitReviewServices, which check the repository's rights. -->
+        org.moqui.git.GitServices and GitReviewServices, which check the repository's rights. -->
     <entity entity-name="GitCommitStatus" package="moqui.resource" use="nontransactional" cache="never">
         <description>A check of a commit posted by outside CI (create#GitCommitStatus, or POST
             /rest/s1/moqui/git/{repositoryId}/commits/{commitId}/statuses in GitHub's status shape): the latest of a
@@ -226,7 +226,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="GIT_HOOK_REPO"><index-field name="repositoryId"/></index>
         <seed-data>
             <moqui.service.message.SystemMessageType systemMessageTypeId="GitWebhook" description="Git Webhook Delivery"
-                    sendServiceName="org.moqui.impl.GitServices.send#GitWebhookDelivery" contentType="application/json"/>
+                    sendServiceName="org.moqui.git.GitServices.send#GitWebhookDelivery" contentType="application/json"/>
         </seed-data>
     </entity>
     <entity entity-name="GitBranchRule" package="moqui.resource" use="nontransactional" cache="never">
@@ -256,7 +256,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <entity entity-name="GitMergeRequest" package="moqui.resource" use="nontransactional" cache="never">
         <description>A request to merge a source branch into a target branch of one repository, reviewed by the users of
-            GitMergeRequestReviewer (org.moqui.impl.GitReviewServices). headCommitId and mergeability are kept by
+            GitMergeRequestReviewer (org.moqui.git.GitReviewServices). headCommitId and mergeability are kept by
             refresh#MergeRequests on every ref update.</description>
         <field name="mergeRequestId" type="id" is-pk="true"/>
         <field name="repositoryId" type="id"/>
@@ -411,7 +411,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <!-- ========================================================= -->
-    <!-- moqui.resource drives (org.moqui.impl.FileServices) -->
+    <!-- moqui.resource drives (org.moqui.resource.FileServices) -->
     <!-- ========================================================= -->
     <!-- Files over resource locations, in drives. No Java counterpart. These are moqui.* entities, which entity filters
         never apply to: FileServices checks every access (a drive's owner, a current member by permission, or a share of
@@ -699,7 +699,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="WIKILINK_TOPATH"><index-field name="toWikiSpaceId"/><index-field name="toPagePath"/></index>
     </entity>
     <entity entity-name="CollabDocument" package="moqui.resource" use="transactional" cache="never">
-        <description>A document several people edit at once (m-coedit, org.moqui.impl.CollabServices; docs/data/Revision-Management.md,
+        <description>A document several people edit at once (m-coedit, org.moqui.resource.CollabServices; docs/data/Revision-Management.md,
             Co-editing): the Yjs state of its editors (stateData, the full update in Yjs v1 encoding, kept current a second
             or two after an edit and merged when several servers write it), the markdown it renders to (snapshotText), and
             what it was last saved as. documentKey names the record, such as WikiPage:100023. The record's own text (the
@@ -722,7 +722,7 @@ along with this software (see the LICENSE.md file). If not, see
             then approved (which publishes the version unless told not to), changes requested (with a note back) or
             cancelled. One row per reviewer; with no reviewerUserId any user who may update the page may decide it. The
             reviewer is notified on topic WikiPageReview, an approval the tray decides (approve#WikiPageReview,
-            refuse#WikiPageReview); the requester on WikiPageReviewDecision. Services: org.moqui.impl.WikiServices
+            refuse#WikiPageReview); the requester on WikiPageReviewDecision. Services: org.moqui.resource.WikiServices
             request#WikiPageReview, decide#WikiPageReview, cancel#WikiPageReview, find#WikiPageReviews.</description>
         <field name="wikiPageReviewId" type="id" is-pk="true"/>
         <field name="wikiPageId" type="id"/>
@@ -767,8 +767,8 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.security.user.NotificationTopic topic="WikiPageReview" description="Page to Review" typeString="info"
                     showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
                     titleTemplate="${authorName} asked you to review ${pageName}" linkTemplate=""
-                    approveServiceName="org.moqui.impl.WikiServices.approve#WikiPageReview"
-                    refuseServiceName="org.moqui.impl.WikiServices.refuse#WikiPageReview" refuseReasonRequired="Y"/>
+                    approveServiceName="org.moqui.resource.WikiServices.approve#WikiPageReview"
+                    refuseServiceName="org.moqui.resource.WikiServices.refuse#WikiPageReview" refuseReasonRequired="Y"/>
             <!-- the decision, to the requester: wikiPageReviewId, wikiPageId, wikiSpaceId, pagePath, pageName, versionName,
                 reviewerUserId, reviewerName, decision (approved or changes), decisionText, decisionNote -->
             <moqui.security.user.NotificationTopic topic="WikiPageReviewDecision" description="Review of Your Page" typeString="info"

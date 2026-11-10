@@ -201,7 +201,7 @@ fn a_phone_call_each_way_through_a_fake_trunk_heard_by_a_browser() {
         // the media node and the SIP engine register as they start; wait for both rows
         let until = Instant::now() + Duration::from_secs(5);
         while Instant::now() < until {
-            let status = call("org.moqui.impl.VoiceServices.get#VoiceStatus", &[]);
+            let status = call("org.moqui.call.VoiceServices.get#VoiceStatus", &[]);
             let up = |key: &str| matches!(status.get(key), Some(Value::List(list)) if !list.is_empty());
             if up("sipNodeList") && up("mediaNodeList") {
                 break;
@@ -210,7 +210,7 @@ fn a_phone_call_each_way_through_a_fake_trunk_heard_by_a_browser() {
         }
         let trunk_id = text(
             &call(
-                "org.moqui.impl.VoiceServices.store#VoiceTrunk",
+                "org.moqui.call.VoiceServices.store#VoiceTrunk",
                 &[
                     ("name", Value::string("Fake trunk")),
                     ("host", Value::string("127.0.0.1")),
@@ -227,7 +227,7 @@ fn a_phone_call_each_way_through_a_fake_trunk_heard_by_a_browser() {
         );
         let john = moqui_core::user::current_user_id().unwrap().expect("john is signed in");
         call(
-            "org.moqui.impl.VoiceServices.store#PhoneNumber",
+            "org.moqui.call.VoiceServices.store#PhoneNumber",
             &[
                 ("phoneNumber", Value::string(NUMBER)),
                 ("voiceTrunkId", Value::string(&trunk_id)),
@@ -236,11 +236,11 @@ fn a_phone_call_each_way_through_a_fake_trunk_heard_by_a_browser() {
             ],
         );
         call(
-            "org.moqui.impl.VoiceServices.grant#CallerId",
+            "org.moqui.call.VoiceServices.grant#CallerId",
             &[("phoneNumber", Value::string(NUMBER)), ("userId", Value::string(&john))],
         );
         call(
-            "org.moqui.impl.VoiceServices.store#VoiceUserSetting",
+            "org.moqui.call.VoiceServices.store#VoiceUserSetting",
             &[
                 ("userId", Value::string(&john)),
                 ("outboundEnabled", Value::string("Y")),
@@ -260,7 +260,7 @@ fn a_phone_call_each_way_through_a_fake_trunk_heard_by_a_browser() {
         let _entered = context.enter();
         moqui_core::user::internal_login_user("john.doe").unwrap();
         call(
-            "org.moqui.impl.VoiceServices.place#PhoneCall",
+            "org.moqui.call.VoiceServices.place#PhoneCall",
             &[
                 ("phoneNumber", Value::string(OUTSIDE)),
                 ("fromNumber", Value::string(NUMBER)),
@@ -311,7 +311,7 @@ fn a_phone_call_each_way_through_a_fake_trunk_heard_by_a_browser() {
         let context = factory.new_context();
         let _entered = context.enter();
         moqui_core::user::internal_login_user("john.doe").unwrap();
-        let active = call("org.moqui.impl.CallServices.find#ActiveCalls", &[]);
+        let active = call("org.moqui.call.CallServices.find#ActiveCalls", &[]);
         let ringing = match active.get("callList") {
             Some(Value::List(list)) => list.first().cloned(),
             _ => None,
@@ -321,7 +321,7 @@ fn a_phone_call_each_way_through_a_fake_trunk_heard_by_a_browser() {
             _ => panic!("the call rings for john: {active:?}"),
         };
         let answered = call(
-            "org.moqui.impl.CallServices.answer#Call",
+            "org.moqui.call.CallServices.answer#Call",
             &[("callSessionId", Value::string(&call_id))],
         );
         (call_id, text(&answered, "callLegId"))
@@ -359,7 +359,7 @@ fn a_phone_call_each_way_through_a_fake_trunk_heard_by_a_browser() {
         let _entered = context.enter();
         moqui_core::user::internal_login_user("john.doe").unwrap();
         call(
-            "org.moqui.impl.CallServices.get#Call",
+            "org.moqui.call.CallServices.get#Call",
             &[("callSessionId", Value::string(&call_id))],
         )
     };
@@ -393,7 +393,7 @@ fn a_busy_user_s_caller_leaves_a_voicemail_through_a_fake_trunk() {
         moqui_core::user::internal_login_user("john.doe").unwrap();
         let until = Instant::now() + Duration::from_secs(5);
         while Instant::now() < until {
-            let status = call("org.moqui.impl.VoiceServices.get#VoiceStatus", &[]);
+            let status = call("org.moqui.call.VoiceServices.get#VoiceStatus", &[]);
             let up = |key: &str| matches!(status.get(key), Some(Value::List(list)) if !list.is_empty());
             if up("sipNodeList") && up("mediaNodeList") {
                 break;
@@ -402,7 +402,7 @@ fn a_busy_user_s_caller_leaves_a_voicemail_through_a_fake_trunk() {
         }
         let trunk_id = text(
             &call(
-                "org.moqui.impl.VoiceServices.store#VoiceTrunk",
+                "org.moqui.call.VoiceServices.store#VoiceTrunk",
                 &[
                     ("name", Value::string("Fake trunk")),
                     ("host", Value::string("127.0.0.1")),
@@ -419,7 +419,7 @@ fn a_busy_user_s_caller_leaves_a_voicemail_through_a_fake_trunk() {
         );
         let john = moqui_core::user::current_user_id().unwrap().expect("john is signed in");
         call(
-            "org.moqui.impl.VoiceServices.store#PhoneNumber",
+            "org.moqui.call.VoiceServices.store#PhoneNumber",
             &[
                 ("phoneNumber", Value::string(NUMBER)),
                 ("voiceTrunkId", Value::string(&trunk_id)),
@@ -500,7 +500,7 @@ fn a_busy_user_s_caller_leaves_a_voicemail_through_a_fake_trunk() {
     moqui_core::user::internal_login_user("john.doe").unwrap();
     let until = Instant::now() + Duration::from_secs(5);
     let voicemail = loop {
-        let found = call("org.moqui.impl.VoicemailServices.find#Voicemails", &[]);
+        let found = call("org.moqui.call.VoicemailServices.find#Voicemails", &[]);
         if let Some(Value::List(list)) = found.get("voicemailList") {
             if let Some(Value::Map(first)) = list.first() {
                 break first.clone();
@@ -525,7 +525,7 @@ fn a_busy_user_s_caller_leaves_a_voicemail_through_a_fake_trunk() {
     );
     let voicemail_id = voicemail.get("voicemailId").map(to_plain_string).unwrap_or_default();
     let file = call(
-        "org.moqui.impl.VoicemailServices.get#VoicemailAudio",
+        "org.moqui.call.VoicemailServices.get#VoicemailAudio",
         &[("voicemailId", Value::string(&voicemail_id))],
     );
     let _authz =
@@ -536,7 +536,7 @@ fn a_busy_user_s_caller_leaves_a_voicemail_through_a_fake_trunk() {
         .unwrap()
         .expect("the audio is stored");
     assert!(bytes.starts_with(b"OggS"), "Ogg Opus");
-    let missed = call("org.moqui.impl.CallServices.count#MissedCalls", &[]);
+    let missed = call("org.moqui.call.CallServices.count#MissedCalls", &[]);
     assert_eq!(text(&missed, "missedCount"), "1", "john missed the call");
     assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
 }
@@ -594,7 +594,7 @@ fn the_access_number_takes_a_box_and_pin_plays_a_message_and_7_deletes_it() {
         moqui_core::user::internal_login_user("john.doe").unwrap();
         let until = Instant::now() + Duration::from_secs(5);
         while Instant::now() < until {
-            let status = call("org.moqui.impl.VoiceServices.get#VoiceStatus", &[]);
+            let status = call("org.moqui.call.VoiceServices.get#VoiceStatus", &[]);
             let up = |key: &str| matches!(status.get(key), Some(Value::List(list)) if !list.is_empty());
             if up("sipNodeList") && up("mediaNodeList") {
                 break;
@@ -603,7 +603,7 @@ fn the_access_number_takes_a_box_and_pin_plays_a_message_and_7_deletes_it() {
         }
         let trunk_id = text(
             &call(
-                "org.moqui.impl.VoiceServices.store#VoiceTrunk",
+                "org.moqui.call.VoiceServices.store#VoiceTrunk",
                 &[
                     ("name", Value::string("Fake trunk")),
                     ("host", Value::string("127.0.0.1")),
@@ -621,7 +621,7 @@ fn the_access_number_takes_a_box_and_pin_plays_a_message_and_7_deletes_it() {
         let john = moqui_core::user::current_user_id().unwrap().expect("john is signed in");
         for (number, route, route_id) in [(NUMBER, "PnrUser", john.as_str()), (ACCESS, "PnrVoicemail", "")] {
             call(
-                "org.moqui.impl.VoiceServices.store#PhoneNumber",
+                "org.moqui.call.VoiceServices.store#PhoneNumber",
                 &[
                     ("phoneNumber", Value::string(number)),
                     ("voiceTrunkId", Value::string(&trunk_id)),
@@ -631,10 +631,10 @@ fn the_access_number_takes_a_box_and_pin_plays_a_message_and_7_deletes_it() {
             );
         }
         call(
-            "org.moqui.impl.VoicemailServices.set#VoicemailPin",
+            "org.moqui.call.VoicemailServices.set#VoicemailPin",
             &[("pin", Value::string("471935"))],
         );
-        let settings = call("org.moqui.impl.VoicemailServices.get#VoicemailSettings", &[]);
+        let settings = call("org.moqui.call.VoicemailServices.get#VoicemailSettings", &[]);
         let Some(Value::Map(mailbox)) = settings.get("box") else {
             panic!("john has a box: {settings:?}")
         };
@@ -649,7 +649,7 @@ fn the_access_number_takes_a_box_and_pin_plays_a_message_and_7_deletes_it() {
             factory.resource().write_bytes(source, &wav_tone(1000)).unwrap();
         }
         call(
-            "org.moqui.impl.VoicemailServices.convert#GreetingAudio",
+            "org.moqui.call.VoicemailServices.convert#GreetingAudio",
             &[
                 ("sourceLocation", Value::string(source)),
                 ("targetLocation", Value::string(audio)),
@@ -729,7 +729,7 @@ fn the_access_number_takes_a_box_and_pin_plays_a_message_and_7_deletes_it() {
     let _entered = context.enter();
     moqui_core::user::internal_login_user("john.doe").unwrap();
     let trash = call(
-        "org.moqui.impl.VoicemailServices.find#Voicemails",
+        "org.moqui.call.VoicemailServices.find#Voicemails",
         &[("folder", Value::string("trash"))],
     );
     let in_trash = matches!(trash.get("voicemailList"), Some(Value::List(list))
@@ -793,7 +793,7 @@ fn a_registered_desk_phone_rings_answers_and_is_heard() {
         let callee = text(&created, "userId");
         moqui_core::user::internal_login_user(CALLEE).unwrap();
         let device = call(
-            "org.moqui.impl.SipDeviceServices.create#SipDevice",
+            "org.moqui.call.SipDeviceServices.create#SipDevice",
             &[("name", Value::string("Front desk"))],
         );
         (callee, device)
@@ -831,7 +831,7 @@ fn a_registered_desk_phone_rings_answers_and_is_heard() {
         moqui_core::user::internal_login_user(CALLEE).unwrap();
         let until = Instant::now() + Duration::from_secs(5);
         loop {
-            let listed = call("org.moqui.impl.SipDeviceServices.find#SipDevices", &[]);
+            let listed = call("org.moqui.call.SipDeviceServices.find#SipDevices", &[]);
             let registered = match listed.get("deviceList") {
                 Some(Value::List(list)) => list.iter().any(|d| match d {
                     Value::Map(m) => matches!(m.get("registrationList"), Some(Value::List(r)) if !r.is_empty()),
@@ -847,7 +847,7 @@ fn a_registered_desk_phone_rings_answers_and_is_heard() {
         }
         moqui_core::user::internal_login_user("john.doe").unwrap();
         let started = call(
-            "org.moqui.impl.CallServices.start#Call",
+            "org.moqui.call.CallServices.start#Call",
             &[("calleeUserIdList", Value::List(vec![Value::string(&callee)]))],
         );
         (text(&started, "callSessionId"), text(&started, "callLegId"))
@@ -882,7 +882,7 @@ fn a_registered_desk_phone_rings_answers_and_is_heard() {
         let _entered = context.enter();
         moqui_core::user::internal_login_user("john.doe").unwrap();
         call(
-            "org.moqui.impl.CallServices.get#Call",
+            "org.moqui.call.CallServices.get#Call",
             &[("callSessionId", Value::string(&call_id))],
         )
     };
@@ -919,7 +919,7 @@ fn an_ivr_key_puts_the_caller_in_a_queue_and_its_agent_answers() {
         moqui_core::user::internal_login_user("john.doe").unwrap();
         let until = Instant::now() + Duration::from_secs(5);
         while Instant::now() < until {
-            let status = call("org.moqui.impl.VoiceServices.get#VoiceStatus", &[]);
+            let status = call("org.moqui.call.VoiceServices.get#VoiceStatus", &[]);
             let up = |key: &str| matches!(status.get(key), Some(Value::List(list)) if !list.is_empty());
             if up("sipNodeList") && up("mediaNodeList") {
                 break;
@@ -928,7 +928,7 @@ fn an_ivr_key_puts_the_caller_in_a_queue_and_its_agent_answers() {
         }
         let trunk_id = text(
             &call(
-                "org.moqui.impl.VoiceServices.store#VoiceTrunk",
+                "org.moqui.call.VoiceServices.store#VoiceTrunk",
                 &[
                     ("name", Value::string("Fake trunk")),
                     ("host", Value::string("127.0.0.1")),
@@ -946,20 +946,20 @@ fn an_ivr_key_puts_the_caller_in_a_queue_and_its_agent_answers() {
         let john = moqui_core::user::current_user_id().unwrap().expect("john is signed in");
         let queue_id = text(
             &call(
-                "org.moqui.impl.CallQueueServices.store#CallQueue",
+                "org.moqui.call.CallQueueServices.store#CallQueue",
                 &[("name", Value::string("Support")), ("announceSeconds", Value::I32(0))],
             ),
             "callQueueId",
         );
         call(
-            "org.moqui.impl.CallQueueServices.store#CallQueueAgent",
+            "org.moqui.call.CallQueueServices.store#CallQueueAgent",
             &[
                 ("callQueueId", Value::string(&queue_id)),
                 ("userId", Value::string(&john)),
             ],
         );
         call(
-            "org.moqui.impl.CallQueueServices.set#QueueAgentStatus",
+            "org.moqui.call.CallQueueServices.set#QueueAgentStatus",
             &[
                 ("callQueueId", Value::string(&queue_id)),
                 ("status", Value::string("in")),
@@ -967,13 +967,13 @@ fn an_ivr_key_puts_the_caller_in_a_queue_and_its_agent_answers() {
         );
         let menu_id = text(
             &call(
-                "org.moqui.impl.IvrServices.store#IvrMenu",
+                "org.moqui.call.IvrServices.store#IvrMenu",
                 &[("name", Value::string("Main"))],
             ),
             "ivrMenuId",
         );
         call(
-            "org.moqui.impl.IvrServices.store#IvrOption",
+            "org.moqui.call.IvrServices.store#IvrOption",
             &[
                 ("ivrMenuId", Value::string(&menu_id)),
                 ("digits", Value::string("1")),
@@ -982,7 +982,7 @@ fn an_ivr_key_puts_the_caller_in_a_queue_and_its_agent_answers() {
             ],
         );
         call(
-            "org.moqui.impl.VoiceServices.store#PhoneNumber",
+            "org.moqui.call.VoiceServices.store#PhoneNumber",
             &[
                 ("phoneNumber", Value::string(NUMBER)),
                 ("voiceTrunkId", Value::string(&trunk_id)),
@@ -1044,7 +1044,7 @@ fn an_ivr_key_puts_the_caller_in_a_queue_and_its_agent_answers() {
             }
             tick += 1;
             if pressed && tick % 10 == 0 {
-                let active = call("org.moqui.impl.CallServices.find#ActiveCalls", &[]);
+                let active = call("org.moqui.call.CallServices.find#ActiveCalls", &[]);
                 if let Some(Value::List(list)) = active.get("callList") {
                     ringing = list.iter().find_map(|c| match c {
                         Value::Map(m) if m.get("myLegStatus").map(to_plain_string).as_deref() == Some("offered") => {
@@ -1064,12 +1064,12 @@ fn an_ivr_key_puts_the_caller_in_a_queue_and_its_agent_answers() {
     let call_id = ringing.expect("the queue offers the call to john, its agent");
     assert!(heard >= 10, "the caller hears the menu and the music: {heard} packets");
     let answered = call(
-        "org.moqui.impl.CallServices.answer#Call",
+        "org.moqui.call.CallServices.answer#Call",
         &[("callSessionId", Value::string(&call_id))],
     );
     assert_eq!(status_of(&answered).as_deref(), Some("active"));
     // the queue's entry is answered: nothing waits, and john, its agent, is in the call
-    let mine = call("org.moqui.impl.CallQueueServices.find#MyCallQueues", &[]);
+    let mine = call("org.moqui.call.CallQueueServices.find#MyCallQueues", &[]);
     let Some(Value::List(queues)) = mine.get("queueList") else {
         panic!("john's queues: {mine:?}")
     };
@@ -1084,7 +1084,7 @@ fn an_ivr_key_puts_the_caller_in_a_queue_and_its_agent_answers() {
     assert_eq!(support.get("state").map(to_plain_string).as_deref(), Some("inCall"));
     // john hangs up: the engine ends the caller's leg
     call(
-        "org.moqui.impl.CallServices.leave#Call",
+        "org.moqui.call.CallServices.leave#Call",
         &[("callSessionId", Value::string(&call_id))],
     );
     let (bye, from) = trunk.request("BYE");

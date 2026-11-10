@@ -71,7 +71,7 @@ pub(super) const ACCOUNT: &str = "moqui.basic.email.EmailAccount";
 pub(super) const FOLDER: &str = "moqui.basic.email.EmailFolder";
 pub(super) const SERVER: &str = "moqui.basic.email.EmailServer";
 pub(super) const CHANGE: &str = "moqui.basic.email.EmailRemoteChange";
-const SERVICES: &str = "org.moqui.impl.EmailClientServices";
+const SERVICES: &str = "org.moqui.mail.EmailClientServices";
 
 /// How long a sync holds its account; it is renewed as the session goes ([`Lease::keep`]).
 const LEASE_MILLIS: i64 = 15 * 60 * 1000;

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The elFinder connector (`org.moqui.impl.ElFinderServices.run#Command`) on a `git://` volume: each write a commit.
+//! The elFinder connector (`org.moqui.resource.ElFinderServices.run#Command`) on a `git://` volume: each write a commit.
 //! The connector's other tests are moqui-dav's `elfinder/tests.rs`.
 
 // run#ElFinderCommand is moqui-dav's; naming the crate keeps its extension entry in this test binary.
@@ -45,7 +45,7 @@ fn setup() -> Setup {
 }
 
 fn install() {
-    let services = moqui_core::context::framework_dir().join("service/org/moqui/impl/ElFinderServices.xml");
+    let services = moqui_core::context::framework_dir().join("service/org/moqui/resource/ElFinderServices.xml");
     let failures = moqui_core::service::lint(&[services]).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
 }
@@ -64,7 +64,7 @@ fn command(root: &str, cmd: &str, target: &str, other: Vec<(&str, Value)>) -> BT
     parameters.insert("target".to_string(), Value::string(target));
     parameters.insert("resourceRoot".to_string(), Value::string(root));
     parameters.insert("otherParameters".to_string(), Value::Map(other));
-    moqui_core::service::sync("org.moqui.impl.ElFinderServices.run#Command", &parameters).unwrap()
+    moqui_core::service::sync("org.moqui.resource.ElFinderServices.run#Command", &parameters).unwrap()
 }
 
 fn response(out: &BTreeMap<String, Value>) -> serde_json::Value {

@@ -15,13 +15,13 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Voice, Numbers (plans/Comms-Framework.md §5.2, §5.4): the phone numbers the trunks bring, in E.164, each with its trunk, the
     user, ring group (V3), IVR menu or queue (V5) a call to it goes to, the emergency location its calls report, and its
     messaging (C4-SMS: the SMS bridge its texts go through, which needs no trunk).
-    org.moqui.impl.VoiceServices find#, store# and delete#PhoneNumber. -->
+    org.moqui.call.VoiceServices find#, store# and delete#PhoneNumber. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Numbers" default-menu-index="3">
 
     <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
     <transition name="storeNumber">
-        <service-call name="org.moqui.impl.VoiceServices.store#PhoneNumber" in-map="{phoneNumber:phoneNumber, voiceTrunkId:voiceTrunkId || null,
+        <service-call name="org.moqui.call.VoiceServices.store#PhoneNumber" in-map="{phoneNumber:phoneNumber, voiceTrunkId:voiceTrunkId || null,
                 routeTypeEnumId:routeTypeEnumId || 'PnrUser',
                 routeId:(routeTypeEnumId == 'PnrRingGroup' ? ringGroupId : routeTypeEnumId == 'PnrIvr' ? ivrMenuId : routeTypeEnumId == 'PnrQueue' ? callQueueId
                     : routeTypeEnumId == 'PnrVoicemail' ? null : routeId) || null, emergencyLocationId:emergencyLocationId || null, description:description || null,
@@ -30,26 +30,26 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
     </transition>
     <transition name="deleteNumber">
-        <service-call name="org.moqui.impl.VoiceServices.delete#PhoneNumber" in-map="{phoneNumber:phoneNumber}"/>
+        <service-call name="org.moqui.call.VoiceServices.delete#PhoneNumber" in-map="{phoneNumber:phoneNumber}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Number removed</message></if></actions>
         <default-response url="."/>
     </transition>
 
     <actions><script><![CDATA[
-        const call = (name) => ec.service.sync().name('org.moqui.impl.VoiceServices.' + name).requireNewTransaction(true).disableAuthz().call() || {}
+        const call = (name) => ec.service.sync().name('org.moqui.call.VoiceServices.' + name).requireNewTransaction(true).disableAuthz().call() || {}
         numberList = Array.from(call('find#PhoneNumbers').numberList || [])
         trunkOptions = Array.from(call('find#VoiceTrunks').trunkList || []).map((t) => ({key: t.voiceTrunkId, text: t.name}))
         locationOptions = Array.from(call('find#EmergencyLocations').locationList || []).map((l) => ({key: l.emergencyLocationId, text: l.name || l.emergencyLocationId}))
         // V3: a number rings a user or a ring group, or is the voicemail access number
-        const groups = ec.service.sync().name('org.moqui.impl.CallHandlingServices.find#RingGroups').requireNewTransaction(true).disableAuthz().call() || {}
+        const groups = ec.service.sync().name('org.moqui.call.CallHandlingServices.find#RingGroups').requireNewTransaction(true).disableAuthz().call() || {}
         groupOptions = Array.from(groups.groupList || []).map((g) => ({key: g.ringGroupId, text: g.name}))
         // V5: or an IVR menu, or a queue
-        menuOptions = Array.from((ec.service.sync().name('org.moqui.impl.IvrServices.find#IvrMenus').requireNewTransaction(true).disableAuthz().call() || {}).menuList || [])
+        menuOptions = Array.from((ec.service.sync().name('org.moqui.call.IvrServices.find#IvrMenus').requireNewTransaction(true).disableAuthz().call() || {}).menuList || [])
             .map((m) => ({key: m.ivrMenuId, text: m.name}))
-        queueOptions = Array.from((ec.service.sync().name('org.moqui.impl.CallQueueServices.find#CallQueues').requireNewTransaction(true).disableAuthz().call() || {}).queueList || [])
+        queueOptions = Array.from((ec.service.sync().name('org.moqui.call.CallQueueServices.find#CallQueues').requireNewTransaction(true).disableAuthz().call() || {}).queueList || [])
             .map((q) => ({key: q.callQueueId, text: q.name}))
         // C4-SMS: the SMS bridges a number's texts can go through
-        const bridges = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.find#Bridges').requireNewTransaction(true).disableAuthz().call() || {}
+        const bridges = ec.service.sync().name('org.moqui.chat.ChatBridgeServices.find#Bridges').requireNewTransaction(true).disableAuthz().call() || {}
         messagingOptions = Array.from(bridges.bridgeList || []).filter((b) => b.typeEnumId === 'CbtSms').map((b) => ({key: b.chatBridgeId, text: b.name || b.chatBridgeId}))
         routeOptions = [{key: 'PnrUser', text: ec.l10n.localize('A user')}, {key: 'PnrRingGroup', text: ec.l10n.localize('A ring group')},
             {key: 'PnrIvr', text: ec.l10n.localize('An IVR menu')}, {key: 'PnrQueue', text: ec.l10n.localize('A queue')},

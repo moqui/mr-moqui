@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Tools app's server side (plans/archive/Tools-Database.md §13): `org.moqui.impl.DatabaseServices` ([`service`])
+//! The Tools app's server side (plans/archive/Tools-Database.md §13): `org.moqui.dev.DatabaseServices` ([`service`])
 //! on the entities of `framework/entity/DatabaseEntities.xml`: what each database allows ([`capabilities`]), the
 //! catalog queries per dialect ([`catalog`]), SQL runs, explain and the database's statement stats ([`sql`], with their
 //! services in [`sql_service`]) and the audit ([`audit`]). The jobs, data grid and ETL of the plan come here as well.

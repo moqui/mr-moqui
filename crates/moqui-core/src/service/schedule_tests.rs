@@ -459,11 +459,7 @@ fn paused_and_future_jobs_do_not_run_and_a_held_lock_blocks_a_job() {
         .unwrap();
     lock.set(
         "lastRunTime",
-        moqui_lib::object::basic_convert(
-            &Value::I64(jiff::Timestamp::now().as_millisecond()),
-            "java.sql.Timestamp",
-        )
-        .value,
+        moqui_lib::object::basic_convert(&Value::I64(jiff::Timestamp::now().as_millisecond()), "Timestamp").value,
     );
     lock.update(&world.facade).unwrap();
     let report = world.ctx.factory().service_pools().tick();
@@ -598,11 +594,7 @@ fn a_success_after_an_error_does_not_keep_the_retry_delay() {
     let mut lock = lock_row(&world, "RETRY").expect("the lock row");
     lock.set(
         "lastRunTime",
-        moqui_lib::object::basic_convert(
-            &Value::I64(jiff::Timestamp::now().as_millisecond()),
-            "java.sql.Timestamp",
-        )
-        .value,
+        moqui_lib::object::basic_convert(&Value::I64(jiff::Timestamp::now().as_millisecond()), "Timestamp").value,
     );
     lock.update(&world.facade).unwrap();
     std::thread::sleep(Duration::from_millis(1100));
@@ -1037,11 +1029,7 @@ fn a_lock_held_by_a_gone_member_is_taken_over_before_it_expires() {
     let _entered = world.ctx.enter();
     let _authz = world.ctx.disable_authz();
     let stamp = |ago: i64| {
-        moqui_lib::object::basic_convert(
-            &Value::I64(jiff::Timestamp::now().as_millisecond() - ago),
-            "java.sql.Timestamp",
-        )
-        .value
+        moqui_lib::object::basic_convert(&Value::I64(jiff::Timestamp::now().as_millisecond() - ago), "Timestamp").value
     };
     let now = stamp(0);
     // Ten seconds ago: far from expiring, and the every-second schedule is due again.

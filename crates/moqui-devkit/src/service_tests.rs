@@ -206,7 +206,7 @@ fn the_seed_splits_the_read_services_from_the_dev_only_ones() {
     let dev_aide = seed("dev-component/dev-aide/data/DevAideSecurityData.xml");
     let read = service_patterns(&framework, "AIDE_READ_API");
     let dev_only = service_patterns(&dev_aide, "DEV_AIDE_APP");
-    let services = seed("base-component/framework/service/org/moqui/impl/DevToolsServices.xml");
+    let services = seed("base-component/framework/service/org/moqui/dev/DevToolsServices.xml");
     let doc = MNode::parse_text("services", &services).unwrap();
     let names: Vec<String> = doc
         .children()
@@ -214,7 +214,7 @@ fn the_seed_splits_the_read_services_from_the_dev_only_ones() {
         .filter(|node| node.has_name("service"))
         .map(|node| {
             format!(
-                "org.moqui.impl.DevToolsServices.{}#{}",
+                "org.moqui.dev.DevToolsServices.{}#{}",
                 node.attribute("verb").unwrap_or_default(),
                 node.attribute("noun").unwrap_or_default()
             )

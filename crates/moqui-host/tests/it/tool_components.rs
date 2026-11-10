@@ -208,7 +208,7 @@ fn xlsx_spreadsheets_images_and_ipp_printing() {
     let _authz = context.disable_authz();
 
     let read = moqui_core::service::sync(
-        "org.moqui.impl.SpreadsheetServices.read#Spreadsheet",
+        "org.moqui.resource.SpreadsheetServices.read#Spreadsheet",
         &params(&[
             ("contentBytes", Value::Bytes(exchange_xlsx(address, &john))),
             ("sheetName", text("ArtifactTarpitList")),

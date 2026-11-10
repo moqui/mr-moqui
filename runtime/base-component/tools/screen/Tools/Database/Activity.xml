@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The database's sessions (plans/archive/Tools-Database.md §7.3,
-    org.moqui.impl.DatabaseServices.get#DatabaseActivity): what each runs and waits on, who blocks whom, and the marks:
+    org.moqui.dev.DatabaseServices.get#DatabaseActivity): what each runs and waits on, who blocks whom, and the marks:
     this server's own sessions, idle in a transaction for over a minute, running for over ten seconds. Cancel stops a
     session's statement and End closes the session; both need DATABASE_ADMIN; a session of this server is refused until
     a second question confirms it (force). Below, the index checks of get#IndexHealth. -->
@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
         on the page (forcePid, forceSignal), and only its own confirmation sends force -->
     <transition name="cancelSession" method="post" begin-transaction="false" authz-action="all">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.cancel#DatabaseSession').parameters({db,
+            const out = ec.service.sync().name('org.moqui.dev.DatabaseServices.cancel#DatabaseSession').parameters({db,
                 pid: Number(context.pid), force: String(context.force) == 'true'}).call() || {}
             forcePid = null
             if (ec.message.hasError() && /set force/i.test(ec.message.errorsString) && String(context.force) != 'true') {
@@ -39,7 +39,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="terminateSession" method="post" begin-transaction="false" authz-action="all">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.terminate#DatabaseSession').parameters({db,
+            const out = ec.service.sync().name('org.moqui.dev.DatabaseServices.terminate#DatabaseSession').parameters({db,
                 pid: Number(context.pid), force: String(context.force) == 'true'}).call() || {}
             forcePid = null
             if (ec.message.hasError() && /set force/i.test(ec.message.errorsString) && String(context.force) != 'true') {
@@ -56,7 +56,7 @@ along with this software (see the LICENSE.md file). If not, see
         <script><![CDATA[
             const call = (name) => {
                 let out = null, error = null
-                try { out = ec.service.sync().name('org.moqui.impl.DatabaseServices.' + name).parameters({db}).call() } catch (e) { error = String(e.message || e) }
+                try { out = ec.service.sync().name('org.moqui.dev.DatabaseServices.' + name).parameters({db}).call() } catch (e) { error = String(e.message || e) }
                 if (ec.message.hasError()) { error = ec.message.errorsString; ec.message.clearErrors() }
                 return {out: out || {}, error}
             }

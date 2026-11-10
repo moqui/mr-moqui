@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Chat apps (XMPP for local users, C3a; docs/interfaces/XMPP.md): what the user enters in an XMPP app (Conversations, Monal,
     Dino, Gajim) to chat in this server's rooms, and the app passwords those apps sign in with. Each app password says whether
     it works with XMPP: one made before XMPP sign-in has no SCRAM verifiers, so most apps refuse it; NewXmppPassword makes a
-    new one for XMPP (shown once, after the redirect), and Revoke ends one. org.moqui.impl.XmppServices.get#ClientSettings,
+    new one for XMPP (shown once, after the redirect), and Revoke ends one. org.moqui.chat.XmppServices.get#ClientSettings,
     org.moqui.impl.UserServices create# and revoke#UserAppPassword. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat apps" default-menu-index="11" server-static="qvt" menu-image="sym_o_forum" menu-image-type="icon">
@@ -35,7 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
     <actions>
         <set field="newXmppPassword" from="ec.web.sessionAttributes.remove('newXmppPassword') || null"/>
         <set field="newXmppPasswordName" from="ec.web.sessionAttributes.remove('newXmppPasswordName') || ''"/>
-        <service-call name="org.moqui.impl.XmppServices.get#ClientSettings" out-map="xmpp"/>
+        <service-call name="org.moqui.chat.XmppServices.get#ClientSettings" out-map="xmpp"/>
         <script><![CDATA[
             const L = (text) => ec.l10n.localize(text)
             const when = (value) => value == null ? '' : ec.l10n.format(value, 'MMM d, yyyy h:mm a')

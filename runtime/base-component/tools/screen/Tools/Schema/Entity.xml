@@ -58,7 +58,7 @@ along with this software (see the LICENSE.md file). If not, see
             tableDiffError = null
             if (!entityDefinition.isViewEntity) {
                 try {
-                    const diff = ec.service.sync().name('org.moqui.impl.DatabaseServices.compare#Schema').parameters({db: entityDb,
+                    const diff = ec.service.sync().name('org.moqui.dev.DatabaseServices.compare#Schema').parameters({db: entityDb,
                         entityNames: [String(selectedEntity)]}).call()
                     tableDiff = ((diff && diff.tables) || [])[0] || null
                 } catch (e) { tableDiffError = String(e.message || e) }

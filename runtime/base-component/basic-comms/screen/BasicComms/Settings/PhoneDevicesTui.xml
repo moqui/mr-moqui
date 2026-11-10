@@ -13,14 +13,14 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The terminal twin of PhoneDevices (style-guide §4.8): the user's desk and soft phones with their live registrations,
-    Add a phone, New password and Remove (org.moqui.impl.SipDeviceServices). A new phone's or a new password's credentials
+    Add a phone, New password and Remove (org.moqui.call.SipDeviceServices). A new phone's or a new password's credentials
     show once, as the message after the change; they are not kept. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Desk and soft phones" default-menu-include="false">
 
     <transition name="add">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.SipDeviceServices.create#SipDevice').parameters({name: name || null,
+            const out = ec.service.sync().name('org.moqui.call.SipDeviceServices.create#SipDevice').parameters({name: name || null,
                 deviceProfile: deviceProfile === 'legacy' ? 'legacy' : 'standard'}).requireNewTransaction(true).disableAuthz().call() || {}
             if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand('Set up the phone with these; the password is shown only now. Username ${u}, password ${p}, domain ${d}, port ${port} (${tr}).', '',
                 {u: out.username, p: out.password, d: out.domain, port: out.tlsPort || out.sipPort || '', tr: out.transport || ''}), 'success')
@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="newPassword">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.SipDeviceServices.rotate#SipDeviceCredential').parameter('sipDeviceId', sipDeviceId || '')
+            const out = ec.service.sync().name('org.moqui.call.SipDeviceServices.rotate#SipDeviceCredential').parameter('sipDeviceId', sipDeviceId || '')
                 .requireNewTransaction(true).disableAuthz().call() || {}
             if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand('The old password no longer works. Username ${u}, new password ${p}; it is shown only now.', '',
                 {u: out.username, p: out.password}), 'success')
@@ -40,7 +40,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="remove">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.SipDeviceServices.revoke#SipDevice').parameter('sipDeviceId', sipDeviceId || '')
+            ec.service.sync().name('org.moqui.call.SipDeviceServices.revoke#SipDevice').parameter('sipDeviceId', sipDeviceId || '')
                 .requireNewTransaction(true).disableAuthz().call()
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Phone removed'), 'success')
         ]]></script></actions>
@@ -49,7 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
 
     <actions><script><![CDATA[
-        const out = ec.service.sync().name('org.moqui.impl.SipDeviceServices.find#SipDevices').requireNewTransaction(true).disableAuthz().call() || {}
+        const out = ec.service.sync().name('org.moqui.call.SipDeviceServices.find#SipDevices').requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         registrarEnabled = !!out.registrarEnabled
         const when = (millis) => millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : ''

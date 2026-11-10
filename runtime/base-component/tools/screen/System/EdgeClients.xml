@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Edge Clients (plans/Edge-Node.md §5.7): on an edge node (node_role=edge), the local nodes paired with it and their links
-    (org.moqui.impl.EdgeServices.get#EdgeClients): state, generation, last connect, address and versions. Ping sends a
+    (org.moqui.edge.EdgeServices.get#EdgeClients): state, generation, last connect, address and versions. Ping sends a
     Ping down a node's down connection and shows the round trip; Revoke ends its key and closes its link. Make a pairing
     code (create#PairingCode) shows the code once, after the redirect, as the Chat apps screen shows a new app password;
     only its hash is kept. Near the top is this edge node's link key fingerprint (get#LinkStatus linkFingerprint), for the
@@ -31,13 +31,13 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Edge Clients" default-menu-index="18" menu-image="sym_o_lan" menu-image-type="icon">
 
     <transition name="makePairingCode">
-        <service-call name="org.moqui.impl.EdgeServices.create#PairingCode" in-map="{validMinutes:validMinutes}" out-map="codeOut"/>
+        <service-call name="org.moqui.edge.EdgeServices.create#PairingCode" in-map="{validMinutes:validMinutes}" out-map="codeOut"/>
         <actions><!-- shown once, after the redirect -->
             <script>if (!ec.message.hasError()) { ec.web.sessionAttributes.newEdgePairingCode = codeOut.code ?? ''; ec.web.sessionAttributes.newEdgePairingExpire = codeOut.expireDate ? ec.l10n.format(codeOut.expireDate, '') : '' }</script></actions>
         <default-response url="."/><error-response url="."/>
     </transition>
     <transition name="revokeClient">
-        <service-call name="org.moqui.impl.EdgeServices.revoke#EdgeClient" in-map="{pairedNodeId:pairedNodeId}" out-map="revokeOut"/>
+        <service-call name="org.moqui.edge.EdgeServices.revoke#EdgeClient" in-map="{pairedNodeId:pairedNodeId}" out-map="revokeOut"/>
         <actions><if condition="!ec.message.hasError()"><then>
             <if condition="revokeOut?.revoked"><then><message type="success">Revoked: the node's link is closed</message></then>
                 <else><message type="warning">No such node is paired</message></else></if>
@@ -46,13 +46,13 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="addHost">
-        <service-call name="org.moqui.impl.EdgeServices.add#EdgeHost" in-map="{hostName:hostName, pairedNodeId:pairedNodeId, modeEnumId:modeEnumId}" out-map="hostOut"/>
+        <service-call name="org.moqui.edge.EdgeServices.add#EdgeHost" in-map="{hostName:hostName, pairedNodeId:pairedNodeId, modeEnumId:modeEnumId}" out-map="hostOut"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">${hostOut.hostName} now goes to ${pairedNodeId}</message></if></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
     <transition name="removeHost">
-        <service-call name="org.moqui.impl.EdgeServices.remove#EdgeHost" in-map="{hostName:hostName}" out-map="removeOut"/>
+        <service-call name="org.moqui.edge.EdgeServices.remove#EdgeHost" in-map="{hostName:hostName}" out-map="removeOut"/>
         <actions><if condition="!ec.message.hasError()"><then>
             <if condition="removeOut?.removed"><then><message type="success">Removed ${hostName}</message></then>
                 <else><message type="warning">No such host name</message></else></if>
@@ -61,13 +61,13 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="recheckConflicts">
-        <service-call name="org.moqui.impl.EdgeServices.recheck#ReplicaConflicts" in-map="{pairedNodeId:pairedNodeId}" out-map="recheckOut"/>
+        <service-call name="org.moqui.edge.EdgeServices.recheck#ReplicaConflicts" in-map="{pairedNodeId:pairedNodeId}" out-map="recheckOut"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Checked again: ${recheckOut?.applied ?? 0} applied</message></if></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
     <transition name="pingClient">
-        <service-call name="org.moqui.impl.EdgeServices.ping#EdgeClient" in-map="{pairedNodeId:pairedNodeId}" out-map="pingOut"/>
+        <service-call name="org.moqui.edge.EdgeServices.ping#EdgeClient" in-map="{pairedNodeId:pairedNodeId}" out-map="pingOut"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Round trip to ${pairedNodeId}: ${ec.l10n.format(pingOut.rttMs, '#,##0.0')} ms</message></if></actions>
         <default-response url="."/>
         <error-response url="."/>
@@ -77,7 +77,7 @@ along with this software (see the LICENSE.md file). If not, see
         const L = (text) => ec.l10n.localize(text)
         newCode = ec.web.sessionAttributes.remove('newEdgePairingCode') || null
         newCodeExpire = ec.web.sessionAttributes.remove('newEdgePairingExpire') || ''
-        const link = ec.service.sync().name('org.moqui.impl.EdgeServices.get#LinkStatus').call() || {}
+        const link = ec.service.sync().name('org.moqui.edge.EdgeServices.get#LinkStatus').call() || {}
         notBuilt = link.state === 'notBuilt'
         notStarted = link.state === 'notStarted'
         // a dedicated edge node and an all-in-one node both take links (plans/Edge-Node.md §10)
@@ -100,13 +100,13 @@ along with this software (see the LICENSE.md file). If not, see
         let conflictsOut = {}
         ec.message.pushErrors()
         try {
-            out = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeClients').call() || {}
-            if (!ec.message.hasError()) hostsOut = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeHosts').call() || {}
+            out = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeClients').call() || {}
+            if (!ec.message.hasError()) hostsOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeHosts').call() || {}
             if (!ec.message.hasError()) {
-                queueOut = ec.service.sync().name('org.moqui.impl.EdgeServices.get#QueueStatus').call() || {}
+                queueOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#QueueStatus').call() || {}
             }
             if (!ec.message.hasError() && allInOne) {
-                conflictsOut = ec.service.sync().name('org.moqui.impl.EdgeServices.get#ReplicaConflicts').call() || {}
+                conflictsOut = ec.service.sync().name('org.moqui.edge.EdgeServices.get#ReplicaConflicts').call() || {}
             }
             if (ec.message.hasError()) clientsError = ec.message.getErrorsString()
         } finally {

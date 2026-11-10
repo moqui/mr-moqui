@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- CallGuest (plans/Comms-Framework.md §6.3 Guests, W3, D-A5): the page of a call link for a person with no account, at
     /call/<token>: the token-route "call" of basic-comms MoquiConf.xml renders it in the public shell after
-    org.moqui.impl.CallServices.check#CallLinkToken accepted the token, so an expired, revoked or unknown link never
+    org.moqui.call.CallServices.check#CallLinkToken accepted the token, so an expired, revoked or unknown link never
     reaches this screen. The component is CallGuest.qvue next to this file: the link's name and its owner, the guest's
     name, the camera and microphone preview, Join (or Ask to join for a link with a lobby), the lobby while someone in the
     call lets them in, then the call over its own socket (/callws). The credential join#AsGuest gives stays in the page; the
@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the guest's name: in the call, or in its lobby; the credential for this page -->
     <transition name="joinGuest" require-session-token="false">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.CallServices.join#AsGuest').parameters({token: token || '',
+            const out = ec.service.sync().name('org.moqui.call.CallServices.join#AsGuest').parameters({token: token || '',
                 displayName: displayName || ''}).requireNewTransaction(true).call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
@@ -38,8 +38,8 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the lobby's question: let in yet, and who is in the call -->
     <transition name="guestState" require-session-token="false" read-only="true">
         <actions><script><![CDATA[
-            const check = ec.service.sync().name('org.moqui.impl.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
-            const out = check.valid ? ec.service.sync().name('org.moqui.impl.CallServices.get#GuestState').parameter('credential', credential || '')
+            const check = ec.service.sync().name('org.moqui.call.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
+            const out = check.valid ? ec.service.sync().name('org.moqui.call.CallServices.get#GuestState').parameter('credential', credential || '')
                 .requireNewTransaction(true).call() || {} : {admission: 'gone'}
             ec.message.clearErrors()
             ec.web.sendJsonResponse({admission: out.admission || 'gone', callStatus: out.callStatus || null, people: out.people || []})
@@ -49,8 +49,8 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the guest's ICE servers (TURN), once admitted -->
     <transition name="iceServers" require-session-token="false" read-only="true">
         <actions><script><![CDATA[
-            const check = ec.service.sync().name('org.moqui.impl.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
-            const out = check.valid ? ec.service.sync().name('org.moqui.impl.CallServices.get#GuestIceServers').parameter('credential', credential || '')
+            const check = ec.service.sync().name('org.moqui.call.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
+            const out = check.valid ? ec.service.sync().name('org.moqui.call.CallServices.get#GuestIceServers').parameter('credential', credential || '')
                 .requireNewTransaction(true).call() || {} : {}
             ec.message.clearErrors()
             ec.web.sendJsonResponse({iceServers: out.iceServers || []})
@@ -58,11 +58,11 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- recording (W5): the call's recording and this guest's notice, and the guest's acknowledgement or withdrawal, by
-        the credential (org.moqui.impl.CallRecordingServices) -->
+        the credential (org.moqui.call.CallRecordingServices) -->
     <transition name="recordingState" require-session-token="false" read-only="true">
         <actions><script><![CDATA[
-            const check = ec.service.sync().name('org.moqui.impl.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
-            const out = check.valid ? ec.service.sync().name('org.moqui.impl.CallRecordingServices.get#RecordingState').parameter('credential', credential || '')
+            const check = ec.service.sync().name('org.moqui.call.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
+            const out = check.valid ? ec.service.sync().name('org.moqui.call.CallRecordingServices.get#RecordingState').parameter('credential', credential || '')
                 .requireNewTransaction(true).call() || {} : {}
             ec.message.clearErrors()
             ec.web.sendJsonResponse({enabled: !!out.enabled, ackRequired: !!out.ackRequired, canRecord: false, recording: out.recording || null,
@@ -72,8 +72,8 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="ackRecording" require-session-token="false">
         <actions><script><![CDATA[
-            const check = ec.service.sync().name('org.moqui.impl.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
-            const out = check.valid ? ec.service.sync().name('org.moqui.impl.CallRecordingServices.ack#RecordingNotice').parameter('credential', credential || '')
+            const check = ec.service.sync().name('org.moqui.call.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
+            const out = check.valid ? ec.service.sync().name('org.moqui.call.CallRecordingServices.ack#RecordingNotice').parameter('credential', credential || '')
                 .requireNewTransaction(true).call() || {} : {reasonCode: 'notFound'}
             ec.message.clearErrors()
             ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, recording: out.recording || null})
@@ -82,8 +82,8 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="withdrawRecording" require-session-token="false">
         <actions><script><![CDATA[
-            const check = ec.service.sync().name('org.moqui.impl.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
-            const out = check.valid ? ec.service.sync().name('org.moqui.impl.CallRecordingServices.withdraw#RecordingConsent').parameter('credential', credential || '')
+            const check = ec.service.sync().name('org.moqui.call.CallServices.check#CallLinkToken').parameter('token', token || '').call() || {}
+            const out = check.valid ? ec.service.sync().name('org.moqui.call.CallRecordingServices.withdraw#RecordingConsent').parameter('credential', credential || '')
                 .requireNewTransaction(true).call() || {} : {reasonCode: 'notFound'}
             ec.message.clearErrors()
             ec.web.sendJsonResponse({reasonCode: out.reasonCode || null, recording: out.recording || null})
@@ -92,7 +92,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="leaveGuest" require-session-token="false">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.CallServices.leave#AsGuest').parameter('credential', credential || '').requireNewTransaction(true).call()
+            ec.service.sync().name('org.moqui.call.CallServices.leave#AsGuest').parameter('credential', credential || '').requireNewTransaction(true).call()
             ec.message.clearErrors()
             ec.web.sendJsonResponse({})
         ]]></script></actions>

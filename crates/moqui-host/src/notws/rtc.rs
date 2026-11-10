@@ -44,17 +44,17 @@ use serde_json::{json, Value as Json};
 use super::{Push, Slot};
 use crate::rtc::{Command, Route};
 
-const BIND_SERVICE: &str = "org.moqui.impl.CallServices.bind#Connection";
-const LEAVE_SERVICE: &str = "org.moqui.impl.CallServices.leave#Call";
-const GUEST_BIND_SERVICE: &str = "org.moqui.impl.CallServices.bind#GuestConnection";
-const GUEST_LEAVE_SERVICE: &str = "org.moqui.impl.CallServices.leave#AsGuest";
-const GUEST_STATE_SERVICE: &str = "org.moqui.impl.CallServices.get#GuestState";
+const BIND_SERVICE: &str = "org.moqui.call.CallServices.bind#Connection";
+const LEAVE_SERVICE: &str = "org.moqui.call.CallServices.leave#Call";
+const GUEST_BIND_SERVICE: &str = "org.moqui.call.CallServices.bind#GuestConnection";
+const GUEST_LEAVE_SERVICE: &str = "org.moqui.call.CallServices.leave#AsGuest";
+const GUEST_STATE_SERVICE: &str = "org.moqui.call.CallServices.get#GuestState";
 /// A guest's socket must send its credential this soon.
 const GUEST_AUTH_WAIT: Duration = Duration::from_secs(10);
 /// A guest's credential is checked again this often; one that no longer works closes the socket.
 const GUEST_CHECK: Duration = Duration::from_secs(30);
-const HEARTBEAT_SERVICE: &str = "org.moqui.impl.CallServices.heartbeat#Connections";
-const RELEASE_SERVICE: &str = "org.moqui.impl.CallServices.release#Connection";
+const HEARTBEAT_SERVICE: &str = "org.moqui.call.CallServices.heartbeat#Connections";
+const RELEASE_SERVICE: &str = "org.moqui.call.CallServices.release#Connection";
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(20);
 /// A frame larger than this is refused.
 const MAX_FRAME: usize = 128 * 1024;

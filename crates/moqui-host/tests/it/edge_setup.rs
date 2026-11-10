@@ -198,7 +198,7 @@ fn list(value: Option<&Value>) -> Vec<BTreeMap<String, String>> {
 
 /// The edge node's host names, by name: (node, mode).
 fn hosts(edge: &Gate) -> BTreeMap<String, (String, String)> {
-    list(call(edge, "org.moqui.impl.EdgeServices.get#EdgeHosts", &[]).get("hostList"))
+    list(call(edge, "org.moqui.edge.EdgeServices.get#EdgeHosts", &[]).get("hostList"))
         .into_iter()
         .map(|row| {
             (
@@ -513,7 +513,7 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
     // Test: the tunnels are probed, and this node runs no XMPP server, so they fail saying so; the name is there
     let tested = call(
         local,
-        "org.moqui.impl.EdgeServices.test#EdgeSetup",
+        "org.moqui.edge.EdgeServices.test#EdgeSetup",
         &[("xmppOn", Value::Bool(true))],
     );
     let tests: BTreeMap<String, BTreeMap<String, String>> = list(tested.get("testList"))
@@ -540,7 +540,7 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
     };
     let applied = xmpp_lines(call(
         local,
-        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        "org.moqui.edge.EdgeServices.apply#EdgeSetup",
         &[("xmppOn", Value::Bool(true))],
     ));
     assert!(
@@ -553,7 +553,7 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
     assert!(refused.contains("turn web access on"), "{refused}");
     let applied = call(
         local,
-        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        "org.moqui.edge.EdgeServices.apply#EdgeSetup",
         &[("xmppOn", Value::Bool(true))],
     );
     assert_eq!(applied["configured"], Value::Bool(true), "the rest is applied");
@@ -567,7 +567,7 @@ fn xmpp_area(local: &Gate, edge: &Gate) {
     // with no xmpp_domain, nothing is changed
     moqui_lib::env::clear_property("xmpp_domain");
     let parameters = BTreeMap::from([("xmppOn".to_string(), Value::Bool(true))]);
-    let refused = moqui_core::service::sync("org.moqui.impl.EdgeServices.apply#EdgeSetup", &parameters);
+    let refused = moqui_core::service::sync("org.moqui.edge.EdgeServices.apply#EdgeSetup", &parameters);
     let errors =
         moqui_core::context::ExecutionContext::with_current(|ec| ec.message().errors().to_vec()).unwrap_or_default();
     assert!(
@@ -635,7 +635,7 @@ fn calls_area(local: &Gate, media: &str) {
     };
     let applied = calls_lines(call(
         local,
-        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        "org.moqui.edge.EdgeServices.apply#EdgeSetup",
         &[("callsOn", Value::Bool(true))],
     ));
     for wanted in [
@@ -661,7 +661,7 @@ fn calls_area(local: &Gate, media: &str) {
     };
     let tested = tests(call(
         local,
-        "org.moqui.impl.EdgeServices.test#EdgeSetup",
+        "org.moqui.edge.EdgeServices.test#EdgeSetup",
         &[("callsOn", Value::Bool(true))],
     ));
     for check in ["callsNode", "iceServers", "turn"] {
@@ -672,7 +672,7 @@ fn calls_area(local: &Gate, media: &str) {
         "{tested:?}"
     );
     // an Apply that was not asked about calls leaves them as they are
-    let untouched = calls_lines(call(local, "org.moqui.impl.EdgeServices.apply#EdgeSetup", &[]));
+    let untouched = calls_lines(call(local, "org.moqui.edge.EdgeServices.apply#EdgeSetup", &[]));
     assert!(untouched.is_empty(), "{untouched:?}");
     let env = std::fs::read_to_string(local.runtime.join(".env")).unwrap();
     assert!(env.contains("edge_calls_enabled=true"), "{env}");
@@ -685,7 +685,7 @@ fn calls_area(local: &Gate, media: &str) {
     // says no new call can start
     let off = calls_lines(call(
         local,
-        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        "org.moqui.edge.EdgeServices.apply#EdgeSetup",
         &[("callsOn", Value::Bool(false))],
     ));
     assert!(
@@ -703,7 +703,7 @@ fn calls_area(local: &Gate, media: &str) {
     assert!(env.contains("edge_calls_enabled=false"), "{env}");
     let tested = tests(call(
         local,
-        "org.moqui.impl.EdgeServices.test#EdgeSetup",
+        "org.moqui.edge.EdgeServices.test#EdgeSetup",
         &[("callsOn", Value::Bool(true))],
     ));
     assert_eq!(tested["callsNode"]["checked"], "false", "{tested:?}");
@@ -716,7 +716,7 @@ fn calls_area(local: &Gate, media: &str) {
     moqui_core::edge::calls::forget_rows(&factory, || ());
     let late = calls_lines(call(
         local,
-        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        "org.moqui.edge.EdgeServices.apply#EdgeSetup",
         &[("callsOn", Value::Bool(true))],
     ));
     assert!(
@@ -729,7 +729,7 @@ fn calls_area(local: &Gate, media: &str) {
     moqui_core::edge::calls::allow_row(&factory, &edge_id);
     let on = calls_lines(call(
         local,
-        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        "org.moqui.edge.EdgeServices.apply#EdgeSetup",
         &[("callsOn", Value::Bool(true))],
     ));
     assert!(on.iter().all(|line| line["ok"] == "true"), "{on:?}");
@@ -804,7 +804,7 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
     let trunk_id = to_plain_string(
         &call(
             local,
-            "org.moqui.impl.VoiceServices.store#VoiceTrunk",
+            "org.moqui.call.VoiceServices.store#VoiceTrunk",
             &[
                 ("name", Value::string("Setup trunk")),
                 ("host", Value::string("127.0.0.1")),
@@ -828,9 +828,9 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
             fields.push(("routeTypeEnumId", Value::string("PnrUser")));
             fields.push(("routeId", Value::string(user)));
         }
-        call(local, "org.moqui.impl.VoiceServices.store#PhoneNumber", &fields);
+        call(local, "org.moqui.call.VoiceServices.store#PhoneNumber", &fields);
     }
-    call(local, "org.moqui.impl.VoiceServices.refresh#PhoneFallbacks", &[]);
+    call(local, "org.moqui.call.VoiceServices.refresh#PhoneFallbacks", &[]);
     wait_until(
         Duration::from_secs(10),
         "the edge node's engine loads the trunk",
@@ -887,7 +887,7 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
     };
     let applied = sip_lines(call(
         local,
-        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        "org.moqui.edge.EdgeServices.apply#EdgeSetup",
         &[("sipOn", Value::Bool(true))],
     ));
     for wanted in [
@@ -911,7 +911,7 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
         list(
             call(
                 local,
-                "org.moqui.impl.EdgeServices.test#EdgeSetup",
+                "org.moqui.edge.EdgeServices.test#EdgeSetup",
                 &[("sipOn", Value::Bool(true))],
             )
             .get("testList"),
@@ -936,7 +936,7 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
         "{tested:?}"
     );
     // phone calls go to the edge node's SIP engine (Voice.js voiceNodes): the only voice node here
-    let active = || call(local, "org.moqui.impl.VoiceServices.get#VoiceCapabilities", &[]);
+    let active = || call(local, "org.moqui.call.VoiceServices.get#VoiceCapabilities", &[]);
     assert_eq!(active()["active"], Value::Bool(true), "{:?}", active());
     show(
         "EdgeNode/Status",
@@ -946,12 +946,12 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
         ],
     );
     // an Apply not asked about phones leaves them as they are
-    let untouched = sip_lines(call(local, "org.moqui.impl.EdgeServices.apply#EdgeSetup", &[]));
+    let untouched = sip_lines(call(local, "org.moqui.edge.EdgeServices.apply#EdgeSetup", &[]));
     assert!(untouched.is_empty(), "{untouched:?}");
     // phones off: both sets go empty, so the edge node's engine has no trunk; the row stays, taking no new call
     let off = sip_lines(call(
         local,
-        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        "org.moqui.edge.EdgeServices.apply#EdgeSetup",
         &[("sipOn", Value::Bool(false))],
     ));
     for wanted in [
@@ -991,7 +991,7 @@ fn sip_area(local: &Gate, edge: &Gate, sip_address: &str) {
     // and on again, as the wizard leaves it
     let on = sip_lines(call(
         local,
-        "org.moqui.impl.EdgeServices.apply#EdgeSetup",
+        "org.moqui.edge.EdgeServices.apply#EdgeSetup",
         &[("sipOn", Value::Bool(true))],
     ));
     assert!(on.iter().all(|line| line["ok"] == "true"), "{on:?}");
@@ -1030,7 +1030,7 @@ fn a_local_node_is_attached_from_the_wizard() {
     let sales = to_plain_string(
         &call(
             &local,
-            "org.moqui.impl.EmailClientServices.create#EmailAccount",
+            "org.moqui.mail.EmailClientServices.create#EmailAccount",
             &[
                 ("accountKindEnumId", Value::string("EakHosted")),
                 ("emailAddress", Value::string("sales@example.com")),
@@ -1097,7 +1097,7 @@ fn a_local_node_is_attached_from_the_wizard() {
     );
     call(
         &edge,
-        "org.moqui.impl.EdgeServices.add#EdgeHost",
+        "org.moqui.edge.EdgeServices.add#EdgeHost",
         &[
             ("hostName", Value::string("taken.example.com")),
             ("pairedNodeId", Value::string(OTHER)),
@@ -1110,7 +1110,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         .build()
         .unwrap();
     let url = format!("https://localhost:{edge_port}");
-    let code = to_plain_string(&call(&edge, "org.moqui.impl.EdgeServices.create#PairingCode", &[])["code"]);
+    let code = to_plain_string(&call(&edge, "org.moqui.edge.EdgeServices.create#PairingCode", &[])["code"]);
     let mut pairing = PairConfig::new(&url, &code, NODE);
     pairing.trust_root = Some(root);
     pairing.connect_timeout = Duration::from_secs(5);
@@ -1126,7 +1126,7 @@ fn a_local_node_is_attached_from_the_wizard() {
     );
     call(
         &edge,
-        "org.moqui.impl.EdgeServices.add#EdgeHost",
+        "org.moqui.edge.EdgeServices.add#EdgeHost",
         &[
             ("hostName", Value::string("stale.example.com")),
             ("pairedNodeId", Value::string(NODE)),
@@ -1241,7 +1241,7 @@ fn a_local_node_is_attached_from_the_wizard() {
         "{kept}"
     );
     assert!(kept.contains(r#""xmppDomain":"chat.example.com""#), "{kept}");
-    let clients = list(call(&edge, "org.moqui.impl.EdgeServices.get#EdgeClients", &[]).get("clientList"));
+    let clients = list(call(&edge, "org.moqui.edge.EdgeServices.get#EdgeClients", &[]).get("clientList"));
     let ours = clients.iter().find(|row| row["pairedNodeId"] == NODE).unwrap();
     assert!(
         ours["setup"].contains("SITE1"),
@@ -1392,7 +1392,7 @@ fn a_local_node_is_attached_from_the_wizard() {
     records.fix_srv(&format!("_sip._udp.{SIP_DOMAIN}"), &[srv(sip_port, "edge.example.net")]);
     let dns = call(
         &local,
-        "org.moqui.impl.EdgeServices.check#EdgeDns",
+        "org.moqui.edge.EdgeServices.check#EdgeDns",
         &[
             ("domains", Value::List(vec![Value::string("example.com")])),
             (
@@ -1465,7 +1465,7 @@ fn a_local_node_is_attached_from_the_wizard() {
     });
     let tested = call(
         &local,
-        "org.moqui.impl.EdgeServices.test#EdgeSetup",
+        "org.moqui.edge.EdgeServices.test#EdgeSetup",
         &[
             ("mailOn", Value::Bool(true)),
             ("mailAddress", Value::string("Sales@example.com")),
@@ -1482,7 +1482,7 @@ fn a_local_node_is_attached_from_the_wizard() {
     }
     let unknown = call(
         &local,
-        "org.moqui.impl.EdgeServices.test#EdgeSetup",
+        "org.moqui.edge.EdgeServices.test#EdgeSetup",
         &[
             ("mailOn", Value::Bool(true)),
             ("mailAddress", Value::string("nobody@example.com")),

@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="createComponent"><service-call name="org.moqui.devaide.WorkspaceServices.create#Component"/>
         <actions><message type="success">Created ${location}: it loads after a restart</message></actions>
         <default-response url="."/></transition>
-    <transition name="restart"><service-call name="org.moqui.impl.DevToolsServices.restart#Server"/>
+    <transition name="restart"><service-call name="org.moqui.dev.DevToolsServices.restart#Server"/>
         <actions><message type="warning">Restarting: the server comes back in a few seconds</message></actions>
         <default-response url="."/></transition>
     <transition name="workspace"><default-response url="../Workspace"/></transition>

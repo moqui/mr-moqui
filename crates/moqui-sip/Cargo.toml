@@ -3,7 +3,7 @@
 # PCMU, PCMA and Opus with telephone-event, symmetric RTP, SRTP by SDES, RFC 4733 DTMF, the digest credentials and
 # their checks, the dial classes and the per-source block of failed digests. The signaling runs on Tokio (rsipstack's);
 # the media, digest, dial and race logic is sans-IO and tested in memory. It knows no ExecutionContext: moqui-host links
-# it under its sip feature, owns the sockets and calls the voice services (org.moqui.impl.VoiceServices).
+# it under its sip feature, owns the sockets and calls the voice services (org.moqui.call.VoiceServices).
 
 [package]
 name = "moqui-sip"

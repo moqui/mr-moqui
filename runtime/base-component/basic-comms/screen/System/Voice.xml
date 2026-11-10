@@ -16,8 +16,8 @@ along with this software (see the LICENSE.md file). If not, see
     MoquiConf.xml mounts it there, as the demo component changes System's screens. Its tabs: Status (whether phone calls work here,
     the SIP and media servers), Trunks, Numbers, Caller IDs, Fraud (the limits, the users' permissions, blocked sources) and
     Emergency (locations and the readiness checklist), Phones (V4: everyone's desk and soft phones and their registrations,
-    through org.moqui.impl.SipDeviceServices), Ring groups and Schedules (V3: org.moqui.impl.CallHandlingServices), IVR menus and Queues (V5:
-    org.moqui.impl.IvrServices, CallQueueServices). Every read and write goes through org.moqui.impl.VoiceServices, whose
+    through org.moqui.call.SipDeviceServices), Ring groups and Schedules (V3: org.moqui.call.CallHandlingServices), IVR menus and Queues (V5:
+    org.moqui.call.IvrServices, CallQueueServices). Every read and write goes through org.moqui.call.VoiceServices, whose
     administration services need the VoiceAdmin permission. These are XML screens, so they render in the terminal (tui) too. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Voice" default-menu-index="20" menu-image="sym_o_call" menu-image-type="icon">

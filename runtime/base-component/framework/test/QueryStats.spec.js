@@ -44,7 +44,7 @@ feature('a user the Tools app does not let in is refused the database services a
         try {
             let capabilities = {}
             let capabilitiesError = ''
-            try { capabilities = call('org.moqui.impl.DatabaseServices.get#Capabilities', {}) || {} } catch (e) {
+            try { capabilities = call('org.moqui.dev.DatabaseServices.get#Capabilities', {}) || {} } catch (e) {
                 capabilitiesError = String(e.message || e)
             }
             ec.message.clearErrors()

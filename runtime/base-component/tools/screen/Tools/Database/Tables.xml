@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The tables of the chosen database (plans/archive/Tools-Database.md §7.4,
-    org.moqui.impl.DatabaseServices.get#TableStats): sizes, row estimates from the catalog, dead rows and the last
+    org.moqui.dev.DatabaseServices.get#TableStats): sizes, row estimates from the catalog, dead rows and the last
     vacuum and analyze; Count gives one table's exact rows. Maintenance of the selected tables is planned with
     plan#TableMaintenance as a pending database job, whose page shows the statements before they run; VACUUM FULL and
     CLUSTER lock the table and need that confirmed. Needs DATABASE_ADMIN. -->
@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="entityDetail"><default-response url="../../Schema/Entity"/></transition>
     <transition name="countRows" method="get" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.count#TableRows').parameters({db, tableName: String(context.tableName || '')}).call() || {}
+            const out = ec.service.sync().name('org.moqui.dev.DatabaseServices.count#TableRows').parameters({db, tableName: String(context.tableName || '')}).call() || {}
             if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand('${tableName}: ${rowCount} rows', '', {tableName: out.tableName,
                 rowCount: ec.l10n.format(Number(out.rowCount || 0), '#,##0')}), 'info')
         ]]></script></actions>
@@ -34,7 +34,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="planMaintenance" method="post" authz-action="all">
         <actions><script><![CDATA[
             const tableNames = [].concat(context.tableNames || []).map(String).filter(Boolean)
-            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.plan#TableMaintenance').parameters({db, tableNames,
+            const out = ec.service.sync().name('org.moqui.dev.DatabaseServices.plan#TableMaintenance').parameters({db, tableNames,
                 action: String(context.maintenance || ''), allowExclusiveLock: String(context.allowExclusiveLock) == 'true',
                 description: 'Maintenance (' + String(context.maintenance || '') + ') of ' + tableNames.length + ' tables'}).call() || {}
             planJobId = ec.message.hasError() ? null : out.jobId
@@ -53,11 +53,11 @@ along with this software (see the LICENSE.md file). If not, see
         <script><![CDATA[
             let found = null
             tablesError = null
-            try { found = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#TableStats').parameters({db}).call() } catch (e) { tablesError = String(e.message || e) }
+            try { found = ec.service.sync().name('org.moqui.dev.DatabaseServices.get#TableStats').parameters({db}).call() } catch (e) { tablesError = String(e.message || e) }
             if (ec.message.hasError()) { tablesError = ec.message.errorsString; ec.message.clearErrors() }
             if (!tablesError && found && found.reason) tablesError = found.reason
             const mib = (bytes) => bytes == null || bytes === '' ? null : Number(bytes) / 1048576
-            const time = (value) => value == null || value === '' ? '' : ec.l10n.format(basicConvert(value, 'java.sql.Timestamp'), null)
+            const time = (value) => value == null || value === '' ? '' : ec.l10n.format(basicConvert(value, 'Timestamp'), null)
             const filter = String(context.tableFilter || '').toLowerCase()
             tableList = ((found && found.tables) || []).map((table) => ({tableName: table.table_name, entityName: table.entity_name || '',
                 estimatedRows: table.estimated_rows == null ? null : Number(table.estimated_rows), totalMib: mib(table.total_bytes),

@@ -31,7 +31,7 @@ use moqui_lib::object::{to_plain_string, Value};
 
 use crate::common;
 
-const SERVICES: &str = "org.moqui.impl.DatabaseServices";
+const SERVICES: &str = "org.moqui.dev.DatabaseServices";
 
 fn call(verb_noun: &str, parameters: &[(&str, Value)]) -> Result<BTreeMap<String, Value>, String> {
     let parameters: BTreeMap<String, Value> = parameters
@@ -90,7 +90,7 @@ fn etl_from_external(db: &str, sql: &str, check: bool) -> Result<BTreeMap<String
     .into_iter()
     .collect();
     let result = moqui_core::service::call::sync_checked(
-        "org.moqui.impl.EtlServices.run#EtlMapping",
+        "org.moqui.dev.EtlServices.run#EtlMapping",
         &parameters,
         &moqui_core::service::call::CallOptions {
             disable_authz: true,

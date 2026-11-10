@@ -66,7 +66,7 @@ along with this software (see the LICENSE.md file). If not, see
                     entityNames = Array.from(names)
                     if (!entityNames.length) { ec.message.addError(ec.l10n.localize('The data names no entity to load')); return }
                 }
-                const wrap = ec.service.sync().name('org.moqui.impl.DatabaseServices.plan#LoadWrap').parameters({db, entityNames,
+                const wrap = ec.service.sync().name('org.moqui.dev.DatabaseServices.plan#LoadWrap').parameters({db, entityNames,
                     description: entityNames.length ? 'Foreign keys around a load of ' + entityNames.length + ' entities' : 'Foreign keys around a load of every entity'}).call() || {}
                 if (ec.message.hasError()) return
                 for (const warning of wrap.warnings || []) ec.message.addMessage(String(warning), 'warning')

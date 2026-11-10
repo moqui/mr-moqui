@@ -489,7 +489,7 @@ fn a_component_kept_in_the_database_is_written_out_when_its_files_are_missing() 
         ]
         .into_iter()
         .collect();
-        let out = moqui_core::service::sync("org.moqui.impl.GitServices.commit#GitFiles", &parameters).unwrap();
+        let out = moqui_core::service::sync("org.moqui.git.GitServices.commit#GitFiles", &parameters).unwrap();
         let commit = out.get("commitId").map(to_plain_string).unwrap();
         let mut row = facade.make_value("moqui.server.DeployedComponent").unwrap();
         row.set("componentName", Value::string("hotdb"));

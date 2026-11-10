@@ -164,14 +164,14 @@ fn dav_routes_and_coediting_over_the_socket() {
         };
         let _authz = context.disable_authz();
         call(
-            "org.moqui.impl.WikiServices.create#WikiSpace",
+            "org.moqui.resource.WikiServices.create#WikiSpace",
             &[
                 ("wikiSpaceId", Value::string("COLLAB")),
                 ("description", Value::string("Co-editing")),
             ],
         );
         let page = call(
-            "org.moqui.impl.WikiServices.update#WikiPage",
+            "org.moqui.resource.WikiServices.update#WikiPage",
             &[
                 ("wikiSpaceId", Value::string("COLLAB")),
                 ("pageName", Value::string("Notes")),

@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The contracts of the Comms provider hooks (plans/Comms-Framework.md §3.3): an app's provider service implements the
     interface of its hook (<implements service="org.moqui.comms.ProviderInterfaces.inbox#Source"/>) and is declared in its app
     root's shell-providers (inbox-source name="..." service="..."). The framework calls the providers through
-    org.moqui.impl.ShellServices.call#Providers, each as the app that declares it, so authority comes from that app and the
+    org.moqui.ui.ShellServices.call#Providers, each as the app that declares it, so authority comes from that app and the
     signed-in user, never from a userId or app passed as data.
 
     Each answer the framework combines carries provider-qualified ids (the provider's name as sourceId, itemId within it);
@@ -147,7 +147,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="sms" noun="Consent" type="interface">
         <description>sms-consent (C4-SMS): whether a promotional text may go from our number fromNumber to toNumber, as the
-            caller's user (org.moqui.impl.SmsServices check#SmsSend). consent true allows it, false refuses it whatever another
+            caller's user (org.moqui.call.SmsServices check#SmsSend). consent true allows it, false refuses it whatever another
             provider says; with no provider saying true, a promotional text is refused (consentRequired).</description>
         <in-parameters>
             <parameter name="fromNumber" required="true"/>
@@ -159,7 +159,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="call" noun="Target" type="interface">
         <description>call-target: which of the users in userIdList the current user may not call, transfer a call to or add
-            to a call (org.moqui.impl.CallTransferServices transfer#Call and add#CallParticipant, CallServices start#Call),
+            to a call (org.moqui.call.CallTransferServices transfer#Call and add#CallParticipant, CallServices start#Call),
             for an app that keeps them to the user's own (IronStone: the user's organizations). A user named in any
             provider's refusedUserIdList is refused, with the same answer as a user that does not exist; with no provider
             every enabled user may be reached; a provider that fails refuses them all.</description>

@@ -411,7 +411,7 @@ const DYNAMIC: &str = r#"<screen require-authentication="false">
 const ENUM_TYPE: &str = "moqui.basic.EnumerationType";
 const USER_GROUP: &str = "moqui.security.UserGroup";
 /// A service name the key reads. It is not run; the '#' is part of the name, as a Moqui service name has one.
-const STATUS_SERVICE: &str = "org.moqui.impl.StatusServices.get#StatusColors";
+const STATUS_SERVICE: &str = "org.moqui.ui.StatusServices.get#StatusColors";
 
 /// The `formLocation` values the html posts, in document order.
 fn posted_locations(html: &str) -> Vec<String> {

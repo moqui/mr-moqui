@@ -13,7 +13,7 @@
  */
 
 //! Web Push to the browsers a user subscribed (the installed PWA or a browser tab; plans/Comms-Framework.md §7.2 P0), in
-//! `org.moqui.impl.NotificationServices`:
+//! `org.moqui.ui.NotificationServices`:
 //!
 //! - `store#WebPushSubscription`, `delete#WebPushSubscription` and `get#WebPushStatus` work on the current user's
 //!   subscriptions only. A browser's endpoint stored for another user moves to them, so a push never crosses an
@@ -55,7 +55,7 @@ const PROVIDER_FCM: &str = "PushFcm";
 /// The longest FCM token and app id stored, in characters (a token is about 160).
 const MAX_TOKEN: usize = 4096;
 const MAX_APP_ID: usize = 255;
-const SEND_SERVICE: &str = "org.moqui.impl.NotificationServices.send#WebPush";
+const SEND_SERVICE: &str = "org.moqui.ui.NotificationServices.send#WebPush";
 const KEY_PROPERTY: &str = "web_push_vapid_key";
 const SUBJECT_PROPERTY: &str = "web_push_subject";
 /// A subscription is disabled after this many failed pushes in a row.

@@ -14,7 +14,7 @@
 
 //! Chat actors and the bridge layer's Rust half (plans/Comms-Framework.md §4.1, §4.3, §4.4; C1). The entities are
 //! `framework/entity/ChatEntities.xml`; the inbound side (`ingest#Event`) and the screens' reads are
-//! `org.moqui.impl.ChatBridgeServices`.
+//! `org.moqui.chat.ChatBridgeServices`.
 //!
 //! - `get#LocalActors`: the `ChatActor` of each local user, made on first use. A local actor's id is its userId (an
 //!   external actor's id is sequenced with the prefix `XA`), so two callers that make one user's actor at once both
@@ -767,7 +767,7 @@ pub fn round(factory: &ExecutionContextFactory, facade: &EntityFacade, now: i64)
     }
     if !infos.is_empty() {
         if let Err(error) = super::shell::call_tolerant(
-            "org.moqui.impl.ChatBridgeServices.process#PendingInbound",
+            "org.moqui.chat.ChatBridgeServices.process#PendingInbound",
             &BTreeMap::from([("nowMillis".to_string(), Value::I64(now))]),
         ) {
             tracing::error!("the chat bridges' waiting input could not be worked: {error}");
@@ -1520,7 +1520,7 @@ fn push_state(room_id: &str, seq: i64) {
         ("chatRoomId".to_string(), Value::string(room_id)),
         ("eventSeq".to_string(), Value::I64(seq)),
     ]);
-    if let Err(error) = super::shell::call_tolerant("org.moqui.impl.ChatBridgeServices.push#DeliveryState", &parameters)
+    if let Err(error) = super::shell::call_tolerant("org.moqui.chat.ChatBridgeServices.push#DeliveryState", &parameters)
     {
         tracing::warn!("Could not push the delivery state of chat event {room_id}::{seq}: {error}");
     }

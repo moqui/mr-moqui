@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.ResourceServices`: the content blobs of `crate::resource::blob`. No Java counterpart. A failure is
+//! `org.moqui.resource.ResourceServices`: the content blobs of `crate::resource::blob`. No Java counterpart. A failure is
 //! an error in the message facade, as a Java service's is.
 
 use std::collections::BTreeMap;

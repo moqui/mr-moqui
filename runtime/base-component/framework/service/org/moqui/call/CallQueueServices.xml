@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Call queues (plans/Comms-Framework.md §5.3, §5.4, V5; docs/interfaces/SIP.md "Queues"): queues, their agents and live stats,
+    the agents' own status, and the SIP engine's tick while a call waits. The model is the V5 block of
+    framework/entity/VoiceEntities.xml; the logic is CallQueues.js beside this file. The queue services need the VoiceAdmin
+    permission (notAllowed otherwise); an agent changes only their own status; tick#QueueCall is internal. No Java
+    counterpart. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="tick" noun="QueueCall" authenticate="false" allow-remote="false">
+        <description>Internal (the SIP engine, every call_queue_tick_seconds while a call waits): an offer that rang the
+            queue's ringSeconds ends (the agents missed it) and the next is made, past maxWaitSeconds the call goes to the
+            fallback, and every announceSeconds the caller hears their place. answer: mode queue (tickSeconds, position,
+            announce, positionPromptLocation), done (answered or ended), or where the fallback sends the call (as route#IvrCall).
+            atMs is the time it is read at (the specs' simulated time).</description>
+        <in-parameters>
+            <parameter name="callQueueEntryId" required="true"/>
+            <parameter name="atMs" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="answer" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll({answer: ec.resource.script('component://framework/service/org/moqui/call/CallQueues.js').execute('tick', context)})</script></actions>
+    </service>
+
+    <service verb="find" noun="MyCallQueues">
+        <description>The queues the current user takes calls for: their status (loggedIn, paused, wrapUpUntil, state:
+            available, out, paused, wrapUp, inCall, offered) and each queue's waitingCount, longestWaitSeconds, agentsAvailable
+            and agentsLoggedIn.</description>
+        <in-parameters>
+            <parameter name="atMs" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="queueList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallQueues.js').execute('myQueues', context))</script></actions>
+    </service>
+
+    <service verb="set" noun="QueueAgentStatus">
+        <description>The current user logs in (status in), out, pauses or resumes taking callQueueId's calls, or
+            every queue's they take without it; a waiting call rings them at once when they come free.</description>
+        <in-parameters>
+            <parameter name="callQueueId"/>
+            <parameter name="status" required="true"/>
+            <parameter name="atMs" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="queueList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallQueues.js').execute('setAgentStatus', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="TransferQueues">
+        <description>The queues a signed-in user may transfer a call to (their names matching term), with waitingCount and agentsAvailable; none for an external user (EXTERNAL_USER), who transfers no call.</description>
+        <in-parameters><parameter name="term"/></in-parameters>
+        <out-parameters><parameter name="queueList" type="List"/><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallQueues.js').execute('transferQueues', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="CallQueues">
+        <description>The queues with their settings, agents and their state, numbers, and live stats (waitingCount, longestWaitSeconds, agentsAvailable, agentsLoggedIn).</description>
+        <in-parameters>
+            <parameter name="atMs" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="queueList" type="List"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallQueues.js').execute('findQueues', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="CallQueue">
+        <description>Add or change a queue: name, description, strategyEnumId (CqsLongestIdle, CqsRoundRobin,
+            CqsAllAtOnce), ringSeconds (5 to 120), maxWaitSeconds (10 to 7200), maxLength (1 to 500), wrapUpSeconds (0 to 600),
+            announceSeconds (0, off, to 600), the fallback (fallbackTypeEnumId and fallbackId; targets are CallTarget enums (CtgUser, CtgGroup, CtgQueue, CtgMenu, CtgVoicemail, CtgNumber, CtgRepeat, CtgEnd) with their id) and commsScheduleId.</description>
+        <in-parameters>
+            <parameter name="callQueueId"/>
+            <parameter name="name"/>
+            <parameter name="description"/>
+            <parameter name="strategyEnumId"/>
+            <parameter name="ringSeconds" type="Integer"/>
+            <parameter name="maxWaitSeconds" type="Integer"/>
+            <parameter name="maxLength" type="Integer"/>
+            <parameter name="wrapUpSeconds" type="Integer"/>
+            <parameter name="announceSeconds" type="Integer"/>
+            <parameter name="fallbackTypeEnumId"/>
+            <parameter name="fallbackId"/>
+            <parameter name="commsScheduleId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callQueueId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallQueues.js').execute('storeQueue', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="CallQueue">
+        <description>Remove a queue no number, menu or queue sends calls to and no call waits in, with its agents and audio.</description>
+        <in-parameters>
+            <parameter name="callQueueId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallQueues.js').execute('deleteQueue', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="CallQueueAgent">
+        <description>Add a user to a queue as an agent (logged out until they log in), or change their order (sequenceNum).</description>
+        <in-parameters>
+            <parameter name="callQueueId" required="true"/>
+            <parameter name="userId" required="true"/>
+            <parameter name="sequenceNum" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallQueues.js').execute('storeAgent', context))</script></actions>
+    </service>
+
+    <service verb="delete" noun="CallQueueAgent">
+        <description>Take an agent out of a queue.</description>
+        <in-parameters>
+            <parameter name="callQueueId" required="true"/>
+            <parameter name="userId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallQueues.js').execute('deleteAgent', context))</script></actions>
+    </service>
+
+    <service verb="store" noun="CallQueueAudio">
+        <description>A queue's hold music (kind music) or position prompt (kind position, played before the caller's
+            place): an uploaded WAV or Ogg Opus file, kept as Ogg Opus; remove true takes it away.</description>
+        <in-parameters>
+            <parameter name="callQueueId" required="true"/>
+            <parameter name="kind"/>
+            <parameter name="file" type="FileItem"/>
+            <parameter name="remove" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="location"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallQueues.js').execute('storeQueueAudio', context))</script></actions>
+    </service>
+</services>

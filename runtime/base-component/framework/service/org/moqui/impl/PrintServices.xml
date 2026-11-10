@@ -54,9 +54,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="storeDocument" type="Boolean" default="true"/>
             <parameter name="contentType"/>
 
-            <parameter name="inputStream" type="java.io.InputStream"><description>The document may be passed in this
+            <parameter name="inputStream" type="InputStream"><description>The document may be passed in this
                 parameter as an InputStream or in the serialBlob field as a wrapped byte[].</description></parameter>
-            <parameter name="serialBlob" type="javax.sql.rowset.serial.SerialBlob">
+            <parameter name="serialBlob" type="SerialBlob">
                 <description>Use SerialBlob as a wrapper for byte[].</description></parameter>
         </in-parameters>
     </service>

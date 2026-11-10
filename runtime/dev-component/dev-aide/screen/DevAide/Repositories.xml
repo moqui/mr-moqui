@@ -37,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="cloneRepository"><service-call name="org.moqui.devaide.VcsServices.clone#Repository" out-map="got"/>
         <actions><message type="success">${got.loadable ? 'Cloned into ' + got.location + ': Load it now, or it loads at the next restart' : 'Cloned into ' + got.location + ': it loads after a restart (Home)' + ((got.restartReasons || []).length ? '; ' + got.restartReasons.join('; ') : '')}</message></actions>
         <default-response url="."><parameter name="loadName" from="got.loadable ? got.componentName : null"/></default-response></transition>
-    <transition name="loadComponent"><service-call name="org.moqui.impl.ComponentServices.load#Component" in-map="{componentName: loadName}" out-map="loaded"/>
+    <transition name="loadComponent"><service-call name="org.moqui.dev.ComponentServices.load#Component" in-map="{componentName: loadName}" out-map="loaded"/>
         <actions><message type="${(loaded.report?.problems || []).length ? 'warning' : 'success'}">${loadName}: ${loaded.report?.status || 'not loaded'}${(loaded.report?.problems || []).length ? '; ' + loaded.report.problems.join('; ') : ''}</message></actions>
         <default-response url="."/></transition>
     <transition name="workspace"><default-response url="../Workspace"/></transition>

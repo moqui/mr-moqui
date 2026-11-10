@@ -1,4 +1,4 @@
-// Call recording (org.moqui.impl.CallRecordingServices and CallRecordings.js; plans/Comms-Framework.md W5, §5.4
+// Call recording (org.moqui.call.CallRecordingServices and CallRecordings.js; plans/Comms-Framework.md W5, §5.4
 // "Recording", D-V5): the policy off refuses; the host records and each current leg gets the notice, logged, a late
 // joiner too; under the acknowledgement policy the recording pauses until every current leg acknowledged, and a resume
 // starts the next period of segments; a withdrawal pauses; only the owner and the hosts read a recording (another user
@@ -31,7 +31,7 @@ function as(userId, name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.impl.CallRecordingServices." + name)
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.CallRecordingServices." + name)
             .parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
@@ -40,7 +40,7 @@ function as(userId, name, parameters) {
     ec.message.clearErrors()
     return Object.assign({errors}, out)
 }
-const calls = name => "org.moqui.impl.CallServices." + name
+const calls = name => "org.moqui.call.CallServices." + name
 function makeUser(userId) {
     sys(() => {
         if (ec.entity.find("moqui.security.UserAccount").condition("userId", userId).count() > 0) return
@@ -62,7 +62,7 @@ function storeSegment(callRecordingId, fields) {
     const dir = ec.factory.getRuntimePath() + "/tmp/call-recording/" + callRecordingId
     const path = dir + "/spec-" + (++spooled) + ".ogg"
     ec.resource.getLocationReference("file:" + path).putText("OggS a recording spec's segment")
-    return sys(() => call("org.moqui.impl.CallRecordingServices.store#RecordingSegment", Object.assign({callRecordingId,
+    return sys(() => call("org.moqui.call.CallRecordingServices.store#RecordingSegment", Object.assign({callRecordingId,
         trackKind: "audio", source: "microphone", codec: "opus", contentType: "audio/ogg", segmentPeriod: 1, segmentSeq: 1,
         startOffsetMs: 0, durationMs: 1000, tempPath: path}, fields || {})))
 }
@@ -279,7 +279,7 @@ feature("only the owner and the call's hosts read a recording: another user with
 
 feature("a recorder failure ends the recording and not the call; a segment after it is dropped", {
     when() {
-        sys(() => call("org.moqui.impl.CallRecordingServices.note#RecorderEnd", {callRecordingId: recId, outcome: "failed",
+        sys(() => call("org.moqui.call.CallRecordingServices.note#RecorderEnd", {callRecordingId: recId, outcome: "failed",
             errorText: "the recorder fell behind: its queue of 4096 frames was full"}))
         const late = storeSegment(recId, {segmentPeriod: 3})
         return {row: recording(recId), late, call: as(A, calls("get#Call"), {callSessionId: callId}),
@@ -318,7 +318,7 @@ feature("the call's end stops its recording, and retention deletes the files and
                 r.update()
             }
         })
-        const expired = sys(() => call("org.moqui.impl.CallRecordingServices.expire#Recordings", {}))
+        const expired = sys(() => call("org.moqui.call.CallRecordingServices.expire#Recordings", {}))
         return {started, ended, stillThere, expired, gone: !sys(() => ec.resource.getLocationReference(kept.contentLocation).getExists()),
             rows: sys(() => ec.entity.find(RECORDING).condition("callSessionId", callId).count()),
             segments: sys(() => ec.entity.find(SEGMENT).condition("callRecordingId", started.callRecordingId).count()),
@@ -345,11 +345,11 @@ feature("the call's end stops its recording, and retention deletes the files and
 function quotaOfA(extraBytes) {
     ec.user.internalLoginUser(A.toLowerCase().replace(/_/g, "."))
     return sys(() => {
-        const driveId = call("org.moqui.impl.FileServices.ensure#PersonalDrive", {userId: A}).driveId
+        const driveId = call("org.moqui.resource.FileServices.ensure#PersonalDrive", {userId: A}).driveId
         const drive = ec.entity.find("moqui.resource.ResourceDrive").condition("driveId", driveId).one()
         drive.set("quotaBytes", null)
         drive.update()
-        const used = call("org.moqui.impl.FileServices.get#DriveUsage", {driveId}).usageList[0].usedBytes
+        const used = call("org.moqui.resource.FileServices.get#DriveUsage", {driveId}).usageList[0].usedBytes
         drive.set("quotaBytes", extraBytes == null ? null : used + extraBytes)
         drive.update()
         return {driveId, used}
@@ -366,7 +366,7 @@ feature("recordings count toward the host's drive quota: a segment that fills it
         const afterFirst = recording(rec.callRecordingId)
         const second = storeSegment(rec.callRecordingId, {callLegId: legOf(started.callSessionId, A).callLegId, segmentSeq: 2})
         const afterSecond = recording(rec.callRecordingId)
-        const usage = as(A, "org.moqui.impl.FileServices.get#DriveUsage", {driveId: quota.driveId})
+        const usage = as(A, "org.moqui.resource.FileServices.get#DriveUsage", {driveId: quota.driveId})
         const full = as(A, "start#Recording", {callSessionId: started.callSessionId})
         quotaOfA(null)
         const withRoom = as(A, "start#Recording", {callSessionId: started.callSessionId})
@@ -399,7 +399,7 @@ feature("a recording whose media node restarted since it began has no recorder: 
             row.setFields({startedDate: new Date(Date.now() + 60000), heartbeatDate: new Date()}, true, null, null)
             row.update()
         })
-        sys(() => call("org.moqui.impl.CallRecordingServices.expire#Recordings", {}))
+        sys(() => call("org.moqui.call.CallRecordingServices.expire#Recordings", {}))
         const row = recording(rec.callRecordingId)
         const callNow = as(A, calls("get#Call"), {callSessionId: started.callSessionId})
         as(A, calls("end#Call"), {callSessionId: started.callSessionId})

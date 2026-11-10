@@ -12,7 +12,7 @@
  *     with no window open, and the page shows its items and hears of each change; with a server that takes them once by
  *     a clientRef (clientApi 4), a message's edit, deletion, reaction and poll vote wait there too (chat.queueChange,
  *     chat.state.changes),
- * and hands the chat pushes to the screens that listen (moqui.chat.on). The server side is org.moqui.impl.ChatServices; the
+ * and hands the chat pushes to the screens that listen (moqui.chat.on). The server side is org.moqui.chat.ChatServices; the
  * topics and their messages are described there and in docs/ui/Qvt-Client.md, "Chat store and presence".
  *
  * Loaded after MoquiLib.js and before WebrootVue.qvt.js (qapps.xml): its components are in moqui.qvtComponents, which

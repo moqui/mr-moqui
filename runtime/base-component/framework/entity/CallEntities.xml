@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     node (mediaNodeId), a CallMediaNode the host registers while its media socket is up. No Java counterpart.
 
     These are moqui.* entities, which entity filters never apply to: screens reach them only through
-    org.moqui.impl.CallServices, which checks the participant or the room. -->
+    org.moqui.call.CallServices, which checks the participant or the room. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
 
     <entity entity-name="CallSession" package="moqui.call" use="transactional" cache="never">
@@ -345,7 +345,7 @@ along with this software (see the LICENSE.md file). If not, see
         A recording of a call (CallRecording) is made on the call's media node: each published track as its own file
         (Opus in Ogg, VP8 in WebM, no transcoding) and the mixed audio of the whole call (Opus in Ogg), cut into segments
         (CallRecordingSegment) at each pause and resume and at a size or time cap. Every leg gets the notice, and it is
-        logged per leg (CallRecordingConsent). Reached only through org.moqui.impl.CallRecordingServices, which checks who
+        logged per leg (CallRecordingConsent). Reached only through org.moqui.call.CallRecordingServices, which checks who
         may record and read (CallRecordings.js). -->
 
     <entity entity-name="CallRecording" package="moqui.call" use="transactional" cache="never">

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.ComponentServices`: the conf reload and, later, the components loaded on a running server, as
+//! `org.moqui.dev.ComponentServices`: the conf reload and, later, the components loaded on a running server, as
 //! services for the System app (plans/archive/Component-Deploy.md). They need the `ADMIN` group on any instance.
 
 use std::collections::BTreeMap;

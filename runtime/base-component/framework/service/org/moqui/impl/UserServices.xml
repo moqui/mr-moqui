@@ -450,7 +450,7 @@ along with this software (see the LICENSE.md file). If not, see
             <entity-update value-field="userAccount"/>
 
             <!-- send an email with the new password; template is always PASSWORD_RESET -->
-            <service-call name="org.moqui.impl.EmailServices.send#EmailTemplate" async="true">
+            <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate" async="true">
                 <field-map field-name="emailTemplateId" value="PASSWORD_RESET"/>
                 <field-map field-name="toAddresses" from="userAccount.get('emailAddress')"/>
                 <field-map field-name="bodyParameters" from="{userAccount: {userId: userAccount.get('userId'), username: userAccount.get('username'),
@@ -817,7 +817,7 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="singleUseFactorId" from="createSuFactorOut.factorId"/>
 
             <!-- send an email with the single use code -->
-            <service-call name="org.moqui.impl.EmailServices.send#EmailTemplate" async="true">
+            <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate" async="true">
                 <field-map field-name="emailTemplateId" value="SINGLE_USE_CODE"/>
                 <field-map field-name="toAddresses" from="emailAddress"/>
                 <field-map field-name="bodyParameters" from="{code: createSuFactorOut.code,
@@ -827,7 +827,7 @@ along with this software (see the LICENSE.md file). If not, see
 
             <!-- if the email just sent to is not the main email address for the user send the main email address a notification email that an email with a code was sent -->
             <if condition="userAccount.get('emailAddress') &amp;&amp; userAccount.get('emailAddress') != emailAddress">
-                <service-call name="org.moqui.impl.EmailServices.send#EmailTemplate" async="true">
+                <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate" async="true">
                     <field-map field-name="emailTemplateId" value="ADDED_EMAIL_AUTHC_FACTOR"/>
                     <field-map field-name="toAddresses" from="userAccount.get('emailAddress')"/>
                     <field-map field-name="bodyParameters" from="{userEmail: emailAddress,
@@ -854,7 +854,7 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="singleUseFactorId" from="createSuFactorOut.factorId"/>
 
             <!-- send an email with the single use code -->
-            <service-call name="org.moqui.impl.EmailServices.send#EmailTemplate" async="true">
+            <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate" async="true">
                 <field-map field-name="emailTemplateId" value="SINGLE_USE_CODE"/>
                 <field-map field-name="toAddresses" from="emailAddress"/>
                 <field-map field-name="bodyParameters" from="{code: createSuFactorOut.code,
@@ -897,7 +897,7 @@ along with this software (see the LICENSE.md file). If not, see
             <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount">
                 <field-map field-name="userId"/></entity-find-one>
             <if condition="userAccount.get('emailAddress')">
-                <service-call name="org.moqui.impl.EmailServices.send#EmailTemplate" async="true">
+                <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate" async="true">
                     <field-map field-name="emailTemplateId" value="ADDED_EMAIL_AUTHC_FACTOR"/>
                     <field-map field-name="toAddresses" from="userAccount.get('emailAddress')"/>
                     <field-map field-name="bodyParameters" from="[userEmail:emailAddress,

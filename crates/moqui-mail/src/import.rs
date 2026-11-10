@@ -38,7 +38,7 @@ use moqui_core::context::ExecutionContext;
 use moqui_core::entity::{Condition, EntityFacade};
 use moqui_core::service::util::{field_text, has_error, now_millis, param_text};
 
-const SERVICES: &str = "org.moqui.impl.EmailClientServices";
+const SERVICES: &str = "org.moqui.mail.EmailClientServices";
 /// The most errors reported back; the rest are only logged.
 const ERRORS_SHOWN: usize = 20;
 /// Messages parsed and checked against the folder at a time.

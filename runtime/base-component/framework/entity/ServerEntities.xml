@@ -165,11 +165,11 @@ along with this software (see the LICENSE.md file). If not, see
 
         <seed-data>
             <moqui.server.instance.InstanceHostType hostTypeId="docker" description="Docker"
-                    initService="org.moqui.impl.InstanceServices.init#InstanceDocker"
-                    startService="org.moqui.impl.InstanceServices.start#InstanceDocker"
-                    stopService="org.moqui.impl.InstanceServices.stop#InstanceDocker"
-                    removeService="org.moqui.impl.InstanceServices.remove#InstanceDocker"
-                    checkService="org.moqui.impl.InstanceServices.check#InstanceDocker"/>
+                    initService="org.moqui.dev.InstanceServices.init#InstanceDocker"
+                    startService="org.moqui.dev.InstanceServices.start#InstanceDocker"
+                    stopService="org.moqui.dev.InstanceServices.stop#InstanceDocker"
+                    removeService="org.moqui.dev.InstanceServices.remove#InstanceDocker"
+                    checkService="org.moqui.dev.InstanceServices.check#InstanceDocker"/>
 
             <!-- see: https://docs.docker.com/engine/reference/commandline/dockerd/#bind-docker-to-another-host-port-or-a-unix-socket -->
             <moqui.server.instance.InstanceHost instanceHostId="LocalDocker" hostTypeId="docker"
@@ -317,10 +317,10 @@ along with this software (see the LICENSE.md file). If not, see
 
         <seed-data>
             <moqui.server.instance.DatabaseType databaseTypeId="mysql" description="MySQL" confName="mysql"
-                    createService="org.moqui.impl.InstanceServices.create#DatabaseMySQL"
-                    checkService="org.moqui.impl.InstanceServices.check#DatabaseMySQL"/>
+                    createService="org.moqui.dev.InstanceServices.create#DatabaseMySQL"
+                    checkService="org.moqui.dev.InstanceServices.check#DatabaseMySQL"/>
             <moqui.server.instance.DatabaseType databaseTypeId="postgres" description="Postgres" confName="postgres"
-                    createService="org.moqui.impl.InstanceServices.create#DatabasePostgres" checkService="org.moqui.impl.InstanceServices.check#DatabasePostgres"/>
+                    createService="org.moqui.dev.InstanceServices.create#DatabasePostgres" checkService="org.moqui.dev.InstanceServices.check#DatabasePostgres"/>
             <!-- matches configuration in nginx-mysql-compose.yml -->
             <moqui.server.instance.DatabaseHost databaseHostId="LocalMySQL" databaseTypeId="mysql"
                     hostAddress="127.0.0.1" hostPort="3306" instanceAddress="moqui-database"

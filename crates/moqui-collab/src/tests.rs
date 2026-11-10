@@ -71,7 +71,7 @@ fn call(name: &str, parameters: &[(&str, Value)]) -> BTreeMap<String, Value> {
 
 fn page_text(space: &str, path: &str) -> String {
     let info = call(
-        "org.moqui.impl.WikiServices.get#WikiPageInfo",
+        "org.moqui.resource.WikiServices.get#WikiPageInfo",
         &[("wikiSpaceId", Value::string(space)), ("pagePath", Value::string(path))],
     );
     let location = to_plain_string(info.get("pageLocation").unwrap());
@@ -112,14 +112,14 @@ fn a_page_is_edited_together_saved_as_one_version_and_read_again_after_a_change_
     }
     login("alice");
     call(
-        "org.moqui.impl.WikiServices.create#WikiSpace",
+        "org.moqui.resource.WikiServices.create#WikiSpace",
         &[
             ("wikiSpaceId", Value::string("TEAM")),
             ("description", Value::string("Team")),
         ],
     );
     let page = call(
-        "org.moqui.impl.WikiServices.update#WikiPage",
+        "org.moqui.resource.WikiServices.update#WikiPage",
         &[
             ("wikiSpaceId", Value::string("TEAM")),
             ("pageName", Value::string("Plan")),
@@ -173,7 +173,7 @@ fn a_page_is_edited_together_saved_as_one_version_and_read_again_after_a_change_
     let written = page_text("TEAM", "Plan");
     assert_eq!(written, server);
     let history = call(
-        "org.moqui.impl.WikiServices.get#WikiPageHistory",
+        "org.moqui.resource.WikiServices.get#WikiPageHistory",
         &[("wikiPageId", Value::string(&page_id))],
     );
     assert!(format!("{history:?}").contains("Merged our lines"), "{history:?}");
@@ -193,7 +193,7 @@ fn a_page_is_edited_together_saved_as_one_version_and_read_again_after_a_change_
 
     // the state is stored; when both leave, the room closes
     let stored = call(
-        "org.moqui.impl.CollabServices.get#CollabDocument",
+        "org.moqui.resource.CollabServices.get#CollabDocument",
         &[("documentKey", Value::string(&key))],
     );
     assert_eq!(stored.get("exists"), Some(&Value::Bool(true)));
@@ -204,7 +204,7 @@ fn a_page_is_edited_together_saved_as_one_version_and_read_again_after_a_change_
 
     // the page is changed outside co-editing; the next join reads it again
     call(
-        "org.moqui.impl.WikiServices.update#WikiPage",
+        "org.moqui.resource.WikiServices.update#WikiPage",
         &[
             ("wikiSpaceId", Value::string("TEAM")),
             ("wikiPageId", Value::string(&page_id)),
@@ -232,7 +232,7 @@ fn a_page_is_edited_together_saved_as_one_version_and_read_again_after_a_change_
 
     // the space's home page (no path) saves in place, not as a move
     let home = call(
-        "org.moqui.impl.WikiServices.update#WikiPage",
+        "org.moqui.resource.WikiServices.update#WikiPage",
         &[
             ("wikiSpaceId", Value::string("TEAM")),
             ("pageName", Value::string("TEAM")),
@@ -255,7 +255,7 @@ fn the_services_register_at_the_locations_the_service_file_names() {
     let mut map = BTreeMap::new();
     crate::service::register(&mut map).unwrap();
     let registered: Vec<&str> = map.keys().copied().collect();
-    let file = moqui_core::context::framework_dir().join("service/org/moqui/impl/CollabServices.xml");
+    let file = moqui_core::context::framework_dir().join("service/org/moqui/resource/CollabServices.xml");
     let text = std::fs::read_to_string(file).unwrap();
     let mut named: Vec<String> = text
         .split("location=\"")

@@ -1,4 +1,4 @@
-# git:// resource locations, org.moqui.impl.GitServices and the git server (smart HTTP and SSH, LFS), on gitoxide, on
+# git:// resource locations, org.moqui.git.GitServices and the git server (smart HTTP and SSH, LFS), on gitoxide, on
 # top of moqui-core (plans/archive/Crate-Split.md). Its own crate so an edit here does not rebuild the framework, and
 # gix stays out of core. Core reaches it only through moqui_core::extension, which this crate fills with an inventory
 # entry; moqui-host links it under its git feature.

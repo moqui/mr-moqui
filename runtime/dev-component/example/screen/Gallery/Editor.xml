@@ -36,7 +36,7 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- Multipart posts normalize textarea line endings to CRLF. Markdown edited here has LF line endings. -->
             <set field="pageText" from="String(pageText ?? '').replace(/\r\n?/g, '\n')"/>
             <set field="pageName" from="pagePath ? pagePath.substring(pagePath.lastIndexOf('/') + 1) : wikiSpaceId"/>
-            <service-call name="org.moqui.impl.WikiServices.update#WikiPage"
+            <service-call name="org.moqui.resource.WikiServices.update#WikiPage"
                     in-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath, pageName:pageName, pageText:pageText, versionNote:versionNote}"/>
         </actions>
         <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath" from="pagePath || '\u00a0'"/>
@@ -45,10 +45,10 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- a restore writes the old text as a new version, so nothing in the history is lost -->
     <transition name="restoreVersion">
         <actions>
-            <service-call name="org.moqui.impl.WikiServices.get#WikiPageInfo" in-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath}"
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageInfo" in-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath}"
                     out-map="restoreInfo"/>
             <if condition="!restoreInfo.wikiPageId"><return error="true" message="There is no page ${pagePath} in ${wikiSpaceId}."/></if>
-            <service-call name="org.moqui.impl.WikiServices.restore#WikiPageVersion"
+            <service-call name="org.moqui.resource.WikiServices.restore#WikiPageVersion"
                     in-map="{wikiPageId:restoreInfo.wikiPageId, versionName:versionName}"/>
             <message>Restored version ${versionName.substring(0, 10)} as the newest version</message>
         </actions>
@@ -56,15 +56,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="versionName" from="null"/><parameter name="versionNameLhs" from="null"/><parameter name="versionNameRhs" from="null"/></default-response>
     </transition>
     <transition name="publishVersion">
-        <service-call name="org.moqui.impl.WikiServices.set#PublishedVersion"/>
+        <service-call name="org.moqui.resource.WikiServices.set#PublishedVersion"/>
         <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath" from="pagePath || '\u00a0'"/><parameter name="versionName"/>
             <parameter name="versionNameLhs" from="null"/><parameter name="versionNameRhs" from="null"/></default-response>
     </transition>
     <transition name="createGitSpace">
         <actions>
-            <service-call name="org.moqui.impl.WikiServices.create#WikiSpace"
+            <service-call name="org.moqui.resource.WikiServices.create#WikiSpace"
                     in-map="{wikiSpaceId:'EXGIT', description:'Example wiki (git)', rootPageDirectory:'git://example-wiki'}"/>
-            <service-call name="org.moqui.impl.WikiServices.update#WikiPage" in-map="{wikiSpaceId:'EXGIT', pageName:'Welcome',
+            <service-call name="org.moqui.resource.WikiServices.update#WikiPage" in-map="{wikiSpaceId:'EXGIT', pageName:'Welcome',
                     pageText:'# Welcome\n\nThis space keeps its pages in the git repository example-wiki, in the database. Each save is a commit.\n'}"/>
         </actions>
         <default-response url="."><parameter name="wikiSpaceId" value="EXGIT"/><parameter name="pagePath" value="Welcome"/>
@@ -82,7 +82,7 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- An omitted path keeps the default Welcome route; the existing null sentinel names Home explicitly.
              Empty strings clear inherited version parameters; null map values would leave them unchanged. -->
         <set field="currentPageParameters" from="{wikiSpaceId:wikiSpaceId, pagePath:pagePath || '\u00a0', versionName:'', versionNameLhs:'', versionNameRhs:''}"/>
-        <service-call name="org.moqui.impl.WikiServices.get#WikiPageInfo" out-map="pageInfo"
+        <service-call name="org.moqui.resource.WikiServices.get#WikiPageInfo" out-map="pageInfo"
                 in-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath || '', versionName:versionName}"/>
         <!-- A comparison failure is recoverable; a page-access failure still stops before any version is read. -->
         <if condition="ec.message.hasError()"><return/></if>

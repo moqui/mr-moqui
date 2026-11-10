@@ -268,7 +268,7 @@ impl ChatBridgeAdapter for TelnyxSms {
                 ("userId".to_string(), Value::string(user)),
                 ("reserve".to_string(), Value::Bool(true)),
             ]);
-            match crate::call("org.moqui.impl.SmsServices.check#SmsSend", parameters) {
+            match crate::call("org.moqui.call.SmsServices.check#SmsSend", parameters) {
                 Ok(out) if out.get("allowed") == Some(&Value::Bool(true)) => {
                     reserved = Some(BTreeMap::from([
                         ("userId".to_string(), Value::string(user)),
@@ -297,7 +297,7 @@ impl ChatBridgeAdapter for TelnyxSms {
                 outcome,
                 DeliveryOutcome::Failed { .. } | DeliveryOutcome::Retry { .. } | DeliveryOutcome::Wait { .. }
             ) {
-                if let Err(error) = crate::call("org.moqui.impl.SmsServices.release#SmsSend", parameters) {
+                if let Err(error) = crate::call("org.moqui.call.SmsServices.release#SmsSend", parameters) {
                     tracing::warn!(
                         "a text of bridge {} was not taken off the day's count: {error}",
                         bridge.chat_bridge_id

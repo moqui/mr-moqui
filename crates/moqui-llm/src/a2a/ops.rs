@@ -615,7 +615,7 @@ fn readable(ctx: &Ctx<'_>, location: &str) -> bool {
         disable_authz: true,
         ..Default::default()
     };
-    moqui_core::service::call::sync_checked("org.moqui.impl.FileServices.get#DriveAccess", &parameters, &options)
+    moqui_core::service::call::sync_checked("org.moqui.resource.FileServices.get#DriveAccess", &parameters, &options)
         .ok()
         .and_then(|out| {
             out.get("level")

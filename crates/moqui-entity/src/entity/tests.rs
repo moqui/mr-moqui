@@ -1603,7 +1603,7 @@ fn a_stamp_set_on_a_found_value_is_kept_without_a_row_read() {
             .unwrap()
             .unwrap()
     };
-    let chosen = moqui_lib::object::basic_convert(&Value::I64(1_000_000_000_000), "java.sql.Timestamp").value;
+    let chosen = moqui_lib::object::basic_convert(&Value::I64(1_000_000_000_000), "Timestamp").value;
     let mut found = read();
     found.set("testMedium", Value::string("chosen stamp"));
     found.set("lastUpdatedStamp", chosen.clone());

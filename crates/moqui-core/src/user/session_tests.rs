@@ -1287,7 +1287,7 @@ fn i64_field(value: &EntityValue, field: &str) -> i64 {
 }
 
 fn stamp(millis: i64) -> Value {
-    moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
+    moqui_lib::object::basic_convert(&Value::I64(millis), "Timestamp").value
 }
 
 #[test]

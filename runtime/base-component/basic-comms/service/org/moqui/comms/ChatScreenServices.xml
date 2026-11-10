@@ -13,13 +13,13 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- What the BasicComms Chat screens show and do (first built as IronStone Comms: mr-boss design-drawers-commons.md §13 Chat,
-    §4 ChatPanel, §17 ChatSettings), over org.moqui.impl.ChatServices: the rail's rooms, the room view (the room, its members, a
+    §4 ChatPanel, §17 ChatSettings), over org.moqui.chat.ChatServices: the rail's rooms, the room view (the room, its members, a
     page of its timeline and the names it shows), the mention list, sending, files, new rooms and the record room of a record, the
     palette's rooms, and the user's chat preferences with the do not disturb hours.
 
     Records are an app's: what a record room or a message has to do with a record (its title, link, card; the records a
     message's links name; the records to file a message on) comes from the record-lookup providers of the apps the user may
-    open (lookup#Records over org.moqui.impl.ShellServices.call#Providers; plans/Comms-Framework.md §3.3). With none, a record
+    open (lookup#Records over org.moqui.ui.ShellServices.call#Providers; plans/Comms-Framework.md §3.3). With none, a record
     room shows its name, and messages carry no record cards.
 
     Access: ChatServices checks every room against the current user's member row, a public room's visibility or a record room's
@@ -153,7 +153,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="use" noun="StatusPreset">
-        <description>Set the current user's status text and emoji from the preset at index (org.moqui.impl.ChatServices.set#UserStatus),
+        <description>Set the current user's status text and emoji from the preset at index (org.moqui.chat.ChatServices.set#UserStatus),
             clearing after its minutes, at the end of today or of this week (Sunday) in the user's time zone, or never.</description>
         <in-parameters><parameter name="index" type="Integer" required="true"/></in-parameters>
         <out-parameters><parameter name="myStatus" type="Map"/></out-parameters>
@@ -173,7 +173,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const last = civil.getUTCFullYear() + '-' + String(civil.getUTCMonth() + 1).padStart(2, '0') + '-' + String(civil.getUTCDate()).padStart(2, '0')
                 params.clearAtDate = ec.l10n.parseTimestamp(last + ' 23:59:59', 'yyyy-MM-dd HH:mm:ss')
             }
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.set#UserStatus').parameters(params).call()
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.set#UserStatus').parameters(params).call()
             if (!ec.message.hasError()) myStatus = out.myStatus
         ]]></script></actions>
     </service>
@@ -191,13 +191,13 @@ along with this software (see the LICENSE.md file). If not, see
             const LEVELS = {all: 'CnlAll', mentions: 'CnlMentions', none: 'CnlNone'}
             const level = String(ec.user.getPreference('CHAT_NOTIFY_DEFAULT') || '').trim()
             if (!LEVELS[level]) { ec.message.addError(ec.l10n.localize('Choose a default notification level first')); return }
-            const rooms = ec.service.sync().name('org.moqui.impl.ChatServices.find#Rooms').parameter('limit', 1000).call()
+            const rooms = ec.service.sync().name('org.moqui.chat.ChatServices.find#Rooms').parameter('limit', 1000).call()
             if (ec.message.hasError()) return
             for (const room of Array.from(rooms.roomList || [])) {
                 if (!room.isMember || room.roomTypeEnumId === 'CrtDirect' || room.notificationLevelEnumId === LEVELS[level]) continue
                 ec.message.pushErrors()
                 try {
-                    ec.service.sync().name('org.moqui.impl.ChatServices.set#Notification').parameters({chatRoomId: room.chatRoomId,
+                    ec.service.sync().name('org.moqui.chat.ChatServices.set#Notification').parameters({chatRoomId: room.chatRoomId,
                         notificationLevelEnumId: level}).requireNewTransaction(true).call()
                     if (ec.message.hasError()) { failedCount++; ec.logger.warn(`Chat: notification level not set on room ${room.chatRoomId}: ${ec.message.errorsString}`) }
                     else updatedCount++
@@ -248,10 +248,10 @@ along with this software (see the LICENSE.md file). If not, see
                             row.createOrUpdate()
                         }
                         if (inside && !auto && statusId === 'UpsOnline') {
-                            ec.service.sync().name('org.moqui.impl.ChatServices.set#UserStatus').parameters({userId: userId, status: 'dnd'}).requireNewTransaction(true).call()
+                            ec.service.sync().name('org.moqui.chat.ChatServices.set#UserStatus').parameters({userId: userId, status: 'dnd'}).requireNewTransaction(true).call()
                             if (!ec.message.hasError()) { setAuto('Y'); dndCount++ }
                         } else if (!inside && auto) {
-                            if (statusId === 'UpsDnd') ec.service.sync().name('org.moqui.impl.ChatServices.set#UserStatus').parameters({userId: userId, status: 'online'})
+                            if (statusId === 'UpsDnd') ec.service.sync().name('org.moqui.chat.ChatServices.set#UserStatus').parameters({userId: userId, status: 'online'})
                                     .requireNewTransaction(true).call()
                             if (!ec.message.hasError()) { setAuto('N'); backCount++ }
                         }
@@ -302,7 +302,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="ChatData">
         <description>What the Chat screen and the tray's Chat tab start with: me {userId, username, name, partyId}, the
-            preferences (get#ChatPrefs, with recordLink: an app files messages on its records), the user's rooms (org.moqui.impl.ChatServices.find#Rooms, pinned first, then by the
+            preferences (get#ChatPrefs, with recordLink: an app files messages on its records), the user's rooms (org.moqui.chat.ChatServices.find#Rooms, pinned first, then by the
             last event, decorate#Rooms) up to limit, and the unread and mention totals.</description>
         <in-parameters><parameter name="limit" type="Integer" default="200"/></in-parameters>
         <out-parameters>
@@ -317,9 +317,9 @@ along with this software (see the LICENSE.md file). If not, see
             me = {userId: ec.user.userId, username: ec.user.username, name: account.userFullName || ec.user.username, partyId: account.partyId || null}
             prefs = ec.service.sync().name('org.moqui.comms.ChatScreenServices.get#ChatPrefs').call().prefs
             // File on a record is offered only with an app that files messages on its records (a record-link provider)
-            const linkers = ec.service.sync().name('org.moqui.impl.ShellServices.get#Providers').parameter('hook', 'record-link').call()
+            const linkers = ec.service.sync().name('org.moqui.ui.ShellServices.get#Providers').parameter('hook', 'record-link').call()
             prefs.recordLink = Array.from(linkers?.providerList || []).length > 0
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.find#Rooms').parameter('limit', Math.max(1, Math.min(limit || 200, 500))).call()
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#Rooms').parameter('limit', Math.max(1, Math.min(limit || 200, 500))).call()
             if (ec.message.hasError()) return
             roomList = ec.service.sync().name('org.moqui.comms.ChatScreenServices.decorate#Rooms').parameter('roomList', out.roomList).call().roomList
             unreadTotal = out.unreadTotal
@@ -339,7 +339,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="roomList" type="List"/></out-parameters>
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.find#Rooms').parameters({filter: filter || null, searchText: searchText || null,
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#Rooms').parameters({filter: filter || null, searchText: searchText || null,
                 includeJoinable: includeJoinable || joinableOnly, limit: Math.max(1, Math.min(limit || 200, 500))}).call()
             if (ec.message.hasError()) return
             let list = Array.from(out.roomList || [])
@@ -349,7 +349,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="RoomView">
-        <description>A room as the room view opens it: the room (org.moqui.impl.ChatServices.get#Room, which refuses a room the
+        <description>A room as the room view opens it: the room (org.moqui.chat.ChatServices.get#Room, which refuses a room the
             user may not read) with displayName and its record (decorate#Rooms), the user's member row and access, the members,
             and the first page of its timeline (get#TimelinePage: the latest events, or those around aroundSeq).</description>
         <in-parameters>
@@ -365,7 +365,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="timeline" type="Map"/>
         </out-parameters>
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#Room').parameter('chatRoomId', chatRoomId).call()
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#Room').parameter('chatRoomId', chatRoomId).call()
             if (ec.message.hasError() || !out.room) return
             member = out.member; access = out.access; memberList = out.memberList
             const source = Object.assign({}, out.room)
@@ -384,7 +384,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="TimelinePage">
-        <description>A page of a room's timeline (org.moqui.impl.ChatServices.get#Timeline: beforeSeq, afterSeq, aroundSeq, a
+        <description>A page of a room's timeline (org.moqui.chat.ChatServices.get#Timeline: beforeSeq, afterSeq, aroundSeq, a
             thread by threadRootEventSeq, or pinnedOnly) with userNames, the names of the users its events name (senders,
             reactions, the users of membership and system events, a thread's last replier, a forward's sender, a poll's
             voters), so the client words those rows. eventSeq gives that one event.</description>
@@ -400,7 +400,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="page" type="Map"/></out-parameters>
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#Timeline').parameters({chatRoomId: chatRoomId, beforeSeq: beforeSeq ?? null,
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#Timeline').parameters({chatRoomId: chatRoomId, beforeSeq: beforeSeq ?? null,
                 afterSeq: afterSeq ?? null, aroundSeq: aroundSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null, pinnedOnly: !!pinnedOnly,
                 eventSeq: eventSeq ?? null, limit: Math.max(1, Math.min(limit || 50, 200))}).call()
             if (ec.message.hasError()) return
@@ -426,7 +426,7 @@ along with this software (see the LICENSE.md file). If not, see
             const actorIds = Array.from(ids).filter((id) => !userNames[id])
             for (const event of events) if (event.content && event.content.chatActorId) actorIds.push(String(event.content.chatActorId))
             if (actorIds.length) {
-                const actors = ec.service.sync().name('org.moqui.impl.ChatServices.get#ActorNames').parameter('chatActorIdList', actorIds).call()?.actorMap || {}
+                const actors = ec.service.sync().name('org.moqui.chat.ChatServices.get#ActorNames').parameter('chatActorIdList', actorIds).call()?.actorMap || {}
                 for (const [id, actor] of Object.entries(actors)) userNames[id] = actor.name
             }
             page = {room: out.room, access: out.access, eventList: events, hasMoreBefore: !!out.hasMoreBefore, hasMoreAfter: !!out.hasMoreAfter,
@@ -451,9 +451,9 @@ along with this software (see the LICENSE.md file). If not, see
             const text = String(term || '').trim().toLowerCase()
             const max = Math.max(1, Math.min(limit || 10, 25))
             // get#RoomAccess adds no error for a room the user may not read (an error would mark the transaction rollback-only)
-            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+            const access = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
             if (ec.message.hasError() || !access || !access.canRead) return
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#Room').parameter('chatRoomId', chatRoomId).call()
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#Room').parameter('chatRoomId', chatRoomId).call()
             if (ec.message.hasError() || !out || !out.room) return
             const everyone = Array.from(out.memberList || []).filter((member) => !member.isAgent)
             if ((access.canModerate || access.isOwner || everyone.length <= 20) && (!text || 'room'.startsWith(text) || 'everyone'.startsWith(text)))
@@ -475,7 +475,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="create" noun="ChatRoom">
-        <description>A new room (org.moqui.impl.ChatServices.create#Room) from the New room and New direct message dialogs:
+        <description>A new room (org.moqui.chat.ChatServices.create#Room) from the New room and New direct message dialogs:
             roomTypeEnumId direct (one room per set of users: the existing one is answered), private or public (a name),
             with the members of memberUserIdList or the comma list memberUserIds; each member starts at their own default
             notification level (CHAT_NOTIFY_DEFAULT, which create#Room reads). encrypted makes a direct or private room
@@ -500,7 +500,7 @@ along with this software (see the LICENSE.md file). If not, see
             const ids = Array.from(memberUserIdList || []).concat(memberUserIds ? String(memberUserIds).split(',') : [])
                     .map((id) => String(id || '').trim()).filter((id) => id)
             if (type === 'CrtDirect' && !ids.length) { ec.message.addError(ec.l10n.localize('Choose who to message')); return }
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.create#Room').parameters({roomTypeEnumId: type, roomName: roomName || null,
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.create#Room').parameters({roomTypeEnumId: type, roomName: roomName || null,
                 topic: topic || null, memberUserIdList: Array.from(new Set(ids)), encrypted: !!encrypted}).call()
             reasonCode = out?.reasonCode || null
             if (ec.message.hasError()) return
@@ -511,7 +511,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="find" noun="RecordRoom">
         <description>The room of a record, for a record's chat link: the record room the user may read
-            (org.moqui.impl.ChatServices.get#Room by the record), or a new one the user makes on first use (create#Room of
+            (org.moqui.chat.ChatServices.get#Room by the record), or a new one the user makes on first use (create#Room of
             type record, named after the record as a record-lookup provider names it, which needs the user to see the record:
             the theme's STRT_RECORD_VISIBLE_SERVICE). A record the user may not see is "not found"; a room of the record kept
             for its members is refused by create#Room.</description>
@@ -529,11 +529,11 @@ along with this software (see the LICENSE.md file). If not, see
                 records: [{recordEntityName: recordEntityName, recordId: recordId}]}).call()
             const info = Array.from(looked?.recordList || [])[0] || null
             const entityName = info && info.visible && info.entity ? info.entity : recordEntityName
-            const existing = ec.service.sync().name('org.moqui.impl.ChatServices.get#Room').parameters({recordEntityName: entityName, recordId: recordId}).call()
+            const existing = ec.service.sync().name('org.moqui.chat.ChatServices.get#Room').parameters({recordEntityName: entityName, recordId: recordId}).call()
             if (ec.message.hasError()) return
             if (existing.room) { chatRoomId = existing.room.chatRoomId; return }
             if (info && !info.visible) { ec.message.addError(ec.resource.expand('Record ${entity} ${id} not found', '', {entity: recordEntityName, id: recordId})); return }
-            const made = ec.service.sync().name('org.moqui.impl.ChatServices.create#Room').parameters({roomTypeEnumId: 'CrtRecord',
+            const made = ec.service.sync().name('org.moqui.chat.ChatServices.create#Room').parameters({roomTypeEnumId: 'CrtRecord',
                 recordEntityName: entityName, recordId: recordId, roomName: (info && info.title) || recordId}).call()
             if (ec.message.hasError()) return
             chatRoomId = made.chatRoomId
@@ -543,17 +543,17 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="join" noun="ChatRoom">
         <description>Join a room the user may join (a public room, or a record room whose record the user sees:
-            org.moqui.impl.ChatServices.add#Member, which starts the membership at the user's default notification level).</description>
+            org.moqui.chat.ChatServices.add#Member, which starts the membership at the user's default notification level).</description>
         <in-parameters><parameter name="chatRoomId" required="true"/></in-parameters>
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.ChatServices.add#Member').parameter('chatRoomId', chatRoomId).call()
+            ec.service.sync().name('org.moqui.chat.ChatServices.add#Member').parameter('chatRoomId', chatRoomId).call()
         ]]></script></actions>
     </service>
 
     <!-- ========== Messages ========== -->
 
     <service verb="lookup" noun="Records" allow-remote="false">
-        <description>Internal: what the apps' record-lookup providers answer (org.moqui.impl.ShellServices.call#Providers,
+        <description>Internal: what the apps' record-lookup providers answer (org.moqui.ui.ShellServices.call#Providers,
             hook record-lookup), combined:
             - info: for records [{recordEntityName, recordId}], recordList [{recordEntityName, recordId, entity (the full
               name), visible, title, typeLabel, url, icon}], the first provider's answer for each record;
@@ -579,7 +579,7 @@ along with this software (see the LICENSE.md file). If not, see
             optionList = []
             card = null
             if (!['info', 'card', 'search', 'links'].includes(operation)) { ec.message.addError('Unknown record lookup ' + operation); return }
-            const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'record-lookup',
+            const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'record-lookup',
                 parameters: {operation: operation, records: records || null, recordEntityName: recordEntityName || null, recordId: recordId || null,
                     text: text || null, body: body || null}}).call()
             const results = Array.from(out?.results || [])
@@ -608,7 +608,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="send" noun="ChatMessage">
-        <description>Send a message from the composer (org.moqui.impl.ChatServices.send#Message, as the current user, a member
+        <description>Send a message from the composer (org.moqui.chat.ChatServices.send#Message, as the current user, a member
             of the room): its body (the m-rich-text light HTML with @ mentions), files uploaded to the room (chatAttachmentIds,
             comma separated, or chatAttachmentIdList), a reply or a thread, a forward (forwardOfChatRoomId and
             forwardOfEventSeq: the server makes the quote), and as its records the records its /qapps links name
@@ -639,7 +639,7 @@ along with this software (see the LICENSE.md file). If not, see
             const ids = Array.from(chatAttachmentIdList || []).concat(chatAttachmentIds ? String(chatAttachmentIds).split(',') : [])
                     .map((id) => String(id || '').trim()).filter((id) => id)
             const records = encrypted ? [] : ec.service.sync().name('org.moqui.comms.ChatScreenServices.lookup#Records').parameters({operation: 'links', body: body || ''}).call().recordList
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.send#Message').parameters({chatRoomId: chatRoomId, body: body || null,
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.send#Message').parameters({chatRoomId: chatRoomId, body: body || null,
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null, chatAttachmentIdList: ids,
                 recordList: records, roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId), clientRef: clientRef || null,
                 forwardOfChatRoomId: forwardOfChatRoomId || null, forwardOfEventSeq: forwardOfEventSeq ?? null,
@@ -651,7 +651,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="upload" noun="ChatFiles">
-        <description>Store files for a message about to be sent in a room (org.moqui.impl.ChatServices.upload#Attachment, each in
+        <description>Store files for a message about to be sent in a room (org.moqui.chat.ChatServices.upload#Attachment, each in
             its own transaction): uploadList [{chatAttachmentId, fileName, contentType, fileSize}] and failedList [{fileName,
             error}]. One file that fails is logged and the others are kept; when none is stored the first error stays.
             uploadId in place of file is a file the client sent in chunks (ClientSyncServices.upload#Chunk).</description>
@@ -673,7 +673,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const name = String(item.name || item.fileName || 'file')
                 ec.message.pushErrors()
                 try {
-                    const out = ec.service.sync().name('org.moqui.impl.ChatServices.upload#Attachment').parameters(item.uploadId
+                    const out = ec.service.sync().name('org.moqui.chat.ChatServices.upload#Attachment').parameters(item.uploadId
                         ? {chatRoomId: chatRoomId, uploadId: item.uploadId} : {chatRoomId: chatRoomId, file: item})
                             .requireNewTransaction(true).call()
                     if (ec.message.hasError()) failedList.push({fileName: name, error: ec.message.errorsString})
@@ -691,7 +691,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="search" noun="PaletteRooms">
         <description>The palette's Chat rooms group (design §13, the # prefix is the room switcher): the user's rooms and the
-            public ones whose name or topic has the text (org.moqui.impl.ChatServices.find#Rooms), the latest first, or the
+            public ones whose name or topic has the text (org.moqui.chat.ChatServices.find#Rooms), the latest first, or the
             latest rooms for no text; each a row {title, subtitle, icon, url} to the room. moreUrl is the Chat screen.</description>
         <in-parameters>
             <parameter name="text"/>
@@ -708,7 +708,7 @@ along with this software (see the LICENSE.md file). If not, see
             const max = Math.max(1, Math.min(limit || 5, 20))
             ec.message.pushErrors()
             try {
-                const out = ec.service.sync().name('org.moqui.impl.ChatServices.find#Rooms').parameters({searchText: term || null, includeJoinable: true,
+                const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#Rooms').parameters({searchText: term || null, includeJoinable: true,
                     limit: max}).call()
                 if (ec.message.hasError()) { ec.logger.warn(`Palette chat rooms for ${term} failed: ${ec.message.errorsString}`); return }
                 const kinds = {CrtDirect: ['sym_o_person', 'Direct message'], CrtPrivate: ['sym_o_lock', 'Private room'], CrtPublic: ['sym_o_tag', 'Public room'],

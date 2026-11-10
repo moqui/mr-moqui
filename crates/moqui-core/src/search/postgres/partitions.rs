@@ -257,7 +257,7 @@ impl PostgresBackend {
             tracing::warn!(
                 table = %self.table(mapping),
                 "partition-telemetry is on but this telemetry table was made unpartitioned; run \
-                 org.moqui.impl.TelemetryServices.partition#TelemetryTables (Monitor › Sources) to move its rows \
+                 org.moqui.monitor.TelemetryServices.partition#TelemetryTables (Monitor › Sources) to move its rows \
                  into a day-partitioned table. Until then retention deletes its rows one by one"
             );
         }

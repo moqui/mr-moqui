@@ -53,7 +53,7 @@ fn racing_first_joins_and_first_page_saves_all_succeed() {
     // a public room of john.doe's, and a wiki space
     let room_id = as_user(&factory, "john.doe", || {
         let room = call(
-            "org.moqui.impl.ChatServices.create#Room",
+            "org.moqui.chat.ChatServices.create#Room",
             &[
                 ("roomTypeEnumId", Value::string("public")),
                 ("roomName", Value::string("Race")),
@@ -61,7 +61,7 @@ fn racing_first_joins_and_first_page_saves_all_succeed() {
         )
         .unwrap();
         call(
-            "org.moqui.impl.WikiServices.create#WikiSpace",
+            "org.moqui.resource.WikiServices.create#WikiSpace",
             &[
                 ("wikiSpaceId", Value::string("RACE")),
                 ("description", Value::string("Racing saves")),
@@ -78,7 +78,7 @@ fn racing_first_joins_and_first_page_saves_all_succeed() {
         let room = room_id.clone();
         let results = race(&factory, &username, move |_| {
             call(
-                "org.moqui.impl.ChatServices.add#Member",
+                "org.moqui.chat.ChatServices.add#Member",
                 &[("chatRoomId", Value::string(room.clone()))],
             )
         });
@@ -116,7 +116,7 @@ fn racing_first_joins_and_first_page_saves_all_succeed() {
         let name = page_name.clone();
         let results = race(&factory, "john.doe", move |index| {
             call(
-                "org.moqui.impl.WikiServices.update#WikiPage",
+                "org.moqui.resource.WikiServices.update#WikiPage",
                 &[
                     ("wikiSpaceId", Value::string("RACE")),
                     ("pageName", Value::string(name.clone())),
@@ -148,7 +148,7 @@ fn racing_first_chat_changes_of_one_user_all_succeed() {
         (0..CALLS)
             .map(|index| {
                 let room = call(
-                    "org.moqui.impl.ChatServices.create#Room",
+                    "org.moqui.chat.ChatServices.create#Room",
                     &[
                         ("roomTypeEnumId", Value::string("private")),
                         ("roomName", Value::string(format!("First changes {index}"))),
@@ -158,7 +158,7 @@ fn racing_first_chat_changes_of_one_user_all_succeed() {
                 .unwrap();
                 let room = to_plain_string(room.get("chatRoomId").unwrap());
                 call(
-                    "org.moqui.impl.ChatServices.send#Message",
+                    "org.moqui.chat.ChatServices.send#Message",
                     &[
                         ("chatRoomId", Value::string(room.clone())),
                         ("body", Value::string("<p>hello</p>")),
@@ -193,7 +193,7 @@ fn racing_first_chat_changes_of_one_user_all_succeed() {
                 parameters.push(("markUnread", Value::Bool(true)));
                 parameters.push(("eventSeq", Value::I64(1)));
             }
-            call("org.moqui.impl.ChatServices.mark#Read", &parameters)
+            call("org.moqui.chat.ChatServices.mark#Read", &parameters)
         });
         for (index, result) in results.iter().enumerate() {
             assert!(result.is_ok(), "round {round}: change {index}: {result:?}");

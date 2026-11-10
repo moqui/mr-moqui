@@ -87,7 +87,7 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 const entityNames = Array.from(names)
                 if (!entityNames.length) ec.message.addMessage(ec.l10n.localize('The snapshot is one file, not one per entity: every foreign key of the database is dropped around it'), 'warning')
-                const wrap = ec.service.sync().name('org.moqui.impl.DatabaseServices.plan#LoadWrap').parameters({db, entityNames,
+                const wrap = ec.service.sync().name('org.moqui.dev.DatabaseServices.plan#LoadWrap').parameters({db, entityNames,
                     description: 'Foreign keys around the import of ' + zipFilename}).call() || {}
                 if (ec.message.hasError()) return
                 for (const warning of wrap.warnings || []) ec.message.addMessage(String(warning), 'warning')
@@ -162,7 +162,7 @@ along with this software (see the LICENSE.md file). If not, see
         <section-iterate name="SnapshotListSection" list="snapshotList" entry="sfile"><widgets>
             <container-row>
                 <row-col sm="4"><label text="${sfile.name}"/></row-col>
-                <row-col sm="2"><label text="${ec.l10n.format(basicConvert(sfile.lastModified, 'java.sql.Timestamp'), null)}"/></row-col>
+                <row-col sm="2"><label text="${ec.l10n.format(basicConvert(sfile.lastModified, 'Timestamp'), null)}"/></row-col>
                 <row-col sm="2"><label text="${ec.l10n.format(sfile.size/(1024*1024), '#,##0.00')} MiB"/></row-col>
                 <row-col sm="1"><link url="downloadSnapshot" text="Download" parameter-map="{filename:sfile.name}"/></row-col>
                 <row-col sm="1"><link url="deleteSnapshot" text="Delete" parameter-map="{filename:sfile.name}" confirmation="Really delete ${sfile.name}?"/></row-col>

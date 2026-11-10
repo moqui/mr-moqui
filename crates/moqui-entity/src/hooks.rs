@@ -256,9 +256,9 @@ pub fn now_effective_millis() -> i64 {
     (get().effective_millis)().unwrap_or_else(now_millis)
 }
 
-/// A `java.sql.Timestamp` value of epoch `millis`.
+/// A `Timestamp` value of epoch `millis`.
 pub fn stamp_value(millis: i64) -> Value {
-    moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
+    moqui_lib::object::basic_convert(&Value::I64(millis), "Timestamp").value
 }
 
 /// Java's `ec.user.nowTimestamp`.

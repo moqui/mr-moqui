@@ -10,8 +10,8 @@ of its own: C4-SMS adds the first, `sms` on Telnyx ([SMS](SMS.md)). The user gui
   `ChatBridge`, `ChatRoomBridge`, `ChatEventExternal`, `ChatBridgeInbound`, `ChatBridgeDelivery`), with
   `ChatRoom.federationEnabled` and `agentsReadExternal`, and the actor keys of `ChatRoomMember`, `ChatEventMention` and
   `ChatPollVote`.
-- **Services:** `org.moqui.impl.ChatBridgeServices` (input, delivery state, retry, administration) and the actor parts of
-  `org.moqui.impl.ChatServices` (`get#LocalActors`, `get#ActorNames`, `get#RoomBridges`, `check#BridgeSupport`,
+- **Services:** `org.moqui.chat.ChatBridgeServices` (input, delivery state, retry, administration) and the actor parts of
+  `org.moqui.chat.ChatServices` (`get#LocalActors`, `get#ActorNames`, `get#RoomBridges`, `check#BridgeSupport`,
   `migrate#ChatActors`).
 - **Rust:** `crates/moqui-core/src/service/chat_bridge.rs` (the adapter contract, the delivery worker, local actors,
   tokens), `chat_migrate.rs` (the migration) and `EntityFacade::table_primary_key` and `rekey_table` in

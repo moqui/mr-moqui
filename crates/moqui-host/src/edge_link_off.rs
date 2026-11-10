@@ -13,7 +13,7 @@
  */
 
 //! The edge link in a host built without the `edge` feature (Lite, Dev): no hook is installed, so
-//! `org.moqui.impl.EdgeServices` answers "edge link not built into this host", and the HTTPS listener has no hand-off.
+//! `org.moqui.edge.EdgeServices` answers "edge link not built into this host", and the HTTPS listener has no hand-off.
 //! The same API as `edge_link/` for `http.rs`.
 
 use std::future::Future;

@@ -15,14 +15,14 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Calls, Queues (plans/Comms-Framework.md §5.3, §5.5, V5): the call queues the user takes calls for, with each queue's calls
     waiting, the longest wait and the agents free, and the user's own state in it: log in, pause, resume, log out (one queue
     or all). A queue offers its calls to its free agents (logged in, not paused, not in a call, out of wrap-up), ringing their
-    tabs and phones as any call does. org.moqui.impl.CallQueueServices find#MyCallQueues and set#QueueAgentStatus, which act
+    tabs and phones as any call does. org.moqui.call.CallQueueServices find#MyCallQueues and set#QueueAgentStatus, which act
     on the signed-in user only. An XML screen, so it is the same in the terminal (tui). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Queues" default-menu-index="6" menu-image="sym_o_support_agent" menu-image-type="icon">
 
     <transition name="setStatus">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.CallQueueServices.set#QueueAgentStatus').parameters({callQueueId: ec.web.parameters.callQueueId || null,
+            ec.service.sync().name('org.moqui.call.CallQueueServices.set#QueueAgentStatus').parameters({callQueueId: ec.web.parameters.callQueueId || null,
                 status: ec.web.parameters.status || ''}).requireNewTransaction(true).disableAuthz().call()
         ]]></script></actions>
         <default-response url="."/>
@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const mine = ec.service.sync().name('org.moqui.impl.CallQueueServices.find#MyCallQueues').requireNewTransaction(true).disableAuthz().call() || {}
+        const mine = ec.service.sync().name('org.moqui.call.CallQueueServices.find#MyCallQueues').requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         const STATES = {available: L('Available'), out: L('Logged out'), paused: L('Paused'), wrapUp: L('In wrap-up'), inCall: L('In a call'),
             offered: L('Ringing'), disabled: L('Disabled')}

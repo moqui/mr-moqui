@@ -26,7 +26,7 @@ The code is `crates/moqui-core/src/user/login.rs` (`recent_auth`, `last_auth_mil
 
 ## Services
 
-`org.moqui.impl.RecentAuthServices` (`crates/moqui-core/src/service/recent_auth.rs`):
+`org.moqui.sso.RecentAuthServices` (`crates/moqui-core/src/service/recent_auth.rs`):
 
 | Service | What |
 | --- | --- |

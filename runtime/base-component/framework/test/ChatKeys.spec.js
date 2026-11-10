@@ -1,4 +1,4 @@
-// Chat devices, keys and to-device messages (org.moqui.impl.ChatKeyServices and ChatKeys.js; framework/entity/ChatKeyEntities.xml;
+// Chat devices, keys and to-device messages (org.moqui.chat.ChatKeyServices and ChatKeys.js; framework/entity/ChatKeyEntities.xml;
 // plans/Comms-Framework.md §4.5, C7 core; docs/interfaces/Chat-Keys.md): Matrix user IDs that map back; a device's keys
 // uploaded with its identity keys fixed; another user refused with the very same parameters; key queries, claims and
 // to-device sends reaching only users who share a room or a live call (and the user's own devices); a revoked device left out
@@ -10,7 +10,7 @@ const A = "CHATKEY_SPEC_A"
 const B = "CHATKEY_SPEC_B"
 const C = "CHATKEY_SPEC_C"
 const D = "CHATKEY_SPEC_D"
-const SERVICES = "org.moqui.impl.ChatKeyServices."
+const SERVICES = "org.moqui.chat.ChatKeyServices."
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -107,7 +107,7 @@ spec({
         })
         // A and B share a room; C shares nothing with anyone; D is only in a call with A (made in its feature)
         ec.user.internalLoginUser(username(A))
-        room = sys(() => call("org.moqui.impl.ChatServices.create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Keys spec", memberUserIdList: [B]})).chatRoomId
+        room = sys(() => call("org.moqui.chat.ChatServices.create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Keys spec", memberUserIdList: [B]})).chatRoomId
     }
 })
 
@@ -234,7 +234,7 @@ feature("concurrent claims never hand out the same one-time key, and one user ta
             const got = []
             try {
                 for (let i = 0; i < 4; i++) {
-                    const out = ec.service.sync().name("org.moqui.impl.ChatKeyServices.claim#Keys").requireNewTransaction(true)
+                    const out = ec.service.sync().name("org.moqui.chat.ChatKeyServices.claim#Keys").requireNewTransaction(true)
                         .parameters({one_time_keys: {[args.mxB]: {[args.device]: "signed_curve25519"}}}).call() || {}
                     const keys = ((out.one_time_keys || {})[args.mxB] || {})[args.device] || {}
                     got.push(Object.keys(keys)[0] || "")
@@ -380,7 +380,7 @@ feature("a member who left the room, and a forged sender, reach nothing: the sen
     when() {
         // C joins a room with A, so each reaches the other; then C leaves it
         ec.user.internalLoginUser(username(A))
-        const shared = sys(() => call("org.moqui.impl.ChatServices.create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Keys spec left", memberUserIdList: [C]})).chatRoomId
+        const shared = sys(() => call("org.moqui.chat.ChatServices.create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Keys spec left", memberUserIdList: [C]})).chatRoomId
         const aSeesCMember = queried(A, C)
         const toCMember = as(A, "send#ToDevice", {deviceId: dev.A1, event_type: "m.room.encrypted", txn_id: "t-left1",
             messages: {[mx(C)]: {[dev.C1]: {ciphertext: "member", sender: mx(B)}}}})
@@ -418,7 +418,7 @@ feature("retries of one to-device send at once queue one copy: the sender's row 
             ec.user.internalLoginUser(args.user)
             const wasDisabled = ec.artifactExecution.disableAuthz()
             try {
-                const out = ec.service.sync().name("org.moqui.impl.ChatKeyServices.send#ToDevice").requireNewTransaction(true)
+                const out = ec.service.sync().name("org.moqui.chat.ChatKeyServices.send#ToDevice").requireNewTransaction(true)
                     .parameters({deviceId: args.from, event_type: "m.room.encrypted", txn_id: "t-concurrent",
                         messages: {[args.mxB]: {[args.to]: {ciphertext: "once"}}}}).call() || {}
                 return {queued: Number(out.queued || 0), repeated: out.repeated === true}
@@ -447,17 +447,17 @@ feature("a revoke of a device with keys needs a recent sign-in, refused with the
         const stillThere = as(B, "find#ChatDevices", {}).deviceList.map((d) => d.deviceId).includes(doomed)
         // a device without keys has nothing encrypted to it: no sign-in asked
         const bareRevoked = as(B, "revoke#ChatDevice", {deviceId: bare})
-        const check = as(null, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {})
-        const wrong = as(null, "org.moqui.impl.RecentAuthServices.reauthenticate#User", {password: "not-it"})
-        const confirmed = as(null, "org.moqui.impl.RecentAuthServices.reauthenticate#User", {password: PASSWORD})
-        const checkAfter = as(null, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {})
+        const check = as(null, "org.moqui.sso.RecentAuthServices.check#RecentAuth", {})
+        const wrong = as(null, "org.moqui.sso.RecentAuthServices.reauthenticate#User", {password: "not-it"})
+        const confirmed = as(null, "org.moqui.sso.RecentAuthServices.reauthenticate#User", {password: PASSWORD})
+        const checkAfter = as(null, "org.moqui.sso.RecentAuthServices.check#RecentAuth", {})
         const allowed = as(null, "revoke#ChatDevice", {deviceId: doomed})
         // a sign-in older than the age asked is not recent
         const pause = Date.now() + 1100
         while (Date.now() < pause) { /* let a second pass */ }
-        const aged = as(null, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {maxAgeSeconds: 1})
+        const aged = as(null, "org.moqui.sso.RecentAuthServices.check#RecentAuth", {maxAgeSeconds: 1})
         // another user's internal login does not take B's recent sign-in
-        const otherUser = as(A, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {})
+        const otherUser = as(A, "org.moqui.sso.RecentAuthServices.check#RecentAuth", {})
         return {refused, stillThere, bareRevoked, check, wrong, confirmed, checkAfter, allowed, aged, otherUser}
     },
     then({refused, stillThere, bareRevoked, check, wrong, confirmed, checkAfter, allowed, aged, otherUser}) {
@@ -483,14 +483,14 @@ feature("an account with a second factor confirms who it is with the password an
         ec.user.logoutUser()
         ec.user.internalLoginUser(username(D))
         try {
-            const check = as(null, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {})
-            const codeOnly = as(null, "org.moqui.impl.RecentAuthServices.reauthenticate#User", {code: codes[0]})
-            const password = as(null, "org.moqui.impl.RecentAuthServices.reauthenticate#User", {password: PASSWORD})
-            const wrongCode = as(null, "org.moqui.impl.RecentAuthServices.reauthenticate#User", {code: "00000000"})
-            const afterWrong = as(null, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {})
+            const check = as(null, "org.moqui.sso.RecentAuthServices.check#RecentAuth", {})
+            const codeOnly = as(null, "org.moqui.sso.RecentAuthServices.reauthenticate#User", {code: codes[0]})
+            const password = as(null, "org.moqui.sso.RecentAuthServices.reauthenticate#User", {password: PASSWORD})
+            const wrongCode = as(null, "org.moqui.sso.RecentAuthServices.reauthenticate#User", {code: "00000000"})
+            const afterWrong = as(null, "org.moqui.sso.RecentAuthServices.check#RecentAuth", {})
             // the password was checked a moment ago: the code may come alone
-            const code = as(null, "org.moqui.impl.RecentAuthServices.reauthenticate#User", {code: codes[0]})
-            const after = as(null, "org.moqui.impl.RecentAuthServices.check#RecentAuth", {})
+            const code = as(null, "org.moqui.sso.RecentAuthServices.reauthenticate#User", {code: codes[0]})
+            const after = as(null, "org.moqui.sso.RecentAuthServices.check#RecentAuth", {})
             return {check, codeOnly, password, wrongCode, afterWrong, code, after}
         } finally {
             sys(() => {

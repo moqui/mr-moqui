@@ -39,7 +39,7 @@ fn credentials_and_a_named_caller_never_cross_the_link() {
 fn a_local_node_refuses_a_service_its_own_conf_does_not_list() {
     let ctx = ExecutionContextFactory::test_context();
     let call = DelegateCall {
-        service: "org.moqui.impl.EdgeServices.echo#Delegate".to_string(),
+        service: "org.moqui.edge.EdgeServices.echo#Delegate".to_string(),
         parameters: serde_json::json!({"message": "hi"}),
         caller: serde_json::json!({"username": "visitor"}),
         operation_id: "op-1".to_string(),
@@ -50,7 +50,7 @@ fn a_local_node_refuses_a_service_its_own_conf_does_not_list() {
     assert_eq!(answer.result, serde_json::Value::Null);
     assert_eq!(
         answer.errors,
-        ["org.moqui.impl.EdgeServices.echo#Delegate is not a delegated service on this node"]
+        ["org.moqui.edge.EdgeServices.echo#Delegate is not a delegated service on this node"]
     );
 }
 

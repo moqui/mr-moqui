@@ -406,7 +406,7 @@ feature("the Detail's status-bar shows the EntitySync flow and its transition mo
         const moved = gallery().render("Detail/setStatus", { enumId: "STT_INTERNAL_QUASAR", statusId: "EsComplete" }, "post")
         const webroot = ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml")
         const flow = JSON.parse(webroot.render("statusBar", { statusId: "EsRunning" }, null).output)
-        const colors = ec.service.sync().name("org.moqui.impl.StatusServices.get#StatusColors")
+        const colors = ec.service.sync().name("org.moqui.ui.StatusServices.get#StatusColors")
             .parameter("statusIdList", ["EsNotStarted", "EsRunning", "EsComplete", "EsOtherError"]).call().colors
         detail.status == 200
         detail.errorMessages.length == 0

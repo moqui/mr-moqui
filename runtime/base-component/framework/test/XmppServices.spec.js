@@ -1,4 +1,4 @@
-// The services the XMPP server calls (org.moqui.impl.XmppServices; framework/entity/XmppEntities.xml; plans/Comms-Framework.md
+// The services the XMPP server calls (org.moqui.chat.XmppServices; framework/entity/XmppEntities.xml; plans/Comms-Framework.md
 // §4.3, C3a; docs/interfaces/XMPP.md): an app password's SCRAM verifiers, made with it and sharing the user's salt; PLAIN
 // taking app passwords only; a FAST token and a session's sign-in check going with the app password they came from; the
 // archive, an event by its clientRef, an OMEMO message kept unreadable, PEP by access model, and uploads attached only by
@@ -13,7 +13,7 @@ const C = "XMPP_SPEC_C"
 // an external user (an app's client contact): the framework permission EXTERNAL_USER through a group
 const D = "XMPP_SPEC_D"
 const EXTERNAL_GROUP = "XMPP_SPEC_EXTERNAL"
-const X = "org.moqui.impl.XmppServices."
+const X = "org.moqui.chat.XmppServices."
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -79,9 +79,9 @@ spec({
             }
         })
         ec.user.internalLoginUser(username(A))
-        room = sys(() => ec.service.sync().name("org.moqui.impl.ChatServices.create#Room")
+        room = sys(() => ec.service.sync().name("org.moqui.chat.ChatServices.create#Room")
                 .parameters({roomTypeEnumId: "CrtPrivate", roomName: "Xmpp spec", memberUserIdList: [B]}).call()).chatRoomId
-        sys(() => ec.service.sync().name("org.moqui.impl.ChatServices.send#Message")
+        sys(() => ec.service.sync().name("org.moqui.chat.ChatServices.send#Message")
                 .parameters({chatRoomId: room, body: "<p>First</p>", clientRef: "spec-ref-1"}).call())
     }
 })

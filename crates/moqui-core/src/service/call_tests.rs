@@ -1314,7 +1314,7 @@ fn implemented_and_auto_parameters_merge_by_name() {
         "{names:?}"
     );
     let stamp = declared.iter().find(|param| param.name == "testDateTime").unwrap();
-    assert_eq!(stamp.java_type, "java.sql.Timestamp");
+    assert_eq!(stamp.java_type, "Timestamp");
     assert_eq!(stamp.required, super::super::define::Required::True);
     assert_eq!(stamp.field_name.as_deref(), Some("testDateTime"));
     let id = declared.iter().find(|param| param.name == "testId").unwrap();

@@ -160,9 +160,9 @@ spec({
         })
         // the user's own drive with a folder and two files, uploaded as the user (so they are recent)
         ec.user.internalLoginUser("basic.comms.files")
-        personalDriveId = sys(() => call("org.moqui.impl.FileServices.ensure#PersonalDrive", {})).driveId
+        personalDriveId = sys(() => call("org.moqui.resource.FileServices.ensure#PersonalDrive", {})).driveId
         sys(() =>
-            call("org.moqui.impl.FileServices.upload#Resource", {
+            call("org.moqui.resource.FileServices.upload#Resource", {
                 driveId: personalDriveId,
                 path: "Reports",
                 fileList: ["Summary for the quarter", "a,b\n1,2\n"],
@@ -171,10 +171,10 @@ spec({
             })
         )
         ec.user.internalLoginUser("basic.comms.files.other")
-        otherDriveId = sys(() => call("org.moqui.impl.FileServices.ensure#PersonalDrive", {})).driveId
+        otherDriveId = sys(() => call("org.moqui.resource.FileServices.ensure#PersonalDrive", {})).driveId
         // a user whose only drive is archived (left out of their drives): no drive to pick from
         ec.user.internalLoginUser("basic.comms.files.nodrive")
-        const archived = sys(() => call("org.moqui.impl.FileServices.ensure#PersonalDrive", {})).driveId
+        const archived = sys(() => call("org.moqui.resource.FileServices.ensure#PersonalDrive", {})).driveId
         store("moqui.resource.ResourceDrive", {driveId: archived, archivedDate: ec.user.nowTimestamp})
     },
     cleanupSpec() {

@@ -198,7 +198,7 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
     let account = |kind: &str, email: &str| {
         out(
             &sync(
-                "org.moqui.impl.EmailClientServices.create#EmailAccount",
+                "org.moqui.mail.EmailClientServices.create#EmailAccount",
                 &[("accountKindEnumId", text(kind)), ("emailAddress", text(email))],
             ),
             "emailAccountId",
@@ -208,7 +208,7 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
     let support = account("EakShared", "support@example.com");
     let broken = account("EakHosted", "broken@example.com");
     sync(
-        "org.moqui.impl.EmailClientServices.create#EmailIdentity",
+        "org.moqui.mail.EmailClientServices.create#EmailIdentity",
         &[
             ("emailAccountId", text(&support)),
             ("emailAddress", text("help@example.com")),
@@ -216,7 +216,7 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
     );
     let rule = out(
         &sync(
-            "org.moqui.impl.EmailClientServices.create#EmailRule",
+            "org.moqui.mail.EmailClientServices.create#EmailRule",
             &[
                 ("ruleName", text("Files")),
                 (
@@ -431,7 +431,7 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
         ],
     );
     let sent = sync(
-        "org.moqui.impl.EmailServices.send#EmailMessage",
+        "org.moqui.mail.EmailServices.send#EmailMessage",
         &[("emailMessageId", text("GATE_INTERNAL"))],
     );
     let message_id = out(&sent, "messageId");
@@ -479,7 +479,7 @@ fn the_lmtp_listener_answers_each_recipient_by_its_account() {
     let account = |email: &str| {
         out(
             &sync(
-                "org.moqui.impl.EmailClientServices.create#EmailAccount",
+                "org.moqui.mail.EmailClientServices.create#EmailAccount",
                 &[("accountKindEnumId", text("EakHosted")), ("emailAddress", text(email))],
             ),
             "emailAccountId",

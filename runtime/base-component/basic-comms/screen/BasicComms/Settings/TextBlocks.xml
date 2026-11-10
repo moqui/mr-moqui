@@ -29,7 +29,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
     </transition>
     <transition name="deleteTextBlock">
-        <service-call name="org.moqui.impl.EmailClientServices.delete#EmailTextBlock" in-map="{emailTextBlockId:emailTextBlockId}"/>
+        <service-call name="org.moqui.mail.EmailClientServices.delete#EmailTextBlock" in-map="{emailTextBlockId:emailTextBlockId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Text block deleted</message></if></actions>
         <default-response url="."/>
     </transition>

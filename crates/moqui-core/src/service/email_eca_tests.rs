@@ -55,7 +55,7 @@ fn save_eca_email_message_stores_the_message_once() {
         "headers".to_string(),
         map(vec![("message-id", Value::string("<m1@example.com>"))]),
     );
-    let out = crate::service::sync("org.moqui.impl.EmailServices.save#EcaEmailMessage", &parameters).unwrap();
+    let out = crate::service::sync("org.moqui.mail.EmailServices.save#EcaEmailMessage", &parameters).unwrap();
     let errors = context.message().errors().join("\n");
     assert!(errors.is_empty(), "{errors}");
     let id = out
@@ -83,7 +83,7 @@ fn save_eca_email_message_stores_the_message_once() {
     assert_eq!(text("statusId"), "ES_RECEIVED");
 
     // The same Message-ID from the same server is not stored again.
-    let out = crate::service::sync("org.moqui.impl.EmailServices.save#EcaEmailMessage", &parameters).unwrap();
+    let out = crate::service::sync("org.moqui.mail.EmailServices.save#EcaEmailMessage", &parameters).unwrap();
     assert!(
         out.get("emailMessageId").is_none_or(moqui_lib::object::is_empty),
         "{out:?}"

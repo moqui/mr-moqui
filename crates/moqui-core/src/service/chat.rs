@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The two Rust parts of `org.moqui.impl.ChatServices` (no Java counterpart; the rest are scripts in
-//! `framework/service/org/moqui/impl/ChatServices.xml`):
+//! The two Rust parts of `org.moqui.chat.ChatServices` (no Java counterpart; the rest are scripts in
+//! `framework/service/org/moqui/chat/ChatServices.xml`):
 //!
 //! - `push#Signal` sends a chat event or signal to users as a NotificationMessage that is not persisted and shows no
 //!   alert, on a chat topic (`chatRoom:<id>`, `chatUser:<userId>` or `userStatus`), after the caller's transaction

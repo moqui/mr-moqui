@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.ChatServices.migrate#ChatActors` (plans/Comms-Framework.md §4.4 "The C1 migration"): a database from
+//! `org.moqui.chat.ChatServices.migrate#ChatActors` (plans/Comms-Framework.md §4.4 "The C1 migration"): a database from
 //! before chat actors moves to them. Run once, in a maintenance window with no server on the old code (docs/Run-Deploy.md
 //! "Chat actors"); running it again changes nothing.
 //!

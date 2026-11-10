@@ -258,7 +258,7 @@ impl GitProvider {
                 self.write_row(&id, |row| {
                     row.set(
                         "lastGcDate",
-                        basic_convert(&Value::I64(now_millis()), "java.sql.Timestamp").value,
+                        basic_convert(&Value::I64(now_millis()), "Timestamp").value,
                     );
                     row.set("lastGcResult", Value::string(result));
                     if let Some(report) = report {
@@ -334,7 +334,7 @@ impl GitProvider {
         {
             others.extend(parse(&head));
         }
-        let since = basic_convert(&Value::I64(now_millis() - options.reflog_millis), "java.sql.Timestamp").value;
+        let since = basic_convert(&Value::I64(now_millis() - options.reflog_millis), "Timestamp").value;
         let updates = entity
             .find(events::GIT_UPDATE)?
             .eq("repositoryId", Value::string(repository_id))
@@ -390,7 +390,7 @@ fn lease_repository(
     owner: Option<&str>,
     until: i64,
 ) -> Result<bool, Error> {
-    let stamp = |millis: i64| basic_convert(&Value::I64(millis), "java.sql.Timestamp").value;
+    let stamp = |millis: i64| basic_convert(&Value::I64(millis), "Timestamp").value;
     let condition = match owner {
         Some(owner) => Condition::and(vec![
             Condition::equals("repositoryId", Value::string(repository_id)),
@@ -568,7 +568,7 @@ fn sweep_lfs(
         .eq("repositoryId", Value::string(store.repository_id()))
         .condition(Condition::less(
             "uploadedDate",
-            basic_convert(&Value::I64(cutoff), "java.sql.Timestamp").value,
+            basic_convert(&Value::I64(cutoff), "Timestamp").value,
         ))
         .list()?;
     if old.is_empty() {

@@ -120,7 +120,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="transaction-isolation" type="isolation-level" use="optional">
                 <xs:annotation><xs:documentation>
                     The transaction isolation level to use if a transaction is begun when calling this service.
-                    For definitions see the javax.sql.Connection.
+                    For definitions see the JDBC Connection isolation levels.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
             -->

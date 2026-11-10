@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- XMPP for local users (plans/Comms-Framework.md §4.3, C3a; docs/interfaces/XMPP.md): what the XMPP server keeps of its
     own beside Moqui chat. Rooms, membership, messages and presence are ChatRoom, ChatRoomMember, ChatEvent and UserStatus;
     these hold the sign-in tokens, PEP, blocking, push registrations and uploads. The services are
-    org.moqui.impl.XmppServices, called by crates/moqui-xmpp as the signed-in user (the sign-in lookups as internal work).
+    org.moqui.chat.XmppServices, called by crates/moqui-xmpp as the signed-in user (the sign-in lookups as internal work).
     No Java counterpart. These are moqui.* entities, which entity filters never apply to. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
 

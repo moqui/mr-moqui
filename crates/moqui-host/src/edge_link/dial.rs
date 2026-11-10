@@ -810,7 +810,7 @@ impl Drop for Work {
 
 /// The service that writes each phone number's fallback for while this node is away (`moqui.call.PhoneNumberFallback`,
 /// the replicated set `voiceFallbacks`, E8), and queues their greetings to the edge node.
-const REFRESH_FALLBACKS: &str = "org.moqui.impl.VoiceServices.refresh#PhoneFallbacks";
+const REFRESH_FALLBACKS: &str = "org.moqui.call.VoiceServices.refresh#PhoneFallbacks";
 /// How often the fallbacks are written again while the link lasts, besides the services that change their sources.
 const REFRESH_EVERY: Duration = Duration::from_secs(60);
 

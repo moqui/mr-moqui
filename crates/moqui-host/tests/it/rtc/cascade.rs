@@ -205,7 +205,7 @@ fn start_call(origin: &str, callees: &[&str]) -> (String, Vec<String>) {
     moqui_core::user::internal_login_user("john.doe").unwrap();
     let ids: Vec<Value> = callees.iter().map(|id| Value::string(*id)).collect();
     let started = call(
-        "org.moqui.impl.CallServices.start#Call",
+        "org.moqui.call.CallServices.start#Call",
         &[("calleeUserIdList", Value::List(ids))],
     );
     let call_id = text(&started, "callSessionId");
@@ -221,7 +221,7 @@ fn start_call(origin: &str, callees: &[&str]) -> (String, Vec<String>) {
     for username in callees.iter().map(|id| username_of(id)) {
         moqui_core::user::internal_login_user(&username).unwrap();
         let answered = call(
-            "org.moqui.impl.CallServices.answer#Call",
+            "org.moqui.call.CallServices.answer#Call",
             &[("callSessionId", Value::string(&call_id))],
         );
         legs.push(text(&answered, "callLegId"));
@@ -406,7 +406,7 @@ fn losing_the_leg_node_ends_only_its_legs() {
             "heartbeatDate",
             stale,
         );
-        call("org.moqui.impl.CallServices.expire#Calls", &[]);
+        call("org.moqui.call.CallServices.expire#Calls", &[]);
         (
             field("moqui.call.CallLeg", "callLegId", &legs[2], "statusId"),
             field("moqui.call.CallLeg", "callLegId", &legs[2], "endReasonEnumId"),

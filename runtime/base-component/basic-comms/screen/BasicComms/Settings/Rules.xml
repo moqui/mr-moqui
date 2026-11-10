@@ -56,7 +56,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="setEnabled">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.EmailClientServices.update#EmailRule').parameters({emailRuleId: emailRuleId || '',
+            ec.service.sync().name('org.moqui.mail.EmailClientServices.update#EmailRule').parameters({emailRuleId: emailRuleId || '',
                 enabled: enabled === 'Y' ? 'Y' : 'N'}).call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
@@ -64,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="deleteRule">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.EmailClientServices.delete#EmailRule').parameter('emailRuleId', emailRuleId || '').call()
+            ec.service.sync().name('org.moqui.mail.EmailClientServices.delete#EmailRule').parameter('emailRuleId', emailRuleId || '').call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
         <default-response type="none"/>
@@ -73,14 +73,14 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             let ids = []
             try { ids = JSON.parse(emailRuleIdsJson || '[]') } catch (err) { ids = [] }
-            ec.service.sync().name('org.moqui.impl.EmailClientServices.reorder#EmailRules').parameter('emailRuleIdList', Array.isArray(ids) ? ids : []).call()
+            ec.service.sync().name('org.moqui.mail.EmailClientServices.reorder#EmailRules').parameter('emailRuleIdList', Array.isArray(ids) ? ids : []).call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
     <transition name="runRules">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.run#EmailRules').parameters({emailFolderId: emailFolderId || '',
+            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.run#EmailRules').parameters({emailFolderId: emailFolderId || '',
                 emailRuleId: emailRuleId || null}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {matchedCount: out.matchedCount || 0, actionCount: out.actionCount || 0,
                 ruleErrorList: out.ruleErrorList || []})
@@ -89,7 +89,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="blockAddress">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.block#Sender').parameters({emailAddress: emailAddress || '',
+            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.block#Sender').parameters({emailAddress: emailAddress || '',
                 emailAccountId: emailAccountId || ''}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {emailRuleId: out.emailRuleId,
                 messageInfos: [{type: 'success', message: ec.l10n.localize('Blocked: their mail goes to Spam')}]})

@@ -36,7 +36,7 @@ fn setup() -> (EntityFacade, ExecutionContext) {
 }
 
 fn install(files: &[&str]) {
-    let dir = crate::context::framework_dir().join("service/org/moqui/impl");
+    let dir = crate::context::framework_dir().join("service/org/moqui");
     let paths: Vec<_> = files.iter().map(|file| dir.join(file)).collect();
     let failures = crate::service::lint(&paths).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
@@ -141,7 +141,7 @@ fn a_print_job_is_sent_through_the_print_client_and_its_status_follows_the_serve
     let (facade, context) = setup();
     let _entered = context.enter();
     let _authz = context.disable_authz();
-    install(&["PrintServices.xml"]);
+    install(&["impl/PrintServices.xml"]);
 
     // No client installed: the job is created and the send fails with the not-installed message.
     crate::print::clear_print_client();
@@ -319,7 +319,7 @@ fn a_send_takes_cups4j_defaults_and_fails_with_no_document_and_a_hold_needs_a_se
     let (facade, context) = setup();
     let _entered = context.enter();
     let _authz = context.disable_authz();
-    install(&["PrintServices.xml"]);
+    install(&["impl/PrintServices.xml"]);
     let printer = std::sync::Arc::new(FakePrinter {
         printed: std::sync::Mutex::new(Vec::new()),
     });
@@ -399,7 +399,7 @@ fn a_spreadsheet_loads_into_an_entity_through_the_auto_service() {
     let (facade, context) = setup();
     let _entered = context.enter();
     let _authz = context.disable_authz();
-    install(&["SpreadsheetServices.xml"]);
+    install(&["resource/SpreadsheetServices.xml"]);
     let mut book = crate::screen::xlsx::XlsxBook::default();
     book.start_sheet("Units");
     for title in ["uomId", "Name", "uomTypeEnumId", "ignored column"] {
@@ -418,7 +418,7 @@ fn a_spreadsheet_loads_into_an_entity_through_the_auto_service() {
     let mut field_map = indexmap::IndexMap::new();
     field_map.insert("Name".to_string(), Value::string("description"));
     call.insert("fieldMap".to_string(), Value::Map(field_map));
-    let out = crate::service::sync("org.moqui.impl.SpreadsheetServices.load#SpreadsheetEntity", &call).unwrap();
+    let out = crate::service::sync("org.moqui.resource.SpreadsheetServices.load#SpreadsheetEntity", &call).unwrap();
     assert_eq!(errors(&context), "");
     assert_eq!(out.get("recordCount"), Some(&Value::I64(2)));
     let row = facade
@@ -447,7 +447,7 @@ fn a_screen_document_prints_its_pdf_or_reports_that_pdf_is_not_available() {
     let (facade, context) = setup();
     let _entered = context.enter();
     let _authz = context.disable_authz();
-    install(&["PrintServices.xml"]);
+    install(&["impl/PrintServices.xml"]);
     let location = format!(
         "{}/src/screen/testdata/Render/Render/Print.xml",
         env!("CARGO_MANIFEST_DIR")

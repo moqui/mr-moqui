@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     entities say how it reaches the phone network. The enumerations and status items are in data/VoiceSetupData.xml.
 
     These are moqui.* entities, which entity filters never apply to: screens reach them only through
-    org.moqui.impl.VoiceServices, whose admin services need the VoiceAdmin permission. No Java counterpart. -->
+    org.moqui.call.VoiceServices, whose admin services need the VoiceAdmin permission. No Java counterpart. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
 
     <entity entity-name="VoiceTrunk" package="moqui.call" use="configuration" cache="never">
@@ -304,7 +304,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== end V2 ========== -->
 
     <!-- ========== V4: the registrar for desk and soft phones (plans/Comms-Framework.md §5.2 "Registrar for phones",
-        §5.4; docs/interfaces/SIP.md "Registrar"). The services are org.moqui.impl.SipDeviceServices (SipDevices.js). ========== -->
+        §5.4; docs/interfaces/SIP.md "Registrar"). The services are org.moqui.call.SipDeviceServices (SipDevices.js). ========== -->
 
     <entity entity-name="SipDevice" package="moqui.call" use="configuration" cache="never">
         <description>A user's desk or soft phone that registers with Moqui's registrar: its generated SIP username and the
@@ -378,7 +378,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <!-- ========== V3: call handling rules, schedules, ring groups (plans/Comms-Framework.md §5.3, §5.4; docs/interfaces/SIP.md
-        "Call handling"). The services are org.moqui.impl.CallHandlingServices (CallHandling.js). ========== -->
+        "Call handling"). The services are org.moqui.call.CallHandlingServices (CallHandling.js). ========== -->
 
     <entity entity-name="CommsSchedule" package="moqui.call" use="configuration" cache="never">
         <description>Business hours: the weekly hours, dated hours and holidays of its CommsScheduleRule rows, read in its
@@ -573,7 +573,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <!-- ========== end V3 ========== -->
     <!-- ========== V5: the IVR, call queues, transfer and merge (plans/Comms-Framework.md §5.1, §5.3, §5.4; docs/interfaces/SIP.md
-        "IVR", "Queues", "Transfer and merge"). The services are org.moqui.impl.IvrServices (Ivr.js), CallQueueServices
+        "IVR", "Queues", "Transfer and merge"). The services are org.moqui.call.IvrServices (Ivr.js), CallQueueServices
         (CallQueues.js) and CallTransferServices (CallTransfers.js). ========== -->
 
     <entity entity-name="IvrMenu" package="moqui.call" use="configuration" cache="never">
@@ -774,7 +774,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== SMS and MMS (C4-SMS; plans/Comms-Framework.md §5.6, docs/interfaces/SMS.md) ==========
         A number's texts go through its messagingBridgeId (a ChatBridge of type CbtSms) and land in the number pair's external
         room (ChatRoom CrtExternal, one per our number and their number, mapped by a ChatRoomBridge whose externalRoomId is
-        "ours/theirs"). org.moqui.impl.SmsServices and Sms.js; the Telnyx adapter is crates/moqui-channels. -->
+        "ours/theirs"). org.moqui.call.SmsServices and Sms.js; the Telnyx adapter is crates/moqui-channels. -->
     <entity entity-name="SmsOptOut" package="moqui.call" use="transactional" cache="never">
         <description>Whether the person at otherNumber has opted out of texts from our phoneNumber: STOP (and its synonyms)
             sets optedOut Y, START sets it N; HELP is kept as the last keyword. A send to an opted-out pair is refused before

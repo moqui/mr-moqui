@@ -46,7 +46,7 @@ inline script and no inline event handler, and the settings are a data block:
 | `userId`, `username`, `userFullName` | the signed-in user |
 | `locale`, `timeZone`, `quasarLang` | `en-US` style tag, zone name, and the key of the language pack in `Quasar.Lang` (`enUS`, `ptBR`, `zhCN`, `de`, ...) |
 | `darkMode`, `leftOpen`, `leftMini` | the preferences `QUASAR_DARK` (`true`, `false` or `"auto"`, which follows the system), `QUASAR_LEFT_OPEN` and `QUASAR_LEFT_MINI` (the drawer as a rail of app icons) |
-| `appearance` | what `org.moqui.impl.ShellServices.get#Appearance` builds (see Appearance): the theme's color schemes (`{id, description, light, dark, custom, version, fonts}`), the fonts (`{id, description, kind, family, stylesheet}`), the themes the user may choose (`themes`, `{id, description}`; see Themes), `screenThemeId` (the theme shown), `defaultSchemeId`, `schemeId` (the scheme shown), `policy`, the user's `THEME_*` values the policy allows, `keys`, `tokens` and the style sheets the page links (`links`) |
+| `appearance` | what `org.moqui.ui.ShellServices.get#Appearance` builds (see Appearance): the theme's color schemes (`{id, description, light, dark, custom, version, fonts}`), the fonts (`{id, description, kind, family, stylesheet}`), the themes the user may choose (`themes`, `{id, description}`; see Themes), `screenThemeId` (the theme shown), `defaultSchemeId`, `schemeId` (the scheme shown), `policy`, the user's `THEME_*` values the policy allows, `keys`, `tokens` and the style sheets the page links (`links`) |
 | `devMarker` | the `webapp_dev_marker_color` conf property: the color of the small square a dev or test instance shows in the corner of the window; empty for none |
 | `density`, `startApp` | `SHELL_DENSITY` (`comfortable` or `compact`) and `SHELL_START_APP`, the app the user may open that `/qapps` with no path opens (empty for the app list) |
 | `notificationEndpoint` | the path of the notification WebSocket, from `webapp_notification_endpoint`. Empty means no socket is opened. |
@@ -163,7 +163,7 @@ color, so a `text-<color>` class picks it, not `color=`, whose `bg-*` class woul
 | `m-container-split` | `container-split`: a `q-splitter` of the `side` and `main` slots; `id`, `side-width` (320), `min-main` (480), `side-position` (`left`, `right`), `select-parameter`, `back-text`, `height` (by default the viewport below the split, so each pane scrolls in itself; see Layout panels below) |
 | `m-menu-nav-item`, `m-menu-subscreen-item`, `m-menu-item-content`, `m-menu-icon` | the navigation of the shell; `m-menu-icon` is a menu image of type icon (`name`, `size`) |
 | `m-screen-context` | the `context` element: while mounted it registers `recordEntity`, `recordId`, `title` and `selectionForm` with the root (`setScreenContext`), again when one changes, and takes them back when unmounted (see Shell data and providers) |
-| `m-status-bar` | the `status-bar` element (style-guide §3.3, §5.2): `bar` (what `org.moqui.impl.StatusServices.get#StatusBar` answers: `current`, `stages` with `state` done, current or todo and `color`, `transitions` with `isNext` and `isDanger`), else `status-id`, `status-type-id`, `status-flow-id`, `stages` and `allowed-status-ids` (lists or comma text) and `read-only`, which it asks of `bar-url` (`/statusBar`, the root screen's transition) and again when one changes, as a server-static screen does; `action` (the transition), `parameters`, `parameter-name` (`statusId`), `title`, `confirm` (true). A stage is a `q-chip dense square`: the current one filled in its color, a done one `m-tonal` with a check, one to come outlined; a transition is a button in an `m-form` of its own posting `action` with the new status: the next stage filled primary, the others tonal (negative for those that end badly), each asking "Label: title?" (`moqui.statusBarView`) |
+| `m-status-bar` | the `status-bar` element (style-guide §3.3, §5.2): `bar` (what `org.moqui.ui.StatusServices.get#StatusBar` answers: `current`, `stages` with `state` done, current or todo and `color`, `transitions` with `isNext` and `isDanger`), else `status-id`, `status-type-id`, `status-flow-id`, `stages` and `allowed-status-ids` (lists or comma text) and `read-only`, which it asks of `bar-url` (`/statusBar`, the root screen's transition) and again when one changes, as a server-static screen does; `action` (the transition), `parameters`, `parameter-name` (`statusId`), `title`, `confirm` (true). A stage is a `q-chip dense square`: the current one filled in its color, a done one `m-tonal` with a check, one to come outlined; a transition is a button in an `m-form` of its own posting `action` with the new status: the next stage filled primary, the others tonal (negative for those that end badly), each asking "Label: title?" (`moqui.statusBarView`) |
 | `m-number-card` | the `number-card` element: a `q-card flat bordered` with the `title` as `text-overline`, the `value` (`text-h5`; `size` `sm` is `text-h6`, `lg` `text-h4`), the `delta` with an arrow, green or red by its sign against `delta-good` (`up`, the default, or `down`; no sign is muted: `moqui.numberCardDelta`), and the `icon`; with `href` the whole card is an `m-link` (`external`: a plain anchor). The `dashboard` element around cards is no component: a `div.m-dashboard` CSS grid, columns of at least its `min-width` (`--m-dashboard-min`, 200 px), each child in a `div.m-dashboard-item` (an empty one hidden, a `section-iterate`'s rows each a cell) |
 | `m-chatter`, `m-record-files` | the `chatter` and `record-files` elements: `record-entity`, `record-id`, `default-tab`, `hide`, `id` (of the `m-dynamic-container` the panel loads into, for `submit-reload-id`). See Record panels below |
 | `m-avatar` | a `q-avatar`: `image` (a face image URL; initials when it does not load), else when `user-id` is set and `qvt.config.avatarUrl` (theme `STRT_AVATAR_URL`) contains `${userId}`, that URL with the id filled in (`moqui.avatar.imageUrl`; a 404 still leaves the initials), else the initials of `name` on a color of the name (`moqui.avatar`), else a person icon; `size` (32px), `color`, `text-color`, `square`, `rounded`, `tooltip` (the name); `presence` (`online`, `away`, `dnd`, `offline`) draws a dot, and `user-id` the dot of that user's presence from the chat store (asked for once mounted), nothing without either |
@@ -252,7 +252,7 @@ once per page load:
   quick-create by `kind`, a palette source by `group`, a key of a keymap by `keys`, a provider hook by `name`; the XSD's
   `screen-extend` lists them). An equal key is replaced where it was, a new one is added at the end, and labels never key.
 - The provider hooks (`inbox-source`, `record-link` and the others of plans/Comms-Framework.md §3.3) are not in the shell data: the
-  server calls them through `org.moqui.impl.ShellServices.call#Providers`, each as the app that declares it, and combines what they
+  server calls them through `org.moqui.ui.ShellServices.call#Providers`, each as the app that declares it, and combines what they
   answer (`results` with each `sourceId`, `failedParts`, `unavailable`); `get#Providers` lists them. Both work outside a render (a
   service, a job), from the apps the current user may open.
 - `shell` are theme values of the user's theme for `STT_INTERNAL_QUASAR`, found as a render finds a theme (the user's `UserScreenTheme`, a
@@ -265,7 +265,7 @@ once per page load:
 - `recordScreens` are, for `chatterScreen` and `recordFilesScreen` of the theme, that subscreen of the app root (`/qapps/<app>/<name>`)
   with its `render-modes` as written (`["all"]` without the attribute), when the app root mounts it and the user may view it there;
   null otherwise, which is no error (the tools have no Chatter). A subscreen that does not load is logged and null.
-- `counts` is what `org.moqui.impl.ShellServices.get#ShellCounts` answers for the user: the `counts` map of the service the theme names in
+- `counts` is what `org.moqui.ui.ShellServices.get#ShellCounts` answers for the user: the `counts` map of the service the theme names in
   `STRT_SHELL_COUNTS_SERVICE`, called with `userId`, with authorization disabled (the theme names it, it reads only that user's rows, and
   no app's authorization covers it), in the user's time zone and locale. The keys the shell reads, each a number or a map with a `total`:
   `today`, `chat`, `email` (external mail unread), `messages` (internal messages and the mailbox posts delivered to the Inbox),
@@ -305,12 +305,12 @@ and answers `rows`, a List of Maps (`title`, `subtitle`, `icon`, `url`, a `/qapp
 and optionally `moreUrl`, the link of the full search for the text. The service runs as the user, with the user's authorization and
 entity filters, so it shows only what the user may see. `example.ExampleServices.search#GalleryEnumerations` is a small one.
 
-**The `shellCounts` topic.** `org.moqui.impl.ShellServices.publish#ShellCounts(userIdList)` sends each user a NotificationMessage on the topic
+**The `shellCounts` topic.** `org.moqui.ui.ShellServices.publish#ShellCounts(userIdList)` sends each user a NotificationMessage on the topic
 `shellCounts`, not persisted and with `showAlert` false, whose `message` is the counts map (as `counts` above). A user gets at most one every
 two seconds: requests inside that window fold into one send at its end. Inside a transaction the request waits for the commit, and the
 sends are made on a server thread, so the caller never waits for the counts. The EECAs and SECAs on the records the counts read call it.
 
-**The `emailSyncProgress` topic.** While `org.moqui.impl.EmailClientServices.sync#EmailAccount` fetches mail it sends the account's owner
+**The `emailSyncProgress` topic.** While `org.moqui.mail.EmailClientServices.sync#EmailAccount` fetches mail it sends the account's owner
 and members a NotificationMessage on the topic `emailSyncProgress` (not persisted, `showAlert` false), at most one a second and one when
 it ends, whose `message` is `{emailAccountId, done, folderCount, foldersDone, folderName, folderPath, folderKept, folderFetched,
 folderToFetch, folderPending, fetched, toFetch, pending}`, with `outcome`, `message` and `newCount` when `done`. A screen listens with
@@ -326,7 +326,7 @@ beside Java's keys (`topic`, `subTopic`, `sentDate`, `notificationMessageId`, `t
 `NrDateAlert`, `NrReminder`, `NrComment`, `NrSystem`), `recordEntityName`, `recordId`, `actorUserId` (the sender unless set), `appName` and
 `inboxEnumId` (the topic's `NotificationInbox`: `NinNotifications`, the default, or `NinUpdates`). A sender sets them with
 `ec.makeNotificationMessage().reason('mention').record(entityName, id).actorUserId(id).appName(name)`. The screens read the current user's
-notifications only through `org.moqui.impl.NotificationServices`: `get#UserNotifications` (by inbox, reason, app, topic, read state, dates,
+notifications only through `org.moqui.ui.NotificationServices`: `get#UserNotifications` (by inbox, reason, app, topic, read state, dates,
 text, approvals waiting; paged; with the unread of each inbox and the approvals waiting), `mark#NotificationsViewed` (ids, or all of an
 inbox, which leaves the approvals waiting: an approval is decided, not read), and `approve#NotificationMessage` and
 `refuse#NotificationMessage`, whose decision is final for the message (every recipient's row is marked viewed, so the others no longer
@@ -486,7 +486,7 @@ and token name without its prefix (`primary`, `page-bg`, ...).
 - A scheme names its own fonts in `defaultFontBodyId`, `defaultFontHeadingId` and `defaultFontMonoId`, used for a role the user
   has chosen no font for. Set a scheme's font there, not as `--m-font-*` in its `extraCss`: there its style sheet is never linked.
 
-**The theme's appearance.** `org.moqui.impl.ShellServices.get#Appearance` (`crates/moqui-core/src/screen/sri/appearance.rs`) builds
+**The theme's appearance.** `org.moqui.ui.ShellServices.get#Appearance` (`crates/moqui-core/src/screen/sri/appearance.rs`) builds
 `config.appearance` for the page, the desktop client and the server's own checks, from three theme resources:
 
 | Resource | Value |
@@ -525,7 +525,7 @@ on `DEFAULT_QUASAR` (BOSS's tray screens, counts service, record and contact hoo
 **Choosing one.** The account menu's **Theme** lists `appearance.themes`, the Quasar themes by description, with the current one
 checked. It shows when there are two or more and the policy of the user's theme leaves the choice open (`policy.theme`, false for
 `theme: false` or `appearance: false`; `moqui.themeChoiceAllowed()`). A pick posts `/apps/setScreenTheme`, which calls
-`org.moqui.impl.ShellServices.set#UserScreenTheme`, and reloads the page, since the theme's style sheets, scripts and shell values
+`org.moqui.ui.ShellServices.set#UserScreenTheme`, and reloads the page, since the theme's style sheets, scripts and shell values
 are read when the page is made. The service:
 - refuses (403, nothing written) a theme that is not in `themes` (an appearance service may remove some) or a locked choice;
 - deletes the user's `UserScreenTheme` when the pick is the theme they would get without it (a group's, the default), so a later
@@ -687,7 +687,7 @@ of m-static-form-list to the condition, so the component draws no selection.
 | `board` | |
 |---|---|
 | `groupField`, `titleField`, `sumField`, `sumFormat` | the column of a row, its card's title for the default card, and the sum in each column's head (`#,##0.##`) |
-| `columns`, `flow` | the known columns in order (`{value, label, color}`) and where a status may go (`{statusId: [toStatusId]}`); the server-merged macros write them from `org.moqui.impl.StatusServices.get#ListViewColumns` (every status of the type in sequence order, with the status color map's colors, then the other values with the description of the status or enumeration they are), a server-static list asks the root screen's `listViewColumns` transition for them with the values its rows have |
+| `columns`, `flow` | the known columns in order (`{value, label, color}`) and where a status may go (`{statusId: [toStatusId]}`); the server-merged macros write them from `org.moqui.ui.StatusServices.get#ListViewColumns` (every status of the type in sequence order, with the status color map's colors, then the other values with the description of the status or enumeration they are), a server-static list asks the root screen's `listViewColumns` transition for them with the values its rows have |
 | `columnOrder`, `statusTypeId`, `statusFlowId` | the columns given (each shown even with no card; a value of a row outside them is a column after them, labelled as the server sent it, a status by its description), the status type when the rows may not have every status, and the status flow of the drag hints (`status-flow-id`, Default when not given; the transition still checks the record's own flow) |
 | `transition`, `parameters`, `keyFields`, `parameterName` | a card dropped in another column posts `transition` with `parameters` (the transition's and the list's `hidden-parameters`), the row's key fields and the new value as `parameterName` (else `groupField`); a refusal (errors in the answer, or a failed request) puts it back and shows the message. While a card is dragged the columns its status may go to (`flow`) are outlined and the others dimmed |
 
@@ -843,8 +843,8 @@ breadcrumb (`moqui-html.css` `.wizard`, `.stack-crumbs`); a split is two columns
 ## Chat store and presence
 
 IronStone impl-drawers-commons M10 (design-drawers-commons §1.8, §13): `WebrootChat.js` is `moqui.chat`, the page's store over the
-notification socket, started by the shell root once mounted for a signed-in user. The server side is `org.moqui.impl.ChatServices`
-(`framework/service/org/moqui/impl/ChatServices.xml`, which describes the rooms, the access rules and the pushes); BOSS's Chat screens use
+notification socket, started by the shell root once mounted for a signed-in user. The server side is `org.moqui.chat.ChatServices`
+(`framework/service/org/moqui/chat/ChatServices.xml`, which describes the rooms, the access rules and the pushes); BOSS's Chat screens use
 the store for the live parts and their own transitions over those services for the rest.
 
 **Agent cards** (plans/LLM-A2A-Assist.md 4.13, docs/ai/Assist.md "Chat members, triggers and AI tasks"): a message of an agent member may

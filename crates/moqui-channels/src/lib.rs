@@ -18,7 +18,7 @@
 //!
 //! - Out: a text a user writes in a number pair's room goes through the delivery worker to
 //!   [`deliver`](moqui_core::service::chat_bridge::ChatBridgeAdapter::deliver), which asks
-//!   `org.moqui.impl.SmsServices.check#SmsSend` (grants, the destination's class, the person's opt-out, the day's limits)
+//!   `org.moqui.call.SmsServices.check#SmsSend` (grants, the destination's class, the person's opt-out, the day's limits)
 //!   before it posts to `/v2/messages`, with its files as addresses the provider fetches
 //!   ([`moqui_core::service::chat_bridge::media_url`]). Telnyx does not dedupe a send, so an answer lost in flight is
 //!   `Uncertain`, never sent again on its own.

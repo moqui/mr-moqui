@@ -141,7 +141,7 @@ fn server_process() {
         moqui_core::user::internal_login_user("john.doe").unwrap();
         let _authz = context.disable_authz();
         let out =
-            moqui_core::service::sync("org.moqui.impl.EdgeServices.create#PairingCode", &BTreeMap::new()).unwrap();
+            moqui_core::service::sync("org.moqui.edge.EdgeServices.create#PairingCode", &BTreeMap::new()).unwrap();
         out.get("code").map(to_plain_string).unwrap_or_default()
     };
     let shown = |address: Option<SocketAddr>| address.map(|a| a.to_string()).unwrap_or_default();
@@ -422,7 +422,7 @@ impl Server {
 
     /// Whether the server has `node`'s down connection.
     fn down(&self, node: &str) -> bool {
-        let out = self.ok("john.doe", "org.moqui.impl.EdgeServices.get#EdgeClients", json!({}));
+        let out = self.ok("john.doe", "org.moqui.edge.EdgeServices.get#EdgeClients", json!({}));
         out["clientList"].as_array().is_some_and(|list| {
             list.iter()
                 .any(|row| row["pairedNodeId"] == json!(node) && row["down"] == json!(true))
@@ -795,7 +795,7 @@ fn mail_to_recipients_on_both_sides_is_delivered_once_to_each() {
             &local_ok(
                 &local,
                 "john.doe",
-                "org.moqui.impl.EmailClientServices.create#EmailAccount",
+                "org.moqui.mail.EmailClientServices.create#EmailAccount",
                 &[
                     ("accountKindEnumId", Value::string(kind)),
                     ("emailAddress", Value::string(address)),
@@ -809,7 +809,7 @@ fn mail_to_recipients_on_both_sides_is_delivered_once_to_each() {
     let sales = json_text(
         &server.ok(
             "john.doe",
-            "org.moqui.impl.EmailClientServices.create#EmailAccount",
+            "org.moqui.mail.EmailClientServices.create#EmailAccount",
             json!({"accountKindEnumId": "EakHosted", "emailAddress": SALES}),
         ),
         "emailAccountId",
@@ -866,7 +866,7 @@ fn mail_to_recipients_on_both_sides_is_delivered_once_to_each() {
     // the server's own services refuse an address the node holds, naming it
     let (_, errors) = server.call(
         "john.doe",
-        "org.moqui.impl.EmailClientServices.create#EmailAccount",
+        "org.moqui.mail.EmailClientServices.create#EmailAccount",
         json!({"accountKindEnumId": "EakHosted", "emailAddress": ANN}),
     );
     assert!(
@@ -916,7 +916,7 @@ fn mail_to_recipients_on_both_sides_is_delivered_once_to_each() {
     let sent = local_ok(
         &local,
         "john.doe",
-        "org.moqui.impl.EmailServices.send#EmailMessage",
+        "org.moqui.mail.EmailServices.send#EmailMessage",
         &[("emailMessageId", Value::string("AIO_OUT_1"))],
     );
     assert_eq!(sent.get("sendError"), None, "{sent:?}");
@@ -978,7 +978,7 @@ fn mail_to_recipients_on_both_sides_is_delivered_once_to_each() {
     link.stop();
     server.ok(
         "john.doe",
-        "org.moqui.impl.EdgeServices.revoke#EdgeClient",
+        "org.moqui.edge.EdgeServices.revoke#EdgeClient",
         json!({"pairedNodeId": node}),
     );
     let (rcpt, after) = smtp(
@@ -1114,7 +1114,7 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
     local_bridge(LOCAL_BRIDGE);
     server.ok(
         "john.doe",
-        "org.moqui.impl.EmailClientServices.create#EmailAccount",
+        "org.moqui.mail.EmailClientServices.create#EmailAccount",
         json!({"accountKindEnumId": "EakHosted", "emailAddress": SALES}),
     );
     let link = Link::up(&server, &local);
@@ -1171,7 +1171,7 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
     local_ok(
         &local,
         "john.doe",
-        "org.moqui.impl.EmailClientServices.create#EmailAccount",
+        "org.moqui.mail.EmailClientServices.create#EmailAccount",
         &[
             ("accountKindEnumId", Value::string("EakHosted")),
             ("emailAddress", Value::string(SALES)),
@@ -1180,7 +1180,7 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
     let conflicts = || {
         let out = server.ok(
             "john.doe",
-            "org.moqui.impl.EdgeServices.get#ReplicaConflicts",
+            "org.moqui.edge.EdgeServices.get#ReplicaConflicts",
             json!({"pairedNodeId": node}),
         );
         out["conflictList"].as_array().cloned().unwrap_or_default()
@@ -1211,7 +1211,7 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
     server.delete("moqui.chat.ChatBridge", json!({"chatBridgeId": OWN_CLAIMED}));
     let rechecked = server.ok(
         "john.doe",
-        "org.moqui.impl.EdgeServices.recheck#ReplicaConflicts",
+        "org.moqui.edge.EdgeServices.recheck#ReplicaConflicts",
         json!({"pairedNodeId": node}),
     );
     assert_eq!(rechecked["applied"], json!(1), "{rechecked}");
@@ -1278,7 +1278,7 @@ fn claimed_items_are_refused_by_name_and_webhooks_go_by_owner() {
     drop(link);
     server.ok(
         "john.doe",
-        "org.moqui.impl.EdgeServices.revoke#EdgeClient",
+        "org.moqui.edge.EdgeServices.revoke#EdgeClient",
         json!({"pairedNodeId": node}),
     );
     let (status, body) = post_webhook(&client, &server.url(), OWN_BRIDGE, &signer, &probe("after"));
@@ -1307,13 +1307,13 @@ fn start_call(call: &dyn Fn(&str, &str, Json) -> Json, callee: &str) -> (String,
     let callee_id = json_text(&created, "userId");
     let started = call(
         "john.doe",
-        "org.moqui.impl.CallServices.start#Call",
+        "org.moqui.call.CallServices.start#Call",
         json!({"calleeUserIdList": [callee_id]}),
     );
     let call_id = json_text(&started, "callSessionId");
     let answered = call(
         callee,
-        "org.moqui.impl.CallServices.answer#Call",
+        "org.moqui.call.CallServices.answer#Call",
         json!({"callSessionId": call_id}),
     );
     (
@@ -1478,7 +1478,7 @@ fn the_same_call_id_on_both_sides_stays_apart_and_each_recording_on_its_side() {
     let server_recording = json_text(
         &server.ok(
             "john.doe",
-            "org.moqui.impl.CallRecordingServices.start#Recording",
+            "org.moqui.call.CallRecordingServices.start#Recording",
             json!({"callSessionId": server_call}),
         ),
         "callRecordingId",
@@ -1487,7 +1487,7 @@ fn the_same_call_id_on_both_sides_stays_apart_and_each_recording_on_its_side() {
         &local_ok(
             &local,
             "john.doe",
-            "org.moqui.impl.CallRecordingServices.start#Recording",
+            "org.moqui.call.CallRecordingServices.start#Recording",
             &[("callSessionId", Value::string(&local_call))],
         ),
         "callRecordingId",
@@ -1500,13 +1500,13 @@ fn the_same_call_id_on_both_sides_stays_apart_and_each_recording_on_its_side() {
     );
     server.ok(
         "john.doe",
-        "org.moqui.impl.CallRecordingServices.stop#Recording",
+        "org.moqui.call.CallRecordingServices.stop#Recording",
         json!({"callSessionId": server_call}),
     );
     local_ok(
         &local,
         "john.doe",
-        "org.moqui.impl.CallRecordingServices.stop#Recording",
+        "org.moqui.call.CallRecordingServices.stop#Recording",
         &[("callSessionId", Value::string(&local_call))],
     );
     let mut server_segments = Vec::new();
@@ -1520,12 +1520,12 @@ fn the_same_call_id_on_both_sides_stays_apart_and_each_recording_on_its_side() {
         );
         server_segments = segments(&server.ok(
             "john.doe",
-            "org.moqui.impl.CallRecordingServices.find#Recordings",
+            "org.moqui.call.CallRecordingServices.find#Recordings",
             json!({"callSessionId": server_call}),
         ));
         local_segments = segments(&on_local(
             "john.doe",
-            "org.moqui.impl.CallRecordingServices.find#Recordings",
+            "org.moqui.call.CallRecordingServices.find#Recordings",
             json!({"callSessionId": local_call}),
         ));
     }
@@ -1557,7 +1557,7 @@ fn the_same_call_id_on_both_sides_stays_apart_and_each_recording_on_its_side() {
             &local_ok(
                 &local,
                 "john.doe",
-                "org.moqui.impl.CallRecordingServices.get#RecordingFile",
+                "org.moqui.call.CallRecordingServices.get#RecordingFile",
                 &[("callRecordingSegmentId", from_json(&segment["callRecordingSegmentId"]))],
             ),
             "location",
@@ -1725,7 +1725,7 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
     };
     // A bound socket may precede the live SipNode row that store#VoiceTrunk uses as its reload target.
     wait_until(Duration::from_secs(5), "the server's live SIP reload target", || {
-        live_sip(&server.ok("john.doe", "org.moqui.impl.VoiceServices.get#VoiceStatus", json!({})))
+        live_sip(&server.ok("john.doe", "org.moqui.call.VoiceServices.get#VoiceStatus", json!({})))
     });
 
     // the server's own trunk and number, to john, who is in a call: his calls go to voicemail
@@ -1738,14 +1738,14 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
     let own_trunk_id = json_text(
         &server.ok(
             "john.doe",
-            "org.moqui.impl.VoiceServices.store#VoiceTrunk",
+            "org.moqui.call.VoiceServices.store#VoiceTrunk",
             trunk(own_trunk.addr().port()),
         ),
         "voiceTrunkId",
     );
     server.ok(
         "john.doe",
-        "org.moqui.impl.VoiceServices.store#PhoneNumber",
+        "org.moqui.call.VoiceServices.store#PhoneNumber",
         json!({"phoneNumber": OWN_NUMBER, "voiceTrunkId": own_trunk_id, "routeTypeEnumId": "PnrUser",
             "routeId": "EX_JOHN_DOE"}),
     );
@@ -1759,16 +1759,20 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
     // the node's: its trunk, number and fallback, replicated to the server
     let mut link = Link::up(&server, &local);
     // Linked transport starts the row keeper asynchronously; wait for the local database's reload target too.
-    wait_until(Duration::from_secs(5), "the local node's live SIP reload target", || {
-        let status = local_ok(&local, "john.doe", "org.moqui.impl.VoiceServices.get#VoiceStatus", &[]);
-        live_sip(&to_json(&Value::Map(status.into_iter().collect())))
-    });
+    wait_until(
+        Duration::from_secs(5),
+        "the local node's live SIP reload target",
+        || {
+            let status = local_ok(&local, "john.doe", "org.moqui.call.VoiceServices.get#VoiceStatus", &[]);
+            live_sip(&to_json(&Value::Map(status.into_iter().collect())))
+        },
+    );
     let node_trunk = Trunk::new();
     let node_trunk_id = text(
         &local_ok(
             &local,
             "john.doe",
-            "org.moqui.impl.VoiceServices.store#VoiceTrunk",
+            "org.moqui.call.VoiceServices.store#VoiceTrunk",
             &[
                 ("name", Value::string("Desk trunk")),
                 ("host", Value::string("127.0.0.1")),
@@ -1786,7 +1790,7 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
     local_ok(
         &local,
         "john.doe",
-        "org.moqui.impl.VoiceServices.store#PhoneNumber",
+        "org.moqui.call.VoiceServices.store#PhoneNumber",
         &[
             ("phoneNumber", Value::string(NODE_NUMBER)),
             ("voiceTrunkId", Value::string(&node_trunk_id)),
@@ -1803,7 +1807,7 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
     let refreshed = local_ok(
         &local,
         "john.doe",
-        "org.moqui.impl.VoiceServices.refresh#PhoneFallbacks",
+        "org.moqui.call.VoiceServices.refresh#PhoneFallbacks",
         &[],
     );
     assert_eq!(text(&refreshed, "writtenCount"), "1", "{refreshed:?}");
@@ -1881,7 +1885,7 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
     // phones by domain: the server's domain checked here, the node's on the local node
     let own_device = server.ok(
         "john.doe",
-        "org.moqui.impl.SipDeviceServices.create#SipDevice",
+        "org.moqui.call.SipDeviceServices.create#SipDevice",
         json!({"name": "Office"}),
     );
     assert_eq!(json_text(&own_device, "domain"), SERVER_DOMAIN, "{own_device}");
@@ -1905,7 +1909,7 @@ fn own_numbers_and_phones_stay_on_the_server_and_the_nodes_go_to_it() {
     let node_device = local_ok(
         &local,
         "john.doe",
-        "org.moqui.impl.SipDeviceServices.create#SipDevice",
+        "org.moqui.call.SipDeviceServices.create#SipDevice",
         &[("name", Value::string("Home"))],
     );
     assert_eq!(text(&node_device, "domain"), LOCAL_DOMAIN, "{node_device:?}");

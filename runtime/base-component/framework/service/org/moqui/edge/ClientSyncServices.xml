@@ -1,0 +1,361 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- What a client that queues its requests offline and sends them again after a lost answer relies on
+    (plans/Mobile-Desktop.md MD5, docs/ui/Desktop-Client.md): a request made once by its clientRef (ClientRequestRef), and
+    files sent in chunks that go on where an upload was cut off (ClientUpload). Both belong to the user who made them. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== A request made once by its clientRef ========== -->
+
+    <service verb="claim" noun="ClientRequest" allow-remote="false">
+        <description>Start a request the current user makes with their own reference (clientRef, ^[A-Za-z0-9_.:-]{1,64}$) of
+            serviceName (a service or an operation, as the caller names it). A reference already used answers duplicate true
+            with the result stored for it (store#ClientRequest): the caller answers that and does nothing else. Otherwise
+            the reference is claimed in the caller's transaction, so a second try that overlaps the first waits for it and
+            then fails (the client tries again and gets the duplicate), and a request that fails leaves no claim. Call
+            store#ClientRequest with the result in the same transaction. The reference is keyed by user and serviceName
+            alone, not by the parameters: a client gives each request its own ref, and the same ref with other parameters
+            answers the first request's result. A ref is kept client_request_keep_days (30): sent again after that, the
+            request runs again.</description>
+        <in-parameters>
+            <parameter name="clientRef" required="true"/>
+            <parameter name="serviceName" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="duplicate" type="Boolean"/>
+            <parameter name="result" type="Map"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            duplicate = false
+            result = null
+            const userId = ec.user.userId
+            if (!userId) { ec.message.addError('No user'); return }
+            if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(String(clientRef))) { ec.message.addError(ec.l10n.localize('A clientRef is up to 64 letters, digits and _ . : -')); return }
+            const row = ec.entity.find('moqui.basic.client.ClientRequestRef').condition({userId: userId, serviceName: serviceName, clientRef: String(clientRef)})
+                    .disableAuthz().one()
+            if (row) {
+                duplicate = true
+                try { result = row.resultJson ? JSON.parse(row.resultJson) : {} } catch (err) { result = {} }
+                return
+            }
+            const claim = ec.entity.makeValue('moqui.basic.client.ClientRequestRef')
+            claim.setFields({userId: userId, serviceName: serviceName, clientRef: String(clientRef), createdDate: ec.user.nowTimestamp}, true, null, null)
+            claim.create()
+        ]]></script></actions>
+    </service>
+
+    <service verb="store" noun="ClientRequest" allow-remote="false">
+        <description>Keep what a request claimed by claim#ClientRequest answered, as JSON (dates as milliseconds), in the
+            request's transaction: a retry with the same clientRef gets it with duplicate true. An answer over 256 KB is
+            kept empty (the retry answers duplicate true alone).</description>
+        <in-parameters>
+            <parameter name="clientRef" required="true"/>
+            <parameter name="serviceName" required="true"/>
+            <parameter name="result" type="Map"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const userId = ec.user.userId
+            if (!userId) { ec.message.addError('No user'); return }
+            let json = null
+            try {
+                json = JSON.stringify(result || {}, function (key, value) {
+                    const raw = this[key]
+                    if (raw instanceof Date) return raw.getTime()
+                    return typeof value === 'bigint' ? Number(value) : value
+                })
+            } catch (err) {
+                ec.logger.warn(`The answer of ${serviceName} for clientRef ${clientRef} is not kept: ${err && err.message ? err.message : err}`)
+                json = '{}'
+            }
+            if (json.length > 262144) json = '{}'
+            const pk = {userId: userId, serviceName: serviceName, clientRef: String(clientRef)}
+            const row = ec.entity.find('moqui.basic.client.ClientRequestRef').condition(pk).disableAuthz().one()
+            if (row) { row.set('resultJson', json); row.update() }
+            else {
+                const created = ec.entity.makeValue('moqui.basic.client.ClientRequestRef')
+                created.setFields(Object.assign({resultJson: json, createdDate: ec.user.nowTimestamp}, pk), true, null, null)
+                created.create()
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="call" noun="ClientRequest" allow-remote="false">
+        <description>Call serviceName with parameters once per clientRef of the current user: the first call runs it and
+            keeps its answer (claim#ClientRequest, store#ClientRequest, in this transaction); a call again with the same
+            clientRef answers that with duplicate true and does nothing. With no clientRef the service just runs. For the
+            screens' transitions of mutations a client may queue (Chat's edit, redact, react, votePoll, markRead); the
+            service runs as the user, with its own checks.</description>
+        <in-parameters>
+            <parameter name="serviceName" required="true"/>
+            <parameter name="clientRef"/>
+            <parameter name="parameters" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="result" type="Map"/>
+            <parameter name="duplicate" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            duplicate = false
+            result = {}
+            const ref = clientRef != null && clientRef !== '' ? String(clientRef) : null
+            if (ref) {
+                const claim = ec.service.sync().name('org.moqui.edge.ClientSyncServices.claim#ClientRequest').parameters({clientRef: ref, serviceName: serviceName}).call()
+                if (ec.message.hasError()) return
+                if (claim.duplicate) { duplicate = true; result = claim.result || {}; return }
+            }
+            result = ec.service.sync().name(serviceName).parameters(parameters || {}).call() || {}
+            if (ec.message.hasError()) return
+            if (ref) ec.service.sync().name('org.moqui.edge.ClientSyncServices.store#ClientRequest').parameters({clientRef: ref, serviceName: serviceName,
+                result: result}).call()
+        ]]></script></actions>
+    </service>
+
+    <service verb="clean" noun="ClientRequests" authenticate="anonymous-all">
+        <description>The daily job: the clientRefs older than days (the property client_request_keep_days, 30 by default)
+            go, so a client's retry is answered as a duplicate for that long.</description>
+        <in-parameters><parameter name="days" type="Integer"/></in-parameters>
+        <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            const keep = Math.max(1, Number(days || System.getProperty('client_request_keep_days') || 30))
+            const before = Number(ec.user.nowTimestamp) - keep * 86400000
+            removedCount = Number(ec.entity.find('moqui.basic.client.ClientRequestRef').condition('createdDate', 'less', String(before))
+                    .disableAuthz().deleteAll() || 0)
+        ]]></script></actions>
+    </service>
+
+    <!-- ========== Files sent in chunks ========== -->
+
+    <service verb="upload" noun="Chunk" allow-remote="false">
+        <description>One chunk of a file the current user sends in parts (ClientUpload): uploadId, the client's own name of
+            the upload (^[A-Za-z0-9_.:-]{1,64}$); offset, where the chunk starts; total, the file's size (at most 25 MB);
+            fileName and contentType of the file; chunk, the bytes (a file part). The chunk is taken only at the offset of the
+            bytes held: one at another offset (a chunk sent again after a lost answer, or one past a gap) is not taken and
+            accepted is false; received always says how many bytes are held, so the client goes on from there. The chunk
+            that ends at total joins the file (complete true); the attachment services take it by uploadId. A chunk of a
+            complete upload changes nothing (complete true). A total other than the upload's, or a chunk past it, is an
+            error.
+
+            Limits: a chunk other than the last is at least client_upload_min_chunk_bytes (256 KB by default); a user has at
+            most client_upload_max_count (20) uploads not complete, of client_upload_max_mb (100) MB in all, so a new one past
+            them is refused until one finishes or expires. The join reads the chunks one at a time into the file's buffer,
+            so the heap holds the file once and a chunk.</description>
+        <in-parameters>
+            <parameter name="uploadId" required="true"/>
+            <parameter name="offset" type="Long" required="true"/>
+            <parameter name="total" type="Long" required="true"/>
+            <parameter name="fileName"/>
+            <parameter name="contentType"/>
+            <parameter name="chunk" type="Object"/>
+            <parameter name="maxBytes" type="Long" default="26214400"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="uploadId"/>
+            <parameter name="received" type="Long"/>
+            <parameter name="total" type="Long"/>
+            <parameter name="accepted" type="Boolean"/>
+            <parameter name="complete" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const UPLOAD = 'moqui.basic.client.ClientUpload'
+            const L = (text) => ec.l10n.localize(text)
+            accepted = false
+            complete = false
+            received = 0
+            const userId = ec.user.userId
+            if (!userId) { ec.message.addError('No user'); return }
+            uploadId = String(uploadId)
+            if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(uploadId)) { ec.message.addError(L('An uploadId is up to 64 letters, digits and _ . : -')); return }
+            const size = Number(total)
+            if (!(size > 0)) { ec.message.addError(L('An upload needs its total size')); return }
+            const limit = Math.min(Number(maxBytes || 26214400), 26214400)
+            if (size > limit) { ec.message.addError(ec.resource.expand('${name} is over 25 MB', '', {name: fileName || uploadId})); return }
+            const at = Number(offset)
+            const part = Array.isArray(chunk) ? chunk[0] : chunk
+            let row = ec.entity.find(UPLOAD).condition({userId: userId, uploadId: uploadId}).forUpdate(true).disableAuthz().one()
+            if (row && Number(row.totalSize) !== size) { ec.message.addError(ec.resource.expand('The upload ${uploadId} is of another file', '', {uploadId: uploadId})); return }
+            if (row && row.completedDate != null) { received = Number(row.receivedSize); complete = true; return }
+            received = row ? Number(row.receivedSize || 0) : 0
+            // only the next bytes: a chunk sent again, or one past a gap, is answered with what is held
+            if (at !== received) return
+            if (part == null || typeof part !== 'object') { ec.message.addError(L('No chunk uploaded')); return }
+            const partSize = Number(typeof part.getSize === 'function' ? part.getSize() : (part.size || 0))
+            if (!(partSize > 0)) { ec.message.addError(L('The chunk is empty')); return }
+            if (at + partSize > size) { ec.message.addError(L('The chunk goes past the total size')); return }
+            const property = (name, fallback) => { const value = Number(System.getProperty(name)); return value > 0 ? value : fallback }
+            const minChunk = property('client_upload_min_chunk_bytes', 262144)
+            if (at + partSize < size && partSize < minChunk) {
+                ec.message.addError(ec.resource.expand('A chunk other than the last is at least ${bytes} bytes', '', {bytes: minChunk})); return }
+            const now = ec.user.nowTimestamp
+            if (!row) {
+                // what the user has open: a new upload past the limits waits for one to finish or expire
+                const open = Array.from(ec.entity.find(UPLOAD).condition('userId', userId).condition(ec.entity.conditionFactory.makeCondition('completedDate', 'is-null', null))
+                        .selectField('totalSize').disableAuthz().list())
+                const maxCount = property('client_upload_max_count', 20)
+                const maxBytesOpen = property('client_upload_max_mb', 100) * 1048576
+                if (open.length >= maxCount) {
+                    ec.message.addError(ec.resource.expand('At most ${count} uploads at once: finish one first', '', {count: maxCount})); return }
+                if (open.reduce((sum, item) => sum + Number(item.totalSize || 0), 0) + size > maxBytesOpen) {
+                    ec.message.addError(ec.resource.expand('At most ${mb} MB of uploads at once: finish one first', '', {mb: maxBytesOpen / 1048576})); return }
+                const token = Math.random().toString(36).substring(2, 10) + Date.now().toString(36)
+                row = ec.entity.makeValue(UPLOAD)
+                row.setFields({userId: userId, uploadId: uploadId, fileName: String(fileName || 'file').split(/[\\/]/).pop().substring(0, 200) || 'file',
+                    contentType: contentType || null, totalSize: size, receivedSize: 0, chunkCount: 0,
+                    storeLocation: `dbresource://upload/${userId}/${token}`, createdDate: now}, true, null, null)
+                row.create()
+            }
+            const chunkName = (start) => String(start).padStart(10, '0')
+            const store = String(row.storeLocation)
+            if (typeof part.write === 'function') part.write(`${store}/${chunkName(at)}`)
+            else {
+                const stream = part.getInputStream()
+                try { ec.resource.getLocationReference(`${store}/${chunkName(at)}`).putStream(stream) } finally { if (stream && stream.close) stream.close() }
+            }
+            received = at + partSize
+            accepted = true
+            row.set('receivedSize', received)
+            row.set('chunkCount', Number(row.chunkCount || 0) + 1)
+            row.set('lastChunkDate', now)
+            if (received === size) {
+                // every byte is here: the chunks become the file, in their order, each read into the file's one buffer
+                const file = new Uint8Array(size)
+                const starts = []
+                for (let start = 0; start < size;) {
+                    let bytes = ec.resource.getLocationReference(`${store}/${chunkName(start)}`).openStream()?.readAllBytes()
+                    if (!bytes || !bytes.length || start + bytes.length > size) {
+                        ec.message.addError(ec.resource.expand('The chunk at ${start} of upload ${uploadId} is missing', '', {start: start, uploadId: uploadId})); return }
+                    file.set(bytes, start)
+                    starts.push(start)
+                    start += bytes.length
+                    bytes = null
+                }
+                ec.resource.getLocationReference(`${store}/file`).putBytes(file)
+                for (const start of starts) {
+                    try { ec.resource.getLocationReference(`${store}/${chunkName(start)}`).delete() }
+                    catch (err) { ec.logger.warn(`Could not remove chunk ${start} of upload ${uploadId}: ${err && err.message ? err.message : err}`) }
+                }
+                row.set('completedDate', now)
+                complete = true
+            }
+            row.update()
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="UploadStatus" allow-remote="false">
+        <description>How much of the current user's upload uploadId the server holds: received bytes of total, and complete
+            once the file is joined. found is false for an upload the server does not have (never started, or expired):
+            the client starts it again from offset 0.</description>
+        <in-parameters><parameter name="uploadId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="found" type="Boolean"/>
+            <parameter name="received" type="Long"/>
+            <parameter name="total" type="Long"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="fileName"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            found = false; received = 0; total = null; complete = false; fileName = null
+            if (!ec.user.userId) { ec.message.addError('No user'); return }
+            const row = ec.entity.find('moqui.basic.client.ClientUpload').condition({userId: ec.user.userId, uploadId: String(uploadId)}).disableAuthz().one()
+            if (!row) return
+            found = true
+            received = Number(row.receivedSize || 0)
+            total = Number(row.totalSize || 0)
+            complete = row.completedDate != null
+            fileName = row.fileName ?? null
+        ]]></script></actions>
+    </service>
+
+    <service verb="take" noun="Upload" allow-remote="false">
+        <description>Internal, for the attachment services that take a file by uploadId: the current user's complete upload,
+            its file's location, fileName, contentType and fileSize. An upload of another user, or one not complete, is an
+            error. It stays until it expires (clean#ClientUploads), so an attachment sent again after a lost answer finds it.</description>
+        <in-parameters><parameter name="uploadId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="location"/>
+            <parameter name="fileName"/>
+            <parameter name="contentType"/>
+            <parameter name="fileSize" type="Long"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const row = ec.user.userId ? ec.entity.find('moqui.basic.client.ClientUpload').condition({userId: ec.user.userId, uploadId: String(uploadId)})
+                    .disableAuthz().one() : null
+            if (!row) { ec.message.addError(ec.resource.expand('Upload ${uploadId} not found', '', {uploadId: uploadId})); return }
+            if (row.completedDate == null) { ec.message.addError(ec.resource.expand('Upload ${uploadId} is not complete', '', {uploadId: uploadId})); return }
+            location = `${row.storeLocation}/file`
+            fileName = row.fileName || 'file'
+            contentType = row.contentType || 'application/octet-stream'
+            fileSize = Number(row.totalSize || 0)
+        ]]></script></actions>
+    </service>
+
+    <service verb="clean" noun="ClientUploads" authenticate="anonymous-all" transaction="ignore">
+        <description>The hourly job: uploads with no chunk for hours (the property client_upload_expire_hours, 24 by default),
+            finished or not, go with their files (remove#ClientUpload), and a user's upload folder left empty goes too. Each
+            upload is on its own, in its own transaction: one that cannot be removed is logged and the rest go on.</description>
+        <in-parameters><parameter name="hours" type="Integer"/></in-parameters>
+        <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            removedCount = 0
+            const keep = Math.max(1, Number(hours || System.getProperty('client_upload_expire_hours') || 24))
+            const before = Number(ec.user.nowTimestamp) - keep * 3600000
+            const cf = ec.entity.conditionFactory
+            const rows = Array.from(ec.entity.find('moqui.basic.client.ClientUpload').condition(cf.makeCondition([
+                cf.makeCondition('lastChunkDate', 'less', String(before)),
+                cf.makeCondition([cf.makeCondition('lastChunkDate', 'is-null', null), cf.makeCondition('createdDate', 'less', String(before))], 'and')], 'or'))
+                    .selectField('userId').selectField('uploadId').disableAuthz().list())
+            const users = new Set()
+            for (const row of rows) {
+                ec.message.pushErrors()
+                try {
+                    ec.service.sync().name('org.moqui.edge.ClientSyncServices.remove#ClientUpload').parameters({userId: row.userId, uploadId: row.uploadId})
+                            .requireNewTransaction(true).disableAuthz().call()
+                    if (ec.message.hasError()) ec.logger.error(`Could not remove upload ${row.uploadId} of user ${row.userId}: ${ec.message.errorsString}`)
+                    else { removedCount++; users.add(row.userId) }
+                } catch (err) {
+                    ec.logger.error(`Could not remove upload ${row.uploadId} of user ${row.userId}: ${err && err.message ? err.message : err}`)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            for (const userId of users) {
+                try {
+                    const folder = ec.resource.getLocationReference(`dbresource://upload/${userId}`)
+                    if (folder.getExists() && !Array.from(folder.getDirectoryEntries() || []).length) folder.delete()
+                } catch (err) {
+                    ec.logger.warn(`Could not remove the upload folder of user ${userId}: ${err && err.message ? err.message : err}`)
+                }
+            }
+        ]]></script></actions>
+    </service>
+    <service verb="remove" noun="ClientUpload" allow-remote="false">
+        <description>Internal, for clean#ClientUploads (authorization disabled): one upload's row and its files.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="uploadId" required="true"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            if (!ec.artifactExecution.authzDisabled()) { ec.message.addError('remove#ClientUpload is internal'); return }
+            const row = ec.entity.find('moqui.basic.client.ClientUpload').condition({userId: userId, uploadId: uploadId}).forUpdate(true).one()
+            if (!row) return
+            const store = row.storeLocation ? String(row.storeLocation) : null
+            if (store && store.startsWith('dbresource://upload/')) {
+                const directory = ec.resource.getLocationReference(store)
+                if (directory.getExists()) {
+                    for (const child of Array.from(directory.getDirectoryEntries() || [])) child.delete()
+                    directory.delete()
+                }
+            }
+            row.delete()
+        ]]></script></actions>
+    </service>
+</services>

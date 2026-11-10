@@ -665,7 +665,7 @@ fn convert_text(value: &Value, java_type: &str) -> Option<Value> {
     // of that, so `118,500` is 118500 and `1800.0` is 1800 for a Long.
     match value {
         Value::String(text) if is_number_type(java_type) => {
-            let decimal = convert_checked(&Value::String(text.replace(',', "")), "java.math.BigDecimal")?;
+            let decimal = convert_checked(&Value::String(text.replace(',', "")), "BigDecimal")?;
             convert_checked(&decimal, java_type)
         }
         _ => None,

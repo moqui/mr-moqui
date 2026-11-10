@@ -477,7 +477,7 @@ impl Driver<'_> {
                 super::note(
                     self.factory,
                     &key.room,
-                    "org.moqui.impl.CallServices.note#MediaEvent",
+                    "org.moqui.call.CallServices.note#MediaEvent",
                     vec![
                         ("callLegId", Value::string(&*key.leg)),
                         ("generation", Value::I64(i64::try_from(generation).unwrap_or(0))),
@@ -572,7 +572,7 @@ impl Driver<'_> {
                 super::note(
                     self.factory,
                     &key.room,
-                    "org.moqui.impl.CallServices.note#MediaEvent",
+                    "org.moqui.call.CallServices.note#MediaEvent",
                     vec![
                         ("callLegId", Value::string(&*key.leg)),
                         ("generation", Value::I64(i64::try_from(generation).unwrap_or(0))),

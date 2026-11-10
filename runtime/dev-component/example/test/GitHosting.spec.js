@@ -1,11 +1,11 @@
-// Git hosting through Moqui (org.moqui.impl.GitServices and GitReviewServices, IronStone Projects P3a) on the real
+// Git hosting through Moqui (org.moqui.git.GitServices and GitReviewServices, IronStone Projects P3a) on the real
 // database: a branch made at a commit, the tree and a compare, a merge request held by its branch rule until a review
 // and a CI status, merged and kept current, a trial merge listing a conflict, and an archived repository refusing a
 // write. The rules in full are the Rust tests in crates/moqui-git/src/server/hosting_tests.rs (pushes
 // over the git command line, webhooks, the REST endpoint).
 
-const GIT = "org.moqui.impl.GitServices"
-const REVIEW = "org.moqui.impl.GitReviewServices"
+const GIT = "org.moqui.git.GitServices"
+const REVIEW = "org.moqui.git.GitReviewServices"
 // a suffix keeps each run's repository apart on a database kept between runs
 const RUN = Date.now().toString(36).slice(-5).toUpperCase()
 const REPO = "SPEC_GIT_" + RUN

@@ -13,8 +13,8 @@
  */
 
 //! The DAV server ([`dav`]: WebDAV over the drives, CalDAV and CardDAV over an application's adapter services), the
-//! `VCard` and `ICalendar` tools ([`pim`]), `org.moqui.impl.DavServices` ([`service`]) and the elFinder connector
-//! ([`elfinder`], `org.moqui.impl.ElFinderServices`), on top of moqui-core (plans/archive/Crate-Split.md).
+//! `VCard` and `ICalendar` tools ([`pim`]), `org.moqui.resource.DavServices` ([`service`]) and the elFinder connector
+//! ([`elfinder`], `org.moqui.resource.ElFinderServices`), on top of moqui-core (plans/archive/Crate-Split.md).
 //!
 //! Core reaches this crate only through the [`moqui_core::extension`] entry below: the feature `dav`, the Rust services
 //! of `DavServices` and `run#ElFinderCommand` (at `moqui_dav::` locations), and the two tools, whose classes stay
@@ -55,9 +55,9 @@ mod tests {
         let mut map = BTreeMap::new();
         super::register_services(&mut map).unwrap();
         let registered: Vec<&str> = map.keys().copied().collect();
-        let dir = moqui_core::context::framework_dir().join("service/org/moqui/impl");
+        let dir = moqui_core::context::framework_dir().join("service/org/moqui");
         let mut named = Vec::new();
-        for file in ["DavServices.xml", "ElFinderServices.xml"] {
+        for file in ["resource/DavServices.xml", "resource/ElFinderServices.xml"] {
             let text = std::fs::read_to_string(dir.join(file)).unwrap();
             named.extend(
                 text.split("location=\"")

@@ -51,7 +51,7 @@ feature("a file mapping is matched, sampled with its errors, saved, listed and r
         out.deleted < 400
         out.scheduled.errors == null && !!out.scheduled.jobName
         out.jobUsers.join(",") == ec.user.userId
-        out.job != null && out.job.paused == "N" && out.job.serviceName == "org.moqui.impl.EtlServices.run#EtlMapping"
+        out.job != null && out.job.paused == "N" && out.job.serviceName == "org.moqui.dev.EtlServices.run#EtlMapping"
         !!out.badCron.errors && out.badJobs == 0
     },
 })
@@ -68,7 +68,7 @@ feature("a saved mapping's run done with no errors offers no rerun", {
                 mappingId = json(tools().render("Etl/etlStore", { mappingJson: JSON.stringify(mapping) }, "post")).mappingId
                 let out = {}
                 ec.artifactExecution.runAsUser("component://tools/screen/Tools.xml", () => {
-                    out = ec.service.sync().name("org.moqui.impl.EtlServices.run#EtlMapping").parameters({ mappingId, wait: true }).call() || {}
+                    out = ec.service.sync().name("org.moqui.dev.EtlServices.run#EtlMapping").parameters({ mappingId, wait: true }).call() || {}
                 })
                 ec.message.clearErrors()
                 runId = out.runId

@@ -8,7 +8,7 @@ through adapter services, and Mantle has them. As of Oct 21, 2026.
 The code is `crates/moqui-dav/src/dav/` (the protocol: `mod.rs`, `files.rs`, `pim.rs`, `locks.rs`, `xml.rs`),
 `crates/moqui-host/src/dav_http.rs` (the routes) and `crates/moqui-host/src/ssh/sftp_fs.rs` (SFTP). Tests:
 `crates/moqui-dav/src/dav/tests.rs`, `crates/moqui-host/tests/it/ssh.rs` and `collab.rs` (the routes), and
-mr-mantle `test/work/Dav.spec.js` (CalDAV and CardDAV on Mantle, through `org.moqui.impl.DavServices.serve#DavRequest`).
+mr-mantle `test/work/Dav.spec.js` (CalDAV and CardDAV on Mantle, through `org.moqui.resource.DavServices.serve#DavRequest`).
 IronStone's screen is Commons, Settings, Sync.
 
 ## App passwords
@@ -56,7 +56,7 @@ the drive's members and shares itself, as for the Files screens.
 | `max-file` | 268435456 | bytes of a request body |
 | `sftp-drives` | true | SFTP to the drives for a user without `SSH_SFTP` |
 
-`org.moqui.impl.DavServices.get#SyncAddresses` gives a user's addresses (with `driveId`, that drive's WebDAV folder and SFTP
+`org.moqui.resource.DavServices.get#SyncAddresses` gives a user's addresses (with `driveId`, that drive's WebDAV folder and SFTP
 path), and `serve#DavRequest` serves one request without a socket, in a context of its own, for a spec.
 
 ### WebDAV over drives

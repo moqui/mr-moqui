@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.EdgeServices` (plans/Edge-Node.md §5.2, §5.7): the edge link for the System app's Edge Node and
+//! `org.moqui.edge.EdgeServices` (plans/Edge-Node.md §5.2, §5.7): the edge link for the System app's Edge Node and
 //! Edge Clients screens, through the host's [`crate::edge::EdgeLink`]. In a host without the `edge` feature each call
 //! fails with [`crate::edge::NOT_BUILT`], except `get#LinkStatus`, which answers `state` notBuilt (or notStarted in a
 //! build with the link that no HTTP listener started) so a screen can say so. The queue's and replication's services

@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         const L = (s) => ec.l10n.localize(s)
-        const data = ec.service.sync().name('org.moqui.impl.CallHandlingServices.get#DialerData').requireNewTransaction(true).disableAuthz().call() || {}
+        const data = ec.service.sync().name('org.moqui.call.CallHandlingServices.get#DialerData').requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         phoneActive = !!data.phoneActive
         callerIdText = Array.from(data.callerIdList || []).map((n) => n.phoneNumber + (n.description ? ' (' + n.description + ')' : '')).join(', ')
@@ -35,7 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
         resultList = []
         numberText = ''
         if (searchText) {
-            const found = ec.service.sync().name('org.moqui.impl.CallHandlingServices.search#Dialable').parameters({text: searchText, limit: 10})
+            const found = ec.service.sync().name('org.moqui.call.CallHandlingServices.search#Dialable').parameters({text: searchText, limit: 10})
                 .requireNewTransaction(true).disableAuthz().call() || {}
             ec.message.clearErrors()
             numberText = found.number ? ec.resource.expand('${t} calls ${n}', '', {t: searchText, n: found.number}) : ''

@@ -898,7 +898,7 @@ fn lfs_files_through_git_locations_are_content_blobs_behind_pointers() {
             .unwrap();
         row.set(
             "uploadedDate",
-            moqui_lib::object::basic_convert(&Value::I64(month_ago), "java.sql.Timestamp").value,
+            moqui_lib::object::basic_convert(&Value::I64(month_ago), "Timestamp").value,
         );
         row.update(&fixture.entity).unwrap();
     }
@@ -938,9 +938,9 @@ fn the_services_register_at_the_locations_the_service_files_name() {
     let mut map = std::collections::BTreeMap::new();
     crate::service::register(&mut map).unwrap();
     let registered: Vec<&str> = map.keys().copied().collect();
-    let dir = moqui_core::context::framework_dir().join("service/org/moqui/impl");
+    let dir = moqui_core::context::framework_dir().join("service/org/moqui");
     let mut named = Vec::new();
-    for file in ["GitServices.xml", "GitReviewServices.xml"] {
+    for file in ["git/GitServices.xml", "git/GitReviewServices.xml"] {
         let text = std::fs::read_to_string(dir.join(file)).unwrap();
         named.extend(
             text.split("location=\"")

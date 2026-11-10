@@ -9,7 +9,7 @@ and can listen by phone with a PIN. The design is [plans/Comms-Framework.md](../
 - **Engine:** `crates/moqui-host/src/sip/voicemail.rs` (the call's state and its prompts, `Machine`, with no I/O) and
   `audio.rs` (Ogg Opus read and written with moqui-rtc's `record/ogg.rs` writer and the M0 Opus codec;
   `convert#GreetingAudio`); the leg's thread plays and records (`leg.rs`).
-- **Services:** `org.moqui.impl.VoicemailServices` and `Voicemail.js` (framework), with `VoicemailBox`, `Voicemail` and
+- **Services:** `org.moqui.call.VoicemailServices` and `Voicemail.js` (framework), with `VoicemailBox`, `Voicemail` and
   `VoicemailPinFailure` in the V2 block of `framework/entity/VoiceEntities.xml` and the transcript a `CallTranscript`
   (`voicemailId`). `store#VoicemailFile` is Rust (moqui-core `service/call_media.rs`).
 - **Screens:** BasicComms Calls, History's Voicemail tab; `Calls/Voicemail` (`Voicemail.qvue`, `VoicemailTui.xml`);

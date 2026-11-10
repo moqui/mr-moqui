@@ -355,7 +355,7 @@ fn rest_path_authz_gates_and_inherits() {
                 member.set("userGroupId", Value::string(group));
                 member.set(
                     "fromDate",
-                    moqui_lib::object::basic_convert(&Value::I64(1_000), "java.sql.Timestamp").value,
+                    moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
                 );
                 member.create(&facade).unwrap();
             }

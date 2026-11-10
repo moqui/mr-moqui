@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Rust body of `org.moqui.impl.ElFinderServices.run#Command`, a port of `ElFinderConnector.groovy`: the elFinder
+//! The Rust body of `org.moqui.resource.ElFinderServices.run#Command`, a port of `ElFinderConnector.groovy`: the elFinder
 //! 2.0 client-server commands over one volume rooted at `resourceRoot`. A `dbresource://` root, or a provider's such as
 //! `git://`, reads and writes through the resource facade. A `file`, `runtime`, `component` or `classpath` root is the
 //! directory the resource facade resolves it to. Any other scheme, `content://` included, is an error that names the
@@ -44,7 +44,7 @@ use moqui_core::rust_service;
 use moqui_core::web::multipart::UploadedFile;
 
 #[cfg(test)]
-const RUN_COMMAND: &str = "org.moqui.impl.ElFinderServices.run#Command";
+const RUN_COMMAND: &str = "org.moqui.resource.ElFinderServices.run#Command";
 /// The error for a target that does not decode or that leaves the volume.
 const INVALID_TARGET: &str = "errFileNotFound";
 /// The error for a destructive command on the volume root.

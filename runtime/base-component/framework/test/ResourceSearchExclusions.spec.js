@@ -4,7 +4,7 @@ const driveId = "TEST_SEARCH_EXCLUSION",
 function search(extra = {}) {
     return ec.service
         .sync()
-        .name("org.moqui.impl.FileServices.find#Resources")
+        .name("org.moqui.resource.FileServices.find#Resources")
         .parameters(Object.assign({driveId, text: "AcctSearchProbe", limit: 2}, extra))
         .disableAuthz()
         .throwOnError(true)
@@ -41,7 +41,7 @@ spec({
         if (ec.search.isAvailable() && ec.search.indexExists({documentType: "MoquiDriveFile"}))
             ec.service
                 .sync()
-                .name("org.moqui.impl.FileServices.index#DriveFiles")
+                .name("org.moqui.resource.FileServices.index#DriveFiles")
                 .parameters({driveId, pathList: ["public", "private"], extractMissing: false})
                 .disableAuthz()
                 .call()

@@ -345,7 +345,7 @@ fn dots_and_tilde_parameters_are_cleaned_before_the_walk() {
 }
 
 fn at(ms: i64) -> Value {
-    moqui_lib::object::basic_convert(&Value::I64(ms), "java.sql.Timestamp").value
+    moqui_lib::object::basic_convert(&Value::I64(ms), "Timestamp").value
 }
 
 fn screen_db() -> (crate::context::ExecutionContext, EntityFacade) {

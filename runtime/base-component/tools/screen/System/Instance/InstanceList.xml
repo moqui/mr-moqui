@@ -17,27 +17,27 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="instanceDetail"><default-response url="../InstanceDetail"/></transition>
 
-    <transition name="createAppInstance"><service-call name="org.moqui.impl.InstanceServices.create#AppInstance"/>
+    <transition name="createAppInstance"><service-call name="org.moqui.dev.InstanceServices.create#AppInstance"/>
         <default-response url="."/></transition>
-    <transition name="provisionAppInstance"><service-call name="org.moqui.impl.InstanceServices.provision#AppInstance"/>
+    <transition name="provisionAppInstance"><service-call name="org.moqui.dev.InstanceServices.provision#AppInstance"/>
         <default-response url="."/></transition>
-    <transition name="checkAppInstanceAndDatabase"><service-call name="org.moqui.impl.InstanceServices.check#AppInstanceAndDatabase"/>
-        <default-response url="."/></transition>
-
-    <transition name="checkAppDatabase"><service-call name="org.moqui.impl.InstanceServices.check#AppDatabase"/>
-        <default-response url="."/></transition>
-    <transition name="createAppDatabase"><service-call name="org.moqui.impl.InstanceServices.create#AppDatabase"/>
+    <transition name="checkAppInstanceAndDatabase"><service-call name="org.moqui.dev.InstanceServices.check#AppInstanceAndDatabase"/>
         <default-response url="."/></transition>
 
-    <transition name="initAppInstance"><service-call name="org.moqui.impl.InstanceServices.init#AppInstance"/>
+    <transition name="checkAppDatabase"><service-call name="org.moqui.dev.InstanceServices.check#AppDatabase"/>
         <default-response url="."/></transition>
-    <transition name="startAppInstance"><service-call name="org.moqui.impl.InstanceServices.start#AppInstance"/>
+    <transition name="createAppDatabase"><service-call name="org.moqui.dev.InstanceServices.create#AppDatabase"/>
         <default-response url="."/></transition>
-    <transition name="stopAppInstance"><service-call name="org.moqui.impl.InstanceServices.stop#AppInstance"/>
+
+    <transition name="initAppInstance"><service-call name="org.moqui.dev.InstanceServices.init#AppInstance"/>
         <default-response url="."/></transition>
-    <transition name="removeAppInstance"><service-call name="org.moqui.impl.InstanceServices.remove#AppInstance"/>
+    <transition name="startAppInstance"><service-call name="org.moqui.dev.InstanceServices.start#AppInstance"/>
         <default-response url="."/></transition>
-    <transition name="checkAppInstance"><service-call name="org.moqui.impl.InstanceServices.check#AppInstance"/>
+    <transition name="stopAppInstance"><service-call name="org.moqui.dev.InstanceServices.stop#AppInstance"/>
+        <default-response url="."/></transition>
+    <transition name="removeAppInstance"><service-call name="org.moqui.dev.InstanceServices.remove#AppInstance"/>
+        <default-response url="."/></transition>
+    <transition name="checkAppInstance"><service-call name="org.moqui.dev.InstanceServices.check#AppInstance"/>
         <default-response url="."/></transition>
 
     <actions>
@@ -87,7 +87,7 @@ along with this software (see the LICENSE.md file). If not, see
         <form-list name="InstanceList" list="instanceList" skip-form="true">
             <row-actions>
                 <if condition="checkAllBool"><then>
-                    <service-call name="org.moqui.impl.InstanceServices.check#AppInstanceAndDatabase"
+                    <service-call name="org.moqui.dev.InstanceServices.check#AppInstanceAndDatabase"
                                   in-map="{appInstanceId:appInstanceId}" out-map="context"/>
                     <if condition="ec.message.hasError()">
                         <set field="checkErrors" from="ec.message.getErrorsString()"/>

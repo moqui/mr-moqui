@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
-    <!-- The daily notification digest (org.moqui.impl.NotificationServices.send#UserNotificationDigest): notificationList
+    <!-- The daily notification digest (org.moqui.ui.NotificationServices.send#UserNotificationDigest): notificationList
         (title, link, topic, topicDescription, sentText, type, appName), notificationCount, userFullName. A link becomes
         a full URL as in NotificationEmail.xml. The list is grouped by app, then topic, in first-seen order (oldest
         first, so newest is last inside a group). An empty app name has no app heading. -->

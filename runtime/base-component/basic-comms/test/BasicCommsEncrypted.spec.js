@@ -7,7 +7,7 @@
 // it (the browsers' encryption is the client spec EncryptedChat).
 // Run: ./moq test basic-comms --spec BasicCommsEncrypted
 const root = "component://basic-comms/screen/BasicComms.xml"
-const CHAT = "org.moqui.impl.ChatServices."
+const CHAT = "org.moqui.chat.ChatServices."
 const A = "CHAT_E2EE_SPEC_A"
 const B = "CHAT_E2EE_SPEC_B"
 const C = "CHAT_E2EE_SPEC_C"
@@ -234,12 +234,12 @@ feature("polls, agents, link previews and bridges are refused in an encrypted ro
         const files = as(B, "find#RoomFiles", {chatRoomId: secret})
         // a bridge: an administrator maps a plain room, and is refused the encrypted one
         ec.user.internalLoginUser("john.doe")
-        const bridge = as(null, "org.moqui.impl.ChatBridgeServices.store#Bridge", {name: "E2EE spec line", typeEnumId: "CbtSms",
+        const bridge = as(null, "org.moqui.chat.ChatBridgeServices.store#Bridge", {name: "E2EE spec line", typeEnumId: "CbtSms",
             adapterName: "spec-missing", inboundToken: "e2ee-spec-token"}).chatBridgeId
         const johnPlain = as(null, "create#Room", {roomTypeEnumId: "private", roomName: "E2EE spec bridged"}).chatRoomId
         const johnSealed = as(null, "create#Room", {roomTypeEnumId: "private", roomName: "E2EE spec bridged", encrypted: true}).chatRoomId
-        const mapPlain = as(null, "org.moqui.impl.ChatBridgeServices.store#RoomBridge", {chatRoomId: johnPlain, chatBridgeId: bridge, externalRoomId: "+15550199"})
-        const mapSealed = as(null, "org.moqui.impl.ChatBridgeServices.store#RoomBridge", {chatRoomId: johnSealed, chatBridgeId: bridge, externalRoomId: "+15550198"})
+        const mapPlain = as(null, "org.moqui.chat.ChatBridgeServices.store#RoomBridge", {chatRoomId: johnPlain, chatBridgeId: bridge, externalRoomId: "+15550199"})
+        const mapSealed = as(null, "org.moqui.chat.ChatBridgeServices.store#RoomBridge", {chatRoomId: johnSealed, chatBridgeId: bridge, externalRoomId: "+15550198"})
         return {pollPlain, pollSealed, agentSealed, agentRole, files, mapPlain, mapSealed}
     },
     then({pollPlain, pollSealed, agentSealed, agentRole, files, mapPlain, mapSealed}) {

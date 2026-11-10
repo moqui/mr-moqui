@@ -101,7 +101,7 @@ pub(crate) fn comparison(field: &str, operator: &str, value: Value) -> Result<Co
 /// A time stamp from a script's value: epoch millis, a time stamp, or text, which is in the session time zone unless it
 /// has an offset.
 pub(crate) fn timestamp_of(value: &Value) -> Value {
-    crate::l10n::basic_convert(value, "java.sql.Timestamp").value
+    crate::l10n::basic_convert(value, "Timestamp").value
 }
 
 /// The context's effective time, or the clock (`ec.user.nowTimestamp`).

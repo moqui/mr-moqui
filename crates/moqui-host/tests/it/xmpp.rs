@@ -330,7 +330,7 @@ fn xmpp_clients_sign_in_chat_with_the_web_page_the_archive_upload_publish_and_re
     let room = as_user(&factory, "xmpp.ann", || {
         get(
             &call(
-                "org.moqui.impl.ChatServices.create#Room",
+                "org.moqui.chat.ChatServices.create#Room",
                 &[
                     ("roomTypeEnumId", Value::string("CrtPrivate")),
                     ("roomName", Value::string("Plans")),
@@ -378,10 +378,10 @@ fn xmpp_clients_sign_in_chat_with_the_web_page_the_archive_upload_publish_and_re
         let (factory_web, room_web) = (Arc::clone(&factory), room.clone());
         let read = tokio::task::spawn_blocking(move || {
             as_user(&factory_web, "xmpp.ben", || {
-                let timeline = call("org.moqui.impl.ChatServices.get#Timeline", &[("chatRoomId", Value::string(&room_web))]);
+                let timeline = call("org.moqui.chat.ChatServices.get#Timeline", &[("chatRoomId", Value::string(&room_web))]);
                 let bodies = format!("{:?}", timeline.get("eventList"));
                 call(
-                    "org.moqui.impl.ChatServices.send#Message",
+                    "org.moqui.chat.ChatServices.send#Message",
                     &[("chatRoomId", Value::string(&room_web)), ("body", Value::string("<p>Hello from the web</p>"))],
                 );
                 bodies
@@ -566,7 +566,7 @@ fn an_upload_put_is_checked_before_its_body_kept_to_its_size_and_deadline_and_pu
     let slot = |name: &str| {
         let out = as_user(&factory, "xmpp.ann", || {
             call(
-                "org.moqui.impl.XmppServices.create#UploadSlot",
+                "org.moqui.chat.XmppServices.create#UploadSlot",
                 &[
                     ("fileName", Value::string(name)),
                     ("fileSize", Value::I64(11)),

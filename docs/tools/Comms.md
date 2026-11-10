@@ -10,12 +10,12 @@ bridges come later.
 
 The code: `runtime/base-component/basic-comms` (screens, services, data, specs); the data model is in
 `framework/entity` (`EmailEntities` in `BasicEntities.xml`, `ChatEntities.xml`, `CallEntities.xml`); the mail client is
-`org.moqui.impl.EmailClientServices` and `moqui-mail`; chat is `org.moqui.impl.ChatServices`; calls are
-`org.moqui.impl.CallServices`, with the media in `moqui-rtc` ([WebRTC](../interfaces/WebRTC.md)); phone calls are
-`org.moqui.impl.VoiceServices` (`VoiceEntities.xml`), with the SIP engine in `moqui-sip` and the host's `sip` feature
+`org.moqui.mail.EmailClientServices` and `moqui-mail`; chat is `org.moqui.chat.ChatServices`; calls are
+`org.moqui.call.CallServices`, with the media in `moqui-rtc` ([WebRTC](../interfaces/WebRTC.md)); phone calls are
+`org.moqui.call.VoiceServices` (`VoiceEntities.xml`), with the SIP engine in `moqui-sip` and the host's `sip` feature
 ([SIP](../interfaces/SIP.md)); XMPP clients reach chat through `moqui-xmpp`, the host's `xmpp` feature and
-`org.moqui.impl.XmppServices` (`XmppEntities.xml`, [XMPP](../interfaces/XMPP.md)); call handling, ring groups and schedules are `org.moqui.impl.CallHandlingServices`; IVR
-menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices` and `CallTransferServices`.
+`org.moqui.chat.XmppServices` (`XmppEntities.xml`, [XMPP](../interfaces/XMPP.md)); call handling, ring groups and schedules are `org.moqui.call.CallHandlingServices`; IVR
+menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices` and `CallTransferServices`.
 
 ## For users
 
@@ -228,7 +228,7 @@ the screen's: IronStone replaces the drive picker's `pickerFolder` in `Inbox/Com
 records drive's folders by their records.
 
 **Provider hooks.** The app root's `shell-providers` names services the framework calls, as the app, through
-`org.moqui.impl.ShellServices.call#Providers` (each hook's contract is a `type="interface"` service in
+`org.moqui.ui.ShellServices.call#Providers` (each hook's contract is a `type="interface"` service in
 `org.moqui.comms.ProviderInterfaces`):
 
 | Hook | BasicComms asks it for |

@@ -333,7 +333,7 @@ fn a_try_is_committed_when_its_report_cannot_be_queued_and_is_not_tried_again() 
         .contains(&field_text(&a, "mailDeliveryId")));
 }
 
-const STATUS_KIND: &str = r#"<moqui-conf><edge><queue-kind name="mailStatus" service="org.moqui.impl.EmailServices.note#EdgeMailStatus"/></edge></moqui-conf>"#;
+const STATUS_KIND: &str = r#"<moqui-conf><edge><queue-kind name="mailStatus" service="org.moqui.mail.EmailServices.note#EdgeMailStatus"/></edge></moqui-conf>"#;
 
 #[test]
 fn a_partial_delivery_reports_the_refused_and_a_message_none_got_bounces() {

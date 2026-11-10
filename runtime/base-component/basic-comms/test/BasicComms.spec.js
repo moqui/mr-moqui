@@ -73,9 +73,9 @@ feature("a user with no party sees the mail settings, the wizard and no Internal
         const accounts = sys(() => call("org.moqui.comms.MailSettingsServices.get#MailAccountList", {})) || {}
         accounts.errors = ec.message.hasError() ? ec.message.errorsString : ""
         ec.message.clearErrors()
-        const providers = sys(() => call("org.moqui.impl.ShellServices.get#Providers", {hook: "inbox-source"})) || {}
+        const providers = sys(() => call("org.moqui.ui.ShellServices.get#Providers", {hook: "inbox-source"})) || {}
         // SMTP alone is not an incoming mailbox. The existing Account render also checks its route back to this mount's Inbox.
-        const hosted = sys(() => call("org.moqui.impl.EmailClientServices.create#EmailAccount", {
+        const hosted = sys(() => call("org.moqui.mail.EmailClientServices.create#EmailAccount", {
             accountKindEnumId: "EakHosted", emailAddress: "basic.comms.spec@example.invalid", accountName: "Spec hosted mail",
             statusId: "EasActive", smtpHost: "127.0.0.1", smtpPort: "1", smtpStartTls: "N", smtpSsl: "N"
         })) || {}
@@ -83,11 +83,11 @@ feature("a user with no party sees the mail settings, the wizard and no Internal
         ec.message.clearErrors()
         const hostedAccountId = hosted.emailAccountId
         const accountDetail = render(root, "Settings/MailAccounts/Account", "qvt", {lastStandalone:"-3", emailAccountId: hostedAccountId, setup: "done"})
-        const shared = sys(() => call("org.moqui.impl.EmailClientServices.create#EmailAccount", {
+        const shared = sys(() => call("org.moqui.mail.EmailClientServices.create#EmailAccount", {
             accountKindEnumId: "EakShared", emailAddress: "basic.comms.shared@example.invalid", statusId: "EasActive",
             smtpHost: "127.0.0.1", smtpPort: "1", smtpStartTls: "N", smtpSsl: "N"
         })) || {}
-        const remote = sys(() => call("org.moqui.impl.EmailClientServices.create#EmailAccount", {
+        const remote = sys(() => call("org.moqui.mail.EmailClientServices.create#EmailAccount", {
             accountKindEnumId: "EakExternal", emailAddress: "basic.comms.remote@example.invalid", statusId: "EasActive",
             storeHost: "127.0.0.1", storePort: "1", storeProtocol: "imap"
         })) || {}
@@ -135,7 +135,7 @@ feature("a user with no party sees the mail settings, the wizard and no Internal
         }
         // the account is this run's own: its owner deletes it, so a later run starts with no mail account again
         for (const emailAccountId of [hostedAccountId, shared.emailAccountId, remote.emailAccountId])
-            if (emailAccountId) sys(() => call("org.moqui.impl.EmailClientServices.delete#EmailAccount", {emailAccountId, deleteLocalCopies: true}))
+            if (emailAccountId) sys(() => call("org.moqui.mail.EmailClientServices.delete#EmailAccount", {emailAccountId, deleteLocalCopies: true}))
         const deleteErrors = ec.message.hasError() ? ec.message.errorsString : ""
         ec.message.clearErrors()
         const accountLeft = sys(() => ec.entity.find("moqui.basic.email.EmailAccount").condition("emailAccountId", hostedAccountId).count())
@@ -217,10 +217,10 @@ feature("a hook nobody declares is unavailable and a hook name that is not one i
     when() {
         login("john.doe")
         // V5: call-context has providers now (the example gallery's, IronStone's); external-conversation has none yet
-        const none = sys(() => call("org.moqui.impl.ShellServices.call#Providers", {hook: "external-conversation"})) || {}
+        const none = sys(() => call("org.moqui.ui.ShellServices.call#Providers", {hook: "external-conversation"})) || {}
         let refused = ""
         try {
-            sys(() => call("org.moqui.impl.ShellServices.call#Providers", {hook: "not-a-hook"}))
+            sys(() => call("org.moqui.ui.ShellServices.call#Providers", {hook: "not-a-hook"}))
         } catch (err) {
             refused = String(err.message || err)
         }
@@ -245,7 +245,7 @@ feature("an app that mounts BasicComms shows its screens with its extensions und
         const appNames = (shell.apps || []).map(found => found.name)
         const inbox =
             sys(() =>
-                call("org.moqui.impl.ShellServices.call#Providers", {hook: "inbox-source", parameters: {operation: "accounts"}})
+                call("org.moqui.ui.ShellServices.call#Providers", {hook: "inbox-source", parameters: {operation: "accounts"}})
             ) || {}
         return {own, app, appNames, inbox}
     },
@@ -266,16 +266,16 @@ feature("the System Voice screens render in qvt and tui through the System app, 
         login("john.doe")
         const systemRoot = "component://tools/screen/System.xml"
         // a row in each list, so the row dialogs render too
-        const voice = (name, parameters) => sys(() => ec.service.sync().name("org.moqui.impl.VoiceServices." + name).parameters(parameters).call()) || {}
+        const voice = (name, parameters) => sys(() => ec.service.sync().name("org.moqui.call.VoiceServices." + name).parameters(parameters).call()) || {}
         const trunk = voice("store#VoiceTrunk", {name: "Render trunk", host: "sip.render.test", emergencyCapable: "Y"}).voiceTrunkId
         const location = voice("store#EmergencyLocation", {name: "Render office", address1: "1 Main St", callbackNumber: "+15550109999"}).emergencyLocationId
         voice("store#PhoneNumber", {phoneNumber: "+15550109999", voiceTrunkId: trunk, routeId: USER, emergencyLocationId: location})
         voice("grant#CallerId", {phoneNumber: "+15550109999", userId: USER})
         voice("store#VoiceUserSetting", {userId: USER, outboundEnabled: "Y"})
         voice("record#AuthFailure", {sourceAddress: "198.51.100.7", username: "render"})
-        sys(() => ec.service.sync().name("org.moqui.impl.SipDeviceServices.create#SipDevice").parameters({name: "Render phone"}).call())
+        sys(() => ec.service.sync().name("org.moqui.call.SipDeviceServices.create#SipDevice").parameters({name: "Render phone"}).call())
         // V3: a ring group with a member and a schedule with a holiday
-        const handling = (name, parameters) => sys(() => ec.service.sync().name("org.moqui.impl.CallHandlingServices." + name).parameters(parameters).call()) || {}
+        const handling = (name, parameters) => sys(() => ec.service.sync().name("org.moqui.call.CallHandlingServices." + name).parameters(parameters).call()) || {}
         const group = handling("store#RingGroup", {name: "Render group"})
         handling("store#RingGroupMember", {ringGroupId: group.ringGroupId, userId: USER})
         const hours = handling("store#CommsSchedule", {name: "Render hours", timeZone: "America/Chicago", shared: true})
@@ -283,10 +283,10 @@ feature("the System Voice screens render in qvt and tui through the System app, 
         ec.message.clearErrors()
         const problems = []
         // V5: an IVR menu with an option and a queue with an agent
-        const ivr = (name, parameters) => sys(() => ec.service.sync().name("org.moqui.impl.IvrServices." + name).parameters(parameters).call()) || {}
+        const ivr = (name, parameters) => sys(() => ec.service.sync().name("org.moqui.call.IvrServices." + name).parameters(parameters).call()) || {}
         const menu = ivr("store#IvrMenu", {name: "Render menu"})
         ivr("store#IvrOption", {ivrMenuId: menu.ivrMenuId, digits: "1", targetTypeEnumId: "CtgUser", targetId: USER})
-        const queues = (name, parameters) => sys(() => ec.service.sync().name("org.moqui.impl.CallQueueServices." + name).parameters(parameters).call()) || {}
+        const queues = (name, parameters) => sys(() => ec.service.sync().name("org.moqui.call.CallQueueServices." + name).parameters(parameters).call()) || {}
         const queue = queues("store#CallQueue", {name: "Render queue"})
         queues("store#CallQueueAgent", {callQueueId: queue.callQueueId, userId: USER})
         ec.message.clearErrors()
@@ -402,7 +402,7 @@ feature("Chat apps says which app passwords work with XMPP apps and offers a new
         const served = withProperty("xmpp_domain", "moqui.local", () => ({
             qvt: render(root, "Settings/ChatApps", "qvt", {}),
             tui: render(root, "Settings/ChatApps", "tui", {}),
-            settings: sys(() => call("org.moqui.impl.XmppServices.get#ClientSettings", {}))
+            settings: sys(() => call("org.moqui.chat.XmppServices.get#ClientSettings", {}))
         }))
         // the terminal renders the sections that show (the qvt page carries both, for the browser to choose)
         const off = withProperty("xmpp_domain", "", () => render(root, "Settings/ChatApps", "tui", {}))
@@ -441,7 +441,7 @@ feature("out of office retains user-zone date strings and supplies instants to t
         const settings = (name, params) => sys(() => call("org.moqui.comms.MailSettingsServices." + name, params || {})) || {}
         let fixtureAccountId = null
         try {
-            const account = sys(() => call("org.moqui.impl.EmailClientServices.create#EmailAccount", {
+            const account = sys(() => call("org.moqui.mail.EmailClientServices.create#EmailAccount", {
                 accountKindEnumId:"EakHosted", emailAddress:"ooo.spec@example.invalid", accountName:"Out of office date fixture", statusId:"EasActive"
             })) || {}
             assert.ok(account.emailAccountId)
@@ -538,7 +538,7 @@ feature("out of office retains user-zone date strings and supplies instants to t
         } finally {
             ec.message.clearErrors()
             // the fixture account goes with this run, deleted by its owner while still signed in
-            if (fixtureAccountId) sys(() => call("org.moqui.impl.EmailClientServices.delete#EmailAccount", {emailAccountId: fixtureAccountId, deleteLocalCopies: true}))
+            if (fixtureAccountId) sys(() => call("org.moqui.mail.EmailClientServices.delete#EmailAccount", {emailAccountId: fixtureAccountId, deleteLocalCopies: true}))
             ec.message.clearErrors()
             ec.user.internalLoginUser(previousUser)
         }

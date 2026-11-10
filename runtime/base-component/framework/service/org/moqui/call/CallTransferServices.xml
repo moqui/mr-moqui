@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Transfer, add and merge (plans/Comms-Framework.md §5.1, §5.3, V5; docs/interfaces/SIP.md "Transfer and merge"): blind and
+    attended transfer of a phone call's outside party, a person or a number added to a call, two calls merged into a meeting,
+    and a call made a meeting. The logic is CallTransfers.js beside this file. Each user service acts on a call the
+    signed-in user is in (another's is "not found"), refuses a call that still rings, and takes the call's revision (a
+    stale one is refused); a number is under the fraud policy of a call the user places, and counts toward the user's limits
+    at once and per day (CallLeg dialedByUserId). An external user (EXTERNAL_USER) neither transfers nor adds (notAllowed). refer#Call and expire#CallTransfer
+    are internal (the SIP engine). No Java counterpart. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="transfer" noun="Call">
+        <description>The call's outside party (its phone) goes to targetType user, number or queue (targetId): mode
+            blind (the user leaves at once; the far end hears ringing until the target answers; nobody answers in
+            call_transfer_ring_seconds: the target user's voicemail) or attended (the far end on hold while the user consults
+            the target; then complete#CallTransfer or cancel#CallTransfer). Refused: ringing, stale, transferring (one is
+            open), noPhone, and a number the user may not call (internationalNotEnabled, premiumNotEnabled, emergency,
+            outboundNotAllowed).</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="revision" type="Integer"/>
+            <parameter name="targetType" required="true"/>
+            <parameter name="targetId"/>
+            <parameter name="mode"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callTransferId"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallTransfers.js').execute('transfer', context))</script></actions>
+    </service>
+
+    <service verb="complete" noun="CallTransfer">
+        <description>The user's attended transfer completes: its target answered (notAnswered otherwise); the far end comes off hold and the user leaves.</description>
+        <in-parameters>
+            <parameter name="callTransferId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallTransfers.js').execute('complete', context))</script></actions>
+    </service>
+
+    <service verb="cancel" noun="CallTransfer">
+        <description>The user's attended transfer is canceled: its target leaves or stops ringing, and the far end comes off hold.</description>
+        <in-parameters>
+            <parameter name="callTransferId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallTransfers.js').execute('cancel', context))</script></actions>
+    </service>
+
+    <service verb="add" noun="CallParticipant">
+        <description>A user (userId) rings in the call, or a number (phoneNumber) joins it as a phone leg under the
+            fraud policy; an end-to-end encrypted call adds no number.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="revision" type="Integer"/>
+            <parameter name="userId"/>
+            <parameter name="phoneNumber"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callLegId"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallTransfers.js').execute('addParticipant', context))</script></actions>
+    </service>
+
+    <service verb="merge" noun="Calls">
+        <description>The other call the user is in (otherCallSessionId) moves into this one, which becomes a meeting;
+            legs on hold come back. Refused when they are on different media nodes (differentNodes), encrypted or being
+            transferred.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="revision" type="Integer"/>
+            <parameter name="otherCallSessionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="movedCount" type="Integer"/>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallTransfers.js').execute('merge', context))</script></actions>
+    </service>
+
+    <service verb="convert" noun="CallToMeeting">
+        <description>The call goes on as a meeting: it ends only when everyone left.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="revision" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="call" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallTransfers.js').execute('toMeeting', context))</script></actions>
+    </service>
+
+    <service verb="refer" noun="Call" authenticate="false" allow-remote="false">
+        <description>Internal (the SIP engine): a desk phone in a call sent REFER to target (a username or a number): a blind transfer by its user.
+            The engine waits for this before it answers the phone: 202 and a NOTIFY of 200 when it went, 403 when it was refused
+            (an error here), so the phone keeps the call.</description>
+        <in-parameters>
+            <parameter name="callLegId" required="true"/>
+            <parameter name="target"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callTransferId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/CallTransfers.js').execute('refer', context))</script></actions>
+    </service>
+
+    <service verb="expire" noun="CallTransfer" authenticate="false" allow-remote="false">
+        <description>Internal (the SIP engine, call_transfer_ring_seconds after a blind transfer): a target that did not
+            answer missed it; answer is where the far end goes (mode voicemail with stepToken, end) or mode done.</description>
+        <in-parameters>
+            <parameter name="callTransferId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="answer" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll({answer: ec.resource.script('component://framework/service/org/moqui/call/CallTransfers.js').execute('expire', context)})</script></actions>
+    </service>
+</services>

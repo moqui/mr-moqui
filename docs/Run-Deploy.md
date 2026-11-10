@@ -916,7 +916,7 @@ node's own names.
     `Authentication-Results`, not sent round through port 25.
   - **DNS to publish.** For each mail domain: MX at the edge node's name; SPF (`v=spf1 a:edge.example.com -all`, or
     its addresses); the DKIM key at `moqui._domainkey.<domain>` (the TXT value is
-    `org.moqui.impl.EmailServices.get#DkimRecord`'s `record`, run on the edge node; it is longer than 255 characters,
+    `org.moqui.mail.EmailServices.get#DkimRecord`'s `record`, run on the edge node; it is longer than 255 characters,
     so enter it as several quoted strings of at most 255 each, which DNS joins); DMARC at `_dmarc.<domain>`
     (`v=DMARC1; p=quarantine; rua=mailto:...` to start); the bounce domain's MX at the edge node too. Reverse DNS: the
     edge node's address must resolve to its `smtp_hostname`, and that name back to the address (set it at the cloud

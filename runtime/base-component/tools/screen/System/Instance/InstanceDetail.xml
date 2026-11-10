@@ -41,18 +41,18 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="deleteAppInstanceVol"><service-call name="delete#moqui.server.instance.AppInstanceVolume"/>
         <default-response url="."/></transition>
 
-    <transition name="provisionAppInstance" authz-action="all"><service-call name="org.moqui.impl.InstanceServices.provision#AppInstance"/>
+    <transition name="provisionAppInstance" authz-action="all"><service-call name="org.moqui.dev.InstanceServices.provision#AppInstance"/>
         <default-response url="."/></transition>
-    <transition name="createAppDatabase" authz-action="all"><service-call name="org.moqui.impl.InstanceServices.create#AppDatabase"/>
+    <transition name="createAppDatabase" authz-action="all"><service-call name="org.moqui.dev.InstanceServices.create#AppDatabase"/>
         <default-response url="."/></transition>
 
-    <transition name="initAppInstance" authz-action="all"><service-call name="org.moqui.impl.InstanceServices.init#AppInstance"/>
+    <transition name="initAppInstance" authz-action="all"><service-call name="org.moqui.dev.InstanceServices.init#AppInstance"/>
         <default-response url="."/></transition>
-    <transition name="startAppInstance" authz-action="all"><service-call name="org.moqui.impl.InstanceServices.start#AppInstance"/>
+    <transition name="startAppInstance" authz-action="all"><service-call name="org.moqui.dev.InstanceServices.start#AppInstance"/>
         <default-response url="."/></transition>
-    <transition name="stopAppInstance" authz-action="all"><service-call name="org.moqui.impl.InstanceServices.stop#AppInstance"/>
+    <transition name="stopAppInstance" authz-action="all"><service-call name="org.moqui.dev.InstanceServices.stop#AppInstance"/>
         <default-response url="."/></transition>
-    <transition name="removeAppInstance" authz-action="all"><service-call name="org.moqui.impl.InstanceServices.remove#AppInstance"/>
+    <transition name="removeAppInstance" authz-action="all"><service-call name="org.moqui.dev.InstanceServices.remove#AppInstance"/>
         <default-response url="."/></transition>
 
     <actions>
@@ -61,9 +61,9 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="linkList" from="appInstance.links"/>
         <set field="volumeList" from="appInstance.vols"/>
 
-        <service-call name="org.moqui.impl.InstanceServices.check#AppInstance" in-map="{appInstanceId:appInstanceId}" out-map="context"/>
-        <service-call name="org.moqui.impl.InstanceServices.check#AppDatabase" in-map="{appInstanceId:appInstanceId}" out-map="context"/>
-        <service-call name="org.moqui.impl.InstanceServices.check#MoquiServer" in-map="{appInstanceId:appInstanceId}" out-map="context"/>
+        <service-call name="org.moqui.dev.InstanceServices.check#AppInstance" in-map="{appInstanceId:appInstanceId}" out-map="context"/>
+        <service-call name="org.moqui.dev.InstanceServices.check#AppDatabase" in-map="{appInstanceId:appInstanceId}" out-map="context"/>
+        <service-call name="org.moqui.dev.InstanceServices.check#MoquiServer" in-map="{appInstanceId:appInstanceId}" out-map="context"/>
 
         <set field="gotMoquiStatus" from="false"/>
         <if condition="moquiStatusMap &amp;&amp; Object.keys(moquiStatusMap).length">

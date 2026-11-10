@@ -41,7 +41,7 @@ may fail) runs in a transaction of its own:
 ec.message.pushErrors()
 let info = null
 try {
-    info = ec.service.sync().name('org.moqui.impl.FileServices.get#ResourceInfo').parameters({driveId, path})
+    info = ec.service.sync().name('org.moqui.resource.FileServices.get#ResourceInfo').parameters({driveId, path})
             .requireNewTransaction(true).call()
     if (ec.message.hasError()) { ec.logger.info(`${path} not read: ${ec.message.errorsString}`); info = null }
 } finally {
@@ -62,9 +62,9 @@ error, so a caller asks it in its own transaction, sees its own new work, and ha
 | Service | Answer |
 |---|---|
 | `mantle.party.CommunicationServices.get#RecordLinkInfo` with `checkOnly` | `recordVisible`, and `notVisibleReason` for a log |
-| `org.moqui.impl.ChatServices.check#RecordVisible` | `recordVisible` from the theme's `STRT_RECORD_VISIBLE_SERVICE` hook |
-| `org.moqui.impl.FileServices.get#DriveAccess`, `check#RecordPaths` | `level`; `visible` of each path |
-| `org.moqui.impl.WikiServices.get#WikiPageAccess` | `canView`, `canUpdate`, `canAdmin` |
+| `org.moqui.chat.ChatServices.check#RecordVisible` | `recordVisible` from the theme's `STRT_RECORD_VISIBLE_SERVICE` hook |
+| `org.moqui.resource.FileServices.get#DriveAccess`, `check#RecordPaths` | `level`; `visible` of each path |
+| `org.moqui.resource.WikiServices.get#WikiPageAccess` | `canView`, `canUpdate`, `canAdmin` |
 
 Write such a service the same way: every refusal an answer, nothing in `ec.message`, and only services that add no error
 either on the paths it takes (`get#RecordLinkInfo` with `checkOnly` calls `setup#UserOrganizationInfo`,

@@ -3,7 +3,7 @@
 Two kinds of storage keep versions of a file behind the same resource API: `dbresource://` files, whose past versions
 are `DbResourceFileHistory` rows, and `git://` files, whose versions are commits. Both answer the version methods of
 `ResourceReference`, a line diff between any two versions, and `location#versionName` reads. The wiki services
-(`org.moqui.impl.WikiServices`) use only that API, so a wiki space works on either storage.
+(`org.moqui.resource.WikiServices`) use only that API, so a wiki space works on either storage.
 
 ## The version API
 
@@ -55,7 +55,7 @@ A file over `resource-facade` `dbresource-blob-threshold` bytes (64 KiB) is a co
 SHA-256, in 1 MiB `ContentBlobChunk` rows; [Git-Hosting](../interfaces/Git-Hosting.md#content-blobs)) named by `DbResourceFile.blobId`,
 with `fileData` empty: the same bytes in two files are stored once, a response streams it (with `Range`), and a past
 version keeps its blob rather than a copy. `fileSize` gives its size without reading it. `migrate#DbResourceBlobs`
-(`org.moqui.impl.ResourceServices`) moves the files written before content blobs. Java reads such a file as empty.
+(`org.moqui.resource.ResourceServices`) moves the files written before content blobs. Java reads such a file as empty.
 
 These rows, the content blobs and the objects of `db` git repositories are the `content` entity group, in a database
 of their own ([Run-Deploy](../Run-Deploy.md#content-database)). Only the resource implementations use them, so read and
@@ -125,7 +125,7 @@ Each repository is a `moqui.resource.GitRepository` row, edited under System, Re
 
 ### Services
 
-`org.moqui.impl.GitServices` (`runtime/base-component/framework/service/org/moqui/impl/GitServices.xml`). A failure is
+`org.moqui.git.GitServices` (`runtime/base-component/framework/service/org/moqui/git/GitServices.xml`). A failure is
 an error in the message facade, as for any service.
 
 | Service | |
@@ -232,7 +232,7 @@ before the field existed is sized from its data until its next write or `migrate
 ## Drives
 
 Files run on drives (`moqui.resource.ResourceDrive` and the entities beside it in `ResourceEntities.xml`), served by
-`org.moqui.impl.FileServices` (`runtime/base-component/framework/service/org/moqui/impl/FileServices.xml`). A drive is a
+`org.moqui.resource.FileServices` (`runtime/base-component/framework/service/org/moqui/resource/FileServices.xml`). A drive is a
 root location with an owner, members and a quota:
 
 | Kind | Root | Versions |
@@ -295,7 +295,7 @@ response after its token and grant checks, under its own anonymous-all authoriza
 ```xml
 <transition name="download" method="get" read-only="true">
     <actions><script><![CDATA[
-        ec.service.sync().name('org.moqui.impl.FileServices.download#PublicShare').parameters({token: token || '',
+        ec.service.sync().name('org.moqui.resource.FileServices.download#PublicShare').parameters({token: token || '',
             grant: grant || null, path: path || null, sendResponse: true, inline: String(inline) === 'true'}).call()
         if (ec.message.hasError()) ec.web.sendJsonResponse({})
     ]]></script></actions>
@@ -339,7 +339,7 @@ held there, as an Elastic term query does. Extracted text is later.
 
 ## Wiki pages
 
-`org.moqui.impl.WikiServices` (`runtime/base-component/framework/service/org/moqui/impl/WikiServices.xml`) keeps
+`org.moqui.resource.WikiServices` (`runtime/base-component/framework/service/org/moqui/resource/WikiServices.xml`) keeps
 knowledge spaces and each user's notes (`ensure#UserNotesSpace`, a private space on database files) over this API.
 `WikiSpace` and `WikiPage` are `moqui.*` entities, which entity filters never apply to, so the services check the wiki's
 own rules: `get#WikiPageAccess` (view, update, admin, and the storage of a space or page; a space with `restrictView`
@@ -394,7 +394,7 @@ last saved as, and the users whose changes are in no version yet.
   nothing depends on a browser being open; HTML and wiki links stay as written, and the markdown is normalized once (`-`
   bullets, `**` and `*`, fenced code).
 - **Versions.** The page's text is written only as a version (`update#WikiPage`, as an editor): on Save with a note
-  (`org.moqui.impl.CollabServices.save#CollabDocument`), after two minutes without an edit on database files, and when the
+  (`org.moqui.resource.CollabServices.save#CollabDocument`), after two minutes without an edit on database files, and when the
   last editor leaves (a note names the editors). The state is written a second and a half after an edit, merged with what
   another server wrote. A save tells the editors (`saved`).
 - **Outside changes.** A page saved with the markdown text area, restored or moved while no co-edited changes are open is
@@ -411,7 +411,7 @@ A `token-route` of the webroot `webapp` in the conf makes `/<name>/<token>` an a
 ```xml
 <webapp-list><webapp name="webroot">
     <token-route name="s" screen-location="component://my-app/screen/PublicShare.xml"
-            token-service="org.moqui.impl.FileServices.check#PublicShareToken" title="Shared files"/>
+            token-service="org.moqui.resource.FileServices.check#PublicShareToken" title="Shared files"/>
 </webapp></webapp-list>
 ```
 

@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Conf › Changes (plans/archive/Component-Deploy.md, Phase 1; guide docs/tools/Component-Deploy.md): the running conf
-    against the conf the files make now (org.moqui.impl.ComponentServices.preview#ConfReload), each change with its class
+    against the conf the files make now (org.moqui.dev.ComponentServices.preview#ConfReload), each change with its class
     (live: read on each use; apply: state built again; restart: read once at boot) and what applying it would do. Apply
     Changes reloads the conf (reload#Conf), as SIGHUP does: what can be live is applied, the rest stays out of the running
     conf and is listed under Waiting for a Restart until the server restarts. Restart Now restarts the server
@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Changes" default-menu-index="3">
 
     <transition name="reloadConf" authz-action="update">
-        <service-call name="org.moqui.impl.ComponentServices.reload#Conf" out-map="reloadOut"/>
+        <service-call name="org.moqui.dev.ComponentServices.reload#Conf" out-map="reloadOut"/>
         <actions><if condition="!ec.message.hasError()">
             <message type="success">Conf reloaded: ${reloadOut.report?.applied ?? 0} change(s) live, ${reloadOut.report?.pendingRestart ?? 0} waiting for a restart</message>
         </if></actions>
@@ -31,7 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="restartServer" authz-action="update">
-        <service-call name="org.moqui.impl.DevToolsServices.restart#Server" out-map="restartOut"/>
+        <service-call name="org.moqui.dev.DevToolsServices.restart#Server" out-map="restartOut"/>
         <actions><if condition="restartOut.restarting">
             <message type="success">The server is restarting; this page comes back when it is up</message>
         </if></actions>
@@ -40,8 +40,8 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
 
     <actions>
-        <service-call name="org.moqui.impl.ComponentServices.preview#ConfReload" out-map="previewOut"/>
-        <service-call name="org.moqui.impl.ComponentServices.get#PendingRestart" out-map="pendingOut"/>
+        <service-call name="org.moqui.dev.ComponentServices.preview#ConfReload" out-map="previewOut"/>
+        <service-call name="org.moqui.dev.ComponentServices.get#PendingRestart" out-map="pendingOut"/>
         <script><![CDATA[
             const report = previewOut.report || {}
             changeList = report.changes || []

@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 // The SQL editor's helpers (moqui.sql from /js/WebrootSql.js) in the page, with fixtures shaped like the answers of
-// org.moqui.impl.DatabaseServices.run#Sql (columns and records) and explain#Sql (a Postgres FORMAT JSON plan).
+// org.moqui.dev.DatabaseServices.run#Sql (columns and records) and explain#Sql (a Postgres FORMAT JSON plan).
 "use strict";
 
 const sql = moqui.sql;

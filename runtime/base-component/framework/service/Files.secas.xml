@@ -13,14 +13,14 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- After a mirror's fetch, the search documents of the drives over it follow the paths that changed
-    (org.moqui.impl.FileServices.index#MirrorDrives; docs/data/Revision-Management.md, "Drives"). -->
+    (org.moqui.resource.FileServices.index#MirrorDrives; docs/data/Revision-Management.md, "Drives"). -->
 <secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
-    <seca id="GitFetchIndexMirrorDrives" service="org.moqui.impl.GitServices.fetch#GitRepository" when="post-service">
+    <seca id="GitFetchIndexMirrorDrives" service="org.moqui.git.GitServices.fetch#GitRepository" when="post-service">
         <condition><expression>headCommitId</expression></condition>
-        <actions><service-call name="org.moqui.impl.FileServices.index#MirrorDrives" in-map="{repositoryId: repositoryId}"/></actions>
+        <actions><service-call name="org.moqui.resource.FileServices.index#MirrorDrives" in-map="{repositoryId: repositoryId}"/></actions>
     </seca>
-    <seca id="GitFetchAllIndexMirrorDrives" service="org.moqui.impl.GitServices.fetch#AllGitRepositories" when="post-service">
+    <seca id="GitFetchAllIndexMirrorDrives" service="org.moqui.git.GitServices.fetch#AllGitRepositories" when="post-service">
         <condition><expression>fetchedIds &amp;&amp; fetchedIds.length</expression></condition>
-        <actions><service-call name="org.moqui.impl.FileServices.index#MirrorDrives" in-map="{repositoryIdList: fetchedIds}"/></actions>
+        <actions><service-call name="org.moqui.resource.FileServices.index#MirrorDrives" in-map="{repositoryIdList: fetchedIds}"/></actions>
     </seca>
 </secas>

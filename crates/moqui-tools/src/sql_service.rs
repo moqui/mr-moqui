@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The SQL services of `org.moqui.impl.DatabaseServices` (plans/archive/Tools-Database.md §8, §7.2 Queries, §7.5, §14):
+//! The SQL services of `org.moqui.dev.DatabaseServices` (plans/archive/Tools-Database.md §8, §7.2 Queries, §7.5, §14):
 //! runs, their classification and cancel, explain, the editor's catalog, the database's own statement stats, saved
 //! queries, the history (the user's own audit rows) and the audit purge. A refusal is a message error and no
 //! out-parameters; a statement that fails is in its result (`error`), not a message error.

@@ -1190,7 +1190,7 @@ fn file_size_of(file: &EntityValue, resource_id: &str) -> Result<u64, Error> {
 /// A `fileData` value as bytes; `None` when it is null.
 fn blob_bytes(value: Option<&Value>, resource_id: &str) -> Result<Option<Vec<u8>>, Error> {
     let raw = value.cloned().unwrap_or(Value::Null);
-    match basic_convert(&raw, "java.sql.Blob").value {
+    match basic_convert(&raw, "Blob").value {
         Value::Bytes(bytes) => Ok(Some(bytes)),
         Value::String(text) => Ok(Some(text.into_bytes())),
         Value::Null => Ok(None),

@@ -1,4 +1,4 @@
-// Call queues (org.moqui.impl.CallQueueServices and CallQueues.js; plans/Comms-Framework.md §5.3, §5.4, V5): only a voice admin
+// Call queues (org.moqui.call.CallQueueServices and CallQueues.js; plans/Comms-Framework.md §5.3, §5.4, V5): only a voice admin
 // keeps queues (the same parameters refused for anyone else); agents log in, pause and log out themselves; a call to a
 // number routed to a queue waits there and is offered to the free agent idle longest, each offer ringing their tabs and
 // phones with a CallUserLog row; an offer that rings out is missed and the next agent is offered; with all at once the
@@ -35,7 +35,7 @@ function as(userId, name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.impl.CallQueueServices." + name)
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.CallQueueServices." + name)
             .parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
@@ -102,11 +102,11 @@ function clean() {
 }
 function nodesUp() {
     sys(() => {
-        ec.service.sync().name("org.moqui.impl.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
-        ec.service.sync().name("org.moqui.impl.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
+        ec.service.sync().name("org.moqui.call.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
+        ec.service.sync().name("org.moqui.call.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
     })
 }
-const receive = () => engine("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: QUEUE_NUMBER, fromNumber: CALLER,
+const receive = () => engine("org.moqui.call.VoiceServices.receive#PhoneCall", {toNumber: QUEUE_NUMBER, fromNumber: CALLER,
     fromName: "Queue Caller", instanceId: NODE})
 const tick = (call, atMs) => engine("tick#QueueCall", {callQueueEntryId: call.ivr.callQueueEntryId, atMs}).answer || {}
 const entryOf = (call) => sys(() => ec.entity.find(ENTRY).condition("callQueueEntryId", call.ivr.callQueueEntryId).one())
@@ -116,7 +116,7 @@ const offeredTo = (callSessionId) => USERS.filter((userId) => sys(() => {
 }))
 const log = (callSessionId, userId) => sys(() => ec.entity.find("moqui.call.CallUserLog").condition({callSessionId, userId}).one())
 const agent = (userId) => sys(() => ec.entity.find(AGENT).condition({callQueueId: queueId, userId}).one())
-const hangUp = (call) => engine("org.moqui.impl.VoiceServices.note#PhoneLeg", {callSessionId: call.callSessionId, callLegId: call.callLegId, event: "ended"})
+const hangUp = (call) => engine("org.moqui.call.VoiceServices.note#PhoneLeg", {callSessionId: call.callSessionId, callLegId: call.callLegId, event: "ended"})
 const ms = (value) => {
     if (value == null || value === "") return null
     const number = Number(value)
@@ -153,7 +153,7 @@ feature("only a voice admin keeps queues and their agents; an agent logs in, pau
         const agentRefused = as(OUT, "store#CallQueueAgent", {callQueueId: queueId, userId: A1})
         as(ADMIN, "store#CallQueueAgent", {callQueueId: queueId, userId: A1, sequenceNum: 10})
         as(ADMIN, "store#CallQueueAgent", {callQueueId: queueId, userId: A2, sequenceNum: 20})
-        const routed = as(ADMIN, "org.moqui.impl.VoiceServices.store#PhoneNumber", {phoneNumber: QUEUE_NUMBER, voiceTrunkId: TRUNK,
+        const routed = as(ADMIN, "org.moqui.call.VoiceServices.store#PhoneNumber", {phoneNumber: QUEUE_NUMBER, voiceTrunkId: TRUNK,
             routeTypeEnumId: "PnrQueue", routeId: queueId})
         const notAgent = as(OUT, "set#QueueAgentStatus", {callQueueId: queueId, status: "in"})
         const loggedIn = as(A1, "set#QueueAgentStatus", {callQueueId: queueId, status: "in"})
@@ -199,11 +199,11 @@ feature("the agent idle longest is offered first; an offer that rings out is mis
         const a2Log = log(call.callSessionId, A2)
         const a1Log = log(call.callSessionId, A1)
         // A1 answers: the entry is answered and the caller's ticks are done
-        const answered = as(A1, "org.moqui.impl.CallServices.answer#Call", {callSessionId: call.callSessionId})
+        const answered = as(A1, "org.moqui.call.CallServices.answer#Call", {callSessionId: call.callSessionId})
         const done = tick(call, now + 17000)
         const entry = entryOf(call)
         // A1 hangs up: the call ends, and A1 is in wrap-up for 30 seconds
-        as(A1, "org.moqui.impl.CallServices.leave#Call", {callSessionId: call.callSessionId})
+        as(A1, "org.moqui.call.CallServices.leave#Call", {callSessionId: call.callSessionId})
         return {call, first, stats, early, stillFirst, later, second, a2Log, a1Log, answered, done, entry, a1: agent(A1), now}
     },
     then({call, first, stats, early, stillFirst, later, second, a2Log, a1Log, answered, done, entry, a1, now}) {
@@ -248,10 +248,10 @@ feature("an agent in wrap-up is skipped; all at once rings every free agent and 
         tick(call, now + 16000)
         const pastWrapUp = tick(call, now + 40000)
         const both = offeredTo(call.callSessionId)
-        const won = as(A2, "org.moqui.impl.CallServices.answer#Call", {callSessionId: call.callSessionId})
-        const lost = as(A1, "org.moqui.impl.CallServices.answer#Call", {callSessionId: call.callSessionId})
+        const won = as(A2, "org.moqui.call.CallServices.answer#Call", {callSessionId: call.callSessionId})
+        const lost = as(A1, "org.moqui.call.CallServices.answer#Call", {callSessionId: call.callSessionId})
         const a1Log = log(call.callSessionId, A1)
-        as(A2, "org.moqui.impl.CallServices.leave#Call", {callSessionId: call.callSessionId})
+        as(A2, "org.moqui.call.CallServices.leave#Call", {callSessionId: call.callSessionId})
         as(ADMIN, "store#CallQueue", {callQueueId: queueId, strategyEnumId: "CqsLongestIdle"})
         return {nobody, stats, whileWrapping, pastWrapUp, both, won, lost, a1Log, entry: entryOf(call)}
     },
@@ -321,7 +321,7 @@ feature("an agent who declines an offer ends it: the call waits on and the next 
         upsert(AGENT, {callQueueId: queueId, userId: A2}, {lastCallEndDate: new Date(now - 600000)})
         const call = receive()
         const first = offeredTo(call.callSessionId)
-        const declined = as(A2, "org.moqui.impl.CallServices.decline#Call", {callSessionId: call.callSessionId})
+        const declined = as(A2, "org.moqui.call.CallServices.decline#Call", {callSessionId: call.callSessionId})
         const afterDecline = entryOf(call)
         // 5 s on, well inside ringSeconds: A1 rings, not A2 again
         const next = tick(call, now + 5000)

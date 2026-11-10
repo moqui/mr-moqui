@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Edge Node status (plans/Edge-Node.md §5.7): the link's state, generation, round trip, last connect, links lost and last
     error, and the edge node as its last Hello said (name, the pinned fingerprint of its link key, versions, public names). Unpair
-    (org.moqui.impl.EdgeServices.unpair#EdgeNode) revokes this node's key on the edge node and removes the link's settings
+    (org.moqui.edge.EdgeServices.unpair#EdgeNode) revokes this node's key on the edge node and removes the link's settings
     from runtime/.env. Queue and replication (§5.2, get#QueueStatus): this node's outbox by kind (waiting, failed, the
     oldest), and each replicated set's epoch, last batch acknowledged and changes waiting; Pause (pause#QueueDelivery)
     holds queue delivery both ways until Resume, and Resync (resync#Replication) sends every set whole again. Setup (§5.7,
@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Status" default-menu-index="1" default-menu-include="false">
 
     <transition name="pauseDelivery">
-        <service-call name="org.moqui.impl.EdgeServices.pause#QueueDelivery" in-map="{paused:paused}" out-map="pauseOut"/>
+        <service-call name="org.moqui.edge.EdgeServices.pause#QueueDelivery" in-map="{paused:paused}" out-map="pauseOut"/>
         <actions><if condition="!ec.message.hasError()"><then>
             <if condition="pauseOut?.paused"><then><message type="warning">Queue delivery is paused until you resume it</message></then>
                 <else><message type="success">Queue delivery resumed</message></else></if>
@@ -39,13 +39,13 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="resyncReplication">
-        <service-call name="org.moqui.impl.EdgeServices.resync#Replication" out-map="resyncOut"/>
+        <service-call name="org.moqui.edge.EdgeServices.resync#Replication" out-map="resyncOut"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Every replicated set goes to the edge node whole again</message></if></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
     <transition name="unpair">
-        <service-call name="org.moqui.impl.EdgeServices.unpair#EdgeNode"/>
+        <service-call name="org.moqui.edge.EdgeServices.unpair#EdgeNode"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Unpaired: the link to the edge node is closed</message></if></actions>
         <default-response url="."/>
         <error-response url="."/>
@@ -53,7 +53,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const link = ec.service.sync().name('org.moqui.impl.EdgeServices.get#LinkStatus').call() || {}
+        const link = ec.service.sync().name('org.moqui.edge.EdgeServices.get#LinkStatus').call() || {}
         const state = link.state || 'unpaired'
         notBuilt = state === 'notBuilt'
         notStarted = state === 'notStarted'
@@ -86,7 +86,7 @@ along with this software (see the LICENSE.md file). If not, see
         if (paired) {
             ec.message.pushErrors()
             try {
-                work = ec.service.sync().name('org.moqui.impl.EdgeServices.get#QueueStatus').call() || {}
+                work = ec.service.sync().name('org.moqui.edge.EdgeServices.get#QueueStatus').call() || {}
                 if (ec.message.hasError()) queueError = ec.message.getErrorsString()
             } finally {
                 ec.message.clearErrors()
@@ -118,7 +118,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (state === 'linked') {
                 ec.message.pushErrors()
                 try {
-                    const offer = (ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeOffer').call() || {}).offer || {}
+                    const offer = (ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeOffer').call() || {}).offer || {}
                     if (!ec.message.hasError()) {
                         const names = Array.from(offer.nodeHosts || []).map((host) => host.hostName +
                             ' (' + (host.modeEnumId === 'EdgeHostTerminate' ? L('terminate') : L('passthrough')) + ')')

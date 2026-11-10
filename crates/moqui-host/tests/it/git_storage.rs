@@ -153,7 +153,7 @@ fn storage_of_imported_histories() {
         let git_size = git_pack_size(&source, "master") as i64;
         let started = Instant::now();
         sync(
-            "org.moqui.impl.GitServices.import#GitRepository",
+            "org.moqui.git.GitServices.import#GitRepository",
             &[
                 ("repositoryId", Value::string(id)),
                 ("source", Value::string(source.to_string_lossy())),
@@ -191,7 +191,7 @@ fn storage_of_imported_histories() {
         );
         let started = Instant::now();
         let gc = sync(
-            "org.moqui.impl.GitServices.gc#GitRepositories",
+            "org.moqui.git.GitServices.gc#GitRepositories",
             &[("repositoryId", Value::string(id))],
         );
         let collected = started.elapsed();
@@ -240,7 +240,7 @@ fn storage_of_imported_histories() {
         );
         let started = Instant::now();
         let fsck = sync(
-            "org.moqui.impl.GitServices.fsck#GitRepository",
+            "org.moqui.git.GitServices.fsck#GitRepository",
             &[("repositoryId", Value::string(id))],
         );
         eprintln!(
@@ -279,7 +279,7 @@ fn storage_of_imported_histories() {
         &params,
     );
     sync(
-        "org.moqui.impl.GitServices.gc#GitRepositories",
+        "org.moqui.git.GitServices.gc#GitRepositories",
         &[("repositoryId", Value::string("bench-edits"))],
     );
     let repacked = number(

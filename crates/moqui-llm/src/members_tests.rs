@@ -158,8 +158,8 @@ fn install(name: &str) -> std::path::PathBuf {
     .unwrap();
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
-        framework.join("impl/ChatServices.xml"),
-        framework.join("impl/ShellServices.xml"),
+        framework.join("chat/ChatServices.xml"),
+        framework.join("ui/ShellServices.xml"),
         framework.join("EntityServices.xml"),
         framework.join("agent/AgentServices.xml"),
         framework.join("agent/AgentTriggerServices.xml"),
@@ -364,7 +364,7 @@ fn an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card() {
     login("ann");
     let room = field(
         &call(
-            "org.moqui.impl.ChatServices.create#Room",
+            "org.moqui.chat.ChatServices.create#Room",
             &[
                 ("roomTypeEnumId", text("private")),
                 ("roomName", text("Ops")),
@@ -374,7 +374,7 @@ fn an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card() {
         "chatRoomId",
     );
     call(
-        "org.moqui.impl.ChatServices.add#Member",
+        "org.moqui.chat.ChatServices.add#Member",
         &[
             ("chatRoomId", text(&room)),
             ("userId", text(AGENT_USER)),
@@ -382,7 +382,7 @@ fn an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card() {
         ],
     );
     call(
-        "org.moqui.impl.ChatServices.set#MemberRole",
+        "org.moqui.chat.ChatServices.set#MemberRole",
         &[
             ("chatRoomId", text(&room)),
             ("userId", text(AGENT_USER)),
@@ -392,7 +392,7 @@ fn an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card() {
     );
     // a message that does not mention the agent in a group room starts nothing
     call(
-        "org.moqui.impl.ChatServices.send#Message",
+        "org.moqui.chat.ChatServices.send#Message",
         &[("chatRoomId", text(&room)), ("body", text("<p>morning all</p>"))],
     );
     drain(&bed);
@@ -404,7 +404,7 @@ fn an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card() {
         ],
     );
     let sent = call(
-        "org.moqui.impl.ChatServices.send#Message",
+        "org.moqui.chat.ChatServices.send#Message",
         &[
             ("chatRoomId", text(&room)),
             (
@@ -541,7 +541,7 @@ fn an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card() {
         ],
     );
     call(
-        "org.moqui.impl.ChatServices.send#Message",
+        "org.moqui.chat.ChatServices.send#Message",
         &[
             ("chatRoomId", text(&room)),
             ("body", text("<p>now the second one</p>")),
@@ -551,7 +551,7 @@ fn an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card() {
     // bob's message in the thread is not for the agent: he has no conversation there and did not mention it
     login("bob");
     call(
-        "org.moqui.impl.ChatServices.send#Message",
+        "org.moqui.chat.ChatServices.send#Message",
         &[
             ("chatRoomId", text(&room)),
             ("body", text("<p>nice</p>")),
@@ -623,7 +623,7 @@ fn an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card() {
     );
     login("ann");
     call(
-        "org.moqui.impl.ChatServices.send#Message",
+        "org.moqui.chat.ChatServices.send#Message",
         &[
             ("chatRoomId", text(&room)),
             ("body", text("<p>and a third</p>")),
@@ -680,7 +680,7 @@ fn an_agent_member_replies_in_the_thread_and_a_room_member_approves_its_card() {
     let plain = |body: &str| -> i64 {
         field(
             &call(
-                "org.moqui.impl.ChatServices.send#Message",
+                "org.moqui.chat.ChatServices.send#Message",
                 &[("chatRoomId", text(&room)), ("body", text(body))],
             ),
             "eventSeq",
@@ -1472,7 +1472,7 @@ fn an_agent_does_not_act_in_a_room_with_an_external_member() {
     login("erin");
     let room = field(
         &call(
-            "org.moqui.impl.ChatServices.create#Room",
+            "org.moqui.chat.ChatServices.create#Room",
             &[
                 ("roomTypeEnumId", text("private")),
                 ("roomName", text("With a client")),
@@ -1482,7 +1482,7 @@ fn an_agent_does_not_act_in_a_room_with_an_external_member() {
         "chatRoomId",
     );
     call(
-        "org.moqui.impl.ChatServices.add#Member",
+        "org.moqui.chat.ChatServices.add#Member",
         &[
             ("chatRoomId", text(&room)),
             ("userId", text(AGENT_USER)),
@@ -1490,7 +1490,7 @@ fn an_agent_does_not_act_in_a_room_with_an_external_member() {
         ],
     );
     call(
-        "org.moqui.impl.ChatServices.set#MemberRole",
+        "org.moqui.chat.ChatServices.set#MemberRole",
         &[
             ("chatRoomId", text(&room)),
             ("userId", text(AGENT_USER)),
@@ -1500,7 +1500,7 @@ fn an_agent_does_not_act_in_a_room_with_an_external_member() {
     );
     fake::script(&bed.endpoint, vec![fake::Reply::text("I should not be asked.")]);
     call(
-        "org.moqui.impl.ChatServices.send#Message",
+        "org.moqui.chat.ChatServices.send#Message",
         &[
             ("chatRoomId", text(&room)),
             (

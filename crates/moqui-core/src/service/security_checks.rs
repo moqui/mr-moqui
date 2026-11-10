@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn a_missing_date_leaves_that_end_open_as_filter_by_date() {
-        let at = |millis: i64| moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value;
+        let at = |millis: i64| moqui_lib::object::basic_convert(&Value::I64(millis), "Timestamp").value;
         let now = at(2_000);
         assert!(membership_open(None, None, &now));
         assert!(membership_open(Some(&Value::Null), Some(&Value::Null), &now));

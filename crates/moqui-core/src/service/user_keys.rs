@@ -345,7 +345,7 @@ fn scram_fields(facade: &EntityFacade, user_id: &str, password: &str, row: &mut 
     Ok(())
 }
 
-/// `org.moqui.impl.XmppServices.get#ScramCredentials` (internal): the salt, iteration count and verifiers of a user's
+/// `org.moqui.chat.XmppServices.get#ScramCredentials` (internal): the salt, iteration count and verifiers of a user's
 /// active app passwords that have them, for SCRAM sign-in; nothing for an unknown user, a disabled one, or one with
 /// no such password.
 fn get_scram_credentials(
@@ -410,7 +410,7 @@ fn get_scram_credentials(
     ]))
 }
 
-/// `org.moqui.impl.XmppServices.check#PlainPassword` (internal): PLAIN sign-in, which takes an app password only
+/// `org.moqui.chat.XmppServices.check#PlainPassword` (internal): PLAIN sign-in, which takes an app password only
 /// (`login_app_password`: a refusal never counts toward the account's lockout); the account's userId and username.
 fn check_plain_password(
     parameters: &BTreeMap<String, Value>,

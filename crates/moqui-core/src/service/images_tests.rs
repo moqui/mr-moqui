@@ -129,7 +129,7 @@ fn upload_rich_text_image() {
     facade.assume_db_tables();
     ctx.factory().set_entity(facade.clone());
     let _entered = ctx.enter();
-    let path = crate::context::framework_dir().join("service/org/moqui/impl/ResourceServices.xml");
+    let path = crate::context::framework_dir().join("service/org/moqui/resource/ResourceServices.xml");
     let failures = crate::service::lint(std::slice::from_ref(&path)).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
@@ -141,7 +141,7 @@ fn upload_rich_text_image() {
     drop(_authz);
 
     let refused = crate::service::sync(
-        "org.moqui.impl.ResourceServices.get#RichTextImage",
+        "org.moqui.resource.ResourceServices.get#RichTextImage",
         &std::iter::once(("imageId".to_string(), Value::string("a".repeat(32)))).collect(),
     )
     .unwrap_err();
@@ -191,7 +191,7 @@ fn service_call(name: &str, parameters: impl IntoIterator<Item = (&'static str, 
         .into_iter()
         .map(|(key, value)| (key.to_string(), value))
         .collect();
-    let out = crate::service::sync(&format!("org.moqui.impl.ResourceServices.{name}"), &parameters)
+    let out = crate::service::sync(&format!("org.moqui.resource.ResourceServices.{name}"), &parameters)
         .unwrap_or_else(|err| panic!("{name}: {err}"));
     let errors = message_errors();
     assert!(errors.is_empty(), "{name}: {errors}");
@@ -203,7 +203,7 @@ fn service_errors(name: &str, parameters: impl IntoIterator<Item = (&'static str
         .into_iter()
         .map(|(key, value)| (key.to_string(), value))
         .collect();
-    crate::service::sync(&format!("org.moqui.impl.ResourceServices.{name}"), &parameters)
+    crate::service::sync(&format!("org.moqui.resource.ResourceServices.{name}"), &parameters)
         .unwrap_or_else(|err| panic!("{name}: {err}"));
     message_errors()
 }

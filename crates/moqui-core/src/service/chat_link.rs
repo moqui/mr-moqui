@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The link previews of chat messages, the Rust parts of `org.moqui.impl.ChatServices` (no Java counterpart; the cache
+//! The link previews of chat messages, the Rust parts of `org.moqui.chat.ChatServices` (no Java counterpart; the cache
 //! and the message's previews are the scripts `get#LinkPreview` and `fetch#LinkPreviews`):
 //!
 //! - `extract#LinkUrls` finds the links of a message to preview: http or https, at most 3, not our own `/qapps` links,

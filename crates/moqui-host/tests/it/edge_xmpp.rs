@@ -286,13 +286,13 @@ fn outside_xmpp_clients_chat_through_the_edge_nodes_tunnel_ports() {
     let timeline = as_user(&factory, "edge.ann", || {
         let room = get(
             &call(
-                "org.moqui.impl.XmppServices.get#DirectRoom",
+                "org.moqui.chat.XmppServices.get#DirectRoom",
                 &[("userId", Value::string("EDGE_XMPP_BEN"))],
             ),
             "chatRoomId",
         );
         let page = call(
-            "org.moqui.impl.ChatServices.get#Timeline",
+            "org.moqui.chat.ChatServices.get#Timeline",
             &[("chatRoomId", Value::string(&room))],
         );
         format!("{:?}", page.get("eventList"))

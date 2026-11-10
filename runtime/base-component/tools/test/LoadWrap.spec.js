@@ -84,7 +84,7 @@ feature("a DATABASE_ADMIN user's wrapped load is refused an ADMIN_ADV membership
     expect() {
         const run = () => {
             ec.user.internalLoginUser("spec.lw.dba")
-            const wrap = ec.service.sync().name("org.moqui.impl.DatabaseServices.plan#LoadWrap").parameters({ db: "group:transactional",
+            const wrap = ec.service.sync().name("org.moqui.dev.DatabaseServices.plan#LoadWrap").parameters({ db: "group:transactional",
                 entityNames: ["moqui.security.UserGroupMember"], description: "Spec load wrap" }).disableAuthz().call() || {}
             const planned = !!(wrap.dropJobId && wrap.restoreJobId)
             ec.message.clearErrors()

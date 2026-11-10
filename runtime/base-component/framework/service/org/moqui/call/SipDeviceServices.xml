@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Desk and soft phones (plans/Comms-Framework.md §5.2 "Registrar for phones", §5.4, V4): a user's phones that register with
+    Moqui's registrar, the SIP engine's lookups and bindings, and the calls to and from them. The model is the V4 block of
+    framework/entity/VoiceEntities.xml (SipDevice, SipDeviceVerifier, SipRegistration); the logic is SipDevices.js beside
+    this file, and a device's leg (CltSipDevice) is the CallServices state machine's (Calls.js deviceEvent). The registrar
+    is the host's SIP engine (crates/moqui-host/src/sip/phones.rs, moqui-sip ua_phones.rs), on only with
+    sip_registrar_enabled. No Java counterpart.
+
+    Access. create#SipDevice, rotate#SipDeviceCredential, revoke#SipDevice and find#SipDevices are the current user's for
+    their own phones; a voice admin (VoiceAdmin) may act on anyone's, and another user is refused as "not found" with the
+    same parameters. The engine's services and make#SipCredential are internal. docs/interfaces/SIP.md, "Registrar", has the
+    phone setup, NAT notes and the settings. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== The user's phones ========== -->
+
+    <service verb="create" noun="SipDevice">
+        <description>Add a desk or soft phone for the current user (or, for a voice admin, for userId): a generated SIP
+            username and a strong password, which comes back here once and is never stored (only its digest verifiers,
+            encrypted: SHA-256, and MD5 too when deviceProfile is legacy, for a phone without SHA-256). With them the domain,
+            the SIP and TLS ports and the transport to choose, and registrarEnabled (false: phones cannot register yet).
+            Refusals carry reasonCode: notSignedIn, notAllowed, notFound, tooManyDevices (10 at once), failed.</description>
+        <in-parameters>
+            <parameter name="name"/>
+            <parameter name="deviceProfile" default-value="standard"><description>standard or legacy</description></parameter>
+            <parameter name="userId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sipDeviceId"/>
+            <parameter name="username"/>
+            <parameter name="password"><description>Shown once: it is not stored</description></parameter>
+            <parameter name="domain"/>
+            <parameter name="sipPort" type="Integer"/>
+            <parameter name="tlsPort" type="Integer"/>
+            <parameter name="transport"/>
+            <parameter name="registrarEnabled" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SipDevices.js').execute('create', context))</script></actions>
+    </service>
+
+    <service verb="rotate" noun="SipDeviceCredential">
+        <description>New credentials for a phone of the current user (or any, for a voice admin): the same username and a
+            new password, shown once. The credential revision goes up, the old verifiers are deleted, and the phone's
+            registrations end on every SIP engine, so it must register again with the new password. reasonCode notFound (not
+            theirs), revoked, failed.</description>
+        <in-parameters>
+            <parameter name="sipDeviceId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sipDeviceId"/>
+            <parameter name="username"/>
+            <parameter name="password"/>
+            <parameter name="domain"/>
+            <parameter name="sipPort" type="Integer"/>
+            <parameter name="tlsPort" type="Integer"/>
+            <parameter name="transport"/>
+            <parameter name="registrarEnabled" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SipDevices.js').execute('rotate', context))</script></actions>
+    </service>
+
+    <service verb="revoke" noun="SipDevice">
+        <description>Remove a phone of the current user (or any, for a voice admin): its verifiers are deleted, its
+            registrations end and its calls on each SIP engine hang up; it cannot register or ring again. reasonCode notFound
+            (not theirs); repeated when it was removed already.</description>
+        <in-parameters>
+            <parameter name="sipDeviceId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sipDeviceId"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SipDevices.js').execute('revoke', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="SipDevices">
+        <description>The current user's phones (userId another's, or allUsers, for a voice admin only), newest first, the
+            removed ones too with includeRevoked: name, username, profile, status, when it was added and last seen, and its
+            live registrations (contact, transport, the address and port it registered from, its user agent, when it
+            expires, whether it uses Outbound). Never a password or a verifier. With them the server setup (domain, ports,
+            registrarEnabled).</description>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="allUsers" type="Boolean" default="false"/>
+            <parameter name="includeRevoked" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="deviceList" type="List"/>
+            <parameter name="domain"/>
+            <parameter name="sipPort" type="Integer"/>
+            <parameter name="tlsPort" type="Integer"/>
+            <parameter name="transport"/>
+            <parameter name="registrarEnabled" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SipDevices.js').execute('findDevices', context))</script></actions>
+    </service>
+
+    <!-- ========== Internal ========== -->
+
+    <service verb="make" noun="SipCredential" type="rust" location="moqui_core::service::sip_credential::make_sip_credential"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal (create# and rotate#): a new password for username (generated, ten digits, when empty) and its
+            digest verifiers for realm (HA1, SHA-256; MD5 too when legacy).</description>
+        <in-parameters>
+            <parameter name="realm" required="true"/>
+            <parameter name="username"/>
+            <parameter name="legacy" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="username"/>
+            <parameter name="password"/>
+            <parameter name="verifierList" type="List"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="SipDeviceAuth" authenticate="false" allow-remote="false">
+        <description>Internal (the SIP engine, on a REGISTER or INVITE that answers a challenge): the active device with
+            this username, its credential revision and its verifiers for realm, decrypted. Nothing for a removed device, one
+            whose user is disabled, or no such device.</description>
+        <in-parameters>
+            <parameter name="username" required="true"/>
+            <parameter name="realm"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sipDeviceId"/>
+            <parameter name="username"/>
+            <parameter name="credentialRevision" type="Integer"/>
+            <parameter name="verifierList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SipDevices.js').execute('deviceAuth', context))</script></actions>
+    </service>
+
+    <service verb="check" noun="SipDeviceDigest" authenticate="false" allow-remote="false">
+        <description>Internal (the registrar of this node's edge node, plans/Edge-Node.md §5.4 "Voice (SIP)", decision 4,
+            E8): a phone's digest answer checked here, against its verifier for realm and algorithm, so the verifiers
+            (HA1) never leave this node. The edge node keeps the nonce and its counts; it sends the response and what it
+            is computed from besides the HA1 (nonce, nc, cnonce, qop, ha2 = H(method:uri)). matched with the device's
+            sipDeviceId, username and credentialRevision when the answer is right for an active device; matched false
+            and nothing else when it is not, or there is no such device. From the edge node's delegate user only for the
+            realm its registrar challenges with (its SipNode row's sipDomain), and only an answer whose nonce is fresh
+            and whose nonce count was not taken before (claim#SipDigestNonce), so an answer it kept cannot be sent
+            again; a match is noted (SipDevice.edgeDigestDate), which its store#SipRegistration and receive#DeviceCall
+            need.</description>
+        <in-parameters>
+            <parameter name="username" required="true"/>
+            <parameter name="realm"/>
+            <parameter name="algorithm" required="true"/>
+            <parameter name="nonce" required="true"/>
+            <parameter name="nc"/>
+            <parameter name="cnonce"/>
+            <parameter name="qop"/>
+            <parameter name="ha2" required="true"/>
+            <parameter name="response" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="matched" type="Boolean"/>
+            <parameter name="sipDeviceId"/>
+            <parameter name="username"/>
+            <parameter name="credentialRevision" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SipDevices.js').execute('checkDigest', context))</script></actions>
+    </service>
+
+    <service verb="compute" noun="SipDigestResponse" type="rust" location="moqui_core::service::sip_credential::compute_sip_digest_response"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal (check#SipDeviceDigest): the digest response a phone's answer must have (RFC 7616 §3.4.1):
+            H(ha1:nonce:nc:cnonce:auth:ha2) with qop auth, else H(ha1:nonce:ha2), for algorithm SHA-256, SHA-512-256 or
+            MD5; empty for another algorithm or qop.</description>
+        <in-parameters>
+            <parameter name="algorithm" required="true"/>
+            <parameter name="ha1" required="true"/>
+            <parameter name="nonce" required="true"/>
+            <parameter name="nc"/>
+            <parameter name="cnonce"/>
+            <parameter name="qop"/>
+            <parameter name="ha2" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="response"/></out-parameters>
+    </service>
+
+    <service verb="claim" noun="SipDigestNonce" type="rust" location="moqui_core::service::sip_credential::claim_sip_digest_nonce"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal (check#SipDeviceDigest for the edge node, E8): whether an answer the edge node's registrar
+            sent may be taken now: its nonce made at most 330 seconds ago by this node's clock (the time is in the nonce,
+            which the phone's response covers) and not ahead of it, and this device, nonce and nonce count not taken
+            before (kept in memory for the nonce's life).</description>
+        <in-parameters>
+            <parameter name="sipDeviceId" required="true"/>
+            <parameter name="nonce" required="true"/>
+            <parameter name="nc"/>
+        </in-parameters>
+        <out-parameters><parameter name="fresh" type="Boolean"/></out-parameters>
+    </service>
+
+    <service verb="store" noun="SipRegistration" authenticate="false" allow-remote="false">
+        <description>Internal (the SIP engine): a binding was added, refreshed or removed (change). Kept as its
+            SipRegistration row, and the device's lastSeenDate; one of an older credential revision, or of a removed device,
+            is not kept. From the edge node's delegate user (E8), an added or refreshed binding only for its own SIP node
+            (instanceId) and a phone whose digest it had checked here within a minute (notAllowed).</description>
+        <in-parameters>
+            <parameter name="change" required="true"/>
+            <parameter name="sipRegistrationId" required="true"/>
+            <parameter name="sipDeviceId"/>
+            <parameter name="instanceId"/>
+            <parameter name="contactUri"/>
+            <parameter name="transport"/>
+            <parameter name="sourceAddress"/>
+            <parameter name="sourcePort" type="Integer"/>
+            <parameter name="sipCallId"/>
+            <parameter name="cseq" type="Long"/>
+            <parameter name="instanceKey"/>
+            <parameter name="regId" type="Integer"/>
+            <parameter name="outbound" type="Boolean"/>
+            <parameter name="credentialRevision" type="Integer"/>
+            <parameter name="expiresDate" type="Long"/>
+            <parameter name="lastRefreshDate" type="Long"/>
+            <parameter name="userAgent"/>
+        </in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SipDevices.js').execute('storeRegistration', context))</script></actions>
+    </service>
+
+    <service verb="expire" noun="SipRegistrations" authenticate="false" allow-remote="false">
+        <description>Internal (the job expire_SipRegistrations, every 5 minutes): removes the registrations past their
+            expiry and those whose SIP engine stopped. Each row on its own.</description>
+        <out-parameters>
+            <parameter name="removedCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SipDevices.js').execute('expireRegistrations', context))</script></actions>
+    </service>
+
+    <service verb="ring" noun="SipDevices" authenticate="false" allow-remote="false">
+        <description>Internal (Calls.js, when a call rings users): rings the users' phones registered with the call's node,
+            a CltSipDevice leg offered for each, which that node's SIP engine forks to the phone's live bindings. From
+            fromUserId's username, else the call's phone number. Nothing while the registrar is off, and nothing for an
+            end-to-end encrypted call (W8, reasonCode encrypted): a phone cannot decrypt it.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/>
+            <parameter name="userIdList" type="List" required="true"/>
+            <parameter name="fromUserId"/>
+            <parameter name="fromName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ringCount" type="Integer"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SipDevices.js').execute('ringDevices', context))</script></actions>
+    </service>
+
+    <service verb="receive" noun="DeviceCall" authenticate="false" allow-remote="false">
+        <description>Internal (the SIP engine of instanceId, after the phone's digest answer): a registered phone's call to
+            toUser, placed as the phone's user with the phone as their leg (callLegId): another user's username is an internal
+            call; anything else is a number, through place#PhoneCall's checks (outbound permission, caller ID, fraud limits,
+            emergency first). Refusals carry place#PhoneCall's reasonCodes, or notAllowed (the registrar is off, the phone was
+            removed).</description>
+        <in-parameters>
+            <parameter name="sipDeviceId" required="true"/>
+            <parameter name="toUser" required="true"/>
+            <parameter name="instanceId" required="true"/>
+            <parameter name="sipCallId"/>
+            <parameter name="sourceAddress"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="callSessionId"/>
+            <parameter name="callLegId"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/SipDevices.js').execute('receiveDeviceCall', context))</script></actions>
+    </service>
+</services>

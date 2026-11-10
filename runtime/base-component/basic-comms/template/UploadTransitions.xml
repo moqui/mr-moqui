@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The transitions of a file sent in chunks (org.moqui.impl.ClientSyncServices, plans/Mobile-Desktop.md MD5), which Compose
+<!-- The transitions of a file sent in chunks (org.moqui.edge.ClientSyncServices, plans/Mobile-Desktop.md MD5), which Compose
     and Chat each include by name: uploadChunk takes one chunk (a multipart post of uploadId, offset, total, fileName,
     contentType and the bytes as the file part chunk) and answers {uploadId, received, total, accepted, complete}; a chunk
     at another offset than the bytes held is not taken and received says where to go on. uploadStatus answers {found,
@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="uploadChunk">
         <actions><script><![CDATA[
             const number = (value) => value == null || value === '' ? null : Number(value)
-            const out = ec.service.sync().name('org.moqui.impl.ClientSyncServices.upload#Chunk').parameters({uploadId: uploadId || '',
+            const out = ec.service.sync().name('org.moqui.edge.ClientSyncServices.upload#Chunk').parameters({uploadId: uploadId || '',
                 offset: number(offset), total: number(total), fileName: fileName || null, contentType: contentType || null, chunk: chunk || null}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {uploadId: out.uploadId, received: out.received, total: out.total,
                 accepted: out.accepted === true, complete: out.complete === true})
@@ -31,7 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="uploadStatus" method="get" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ClientSyncServices.get#UploadStatus').parameter('uploadId', uploadId || '').call()
+            const out = ec.service.sync().name('org.moqui.edge.ClientSyncServices.get#UploadStatus').parameter('uploadId', uploadId || '').call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {found: out.found === true, received: out.received, total: out.total,
                 complete: out.complete === true, fileName: out.fileName})
         ]]></script></actions>

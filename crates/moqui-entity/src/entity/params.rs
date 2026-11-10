@@ -118,9 +118,9 @@ mod tests {
             origins: None,
         };
         let columns: Vec<(Arc<str>, String)> = vec![
-            ("quantity".into(), "java.math.BigDecimal".to_string()),
-            ("amount".into(), "java.math.BigDecimal".to_string()),
-            ("total".into(), "java.math.BigDecimal".to_string()),
+            ("quantity".into(), "BigDecimal".to_string()),
+            ("amount".into(), "BigDecimal".to_string()),
+            ("total".into(), "BigDecimal".to_string()),
             ("raw".into(), String::new()),
         ];
         let values = map_row(&columns, row);

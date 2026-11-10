@@ -17,7 +17,7 @@
 //! on.
 //!
 //! - **Verifiers.** The user agent asks for a device's digest verifiers by username on each REGISTER or INVITE that
-//!   answers a challenge (`org.moqui.impl.SipDeviceServices.get#SipDeviceAuth`, which decrypts them); the password is
+//!   answers a challenge (`org.moqui.call.SipDeviceServices.get#SipDeviceAuth`, which decrypts them); the password is
 //!   never stored.
 //! - **Bindings** live in the user agent, with their flows; each change is kept as a `SipRegistration` row
 //!   (`store#SipRegistration`), which the services read to know which users' devices ring here.
@@ -57,11 +57,11 @@ use super::{call_service, number, owners, text, Engine, Leg, RING_TIMEOUT};
 /// The paired node and its SIP device domain (E12), as the engine last read them, for the registrar's directory.
 pub(super) type Paired = Arc<Mutex<Option<(String, String)>>>;
 
-const AUTH_SERVICE: &str = "org.moqui.impl.SipDeviceServices.get#SipDeviceAuth";
+const AUTH_SERVICE: &str = "org.moqui.call.SipDeviceServices.get#SipDeviceAuth";
 /// On an edge node, the local node's check of a phone's digest answer (E8).
-const CHECK_SERVICE: &str = "org.moqui.impl.SipDeviceServices.check#SipDeviceDigest";
-const STORE_SERVICE: &str = "org.moqui.impl.SipDeviceServices.store#SipRegistration";
-const RECEIVE_SERVICE: &str = "org.moqui.impl.SipDeviceServices.receive#DeviceCall";
+const CHECK_SERVICE: &str = "org.moqui.call.SipDeviceServices.check#SipDeviceDigest";
+const STORE_SERVICE: &str = "org.moqui.call.SipDeviceServices.store#SipRegistration";
+const RECEIVE_SERVICE: &str = "org.moqui.call.SipDeviceServices.receive#DeviceCall";
 
 /// The registrar's limits from the `sip_registrar_*` properties, or `None` while `sip_registrar_enabled` is not true.
 /// A value that is not a number is logged and keeps its default.

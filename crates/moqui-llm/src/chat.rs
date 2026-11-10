@@ -57,7 +57,7 @@ use moqui_core::entity::EntityFacade;
 use moqui_core::llm_hooks::RustServiceFn;
 use moqui_core::rust_service;
 
-const CHAT: &str = "org.moqui.impl.ChatServices";
+const CHAT: &str = "org.moqui.chat.ChatServices";
 const EVENT: &str = "moqui.chat.ChatEvent";
 const MEMBER: &str = "moqui.chat.ChatRoomMember";
 const ROOM: &str = "moqui.chat.ChatRoom";

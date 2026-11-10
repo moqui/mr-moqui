@@ -1214,7 +1214,7 @@ try {
                 let $groups = [];
                 if ($isStatus || $order.length) {
                     const $values = $order.concat($viewRows.map(($row) => $row.group)).filter(($g, $i, $all) => $g && $all.indexOf($g) === $i);
-                    const $out = ec.service.sync().name("org.moqui.impl.StatusServices.get#ListViewColumns").parameters({
+                    const $out = ec.service.sync().name("org.moqui.ui.StatusServices.get#ListViewColumns").parameters({
                         values:$values,statusTypeId:$statusTypeId || null,status:$isStatus,statusFlowId:${jsString(vb("status-flow-id"))} || null
                     }).disableAuthz().call() || {};
                     $groups = Array.from($out.columns || []).map(($c) => ({value:String($c.value),label:String($c.label || $c.value),color:$c.color ? String($c.color) : ""}));
@@ -1379,7 +1379,7 @@ ${actionDialogs ? "        " + ifSelOn(actionDialogs) : ""}    } finally {
         if (whole) return `$ids(ec.resource.expression(${jsString(whole[1])}, ""))`;
         return `$ids(${exprNoL10n(text)})`;
     };
-    // status-bar: the stages and transitions of org.moqui.impl.StatusServices.get#StatusBar, as qvt's statusBarData, and a
+    // status-bar: the stages and transitions of org.moqui.ui.StatusServices.get#StatusBar, as qvt's statusBarData, and a
     // link per transition that posts the new status. Without a status, or when the service fails, the status's text alone.
     const statusBarCode = (node) => {
         const transition = attr(node, "transition");
@@ -1409,7 +1409,7 @@ ${actionDialogs ? "        " + ifSelOn(actionDialogs) : ""}    } finally {
     if ($statusId && $statusId !== "null") {
         try {
             const $readOnly = String(${exprNoL10n(attr(node, "read-only"))}) === "true";
-            const $out = ec.service.sync().name("org.moqui.impl.StatusServices.get#StatusBar").parameters({statusId:$statusId,statusTypeId:${exprNoL10n(attr(node, "status-type-id"))} || null,statusFlowId:${exprNoL10n(attr(node, "status-flow-id"))} || null,stageStatusIds:${idListExpr(attr(node, "stages"))},allowedToStatusIds:$readOnly ? [] : ${idListExpr(attr(node, "allowed-status-ids"))}}).disableAuthz().call() || {};
+            const $out = ec.service.sync().name("org.moqui.ui.StatusServices.get#StatusBar").parameters({statusId:$statusId,statusTypeId:${exprNoL10n(attr(node, "status-type-id"))} || null,statusFlowId:${exprNoL10n(attr(node, "status-flow-id"))} || null,stageStatusIds:${idListExpr(attr(node, "stages"))},allowedToStatusIds:$readOnly ? [] : ${idListExpr(attr(node, "allowed-status-ids"))}}).disableAuthz().call() || {};
             $bar = {readOnly:$readOnly,current:$out.current || null,stages:Array.from($out.stages || []),transitions:$readOnly ? [] : Array.from($out.transitions || [])};
         } catch ($err) {
             ec.logger.error(${jsString(`Leaving the stages of status-bar ${idOf(node)} out for status `)} + $statusId + ": " + $err);

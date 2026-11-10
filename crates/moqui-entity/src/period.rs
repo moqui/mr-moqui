@@ -74,7 +74,7 @@ fn stamp(date: Date, zone: &TimeZone) -> Result<Value, Error> {
         .at(0, 0, 0, 0)
         .to_zoned(zone.clone())
         .map_err(|err| Error::new(format!("period date {date} has no start of day: {err}")))?;
-    Ok(basic_convert(&Value::I64(zoned.timestamp().as_millisecond()), "java.sql.Timestamp").value)
+    Ok(basic_convert(&Value::I64(zoned.timestamp().as_millisecond()), "Timestamp").value)
 }
 
 fn add_days(date: Date, days: i32) -> Result<Date, Error> {
@@ -292,8 +292,14 @@ mod tests {
     fn a_dates_millis_keep_its_day_west_of_utc() {
         let chicago = TimeZone::get("America/Chicago").unwrap();
         // 2026-11-01 as a Date parameter: its UTC midnight, which is Oct 31 in Chicago
-        assert_eq!(millis_date(1_793_491_200_000, &chicago), Some("2026-11-01".parse().unwrap()));
+        assert_eq!(
+            millis_date(1_793_491_200_000, &chicago),
+            Some("2026-11-01".parse().unwrap())
+        );
         // a Timestamp at another instant is dated in the zone: 2026-11-01T03:00Z is Oct 31 at 22:00 in Chicago
-        assert_eq!(millis_date(1_793_502_000_000, &chicago), Some("2026-10-31".parse().unwrap()));
+        assert_eq!(
+            millis_date(1_793_502_000_000, &chicago),
+            Some("2026-10-31".parse().unwrap())
+        );
     }
 }

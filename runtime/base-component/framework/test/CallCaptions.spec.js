@@ -1,4 +1,4 @@
-// Call captions (org.moqui.impl.CallCaptionServices and CallCaptions.js; plans/Comms-Framework.md §6.4, W6): the policy
+// Call captions (org.moqui.call.CallCaptionServices and CallCaptions.js; plans/Comms-Framework.md §6.4, W6): the policy
 // switch, someone not in the call, an end-to-end encrypted call, and turning captions on and off. Every refusal uses the
 // same parameters as the case that works. The media node's side (chunking, order, timeouts, backpressure) is
 // crates/moqui-host rtc/captions_tests.rs; this spec's media node is a row, so no audio goes anywhere.
@@ -34,7 +34,7 @@ function as(userId, name, parameters) {
     ec.message.clearErrors()
     return Object.assign({errors}, out)
 }
-const captions = (userId, verb, parameters) => as(userId, "org.moqui.impl.CallCaptionServices." + verb, parameters)
+const captions = (userId, verb, parameters) => as(userId, "org.moqui.call.CallCaptionServices." + verb, parameters)
 const on = (run) => withProperty("call_captions_enabled", "true", run)
 function makeUser(userId) {
     sys(() => {
@@ -88,9 +88,9 @@ spec({
     setupSpec() {
         for (const id of [A, B, C]) makeUser(id)
         endAll()
-        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: NODE, mediaAddress: "127.0.0.1:10000"}))
-        const started = as(A, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [B], idempotencyKey: "captions-spec-1"})
-        as(B, "org.moqui.impl.CallServices.answer#Call", {callSessionId: started.callSessionId})
+        sys(() => call("org.moqui.call.CallServices.register#MediaNode", {instanceId: NODE, mediaAddress: "127.0.0.1:10000"}))
+        const started = as(A, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [B], idempotencyKey: "captions-spec-1"})
+        as(B, "org.moqui.call.CallServices.answer#Call", {callSessionId: started.callSessionId})
         theCall = {callSessionId: started.callSessionId}
     },
     cleanupSpec() {
@@ -166,13 +166,13 @@ feature("someone in the call turns captions on and someone else turns them off",
             const again = captions(A, "start#Captions", theCall)
             const afterAgain = notices()
             // C is added and answers: the leg bound while captions are on gets the notice, logged for its leg
-            as(A, "org.moqui.impl.CallTransferServices.add#CallParticipant", {callSessionId: theCall.callSessionId, userId: C})
-            as(C, "org.moqui.impl.CallServices.answer#Call", theCall)
+            as(A, "org.moqui.call.CallTransferServices.add#CallParticipant", {callSessionId: theCall.callSessionId, userId: C})
+            as(C, "org.moqui.call.CallServices.answer#Call", theCall)
             const cLeg = sys(() => {
                 const p = ec.entity.find("moqui.call.CallParticipant").condition({callSessionId: theCall.callSessionId, userId: C}).one()
                 return Array.from(ec.entity.find(LEG).condition({callParticipantId: p.callParticipantId, statusId: "ClsAnswered"}).list())[0]
             })
-            const bound = as(C, "org.moqui.impl.CallServices.bind#Connection", {callSessionId: theCall.callSessionId, callLegId: cLeg.callLegId})
+            const bound = as(C, "org.moqui.call.CallServices.bind#Connection", {callSessionId: theCall.callSessionId, callLegId: cLeg.callLegId})
             const afterJoin = notices()
             const seenByB = captions(B, "get#CaptionState", theCall)
             const stopped = captions(B, "stop#Captions", theCall)
@@ -206,7 +206,7 @@ feature("someone in the call turns captions on and someone else turns them off",
 
 feature("transcribe#Audio answers a reason, not a failure, when there is no audio", {
     when() {
-        return sys(() => ec.service.sync().name("org.moqui.impl.SpeechServices.transcribe#Audio")
+        return sys(() => ec.service.sync().name("org.moqui.call.SpeechServices.transcribe#Audio")
             .parameters({mediaType: "audio/wav", audio: ""}).call()) || {}
     },
     then(out) {

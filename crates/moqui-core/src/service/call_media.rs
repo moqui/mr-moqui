@@ -12,15 +12,15 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.CallServices.send#MediaControl` (plans/Comms-Framework.md §6.3): the call services tell the node
+//! `org.moqui.call.CallServices.send#MediaControl` (plans/Comms-Framework.md §6.3): the call services tell the node
 //! holding a call's media that a leg left or was removed, or that the call ended, so the node closes its peers. The
 //! message goes on the `rtc-signal` cluster topic to that node only ([`crate::cluster::send_to`]), after the caller's
 //! transaction commits; moqui-host's rtc module takes it there. A node that is gone is logged and skipped: its calls
-//! end on their own when its heartbeat stops (`expire#Calls`). `org.moqui.impl.VoiceServices.send#SipControl` (§5.2)
+//! end on their own when its heartbeat stops (`expire#Calls`). `org.moqui.call.VoiceServices.send#SipControl` (§5.2)
 //! goes the same way to a node's SIP engine (moqui-host's sip module), with kind `sip`.
 //!
-//! `org.moqui.impl.CallRecordingServices.store#RecordingFile` (W5) moves a recorder's spooled segment file into the
-//! recordings' `dbresource://` root, and `org.moqui.impl.VoicemailServices.store#VoicemailFile` (V2) a message the SIP
+//! `org.moqui.call.CallRecordingServices.store#RecordingFile` (W5) moves a recorder's spooled segment file into the
+//! recordings' `dbresource://` root, and `org.moqui.call.VoicemailServices.store#VoicemailFile` (V2) a message the SIP
 //! engine recorded into the voicemail root.
 //!
 //! SIP on an edge node (plans/Edge-Node.md §5.4 "Voice (SIP)", E8): `VoiceServices.get#CallAudio` and
@@ -195,7 +195,7 @@ fn audio_answer(location: &str) -> Result<BTreeMap<String, Value>, LibError> {
     Ok(out)
 }
 
-/// `org.moqui.impl.VoiceServices.get#CallAudio` (E8): a greeting or prompt (`location`) the edge node's SIP engine is to
+/// `org.moqui.call.VoiceServices.get#CallAudio` (E8): a greeting or prompt (`location`) the edge node's SIP engine is to
 /// play and does not have, as base64. Any other location is not found.
 fn get_call_audio(
     parameters: &BTreeMap<String, Value>,
@@ -209,7 +209,7 @@ fn get_call_audio(
     audio_answer(location)
 }
 
-/// `org.moqui.impl.VoicemailServices.get#PhoneVoicemailAudio` (E8): a message (`audioLocation`) the edge node's SIP
+/// `org.moqui.call.VoicemailServices.get#PhoneVoicemailAudio` (E8): a message (`audioLocation`) the edge node's SIP
 /// engine plays to a caller, as base64, only on a call (`callSessionId`) that has not ended, whose media is on that
 /// edge node when the edge node asks, and whose caller gave the message's box's PIN (`CallSession.voicemailAccessBoxId`,
 /// set by `check#VoicemailPin`). Anything else is not found.
@@ -255,7 +255,7 @@ fn get_phone_voicemail_audio(
     audio_answer(&location)
 }
 
-/// `org.moqui.impl.VoiceServices.store#EdgeCallAudio` (E8), the queue kind `callAudio` on an edge node: a greeting or
+/// `org.moqui.call.VoiceServices.store#EdgeCallAudio` (E8), the queue kind `callAudio` on an edge node: a greeting or
 /// prompt of its local node (the item's content at `contentLocation`), kept at its own location (the payload's
 /// `location`), which the SIP engine reads as on the local node. Refused on a local node, from anyone but the queue,
 /// and for any other location.
@@ -471,7 +471,7 @@ fn send_media_control(
     send_to_node(parameters, facade, "mediaNodeId", "control")
 }
 
-/// `org.moqui.impl.VoiceServices.send#SipControl` (plans/Comms-Framework.md §5.2): the voice services tell the SIP
+/// `org.moqui.call.VoiceServices.send#SipControl` (plans/Comms-Framework.md §5.2): the voice services tell the SIP
 /// engine of a node (`instanceId`) to dial, answer, hang up, hold, send digits or reload its trunks, on the same
 /// `rtc-signal` topic with kind `sip`, after the caller's commit; moqui-host's sip module takes it there.
 fn send_sip_control(
@@ -534,7 +534,7 @@ fn send_to_node(
     Ok(BTreeMap::new())
 }
 
-/// `org.moqui.impl.CallCaptionServices.get#CaptionSpeaker` (W6): the participant of a leg (`callLegId`) and the name the
+/// `org.moqui.call.CallCaptionServices.get#CaptionSpeaker` (W6): the participant of a leg (`callLegId`) and the name the
 /// call shows for them: the participant's `displayName`, else its user's full name or username. Empty for a leg not
 /// found. The media node's captions call it, so on an edge node it runs on the local node (plans/Edge-Node.md §5.4).
 fn get_caption_speaker(
@@ -623,7 +623,7 @@ fn edge_caller_allowed(facade: &EntityFacade, call: &str, leg_node: Option<&str>
 /// The most audio one caption chunk may carry: 30 seconds of 16 kHz mono WAV is under 1 MiB; this leaves room.
 const MAX_CAPTION_AUDIO: usize = 4 * 1024 * 1024;
 
-/// `org.moqui.impl.CallCaptionServices.transcribe#CaptionAudio` (W6, plans/Edge-Node.md §5.4 E7): an edge node's chunk
+/// `org.moqui.call.CallCaptionServices.transcribe#CaptionAudio` (W6, plans/Edge-Node.md §5.4 E7): an edge node's chunk
 /// of a call's audio (`audioBase64`, WAV) through [`crate::llm_hooks::transcribe`] on this node, counted against
 /// `userId` (who must be a participant of `callSessionId`) and kept as an `LlmCall` with the client
 /// `captions:<callSessionId>`. A refusal is `errorCode` and `errorMessage`, not a service error, so the media node keeps

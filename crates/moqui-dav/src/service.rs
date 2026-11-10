@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.DavServices.serve#DavRequest`: one request to the DAV server (`crate::dav`) without a socket, for a
+//! `org.moqui.resource.DavServices.serve#DavRequest`: one request to the DAV server (`crate::dav`) without a socket, for a
 //! spec or a script that checks an application's DAV adapter. The request runs in a context of its own, as on a request
 //! worker: authorization on, logged in by its own `Authorization` header; the caller's user and context are untouched.
 

@@ -1,4 +1,4 @@
-// The framework's mail client (org.moqui.impl.EmailClientServices) on the real database: the SQL the message list
+// The framework's mail client (org.moqui.mail.EmailClientServices) on the real database: the SQL the message list
 // writes (case-insensitive LIKE, NOT IN with nulls, the date cursor), filing and a delete forever under the foreign
 // keys, a send that cannot connect waiting in the Outbox, a send that goes (through the mail capture,
 // docs/Build-Test.md "Mail"), removing an account with its mail, and the sync engine's SQL (an import with its files as
@@ -6,7 +6,7 @@
 // access rules, the views and the sends in full are the Rust tests in
 // crates/moqui-core/src/service/mail/client_tests.rs, and the sync against scripted servers in sync_tests.rs.
 
-const SERVICES = "org.moqui.impl.EmailClientServices"
+const SERVICES = "org.moqui.mail.EmailClientServices"
 const base = Date.now() - 10 * 86400000
 let accountId
 let inboxId

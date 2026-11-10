@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.EmailClientServices`, the mail client: who reaches an account and with what permission, the
+//! `org.moqui.mail.EmailClientServices`, the mail client: who reaches an account and with what permission, the
 //! Internal account, the message list with its views, threads and date cursor, filing (flags, folders, labels, snooze,
 //! trash, archive), drafts and sends through the test sink (now, scheduled, held for undo, failed and retried), the
 //! jobs, the unread count, and the server test against scripted local SMTP and IMAP servers.
@@ -31,7 +31,7 @@ use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_core::transaction::TransactionAttribute;
 
-const SERVICES: &str = "org.moqui.impl.EmailClientServices";
+const SERVICES: &str = "org.moqui.mail.EmailClientServices";
 const MESSAGE: &str = "moqui.basic.email.EmailMessage";
 const DAY: i64 = 86_400_000;
 
@@ -55,10 +55,10 @@ fn install() {
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
         framework.join("EmailServices.xml"),
-        framework.join("impl/EmailServices.xml"),
-        framework.join("impl/EmailClientServices.xml"),
+        framework.join("mail/EmailServices.xml"),
+        framework.join("mail/EmailClientServices.xml"),
         framework.join("admin/IdentityServices.xml"),
-        framework.join("impl/ShellServices.xml"),
+        framework.join("ui/ShellServices.xml"),
     ];
     let failures = moqui_core::service::lint(&paths).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
@@ -69,7 +69,7 @@ fn now() -> i64 {
 }
 
 fn stamp(millis: i64) -> Value {
-    basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
+    basic_convert(&Value::I64(millis), "Timestamp").value
 }
 
 fn text(value: &str) -> Value {

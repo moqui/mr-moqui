@@ -57,7 +57,7 @@ const WARMUP: usize = 8;
 const USER_A: &str = "speed.a";
 const USER_B: &str = "speed.b";
 const PASSWORD: &str = "Speed-Secret1!";
-const CHAT: &str = "org.moqui.impl.ChatServices";
+const CHAT: &str = "org.moqui.chat.ChatServices";
 
 #[test]
 #[ignore = "transaction cache timings: cargo test --release -p moqui-host --test tx_cache_speed -- --ignored --nocapture"]
@@ -204,7 +204,7 @@ fn one_batch(
         });
         row("S4 update#WikiPage", cache, &mut |index| {
             service(
-                "org.moqui.impl.WikiServices.update#WikiPage",
+                "org.moqui.resource.WikiServices.update#WikiPage",
                 cache,
                 [
                     ("wikiSpaceId", Value::string("SPEED")),
@@ -215,7 +215,7 @@ fn one_batch(
         });
         row("S5 set#MessageFlags", cache, &mut |index| {
             service(
-                "org.moqui.impl.EmailClientServices.set#MessageFlags",
+                "org.moqui.mail.EmailClientServices.set#MessageFlags",
                 cache,
                 [
                     ("emailMessageIdList", Value::List(vec![Value::string("SPEEDM1")])),
@@ -260,7 +260,7 @@ fn one_batch(
         tx.set_use_transaction_cache(cache == Cache::On);
         row("N1 mail store, 2 attachments, a cursor", cache, &mut |index| {
             service(
-                "org.moqui.impl.EmailClientServices.import#EmailMessages",
+                "org.moqui.mail.EmailClientServices.import#EmailMessages",
                 cache,
                 [
                     ("emailFolderId", Value::string(&world.inbox)),
@@ -285,14 +285,14 @@ fn one_batch(
         row("N3 mark#NotificationsViewed of 5", cache, &mut |_| {
             let chunk = chunks.next().unwrap_or_default();
             service(
-                "org.moqui.impl.NotificationServices.mark#NotificationsViewed",
+                "org.moqui.ui.NotificationServices.mark#NotificationsViewed",
                 cache,
                 [("notificationMessageIdList", Value::List(chunk.to_vec()))],
             );
         });
         // N4: an autosave of a draft, the draft made first.
         let draft = service_out(
-            "org.moqui.impl.EmailClientServices.save#Draft",
+            "org.moqui.mail.EmailClientServices.save#Draft",
             [
                 ("emailAccountId", Value::string(&world.mail_account)),
                 ("toAddresses", Value::string("someone@speed.test")),
@@ -305,7 +305,7 @@ fn one_batch(
         .expect("draft emailMessageId");
         row("N4 save#Draft, an autosave", cache, &mut |index| {
             service(
-                "org.moqui.impl.EmailClientServices.save#Draft",
+                "org.moqui.mail.EmailClientServices.save#Draft",
                 cache,
                 [
                     ("emailMessageId", draft.clone()),
@@ -398,14 +398,14 @@ fn seed(facade: &EntityFacade) -> World {
     .cloned()
     .expect("eventSeq");
     service_out(
-        "org.moqui.impl.WikiServices.create#WikiSpace",
+        "org.moqui.resource.WikiServices.create#WikiSpace",
         [
             ("wikiSpaceId", Value::string("SPEED")),
             ("description", Value::string("Speed space")),
         ],
     );
     service_out(
-        "org.moqui.impl.WikiServices.update#WikiPage",
+        "org.moqui.resource.WikiServices.update#WikiPage",
         [
             ("wikiSpaceId", Value::string("SPEED")),
             ("pageName", Value::string("Page1")),
@@ -430,7 +430,7 @@ fn seed(facade: &EntityFacade) -> World {
     // N1: a mail account of user A's, and a mail change cursor of A's, so each write of a stored message makes a change
     // row (note#MessageChange reads the account's users and their states for each).
     let mail = service_out(
-        "org.moqui.impl.EmailClientServices.create#EmailAccount",
+        "org.moqui.mail.EmailClientServices.create#EmailAccount",
         [
             ("emailAddress", Value::string("speed.mail@speed.test")),
             ("accountName", Value::string("Speed mail")),

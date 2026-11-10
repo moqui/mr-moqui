@@ -54,7 +54,7 @@ const SERVICES: &str = r#"<services>
             <parameter name="clientVerified" type="Boolean"/>
             <parameter name="visitorAddress"/>
             <parameter name="operationId"/>
-            <parameter name="file" type="org.apache.commons.fileupload2.core.FileItem"/>
+            <parameter name="file" type="FileItem"/>
         </in-parameters>
         <out-parameters>
             <parameter name="result" type="Map"/>
@@ -443,7 +443,7 @@ fn wait_until(limit: Duration, what: &str, check: impl Fn() -> bool) {
 
 /// Whether the edge node has the local node's down connection.
 fn down(edge: &Gate) -> bool {
-    let (out, errors) = call(edge, "org.moqui.impl.EdgeServices.get#EdgeClients", &[]);
+    let (out, errors) = call(edge, "org.moqui.edge.EdgeServices.get#EdgeClients", &[]);
     assert!(errors.is_empty(), "{errors:?}");
     let Some(Value::List(list)) = out.get("clientList") else {
         panic!("clientList: {out:?}")
@@ -511,7 +511,7 @@ fn pass_authority_calls_round_trip_direct_and_on_the_edge_link() {
         .build()
         .unwrap();
     let url = format!("https://localhost:{edge_port}");
-    let (out, errors) = call(&edge, "org.moqui.impl.EdgeServices.create#PairingCode", &[]);
+    let (out, errors) = call(&edge, "org.moqui.edge.EdgeServices.create#PairingCode", &[]);
     assert!(errors.is_empty(), "{errors:?}");
     let mut pairing = PairConfig::new(&url, &to_plain_string(&out["code"]), NODE);
     pairing.trust_root = Some(root);

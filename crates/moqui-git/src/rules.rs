@@ -13,7 +13,7 @@
  */
 
 //! Branch rules (`moqui.resource.GitBranchRule`): protected refs of a repository, enforced by the git server before a
-//! pushed ref moves and by the ref services of `org.moqui.impl.GitServices` (create, delete and merge), so no
+//! pushed ref moves and by the ref services of `org.moqui.git.GitServices` (create, delete and merge), so no
 //! component can skip them. A rule names its refs by a pattern: one that starts with `refs/` is matched against the
 //! full ref name, any other against a branch's name; `*` stands for any run of characters. Every rule that matches a
 //! ref applies: a change is refused when any of them refuses it. Writes through `git://` (a wiki save, release notes)

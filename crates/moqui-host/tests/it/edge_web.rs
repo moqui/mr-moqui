@@ -41,7 +41,7 @@ use tokio::sync::watch;
 
 use crate::common::Gate;
 
-const SERVICES: &str = "org.moqui.impl.EdgeServices";
+const SERVICES: &str = "org.moqui.edge.EdgeServices";
 const TERM: &str = "term.localhost";
 const PASS: &str = "pass.localhost";
 

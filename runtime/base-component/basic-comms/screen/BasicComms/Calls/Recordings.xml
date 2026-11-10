@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     may read (their own, and those of calls they host), newest first, each with who was in the call, when, how long and its
     state; a player that plays one period of a recording's tracks together (each person's audio and video, with the mixed
     audio of the whole call as the clock when there is one); a download of each file; and Delete for the one who recorded it.
-    The rows come from org.moqui.impl.CallRecordingServices find#Recordings, the files from get#RecordingFile by segment id,
+    The rows come from org.moqui.call.CallRecordingServices find#Recordings, the files from get#RecordingFile by segment id,
     which refuses anyone who may not read the recording ("not found"), so these transitions run with authorization off as
     the call transitions do. The component is Recordings.qvue next to this file; the terminal twin (RecordingsTui) lists them
     with Delete, and has no player. -->
@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="recordings" method="get" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.find#Recordings').parameters({callSessionId: callSessionId || null,
+            const out = ec.service.sync().name('org.moqui.call.CallRecordingServices.find#Recordings').parameters({callSessionId: callSessionId || null,
                 pageIndex: Math.max(Number(pageIndex) || 0, 0), pageSize: 20}).requireNewTransaction(true).disableAuthz().call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
@@ -39,7 +39,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- one file of a recording the user may read: inline for the player, else a download; nothing for anyone else -->
     <transition name="recordingFile" method="get" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.get#RecordingFile').parameter('callRecordingSegmentId', callRecordingSegmentId || '')
+            const out = ec.service.sync().name('org.moqui.call.CallRecordingServices.get#RecordingFile').parameter('callRecordingSegmentId', callRecordingSegmentId || '')
                 .requireNewTransaction(true).disableAuthz().call() || {}
             const refused = ec.message.hasError() || !out.location
             ec.message.clearErrors()
@@ -50,7 +50,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="deleteRecording">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.delete#Recording').parameter('callRecordingId', callRecordingId || '')
+            const out = ec.service.sync().name('org.moqui.call.CallRecordingServices.delete#Recording').parameter('callRecordingId', callRecordingId || '')
                 .requireNewTransaction(true).disableAuthz().call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()

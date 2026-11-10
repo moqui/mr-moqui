@@ -153,7 +153,7 @@
         if (body && body.classList) body.classList.toggle("m-density-handheld", density === "handheld");
         moqui.applyDensity(moqui.densityPreference);
     };
-    // The appearance (docs/ui/Qvt-Client.md, Appearance): config.appearance is what org.moqui.impl.ShellServices.get#Appearance built
+    // The appearance (docs/ui/Qvt-Client.md, Appearance): config.appearance is what org.moqui.ui.ShellServices.get#Appearance built
     // for the theme (after its STRT_APPEARANCE_SERVICE extensions): the color schemes, the fonts, the default scheme, the policy and the
     // user's THEME_* values it allows. The scheme shown is the user's, else the theme's default: a style sheet (the apps colorSchemeCss
     // transition) linked as m-color-scheme, none for one without colors. A font sets its --m-font-* token on the html element and links
@@ -5548,7 +5548,7 @@
 
     /* ========== status ========== */
 
-    // How a status-bar draws what org.moqui.impl.StatusServices.get#StatusBar answered (style-guide §3.3, §5.2): each stage a chip,
+    // How a status-bar draws what org.moqui.ui.StatusServices.get#StatusBar answered (style-guide §3.3, §5.2): each stage a chip,
     // the current one filled in its color, a done one tinted with a check, one to come outlined and muted; each transition a
     // button, the next stage the filled primary action, the others tonal (negative for those that end badly), with the
     // confirmation "Label: title?". Pure, for the node tests; m-status-bar binds what it gives.

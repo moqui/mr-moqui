@@ -22,7 +22,7 @@ The code:
   - batches and transactions of a load: `EtlLoader` in `crates/moqui-entity/src/entity/etl.rs`;
   - the extract-transform-load core: `crates/moqui-lib/src/etl.rs`.
 - Services:
-  - `runtime/base-component/framework/service/org/moqui/impl/DatabaseServices.xml`;
+  - `runtime/base-component/framework/service/org/moqui/dev/DatabaseServices.xml`;
   - `EtlServices.xml`, beside it.
 - Entities: `runtime/base-component/framework/entity/DatabaseEntities.xml` (packages `moqui.database` and
   `moqui.etl`).

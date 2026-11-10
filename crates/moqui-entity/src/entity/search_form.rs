@@ -344,7 +344,7 @@ fn bound(raw: Option<&Value>, field: &SearchField, day_end: &str) -> Option<Valu
     let stamp = field.java_type.ends_with("Timestamp");
     if stamp && text.len() < 12 {
         let widened = Value::string(format!("{text}{day_end}"));
-        return Some(crate::hooks::basic_convert(&widened, "java.sql.Timestamp").value);
+        return Some(crate::hooks::basic_convert(&widened, "Timestamp").value);
     }
     Some(convert(text, &field.java_type))
 }

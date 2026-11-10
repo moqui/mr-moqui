@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The entity facade's statement statistics of this instance (plans/archive/Tools-Database.md §7.1): each statement's
     hits, errors and times, and the screens, services and REST paths that ran it. Counted when the conf's entity-facade
-    query-stats is true. Reset (org.moqui.impl.DatabaseServices.reset#QueryStats) needs DATABASE_ADMIN. -->
+    query-stats is true. Reset (org.moqui.dev.DatabaseServices.reset#QueryStats) needs DATABASE_ADMIN. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Queries" default-menu-index="3">
@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
     <transition name="resetDatabaseStatements" method="post" authz-action="all">
         <actions>
-            <service-call name="org.moqui.impl.DatabaseServices.reset#DatabaseStatements" in-map="{db: db}"/>
+            <service-call name="org.moqui.dev.DatabaseServices.reset#DatabaseStatements" in-map="{db: db}"/>
             <message>The database's statement statistics were reset</message>
         </actions>
         <default-response url="."><parameter name="db"/></default-response>
@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="resetStats" method="post" authz-action="all">
         <actions>
-            <service-call name="org.moqui.impl.DatabaseServices.reset#QueryStats"/>
+            <service-call name="org.moqui.dev.DatabaseServices.reset#QueryStats"/>
             <message>Statement statistics reset</message>
         </actions>
         <default-response url="."/>
@@ -63,7 +63,7 @@ along with this software (see the LICENSE.md file). If not, see
             databaseStatementsReason = null
             let found = null
             try {
-                found = ec.service.sync().name('org.moqui.impl.DatabaseServices.list#DatabaseStatements').parameters({db, limit: 100}).call()
+                found = ec.service.sync().name('org.moqui.dev.DatabaseServices.list#DatabaseStatements').parameters({db, limit: 100}).call()
             } catch (e) { databaseStatementsReason = String(e.message || e) }
             if (ec.message.hasError()) { databaseStatementsReason = ec.message.errorsString; ec.message.clearErrors() }
             else if (found && found.available === false) databaseStatementsReason = found.reason || 'Not available on this database'

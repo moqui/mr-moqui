@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.SimServices.run#Steps` (docs/ai/Assist.md, Sim steps): steps of one sim run, each under its own
+//! `org.moqui.dev.SimServices.run#Steps` (docs/ai/Assist.md, Sim steps): steps of one sim run, each under its own
 //! savepoint, with the rows each changed and a read after each.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "llm"))]
@@ -36,7 +36,7 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
             artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="SIM_STEPS" artifactName="simsteps\..*" nameIsPattern="Y"
             artifactTypeEnumId="AT_ENTITY" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="SIM_STEPS" artifactName="org.moqui.impl.SimServices.run#Steps"
+    <moqui.security.ArtifactGroupMember artifactGroupId="SIM_STEPS" artifactName="org.moqui.dev.SimServices.run#Steps"
             artifactTypeEnumId="AT_SERVICE"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="SIM_STEPS_ADMIN" userGroupId="ADMIN" artifactGroupId="SIM_STEPS"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
@@ -91,7 +91,7 @@ fn run_steps(factory: &Arc<ExecutionContextFactory>, user: &str, parameters: BTr
     let context = factory.new_context();
     let _entered = context.enter();
     moqui_core::user::internal_login_user(user).unwrap();
-    let out = moqui_core::service::sync("org.moqui.impl.SimServices.run#Steps", &parameters).unwrap();
+    let out = moqui_core::service::sync("org.moqui.dev.SimServices.run#Steps", &parameters).unwrap();
     assert!(
         context.message().errors().is_empty(),
         "{:?}",
@@ -257,7 +257,7 @@ fn steps_run_in_one_sim_each_under_its_own_savepoint() {
             ),
             ("read".to_string(), step("count#Widgets", serde_json::json!({}))),
         ]);
-        let out = moqui_core::service::sync("org.moqui.impl.SimServices.run#Steps", &parameters).unwrap();
+        let out = moqui_core::service::sync("org.moqui.dev.SimServices.run#Steps", &parameters).unwrap();
         assert!(
             context.message().errors().is_empty(),
             "{:?}",
@@ -284,7 +284,7 @@ fn steps_run_in_one_sim_each_under_its_own_savepoint() {
         );
         assert!(call.available && call.steps[0].ok, "{:?}", call.steps[0].error);
         let refused = moqui_core::service::sync(
-            "org.moqui.impl.SimServices.run#Steps",
+            "org.moqui.dev.SimServices.run#Steps",
             &BTreeMap::from([(
                 "steps".to_string(),
                 Value::List(vec![step("make#Widget", serde_json::json!({}))]),

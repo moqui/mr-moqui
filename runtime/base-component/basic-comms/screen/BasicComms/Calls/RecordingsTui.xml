@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The terminal twin of Recordings (style-guide §4.8): the call recordings the user may read
-    (org.moqui.impl.CallRecordingServices find#Recordings): when, who was in the call, its state and length, with Delete for
+    (org.moqui.call.CallRecordingServices find#Recordings): when, who was in the call, its state and length, with Delete for
     the one who recorded it. There is no player in the terminal: a recording plays in the browser. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Recordings" default-menu-include="false">
@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="delete">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.CallRecordingServices.delete#Recording').parameter('callRecordingId', callRecordingId || '')
+            ec.service.sync().name('org.moqui.call.CallRecordingServices.delete#Recording').parameter('callRecordingId', callRecordingId || '')
                 .requireNewTransaction(true).disableAuthz().call()
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Recording deleted'), 'success')
         ]]></script></actions>
@@ -32,7 +32,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const out = ec.service.sync().name('org.moqui.impl.CallRecordingServices.find#Recordings').parameters({callSessionId: callSessionId || null,
+        const out = ec.service.sync().name('org.moqui.call.CallRecordingServices.find#Recordings').parameters({callSessionId: callSessionId || null,
             pageSize: 50}).requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         const STATES = {recording: L('Recording'), paused: L('Paused'), stopped: L('Done'), failed: L('Failed')}

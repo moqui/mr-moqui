@@ -430,7 +430,7 @@ function endCredential(userId, kind, credentialId) {
         }
     } else if (kind === "sipDevices" || kind === "sipDevice") {
         const out = ec.resource
-            .script("component://framework/service/org/moqui/impl/SipDevices.js")
+            .script("component://framework/service/org/moqui/call/SipDevices.js")
             .execute("revokeUserDevices", {userId, sipDeviceId: credentialId || null})
         ended += Number(out.revokedCount || 0)
     } else if (kind === "agents") {

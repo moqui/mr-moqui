@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.ShellServices` (no Java counterpart): the badge counts of the `/qapps` shell. The framework does not
+//! `org.moqui.ui.ShellServices` (no Java counterpart): the badge counts of the `/qapps` shell. The framework does not
 //! count anything itself: `get#ShellCounts` calls the service the user's qapps theme names in the theme value
 //! `STRT_SHELL_COUNTS_SERVICE` (IronStone BOSS seeds it), so the framework stays Mantle-free. `publish#ShellCounts`
 //! sends a user's counts on the notification topic `shellCounts`, at most once per user every two seconds: a request
@@ -292,7 +292,10 @@ fn get_appearance(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    let user_id = crate::user::current_user_id().ok().flatten().filter(|id| !id.is_empty());
+    let user_id = crate::user::current_user_id()
+        .ok()
+        .flatten()
+        .filter(|id| !id.is_empty());
     let theme_id = text(parameters, "screenThemeId")
         .unwrap_or_else(|| user_theme_id(user_id.as_deref(), QUASAR_THEME_TYPE, DEFAULT_QUASAR_THEME));
     let appearance = crate::screen::sri::appearance::build_appearance(user_id.as_deref(), &theme_id)
@@ -307,7 +310,10 @@ fn get_appearance_policy(
     _parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    let user_id = crate::user::current_user_id().ok().flatten().filter(|id| !id.is_empty());
+    let user_id = crate::user::current_user_id()
+        .ok()
+        .flatten()
+        .filter(|id| !id.is_empty());
     let policy = crate::screen::sri::appearance::appearance_policy_for_user(user_id.as_deref());
     let text = moqui_lib::json::to_json(&policy.as_value()).to_string();
     Ok(BTreeMap::from([("policy".to_string(), Value::String(text))]))
@@ -319,7 +325,9 @@ fn get_color_scheme_css(
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let css = match text(parameters, "colorSchemeId") {
-        Some(id) => crate::screen::sri::appearance::color_scheme_css(&id).map_err(|err| LibError::new(err.to_string()))?,
+        Some(id) => {
+            crate::screen::sri::appearance::color_scheme_css(&id).map_err(|err| LibError::new(err.to_string()))?
+        }
         None => String::new(),
     };
     Ok(BTreeMap::from([("css".to_string(), Value::String(css))]))

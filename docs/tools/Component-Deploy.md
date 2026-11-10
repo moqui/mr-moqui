@@ -7,7 +7,7 @@ restart. The design and status are in [plans/archive/Component-Deploy.md](../../
 
 The code: `crates/moqui-core/src/context/conf_reload/` (the catalog, the diff, the apply and the view),
 `crates/moqui-devkit/src/deploy/` (the component load and the services), and `crates/moqui-host/src/http.rs` (SIGHUP
-and the web protection hook). Services: `org.moqui.impl.ComponentServices`. Screens: System › Conf (its Settings,
+and the web protection hook). Services: `org.moqui.dev.ComponentServices`. Screens: System › Conf (its Settings,
 Edit and Changes tabs) and System › Components.
 
 ## Reloading the conf

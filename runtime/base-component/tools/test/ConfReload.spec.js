@@ -23,7 +23,7 @@ spec({
 
 feature("a preview on a server just booted finds no change", {
     when() {
-        const out = ec.service.sync().name("org.moqui.impl.ComponentServices.preview#ConfReload").disableAuthz().call() || {}
+        const out = ec.service.sync().name("org.moqui.dev.ComponentServices.preview#ConfReload").disableAuthz().call() || {}
         const errors = ec.message.getErrorsString()
         ec.message.clearErrors()
         const report = out.report || {}
@@ -94,7 +94,7 @@ feature("the services need the ADMIN group", {
     when() {
         logout()
         login("joe@public.com")
-        ec.service.sync().name("org.moqui.impl.ComponentServices.reload#Conf").disableAuthz().call()
+        ec.service.sync().name("org.moqui.dev.ComponentServices.reload#Conf").disableAuthz().call()
         const errors = ec.message.getErrorsString()
         ec.message.clearErrors()
         logout()
@@ -108,7 +108,7 @@ feature("the services need the ADMIN group", {
 
 feature("a reload with no change applies nothing", {
     when() {
-        const out = ec.service.sync().name("org.moqui.impl.ComponentServices.reload#Conf").disableAuthz().call() || {}
+        const out = ec.service.sync().name("org.moqui.dev.ComponentServices.reload#Conf").disableAuthz().call() || {}
         const errors = ec.message.getErrorsString()
         ec.message.clearErrors()
         return {errors, report: out.report || {}}

@@ -973,7 +973,7 @@ pub(crate) struct FindValues;
 impl ConditionValues for FindValues {
     /// Java's `ec.user.nowTimestamp`, so a date filter follows the effective time.
     fn now(&self) -> Value {
-        basic_convert(&Value::I64(crate::hooks::now_effective_millis()), "java.sql.Timestamp").value
+        basic_convert(&Value::I64(crate::hooks::now_effective_millis()), "Timestamp").value
     }
 
     fn expand(&self, text: &str) -> Result<String, Error> {

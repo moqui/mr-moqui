@@ -840,7 +840,7 @@ pub fn wait_echo(token: &str, deadline: Instant) -> Option<EchoAnswer> {
     }
 }
 
-/// The handler of the `edgeEcho` queue kind (`org.moqui.impl.EdgeServices.receive#EdgeEcho`). On an edge node it
+/// The handler of the `edgeEcho` queue kind (`org.moqui.edge.EdgeServices.receive#EdgeEcho`). On an edge node it
 /// makes the check the payload asks of the node's own copies and settings and queues the answer back, in the
 /// transaction of the receipt; on a local node it keeps the answer for [`wait_echo`].
 ///

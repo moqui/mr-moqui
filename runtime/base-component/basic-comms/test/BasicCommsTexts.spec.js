@@ -109,7 +109,7 @@ feature("Text a number opens the pair's room once, with the user in it; the same
         const room = made.length ? sys(() => ec.entity.find("moqui.chat.ChatRoom").condition("chatRoomId", made[0].chatRoomId).one()) : null
         const members = made.length ? sys(() => Array.from(ec.entity.find("moqui.chat.ChatRoomMember").condition("chatRoomId", made[0].chatRoomId).list())
             .map((m) => m.userId)) : []
-        const international = sys(() => ec.service.sync().name("org.moqui.impl.SmsServices.open#PairRoom")
+        const international = sys(() => ec.service.sync().name("org.moqui.call.SmsServices.open#PairRoom")
             .parameters({toNumber: "+442071234000", fromNumber: OURS}).call()) || {}
         ec.message.clearErrors()
         return {afterStranger, made, room, members, international}

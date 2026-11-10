@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const id = String(context.mappingId || '')
                 if (!id) return [{t: 'text', id: 'MappingNew', text: 'Make a mapping in the browser: Tools › ETL › Mappings › New mapping.'}]
                 const call = (service, parameters) => {
-                    const out = ec.service.sync().name('org.moqui.impl.EtlServices.' + service).parameters(parameters).call() || {}
+                    const out = ec.service.sync().name('org.moqui.dev.EtlServices.' + service).parameters(parameters).call() || {}
                     const error = ec.message.hasError() ? ec.message.errorsString : null
                     ec.message.clearErrors()
                     return {out, error}

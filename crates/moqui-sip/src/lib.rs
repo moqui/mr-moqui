@@ -17,7 +17,7 @@
 //! Every call is one `CallSession` whatever its transport; a phone number through a trunk is one more leg of it (§5.1).
 //! This crate is that leg: its signaling toward the trunk provider and its media. It runs no business logic and knows
 //! no ExecutionContext: moqui-host starts it under its `sip` feature, owns its sockets and asks the voice services
-//! (`org.moqui.impl.VoiceServices`) what a call may do.
+//! (`org.moqui.call.VoiceServices`) what a call may do.
 //!
 //! - [`ua`]: the user agent and B2BUA on rsipstack (Tokio): the listeners, trunk registration, outbound calls with
 //!   CANCEL and forked answers, inbound calls, hold by re-INVITE, and the per-source block of failed digests.

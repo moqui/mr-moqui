@@ -13,7 +13,7 @@
  */
 
 //! The suite shell's data (`shellData`, `sri.getShellData`), the palette search (`shellSearch`, `sri.getShellSearch`)
-//! and `org.moqui.impl.ShellServices`: the apps the user may open with their menus and `<shell-providers>`, an app root
+//! and `org.moqui.ui.ShellServices`: the apps the user may open with their menus and `<shell-providers>`, an app root
 //! that fails logged and left out, the palette sources of those apps only, a failing source logged and left out, the
 //! theme values of the user's qapps theme, and the counts sent on the `shellCounts` topic, coalesced per user.
 
@@ -57,7 +57,7 @@ const ROOT: &str = r#"<screen require-authentication="false">
     ]]></script></actions><default-response type="none"/></transition>
     <transition name="providers" read-only="true" begin-transaction="false"><actions><script><![CDATA[
         const params = ec.web.parameters
-        const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: params.hook,
+        const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: params.hook,
             mutation: params.mutation == 'true', sourceId: params.sourceId || null, parameters: {text: 'hello'}}).disableAuthz().call() || {}
         const errors = ec.message.hasError() ? ec.message.errorsString : ''
         ec.message.clearErrors()
@@ -433,7 +433,7 @@ fn world_with(dir: &std::path::Path, conf: &str) -> World {
 
 fn shell_services_xml() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../runtime/base-component/framework/service/org/moqui/impl/ShellServices.xml")
+        .join("../../runtime/base-component/framework/service/org/moqui/ui/ShellServices.xml")
 }
 
 fn load_services(world: &World, services: &[PathBuf]) {
@@ -443,7 +443,7 @@ fn load_services(world: &World, services: &[PathBuf]) {
     assert!(failures.is_empty(), "{failures:?}");
 }
 
-/// `org.moqui.impl.ShellServices` alone, for a world without the test tree.
+/// `org.moqui.ui.ShellServices` alone, for a world without the test tree.
 fn shell_services(world: &World) {
     load_services(world, &[shell_services_xml()]);
 }
@@ -1051,13 +1051,13 @@ fn shell_counts_come_from_the_service_of_the_users_qapps_theme_and_a_failing_one
 
     // the service: the current user by default, another user's counts only for internal work
     crate::user::internal_login_user("other").unwrap();
-    let out = crate::service::sync("org.moqui.impl.ShellServices.get#ShellCounts", &BTreeMap::new()).unwrap();
+    let out = crate::service::sync("org.moqui.ui.ShellServices.get#ShellCounts", &BTreeMap::new()).unwrap();
     assert_eq!(
         out.get("counts").map(moqui_lib::json::to_json),
         Some(json!({"other": true}))
     );
     let theirs = BTreeMap::from([("userId".to_string(), Value::string("grouped"))]);
-    let out = crate::service::sync("org.moqui.impl.ShellServices.get#ShellCounts", &theirs).unwrap();
+    let out = crate::service::sync("org.moqui.ui.ShellServices.get#ShellCounts", &theirs).unwrap();
     assert!(!out.contains_key("counts"), "{out:?}");
     assert!(
         ctx.message().errors().join("\n").contains("another user's counts"),
@@ -1066,7 +1066,7 @@ fn shell_counts_come_from_the_service_of_the_users_qapps_theme_and_a_failing_one
     );
     ctx.message().clear_errors();
     let _authz = ctx.disable_authz();
-    let out = crate::service::sync("org.moqui.impl.ShellServices.get#ShellCounts", &theirs).unwrap();
+    let out = crate::service::sync("org.moqui.ui.ShellServices.get#ShellCounts", &theirs).unwrap();
     assert_eq!(out.get("counts"), Some(&Value::Null), "the group's service fails");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1179,7 +1179,7 @@ fn the_counts_service_runs_for_the_current_user_without_service_authorization_in
     let err = crate::service::sync("test.Shell.get#ZonedCounts", &direct).unwrap_err();
     assert!(err.to_string().contains("not authorized"), "{err}");
     let theirs = BTreeMap::from([("userId".to_string(), Value::string("plain"))]);
-    let err = crate::service::sync("org.moqui.impl.ShellServices.get#ShellCounts", &theirs).unwrap_err();
+    let err = crate::service::sync("org.moqui.ui.ShellServices.get#ShellCounts", &theirs).unwrap_err();
     assert!(err.to_string().contains("not authorized"), "{err}");
     ctx.message().clear_errors();
     let _ = std::fs::remove_dir_all(&dir);
@@ -1229,7 +1229,7 @@ fn publish_sends_nothing_once_the_factory_shuts_down() {
     world.factory.shutdown();
     assert!(world.factory.is_shutting_down());
     let parameters = BTreeMap::from([("userIdList".to_string(), Value::string(&user))]);
-    crate::service::sync("org.moqui.impl.ShellServices.publish#ShellCounts", &parameters).unwrap();
+    crate::service::sync("org.moqui.ui.ShellServices.publish#ShellCounts", &parameters).unwrap();
     assert_eq!(wait_for(&seen, &user, 1, Duration::from_millis(600)), 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1257,7 +1257,7 @@ fn publish_sends_the_counts_on_the_shell_counts_topic_once_per_window_and_after_
             Value::List(vec![Value::string(&user), Value::string(&user)]),
         )]);
         let started = Instant::now();
-        crate::service::sync("org.moqui.impl.ShellServices.publish#ShellCounts", &parameters).unwrap();
+        crate::service::sync("org.moqui.ui.ShellServices.publish#ShellCounts", &parameters).unwrap();
         // it does not wait for the counts
         assert!(started.elapsed() < Duration::from_millis(300));
     };
@@ -1302,7 +1302,7 @@ fn publish_sends_the_counts_on_the_shell_counts_topic_once_per_window_and_after_
     let zoned = format!("zoned{}", std::process::id());
     zoned_user(&world, &zoned);
     let parameters = BTreeMap::from([("userIdList".to_string(), Value::string(&zoned))]);
-    crate::service::sync("org.moqui.impl.ShellServices.publish#ShellCounts", &parameters).unwrap();
+    crate::service::sync("org.moqui.ui.ShellServices.publish#ShellCounts", &parameters).unwrap();
     assert_eq!(wait_for(&seen, &zoned, 1, Duration::from_secs(5)), 1);
     assert_eq!(
         sent_counts(&seen, &zoned)[0]["message"],
@@ -1536,7 +1536,7 @@ fn the_appearance_policy_and_services_of_the_theme_decide_what_a_user_may_change
     let _entered = ctx.enter();
     crate::user::internal_login_user("plain").unwrap();
     assert!(crate::user::set_preference("THEME_PRIMARY_COLOR_DARK", Some("#fff")).is_err());
-    let out = crate::service::sync("org.moqui.impl.ShellServices.get#Appearance", &BTreeMap::new()).unwrap();
+    let out = crate::service::sync("org.moqui.ui.ShellServices.get#Appearance", &BTreeMap::new()).unwrap();
     let appearance = out.get("appearance").map(moqui_lib::json::to_json).unwrap();
     assert_eq!(appearance["screenThemeId"], json!("DEFAULT_QUASAR"), "{appearance}");
     assert_eq!(appearance["seenUser"], json!("plain"), "{appearance}");
@@ -1552,7 +1552,7 @@ fn the_appearance_policy_and_services_of_the_theme_decide_what_a_user_may_change
         "{appearance}"
     );
     // the policy alone, as JSON text, is the same
-    let out = crate::service::sync("org.moqui.impl.ShellServices.get#AppearancePolicy", &BTreeMap::new()).unwrap();
+    let out = crate::service::sync("org.moqui.ui.ShellServices.get#AppearancePolicy", &BTreeMap::new()).unwrap();
     let text = out
         .get("policy")
         .map(moqui_lib::object::to_plain_string)
@@ -1734,7 +1734,7 @@ fn a_user_chooses_a_quasar_theme_the_appearance_offers() {
         let _entered = ctx.enter();
         crate::user::internal_login_user("plain").unwrap();
         crate::user::set_preference("THEME_COLOR_SCHEME", Some("SLATE")).unwrap();
-        let out = crate::service::sync("org.moqui.impl.ShellServices.get#Appearance", &BTreeMap::new()).unwrap();
+        let out = crate::service::sync("org.moqui.ui.ShellServices.get#Appearance", &BTreeMap::new()).unwrap();
         let appearance = out.get("appearance").map(moqui_lib::json::to_json).unwrap();
         assert_eq!(appearance["screenThemeId"], json!("DEFAULT_QUASAR"), "{appearance}");
         assert_eq!(

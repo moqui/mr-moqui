@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.NotificationServices`: a user's notifications by inbox and filter, the approvals a notification asks
+//! `org.moqui.ui.NotificationServices`: a user's notifications by inbox and filter, the approvals a notification asks
 //! for, marking them viewed, and the daily digest email.
 
 use std::collections::BTreeMap;
@@ -25,7 +25,7 @@ use super::NotificationMessage;
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::EntityFacade;
 
-const SERVICES: &str = "org.moqui.impl.NotificationServices";
+const SERVICES: &str = "org.moqui.ui.NotificationServices";
 
 /// The approve and refuse services a topic names: each keeps what it was given in an `Enumeration` row whose id is the
 /// record id, so the test reads it back.
@@ -74,8 +74,8 @@ fn install(dir: &std::path::Path) {
     let framework = crate::context::framework_dir().join("service/org/moqui");
     let paths = vec![
         framework.join("EmailServices.xml"),
-        framework.join("impl/EmailServices.xml"),
-        framework.join("impl/NotificationServices.xml"),
+        framework.join("mail/EmailServices.xml"),
+        framework.join("ui/NotificationServices.xml"),
         dir.join("service/test/Decide.xml"),
     ];
     let failures = crate::service::lint(&paths).unwrap();

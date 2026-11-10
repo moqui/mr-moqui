@@ -128,7 +128,7 @@ pub(super) fn fixture_with(name: &str, framework: std::path::PathBuf, extra: &st
             row.set("userGroupId", Value::string(group));
             row.set(
                 "fromDate",
-                moqui_lib::object::basic_convert(&Value::I64(1_000), "java.sql.Timestamp").value,
+                moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
             );
             row.create(&entity).unwrap();
             create(
@@ -1556,7 +1556,7 @@ fn a_drive_repository_takes_the_drive_members() {
             }
             row.set(
                 "fromDate",
-                moqui_lib::object::basic_convert(&Value::I64(1_000), "java.sql.Timestamp").value,
+                moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
             );
             row.create(&fixture.entity).unwrap();
         }

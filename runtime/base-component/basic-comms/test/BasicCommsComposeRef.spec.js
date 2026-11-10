@@ -74,7 +74,7 @@ function makeUser(username) {
 // a mail account of the current user's own with an SMTP host that the capture never connects to
 function makeAccount(address) {
     const accountId = sys(() =>
-        call("org.moqui.impl.EmailClientServices.create#EmailAccount", {
+        call("org.moqui.mail.EmailClientServices.create#EmailAccount", {
             accountKindEnumId: "EakHosted",
             emailAddress: address,
             accountName: "Ref " + address,
