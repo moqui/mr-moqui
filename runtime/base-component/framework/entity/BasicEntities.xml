@@ -303,7 +303,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="statusColor" type="text-short"><description>The color of the status by its meaning, a Quasar color name:
             grey-7 (draft, proposed), primary (in progress), warning (waiting), positive (done well), negative (ended badly)
             or info (informational). The status-bar element and the status chips read it through
-            org.moqui.impl.StatusServices.get#StatusColors, which guesses one from the words of the status id when it is
+            org.moqui.ui.StatusServices.get#StatusColors, which guesses one from the words of the status id when it is
             empty (IronStone style-guide §5.2). Not in Java Moqui.</description></field>
         <relationship type="one" related="moqui.basic.StatusType" short-alias="type"/>
         <relationship type="many" related="moqui.basic.StatusFlowItem" short-alias="flows">
@@ -560,7 +560,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="toUserId" type="id"/>
         <field name="emailTemplateId" type="id"><description>For outgoing messages that came from an EmailTemplate.</description></field>
         <field name="emailServerId" type="id"/>
-        <!-- The mail client (org.moqui.impl.EmailClientServices): the account and folder a message is in, its flags and
+        <!-- The mail client (org.moqui.mail.EmailClientServices): the account and folder a message is in, its flags and
             its place in the Inbox. A message the system sends from a template has none of these. -->
         <field name="emailAccountId" type="id"><description>The EmailAccount the message is in, for the mail client</description></field>
         <field name="emailFolderId" type="id"><description>The EmailFolder of its account; empty for a message in the
@@ -718,7 +718,7 @@ along with this software (see the LICENSE.md file). If not, see
             <description>Comma separated list of domain names to allow (like: moqui.org, dejc.com), matched by ends with; if no value specified all domains allowed</description></field>
         <field name="authTypeEnumId" type="id"><description>How SMTP and the store sign in: EatPassword (mailUsername and
             mailPassword; the default) or EatOAuth2 (XOAUTH2 as mailUsername with an access token from oauthRefreshToken,
-            org.moqui.impl.EmailClientServices.start#OAuthSignIn)</description></field>
+            org.moqui.mail.EmailClientServices.start#OAuthSignIn)</description></field>
         <field name="oauthProviderEnumId" type="id"><description>The EmailOAuthProvider an EatOAuth2 server signs in with</description></field>
         <field name="oauthRefreshToken" type="text-long" encrypt="true"><description>The provider's refresh token, encrypted;
             never answered by a service. The access token made from it is kept in memory and, for the other servers of a
@@ -852,7 +852,7 @@ along with this software (see the LICENSE.md file). If not, see
                     smtpHost="smtp.office365.com" smtpPort="587" smtpSsl="N" smtpStartTls="Y"/>
         </seed-data>
     </entity>
-    <!-- The mail client's model (org.moqui.impl.EmailClientServices). These are moqui.* entities, which entity filters
+    <!-- The mail client's model (org.moqui.mail.EmailClientServices). These are moqui.* entities, which entity filters
         never apply to, so every read and write of a user's mail goes through those services, which check the account's
         owner and members. -->
     <entity entity-name="EmailAccount" package="moqui.basic.email" use="transactional" cache="never">

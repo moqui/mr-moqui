@@ -46,7 +46,7 @@ use tokio::sync::watch;
 
 use crate::common::Gate;
 
-const SERVICES: &str = "org.moqui.impl.EdgeServices";
+const SERVICES: &str = "org.moqui.edge.EdgeServices";
 const NODE: &str = "local-q";
 const GROUP: &str = "moqui.security.UserGroup";
 const ECHO: &str = "edgetest.EdgeTestEcho";
@@ -54,8 +54,8 @@ const HANDLER: &str = "edgetest.EdgeTestServices.apply#EchoItem";
 
 /// The edge conf of both nodes: quick retries, three attempts.
 const EDGE_CONF: &str = r#"<edge queue-retry-seconds="0.1" queue-max-attempts="3">
-    <delegate service="org.moqui.impl.EdgeServices.echo#Delegate"/>
-    <delegate service="org.moqui.impl.EdgeServices.get#EdgeHosts"/>
+    <delegate service="org.moqui.edge.EdgeServices.echo#Delegate"/>
+    <delegate service="org.moqui.edge.EdgeServices.get#EdgeHosts"/>
     <queue-kind name="echo" service="edgetest.EdgeTestServices.apply#EchoItem"/>
     <replicate set="groups"><entity name="moqui.security.UserGroup" fields="description"/></replicate>
 </edge>"#;

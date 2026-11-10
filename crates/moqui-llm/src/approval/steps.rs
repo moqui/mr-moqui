@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.SimServices.run#Steps` (docs/ai/Assist.md, Sim steps): service calls run one after another in one
+//! `org.moqui.dev.SimServices.run#Steps` (docs/ai/Assist.md, Sim steps): service calls run one after another in one
 //! sim run, as the current user and under the sim fence, as an approval's preview runs its write ([`super::preview`]).
 //! Each step runs under its own savepoint ([`moqui_core::entity::sim_step`]): a step that fails (an error, a refused
 //! outside effect, a transaction it rolled back) is rolled back to it and the next step runs on what the steps before

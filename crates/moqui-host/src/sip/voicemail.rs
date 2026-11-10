@@ -48,10 +48,10 @@ use super::audio::{self, OpusFile};
 use super::leg::{LegCommand, Prompt};
 use super::{call_service, text, Command, Engine};
 
-const BEGIN_SERVICE: &str = "org.moqui.impl.VoicemailServices.begin#Voicemail";
-const STORE_SERVICE: &str = "org.moqui.impl.VoicemailServices.store#Voicemail";
-const PIN_SERVICE: &str = "org.moqui.impl.VoicemailServices.check#VoicemailPin";
-const ACT_SERVICE: &str = "org.moqui.impl.VoicemailServices.act#PhoneVoicemail";
+const BEGIN_SERVICE: &str = "org.moqui.call.VoicemailServices.begin#Voicemail";
+const STORE_SERVICE: &str = "org.moqui.call.VoicemailServices.store#Voicemail";
+const PIN_SERVICE: &str = "org.moqui.call.VoicemailServices.check#VoicemailPin";
+const ACT_SERVICE: &str = "org.moqui.call.VoicemailServices.act#PhoneVoicemail";
 /// Where messages are spooled, under the runtime directory (`VOICEMAIL_SPOOL` in moqui-core `service/call_media.rs`).
 pub(crate) const SPOOL: &str = "tmp/voicemail";
 /// A message shorter than this (a caller who hung up at the beep) is not kept.

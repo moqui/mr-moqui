@@ -265,7 +265,7 @@ Other root screens that do not require a user: `Login` (`false`), `ChangePasswor
 
 `Login` transitions include `login` (`require-session-token="false"`), `logout`, `removePreAuth`, `resetPassword`, `changePassword`, `createInitialAdminAccount`, and `sendOtp`. A user who is already signed in is redirected to `/`. `returnTo` is kept only when `WebUtilities.isSameOriginRedirect` accepts it (`Login.xml`). That helper allows a path that starts with `/`, and an `http` or `https` URL whose host equals the configured host. It refuses `javascript:`, `data:`, `vbscript:`, a leading `//`, a backslash, user info, and control characters. The port is not part of the host compare (`web/mod.rs`). An off-site value is logged and ignored. The initial-admin transition is the service described under passwords: it runs only while no real `UserAccount` exists beyond the seed row.
 
-`apps` transitions: `setPreference`, `setPrefGoLast`, and `getPreferences` are 401 `Authentication required` without a `userId`. `setPreference` and `setPrefGoLast` are 403 for an appearance key (`QUASAR_DARK`, `SHELL_DENSITY`, `THEME_*`) that the `STRT_APPEARANCE_POLICY` of the user's Quasar theme, after its `STRT_APPEARANCE_SERVICE` services, locks; `ec.user.setPreference` itself refuses it, so another caller gets the error too. `l10nCatalog` and `qzSign` are 401 without a `userId`. `colorSchemeCss` is `read-only` and `require-session-token="false"`. The comment says a scheme is not private, so there is no login. It calls `org.moqui.impl.ShellServices.get#ColorSchemeCss` (Rust, `screen/sri/appearance.rs`), which loads `ScreenColorScheme` and colors with authorization disabled. A scheme name must match `^[a-z][a-z0-9-]{0,40}$`. A color value is rejected when it matches `[;{}<>\\"'!]`. `scheme.extraCss` is appended after that check. It is not passed through the name or value checks. The response is `text/css`.
+`apps` transitions: `setPreference`, `setPrefGoLast`, and `getPreferences` are 401 `Authentication required` without a `userId`. `setPreference` and `setPrefGoLast` are 403 for an appearance key (`QUASAR_DARK`, `SHELL_DENSITY`, `THEME_*`) that the `STRT_APPEARANCE_POLICY` of the user's Quasar theme, after its `STRT_APPEARANCE_SERVICE` services, locks; `ec.user.setPreference` itself refuses it, so another caller gets the error too. `l10nCatalog` and `qzSign` are 401 without a `userId`. `colorSchemeCss` is `read-only` and `require-session-token="false"`. The comment says a scheme is not private, so there is no login. It calls `org.moqui.ui.ShellServices.get#ColorSchemeCss` (Rust, `screen/sri/appearance.rs`), which loads `ScreenColorScheme` and colors with authorization disabled. A scheme name must match `^[a-z][a-z0-9-]{0,40}$`. A color value is rejected when it matches `[;{}<>\\"'!]`. `scheme.extraCss` is appended after that check. It is not passed through the name or value checks. The response is `text/css`.
 
 `apps` subscreens that were read: `AppList` and `ScreenTree` and `Terminal` require authentication. `ScreenTreeNested` sets `require-authentication="false"` and is a child of `ScreenTree`. Whether a direct URL's render chain always includes the parent was not traced. See [Open questions](#open-questions).
 
@@ -281,7 +281,7 @@ Tools' SQL, Service Run, Data Load, Data Snapshots, and `qzSign` are designed pr
 | `Tools/Data/Grid.xml` | The entity's own authorization through the entity-auto services. A SQL source, and a saved view of one, need what SQL needs |
 | `Tools/Database/*`, `Tools/Schema/*` (cancel or end a session, DDL and maintenance jobs, stats resets) | `DATABASE_ADMIN` (`ADMIN_ADV`). A job is only a plan the server made; no service takes job statement text |
 | `db=ext:…` on any database service, and the connection services | `DATABASE_EXTERNAL` (`ADMIN_ADV`), and not a production instance; the refusal is one vague "Not available" |
-| ETL (`org.moqui.impl.EtlServices`) | All actions on the Tools app, checked again as the user on the worker; `GROOVY_SHELL_WEB` for a mapping with an `expression`; `SQL_RUNNER_WEB` for a SQL source; files only from the user's uploads, `dbresource://moqui/etl/` and `runtime://import/` (any `dbresource://` with `DATABASE_ADMIN`) |
+| ETL (`org.moqui.dev.EtlServices`) | All actions on the Tools app, checked again as the user on the worker; `GROOVY_SHELL_WEB` for a mapping with an `expression`; `SQL_RUNNER_WEB` for a SQL source; files only from the user's uploads, `dbresource://moqui/etl/` and `runtime://import/` (any `dbresource://` with `DATABASE_ADMIN`) |
 | `Tools/Service/ServiceLoadRunner.xml` | `SERVICE_LOAD_RUNNER` |
 | `Tools/dashboard.xml` | shows SQL and service load runner links only with their respective permissions |
 | `System/Llm.xml` | `AgentAdmin`, or the screen returns an error. The comment says every screen under it needs `AgentAdmin`. |
@@ -304,7 +304,7 @@ The Tools database sections ([Database](../tools/Database.md), `crates/moqui-too
 
 ### Component deploy and conf reload
 
-System › Components and System › Conf ([Component-Deploy](../tools/Component-Deploy.md)), with the services in `org.moqui.impl.ComponentServices` (`crates/moqui-devkit/src/deploy/`). Each is `allow-remote="false"`, under the `SYSTEM_APP` screen authorization, and each checks the `ADMIN` group itself.
+System › Components and System › Conf ([Component-Deploy](../tools/Component-Deploy.md)), with the services in `org.moqui.dev.ComponentServices` (`crates/moqui-devkit/src/deploy/`). Each is `allow-remote="false"`, under the `SYSTEM_APP` screen authorization, and each checks the `ADMIN` group itself.
 
 - **What a load can do.** Loading a component, from a component directory or from git, runs its code on the server: its services, ECA rules, screens, REST APIs, templates and scripts are loaded, its data is loaded with authorization off, its tables are made, and its `MoquiConf.xml` is merged into the running conf. Treat a load as a code deploy. A component with Rust code (a `Cargo.toml`, or `.rs` files in `src/`) is refused: native code loads only at a start, when the binary links it.
 - **Deploy from git** (`preview#ComponentDeploy`, `deploy#Component`, `update#Component`) also needs the sealed `COMPONENT_DEPLOY` permission. On a production instance it needs `component_deploy_enabled=true` too, and without that it is refused with a vague error.
@@ -323,11 +323,11 @@ Token routes are not framework-default paths. `runtime/component/mr-boss/MoquiCo
 
 | Name | URL | Token service | Screen |
 | --- | --- | --- | --- |
-| `s` | `/s/<token>` | `org.moqui.impl.FileServices.check#PublicShareToken` | `mr-boss` `PublicShare.xml` |
+| `s` | `/s/<token>` | `org.moqui.resource.FileServices.check#PublicShareToken` | `mr-boss` `PublicShare.xml` |
 | `u` | `/u/<token>` | `mantle.party.ConsentServices.check#UnsubscribeToken` | `Unsubscribe.xml`, post-transition `oneClick` |
 | `cal` | `/cal/<token>` | `ironstone.commons.CalendarServices.check#PublishedCalendarToken` | `PublishedCalendar.xml` |
 | `r` | `/r/<token>` | `mantle.request.RequestServices.check#IntakeToken` | `RequestIntake.xml` |
-| `call` | `/call/<token>` | `org.moqui.impl.CallServices.check#CallLinkToken` | `basic-comms` `CallGuest.xml` |
+| `call` | `/call/<token>` | `org.moqui.call.CallServices.check#CallLinkToken` | `basic-comms` `CallGuest.xml` |
 | `i` | `/i/<token>` | `mantle.party.IdentityServices.check#InvitationToken` | `mr-boss` `AcceptInvitation.xml` (staff invitation) |
 
 mr-boss also adds per-client rate limits: `request-form` on `POST /r/*/submit`, 5 requests in 60 seconds, burst 5; and
@@ -371,7 +371,7 @@ unless `call_captions_enabled` is `true`. `start#Captions` and `stop#Captions` (
 encrypted call is refused. Every leg, a late joiner's and a guest's too, gets the notice naming the provider before its
 audio is captioned. The provider is the `transcribe` model binding, reached through `moqui-llm`'s address guard (a
 private address needs `allow-private-network`), counted against the quota of the user who turned captions on, and kept
-as an `LlmCall`. `org.moqui.impl.SpeechServices.transcribe#Audio` and `get#SpeechProvider` are `allow-remote="false"`:
+as an `LlmCall`. `org.moqui.call.SpeechServices.transcribe#Audio` and `get#SpeechProvider` are `allow-remote="false"`:
 `transcribe#Audio` reads any `audioLocation` it is given, so its caller decides what may be sent out. Captions are not
 stored unless `call_captions_store` is `true`.
 
@@ -587,7 +587,7 @@ key the server gives only to its signed-in user (see Chat keys).
 ### Call recording
 
 Off unless `call_recording_enabled` is true ([Call recording](../interfaces/Call-Recording.md)). It opens no port. Only a
-host of the call starts, pauses, resumes or stops it (`org.moqui.impl.CallRecordingServices`). The recorder runs on the
+host of the call starts, pauses, resumes or stops it (`org.moqui.call.CallRecordingServices`). The recorder runs on the
 media node, takes frames from a bounded queue and spools under `runtime/tmp/call-recording/`. `store#RecordingFile`
 (internal, `allow-remote="false"`) refuses a spool path outside that directory and a location outside
 `dbresource://moqui/call/recording/`. The files are read only through `get#RecordingFile` by segment id, from the

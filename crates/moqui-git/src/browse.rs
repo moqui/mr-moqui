@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Reading a repository as git sees it, for the `get#Git*` services of `org.moqui.impl.GitServices` and the commit
+//! Reading a repository as git sees it, for the `get#Git*` services of `org.moqui.git.GitServices` and the commit
 //! view: its branches and tags, a log, a commit with the files it changed and their diffs, a file at any revision.
 //! The `git://` scheme reads the files of one branch; this reads any branch, tag or commit. Callers check
 //! `AT_GIT_REPOSITORY` authorization; nothing here does.

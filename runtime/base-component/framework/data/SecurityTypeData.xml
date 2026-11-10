@@ -35,7 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- The resources transition of webroot.xml (the elFinder protocol over a resource root, ElFinderServices.run#Command)
         reads and writes any root it is given, so only ADMIN -->
     <moqui.security.ArtifactGroup artifactGroupId="ResourceCommandServices" description="Resource command services (/resources)"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="ResourceCommandServices" artifactName="org.moqui.impl.ElFinderServices.run#Command"
+    <moqui.security.ArtifactGroupMember artifactGroupId="ResourceCommandServices" artifactName="org.moqui.resource.ElFinderServices.run#Command"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="ResourceCommandServicesADMIN" userGroupId="ADMIN" artifactGroupId="ResourceCommandServices"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
@@ -56,7 +56,7 @@ along with this software (see the LICENSE.md file). If not, see
         with an app password (docs/interfaces/Sync.md). Each checks the drive's members and shares itself, as for the Files screens. -->
     <moqui.security.ArtifactGroup artifactGroupId="DriveDeviceServices" description="Drive services of devices (WebDAV, SFTP)"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="DriveDeviceServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
-            artifactName="org\.moqui\.impl\.FileServices\.(get#UserDrives|list#Folder|get#ResourceInfo|upload#Resource|create#Folder|rename#Resource|move#Resource|copy#Resource|trash#Resource)"/>
+            artifactName="org\.moqui\.resource\.FileServices\.(get#UserDrives|list#Folder|get#ResourceInfo|upload#Resource|create#Folder|rename#Resource|move#Resource|copy#Resource|trash#Resource)"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="DriveDeviceServicesALL" userGroupId="ALL_USERS" artifactGroupId="DriveDeviceServices"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 
@@ -132,7 +132,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="EMAIL_ACCOUNT_OWNER_CHANGE" fromDate="0"/>
     <moqui.security.ArtifactGroup artifactGroupId="ResourceOwnerServices" description="Owned resource lookup and owner change"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="ResourceOwnerServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
-            artifactName="org\.moqui\.impl\.(FileServices\.(find#OwnedDrives|transfer#DriveOwner)|EmailClientServices\.(find#OwnedEmailAccounts|transfer#EmailAccountOwner))"/>
+            artifactName="org\.moqui\.(resource\.FileServices\.(find#OwnedDrives|transfer#DriveOwner)|mail\.EmailClientServices\.(find#OwnedEmailAccounts|transfer#EmailAccountOwner))"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="ResourceOwnerServicesALL" userGroupId="ALL_USERS" artifactGroupId="ResourceOwnerServices"
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     <!-- A coordinator's call of a stored step's owner service (IdentityServices.call#OwnedResourceService; impl-admin P6 review,

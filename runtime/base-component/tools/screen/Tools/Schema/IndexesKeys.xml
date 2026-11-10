@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The entity model against the database (plans/archive/Tools-Database.md §5): each table with a difference, from
-    org.moqui.impl.DatabaseServices.compare#Schema. A selection of tables, one table, every missing index or every foreign
+    org.moqui.dev.DatabaseServices.compare#Schema. A selection of tables, one table, every missing index or every foreign
     key is planned with plan#SchemaChanges, which keeps the plan as a pending database job; its page (Database › Job)
     shows the statements and runs exactly those. Planning needs DATABASE_ADMIN. Download DDL is get#SchemaDdl. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="plan" method="post" authz-action="all">
         <actions><script><![CDATA[
             const list = (value) => value == null || value === '' ? [] : [].concat(value).map(String).filter(Boolean)
-            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.plan#SchemaChanges').parameters({db,
+            const out = ec.service.sync().name('org.moqui.dev.DatabaseServices.plan#SchemaChanges').parameters({db,
                 entityNames: list(context.entityNames), changes: list(context.changes), names: list(context.names),
                 description: list(context.entityNames).length == 1 ? 'Indexes and keys of ' + list(context.entityNames)[0] : 'Indexes and keys'}).call() || {}
             planJobId = ec.message.hasError() ? null : out.jobId
@@ -41,7 +41,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="downloadDdl" method="get" read-only="true">
         <actions><script><![CDATA[
             const list = (value) => value == null || value === '' ? [] : [].concat(value).map(String).filter(Boolean)
-            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#SchemaDdl').parameters({db, entityNames: list(context.entityNames)}).call() || {}
+            const out = ec.service.sync().name('org.moqui.dev.DatabaseServices.get#SchemaDdl').parameters({db, entityNames: list(context.entityNames)}).call() || {}
             if (!ec.message.hasError()) ec.web.sendTextResponse(String(out.ddlText || ''), 'application/sql', out.fileName || 'schema.sql')
         ]]></script></actions>
         <default-response type="none"/>
@@ -53,7 +53,7 @@ along with this software (see the LICENSE.md file). If not, see
             compareError = null
             let diff = null
             try {
-                diff = ec.service.sync().name('org.moqui.impl.DatabaseServices.compare#Schema').parameters({db, entityNames: []}).call()
+                diff = ec.service.sync().name('org.moqui.dev.DatabaseServices.compare#Schema').parameters({db, entityNames: []}).call()
             } catch (e) { compareError = String(e.message || e) }
             if (ec.message.hasError()) { compareError = ec.message.errorsString; ec.message.clearErrors() }
             checkedCount = diff?.checked || 0

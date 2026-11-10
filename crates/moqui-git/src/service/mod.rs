@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.GitServices`: fetch, init, export and import of the repositories behind `git://` locations
+//! `org.moqui.git.GitServices`: fetch, init, export and import of the repositories behind `git://` locations
 //! ([`crate`]). No Java counterpart. A failure is an error in the message facade, as a Java service's is.
 
 use std::collections::BTreeMap;
@@ -41,7 +41,7 @@ mod script_ports_tests;
 #[cfg(test)]
 mod wiki_tests;
 
-/// The Rust services of `org.moqui.impl.GitServices` and of [`hosting`].
+/// The Rust services of `org.moqui.git.GitServices` and of [`hosting`].
 pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::RustServiceFn>) -> Result<(), String> {
     rust_service!(map, fetch_repository)?;
     rust_service!(map, fetch_all_repositories)?;

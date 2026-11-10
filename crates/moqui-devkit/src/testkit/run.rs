@@ -1072,7 +1072,7 @@ mod tests {
     #[test]
     fn a_missing_tool_message_names_its_feature() {
         assert_eq!(
-            missing_tool("service org.moqui.impl.GitServices.init#GitRepository: git is not built into this host"),
+            missing_tool("service org.moqui.git.GitServices.init#GitRepository: git is not built into this host"),
             Some("git")
         );
         assert_eq!(

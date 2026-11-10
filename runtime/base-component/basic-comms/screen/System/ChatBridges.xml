@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     each with its status as its adapter last reported it (connected, not connected, disabled), its last error, its mapped
     rooms and the deliveries waiting, failed and uncertain; and the latest deliveries that did not go, each with Send again
     (the same idempotency key; an uncertain one may then arrive twice). Disable stops a bridge's deliveries and input; Enable
-    lets the worker start it again. org.moqui.impl.ChatBridgeServices find#Bridges, store#Bridge and retry#Delivery, which need
+    lets the worker start it again. org.moqui.chat.ChatBridgeServices find#Bridges, store#Bridge and retry#Delivery, which need
     the ChatBridgeAdmin permission. A bridge is made and its rooms mapped by store#Bridge and store#RoomBridge; the networks'
     own setup comes with their adapters (C4 on). While the copies the chat actors migration kept (CHAT_*_PRE_C1) are there,
     they are listed with Drop the old copies (get# and drop#PreC1Backups, each table's key and counts checked first).
@@ -25,12 +25,12 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Chat Bridges" default-menu-index="21" menu-image="sym_o_hub" menu-image-type="icon">
 
     <transition name="setDisabled">
-        <service-call name="org.moqui.impl.ChatBridgeServices.store#Bridge" in-map="{chatBridgeId:chatBridgeId, disabled:disabled}"/>
+        <service-call name="org.moqui.chat.ChatBridgeServices.store#Bridge" in-map="{chatBridgeId:chatBridgeId, disabled:disabled}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Bridge changed</message></if></actions>
         <default-response url="."/>
     </transition>
     <transition name="dropPreC1Backups">
-        <service-call name="org.moqui.impl.ChatBridgeServices.drop#PreC1Backups" out-map="dropOut"/>
+        <service-call name="org.moqui.chat.ChatBridgeServices.drop#PreC1Backups" out-map="dropOut"/>
         <actions><if condition="!ec.message.hasError()"><script><![CDATA[
             const dropped = Array.from(dropOut?.droppedList || []).length
             const kept = Array.from(dropOut?.keptList || []).length
@@ -40,14 +40,14 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
     </transition>
     <transition name="retryDelivery">
-        <service-call name="org.moqui.impl.ChatBridgeServices.retry#Delivery" in-map="{chatBridgeDeliveryId:chatBridgeDeliveryId}"/>
+        <service-call name="org.moqui.chat.ChatBridgeServices.retry#Delivery" in-map="{chatBridgeDeliveryId:chatBridgeDeliveryId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Sending again</message></if></actions>
         <default-response url="."/>
     </transition>
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const out = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.find#Bridges').requireNewTransaction(true).call() || {}
+        const out = ec.service.sync().name('org.moqui.chat.ChatBridgeServices.find#Bridges').requireNewTransaction(true).call() || {}
         allowed = !ec.message.hasError()
         ec.message.clearErrors()
         const when = (millis) => (millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : '')
@@ -71,7 +71,7 @@ along with this software (see the LICENSE.md file). If not, see
         // the copies the chat actors migration (C1) kept of the tables it rebuilt, while they are there
         backupList = []
         if (allowed) {
-            const backups = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.get#PreC1Backups').requireNewTransaction(true).call() || {}
+            const backups = ec.service.sync().name('org.moqui.chat.ChatBridgeServices.get#PreC1Backups').requireNewTransaction(true).call() || {}
             if (ec.message.hasError()) { ec.logger.warn(`Chat bridges: the pre-C1 copies are left out: ${ec.message.errorsString}`); ec.message.clearErrors() }
             backupList = Array.from(backups.backupList || []).map((b) => Object.assign({}, b, {
                 countText: ec.resource.expand('${backupRows} in the copy, ${tableRows} in the table now', '', b),

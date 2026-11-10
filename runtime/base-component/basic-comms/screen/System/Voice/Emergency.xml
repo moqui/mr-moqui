@@ -16,12 +16,12 @@ along with this software (see the LICENSE.md file). If not, see
     trunk, validated locations with a callback number and a notification destination, the people and numbers with a location;
     and what the operator confirms with the provider), and the emergency locations with Add, Edit and Remove. An emergency call
     without these is refused with a clear message. Never test with a real emergency call: use the provider's test procedure.
-    org.moqui.impl.VoiceServices find#, store# and delete#EmergencyLocation. -->
+    org.moqui.call.VoiceServices find#, store# and delete#EmergencyLocation. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Emergency" default-menu-index="6">
 
     <transition name="storeLocation">
-        <service-call name="org.moqui.impl.VoiceServices.store#EmergencyLocation" in-map="{emergencyLocationId:emergencyLocationId || null, name:name || '',
+        <service-call name="org.moqui.call.VoiceServices.store#EmergencyLocation" in-map="{emergencyLocationId:emergencyLocationId || null, name:name || '',
                 address1:address1 || '', address2:address2 || '', city:city || '', postalCode:postalCode || '', countryGeoId:countryGeoId || '',
                 callbackNumber:callbackNumber || '', validationStatusId:validationStatusId || null, providerReference:providerReference || '',
                 notifyEmailAddress:notifyEmailAddress || ''}"/>
@@ -29,14 +29,14 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
     </transition>
     <transition name="deleteLocation">
-        <service-call name="org.moqui.impl.VoiceServices.delete#EmergencyLocation" in-map="{emergencyLocationId:emergencyLocationId}"/>
+        <service-call name="org.moqui.call.VoiceServices.delete#EmergencyLocation" in-map="{emergencyLocationId:emergencyLocationId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Emergency location removed</message></if></actions>
         <default-response url="."/>
     </transition>
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const call = (name) => ec.service.sync().name('org.moqui.impl.VoiceServices.' + name).requireNewTransaction(true).disableAuthz().call() || {}
+        const call = (name) => ec.service.sync().name('org.moqui.call.VoiceServices.' + name).requireNewTransaction(true).disableAuthz().call() || {}
         const trunks = Array.from(call('find#VoiceTrunks').trunkList || []).filter((t) => t.disabled !== 'Y')
         const locations = Array.from(call('find#EmergencyLocations').locationList || [])
         const numbers = Array.from(call('find#PhoneNumbers').numberList || [])

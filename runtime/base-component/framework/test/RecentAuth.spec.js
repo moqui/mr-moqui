@@ -1,4 +1,4 @@
-// The recent sign-in check and the re-authentication that satisfies it (org.moqui.impl.RecentAuthServices;
+// The recent sign-in check and the re-authentication that satisfies it (org.moqui.sso.RecentAuthServices;
 // crates/moqui-core/src/service/recent_auth.rs, user/login.rs and user/factor.rs; docs/security/Recent-Auth.md): an
 // internal login is not a recent sign-in; the signed-in user's password, a wrong one counted as a failed login; with a
 // second factor the code too, a wrong code counted, the right one (a single-use code) accepted without the password again;
@@ -8,7 +8,7 @@
 const A = "RECENTAUTH_SPEC_A"
 const B = "RECENTAUTH_SPEC_B"
 const PASSWORD = "Recent-spec-9!"
-const SERVICES = "org.moqui.impl.RecentAuthServices."
+const SERVICES = "org.moqui.sso.RecentAuthServices."
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()

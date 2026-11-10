@@ -41,7 +41,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const config = qvtLib.build(ec, sri, { staticOnly: true, localeTag: localeTag, quasarLang: qvtLib.quasarLangOf(localeTag), rumSettings: rumSettings })
                 config.pageTraceId = ''
                 config.server = { name: config.shell.title || ec.web.getHostName(false), moquiVersion: ec.factory.moquiVersion, clientApi: 4 }
-                const push = ec.service.sync().name('org.moqui.impl.NotificationServices.get#PushDeviceStatus').disableAuthz().call() || {}
+                const push = ec.service.sync().name('org.moqui.ui.NotificationServices.get#PushDeviceStatus').disableAuthz().call() || {}
                 config.server.features = { nativePush: { providers: ['fcm'], fcmConfigured: push.fcmConfigured === true, registered: push.registered === true } }
                 // what an app's inbox source supports beyond the framework's (its operation features), for a client that works
                 // offline: internalSendRef (an internal send is made once by its clientRef, so it may be queued) and
@@ -49,7 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
                 // no authorization, as the shell's other services here; each provider runs as its app. One that fails is logged.
                 const features = config.server.features = Object.assign({}, config.server.features || {})
                 try {
-                    const providers = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'inbox-source',
+                    const providers = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'inbox-source',
                         parameters: {operation: 'features'}}).disableAuthz().call()
                     for (const answer of Array.from(providers?.results || [])) {
                         if (answer && answer.handled && answer.result) Object.assign(features, answer.result)
@@ -112,7 +112,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
             else {
                 const p = ec.web.parameters
-                const out = ec.service.sync().name('org.moqui.impl.NotificationServices.register#PushDevice').parameters({
+                const out = ec.service.sync().name('org.moqui.ui.NotificationServices.register#PushDevice').parameters({
                     provider: p.provider || null, token: p.token || null, appId: p.appId || null, platform: p.platform || null,
                 }).disableAuthz().call() || {}
                 if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
@@ -126,7 +126,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
             else {
-                const out = ec.service.sync().name('org.moqui.impl.NotificationServices.unregister#PushDevice')
+                const out = ec.service.sync().name('org.moqui.ui.NotificationServices.unregister#PushDevice')
                     .parameters({token: ec.web.parameters.token || null}).disableAuthz().call() || {}
                 if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
                 else ec.web.sendJsonResponse({deletedCount: out.deletedCount ?? 0})

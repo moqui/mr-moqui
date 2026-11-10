@@ -22,7 +22,7 @@ fn open() -> (ExecutionContext, EntityFacade) {
     ctx.factory().extension(|_| EdgeSettings {
         kinds: BTreeMap::from([(
             ECHO_KIND.to_string(),
-            "org.moqui.impl.EdgeServices.receive#EdgeEcho".to_string(),
+            "org.moqui.edge.EdgeServices.receive#EdgeEcho".to_string(),
         )]),
         ..EdgeSettings::default()
     });

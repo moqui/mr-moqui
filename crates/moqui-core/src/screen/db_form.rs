@@ -67,7 +67,10 @@ impl AsOf {
     /// Returns an error when an expression does not evaluate.
     pub fn of_form(form: Option<&MNode>) -> Result<Self, Error> {
         let eval = |name: &str| -> Result<Option<Value>, Error> {
-            match form.and_then(|form| form.attribute(name)).filter(|text| !text.trim().is_empty()) {
+            match form
+                .and_then(|form| form.attribute(name))
+                .filter(|text| !text.trim().is_empty())
+            {
                 Some(expression) => crate::script::eval_value(&expression).map(Some),
                 None => Ok(None),
             }
@@ -86,7 +89,7 @@ fn millis_of(value: &Value) -> Option<i64> {
     if value.is_null() || moqui_lib::object::to_plain_string(value).is_empty() {
         return None;
     }
-    match crate::l10n::basic_convert(value, "java.sql.Timestamp").value {
+    match crate::l10n::basic_convert(value, "Timestamp").value {
         Value::Timestamp(stamp) => Some(stamp.as_millisecond()),
         _ => None,
     }

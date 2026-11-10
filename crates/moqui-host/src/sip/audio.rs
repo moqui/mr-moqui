@@ -15,7 +15,7 @@
 //! Voicemail's audio files (plans/Comms-Framework.md §5.3, V2; docs/interfaces/Voicemail.md): Ogg Opus read and
 //! written with moqui-rtc's in-house Ogg writer (W5) and the M0 Opus codec, and WAV through `prompt.rs`. A message is
 //! recorded as Ogg Opus (`voicemail.rs`); a greeting is uploaded as WAV or Ogg Opus and kept as Ogg Opus, which the
-//! browser plays and the engine decodes for a caller. `org.moqui.impl.VoicemailServices.convert#GreetingAudio` is the
+//! browser plays and the engine decodes for a caller. `org.moqui.call.VoicemailServices.convert#GreetingAudio` is the
 //! conversion, a Rust service this module registers as a framework extension (the `sip` feature).
 
 use std::collections::BTreeMap;

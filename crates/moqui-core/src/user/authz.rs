@@ -703,7 +703,7 @@ fn check_tarpit(artifact_type: &str, name: &str) -> Result<(), Error> {
     if lock_for > 0 {
         let release = moqui_lib::object::basic_convert(
             &Value::I64(now.saturating_add(lock_for.saturating_mul(1000))),
-            "java.sql.Timestamp",
+            "Timestamp",
         )
         .value;
         let mut row = facade.make_value("moqui.security.ArtifactTarpitLock")?;

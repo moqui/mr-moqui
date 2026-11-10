@@ -30,7 +30,7 @@ use super::{
 use moqui_core::context::ExecutionContext;
 use moqui_core::web::multipart::UploadedFile;
 
-const FILES: &str = "org.moqui.impl.FileServices";
+const FILES: &str = "org.moqui.resource.FileServices";
 
 /// A drive as a folder of the user's home.
 struct Drive {

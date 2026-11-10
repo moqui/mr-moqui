@@ -1,6 +1,6 @@
 # Mail sign-in with Google and Microsoft (OAuth)
 
-A mail account of the mail client (`org.moqui.impl.EmailClientServices`) can sign in to Gmail, Google Workspace, Microsoft 365
+A mail account of the mail client (`org.moqui.mail.EmailClientServices`) can sign in to Gmail, Google Workspace, Microsoft 365
 or Outlook.com with the provider's own sign-in instead of a password: OAuth 2.0 authorization code with PKCE in a popup, the
 refresh token stored encrypted on the account's `EmailServer`, and XOAUTH2 for IMAP (the sync, the IDLE workers, the server
 test), POP3 (the sync and the server test, `AUTH XOAUTH2`) and SMTP (sending). The code is `crates/moqui-mail/src/oauth.rs`; the providers are

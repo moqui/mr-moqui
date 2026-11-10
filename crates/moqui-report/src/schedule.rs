@@ -1244,7 +1244,7 @@ fn deliver(
                 lease.check()?;
                 attempted = true;
                 let mail = moqui_core::service::call::sync_checked(
-                    "org.moqui.impl.EmailServices.send#EmailTemplate",
+                    "org.moqui.mail.EmailServices.send#EmailTemplate",
                     &BTreeMap::from([
                         ("emailTemplateId".into(), Value::string(template)),
                         ("toAddresses".into(), Value::string(recipients.join(","))),

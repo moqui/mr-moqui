@@ -628,7 +628,7 @@ along with this software (see the LICENSE.md file). If not, see
             persisted (so it is in the user's notification list) and the user has a WebPushSubscription.</description></field>
         <field name="emailMessageSave" type="text-indicator"/>
         <field name="approveServiceName" type="text-medium"><description>A notification on this topic asks its recipients for a
-            decision: org.moqui.impl.NotificationServices.approve#NotificationMessage calls this service with recordEntityName,
+            decision: org.moqui.ui.NotificationServices.approve#NotificationMessage calls this service with recordEntityName,
             recordId, message (the messageJson as a Map) and notificationMessageId. An unviewed message of such a topic is an
             approval waiting.</description></field>
         <field name="refuseServiceName" type="text-medium"><description>As approveServiceName, for refuse#NotificationMessage;

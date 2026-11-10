@@ -42,9 +42,9 @@ pub const STALE_MS: i64 = 60_000;
 pub const PROBE_LEG: &str = "edgeSetupProbe";
 
 const MEDIA_NODE: &str = "moqui.call.CallMediaNode";
-const REGISTER_MEDIA_NODE: &str = "org.moqui.impl.CallServices.register#MediaNode";
-const REGISTER_SIP_NODE: &str = "org.moqui.impl.VoiceServices.register#SipNode";
-const MAKE_ICE_SERVERS: &str = "org.moqui.impl.CallServices.make#IceServers";
+const REGISTER_MEDIA_NODE: &str = "org.moqui.call.CallServices.register#MediaNode";
+const REGISTER_SIP_NODE: &str = "org.moqui.call.VoiceServices.register#SipNode";
+const MAKE_ICE_SERVERS: &str = "org.moqui.call.CallServices.make#IceServers";
 
 /// Whether new calls may have their media on the edge node ([`CALLS_ENABLED`]).
 pub fn calls_enabled() -> bool {

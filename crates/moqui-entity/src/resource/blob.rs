@@ -90,7 +90,7 @@ fn now_millis() -> i64 {
 }
 
 fn stamp(millis: i64) -> Value {
-    basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
+    basic_convert(&Value::I64(millis), "Timestamp").value
 }
 
 fn text(value: Option<&Value>) -> Option<String> {
@@ -269,7 +269,7 @@ impl BlobStore {
         let mut by_seq: HashMap<u64, Vec<u8>> = HashMap::new();
         for row in rows.iter() {
             let seq = u64::try_from(long(row.get("chunkSeq")).unwrap_or(-1)).unwrap_or(u64::MAX);
-            let data = match basic_convert(row.get("chunkData").unwrap_or(&Value::Null), "java.sql.Blob").value {
+            let data = match basic_convert(row.get("chunkData").unwrap_or(&Value::Null), "Blob").value {
                 Value::Bytes(bytes) => bytes,
                 _ => Vec::new(),
             };

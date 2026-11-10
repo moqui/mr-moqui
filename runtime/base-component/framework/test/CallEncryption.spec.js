@@ -1,5 +1,5 @@
 // End-to-end encrypted calls (plans/Comms-Framework.md §6.4, D-W3, W8; docs/interfaces/WebRTC.md "Encrypted calls"): the
-// policy of org.moqui.impl.CallServices and Calls.js. A call is encrypted when its starter asks for it, or when its room's
+// policy of org.moqui.call.CallServices and Calls.js. A call is encrypted when its starter asks for it, or when its room's
 // or call link's policy says so, and stays so. Only a browser that can take part answers or joins one (it has
 // RTCRtpScriptTransform and names a crypto device of its user's, ChatDevice); a leg binds its media only with a device,
 // and the call's view publishes the roster of legs, devices and key indexes the browsers send their keys to. An encrypted
@@ -31,7 +31,7 @@ function as(userId, name, parameters) {
     let thrown = ""
     try {
         // as the screens' transitions call them: the services check the signed-in user's part in each call
-        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.impl.CallServices." + name)
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.CallServices." + name)
             .parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
@@ -78,7 +78,7 @@ const legOf = (call, userId) => {
 /** An internal operation of Calls.js, in a transaction of its own (as the services that call it run it). */
 const internal = (op, parameters) => parallel(1, (n, args) => {
     ec.artifactExecution.disableAuthz()
-    const out = ec.resource.script("component://framework/service/org/moqui/impl/Calls.js").execute(args.op, args.parameters)
+    const out = ec.resource.script("component://framework/service/org/moqui/call/Calls.js").execute(args.op, args.parameters)
     return {forwardLegList: Array.from(out.forwardLegList || []).map(l => ({callLegId: l.callLegId})), reasonCode: out.reasonCode || null}
 }, {op, parameters})[0]
 function endAll() {
@@ -107,7 +107,7 @@ spec({
         }
         makeDevice(B, B_OLD, true)
         endAll()
-        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: NODE, mediaAddress: "127.0.0.1:10000"}))
+        sys(() => call("org.moqui.call.CallServices.register#MediaNode", {instanceId: NODE, mediaAddress: "127.0.0.1:10000"}))
     },
     cleanupSpec() {
         endAll()
@@ -212,28 +212,28 @@ feature("an encrypted call refuses recording, captions, a number, desk phones, f
     when() {
         setProperty("call_recording_enabled", "true")
         setProperty("call_recording_ack_required", "false")
-        const recordEncrypted = as(A, "org.moqui.impl.CallRecordingServices.start#Recording", {callSessionId: encrypted})
-        const stateEncrypted = as(A, "org.moqui.impl.CallRecordingServices.get#RecordingState", {callSessionId: encrypted})
-        const recordPlain = as(A, "org.moqui.impl.CallRecordingServices.start#Recording", {callSessionId: plain})
-        as(A, "org.moqui.impl.CallRecordingServices.stop#Recording", {callSessionId: plain, callRecordingId: recordPlain.callRecordingId})
+        const recordEncrypted = as(A, "org.moqui.call.CallRecordingServices.start#Recording", {callSessionId: encrypted})
+        const stateEncrypted = as(A, "org.moqui.call.CallRecordingServices.get#RecordingState", {callSessionId: encrypted})
+        const recordPlain = as(A, "org.moqui.call.CallRecordingServices.start#Recording", {callSessionId: plain})
+        as(A, "org.moqui.call.CallRecordingServices.stop#Recording", {callSessionId: plain, callRecordingId: recordPlain.callRecordingId})
         setProperty("call_recording_enabled", "false")
         const captions = withProperty("call_captions_enabled", "true", () => ({
-            encrypted: as(A, "org.moqui.impl.CallCaptionServices.start#Captions", {callSessionId: encrypted}),
-            plain: as(A, "org.moqui.impl.CallCaptionServices.start#Captions", {callSessionId: plain}),
+            encrypted: as(A, "org.moqui.call.CallCaptionServices.start#Captions", {callSessionId: encrypted}),
+            plain: as(A, "org.moqui.call.CallCaptionServices.start#Captions", {callSessionId: plain}),
         }))
-        as(A, "org.moqui.impl.CallCaptionServices.stop#Captions", {callSessionId: plain})
-        const numberEncrypted = as(A, "org.moqui.impl.CallTransferServices.add#CallParticipant", {callSessionId: encrypted, phoneNumber: "+15550199977"})
-        const numberPlain = as(A, "org.moqui.impl.CallTransferServices.add#CallParticipant", {callSessionId: plain, phoneNumber: "+15550199977"})
-        const phonesEncrypted = as(A, "org.moqui.impl.SipDeviceServices.ring#SipDevices", {callSessionId: encrypted, userIdList: [B]})
-        const phonesPlain = as(A, "org.moqui.impl.SipDeviceServices.ring#SipDevices", {callSessionId: plain, userIdList: [C]})
+        as(A, "org.moqui.call.CallCaptionServices.stop#Captions", {callSessionId: plain})
+        const numberEncrypted = as(A, "org.moqui.call.CallTransferServices.add#CallParticipant", {callSessionId: encrypted, phoneNumber: "+15550199977"})
+        const numberPlain = as(A, "org.moqui.call.CallTransferServices.add#CallParticipant", {callSessionId: plain, phoneNumber: "+15550199977"})
+        const phonesEncrypted = as(A, "org.moqui.call.SipDeviceServices.ring#SipDevices", {callSessionId: encrypted, userIdList: [B]})
+        const phonesPlain = as(A, "org.moqui.call.SipDeviceServices.ring#SipDevices", {callSessionId: plain, userIdList: [C]})
         const forwardEncrypted = internal("ringStep", {callSessionId: encrypted, userIdList: [], numberList: [{number: "+15550199988"}]})
         const forwardPlain = internal("ringStep", {callSessionId: plain, userIdList: [], numberList: [{number: "+15550199988"}]})
-        const mergeEncrypted = as(A, "org.moqui.impl.CallTransferServices.merge#Calls", {callSessionId: plain, otherCallSessionId: encrypted})
-        const mergeIntoEncrypted = as(A, "org.moqui.impl.CallTransferServices.merge#Calls", {callSessionId: encrypted, otherCallSessionId: plain})
+        const mergeEncrypted = as(A, "org.moqui.call.CallTransferServices.merge#Calls", {callSessionId: plain, otherCallSessionId: encrypted})
+        const mergeIntoEncrypted = as(A, "org.moqui.call.CallTransferServices.merge#Calls", {callSessionId: encrypted, otherCallSessionId: plain})
         // a second plain call, which merges with the first
         const other = as(A, "start#Call", {calleeUserIdList: [D]})
         as(D, "answer#Call", {callSessionId: other.callSessionId})
-        const mergePlain = as(A, "org.moqui.impl.CallTransferServices.merge#Calls", {callSessionId: plain, otherCallSessionId: other.callSessionId})
+        const mergePlain = as(A, "org.moqui.call.CallTransferServices.merge#Calls", {callSessionId: plain, otherCallSessionId: other.callSessionId})
         const pstnLegs = sys(() => ec.entity.find(LEG).condition({callSessionId: encrypted, legTypeEnumId: "CltPstn"}).count())
         return {recordEncrypted, stateEncrypted, recordPlain, captions, numberEncrypted, numberPlain, phonesEncrypted, phonesPlain,
             forwardEncrypted, forwardPlain, mergeEncrypted, mergeIntoEncrypted, mergePlain, pstnLegs}
@@ -295,7 +295,7 @@ let roomCall = null
 feature("a room's owner or moderator makes its calls encrypted; a plain call going on is never offered for an encrypted one", {
     when() {
         ec.user.internalLoginUser("e2ee.spec.a")
-        const room = sys(() => call("org.moqui.impl.ChatServices.create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Encrypted calls spec",
+        const room = sys(() => call("org.moqui.chat.ChatServices.create#Room", {roomTypeEnumId: "CrtPrivate", roomName: "Encrypted calls spec",
             memberUserIdList: [B, C]}))
         const chatRoomId = room.chatRoomId
         const plainRoomCall = as(A, "start#Call", {chatRoomId})
@@ -310,7 +310,7 @@ feature("a room's owner or moderator makes its calls encrypted; a plain call goi
         roomCall = started.callSessionId
         const joinedPlainly = as(A, "join#Call", {callSessionId: roomCall})
         const joined = as(A, "join#Call", {callSessionId: roomCall, ...browser(A)})
-        const roomView = sys(() => call("org.moqui.impl.ChatServices.get#RoomAccess", {chatRoomId, userId: A}))
+        const roomView = sys(() => call("org.moqui.chat.ChatServices.get#RoomAccess", {chatRoomId, userId: A}))
         return {plainRoomCall, downgrade, policyDowngrade, byMember, byOwner, byStranger, started, joinedPlainly, joined, roomView}
     },
     then({plainRoomCall, downgrade, policyDowngrade, byMember, byOwner, byStranger, started, joinedPlainly, joined, roomView}) {
@@ -335,7 +335,7 @@ feature("revoking a device takes its leg out of the encrypted call, and the othe
     when() {
         // signed in with the password just now: a revoke of a device with keys needs a recent sign-in
         ec.user.loginUser(B.toLowerCase().replace(/_/g, "."), PASSWORD)
-        const revoked = as(B, "org.moqui.impl.ChatKeyServices.revoke#ChatDevice", {deviceId: DEVICES[B]})
+        const revoked = as(B, "org.moqui.chat.ChatKeyServices.revoke#ChatDevice", {deviceId: DEVICES[B]})
         const seen = as(A, "get#Call", {callSessionId: roomCall})
         return {revoked, seen}
     },

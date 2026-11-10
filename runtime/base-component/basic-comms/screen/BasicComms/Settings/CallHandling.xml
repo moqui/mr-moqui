@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     disturb (calls go to voicemail), call waiting, the mobile that rings with the user (and when), Hide my number, the user's
     rules in order (reject anonymous callers; reject, accept only or forward the callers on a list; forward all calls; when
     busy; when not answered; each to a number, a person, a ring group, voicemail or a refusal, and while a schedule is open or
-    closed) and their caller lists. All through org.moqui.impl.CallHandlingServices, which acts on the signed-in user's own
+    closed) and their caller lists. All through org.moqui.call.CallHandlingServices, which acts on the signed-in user's own
     rules and lists only, so these transitions run with authorization off as the call transitions do. A section of the
     Phone settings in a file of its own, beside Settings/Phone (voicemail) and Settings/PhoneDevices. The component is
     CallHandling.qvue next to this file; the terminal twin is CallHandlingTui. -->
@@ -27,10 +27,10 @@ along with this software (see the LICENSE.md file). If not, see
     <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
     <transition name="handling" method="get" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.CallHandlingServices.get#CallHandling').requireNewTransaction(true).disableAuthz().call() || {}
+            const out = ec.service.sync().name('org.moqui.call.CallHandlingServices.get#CallHandling').requireNewTransaction(true).disableAuthz().call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
-            const caps = ec.service.sync().name('org.moqui.impl.VoiceServices.get#VoiceCapabilities').requireNewTransaction(true).disableAuthz().call() || {}
+            const caps = ec.service.sync().name('org.moqui.call.VoiceServices.get#VoiceCapabilities').requireNewTransaction(true).disableAuthz().call() || {}
             ec.message.clearErrors()
             ec.web.sendJsonResponse({errors, ruleList: out.ruleList || [], callerListList: out.callerListList || [], scheduleList: out.scheduleList || [],
                 groupList: out.groupList || [], settings: out.settings || {}, kindList: out.kindList || [], targetList: out.targetList || [],
@@ -53,7 +53,7 @@ along with this software (see the LICENSE.md file). If not, see
                     const value = ec.web.parameters[name]
                     if (value !== undefined && value !== null) parameters[name] = value
                 }
-                out = ec.service.sync().name('org.moqui.impl.CallHandlingServices.' + service).parameters(parameters).requireNewTransaction(true)
+                out = ec.service.sync().name('org.moqui.call.CallHandlingServices.' + service).parameters(parameters).requireNewTransaction(true)
                     .disableAuthz().call() || {}
             }
             const errors = ec.message.hasError() ? ec.message.errorsString : null

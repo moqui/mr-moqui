@@ -35,7 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
             const escape = (line) => line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
             const text = String(bodyText || '').replace(/\r\n?/g, '\n').trim()
             if (!text) ec.message.addError(ec.l10n.localize('Write a message first'))
-            else if (ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
+            else if (ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
                     && ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId || '').condition('encrypted', 'Y').count())
                 ec.message.addError(ec.l10n.localize('This room is end-to-end encrypted: open it in a browser to write in it'))
             else ec.service.sync().name('org.moqui.comms.ChatScreenServices.send#ChatMessage').parameters({chatRoomId: chatRoomId || '',
@@ -47,7 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="retryDelivery">
         <actions><script><![CDATA[
             for (const id of String(deliveryIds || '').split(',').map((part) => part.trim()).filter((part) => part)) {
-                ec.service.sync().name('org.moqui.impl.ChatBridgeServices.retry#Delivery').parameter('chatBridgeDeliveryId', id).call()
+                ec.service.sync().name('org.moqui.chat.ChatBridgeServices.retry#Delivery').parameter('chatBridgeDeliveryId', id).call()
                 if (ec.message.hasError()) break
             }
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Sending again'), 'success')
@@ -56,13 +56,13 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="markRead">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.ChatServices.mark#Read').parameters({chatRoomId: chatRoomId || '', eventSeq: null}).call()
+            ec.service.sync().name('org.moqui.chat.ChatServices.mark#Read').parameters({chatRoomId: chatRoomId || '', eventSeq: null}).call()
         ]]></script></actions>
         <default-response url="../Chat"><parameter name="chatRoomId"/></default-response>
     </transition>
     <transition name="markAllRead">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.ChatServices.mark#AllRead').call()
+            ec.service.sync().name('org.moqui.chat.ChatServices.mark#AllRead').call()
         ]]></script></actions>
         <default-response url="../Chat"/>
     </transition>

@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     the user's phones that register with Moqui's registrar, each with its live registrations (the phone's user agent, the
     address it registered from, when it expires); Add a phone, which shows its username, password, domain, port and
     transport once, with copy buttons and a short setup note; New password (rotate, shown once too) and Remove (revoke). All
-    through org.moqui.impl.SipDeviceServices, which acts only on the user's own phones, so these transitions run with
+    through org.moqui.call.SipDeviceServices, which acts only on the user's own phones, so these transitions run with
     authorization off as the call transitions do. A separate subscreen from Settings/Phone (V2's voicemail and numbers).
     The component is PhoneDevices.qvue next to this file; the terminal twin is PhoneDevicesTui, where the credentials show
     once as a message. -->
@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="devices" method="get" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.SipDeviceServices.find#SipDevices').requireNewTransaction(true).disableAuthz().call() || {}
+            const out = ec.service.sync().name('org.moqui.call.SipDeviceServices.find#SipDevices').requireNewTransaction(true).disableAuthz().call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
             ec.web.sendJsonResponse({errors, deviceList: out.deviceList || [], domain: out.domain || null, sipPort: out.sipPort || null,
@@ -37,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- add, newPassword and remove answer with the credentials once (add and newPassword) and never keep them -->
     <transition name="add">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.SipDeviceServices.create#SipDevice').parameters({name: name || null,
+            const out = ec.service.sync().name('org.moqui.call.SipDeviceServices.create#SipDevice').parameters({name: name || null,
                 deviceProfile: deviceProfile === 'legacy' ? 'legacy' : 'standard'}).requireNewTransaction(true).disableAuthz().call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
@@ -48,7 +48,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="newPassword">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.SipDeviceServices.rotate#SipDeviceCredential').parameter('sipDeviceId', sipDeviceId || '')
+            const out = ec.service.sync().name('org.moqui.call.SipDeviceServices.rotate#SipDeviceCredential').parameter('sipDeviceId', sipDeviceId || '')
                 .requireNewTransaction(true).disableAuthz().call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
@@ -59,7 +59,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="remove">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.SipDeviceServices.revoke#SipDevice').parameter('sipDeviceId', sipDeviceId || '')
+            const out = ec.service.sync().name('org.moqui.call.SipDeviceServices.revoke#SipDevice').parameter('sipDeviceId', sipDeviceId || '')
                 .requireNewTransaction(true).disableAuthz().call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()

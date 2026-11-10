@@ -1,4 +1,4 @@
-// Calls (org.moqui.impl.CallServices and Calls.js; framework/entity/CallEntities.xml; plans/Comms-Framework.md §5.4,
+// Calls (org.moqui.call.CallServices and Calls.js; framework/entity/CallEntities.xml; plans/Comms-Framework.md §5.4,
 // §6.3, W1): starting, ringing, the first answer winning, repeated requests, binding a socket with a fenced generation,
 // presence across two calls, leaving and ending, declining, ringing out, a lost connection and a lost media node, and a
 // room's group call. With cascading media nodes (W7, rtc_cascade_enabled) a leg's media goes to its signaling node, an
@@ -28,7 +28,7 @@ function as(userId, name, parameters) {
     let thrown = ""
     try {
         // as the Calls screens' transitions call them: the services check the signed-in user's part in each call
-        out = sys(() => ec.service.sync().name("org.moqui.impl.CallServices." + name).parameters(parameters || {}).call()) || {}
+        out = sys(() => ec.service.sync().name("org.moqui.call.CallServices." + name).parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
     }
@@ -45,12 +45,12 @@ function makeUser(userId) {
         account.create()
     })
 }
-const nodeUp = () => sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: NODE, mediaAddress: "127.0.0.1:10000"}))
+const nodeUp = () => sys(() => call("org.moqui.call.CallServices.register#MediaNode", {instanceId: NODE, mediaAddress: "127.0.0.1:10000"}))
 const session = id => sys(() => ec.entity.find(SESSION).condition("callSessionId", id).one())
 const legs = id => sys(() => Array.from(ec.entity.find(LEG).condition("callSessionId", id).orderBy("offeredDate").list()))
 const log = (id, userId) => sys(() => ec.entity.find("moqui.call.CallUserLog").condition({callSessionId: id, userId}).one())
 const inCall = userId => sys(() => ec.entity.find("moqui.security.UserStatus").condition("userId", userId).one()?.inCall || "N")
-const expire = () => sys(() => call("org.moqui.impl.CallServices.expire#Calls", {}))
+const expire = () => sys(() => call("org.moqui.call.CallServices.expire#Calls", {}))
 function age(entity, fields, field, millis) {
     sys(() => {
         for (const row of ec.entity.find(entity).condition(fields).list()) {
@@ -160,7 +160,7 @@ feature("binding a socket claims the next generation and fences the older one", 
         const second = as(A, "bind#Connection", {callSessionId: direct, callLegId: myLeg})
         const stranger = as(C, "bind#Connection", {callSessionId: direct, callLegId: myLeg})
         const otherSide = as(B, "bind#Connection", {callSessionId: direct, callLegId: myLeg})
-        const stale = sys(() => call("org.moqui.impl.CallServices.release#Connection", {callLegId: myLeg, generation: first.generation}))
+        const stale = sys(() => call("org.moqui.call.CallServices.release#Connection", {callLegId: myLeg, generation: first.generation}))
         const conns = sys(() => Array.from(ec.entity.find("moqui.call.CallConnection").condition("callLegId", myLeg).orderBy("generation").list()))
         return {first, second, stranger, otherSide, stale, conns}
     },
@@ -246,7 +246,7 @@ feature("a leg whose socket did not come back leaves, and the call ends", {
         const started = as(A, "start#Call", {calleeUserIdList: [B]})
         const answered = as(B, "answer#Call", {callSessionId: started.callSessionId})
         const bound = as(B, "bind#Connection", {callSessionId: started.callSessionId, callLegId: answered.callLegId})
-        sys(() => call("org.moqui.impl.CallServices.release#Connection", {callLegId: answered.callLegId, generation: bound.generation}))
+        sys(() => call("org.moqui.call.CallServices.release#Connection", {callLegId: answered.callLegId, generation: bound.generation}))
         age("moqui.call.CallConnection", {callLegId: answered.callLegId}, "closedDate", 60000)
         const expired = expire()
         return {expired, row: session(started.callSessionId)}
@@ -280,7 +280,7 @@ feature("a call whose media server stopped ends with that reason", {
 feature("a room's group call: members join, a non-member cannot, the host's leaving keeps it, the last leg ends it", {
     when() {
         ec.user.internalLoginUser("calls.spec.a")
-        room = sys(() => ec.service.sync().name("org.moqui.impl.ChatServices.create#Room")
+        room = sys(() => ec.service.sync().name("org.moqui.chat.ChatServices.create#Room")
             .parameters({roomTypeEnumId: "CrtPrivate", roomName: "Calls spec", memberUserIdList: [B, C]}).call()).chatRoomId
         ec.message.clearErrors()
         const started = as(A, "start#Call", {chatRoomId: room})
@@ -343,7 +343,7 @@ function anon(name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = ec.service.sync().name("org.moqui.impl.CallServices." + name).parameters(parameters || {}).call() || {}
+        out = ec.service.sync().name("org.moqui.call.CallServices." + name).parameters(parameters || {}).call() || {}
     } catch (err) {
         thrown = String(err.message || err)
     }
@@ -356,7 +356,7 @@ function internal(name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => ec.service.sync().name("org.moqui.impl.CallServices." + name).parameters(parameters || {}).call()) || {}
+        out = sys(() => ec.service.sync().name("org.moqui.call.CallServices." + name).parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
     }
@@ -467,7 +467,7 @@ const LEG_NODE = "calls-spec-leg-node"
 feature("with cascading media nodes a leg's media is on its signaling node, and losing that node ends only its legs", {
     when() {
         nodeUp()
-        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: LEG_NODE, mediaAddress: "127.0.0.1:10002"}))
+        sys(() => call("org.moqui.call.CallServices.register#MediaNode", {instanceId: LEG_NODE, mediaAddress: "127.0.0.1:10002"}))
         const started = as(A, "start#Call", {calleeUserIdList: [B, C]})
         const id = started.callSessionId
         sys(() => {
@@ -485,7 +485,7 @@ feature("with cascading media nodes a leg's media is on its signaling node, and 
         const stranger = as(D, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: LEG_NODE})
         const noMedia = as(A, "bind#Connection", {callSessionId: id, callLegId: started.callLegId, signalingNodeId: "calls-spec-nowhere"})
         // the call's node refused B's leg node's relay: B's media goes back to the call's node, and stays there
-        sys(() => call("org.moqui.impl.CallServices.note#MediaEvent", {callLegId: bLeg, generation: onLegNode.generation, event: "relayRefused"}))
+        sys(() => call("org.moqui.call.CallServices.note#MediaEvent", {callLegId: bLeg, generation: onLegNode.generation, event: "relayRefused"}))
         const pinned = as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg, signalingNodeId: LEG_NODE})
         const cOnLegNode = as(C, "bind#Connection", {callSessionId: id, callLegId: cLeg, signalingNodeId: LEG_NODE})
         // the leg node is lost: C's leg leaves with that reason; the call and the others go on
@@ -518,7 +518,7 @@ feature("with cascading media nodes a leg's media is on its signaling node, and 
 
 feature("a leg in the call gets its TURN servers with a credential of its own; nobody else does", {
     when() {
-        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: NODE, mediaAddress: "127.0.0.1:10000",
+        sys(() => call("org.moqui.call.CallServices.register#MediaNode", {instanceId: NODE, mediaAddress: "127.0.0.1:10000",
             turnUrls: "turn:127.0.0.1:3478?transport=udp,turns:127.0.0.1:5349?transport=tcp"}))
         const started = as(A, "start#Call", {calleeUserIdList: [B]})
         sys(() => {
@@ -546,7 +546,7 @@ feature("a leg in the call gets its TURN servers with a credential of its own; n
 feature("a new call's media goes to the edge node, whose row the edge link keeps, before a newer media node", {
     when() {
         // the edge node's row (plans/Edge-Node.md §5.4), its heartbeat older than the other media node's
-        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: EDGE_NODE, mediaAddress: "203.0.113.5:10000",
+        sys(() => call("org.moqui.call.CallServices.register#MediaNode", {instanceId: EDGE_NODE, mediaAddress: "203.0.113.5:10000",
             edgeLinked: true}))
         age("moqui.call.CallMediaNode", {instanceId: EDGE_NODE}, "heartbeatDate", 5000)
         nodeUp()
@@ -561,7 +561,7 @@ feature("a new call's media goes to the edge node, whose row the edge link keeps
         const otherAfter = sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", NODE).one())
         as(A, "end#Call", {callSessionId: started.callSessionId})
         // unpairing removes the edge node's row
-        sys(() => call("org.moqui.impl.CallServices.register#MediaNode", {instanceId: EDGE_NODE, edgeLinked: true, stopping: true}))
+        sys(() => call("org.moqui.call.CallServices.register#MediaNode", {instanceId: EDGE_NODE, edgeLinked: true, stopping: true}))
         const gone = sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", EDGE_NODE).count())
         return {started, row, edgeRow, other, gone, plainOnEdge, linkOnOther, edgeAfter, otherAfter}
     },

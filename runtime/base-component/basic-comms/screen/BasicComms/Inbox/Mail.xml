@@ -193,7 +193,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="unsubscribe">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.unsubscribe#Message').parameter('emailMessageId', emailMessageId || '').call()
+            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.unsubscribe#Message').parameter('emailMessageId', emailMessageId || '').call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {method: out.method, unsubscribed: out.unsubscribed, url: out.url,
                 messageInfos: out.unsubscribed ? [{type: 'success', message: ec.l10n.localize('Unsubscribed')}] : []})
         ]]></script></actions>
@@ -201,7 +201,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="blockSender">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.block#Sender').parameter('emailMessageId', emailMessageId || '').call()
+            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.block#Sender').parameter('emailMessageId', emailMessageId || '').call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {emailRuleId: out.emailRuleId, movedCount: out.movedCount,
                 messageInfos: [{type: 'success', message: ec.l10n.localize('Sender blocked: their mail goes to Spam')}]})
         ]]></script></actions>
@@ -219,7 +219,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="saveSearch">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.store#EmailSearch').parameters({emailSearchId: emailSearchId || null,
+            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.store#EmailSearch').parameters({emailSearchId: emailSearchId || null,
                 searchName: searchName || '', queryText: queryText || ''}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {emailSearchId: out.emailSearchId})
         ]]></script></actions>
@@ -227,14 +227,14 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="deleteSearch">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.EmailClientServices.delete#EmailSearch').parameter('emailSearchId', emailSearchId || '').call()
+            ec.service.sync().name('org.moqui.mail.EmailClientServices.delete#EmailSearch').parameter('emailSearchId', emailSearchId || '').call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
     <transition name="createLabel">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.create#EmailLabel').parameters({emailAccountId: emailAccountId || '',
+            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.create#EmailLabel').parameters({emailAccountId: emailAccountId || '',
                 labelName: labelName || ''}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {emailLabelId: out.emailLabelId})
         ]]></script></actions>
@@ -242,7 +242,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="createFolder">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.create#EmailFolder').parameters({emailAccountId: emailAccountId || '',
+            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.create#EmailFolder').parameters({emailAccountId: emailAccountId || '',
                 folderName: folderName || ''}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {emailFolderId: out.emailFolderId})
         ]]></script></actions>

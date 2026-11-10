@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The terminal twin of Settings, Phone (style-guide §4.8): the user's numbers and their voicemail settings
-    (org.moqui.impl.VoicemailServices): the email notice with its attachments (off by default; mail cannot be recalled), the
+    (org.moqui.call.VoicemailServices): the email notice with its attachments (off by default; mail cannot be recalled), the
     rings, the PIN (set, changed or removed) and whether there is a greeting, which is recorded or uploaded in the browser and
     can be removed here. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="saveNotices">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.update#VoicemailSettings').parameters({notifyEmail: notifyEmail || '',
+            const out = ec.service.sync().name('org.moqui.call.VoicemailServices.update#VoicemailSettings').parameters({notifyEmail: notifyEmail || '',
                 attachAudio: attachAudio === 'Y', attachTranscript: attachTranscript === 'Y', rings: rings || null})
                 .requireNewTransaction(true).disableAuthz().call() || {}
             if (!ec.message.hasError()) ec.message.addMessage(out.warning || ec.l10n.localize('Voicemail settings saved'), out.warning ? 'warning' : 'success')
@@ -31,7 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="setPin">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.VoicemailServices.set#VoicemailPin').parameter('pin', pin || '')
+            ec.service.sync().name('org.moqui.call.VoicemailServices.set#VoicemailPin').parameter('pin', pin || '')
                 .requireNewTransaction(true).disableAuthz().call()
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('PIN saved'), 'success')
         ]]></script></actions>
@@ -40,7 +40,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="clearPin">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.VoicemailServices.set#VoicemailPin').parameter('clear', true)
+            ec.service.sync().name('org.moqui.call.VoicemailServices.set#VoicemailPin').parameter('clear', true)
                 .requireNewTransaction(true).disableAuthz().call()
         ]]></script></actions>
         <default-response url="."/>
@@ -48,7 +48,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="deleteGreeting">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.VoicemailServices.delete#VoicemailGreeting').requireNewTransaction(true).disableAuthz().call()
+            ec.service.sync().name('org.moqui.call.VoicemailServices.delete#VoicemailGreeting').requireNewTransaction(true).disableAuthz().call()
         ]]></script></actions>
         <default-response url="."/>
         <error-response url="."/>
@@ -56,7 +56,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.get#VoicemailSettings').requireNewTransaction(true).disableAuthz().call() || {}
+        const out = ec.service.sync().name('org.moqui.call.VoicemailServices.get#VoicemailSettings').requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         const box = out.box || {}
         numbersText = Array.from(out.myNumberList || []).join(', ') || L('No number rings you yet; an administrator can give you one.')

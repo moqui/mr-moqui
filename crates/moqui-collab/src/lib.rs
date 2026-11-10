@@ -28,7 +28,7 @@
 //! the next save writes over it, the other change staying in the page's history.
 //!
 //! This crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it through the [`moqui_core::extension`]
-//! entry below: `org.moqui.impl.CollabServices` ([`service`]). moqui-host links it in every build and calls the rooms
+//! entry below: `org.moqui.resource.CollabServices` ([`service`]). moqui-host links it in every build and calls the rooms
 //! from its WebSocket; the browser build leaves it out, and its services report that `collab` is not built in.
 
 pub mod markdown;
@@ -204,7 +204,7 @@ struct Access {
 
 fn access(page_id: &str, user_id: &str) -> Result<Access, Refusal> {
     let out = call_internal(
-        "org.moqui.impl.WikiServices.get#WikiPageAccess",
+        "org.moqui.resource.WikiServices.get#WikiPageAccess",
         &[
             ("wikiPageId", Value::string(page_id)),
             ("userId", Value::string(user_id)),
@@ -221,7 +221,7 @@ fn access(page_id: &str, user_id: &str) -> Result<Access, Refusal> {
 /// The page, its text and the version it is at.
 fn read_page(page_id: &str, on_database: bool) -> Result<(WikiTarget, String, Option<String>), Refusal> {
     let info = call_internal(
-        "org.moqui.impl.WikiServices.get#WikiPageInfoById",
+        "org.moqui.resource.WikiServices.get#WikiPageInfoById",
         &[("wikiPageId", Value::string(page_id))],
     )
     .map_err(|err| Refusal::new(404, err.message()))?;
@@ -672,7 +672,7 @@ fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -
         disable_authz: true,
         ..Default::default()
     };
-    let result = sync_checked("org.moqui.impl.WikiServices.update#WikiPage", &parameters, &options);
+    let result = sync_checked("org.moqui.resource.WikiServices.update#WikiPage", &parameters, &options);
     ExecutionContext::with_current(|ec| ec.message().clear_errors());
     if switched {
         moqui_core::user::session::restore_identity(&identity);

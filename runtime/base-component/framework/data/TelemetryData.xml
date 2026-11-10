@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <entity-facade-xml type="seed">
     <moqui.service.job.ServiceJob jobName="rollup_TelemetryMetrics_hourly" description="Roll telemetry minute metrics into hours and days"
-            serviceName="org.moqui.impl.TelemetryServices.rollup#Metrics" cronExpression="0 5 * * * ?" paused="N"/>
+            serviceName="org.moqui.monitor.TelemetryServices.rollup#Metrics" cronExpression="0 5 * * * ?" paused="N"/>
     <moqui.service.job.ServiceJob jobName="clean_TelemetryData_daily" description="Apply configured telemetry retention"
-            serviceName="org.moqui.impl.TelemetryServices.clean#TelemetryData" cronExpression="0 15 2 * * ?" paused="N"/>
+            serviceName="org.moqui.monitor.TelemetryServices.clean#TelemetryData" cronExpression="0 15 2 * * ?" paused="N"/>
     <moqui.service.job.ServiceJob jobName="scrape_TelemetryTargets_minute" description="Scrape Prometheus-text targets whose interval has passed"
-            serviceName="org.moqui.impl.TelemetryServices.scrape#Targets" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
+            serviceName="org.moqui.monitor.TelemetryServices.scrape#Targets" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
     <moqui.service.job.ServiceJob jobName="run_SyntheticChecks_minute" description="Run synthetic checks whose interval has passed"
-            serviceName="org.moqui.impl.TelemetryServices.run#Checks" cronExpression="30 * * * * ?" paused="N" errorHistoryOnly="Y"/>
+            serviceName="org.moqui.monitor.TelemetryServices.run#Checks" cronExpression="30 * * * * ?" paused="N" errorHistoryOnly="Y"/>
     <moqui.service.job.ServiceJob jobName="detect_Regressions_5min" description="Compare service versions with their baselines and open incidents"
             serviceName="org.moqui.monitor.MonitorServices.detect#Regressions" cronExpression="0 */5 * * * ?" paused="N" errorHistoryOnly="Y"/>
     <moqui.service.job.ServiceJob jobName="run_Recovery_minute" description="Recovery decisions, actions and their verification for open incidents"

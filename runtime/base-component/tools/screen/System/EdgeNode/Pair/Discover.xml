@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Pair step 3, discover (plans/Edge-Node.md §5.7): what the paired edge node offers now
-    (org.moqui.impl.EdgeServices.get#EdgeOffer, asked on the link), as a filled-out form with each area on or off and
+    (org.moqui.edge.EdgeServices.get#EdgeOffer, asked on the link), as a filled-out form with each area on or off and
     this node's choices filled in: web access (its host names, passthrough or terminate; by default this node's
     webapp_http_host and the names it has there now), mail (the domains of the hosted and shared accounts, and whether
     the system's and the chosen accounts' outgoing mail goes through the edge node), chat (the bridges whose webhooks
@@ -87,7 +87,7 @@ along with this software (see the LICENSE.md file). If not, see
                 let nodeHosts = null
                 ec.message.pushErrors()
                 try {
-                    const offered = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeOffer').call() || {}
+                    const offered = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeOffer').call() || {}
                     if (!ec.message.hasError()) nodeHosts = Array.from(offered.offer?.nodeHosts || [])
                         .map((host) => String(host.hostName || '').replace(/\.$/, '').toLowerCase())
                 } finally {
@@ -113,7 +113,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const link = ec.service.sync().name('org.moqui.impl.EdgeServices.get#LinkStatus').call() || {}
+        const link = ec.service.sync().name('org.moqui.edge.EdgeServices.get#LinkStatus').call() || {}
         notBuilt = link.state === 'notBuilt'
         notStarted = link.state === 'notStarted'
         const running = !notBuilt && !notStarted
@@ -128,7 +128,7 @@ along with this software (see the LICENSE.md file). If not, see
         let out = {}
         ec.message.pushErrors()
         try {
-            out = ec.service.sync().name('org.moqui.impl.EdgeServices.get#EdgeOffer').call() || {}
+            out = ec.service.sync().name('org.moqui.edge.EdgeServices.get#EdgeOffer').call() || {}
             if (ec.message.hasError()) offerError = ec.message.getErrorsString()
         } finally {
             ec.message.clearErrors()

@@ -14,7 +14,7 @@
 
 //! What the server asks of Moqui. Everything a session reads or writes is a service call by name, as a user (with that
 //! user's authorization, as the web client's calls are) or as internal work (sign-in lookups only), so the chat rules
-//! stay in `org.moqui.impl.ChatServices` and `XmppServices` and this crate needs no ExecutionContext. moqui-host runs
+//! stay in `org.moqui.chat.ChatServices` and `XmppServices` and this crate needs no ExecutionContext. moqui-host runs
 //! the calls on its request workers; the tests have an in-memory backend.
 
 use std::future::Future;
@@ -50,49 +50,49 @@ pub trait Backend: Send + Sync {
 
 /// The services this crate calls.
 pub mod services {
-    pub const ACCOUNT: &str = "org.moqui.impl.XmppServices.get#Account";
-    pub const SCRAM: &str = "org.moqui.impl.XmppServices.get#ScramCredentials";
-    pub const CHECK_PLAIN: &str = "org.moqui.impl.XmppServices.check#PlainPassword";
-    pub const FAST_TOKEN: &str = "org.moqui.impl.XmppServices.get#FastToken";
-    pub const ISSUE_FAST_TOKEN: &str = "org.moqui.impl.XmppServices.issue#FastToken";
-    pub const USE_FAST_TOKEN: &str = "org.moqui.impl.XmppServices.use#FastToken";
-    pub const INVALIDATE_FAST_TOKEN: &str = "org.moqui.impl.XmppServices.invalidate#FastToken";
-    pub const CHECK_CREDENTIAL: &str = "org.moqui.impl.XmppServices.check#Credential";
-    pub const USERS: &str = "org.moqui.impl.XmppServices.get#Users";
-    pub const ROSTER: &str = "org.moqui.impl.XmppServices.get#Roster";
-    pub const DIRECT_ROOM: &str = "org.moqui.impl.XmppServices.get#DirectRoom";
-    pub const ROOM: &str = "org.moqui.impl.XmppServices.get#RoomInfo";
-    pub const ARCHIVE: &str = "org.moqui.impl.XmppServices.get#Archive";
-    pub const FIND_EVENT: &str = "org.moqui.impl.XmppServices.find#EventByRef";
-    pub const STORE_ENCRYPTED: &str = "org.moqui.impl.XmppServices.store#EncryptedMessage";
-    pub const PEP_ITEMS: &str = "org.moqui.impl.XmppServices.get#PepItems";
-    pub const PEP_PUBLISH: &str = "org.moqui.impl.XmppServices.publish#PepItem";
-    pub const PEP_RETRACT: &str = "org.moqui.impl.XmppServices.retract#PepItem";
-    pub const PEP_CONFIGURE: &str = "org.moqui.impl.XmppServices.configure#PepNode";
-    pub const PEP_DELETE: &str = "org.moqui.impl.XmppServices.delete#PepNode";
-    pub const BLOCKS: &str = "org.moqui.impl.XmppServices.get#BlockedJids";
-    pub const BLOCK: &str = "org.moqui.impl.XmppServices.block#Jids";
-    pub const UNBLOCK: &str = "org.moqui.impl.XmppServices.unblock#Jids";
-    pub const PUSH_ENABLE: &str = "org.moqui.impl.XmppServices.enable#Push";
-    pub const PUSH_DISABLE: &str = "org.moqui.impl.XmppServices.disable#Push";
-    pub const PUSH_TARGETS: &str = "org.moqui.impl.XmppServices.get#PushTargets";
-    pub const UPLOAD_SLOT: &str = "org.moqui.impl.XmppServices.create#UploadSlot";
-    pub const ATTACH_UPLOAD: &str = "org.moqui.impl.XmppServices.attach#Upload";
-    pub const ATTACHMENT_URLS: &str = "org.moqui.impl.XmppServices.get#AttachmentUrls";
-    pub const ICE_SERVERS: &str = "org.moqui.impl.XmppServices.get#IceServers";
+    pub const ACCOUNT: &str = "org.moqui.chat.XmppServices.get#Account";
+    pub const SCRAM: &str = "org.moqui.chat.XmppServices.get#ScramCredentials";
+    pub const CHECK_PLAIN: &str = "org.moqui.chat.XmppServices.check#PlainPassword";
+    pub const FAST_TOKEN: &str = "org.moqui.chat.XmppServices.get#FastToken";
+    pub const ISSUE_FAST_TOKEN: &str = "org.moqui.chat.XmppServices.issue#FastToken";
+    pub const USE_FAST_TOKEN: &str = "org.moqui.chat.XmppServices.use#FastToken";
+    pub const INVALIDATE_FAST_TOKEN: &str = "org.moqui.chat.XmppServices.invalidate#FastToken";
+    pub const CHECK_CREDENTIAL: &str = "org.moqui.chat.XmppServices.check#Credential";
+    pub const USERS: &str = "org.moqui.chat.XmppServices.get#Users";
+    pub const ROSTER: &str = "org.moqui.chat.XmppServices.get#Roster";
+    pub const DIRECT_ROOM: &str = "org.moqui.chat.XmppServices.get#DirectRoom";
+    pub const ROOM: &str = "org.moqui.chat.XmppServices.get#RoomInfo";
+    pub const ARCHIVE: &str = "org.moqui.chat.XmppServices.get#Archive";
+    pub const FIND_EVENT: &str = "org.moqui.chat.XmppServices.find#EventByRef";
+    pub const STORE_ENCRYPTED: &str = "org.moqui.chat.XmppServices.store#EncryptedMessage";
+    pub const PEP_ITEMS: &str = "org.moqui.chat.XmppServices.get#PepItems";
+    pub const PEP_PUBLISH: &str = "org.moqui.chat.XmppServices.publish#PepItem";
+    pub const PEP_RETRACT: &str = "org.moqui.chat.XmppServices.retract#PepItem";
+    pub const PEP_CONFIGURE: &str = "org.moqui.chat.XmppServices.configure#PepNode";
+    pub const PEP_DELETE: &str = "org.moqui.chat.XmppServices.delete#PepNode";
+    pub const BLOCKS: &str = "org.moqui.chat.XmppServices.get#BlockedJids";
+    pub const BLOCK: &str = "org.moqui.chat.XmppServices.block#Jids";
+    pub const UNBLOCK: &str = "org.moqui.chat.XmppServices.unblock#Jids";
+    pub const PUSH_ENABLE: &str = "org.moqui.chat.XmppServices.enable#Push";
+    pub const PUSH_DISABLE: &str = "org.moqui.chat.XmppServices.disable#Push";
+    pub const PUSH_TARGETS: &str = "org.moqui.chat.XmppServices.get#PushTargets";
+    pub const UPLOAD_SLOT: &str = "org.moqui.chat.XmppServices.create#UploadSlot";
+    pub const ATTACH_UPLOAD: &str = "org.moqui.chat.XmppServices.attach#Upload";
+    pub const ATTACHMENT_URLS: &str = "org.moqui.chat.XmppServices.get#AttachmentUrls";
+    pub const ICE_SERVERS: &str = "org.moqui.chat.XmppServices.get#IceServers";
 
-    pub const SEND: &str = "org.moqui.impl.ChatServices.send#Message";
-    pub const EDIT: &str = "org.moqui.impl.ChatServices.edit#Message";
-    pub const REDACT: &str = "org.moqui.impl.ChatServices.redact#Message";
-    pub const REACT: &str = "org.moqui.impl.ChatServices.react#Message";
-    pub const MARK_READ: &str = "org.moqui.impl.ChatServices.mark#Read";
-    pub const TYPING: &str = "org.moqui.impl.ChatServices.signal#Typing";
-    pub const ADD_MEMBER: &str = "org.moqui.impl.ChatServices.add#Member";
-    pub const FIND_ROOMS: &str = "org.moqui.impl.ChatServices.find#Rooms";
-    pub const SET_STATUS: &str = "org.moqui.impl.ChatServices.set#UserStatus";
-    pub const HEARTBEAT: &str = "org.moqui.impl.ChatServices.heartbeat#UserStatus";
-    pub const DISCONNECT: &str = "org.moqui.impl.ChatServices.disconnect#UserStatus";
-    pub const STATUSES: &str = "org.moqui.impl.ChatServices.get#UserStatuses";
+    pub const SEND: &str = "org.moqui.chat.ChatServices.send#Message";
+    pub const EDIT: &str = "org.moqui.chat.ChatServices.edit#Message";
+    pub const REDACT: &str = "org.moqui.chat.ChatServices.redact#Message";
+    pub const REACT: &str = "org.moqui.chat.ChatServices.react#Message";
+    pub const MARK_READ: &str = "org.moqui.chat.ChatServices.mark#Read";
+    pub const TYPING: &str = "org.moqui.chat.ChatServices.signal#Typing";
+    pub const ADD_MEMBER: &str = "org.moqui.chat.ChatServices.add#Member";
+    pub const FIND_ROOMS: &str = "org.moqui.chat.ChatServices.find#Rooms";
+    pub const SET_STATUS: &str = "org.moqui.chat.ChatServices.set#UserStatus";
+    pub const HEARTBEAT: &str = "org.moqui.chat.ChatServices.heartbeat#UserStatus";
+    pub const DISCONNECT: &str = "org.moqui.chat.ChatServices.disconnect#UserStatus";
+    pub const STATUSES: &str = "org.moqui.chat.ChatServices.get#UserStatuses";
 }
 
 /// Helpers to read a service's JSON answer.

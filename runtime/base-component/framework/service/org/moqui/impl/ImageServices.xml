@@ -23,16 +23,16 @@ along with this software (see the LICENSE.md file). If not, see
             small and thumbnail widths in outputImageFormat. An output is a resource location or a resource reference.
             Each width is resampled from the original.</description>
         <in-parameters>
-            <parameter name="inputImageStream" type="java.io.InputStream"><description>The image bytes, or a resource
+            <parameter name="inputImageStream" type="InputStream"><description>The image bytes, or a resource
                 location as text.</description></parameter>
             <parameter name="inputLocation"><description>The resource location of the image, when inputImageStream
                 is not given.</description></parameter>
             <parameter name="outputImageFormat" required="true"><description>Supports the values: jpg, png, gif, tiff, webp, bmp</description></parameter>
-            <parameter name="outputResourceReferenceOriginal" type="org.moqui.resource.ResourceReference"><description>Destination to save original image with no modification.</description></parameter>
-            <parameter name="outputResourceReferenceLarge" type="org.moqui.resource.ResourceReference"><description>Destination to save the converted image with pixelWidthLarge width.</description></parameter>
-            <parameter name="outputResourceReferenceMedium" type="org.moqui.resource.ResourceReference"><description>Destination to save the converted image with pixelWidthMedium width.</description></parameter>
-            <parameter name="outputResourceReferenceSmall" type="org.moqui.resource.ResourceReference"><description>Destination to save the converted image with pixelWidthSmall width.</description></parameter>
-            <parameter name="outputResourceReferenceThumbnail" type="org.moqui.resource.ResourceReference"><description>Destination to save the converted image with pixelWidthThumbnail width.</description></parameter>
+            <parameter name="outputResourceReferenceOriginal" type="ResourceReference"><description>Destination to save original image with no modification.</description></parameter>
+            <parameter name="outputResourceReferenceLarge" type="ResourceReference"><description>Destination to save the converted image with pixelWidthLarge width.</description></parameter>
+            <parameter name="outputResourceReferenceMedium" type="ResourceReference"><description>Destination to save the converted image with pixelWidthMedium width.</description></parameter>
+            <parameter name="outputResourceReferenceSmall" type="ResourceReference"><description>Destination to save the converted image with pixelWidthSmall width.</description></parameter>
+            <parameter name="outputResourceReferenceThumbnail" type="ResourceReference"><description>Destination to save the converted image with pixelWidthThumbnail width.</description></parameter>
             <parameter name="pixelWidthLarge" type="Integer" default="2160" required="true"/>
             <parameter name="pixelWidthMedium" type="Integer" default="1080" required="true"/>
             <parameter name="pixelWidthSmall" type="Integer" default="360" required="true"/>
@@ -53,7 +53,7 @@ along with this software (see the LICENSE.md file). If not, see
             extension, and contentLocation names that file.</description>
         <in-parameters>
             <parameter name="image" type="byte[]" required="true"/>
-            <parameter name="outputResourceReference" type="org.moqui.resource.ResourceReference" required="true"/>
+            <parameter name="outputResourceReference" type="ResourceReference" required="true"/>
             <parameter name="outputImageFormat" required="true"><description>Supports the values: jpg, png, gif, tiff, webp, bmp</description></parameter>
             <parameter name="inputImageFormat"><description>Defaults to the format of image.</description></parameter>
             <parameter name="retryIfFail" type="Boolean" default="true"/>

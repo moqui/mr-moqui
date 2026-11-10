@@ -8,7 +8,7 @@ and only the host and the one who recorded it can play or download the files. Th
 - **Writers:** `crates/moqui-rtc/src/record/` (sans-IO): Ogg Opus, WebM VP8, and the recorder that cuts tracks into
   segments.
 - **Recorder:** `crates/moqui-host/src/rtc/recorder.rs`, one thread per recording on the call's media node.
-- **Services:** `org.moqui.impl.CallRecordingServices` and `CallRecordings.js` (framework), with the model in the
+- **Services:** `org.moqui.call.CallRecordingServices` and `CallRecordings.js` (framework), with the model in the
   Recording block of `framework/entity/CallEntities.xml`.
 - **Browser:** the Record button, indicator and notice in `m-call` (`webroot` `js/WebrootCall.js`); the Recordings
   screen in BasicComms Calls (`Calls/Recordings.xml`, `Recordings.qvue`, and `RecordingsTui.xml` for the terminal).

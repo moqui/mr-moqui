@@ -162,7 +162,7 @@ fn sink_receives_a_template_send_and_expands_the_subject() {
     params.insert("body".into(), Value::string("Hi"));
     params.insert("bodyText".into(), Value::string("Hi"));
     params.insert("bodyParameters".into(), Value::Map(body_parameters));
-    let out = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send");
+    let out = moqui_core::service::sync("org.moqui.mail.EmailServices.send#EmailTemplate", &params).expect("send");
     let errors = context.message().errors().join("\n");
     assert!(errors.is_empty(), "{errors}");
     let sent = sink.messages();
@@ -213,7 +213,7 @@ fn a_template_send_adds_the_list_headers_and_keeps_them() {
     params.insert("toAddresses".into(), Value::string("member@example.com"));
     params.insert("body".into(), Value::string("<p>News</p>"));
     params.insert("extraHeaders".into(), Value::Map(extra));
-    let out = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send");
+    let out = moqui_core::service::sync("org.moqui.mail.EmailServices.send#EmailTemplate", &params).expect("send");
     let errors = context.message().errors().join("\n");
     assert!(errors.is_empty(), "{errors}");
     let sent = sink.messages();
@@ -269,7 +269,7 @@ fn a_template_send_threads_and_replies_as_the_caller_says() {
         params.insert("inReplyTo".into(), Value::string(in_reply_to));
         params.insert("references".into(), Value::string(references));
         params.insert("replyToAddresses".into(), Value::string(reply_to));
-        moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send")
+        moqui_core::service::sync("org.moqui.mail.EmailServices.send#EmailTemplate", &params).expect("send")
     };
     let out = send(
         "<b@forum.example.com>",
@@ -326,7 +326,7 @@ fn host_rejected_by_allowed_hosts_does_not_touch_the_sink() {
     params.insert("toAddresses".into(), Value::string("to@example.com"));
     params.insert("body".into(), Value::string("Hi"));
     params.insert("bodyText".into(), Value::string("Hi"));
-    let _ = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params);
+    let _ = moqui_core::service::sync("org.moqui.mail.EmailServices.send#EmailTemplate", &params);
     let errors = context.message().errors().join("\n");
     assert!(errors.contains("notexample.com"), "{errors}");
     assert!(sink.messages().is_empty(), "{errors}");
@@ -421,7 +421,7 @@ fn screen_body_renders_html_and_text_and_sends_with_attachments() {
             ("contentBytes", Value::Bytes(vec![137, 80, 78, 71])),
         ])]),
     );
-    let out = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("send");
+    let out = moqui_core::service::sync("org.moqui.mail.EmailServices.send#EmailTemplate", &params).expect("send");
     let errors = context.message().errors().join("\n");
     let messages = context.message().messages().join("\n");
     assert!(errors.is_empty(), "{errors}");
@@ -539,7 +539,7 @@ fn screen_render_email_sends_the_rendered_screen_as_an_attachment() {
     params.insert("toAddresses".into(), Value::string("boss@example.com"));
     params.insert("title".into(), Value::string("Monthly Report"));
     params.insert("bodyParameters".into(), map(vec![("rowName", Value::string("March"))]));
-    moqui_core::service::sync("org.moqui.impl.EmailServices.send#ScreenRenderEmail", &params).expect("send");
+    moqui_core::service::sync("org.moqui.mail.EmailServices.send#ScreenRenderEmail", &params).expect("send");
     let errors = context.message().errors().join("\n");
     let messages = context.message().messages().join("\n");
     assert!(errors.is_empty(), "{errors}");
@@ -592,7 +592,7 @@ fn screen_render_email_as_xlsx_attaches_the_workbook() {
     params.insert("toAddresses".into(), Value::string("boss@example.com"));
     params.insert("title".into(), Value::string("Monthly Report"));
     params.insert("bodyParameters".into(), map(vec![("rowName", Value::string("March"))]));
-    moqui_core::service::sync("org.moqui.impl.EmailServices.send#ScreenRenderEmail", &params).expect("send");
+    moqui_core::service::sync("org.moqui.mail.EmailServices.send#ScreenRenderEmail", &params).expect("send");
     let errors = context.message().errors().join("\n");
     assert!(errors.is_empty(), "{errors}");
     let sent = sink.sent();
@@ -640,7 +640,7 @@ fn screen_render_email_as_xsl_fo_attaches_the_pdf_or_sends_without_it() {
     params.insert("screenRenderMode".into(), Value::string("xsl-fo"));
     params.insert("toAddresses".into(), Value::string("boss@example.com"));
     params.insert("title".into(), Value::string("Printed"));
-    moqui_core::service::sync("org.moqui.impl.EmailServices.send#ScreenRenderEmail", &params).expect("send");
+    moqui_core::service::sync("org.moqui.mail.EmailServices.send#ScreenRenderEmail", &params).expect("send");
     let errors = context.message().errors().join("\n");
     assert!(errors.is_empty(), "{errors}");
     assert!(!errors.contains(PDF_UNAVAILABLE), "{errors}");
@@ -650,7 +650,7 @@ fn screen_render_email_as_xsl_fo_attaches_the_pdf_or_sends_without_it() {
     assert!(sent[0].body.contains("Printed"), "{}", sent[0].body);
 
     moqui_core::screen::install_pdf_engine(std::sync::Arc::new(FakePdf));
-    moqui_core::service::sync("org.moqui.impl.EmailServices.send#ScreenRenderEmail", &params).expect("send");
+    moqui_core::service::sync("org.moqui.mail.EmailServices.send#ScreenRenderEmail", &params).expect("send");
     moqui_core::screen::clear_pdf_engine();
     let sent = sink.sent();
     assert_eq!(sent.len(), 2);
@@ -692,7 +692,7 @@ fn a_body_screen_that_fails_to_render_does_not_send() {
     let mut params = BTreeMap::new();
     params.insert("emailTemplateId".into(), Value::string("BROKEN"));
     params.insert("toAddresses".into(), Value::string("to@example.com"));
-    let _ = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params);
+    let _ = moqui_core::service::sync("org.moqui.mail.EmailServices.send#EmailTemplate", &params);
     let messages = context.message().messages().join("\n");
     assert!(messages.contains("Error sending email"), "{messages}");
     assert!(messages.contains("NoSuchScreen.xml"), "{messages}");
@@ -710,7 +710,7 @@ fn sim_skip_returns_email_message_id_sim() {
     let mut params = std::collections::BTreeMap::new();
     params.insert("emailTemplateId".into(), Value::string("MISSING"));
     params.insert("toAddresses".into(), Value::string("to@example.com"));
-    let out = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailTemplate", &params).expect("sim");
+    let out = moqui_core::service::sync("org.moqui.mail.EmailServices.send#EmailTemplate", &params).expect("sim");
     assert_eq!(out.get("emailMessageId").and_then(Value::as_str), Some("SIM"));
     assert!(sink.messages().is_empty());
     assert!(context.message().errors().is_empty());
@@ -757,7 +757,7 @@ fn fake_store_poll_runs_one_eca_and_skips_seen() {
     let _store = FakeGuard::install(vec![fresh, seen]);
     let mut params = std::collections::BTreeMap::new();
     params.insert("emailServerId".into(), Value::string("TEST_POLL"));
-    moqui_core::service::sync("org.moqui.impl.EmailServices.poll#EmailServer", &params).expect("poll");
+    moqui_core::service::sync("org.moqui.mail.EmailServices.poll#EmailServer", &params).expect("poll");
     let errors = context.message().errors().join("\n");
     assert!(errors.is_empty(), "{errors}");
     let messages = context.message().messages().to_vec();
@@ -865,7 +865,7 @@ fn a_message_whose_rule_fails_is_not_marked_or_deleted() {
     FAKE_DELETED.with(|deleted| deleted.borrow_mut().clear());
     let mut params = std::collections::BTreeMap::new();
     params.insert("emailServerId".into(), Value::string("TEST_KEEP"));
-    let _ = moqui_core::service::sync("org.moqui.impl.EmailServices.poll#EmailServer", &params);
+    let _ = moqui_core::service::sync("org.moqui.mail.EmailServices.poll#EmailServer", &params);
     let messages = context.message().messages().to_vec();
     // The second rule still ran for the failing message, and the next message was processed.
     assert!(messages.iter().any(|text| text == "saw bad"), "{messages:?}");
@@ -886,7 +886,7 @@ fn a_failed_message_keeps_the_ones_before_it_committed_and_deleted() {
         "",
         r#"<emecas>
                 <emeca rule-name="Save"><actions>
-                    <service-call name="org.moqui.impl.EmailServices.save#EcaEmailMessage" in-map="context"/></actions></emeca>
+                    <service-call name="org.moqui.mail.EmailServices.save#EcaEmailMessage" in-map="context"/></actions></emeca>
                 <emeca rule-name="Breaks"><condition><expression>fields.subject == 'bad'</expression></condition>
                     <actions><script>throw new Error('rule broke')</script></actions></emeca>
             </emecas>"#,
@@ -917,7 +917,7 @@ fn a_failed_message_keeps_the_ones_before_it_committed_and_deleted() {
     FAKE_DELETED.with(|deleted| deleted.borrow_mut().clear());
     let mut params = std::collections::BTreeMap::new();
     params.insert("emailServerId".into(), Value::string("TEST_EACH"));
-    let _ = moqui_core::service::sync("org.moqui.impl.EmailServices.poll#EmailServer", &params);
+    let _ = moqui_core::service::sync("org.moqui.mail.EmailServices.poll#EmailServer", &params);
     let errors = context.message().errors().join("\n");
     assert!(errors.contains("rule broke"), "{errors}");
     // The poll's own transaction rolled back on that error; the saved messages were committed before it.

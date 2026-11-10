@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Pair step 1, the edge node (plans/Edge-Node.md §5.7): its address (https://host, or https://host:port) and the one-use
     pairing code made on it in System, Edge Clients. Next connects to it and checks its certificate
-    (org.moqui.impl.EdgeServices.check#EdgeNode), keeps the code in the session for Connect, and carries the address on.
+    (org.moqui.edge.EdgeServices.check#EdgeNode), keeps the code in the session for Connect, and carries the address on.
     The answer goes in the session too, so Connect shows it without a second round trip. A node already paired, an edge
     node, a build without the edge link and a process where it is not running see why they cannot pair instead. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
             const pairingCode = String(code || '').trim()
             if (!url) { ec.message.addError(L('Enter the edge node address')); return }
             if (!pairingCode) { ec.message.addError(L('Enter the pairing code made on the edge node')); return }
-            const out = ec.service.sync().name('org.moqui.impl.EdgeServices.check#EdgeNode').parameter('url', url).call() || {}
+            const out = ec.service.sync().name('org.moqui.edge.EdgeServices.check#EdgeNode').parameter('url', url).call() || {}
             if (ec.message.hasError()) return
             ec.web.sessionAttributes.edgePairingCode = pairingCode
             // for Connect: what the edge node answered, for this address (session attributes are text)
@@ -44,7 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
 
     <actions><script><![CDATA[
-        const link = ec.service.sync().name('org.moqui.impl.EdgeServices.get#LinkStatus').call() || {}
+        const link = ec.service.sync().name('org.moqui.edge.EdgeServices.get#LinkStatus').call() || {}
         notBuilt = link.state === 'notBuilt'
         notStarted = link.state === 'notStarted'
         const running = !notBuilt && !notStarted

@@ -133,7 +133,7 @@ fn a_timestamp_is_read_in_the_session_time_zone() {
     let _entered = context.enter();
     crate::user::session::set_time_zone(Some("America/Chicago"));
     let stamp = |text: &str| Value::Timestamp(text.parse::<jiff::Timestamp>().unwrap());
-    let mut due = param("dueDate", "java.sql.Timestamp", Required::False);
+    let mut due = param("dueDate", "Timestamp", Required::False);
     due.format = Some("yyyy-MM-dd".to_string());
     assert_eq!(
         convert_text(&due, &Value::string("2026-10-19")),
@@ -173,7 +173,7 @@ fn a_timestamp_is_read_in_the_session_time_zone() {
 /// Java's `convertType`: a date by the parameter's `format`, a number as the locale writes it or by its `format`.
 #[test]
 fn text_converts_by_the_parameter_format_and_the_locale() {
-    let mut date = param("when", "java.sql.Date", Required::False);
+    let mut date = param("when", "Date", Required::False);
     date.format = Some("dd.MM.yyyy".to_string());
     assert_eq!(
         convert_text(&date, &Value::string("15.01.2024")),

@@ -95,9 +95,9 @@ pub(crate) fn java_type_of(value: &Value) -> &'static str {
         Value::I64(_) => "Long",
         Value::F64(_) => "Double",
         Value::Decimal(_) => "BigDecimal",
-        Value::Timestamp(_) => "java.sql.Timestamp",
-        Value::Date(_) => "java.sql.Date",
-        Value::Time(_) => "java.sql.Time",
+        Value::Timestamp(_) => "Timestamp",
+        Value::Date(_) => "Date",
+        Value::Time(_) => "Time",
         _ => "Object",
     }
 }
@@ -105,7 +105,7 @@ pub(crate) fn java_type_of(value: &Value) -> &'static str {
 /// A time stamp from a script's value: epoch millis, a time stamp, or text, which is in the session time zone unless it
 /// has an offset.
 pub(crate) fn timestamp_of(value: &Value) -> Value {
-    crate::l10n::basic_convert(value, "java.sql.Timestamp").value
+    crate::l10n::basic_convert(value, "Timestamp").value
 }
 
 /// `ec.user.nowTimestamp`: the context's effective time, or the clock.

@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     recordEntity and recordId to open a record's room, made on first use), so a room is a link. The tray's Chat tab
     (Panel/Chat, ChatPanel.qvue) uses these transitions and the same room view.
 
-    Each transition is a JSON answer of org.moqui.comms.ChatScreenServices or of org.moqui.impl.ChatServices, which checks the
+    Each transition is a JSON answer of org.moqui.comms.ChatScreenServices or of org.moqui.chat.ChatServices, which checks the
     room for the current user: a room the user may not reach, and its files, are "not found". What a message or a room has to do
     with an app's records (its record cards, filing a message on a record, making a record from one) comes from the apps' providers
     (record-lookup, record-link, create-from; plans/Comms-Framework.md §3.3); with none, those parts are not offered. An app adds
@@ -86,7 +86,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="chatChanges" method="get" read-only="true">
         <actions><script><![CDATA[
             const number = (value) => value == null || value === '' ? null : Number(value)
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#UserChanges').parameters({afterSeq: number(afterSeq),
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#UserChanges').parameters({afterSeq: number(afterSeq),
                 limit: number(limit) || 200, heads: String(heads) !== 'false', headsSince: number(headsSince)}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {changes: out.changeList || [], lastSeq: out.lastSeq, more: !!out.more,
                 reset: !!out.reset, heads: out.headList ?? null, headsSince: out.headsSince ?? null})
@@ -97,7 +97,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="roomChanges" method="get" read-only="true">
         <actions><script><![CDATA[
             const number = (value) => value == null || value === '' ? null : Number(value)
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomChanges').parameters({chatRoomId: chatRoomId || '',
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomChanges').parameters({chatRoomId: chatRoomId || '',
                 afterSeq: number(afterSeq), limit: number(limit) || 200}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {changes: out.changeList || [], lastSeq: out.lastSeq, more: !!out.more,
                 reset: !!out.reset})
@@ -107,7 +107,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the files of the room's messages, newest first: all, or the pictures (contentTypePrefix image/) -->
     <transition name="files" method="get" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.find#RoomFiles').parameters({chatRoomId: chatRoomId || '',
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#RoomFiles').parameters({chatRoomId: chatRoomId || '',
                 contentTypePrefix: contentTypePrefix || null, searchText: searchText || null, limit: limit ? Number(limit) : 30,
                 beforeEventSeq: beforeEventSeq ? Number(beforeEventSeq) : null}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {fileList: out.fileList, nextBeforeEventSeq: out.nextBeforeEventSeq})
@@ -117,7 +117,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the room's threads, the latest reply first; mine for those I started or replied in -->
     <transition name="threads" method="get" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.find#RoomThreads').parameters({chatRoomId: chatRoomId || '',
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#RoomThreads').parameters({chatRoomId: chatRoomId || '',
                 limit: limit ? Number(limit) : 20, beforeDate: beforeDate ? Number(beforeDate) : null, mine: String(mine) === 'true'}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {threadList: out.threadList, hasMore: out.hasMore})
         ]]></script></actions>
@@ -126,7 +126,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the rooms a message may be forwarded to (mine, not archived): [{value (chatRoomId), label}] -->
     <transition name="forwardRooms" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.find#Rooms').parameters({searchText: term || null, limit: 30}).call()
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.find#Rooms').parameters({searchText: term || null, limit: 30}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? [] : Array.from(out.roomList || []).filter((room) => room.isMember && !room.archivedDate)
                     .map((room) => ({value: room.chatRoomId, label: room.displayName})))
         ]]></script></actions>
@@ -135,7 +135,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- a file of a room the user may read: inline for a picture when asked, else a download -->
     <transition name="attachment" method="get" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#Attachment').parameter('chatAttachmentId', chatAttachmentId || '').call()
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#Attachment').parameter('chatAttachmentId', chatAttachmentId || '').call()
             if (ec.message.hasError()) ec.web.sendJsonResponse({})
             else ec.web.sendResourceResponse(out.location, String(inline) === 'true' && /^image\/(png|jpe?g|gif|webp)$/i.test(out.contentType || ''))
         ]]></script></actions>
@@ -161,7 +161,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- messages of the rooms I may read, or of one room -->
     <transition name="search" method="get" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.search#ChatEvents').parameters({searchText: searchText || '',
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.search#ChatEvents').parameters({searchText: searchText || '',
                 chatRoomId: chatRoomId || null, limit: 30}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {eventList: out.eventList, total: out.total})
         ]]></script></actions>
@@ -200,7 +200,7 @@ along with this software (see the LICENSE.md file). If not, see
             let sealed = null
             try { sealed = encryptedJson ? JSON.parse(String(encryptedJson)) : null } catch (err) { sealed = {} }
             const mentionList = mentionUserIds ? String(mentionUserIds).split(',').map((id) => id.trim()).filter((id) => id) : null
-            const ran = ec.service.sync().name('org.moqui.impl.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.impl.ChatServices.edit#Message',
+            const ran = ec.service.sync().name('org.moqui.edge.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.chat.ChatServices.edit#Message',
                 clientRef: clientRef || null, parameters: {chatRoomId: chatRoomId || '',
                 eventSeq: Number(eventSeq || 0), body: body || null, encrypted: sealed, mentionUserIdList: mentionList, roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}}).call()
             const out = (ran && ran.result) || {}
@@ -210,7 +210,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="redact">
         <actions><script><![CDATA[
-            const ran = ec.service.sync().name('org.moqui.impl.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.impl.ChatServices.redact#Message',
+            const ran = ec.service.sync().name('org.moqui.edge.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.chat.ChatServices.redact#Message',
                 clientRef: clientRef || null, parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), reason: reason || null}}).call()
             const out = (ran && ran.result) || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {redactionEventSeq: out.redactionEventSeq, duplicate: ran.duplicate === true})
@@ -222,7 +222,7 @@ along with this software (see the LICENSE.md file). If not, see
             // an encrypted room's reaction (C7): its key is ciphertext (encryptedJson), taken back by its reactionEventSeq
             let sealed = null
             try { sealed = encryptedJson ? JSON.parse(String(encryptedJson)) : null } catch (err) { sealed = {} }
-            const ran = ec.service.sync().name('org.moqui.impl.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.impl.ChatServices.react#Message',
+            const ran = ec.service.sync().name('org.moqui.edge.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.chat.ChatServices.react#Message',
                 clientRef: clientRef || null, parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), key: key || null, encrypted: sealed,
                 reactionEventSeq: reactionEventSeq ? Number(reactionEventSeq) : null}}).call()
             const out = (ran && ran.result) || {}
@@ -234,7 +234,7 @@ along with this software (see the LICENSE.md file). If not, see
         reasonCode in its own transaction, so the answer still goes out -->
     <transition name="retryDelivery">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatBridgeServices.retry#Delivery').parameter('chatBridgeDeliveryId',
+            const out = ec.service.sync().name('org.moqui.chat.ChatBridgeServices.retry#Delivery').parameter('chatBridgeDeliveryId',
                 chatBridgeDeliveryId || '').requireNewTransaction(true).call()
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
@@ -244,7 +244,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="pin">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.ChatServices.pin#Message').parameters({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0),
+            ec.service.sync().name('org.moqui.chat.ChatServices.pin#Message').parameters({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0),
                 pinned: String(pinned) !== 'false'}).call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
@@ -255,7 +255,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             let options = []
             try { options = JSON.parse(optionsJson || '[]') } catch (err) { options = [] }
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.create#Poll').parameters({chatRoomId: chatRoomId || '', question: question || '',
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.create#Poll').parameters({chatRoomId: chatRoomId || '', question: question || '',
                 optionList: Array.isArray(options) ? options.map((option) => String(option ?? '')) : [], anonymous: String(anonymous) === 'true',
                 multiple: String(multiple) === 'true', closesDate: closesDate ? Number(closesDate) : null,
                 threadRootEventSeq: threadRootEventSeq ? Number(threadRootEventSeq) : null, clientRef: clientRef || null,
@@ -268,7 +268,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="votePoll">
         <actions><script><![CDATA[
             const ids = optionIds ? String(optionIds).split(',').map((id) => id.trim()).filter((id) => id).map(Number) : []
-            const ran = ec.service.sync().name('org.moqui.impl.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.impl.ChatServices.vote#Poll',
+            const ran = ec.service.sync().name('org.moqui.edge.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.chat.ChatServices.vote#Poll',
                 clientRef: clientRef || null, parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), optionIdList: ids}}).call()
             const out = (ran && ran.result) || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {poll: out.poll, duplicate: ran.duplicate === true})
@@ -277,7 +277,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="closePoll">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.close#Poll').parameters({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0)}).call()
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.close#Poll').parameters({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0)}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {poll: out.poll})
         ]]></script></actions>
         <default-response type="none"/>
@@ -285,14 +285,14 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the sender takes the link previews off their message -->
     <transition name="removePreviews">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.ChatServices.remove#LinkPreviews').parameters({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0)}).call()
+            ec.service.sync().name('org.moqui.chat.ChatServices.remove#LinkPreviews').parameters({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0)}).call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
     <transition name="markRead">
         <actions><script><![CDATA[
-            const ran = ec.service.sync().name('org.moqui.impl.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.impl.ChatServices.mark#Read',
+            const ran = ec.service.sync().name('org.moqui.edge.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.chat.ChatServices.mark#Read',
                 clientRef: clientRef || null, parameters: {chatRoomId: chatRoomId || '', eventSeq: eventSeq ? Number(eventSeq) : null,
                 markUnread: String(markUnread) === 'true'}}).call()
             const out = (ran && ran.result) || {}
@@ -302,7 +302,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="markAllRead">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.mark#AllRead').call()
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.mark#AllRead').call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {roomCount: out.roomCount})
         ]]></script></actions>
         <default-response type="none"/>
@@ -326,10 +326,10 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             // the server has no text of an encrypted room's message (C7): nothing is made from it
             // (only to one who may read the room: another learns nothing of it here, and gets the provider's "not found")
-            if (ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
+            if (ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
                     && ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), encrypted: 'Y'}).count()) {
                 ec.message.addError(ec.l10n.localize('An encrypted message is not read on the server: nothing is made from it')); ec.web.sendJsonResponse({reasonCode: 'encryptedRoom'}); return }
-            const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'create-from', mutation: true,
+            const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'create-from', mutation: true,
                 parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), kind: kind || ''}}).call()
             const made = (out?.results || [])[0] || {}
             if (!ec.message.hasError() && out?.unavailable) ec.message.addError(ec.l10n.localize('Nothing here makes records from messages'))
@@ -344,10 +344,10 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             // the server has no text of an encrypted room's message (C7): it is not filed on a record
             // (only to one who may read the room: another learns nothing of it here, and gets the provider's "not found")
-            if (ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
+            if (ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId || '').call()?.canRead
                     && ec.entity.find('moqui.chat.ChatEvent').condition({chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), encrypted: 'Y'}).count()) {
                 ec.message.addError(ec.l10n.localize('An encrypted message is not read on the server: it is not filed on a record')); ec.web.sendJsonResponse({reasonCode: 'encryptedRoom'}); return }
-            const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'record-link', mutation: true,
+            const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'record-link', mutation: true,
                 parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), recordEntityName: recordEntityName || '',
                     recordId: recordId || ''}}).call()
             const filed = (out?.results || [])[0] || {}
@@ -404,7 +404,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="leave">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.ChatServices.remove#Member').parameter('chatRoomId', chatRoomId || '').call()
+            ec.service.sync().name('org.moqui.chat.ChatServices.remove#Member').parameter('chatRoomId', chatRoomId || '').call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
         <default-response type="none"/>
@@ -412,7 +412,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="addMembers">
         <actions><script><![CDATA[
             const ids = userIds ? String(userIds).split(',').map((id) => id.trim()).filter((id) => id) : []
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.add#Member').parameters({chatRoomId: chatRoomId || '', userIdList: ids}).call()
+            const out = ec.service.sync().name('org.moqui.chat.ChatServices.add#Member').parameters({chatRoomId: chatRoomId || '', userIdList: ids}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {addedUserIdList: out.addedUserIdList})
         ]]></script></actions>
         <default-response type="none"/>
@@ -420,7 +420,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="removeMember">
         <actions><script><![CDATA[
             if (!userId && !chatActorId) ec.message.addError(ec.l10n.localize('Who to take out?'))
-            else ec.service.sync().name('org.moqui.impl.ChatServices.remove#Member').parameters({chatRoomId: chatRoomId || '', userId: userId || null,
+            else ec.service.sync().name('org.moqui.chat.ChatServices.remove#Member').parameters({chatRoomId: chatRoomId || '', userId: userId || null,
                 chatActorId: userId ? null : chatActorId}).call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
@@ -428,7 +428,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="setRole">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.ChatServices.set#MemberRole').parameters({chatRoomId: chatRoomId || '', userId: userId || '',
+            ec.service.sync().name('org.moqui.chat.ChatServices.set#MemberRole').parameters({chatRoomId: chatRoomId || '', userId: userId || '',
                 roleEnumId: roleEnumId || ''}).call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
@@ -438,7 +438,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="setNotification">
         <actions><script><![CDATA[
             const flag = (value) => value === 'true' ? true : (value === 'false' ? false : null)
-            ec.service.sync().name('org.moqui.impl.ChatServices.set#Notification').parameters({chatRoomId: chatRoomId || '',
+            ec.service.sync().name('org.moqui.chat.ChatServices.set#Notification').parameters({chatRoomId: chatRoomId || '',
                 notificationLevelEnumId: notificationLevelEnumId || null, isMuted: flag(isMuted), isPinned: flag(isPinned)}).call()
             ec.web.sendJsonResponse({})
         ]]></script></actions>
@@ -447,7 +447,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- a room's name, topic (moderators), who may join and the archive (owners) -->
     <transition name="updateRoom">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.ChatServices.update#Room').parameters({chatRoomId: chatRoomId || '',
+            ec.service.sync().name('org.moqui.chat.ChatServices.update#Room').parameters({chatRoomId: chatRoomId || '',
                 roomName: roomName != null ? roomName : null, topic: topic != null ? topic : null, visibilityEnumId: visibilityEnumId || null,
                 archived: archived === 'true' ? true : (archived === 'false' ? false : null)}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {messageInfos: [{type: 'success', message: ec.l10n.localize('Saved')}]})
@@ -455,10 +455,10 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
 
-    <!-- the room's calls end-to-end encrypted, or not (W8: owners and moderators; org.moqui.impl.CallServices) -->
+    <!-- the room's calls end-to-end encrypted, or not (W8: owners and moderators; org.moqui.call.CallServices) -->
     <transition name="setCallEncryption">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.CallServices.set#RoomCallEncryption').parameters({chatRoomId: chatRoomId || '',
+            const out = ec.service.sync().name('org.moqui.call.CallServices.set#RoomCallEncryption').parameters({chatRoomId: chatRoomId || '',
                 required: String(required) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
@@ -470,7 +470,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- an encrypted room's keys to verified or cross-signed devices only (C7 hardening: moderators; ChatKeyServices) -->
     <transition name="setVerifiedDevicesOnly">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatKeyServices.set#RoomVerifiedDevicesOnly').parameters({chatRoomId: chatRoomId || '',
+            const out = ec.service.sync().name('org.moqui.chat.ChatKeyServices.set#RoomVerifiedDevicesOnly').parameters({chatRoomId: chatRoomId || '',
                 verifiedDevicesOnly: String(verifiedDevicesOnly) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()

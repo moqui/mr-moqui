@@ -1,4 +1,4 @@
-// Voice (org.moqui.impl.VoiceServices and Voice.js; framework/entity/VoiceEntities.xml; plans/Comms-Framework.md §5.2, V1):
+// Voice (org.moqui.call.VoiceServices and Voice.js; framework/entity/VoiceEntities.xml; plans/Comms-Framework.md §5.2, V1):
 // the admin services only for VoiceAdmin, insecure trunks only with a profile that allows them, caller ID from the user's
 // grants, international and premium off until the deployment and the user allow them, the limits at once and per day,
 // failed digest attempts blocked per source without locking the account, emergency calls refused without readiness and
@@ -34,7 +34,7 @@ function as(userId, name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.impl.VoiceServices." + name).parameters(parameters || {}).call()) || {}
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.VoiceServices." + name).parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
     }
@@ -59,8 +59,8 @@ function makeUser(userId, groupId) {
 }
 function nodesUp() {
     sys(() => {
-        ec.service.sync().name("org.moqui.impl.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
-        ec.service.sync().name("org.moqui.impl.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
+        ec.service.sync().name("org.moqui.call.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
+        ec.service.sync().name("org.moqui.call.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
     })
 }
 function endAll() {
@@ -155,7 +155,7 @@ feature("only a PBX trunk's credentials sign a call in; inbound addresses wider 
     when() {
         const pbx = admin("store#VoiceTrunk", {name: "Office PBX", host: "10.0.0.6", transportEnumId: "VtrUdp", mediaEncryptionEnumId: "VmePlain",
             providerProfileEnumId: "VppPlainLan", username: "pbx", password: "secret-2"})
-        const config = sys(() => ec.service.sync().name("org.moqui.impl.VoiceServices.get#EngineConfig").call())
+        const config = sys(() => ec.service.sync().name("org.moqui.call.VoiceServices.get#EngineConfig").call())
         const digestOf = id => config.trunkList.find(t => t.voiceTrunkId == id).inboundDigest
         const wide = ["0.0.0.0/0", "::/0", "10.0.0.0/7", "2001:db8::/31", "sip.example.test", "203.0.113.0/33"]
             .map(inboundAddresses => admin("store#VoiceTrunk", {voiceTrunkId: trunkId, inboundAddresses}))
@@ -269,7 +269,7 @@ function placeAtOnce(n) {
         ec.user.internalLoginUser(args.user)
         const wasDisabled = ec.artifactExecution.disableAuthz()
         try {
-            const out = ec.service.sync().name("org.moqui.impl.VoiceServices.place#PhoneCall").requireNewTransaction(true)
+            const out = ec.service.sync().name("org.moqui.call.VoiceServices.place#PhoneCall").requireNewTransaction(true)
                 .parameters({phoneNumber: args.dest, fromNumber: args.from}).call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : ""
             ec.message.clearErrors()
@@ -392,8 +392,8 @@ feature("a call coming in rings the number's user; the phone's events move the c
         const unknown = as(null, "receive#PhoneCall", {voiceTrunkId: trunkId, toNumber: "+15550199999", fromNumber: "+15557770000", instanceId: NODE})
         const wrongNode = as(null, "receive#PhoneCall", {voiceTrunkId: trunkId, toNumber: MINE, fromNumber: "+15557770000", instanceId: "elsewhere"})
         const received = as(null, "receive#PhoneCall", {voiceTrunkId: trunkId, toNumber: MINE, fromNumber: "+15557770000", fromName: "Pat Caller", instanceId: NODE})
-        const ringing = as(A, "org.moqui.impl.CallServices.find#ActiveCalls")
-        const answered = as(A, "org.moqui.impl.CallServices.answer#Call", {callSessionId: received.callSessionId})
+        const ringing = as(A, "org.moqui.call.CallServices.find#ActiveCalls")
+        const answered = as(A, "org.moqui.call.CallServices.answer#Call", {callSessionId: received.callSessionId})
         const hungUp = as(null, "note#PhoneLeg", {callSessionId: received.callSessionId, callLegId: received.callLegId, event: "ended"})
         const repeat = as(null, "note#PhoneLeg", {callSessionId: received.callSessionId, callLegId: received.callLegId, event: "ended"})
         return {unknown, wrongNode, received, ringing, answered, hungUp, repeat, row: session(received.callSessionId)}
@@ -423,7 +423,7 @@ feature("an outbound call is active when the number answers, and ends when the u
         const dtmf = as(A, "send#PhoneDtmf", {callSessionId: placed.callSessionId, digits: "12#"})
         const badDtmf = as(A, "send#PhoneDtmf", {callSessionId: placed.callSessionId, digits: "1x"})
         const dtmfByB = as(B, "send#PhoneDtmf", {callSessionId: placed.callSessionId, digits: "12#"})
-        const left = as(A, "org.moqui.impl.CallServices.leave#Call", {callSessionId: placed.callSessionId})
+        const left = as(A, "org.moqui.call.CallServices.leave#Call", {callSessionId: placed.callSessionId})
         const busy = placeA()
         const failed = as(null, "note#PhoneLeg", {callSessionId: busy.callSessionId, callLegId: busy.phoneLegId, event: "busy", sipCode: 486})
         return {answered, active, dtmf, badDtmf, dtmfByB, left, row: session(placed.callSessionId), busyRow: session(busy.callSessionId), failed}
@@ -451,7 +451,7 @@ feature("a phone leg hears the recording notice and acknowledges it by pressing 
         const callSessionId = placed.callSessionId
         const phone = {callSessionId, callLegId: placed.phoneLegId}
         as(null, "note#PhoneLeg", Object.assign({event: "answered"}, phone))
-        const started = as(A, "org.moqui.impl.CallRecordingServices.start#Recording", {callSessionId})
+        const started = as(A, "org.moqui.call.CallRecordingServices.start#Recording", {callSessionId})
         const recId = started.callRecordingId
         const consent = () => sys(() => ec.entity.find("moqui.call.CallRecordingConsent").condition({callRecordingId: recId, callLegId: placed.phoneLegId}).one())
         const recording = () => sys(() => ec.entity.find("moqui.call.CallRecording").condition("callRecordingId", recId).one())
@@ -460,9 +460,9 @@ feature("a phone leg hears the recording notice and acknowledges it by pressing 
         const otherKey = {consent: consent(), recording: recording()}
         const pressed = as(null, "note#PhoneLeg", Object.assign({event: "dtmf", digits: "1"}, phone))
         const acked = {consent: consent(), recording: recording()}
-        const again = as(null, "org.moqui.impl.CallRecordingServices.ack#LegRecordingNotice", phone)
-        const prompted = as(null, "org.moqui.impl.CallRecordingServices.notify#LegRecording", {callRecordingId: recId, callLegId: placed.phoneLegId, ackRequired: true})
-        const webPrompt = as(null, "org.moqui.impl.CallRecordingServices.notify#LegRecording", {callRecordingId: recId, callLegId: placed.callLegId})
+        const again = as(null, "org.moqui.call.CallRecordingServices.ack#LegRecordingNotice", phone)
+        const prompted = as(null, "org.moqui.call.CallRecordingServices.notify#LegRecording", {callRecordingId: recId, callLegId: placed.phoneLegId, ackRequired: true})
+        const webPrompt = as(null, "org.moqui.call.CallRecordingServices.notify#LegRecording", {callRecordingId: recId, callLegId: placed.callLegId})
         const captions = as(null, "notify#PhoneLeg", {callLegId: placed.phoneLegId, notice: "captions"})
         const captionsToWeb = as(null, "notify#PhoneLeg", {callLegId: placed.callLegId, notice: "captions"})
         const badNotice = as(null, "notify#PhoneLeg", {callLegId: placed.phoneLegId, notice: "beep"})

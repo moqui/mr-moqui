@@ -171,7 +171,7 @@ fn tools_services_run_on_postgres() {
     let (status, cleaned) = run(
         address,
         &john,
-        "org.moqui.impl.TelemetryServices.clean#TelemetryData",
+        "org.moqui.monitor.TelemetryServices.clean#TelemetryData",
         &[],
     );
     assert_eq!(status, 200, "{cleaned}");

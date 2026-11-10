@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.DatabaseServices`, the Rust services of the Tools database screens.
+//! `org.moqui.dev.DatabaseServices`, the Rust services of the Tools database screens.
 
 use std::collections::BTreeMap;
 

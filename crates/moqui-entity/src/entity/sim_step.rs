@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Steps of a sim run, each under its own savepoint (`org.moqui.impl.SimServices.run#Steps`, docs/ai/Assist.md).
+//! Steps of a sim run, each under its own savepoint (`org.moqui.dev.SimServices.run#Steps`, docs/ai/Assist.md).
 //!
 //! Each sim write otherwise commits on its own overlay connection, so a rolled-back transaction cannot undo it and ends
 //! the sim ([`super::cache::sim_poisoned`]). [`hold`] keeps one overlay transaction for the sim instead: every overlay

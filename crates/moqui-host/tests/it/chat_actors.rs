@@ -36,7 +36,7 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.security.UserGroupMember userGroupId="ADMIN" userId="MIG_ANN" fromDate="0"/>
 </entity-facade-xml>"#;
 
-const CHAT: &str = "org.moqui.impl.ChatServices";
+const CHAT: &str = "org.moqui.chat.ChatServices";
 
 fn as_user<T>(factory: &Arc<ExecutionContextFactory>, username: &str, body: impl FnOnce() -> T) -> T {
     let context = factory.new_context();
@@ -327,7 +327,7 @@ fn old_chat_rows_move_to_actors_and_keep_their_counts() {
     // emptied mention table's copy stays (it may be the only one of its rows). Someone else is refused, with the same
     // (no) parameters, and nothing is dropped.
     let refused = as_user(&factory, "mig.ben", || {
-        call_refused("org.moqui.impl.ChatBridgeServices.drop#PreC1Backups")
+        call_refused("org.moqui.chat.ChatBridgeServices.drop#PreC1Backups")
     });
     assert!(refused.contains("administrators"), "{refused}");
     assert_eq!(
@@ -335,7 +335,7 @@ fn old_chat_rows_move_to_actors_and_keep_their_counts() {
         members_before
     );
     let listed = as_user(&factory, "mig.ann", || {
-        call("org.moqui.impl.ChatBridgeServices.get#PreC1Backups", &[])
+        call("org.moqui.chat.ChatBridgeServices.get#PreC1Backups", &[])
     });
     let listed = get(&listed, "backupList");
     assert!(
@@ -343,7 +343,7 @@ fn old_chat_rows_move_to_actors_and_keep_their_counts() {
         "{listed}"
     );
     let dropped = as_user(&factory, "mig.ann", || {
-        call("org.moqui.impl.ChatBridgeServices.drop#PreC1Backups", &[])
+        call("org.moqui.chat.ChatBridgeServices.drop#PreC1Backups", &[])
     });
     let (gone, kept) = (get(&dropped, "droppedList"), get(&dropped, "keptList"));
     assert!(

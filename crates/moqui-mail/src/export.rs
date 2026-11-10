@@ -40,7 +40,7 @@ use moqui_core::context::ExecutionContext;
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_core::service::util::{field_text, has_error, param_text};
 
-const SERVICES: &str = "org.moqui.impl.EmailClientServices";
+const SERVICES: &str = "org.moqui.mail.EmailClientServices";
 
 /// `export#EmailMessage`: `mimeBytes` (and the same as `mimeText`, which is 7-bit text), `fileName` (the subject made safe,
 /// with `.eml`) and `contentType` (`message/rfc822`). A message the user may not read (level 1 on its account) is "not

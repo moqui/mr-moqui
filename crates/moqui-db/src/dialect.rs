@@ -312,7 +312,7 @@ mod tests {
             "sample",
             r#"<moqui-conf>
                 <database-list>
-                    <dictionary-type type="text-medium" java-type="java.lang.String" default-sql-type="VARCHAR(255)"/>
+                    <dictionary-type type="text-medium" java-type="String" default-sql-type="VARCHAR(255)"/>
                     <database name="custom">
                         <database-type type="number-float" sql-type="FLOAT8"/>
                     </database>

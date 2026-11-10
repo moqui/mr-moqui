@@ -235,9 +235,13 @@ mod tests {
         let mut map = std::collections::BTreeMap::new();
         super::register(&mut map).unwrap();
         let registered: Vec<&str> = map.keys().copied().collect();
-        let dir = moqui_core::context::framework_dir().join("service/org/moqui/impl");
+        let dir = moqui_core::context::framework_dir().join("service/org/moqui");
         let mut named = Vec::new();
-        for file in ["EmailServices.xml", "EmailClientServices.xml", "EdgeServices.xml"] {
+        for file in [
+            "mail/EmailServices.xml",
+            "mail/EmailClientServices.xml",
+            "edge/EdgeServices.xml",
+        ] {
             let text = std::fs::read_to_string(dir.join(file)).unwrap();
             named.extend(
                 text.split("location=\"")

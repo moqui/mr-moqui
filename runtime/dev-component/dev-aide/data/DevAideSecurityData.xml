@@ -33,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- the framework's development tools that write, run or rebuild (the index's rebuild, the schema digest, XML
             operations, restart), which check the dev instance and the permission themselves; the index's reads are in
             the framework's AIDE_READ_API group, granted to the dev-aide's groups below -->
-        <artifacts artifactName="org\.moqui\.impl\.DevToolsServices\.(apply#XmlOps|get#SchemaDigest|get#XmlOutline|rebuild#ArtifactIndex|restart#Server)"
+        <artifacts artifactName="org\.moqui\.dev\.DevToolsServices\.(apply#XmlOps|get#SchemaDigest|get#XmlOutline|rebuild#ArtifactIndex|restart#Server)"
                 nameIsPattern="Y" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
         <authz artifactAuthzId="DEV_AIDE_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
         <authz artifactAuthzId="DEV_AIDE_APP_USERS" userGroupId="DEV_AIDE_USERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>

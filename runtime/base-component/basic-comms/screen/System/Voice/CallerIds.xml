@@ -13,24 +13,24 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Voice, Caller IDs (plans/Comms-Framework.md §5.2): which users may present which numbers on the calls they place. A user
-    calls only from a number granted here. org.moqui.impl.VoiceServices find#CallerIdGrants, grant# and revoke#CallerId. -->
+    calls only from a number granted here. org.moqui.call.VoiceServices find#CallerIdGrants, grant# and revoke#CallerId. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Caller IDs" default-menu-index="4">
 
     <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
     <transition name="grantCallerId">
-        <service-call name="org.moqui.impl.VoiceServices.grant#CallerId" in-map="{phoneNumber:phoneNumber, userId:userId}"/>
+        <service-call name="org.moqui.call.VoiceServices.grant#CallerId" in-map="{phoneNumber:phoneNumber, userId:userId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Caller ID granted</message></if></actions>
         <default-response url="."/>
     </transition>
     <transition name="revokeCallerId">
-        <service-call name="org.moqui.impl.VoiceServices.revoke#CallerId" in-map="{phoneNumber:phoneNumber, userId:userId}"/>
+        <service-call name="org.moqui.call.VoiceServices.revoke#CallerId" in-map="{phoneNumber:phoneNumber, userId:userId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Caller ID revoked</message></if></actions>
         <default-response url="."/>
     </transition>
 
     <actions><script><![CDATA[
-        const call = (name) => ec.service.sync().name('org.moqui.impl.VoiceServices.' + name).requireNewTransaction(true).disableAuthz().call() || {}
+        const call = (name) => ec.service.sync().name('org.moqui.call.VoiceServices.' + name).requireNewTransaction(true).disableAuthz().call() || {}
         grantList = Array.from(call('find#CallerIdGrants').grantList || [])
         numberOptions = Array.from(call('find#PhoneNumbers').numberList || []).map((n) => ({key: n.phoneNumber, text: n.phoneNumber + (n.description ? ' · ' + n.description : '')}))
         ec.message.clearErrors()

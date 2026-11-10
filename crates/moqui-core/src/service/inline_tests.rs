@@ -378,7 +378,7 @@ fn authz_context() -> (EntityFacade, ExecutionContext) {
         member.set("userGroupId", Value::string("ASYNC_CALLERS"));
         member.set(
             "fromDate",
-            moqui_lib::object::basic_convert(&Value::I64(1_000), "java.sql.Timestamp").value,
+            moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
         );
         member.create(&facade).unwrap();
         let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
@@ -386,7 +386,7 @@ fn authz_context() -> (EntityFacade, ExecutionContext) {
         member.set("userGroupId", Value::string("REGISTER_CALLERS"));
         member.set(
             "fromDate",
-            moqui_lib::object::basic_convert(&Value::I64(1_000), "java.sql.Timestamp").value,
+            moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
         );
         member.create(&facade).unwrap();
         create(

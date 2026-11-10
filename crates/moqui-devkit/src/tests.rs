@@ -312,8 +312,8 @@ fn the_services_register_at_the_locations_the_service_file_names() {
     let mut map = std::collections::BTreeMap::new();
     crate::service::register(&mut map).unwrap();
     let registered: Vec<&str> = map.keys().copied().collect();
-    let dir = moqui_core::context::framework_dir().join("service/org/moqui/impl");
-    let text: String = ["DevToolsServices.xml", "ComponentServices.xml"]
+    let dir = moqui_core::context::framework_dir().join("service/org/moqui");
+    let text: String = ["dev/DevToolsServices.xml", "dev/ComponentServices.xml"]
         .iter()
         .map(|name| std::fs::read_to_string(dir.join(name)).unwrap())
         .collect();

@@ -1104,7 +1104,7 @@ fn the_account_status_and_the_presence_dots_work_in_chromium() {
                 .iter()
                 .map(|(key, value)| ((*key).to_string(), value.clone()))
                 .collect();
-            moqui_core::service::sync(&format!("org.moqui.impl.ChatServices.{name}"), &parameters)
+            moqui_core::service::sync(&format!("org.moqui.chat.ChatServices.{name}"), &parameters)
                 .unwrap_or_else(|err| panic!("{name}: {err}"))
         };
         let authz = ctx.disable_authz();

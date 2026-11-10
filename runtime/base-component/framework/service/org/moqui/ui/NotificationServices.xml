@@ -1,0 +1,583 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- A user's notifications for the screens of the /qapps shell (the IronStone tray panel and notification center), the
+    approvals a notification asks for, and the daily digest email. No Java counterpart. The screens read only the current
+    user's rows, through these services: the rows are read with authorization disabled and always for ec.user.userId.
+
+    The inbox of a notification is its topic's NotificationTopic.inboxEnumId: NinNotifications (the default, and for a
+    topic with no record), the ones the header badge counts, or NinUpdates, the automatic ones. A topic with an
+    approveServiceName is always in NinNotifications. An unviewed notification of such a topic is an approval waiting.
+
+    An approval is decided, not read: marking all of an inbox viewed leaves it waiting (only its id marks it), and the
+    first recipient's approve or refuse decides it for every recipient of the message (each one's row is marked viewed),
+    so the others no longer see it waiting. An approval that needs each of several users to decide is one notification
+    message per user.
+
+    Web Push (the PWA; plans/Comms-Framework.md §7.2): a browser the user turns notifications on in subscribes with the
+    server's VAPID public key (get#WebPushStatus) and stores its subscription (store#WebPushSubscription). Each persisted
+    notification then also goes to the subscribed browsers of the recipients who want it pushed (pushNotifications on
+    NotificationTopicUser, else NotificationTopic, else yes for the NinNotifications inbox), through send#WebPush on a
+    service worker. A push carries the title, link and topic, never the message body. Push is a hint: the notification
+    list is the server's, and works with no push at all.
+
+    Native push (plans/Mobile-Desktop.md §5): an app signed in with its device key registers its FCM token
+    (register#PushDevice, /qapps/registerClientPush); send#WebPush then also sends to it through FCM (fcm_service_account,
+    fcm_project_id), a call's ring as a high-priority data message. The registration ends with the device key. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="UserNotifications">
+        <description>The current user's notifications, newest first, with their topic, inbox, reason, record, actor and app,
+            and the counts the screens show beside them. Filters: inboxEnumId (NinNotifications by default; 'all' for both),
+            reasonEnumId, appName, topic, topicList (any of these topics, for an app's own list), viewed (N unread, Y read, empty both), fromDate and thruDate (on sentDate), text
+            (in the title, ignoring case) and approvals (only the approvals waiting: unviewed, of a topic with an approve
+            service).</description>
+        <in-parameters>
+            <parameter name="inboxEnumId" default-value="NinNotifications"/>
+            <parameter name="reasonEnumId"/>
+            <parameter name="appName"/>
+            <parameter name="topic"/>
+            <parameter name="topicList" type="List"/>
+            <parameter name="viewed"><description>N for the unread, Y for the read, empty for both</description></parameter>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="text"/>
+            <parameter name="approvals" type="Boolean" default="false"/>
+            <parameter name="orderByField" default-value="-sentDate"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="20"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="notificationList" type="List"><parameter name="notification" type="Map">
+                <parameter name="notificationMessageId"/><parameter name="topic"/><parameter name="topicDescription"/>
+                <parameter name="subTopic"/><parameter name="inboxEnumId"/><parameter name="titleText"/>
+                <parameter name="linkText"/><parameter name="typeString"/><parameter name="sentDate" type="Timestamp"/>
+                <parameter name="userSentDate" type="Timestamp"/><parameter name="viewedDate" type="Timestamp"/>
+                <parameter name="reasonEnumId"/><parameter name="recordEntityName"/><parameter name="recordId"/>
+                <parameter name="actorUserId"/><parameter name="actorName"/><parameter name="appName"/>
+                <parameter name="message" type="Map"><description>The messageJson, parsed</description></parameter>
+                <parameter name="canApprove" type="Boolean"/><parameter name="canRefuse" type="Boolean"/>
+                <parameter name="refuseReasonRequired" type="Boolean"/>
+            </parameter></parameter>
+            <parameter name="notificationListCount" type="Integer"/>
+            <parameter name="notificationListPageIndex" type="Integer"/>
+            <parameter name="notificationListPageSize" type="Integer"/>
+            <parameter name="notificationListPageMaxIndex" type="Integer"/>
+            <parameter name="unreadCounts" type="Map"><description>The unread of each inbox, by inboxEnumId</description></parameter>
+            <parameter name="approvalCount" type="Integer"><description>The approvals waiting</description></parameter>
+            <parameter name="reasonCounts" type="Map"><description>The unread of the inbox by reasonEnumId ('' for none)</description></parameter>
+            <parameter name="appCounts" type="Map"><description>The unread of the inbox by appName ('' for none)</description></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            notificationList = []
+            notificationListCount = 0
+            notificationListPageIndex = pageIndex || 0
+            notificationListPageSize = pageSize || 20
+            notificationListPageMaxIndex = 0
+            unreadCounts = {NinNotifications: 0, NinUpdates: 0}
+            approvalCount = 0
+            reasonCounts = {}
+            appCounts = {}
+            const userId = ec.user.userId
+            if (!userId) return
+
+            const topics = new Map()
+            for (const row of Array.from(ec.entity.find('moqui.security.user.NotificationTopic').useCache(true).disableAuthz().list()))
+                topics.set(row.topic, row)
+            const inboxOf = (topic) => {
+                const row = topics.get(topic)
+                if (!row || row.approveServiceName) return 'NinNotifications'
+                return row.inboxEnumId || 'NinNotifications'
+            }
+            const updateTopics = Array.from(topics.keys()).filter((topic) => inboxOf(topic) === 'NinUpdates')
+            const approvalTopics = Array.from(topics.values()).filter((row) => row.approveServiceName).map((row) => row.topic)
+            const cf = ec.entity.conditionFactory
+            // the inbox as a condition on the topic: Updates are the topics that name it, Notifications every other one
+            const inboxCondition = (inbox) => {
+                if (inbox === 'NinUpdates') return updateTopics.length ? cf.makeCondition('topic', 'in', updateTopics) : cf.makeCondition('topic', 'equals', '_NA_')
+                return updateTopics.length ? cf.makeCondition([cf.makeCondition('topic', 'not-in', updateTopics),
+                        cf.makeCondition('topic', 'equals', null)], 'or') : null
+            }
+            const mine = () => ec.entity.find('moqui.security.user.NotificationMessageByUser').condition('userId', userId).disableAuthz()
+            const unread = () => mine().condition('viewedDate', null)
+
+            unreadCounts.NinNotifications = unread().condition(inboxCondition('NinNotifications')).count()
+            unreadCounts.NinUpdates = unread().condition(inboxCondition('NinUpdates')).count()
+            approvalCount = approvalTopics.length ? unread().condition('topic', 'in', approvalTopics).count() : 0
+
+            const inbox = inboxEnumId === 'all' ? null : (inboxEnumId || 'NinNotifications')
+            if (inbox) {
+                for (const row of Array.from(unread().condition(inboxCondition(inbox)).selectField('reasonEnumId,appName').list())) {
+                    const reason = row.reasonEnumId || ''
+                    const app = row.appName || ''
+                    reasonCounts[reason] = (reasonCounts[reason] || 0) + 1
+                    appCounts[app] = (appCounts[app] || 0) + 1
+                }
+            }
+
+            if (approvals && !approvalTopics.length) return
+            let find = mine()
+            if (inbox) find = find.condition(inboxCondition(inbox))
+            if (approvals) find = find.condition('topic', 'in', approvalTopics).condition('viewedDate', null)
+            if (reasonEnumId) find = find.condition('reasonEnumId', reasonEnumId)
+            if (appName) find = find.condition('appName', appName)
+            if (topic) find = find.condition('topic', topic)
+            if (topicList?.length) find = find.condition('topic', 'in', Array.from(topicList))
+            if (viewed === 'N') find = find.condition('viewedDate', null)
+            else if (viewed === 'Y') find = find.condition('viewedDate', 'not-equals', null)
+            if (fromDate) find = find.condition('sentDate', '>=', fromDate)
+            if (thruDate) find = find.condition('sentDate', '<', thruDate)
+            if (text) find = find.condition(cf.makeCondition('titleText', 'like', '%' + text + '%', false, true))
+            notificationListCount = find.copy().count()
+            notificationListPageMaxIndex = Math.max(0, Math.ceil(notificationListCount / notificationListPageSize) - 1)
+            const rows = Array.from(find.orderBy(orderByField || '-sentDate').orderBy('-notificationMessageId')
+                    .offset(notificationListPageIndex, notificationListPageSize).limit(notificationListPageSize).list())
+
+            const actorNames = new Map()
+            const actorName = (actorUserId) => {
+                if (!actorUserId) return null
+                if (!actorNames.has(actorUserId)) {
+                    const account = ec.entity.find('moqui.security.UserAccount').condition('userId', actorUserId)
+                            .useCache(true).disableAuthz().one()
+                    actorNames.set(actorUserId, account ? (account.userFullName || account.username) : null)
+                }
+                return actorNames.get(actorUserId)
+            }
+            for (const row of rows) {
+                const topicRow = topics.get(row.topic)
+                let message = null
+                if (row.messageJson) {
+                    try {
+                        message = JSON.parse(row.messageJson)
+                    } catch (e) {
+                        ec.logger.warn(`Notification ${row.notificationMessageId} has a messageJson that is not JSON: ${e}`)
+                    }
+                }
+                notificationList.push({notificationMessageId: row.notificationMessageId, topic: row.topic,
+                    topicDescription: topicRow?.description || null, subTopic: row.subTopic, inboxEnumId: inboxOf(row.topic),
+                    titleText: row.titleText, linkText: row.linkText, typeString: row.typeString, sentDate: row.sentDate,
+                    userSentDate: row.userSentDate, viewedDate: row.viewedDate, reasonEnumId: row.reasonEnumId,
+                    recordEntityName: row.recordEntityName, recordId: row.recordId, actorUserId: row.actorUserId,
+                    actorName: actorName(row.actorUserId), appName: row.appName,
+                    message: message && typeof message === 'object' && !Array.isArray(message) ? message : null,
+                    canApprove: !!topicRow?.approveServiceName, canRefuse: !!topicRow?.refuseServiceName,
+                    refuseReasonRequired: topicRow?.refuseReasonRequired === 'Y'})
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="mark" noun="NotificationsViewed" transaction="cache">
+        <description>Mark the current user's notifications viewed: those of notificationMessageIdList, or, without one, all
+            of the user's unviewed, of one inbox when inboxEnumId is given, except the approvals waiting (notifications of
+            a topic with an approve service), which are decided, not read. Only the user's own rows change.</description>
+        <in-parameters>
+            <parameter name="notificationMessageIdList" type="List"><parameter name="notificationMessageId"/></parameter>
+            <parameter name="notificationMessageId"><description>One id, as a list of one</description></parameter>
+            <parameter name="inboxEnumId"><description>Without ids: NinNotifications or NinUpdates; empty for all</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="viewedCount" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            viewedCount = 0
+            const userId = ec.user.userId
+            if (!userId) { ec.message.addError(ec.l10n.localize('Notifications are marked viewed only for a signed in user')); return }
+            let ids = notificationMessageIdList ? Array.from(notificationMessageIdList).filter((id) => id) : []
+            if (notificationMessageId) ids.push(notificationMessageId)
+            let find = ec.entity.find('moqui.security.user.NotificationMessageByUser').condition('userId', userId)
+                    .condition('viewedDate', null).selectField('notificationMessageId').disableAuthz()
+            if (ids.length) {
+                find = find.condition('notificationMessageId', 'in', ids)
+            } else {
+                const topics = Array.from(ec.entity.find('moqui.security.user.NotificationTopic').useCache(true).disableAuthz().list())
+                const updateTopics = topics.filter((row) => !row.approveServiceName && row.inboxEnumId === 'NinUpdates').map((row) => row.topic)
+                // an approval waiting is decided, not read: all of an inbox leaves it
+                const approvalTopics = topics.filter((row) => row.approveServiceName).map((row) => row.topic)
+                if (inboxEnumId === 'NinUpdates') {
+                    if (!updateTopics.length) return
+                    find = find.condition('topic', 'in', updateTopics)
+                } else {
+                    const left = inboxEnumId ? updateTopics.concat(approvalTopics) : approvalTopics
+                    if (left.length) {
+                        const cf = ec.entity.conditionFactory
+                        find = find.condition(cf.makeCondition([cf.makeCondition('topic', 'not-in', left),
+                                cf.makeCondition('topic', 'equals', null)], 'or'))
+                    }
+                }
+            }
+            const now = ec.user.nowTimestamp
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                for (const row of Array.from(find.list())) {
+                    const messageUser = ec.entity.makeValue('moqui.security.user.NotificationMessageUser')
+                    messageUser.notificationMessageId = row.notificationMessageId
+                    messageUser.userId = userId
+                    messageUser.viewedDate = now
+                    messageUser.update()
+                    viewedCount++
+                }
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="approve" noun="NotificationMessage">
+        <description>The current user's decision on a notification that asks for one (IronStone R23): the topic's
+            approveServiceName is called, as the user, with recordEntityName, recordId, message (the messageJson as a Map)
+            and notificationMessageId; its results are returned. The user must be a recipient (NotificationMessageUser). On
+            success the decision is final for the message: every recipient's row is marked viewed, so it leaves the
+            approvals waiting of all of them (an approval each of several users decides is a message per user); the
+            service's errors are the caller's messages and nothing is marked.</description>
+        <in-parameters><parameter name="notificationMessageId" required="true"/></in-parameters>
+        <out-parameters><parameter name="results" type="Map"/></out-parameters>
+        <actions>
+            <service-call name="org.moqui.ui.NotificationServices.decide#NotificationMessage"
+                    in-map="{notificationMessageId: notificationMessageId, decision: 'approve'}" out-map="context"/>
+        </actions>
+    </service>
+    <service verb="refuse" noun="NotificationMessage">
+        <description>As approve#NotificationMessage, with the topic's refuseServiceName, which also gets reason. When the
+            topic has refuseReasonRequired=Y a refuse without a reason is an error; otherwise the refuse service decides
+            whether it needs one.</description>
+        <in-parameters>
+            <parameter name="notificationMessageId" required="true"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="results" type="Map"/></out-parameters>
+        <actions>
+            <service-call name="org.moqui.ui.NotificationServices.decide#NotificationMessage"
+                    in-map="{notificationMessageId: notificationMessageId, decision: 'refuse', reason: reason}" out-map="context"/>
+        </actions>
+    </service>
+    <service verb="decide" noun="NotificationMessage" allow-remote="false">
+        <description>The body of approve#NotificationMessage and refuse#NotificationMessage.</description>
+        <in-parameters>
+            <parameter name="notificationMessageId" required="true"/>
+            <parameter name="decision" required="true"><description>approve or refuse</description></parameter>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="results" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            results = null
+            const userId = ec.user.userId
+            if (!userId) { ec.message.addError(ec.l10n.localize('A decision on a notification needs a signed in user')); return }
+            const refuse = decision === 'refuse'
+            const messageUser = ec.entity.find('moqui.security.user.NotificationMessageUser')
+                    .condition('notificationMessageId', notificationMessageId).condition('userId', userId).disableAuthz().one()
+            if (!messageUser) { ec.message.addError(`Notification ${notificationMessageId} is not addressed to you`); return }
+            const message = ec.entity.find('moqui.security.user.NotificationMessage')
+                    .condition('notificationMessageId', notificationMessageId).disableAuthz().one()
+            const topic = message?.topic ? ec.entity.find('moqui.security.user.NotificationTopic').condition('topic', message.topic)
+                    .useCache(true).disableAuthz().one() : null
+            const serviceName = refuse ? topic?.refuseServiceName : topic?.approveServiceName
+            if (!serviceName) {
+                ec.message.addError(`Notification topic ${message?.topic || ''} has no ${refuse ? 'refuse' : 'approve'} service`)
+                return
+            }
+            if (refuse && topic.refuseReasonRequired === 'Y' && !(reason && String(reason).trim())) {
+                ec.message.addError(ec.l10n.localize('A reason is required to refuse this'))
+                return
+            }
+            let parsed = {}
+            if (message.messageJson) {
+                try {
+                    const json = JSON.parse(message.messageJson)
+                    if (json && typeof json === 'object' && !Array.isArray(json)) parsed = json
+                } catch (e) {
+                    ec.logger.warn(`Notification ${notificationMessageId} has a messageJson that is not JSON: ${e}`)
+                }
+            }
+            const parameters = {recordEntityName: message.recordEntityName, recordId: message.recordId, message: parsed,
+                notificationMessageId: notificationMessageId}
+            if (refuse) parameters.reason = reason
+            try {
+                results = ec.service.sync().name(serviceName).parameters(parameters).call()
+            } catch (e) {
+                ec.message.addError(String(e.message || e))
+            }
+            if (ec.message.hasError()) return
+            // the decision is the message's: every recipient's row is marked, so no one else sees it waiting
+            const now = ec.user.nowTimestamp
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const recipients = ec.entity.find('moqui.security.user.NotificationMessageUser')
+                        .condition('notificationMessageId', notificationMessageId).condition('viewedDate', null).list()
+                for (const recipient of Array.from(recipients)) {
+                    recipient.viewedDate = now
+                    recipient.update()
+                }
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="send" noun="NotificationDigests" authenticate="anonymous-all" transaction-timeout="1800">
+        <description>The daily digest (a ServiceJob): for each user who has the digest on for a topic
+            (NotificationTopicUser.digest=Y, or NotificationTopic.digestDefault=Y and no user row that says N), one email
+            of their unviewed notifications on those topics sent in the last hours, that no email carried yet (neither the
+            immediate email of a topic the user gets by email, nor an earlier digest); each goes in one digest at most
+            (NotificationMessageUser.digestDate). The job is hourly; a user is sent only in the hour of their
+            NOTIFICATION_DIGEST_HOUR preference (0–23, missing means 6) in their time zone. A user who cannot be signed
+            in (disabled, terminated) or has no email address is passed over; a failing user is logged and the others
+            still get theirs.</description>
+        <in-parameters>
+            <parameter name="hours" type="Integer" default="24"/>
+            <parameter name="emailTemplateId" default-value="NOTIFICATION_DIGEST"/>
+            <parameter name="ignoreHour" type="Boolean" default="false"><description>When true, send whatever the
+                hour (a test). The scheduled job leaves this false.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="userCount" type="Integer"><description>The users a digest was sent to</description></parameter>
+            <parameter name="notificationCount" type="Integer"><description>The notifications those digests carried</description></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            userCount = 0
+            notificationCount = 0
+            const topics = new Map()
+            for (const row of Array.from(ec.entity.find('moqui.security.user.NotificationTopic').disableAuthz().list())) topics.set(row.topic, row)
+            const userRows = Array.from(ec.entity.find('moqui.security.user.NotificationTopicUser').condition('digest', 'Y').disableAuthz().list())
+            const candidates = new Set(Array.from(topics.values()).filter((row) => row.digestDefault === 'Y').map((row) => row.topic))
+            for (const row of userRows) candidates.add(row.topic)
+            if (!candidates.size) return
+
+            // each user's choices for the candidate topics, for the digest and the immediate email
+            const choices = new Map()
+            for (const row of Array.from(ec.entity.find('moqui.security.user.NotificationTopicUser')
+                    .condition('topic', 'in', Array.from(candidates)).disableAuthz().list())) choices.set(row.topic + '\u0000' + row.userId, row)
+            const since = new Date(Date.now() - (hours || 24) * 3600000)
+            const rows = Array.from(ec.entity.find('moqui.security.user.NotificationMessageByUser')
+                    .condition('topic', 'in', Array.from(candidates)).condition('viewedDate', null).condition('digestDate', null)
+                    .condition('emailMessageId', null).condition('sentDate', '>=', since)
+                    .selectField('notificationMessageId,userId,topic').orderBy('userId,sentDate').disableAuthz().list())
+            const byUser = new Map()
+            for (const row of rows) {
+                const topic = topics.get(row.topic)
+                const choice = choices.get(row.topic + '\u0000' + row.userId)
+                const digest = choice?.digest ? choice.digest === 'Y' : topic?.digestDefault === 'Y'
+                if (!digest) continue
+                // a topic the user gets by email at once was emailed already
+                const immediate = choice?.emailNotifications ? choice.emailNotifications === 'Y' : topic?.emailNotifications === 'Y'
+                if (immediate && topic?.emailTemplateId) continue
+                if (!byUser.has(row.userId)) byUser.set(row.userId, [])
+                byUser.get(row.userId).push(row.notificationMessageId)
+            }
+
+            for (const [userId, ids] of byUser) {
+                ec.message.pushErrors()
+                try {
+                    const out = ec.service.sync().name('org.moqui.ui.NotificationServices.send#UserNotificationDigest')
+                            .parameters({userId: userId, notificationMessageIdList: ids, emailTemplateId: emailTemplateId,
+                                ignoreHour: !!ignoreHour})
+                            .requireNewTransaction(true).call()
+                    if (ec.message.hasError()) {
+                        ec.logger.error(`The notification digest of user ${userId} was not sent: ${ec.message.getErrorsString()}`)
+                    } else if (out?.sentCount) {
+                        userCount++
+                        notificationCount += out.sentCount
+                    }
+                } catch (e) {
+                    ec.logger.error(`The notification digest of user ${userId} was not sent: ${e}`)
+                } finally {
+                    ec.message.popErrors()
+                }
+            }
+            // the zone and locale the user digests set are for this job's session only
+            if (byUser.size && !ec.user.userId) { ec.user.setTimeZone(null); ec.user.setLocale(null) }
+        ]]></script></actions>
+    </service>
+    <service verb="send" noun="UserNotificationDigest" authenticate="anonymous-all" allow-remote="false">
+        <description>One user's digest, for send#NotificationDigests: with nobody signed in (the job) the session takes
+            the user's time zone and locale, so the dates are the user's (the machine's zone when the account has none);
+            sends the template with notificationList, notificationCount, userId and userFullName as its body parameters;
+            and sets digestDate (and emailMessageId, when the email is saved) on each NotificationMessageUser row it
+            carried. Unless ignoreHour, it sends only when the local hour is the user's NOTIFICATION_DIGEST_HOUR
+            (0–23, missing means 6), read from UserPreference by userId (the job is not signed in as them), and a
+            skipped hour marks nothing. A disabled or terminated account gets none.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="notificationMessageIdList" type="List" required="true"><parameter name="notificationMessageId"/></parameter>
+            <parameter name="emailTemplateId" default-value="NOTIFICATION_DIGEST"/>
+            <parameter name="ignoreHour" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sentCount" type="Integer"/>
+            <parameter name="emailMessageId"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            sentCount = 0
+            const account = ec.entity.find('moqui.security.UserAccount').condition('userId', userId).disableAuthz().one()
+            if (!account?.emailAddress || account.disabled === 'Y') return
+            // a script sees a time stamp as its epoch millis
+            if (account.terminateDate && Number(ec.user.nowTimestamp) > Number(account.terminateDate)) return
+            // not ec.user.internalLoginUser: that refuses an account whose password must be changed
+            if (!ec.user.userId) {
+                ec.user.setTimeZone(account.timeZone || ec.user.machineTimeZone)
+                ec.user.setLocale(account.locale || null)
+            }
+            // the job is not signed in as this user, so the hour is the preference row, not ec.user.getPreference
+            if (!ignoreHour) {
+                let want = 6
+                const pref = ec.entity.find('moqui.security.UserPreference').condition('userId', userId)
+                        .condition('preferenceKey', 'NOTIFICATION_DIGEST_HOUR').disableAuthz().one()
+                const parsed = parseInt(pref && pref.preferenceValue, 10)
+                if (parsed >= 0 && parsed <= 23) want = parsed
+                const nowHour = parseInt(ec.l10n.format(ec.user.nowTimestamp, 'H'), 10)
+                if (nowHour !== want) return
+            }
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const rows = Array.from(ec.entity.find('moqui.security.user.NotificationMessageByUser').condition('userId', userId)
+                        .condition('notificationMessageId', 'in', Array.from(notificationMessageIdList)).condition('viewedDate', null)
+                        .condition('digestDate', null).orderBy('sentDate').list())
+                if (!rows.length) return
+                const topics = new Map()
+                const notificationList = rows.map((row) => {
+                    if (!topics.has(row.topic)) topics.set(row.topic, ec.entity.find('moqui.security.user.NotificationTopic')
+                            .condition('topic', row.topic).useCache(true).one())
+                    return {notificationMessageId: row.notificationMessageId, topic: row.topic,
+                        topicDescription: topics.get(row.topic)?.description || row.topic, title: row.titleText || '',
+                        link: row.linkText || '', type: row.typeString || 'info', sentDate: row.sentDate,
+                        sentText: ec.l10n.format(row.sentDate, 'yyyy-MM-dd HH:mm'), reasonEnumId: row.reasonEnumId,
+                        appName: row.appName}
+                })
+                const out = ec.service.sync().name('org.moqui.mail.EmailServices.send#EmailTemplate').parameters({
+                    emailTemplateId: emailTemplateId, toAddresses: account.emailAddress, toUserId: userId,
+                    bodyParameters: {notificationList: notificationList, notificationCount: notificationList.length,
+                        userId: userId, userFullName: account.userFullName || account.username}}).call()
+                if (ec.message.hasError()) return
+                emailMessageId = out?.emailMessageId || null
+                const now = ec.user.nowTimestamp
+                for (const row of rows) {
+                    const messageUser = ec.entity.makeValue('moqui.security.user.NotificationMessageUser')
+                    messageUser.notificationMessageId = row.notificationMessageId
+                    messageUser.userId = userId
+                    messageUser.digestDate = now
+                    if (emailMessageId) messageUser.emailMessageId = emailMessageId
+                    messageUser.update()
+                }
+                sentCount = rows.length
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            }
+        ]]></script></actions>
+    </service>
+
+    <!-- ========== Web Push ========== -->
+
+    <service verb="get" noun="WebPushStatus" type="rust" location="moqui_core::service::web_push::get_status">
+        <description>Whether this host can send Web Push (supported: built with the web-push feature), has its VAPID key
+            (configured, with the publicKey a browser subscribes with, or unavailableReason), how many browsers the current
+            user has subscribed (subscriptionCount), and whether the browser with endpoint is one of them (subscribed).
+            Adds no error: a host without push answers supported false.</description>
+        <in-parameters><parameter name="endpoint"/></in-parameters>
+        <out-parameters>
+            <parameter name="supported" type="Boolean"/>
+            <parameter name="configured" type="Boolean"/>
+            <parameter name="publicKey"/>
+            <parameter name="unavailableReason"/>
+            <parameter name="subscribed" type="Boolean"/>
+            <parameter name="subscriptionCount" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="WebPushSubscription" type="rust" location="moqui_core::service::web_push::store_subscription">
+        <description>Store the current user's browser subscription (the PushSubscription's endpoint and its p256dh and
+            auth keys, base64url). The endpoint must be https and the keys a P-256 point and 16 bytes. An endpoint stored
+            before, for this user or another, becomes this user's and is enabled again, so a browser never gets another
+            account's pushes after a sign-in. Refuses with an error when no user is signed in or push is not built.</description>
+        <in-parameters>
+            <parameter name="endpoint" required="true"/>
+            <parameter name="p256dhKey" required="true"/>
+            <parameter name="authSecret" required="true"/>
+            <parameter name="userAgent"/>
+        </in-parameters>
+        <out-parameters><parameter name="subscriptionId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="WebPushSubscription" type="rust" location="moqui_core::service::web_push::delete_subscription">
+        <description>Forget the current user's subscription with endpoint (the browser turned notifications off, or is
+            signing out). Another user's endpoint is left as it is, with no error. Logout also deletes the subscriptions
+            the visit stored.</description>
+        <in-parameters><parameter name="endpoint" required="true"/></in-parameters>
+    </service>
+    <service verb="send" noun="WebPush" type="rust" location="moqui_core::service::web_push::send_web_push"
+            authenticate="false" allow-remote="false" transaction="ignore">
+        <description>Internal: run on a service worker when a persisted notification is sent, and for a call's ring
+            and its end. Pushes title, link, topic and tag (the notification message id) to each active subscription and
+            registration of userIdList. A browser's (PushWeb) is encrypted (RFC 8291) with a VAPID token (RFC 8292); a
+            push service answering 404 or 410 disables it, as 5 failures in a row do. A native app's (PushFcm) goes by
+            FCM's HTTP v1 API as a data message {kind: notification | ring | ringEnded, topic, tag; title, link; for a
+            ring callSessionId, chatRoomId, caller, video, expiresAt; for a ring's end callSessionId, reason} (FCM
+            reserves "from"), android.priority HIGH for urgency high, with ttl from ttlSeconds. FCM answering 404,
+            UNREGISTERED, SENDER_ID_MISMATCH or a 400 about the token disables it; another 400 is logged as an error and
+            leaves it. 429 and 5xx are tried again twice, never past a ring's end; then, as with no access token, the
+            rest of the send is not tried and no device is counted against. One whose device key has ended is deleted.
+            Each one fails on its own, logged by its id; FCM is skipped, with one info line in the log, while
+            fcm_service_account is not set.</description>
+        <in-parameters>
+            <parameter name="userIdList" type="List" required="true"/>
+            <parameter name="title"/>
+            <parameter name="link"/>
+            <parameter name="topic"/>
+            <parameter name="tag"/>
+            <parameter name="ttlSeconds" type="Integer"><description>How long a push service keeps the push for a device
+                that is offline, at most (and by default) a day: a call's ring passes on its ring time</description></parameter>
+            <parameter name="urgency"><description>normal (the default) or high (a ringing call)</description></parameter>
+            <parameter name="callSessionId"><description>A call's ring: the call, which makes the FCM message a ring
+                (kind ring) for the app to show as an incoming call. Not in a Web Push payload.</description></parameter>
+            <parameter name="chatRoomId"><description>A ring: the call's room</description></parameter>
+            <parameter name="fromName"><description>A ring: the caller's name</description></parameter>
+            <parameter name="video" type="Boolean"><description>A ring: whether it is a video call</description></parameter>
+            <parameter name="expiresAt" type="Long"><description>A ring: when it stops ringing, in epoch milliseconds</description></parameter>
+            <parameter name="kind"><description>ringEnded (with callSessionId and reason): the ring of the call is over,
+                for the apps' ring screens only; no Web Push is sent</description></parameter>
+            <parameter name="reason"><description>A ring's end: answered, declined, timedOut or ended</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sentCount" type="Long"/>
+            <parameter name="failedCount" type="Long"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== Native push (FCM; plans/Mobile-Desktop.md §5) ========== -->
+
+    <service verb="register" noun="PushDevice" type="rust" location="moqui_core::service::web_push::register_device">
+        <description>Keep the push registration of the native app this request comes from, for the current user: an FCM
+            registration token (provider fcm), stored as a WebPushSubscription with pushProviderEnumId PushFcm and the
+            device key the request signed in with (its login_key header). Refused with an error unless the request was
+            signed in by an unexpired device key of the user's (one with a deviceName), so the registration always ends
+            with its device: revoke#UserDeviceKey or logout with revokeLoginKey deletes it, renew#UserDeviceKey moves it to
+            the new key. A token stored before, for this user or another, becomes this registration and is enabled again;
+            an older token of the same device key is replaced.</description>
+        <in-parameters>
+            <parameter name="provider" required="true"><description>fcm (the only one so far)</description></parameter>
+            <parameter name="token" required="true"><description>The FCM registration token (no spaces, 4096 characters at
+                most)</description></parameter>
+            <parameter name="appId"><description>The app's id, such as the Android package name</description></parameter>
+            <parameter name="platform"><description>android (the default)</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="subscriptionId"/></out-parameters>
+    </service>
+    <service verb="unregister" noun="PushDevice" type="rust" location="moqui_core::service::web_push::unregister_device">
+        <description>Forget the current user's FCM registration with token, or with no token every registration of the
+            device key this request signed in with. Another user's token is left as it is, with no error.</description>
+        <in-parameters><parameter name="token"/></in-parameters>
+        <out-parameters><parameter name="deletedCount" type="Long"/></out-parameters>
+    </service>
+    <service verb="get" noun="PushDeviceStatus" type="rust" location="moqui_core::service::web_push::get_device_status">
+        <description>Whether this server sends FCM (fcmConfigured: fcm_service_account is set), and whether the device
+            key this request signed in with has an enabled registration (registered). Adds no error.</description>
+        <out-parameters>
+            <parameter name="fcmConfigured" type="Boolean"/>
+            <parameter name="registered" type="Boolean"/>
+        </out-parameters>
+    </service>
+</services>

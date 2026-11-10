@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Pair step 5, test (plans/Edge-Node.md §5.7; modeled on MailAccounts Add/Test.xml): the areas chosen in Discover,
-    end to end, each with a pass or fail line (org.moqui.impl.EdgeServices.test#EdgeSetup): the link is up; mail in
+    end to end, each with a pass or fail line (org.moqui.edge.EdgeServices.test#EdgeSetup): the link is up; mail in
     (the edge node takes mail for the first chosen account's address, and its answer comes back on the queue as
     inbound mail does) and mail out (it takes this node's mail, through the EDGE mail server); chat (it takes the
     chosen bridges' webhooks); PASS (the client settings are there and the edge node has mr-pass); XMPP (a client
@@ -48,7 +48,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const link = ec.service.sync().name('org.moqui.impl.EdgeServices.get#LinkStatus').call() || {}
+        const link = ec.service.sync().name('org.moqui.edge.EdgeServices.get#LinkStatus').call() || {}
         notBuilt = link.state === 'notBuilt'
         notStarted = link.state === 'notStarted'
         const running = !notBuilt && !notStarted
@@ -73,7 +73,7 @@ along with this software (see the LICENSE.md file). If not, see
         if (!out) {
             ec.message.pushErrors()
             try {
-                const tested = ec.service.sync().name('org.moqui.impl.EdgeServices.test#EdgeSetup').parameters({
+                const tested = ec.service.sync().name('org.moqui.edge.EdgeServices.test#EdgeSetup').parameters({
                     mailOn: !!choices.mailOn, mailAddress: account?.emailAddress || '',
                     systemMail: !!choices.systemMail, emailAccountIds: choices.emailAccountIds || [],
                     chatOn: !!choices.chatOn, chatBridgeIds: choices.chatBridgeIds || [],

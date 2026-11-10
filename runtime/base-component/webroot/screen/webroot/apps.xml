@@ -35,7 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
                 let out = null, refused = null
                 try {
-                    out = ec.service.sync().name('org.moqui.impl.ShellServices.set#UserScreenTheme')
+                    out = ec.service.sync().name('org.moqui.ui.ShellServices.set#UserScreenTheme')
                             .parameter('screenThemeId', screenThemeId).disableAuthz().call()
                 } catch (e) { refused = String(e.message || e) }
                 if (ec.message.hasError()) { refused = ec.message.errorsString; ec.message.clearErrors() }
@@ -72,8 +72,8 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="colorSchemeCss" read-only="true" require-session-token="false">
         <parameter name="colorSchemeId"/>
         <actions><script><![CDATA[
-            // the scheme's tokens and extraCss (org.moqui.impl.ShellServices.get#ColorSchemeCss); empty for an unknown scheme
-            const out = colorSchemeId ? ec.service.sync().name('org.moqui.impl.ShellServices.get#ColorSchemeCss')
+            // the scheme's tokens and extraCss (org.moqui.ui.ShellServices.get#ColorSchemeCss); empty for an unknown scheme
+            const out = colorSchemeId ? ec.service.sync().name('org.moqui.ui.ShellServices.get#ColorSchemeCss')
                     .parameter('colorSchemeId', colorSchemeId).disableAuthz().call() : null
             ec.web.sendTextResponse((out && out.css) || '', 'text/css')
             ]]></script></actions>

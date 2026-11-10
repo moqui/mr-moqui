@@ -7,7 +7,7 @@ user guide is [Comms](../tools/Comms.md#calls).
 - **Media:** `crates/moqui-rtc`, on [str0m](https://github.com/algesten/str0m) (sans-IO: ICE-lite, DTLS-SRTP, simulcast,
   TWCC). The host's driver thread (`crates/moqui-host/src/rtc/`) owns the UDP socket.
 - **Signaling:** `rtc` frames on the notification socket (`crates/moqui-host/src/notws/rtc.rs`).
-- **Call state:** `org.moqui.impl.CallServices` and `Calls.js` (framework), with the model in
+- **Call state:** `org.moqui.call.CallServices` and `Calls.js` (framework), with the model in
   `framework/entity/CallEntities.xml`.
 - **Browser:** `webroot/screen/webroot/js/WebrootCall.js`.
 
@@ -98,7 +98,7 @@ the binary (`speech-local`, Whisper on candle) is not built yet.
 
 How they work:
 
-1. Someone in the call presses CC: `start#Captions` (`org.moqui.impl.CallCaptionServices`, `CallCaptions.js`). It
+1. Someone in the call presses CC: `start#Captions` (`org.moqui.call.CallCaptionServices`, `CallCaptions.js`). It
    refuses with a reason code when the switch is off (`captionsOff`), the user is not in the call (`notFound`, as for a
    call that does not exist), the call ended (`callEnded`), its media is end-to-end encrypted (`encrypted`: the server
    cannot hear it, and captions never downgrade it), or no provider is set up (`noProvider`). It keeps the state in
@@ -120,7 +120,7 @@ How they work:
    works brings them back.
 5. Anyone in the call turns them off (`stop#Captions`, `{rtc: 'captions', state: 'off'}`). They also end with the call.
 
-Transcription for other server code is `org.moqui.impl.SpeechServices.transcribe#Audio` (internal): voicemail (V2) and
+Transcription for other server code is `org.moqui.call.SpeechServices.transcribe#Audio` (internal): voicemail (V2) and
 a recording's transcript will use the same seam, and `CallTranscript` holds their text too; a recording's transcripts
 are deleted with it.
 

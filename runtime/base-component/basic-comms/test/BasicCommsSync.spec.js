@@ -7,8 +7,8 @@ const root = "component://basic-comms/screen/BasicComms.xml"
 const OWNER = "basic.comms.sync"
 const OTHER = "basic.comms.sync.other"
 const MESSAGE = "moqui.basic.email.EmailMessage"
-const MAIL = "org.moqui.impl.EmailClientServices."
-const SYNC = "org.moqui.impl.ClientSyncServices."
+const MAIL = "org.moqui.mail.EmailClientServices."
+const SYNC = "org.moqui.edge.ClientSyncServices."
 // with IronStone installed its inbox source answers the Inbox, and has no change cursor of its own yet
 const bossInstalled = !!ec.resource.getLocationReference("component://mr-boss/screen/Comms.xml")?.getExists()
 let accountId = null

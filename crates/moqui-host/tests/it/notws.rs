@@ -84,7 +84,7 @@ fn notification_sockets_close_after_logout_key_revocation_and_expiry() {
         };
         find_key(&revoked_key).delete(&facade).unwrap();
         let mut row = find_key(&expired_key);
-        row.set("thruDate", basic_convert(&Value::I64(1), "java.sql.Timestamp").value);
+        row.set("thruDate", basic_convert(&Value::I64(1), "Timestamp").value);
         row.update(&facade).unwrap();
     }
     for socket in [&mut logged_out, &mut revoked, &mut expired] {
@@ -340,7 +340,7 @@ fn set_online(factory: &Arc<ExecutionContextFactory>, user_id: &str) {
             .as_millis(),
     )
     .unwrap_or(0);
-    let now = basic_convert(&Value::I64(millis), "java.sql.Timestamp").value;
+    let now = basic_convert(&Value::I64(millis), "Timestamp").value;
     let mut row = facade.make_value("moqui.security.UserStatus").unwrap();
     row.set("userId", Value::string(user_id));
     row.set("statusEnumId", Value::string("UpsOnline"));
@@ -469,7 +469,7 @@ fn insert_peer(factory: &Arc<ExecutionContextFactory>, session_fp: &str, cert_fp
             .as_millis(),
     )
     .unwrap_or(0);
-    let heartbeat = basic_convert(&Value::I64(millis), "java.sql.Timestamp").value;
+    let heartbeat = basic_convert(&Value::I64(millis), "Timestamp").value;
     let mut row = facade.make_value("moqui.server.ClusterMember").unwrap();
     row.set("instanceId", Value::string("wave3-peer"));
     row.set("clusterBaseUrl", Value::string(format!("https://127.0.0.1:{port}")));

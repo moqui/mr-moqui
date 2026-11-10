@@ -10,7 +10,7 @@ const systemRoot = "component://tools/screen/System.xml"
 const adminId = "SPEC_CONF_ADMIN"
 
 function call(name, parameters) {
-    const out = ec.service.sync().name("org.moqui.impl.ComponentServices." + name).parameters(parameters || {}).disableAuthz().call() || {}
+    const out = ec.service.sync().name("org.moqui.dev.ComponentServices." + name).parameters(parameters || {}).disableAuthz().call() || {}
     const errors = ec.message.getErrorsString()
     ec.message.clearErrors()
     return {out, errors}

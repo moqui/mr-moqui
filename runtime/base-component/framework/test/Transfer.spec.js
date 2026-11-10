@@ -1,4 +1,4 @@
-// Transfer, add and merge (org.moqui.impl.CallTransferServices and CallTransfers.js; plans/Comms-Framework.md §5.1, §5.3, V5):
+// Transfer, add and merge (org.moqui.call.CallTransferServices and CallTransfers.js; plans/Comms-Framework.md §5.1, §5.3, V5):
 // a call that still rings is not transferred; a stale revision and a second open transfer are refused, so two transfers
 // cannot both win; an attended transfer holds the far end while the user consults the target, then cancels (the far end
 // back) or completes (the user leaves); a blind transfer leaves at once and the far end waits for the target, whose
@@ -42,7 +42,7 @@ function as(userId, name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.impl.CallTransferServices." + name)
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.CallTransferServices." + name)
             .parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
@@ -96,8 +96,8 @@ function clean() {
 }
 function nodesUp() {
     sys(() => {
-        ec.service.sync().name("org.moqui.impl.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
-        ec.service.sync().name("org.moqui.impl.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
+        ec.service.sync().name("org.moqui.call.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
+        ec.service.sync().name("org.moqui.call.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
     })
 }
 const session = (callSessionId) => sys(() => ec.entity.find(SESSION).condition("callSessionId", callSessionId).one())
@@ -109,16 +109,16 @@ const legsOf = (callSessionId, userId) => sys(() => {
 })
 const lastLeg = (callSessionId, userId) => legsOf(callSessionId, userId).slice(-1)[0] || null
 const rev = (callSessionId) => Number(session(callSessionId).revision)
-const note = (callSessionId, callLegId, event, extra) => engine("org.moqui.impl.VoiceServices.note#PhoneLeg", Object.assign({callSessionId, callLegId, event}, extra || {}))
+const note = (callSessionId, callLegId, event, extra) => engine("org.moqui.call.VoiceServices.note#PhoneLeg", Object.assign({callSessionId, callLegId, event}, extra || {}))
 /** An inbound call to A's number, answered by A. */
 function inbound() {
-    const call = engine("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: MINE, fromNumber: CALLER, fromName: "Xfer Caller", instanceId: NODE})
-    as(A, "org.moqui.impl.CallServices.answer#Call", {callSessionId: call.callSessionId})
+    const call = engine("org.moqui.call.VoiceServices.receive#PhoneCall", {toNumber: MINE, fromNumber: CALLER, fromName: "Xfer Caller", instanceId: NODE})
+    as(A, "org.moqui.call.CallServices.answer#Call", {callSessionId: call.callSessionId})
     return {callSessionId: call.callSessionId, phoneLegId: call.callLegId}
 }
 /** A call A places to DEST, answered there. */
 function outbound(phoneNumber) {
-    const placed = as(A, "org.moqui.impl.VoiceServices.place#PhoneCall", {phoneNumber: phoneNumber || DEST, fromNumber: MINE})
+    const placed = as(A, "org.moqui.call.VoiceServices.place#PhoneCall", {phoneNumber: phoneNumber || DEST, fromNumber: MINE})
     note(placed.callSessionId, placed.phoneLegId, "answered")
     return {callSessionId: placed.callSessionId, phoneLegId: placed.phoneLegId}
 }
@@ -144,7 +144,7 @@ spec({
         makeUser(D, EXTERNAL_GROUP)
         clean()
         nodesUp()
-        const admin = (name, parameters) => as(ADMIN, "org.moqui.impl.VoiceServices." + name, parameters)
+        const admin = (name, parameters) => as(ADMIN, "org.moqui.call.VoiceServices." + name, parameters)
         sys(() => {
             const t = ec.entity.find("moqui.call.VoiceTrunk").condition("voiceTrunkId", TRUNK).one()
             if (!t) {
@@ -165,9 +165,9 @@ spec({
 
 feature("a ringing call is not transferred; a stale revision and a second open transfer are refused; an attended transfer cancels", {
     when() {
-        const call = engine("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: MINE, fromNumber: CALLER, instanceId: NODE})
+        const call = engine("org.moqui.call.VoiceServices.receive#PhoneCall", {toNumber: MINE, fromNumber: CALLER, instanceId: NODE})
         const ringing = as(A, "transfer#Call", {callSessionId: call.callSessionId, targetType: "user", targetId: B, mode: "blind"})
-        as(A, "org.moqui.impl.CallServices.answer#Call", {callSessionId: call.callSessionId})
+        as(A, "org.moqui.call.CallServices.answer#Call", {callSessionId: call.callSessionId})
         const seen = rev(call.callSessionId)
         const stale = transfer({callSessionId: call.callSessionId}, "user", B, "attended", seen - 1)
         const consult = transfer({callSessionId: call.callSessionId}, "user", B, "attended", seen)
@@ -178,7 +178,7 @@ feature("a ringing call is not transferred; a stale revision and a second open t
         const bOffered = lastLeg(call.callSessionId, B)
         const early = as(A, "complete#CallTransfer", {callTransferId: consult.callTransferId})
         const byB = as(B, "cancel#CallTransfer", {callTransferId: consult.callTransferId})
-        as(B, "org.moqui.impl.CallServices.answer#Call", {callSessionId: call.callSessionId})
+        as(B, "org.moqui.call.CallServices.answer#Call", {callSessionId: call.callSessionId})
         const bIn = lastLeg(call.callSessionId, B)
         const canceled = as(A, "cancel#CallTransfer", {callTransferId: consult.callTransferId})
         return {call, ringing, stale, consult, again, fresh, held, bOffered, early, byB, bIn, canceled, after: leg(call.callLegId),
@@ -212,7 +212,7 @@ feature("an attended transfer completes once the target answered: the far end co
         endAll()
         const call = inbound()
         const consult = transfer(call, "user", B, "attended")
-        as(B, "org.moqui.impl.CallServices.answer#Call", {callSessionId: call.callSessionId})
+        as(B, "org.moqui.call.CallServices.answer#Call", {callSessionId: call.callSessionId})
         const done = as(A, "complete#CallTransfer", {callTransferId: consult.callTransferId})
         return {done, far: leg(call.phoneLegId), a: lastLeg(call.callSessionId, A), b: lastLeg(call.callSessionId, B),
             row: transferRow(consult.callTransferId), status: session(call.callSessionId).statusId}
@@ -238,12 +238,12 @@ feature("blind: the user leaves at once; the target's answer and the far end han
         const aLeft = lastLeg(first.callSessionId, A)
         const waiting = session(first.callSessionId).statusId
         note(first.callSessionId, first.phoneLegId, "ended")
-        const late = as(B, "org.moqui.impl.CallServices.answer#Call", {callSessionId: first.callSessionId})
+        const late = as(B, "org.moqui.call.CallServices.answer#Call", {callSessionId: first.callSessionId})
         const firstOut = {session: session(first.callSessionId), row: transferRow(blind1.callTransferId), b: lastLeg(first.callSessionId, B)}
         // the target answers first: the transfer completes; then the far end hangs up and the call ends as any call does
         const second = inbound()
         const blind2 = transfer(second, "user", B)
-        const won = as(B, "org.moqui.impl.CallServices.answer#Call", {callSessionId: second.callSessionId})
+        const won = as(B, "org.moqui.call.CallServices.answer#Call", {callSessionId: second.callSessionId})
         const completed = transferRow(blind2.callTransferId)
         const tooLate = engine("expire#CallTransfer", {callTransferId: blind2.callTransferId})
         note(second.callSessionId, second.phoneLegId, "ended")
@@ -253,7 +253,7 @@ feature("blind: the user leaves at once; the target's answer and the far end han
         const blind3 = transfer(third, "user", B)
         const expired = engine("expire#CallTransfer", {callTransferId: blind3.callTransferId})
         const bLog = sys(() => ec.entity.find("moqui.call.CallUserLog").condition({callSessionId: third.callSessionId, userId: B}).one())
-        const deposit = engine("org.moqui.impl.VoicemailServices.begin#Voicemail", {callSessionId: third.callSessionId, callLegId: third.phoneLegId,
+        const deposit = engine("org.moqui.call.VoicemailServices.begin#Voicemail", {callSessionId: third.callSessionId, callLegId: third.phoneLegId,
             reason: "busy", stepToken: expired.answer.stepToken})
         return {blind1, aLeft, waiting, late, firstOut, won, completed, tooLate, secondOut, expired, bLog, deposit, third: transferRow(blind3.callTransferId)}
     },
@@ -307,7 +307,7 @@ feature("a number transferred to hears the recording notice and acknowledges it 
         setProperty("call_recording_enabled", "true")
         setProperty("call_recording_ack_required", "true")
         const call = outbound()
-        const started = as(A, "org.moqui.impl.CallRecordingServices.start#Recording", {callSessionId: call.callSessionId})
+        const started = as(A, "org.moqui.call.CallRecordingServices.start#Recording", {callSessionId: call.callSessionId})
         const consult = transfer(call, "number", "+15550199977", "attended")
         const targetLegId = transferRow(consult.callTransferId).targetLegId
         note(call.callSessionId, targetLegId, "answered")
@@ -353,7 +353,7 @@ feature("a person is added; a number is not added to an encrypted call; calls on
             s.update()
         })
         // A puts the first call on hold and places a second; then merges them
-        as(A, "org.moqui.impl.VoiceServices.hold#PhoneCall", {callSessionId: first.callSessionId})
+        as(A, "org.moqui.call.VoiceServices.hold#PhoneCall", {callSessionId: first.callSessionId})
         const heldFirst = leg(first.phoneLegId)
         const second = outbound()
         const merged = as(A, "merge#Calls", {callSessionId: first.callSessionId, otherCallSessionId: second.callSessionId,
@@ -411,19 +411,19 @@ feature("a desk phone's REFER is checked before the phone is answered: refused w
     when() {
         endAll()
         return withProperty("sip_registrar_enabled", "true", () => {
-            const made = as(A, "org.moqui.impl.SipDeviceServices.create#SipDevice", {name: "Xfer desk"})
+            const made = as(A, "org.moqui.call.SipDeviceServices.create#SipDevice", {name: "Xfer desk"})
             const device = sys(() => ec.entity.find("moqui.call.SipDevice").condition("sipDeviceId", made.sipDeviceId).one())
-            engine("org.moqui.impl.SipDeviceServices.store#SipRegistration", {change: "added", sipRegistrationId: "xfer-refer-1",
+            engine("org.moqui.call.SipDeviceServices.store#SipRegistration", {change: "added", sipRegistrationId: "xfer-refer-1",
                 sipDeviceId: device.sipDeviceId, instanceId: NODE, contactUri: "sip:" + device.username + "@192.168.1.20:5060",
                 transport: "udp", sourceAddress: "198.51.100.7", sourcePort: 61000, sipCallId: "reg-xfer-refer-1", cseq: 2,
                 credentialRevision: device.credentialRevision || 1, expiresDate: Date.now() + 300000, lastRefreshDate: Date.now(),
                 userAgent: "Spec Phone/1.0"})
-            const call = engine("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: MINE, fromNumber: CALLER, fromName: "Xfer Caller", instanceId: NODE})
+            const call = engine("org.moqui.call.VoiceServices.receive#PhoneCall", {toNumber: MINE, fromNumber: CALLER, fromName: "Xfer Caller", instanceId: NODE})
             const phoneLeg = sys(() => Array.from(ec.entity.find(LEG).condition({callSessionId: call.callSessionId, legTypeEnumId: "CltSipDevice"}).list()))[0]
             const answered = note(call.callSessionId, phoneLeg.callLegId, "answered")
             const refused = engine("refer#Call", {callLegId: phoneLeg.callLegId, target: ABROAD})
             const taken = engine("refer#Call", {callLegId: phoneLeg.callLegId, target: "+15550199977"})
-            as(A, "org.moqui.impl.SipDeviceServices.revoke#SipDevice", {sipDeviceId: made.sipDeviceId})
+            as(A, "org.moqui.call.SipDeviceServices.revoke#SipDevice", {sipDeviceId: made.sipDeviceId})
             return {answered, refused, taken}
         })
     },
@@ -439,22 +439,22 @@ feature("a desk phone's REFER is checked before the phone is answered: refused w
 feature("the numbers a user adds count toward their limit of calls at once; an external user neither adds to a call nor transfers it", {
     when() {
         endAll()
-        as(ADMIN, "org.moqui.impl.VoiceServices.store#VoiceUserSetting", {userId: A, maxConcurrent: 2})
+        as(ADMIN, "org.moqui.call.VoiceServices.store#VoiceUserSetting", {userId: A, maxConcurrent: 2})
         // A's call is one, the first number added two (the limit), the second would be three
         const call = outbound()
         const first = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, phoneNumber: "+15550199955"})
         const firstLeg = first.callLegId ? leg(first.callLegId) : null
         const second = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, phoneNumber: "+15550199944"})
-        as(ADMIN, "org.moqui.impl.VoiceServices.store#VoiceUserSetting", {userId: A, maxConcurrent: ""})
+        as(ADMIN, "org.moqui.call.VoiceServices.store#VoiceUserSetting", {userId: A, maxConcurrent: ""})
         // D, an external user, is added to an inbound call and answers; then adds C and transfers the caller to C: both refused,
         // where A, with the very same parameters, adds C
         endAll()
         const inCall = inbound()
         as(A, "add#CallParticipant", {callSessionId: inCall.callSessionId, userId: D})
-        const dAnswered = as(D, "org.moqui.impl.CallServices.answer#Call", {callSessionId: inCall.callSessionId})
+        const dAnswered = as(D, "org.moqui.call.CallServices.answer#Call", {callSessionId: inCall.callSessionId})
         const dAdds = as(D, "add#CallParticipant", {callSessionId: inCall.callSessionId, userId: C})
         const dTransfers = as(D, "transfer#Call", {callSessionId: inCall.callSessionId, targetType: "user", targetId: C, mode: "blind"})
-        const dQueues = as(D, "org.moqui.impl.CallQueueServices.find#TransferQueues", {term: ""})
+        const dQueues = as(D, "org.moqui.call.CallQueueServices.find#TransferQueues", {term: ""})
         const aAdds = as(A, "add#CallParticipant", {callSessionId: inCall.callSessionId, userId: C})
         return {first, firstLeg, second, dAnswered, dAdds, dTransfers, dQueues, aAdds, cRinging: lastLeg(inCall.callSessionId, C)}
     },
@@ -499,14 +499,14 @@ feature("a call-target provider refuses a transfer, an add and a call to a user 
             }
         })
         makeUser(A, GALLERY_GROUP)
-        const asked = as(A, "org.moqui.impl.ShellServices.call#Providers", {hook: "call-target", parameters: {userIdList: [OFFLIMITS, C]}})
+        const asked = as(A, "org.moqui.ui.ShellServices.call#Providers", {hook: "call-target", parameters: {userIdList: [OFFLIMITS, C]}})
         const call = inbound()
         const transferOff = transfer(call, "user", OFFLIMITS)
         const addOff = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, userId: OFFLIMITS})
         const addNobody = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, userId: "XFER_SPEC_NO_SUCH_USER"})
         const addC = as(A, "add#CallParticipant", {callSessionId: call.callSessionId, userId: C})
-        const callOff = as(A, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [OFFLIMITS]})
-        const callC = as(A, "org.moqui.impl.CallServices.start#Call", {calleeUserIdList: [C]})
+        const callOff = as(A, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [OFFLIMITS]})
+        const callC = as(A, "org.moqui.call.CallServices.start#Call", {calleeUserIdList: [C]})
         endAll()
         sys(() => ec.entity.find("moqui.security.UserGroupMember").condition({userId: A, userGroupId: GALLERY_GROUP}).deleteAll())
         return {asked, transferOff, addOff, addNobody, addC, callOff, callC}

@@ -152,7 +152,7 @@
         key (base64 PKCS#8 DER, or PEM), made (RSA-2048) into runtime/.env the first time a server needs it; an edge node
         signs what it delivers with it, and a send by SMTP is signed only when it is set or goes to this node's own
         listener. mail_dkim_selector: its selector (the TXT record to publish at selector._domainkey.domain is
-        org.moqui.impl.EmailServices.get#DkimRecord's). mail_dkim_domains: the domains signed for, comma-separated; empty
+        org.moqui.mail.EmailServices.get#DkimRecord's). mail_dkim_domains: the domains signed for, comma-separated; empty
         for the hosted and shared accounts' domains. On an edge node: edge_mail_mta (moqui for the MTA in moqui, set in
         MoquiEdgeConf.xml; empty or postfix is E5a's relay to Postfix), mail_delivery_retry_seconds (the first retry wait, doubled each
         time to 4 hours) and mail_delivery_days (when a message not delivered goes back as a bounce).
@@ -567,57 +567,57 @@
         <!-- Entity Database Record Caches (and cache clear assist data) -->
         <!-- set type="distributed" to use the distributed cache -->
         <cache name="entity.record.one." max-elements="20000" eviction-strategy="least-frequently-used"
-                key-type="org.moqui.entity.EntityCondition" value-type="org.moqui.impl.entity.EntityValueBase"/>
+                key-type="EntityCondition" value-type="EntityValueBase"/>
         <cache name="entity.record.list." max-elements="10000" eviction-strategy="least-frequently-used"
-                key-type="org.moqui.entity.EntityCondition" value-type="org.moqui.impl.entity.EntityListImpl"/>
+                key-type="EntityCondition" value-type="EntityListImpl"/>
         <cache name="entity.record.count." max-elements="10000" eviction-strategy="least-frequently-used"
-                key-type="org.moqui.entity.EntityCondition" value-type="Long"/>
+                key-type="EntityCondition" value-type="Long"/>
 
         <cache name="entity.record.one_ra." max-elements="40000" eviction-strategy="least-frequently-used"
-                key-type="org.moqui.entity.EntityCondition" value-type="Set"/>
+                key-type="EntityCondition" value-type="Set"/>
         <cache name="entity.record.one_view_ra." max-elements="40000" eviction-strategy="least-frequently-used"
-                key-type="org.moqui.entity.EntityCondition" value-type="Set"/>
+                key-type="EntityCondition" value-type="Set"/>
         <cache name="entity.record.one_bf" max-elements="1000" eviction-strategy="least-frequently-used"
                 value-type="Set"/>
 
         <cache name="entity.record.list_ra." max-elements="20000" eviction-strategy="least-frequently-used"
-                key-type="org.moqui.entity.EntityCondition" value-type="Set"/>
+                key-type="EntityCondition" value-type="Set"/>
         <cache name="entity.record.list_view_ra." max-elements="20000" eviction-strategy="least-frequently-used"
-                key-type="org.moqui.entity.EntityCondition" value-type="Set"/>
+                key-type="EntityCondition" value-type="Set"/>
 
         <!-- Framework configuration and artifact caches -->
         <!-- NOTE: Production mode by default - No expiration of conf and impl artifacts. -->
 
-        <cache name="entity.definition" value-type="org.moqui.impl.entity.EntityDefinition"/>
+        <cache name="entity.definition" value-type="EntityDefinition"/>
         <cache name="entity.location" value-type="Map"/>
         <cache name="entity.sequence.bank" value-type="long[]"/>
         <!-- this is info for each entity for real-time push DataFeeds; expires every 15 min to get DataFeed and DataDocument updates -->
         <cache name="entity.data.feed.info" expire-time-live="900" value-type="ArrayList"/>
 
-        <cache name="service.location" value-type="org.moqui.impl.service.ServiceDefinition"/>
-        <cache name="service.rest.api" value-type="org.moqui.impl.service.RestApi$ResourceNode"/>
-        <cache name="kie.component.releaseId" value-type="org.kie.api.builder.ReleaseId"/>
+        <cache name="service.location" value-type="ServiceDefinition"/>
+        <cache name="service.rest.api" value-type="ResourceNode"/>
+        <cache name="kie.component.releaseId" value-type="ReleaseId"/>
         <cache name="kie.session.component" value-type="String"/>
 
-        <cache name="screen.location" value-type="org.moqui.impl.screen.ScreenDefinition"/>
-        <cache name="screen.location.perm" value-type="org.moqui.impl.screen.ScreenDefinition"/>
-        <cache name="screen.url" value-type="org.moqui.impl.screen.ScreenUrlInfo"/>
+        <cache name="screen.location" value-type="ScreenDefinition"/>
+        <cache name="screen.location.perm" value-type="ScreenDefinition"/>
+        <cache name="screen.url" value-type="ScreenUrlInfo"/>
         <cache name="screen.info" value-type="List"/>
         <cache name="screen.info.ref.rev" value-type="Set"/>
         <cache name="widget.template.location" value-type="MNode"/>
         <cache name="screen.find.path" value-type="ArrayList"/>
         <cache name="screen.form.db.node" value-type="MNode"/>
 
-        <cache name="resource.xml-actions.location" value-type="org.moqui.impl.actions.XmlAction"/>
-        <cache name="resource.groovy.location" value-type="java.lang.Class"/>
-        <cache name="resource.javascript.location" value-type="java.lang.Class"/>
+        <cache name="resource.xml-actions.location" value-type="XmlAction"/>
+        <cache name="resource.groovy.location" value-type="Class"/>
+        <cache name="resource.javascript.location" value-type="Class"/>
 
-        <!-- These caches must be local caches (use additional methods on MCache not in javax.cache.Cache) -->
+        <!-- These caches must be local caches (use additional methods on MCache not in the JCache Cache interface) -->
         <cache name="resource.wiki.location" value-type="String" type="local" max-elements="10000" expire-time-live="3600"/>
         <cache name="resource.markdown.location" value-type="String" type="local" max-elements="10000" expire-time-live="3600"/>
         <cache name="resource.text.location" value-type="String" type="local" max-elements="10000" expire-time-live="3600"/>
 
-        <cache name="resource.reference.location" value-type="org.moqui.resource.ResourceReference"/>
+        <cache name="resource.reference.location" value-type="ResourceReference"/>
 
         <cache name="l10n.message" expire-time-live="3600" max-elements="50000" value-type="String"/>
 
@@ -865,7 +865,7 @@
     <resource-facade xml-actions-template-location="component://framework/template/XmlActions.groovy.ftl"
             blob-chunk-size="1048576" blob-gc-prune-days="14" dbresource-blob-threshold="65536"
             image-max-concurrent="2" script-timeout="">
-        <!-- resource reference class needs to implement the org.moqui.resource.ResourceReference interface -->
+        <!-- resource reference class needs to implement the ResourceReference interface -->
         <resource-reference scheme="http" class="org.moqui.resource.UrlResourceReference"/>
         <resource-reference scheme="https" class="org.moqui.resource.UrlResourceReference"/>
         <resource-reference scheme="file" class="org.moqui.resource.UrlResourceReference"/>
@@ -883,7 +883,7 @@
             counterpart; crates/moqui-git) -->
         <resource-reference scheme="git" class="org.moqui.impl.context.reference.GitResourceReference"/>
 
-        <!-- renderer class needs to implement the org.moqui.context.TemplateRenderer interface -->
+        <!-- renderer class needs to implement the TemplateRenderer interface -->
 
         <!-- fancy templates: if, list and assign tags plus ${expr}, compiled to a cached JavaScript function. The
             -locked renderers see only the plain snapshot of the map passed in. See Templating in plans/archive/Architecture-Proposal.md -->
@@ -953,7 +953,7 @@
 
     <service-facade distributed-factory="" scheduled-job-check-time="${scheduled_job_check_time}"
             job-queue-max="0" job-pool-core="2" job-pool-max="8" job-pool-alive="120">
-        <!-- runner-class needs to implement the org.moqui.impl.service.ServiceRunner interface -->
+        <!-- runner-class needs to implement the ServiceRunner interface -->
         <service-type name="inline" runner-class="org.moqui.impl.service.runner.InlineServiceRunner"/>
         <service-type name="entity-auto" runner-class="org.moqui.impl.service.runner.EntityAutoServiceRunner"/>
         <service-type name="script" runner-class="org.moqui.impl.service.runner.ScriptServiceRunner"/>
@@ -966,21 +966,21 @@
         <service-file location="component://framework/service/org/moqui/ImageServices.xml"/>
         <service-file location="component://framework/service/org/moqui/SmsServices.xml"/>
         <service-file location="component://framework/service/org/moqui/impl/BasicServices.xml"/>
-        <service-file location="component://framework/service/org/moqui/impl/ElFinderServices.xml"/>
-        <service-file location="component://framework/service/org/moqui/impl/EmailServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/resource/ElFinderServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/mail/EmailServices.xml"/>
         <service-file location="component://framework/service/org/moqui/impl/EntityServices.xml"/>
         <service-file location="component://framework/service/org/moqui/impl/EntitySyncServices.xml"/>
-        <service-file location="component://framework/service/org/moqui/impl/GoogleServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/ext/GoogleServices.xml"/>
         <service-file location="component://framework/service/org/moqui/impl/ImageServices.xml"/>
-        <service-file location="component://framework/service/org/moqui/impl/InstanceServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/dev/InstanceServices.xml"/>
         <service-file location="component://framework/service/org/moqui/impl/PrintServices.xml"/>
         <service-file location="component://framework/service/org/moqui/impl/ScreenServices.xml"/>
         <service-file location="component://framework/service/org/moqui/impl/ServerServices.xml"/>
         <service-file location="component://framework/service/org/moqui/impl/ServiceServices.xml"/>
-        <service-file location="component://framework/service/org/moqui/impl/SpreadsheetServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/resource/SpreadsheetServices.xml"/>
         <service-file location="component://framework/service/org/moqui/impl/SystemMessageServices.xml"/>
         <service-file location="component://framework/service/org/moqui/impl/UserServices.xml"/>
-        <service-file location="component://framework/service/org/moqui/impl/WikiServices.xml"/>
+        <service-file location="component://framework/service/org/moqui/resource/WikiServices.xml"/>
         <service-file location="component://framework/service/org/moqui/search/SearchServices.xml"/>
         <service-file location="component://framework/service/org/moqui/sftp/SftpMessageServices.xml"/>
         <service-file location="component://framework/service/org/moqui/sso/AuthServices.xml"/>
@@ -1136,7 +1136,7 @@
     </llm-facade>
 
     <!--
-        The mail client (org.moqui.impl.EmailClientServices).
+        The mail client (org.moqui.mail.EmailClientServices).
         allowed-hosts: comma-separated hostnames and IPs poll#EmailServer and send#Email may connect to; empty allows
         any host. smtp.example.com matches example.com; notexample.com does not. EmailServer.allowedToDomains is a
         separate recipient-domain filter.
@@ -1238,10 +1238,10 @@
         VERP address); a mailOut that fails for good puts its message back in the Outbox. With the MTA in moqui (E5b) the
         edge node answers from its MX delivery: bounced for the recipients refused, accepted once all are delivered. -->
     <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5">
-        <queue-kind name="mail" service="org.moqui.impl.EmailServices.deliver#EdgeMail"/>
-        <queue-kind name="mailOut" service="org.moqui.impl.EmailServices.deliver#EdgeOutboundMail"
-                failed-service="org.moqui.impl.EmailServices.fail#EdgeOutboundMail"/>
-        <queue-kind name="mailStatus" service="org.moqui.impl.EmailServices.note#EdgeMailStatus"/>
+        <queue-kind name="mail" service="org.moqui.mail.EmailServices.deliver#EdgeMail"/>
+        <queue-kind name="mailOut" service="org.moqui.mail.EmailServices.deliver#EdgeOutboundMail"
+                failed-service="org.moqui.mail.EmailServices.fail#EdgeOutboundMail"/>
+        <queue-kind name="mailStatus" service="org.moqui.mail.EmailServices.note#EdgeMailStatus"/>
         <replicate set="mailRecipients">
             <entity name="moqui.basic.email.EmailAccount" fields="emailAddress,accountKindEnumId,statusId,emailServerId"/>
             <entity name="moqui.basic.email.EmailIdentity" fields="emailAddress,emailAccountId"/>
@@ -1249,47 +1249,47 @@
         </replicate>
         <!-- chat bridges and SMS (E6): webhooks checked on the edge node and applied on the local node; the files of
             messages sent by address (MMS) served by the edge node; the bridges' webhook keys, not their configJson -->
-        <queue-kind name="chatWebhook" service="org.moqui.impl.ChatBridgeServices.apply#EdgeWebhook"/>
-        <queue-kind name="chatMedia" service="org.moqui.impl.ChatBridgeServices.store#EdgeMedia"/>
+        <queue-kind name="chatWebhook" service="org.moqui.chat.ChatBridgeServices.apply#EdgeWebhook"/>
+        <queue-kind name="chatMedia" service="org.moqui.chat.ChatBridgeServices.store#EdgeMedia"/>
         <replicate set="chatBridges">
             <entity name="moqui.chat.ChatBridge" fields="typeEnumId,adapterName,statusId,webhookPublicKey,webhookToleranceSeconds"/>
         </replicate>
         <!-- attaching a local node (E10): the round trips of the Edge Node wizard's Test step, which the edge node
             answers back on the queue -->
-        <queue-kind name="edgeEcho" service="org.moqui.impl.EdgeServices.receive#EdgeEcho"/>
+        <queue-kind name="edgeEcho" service="org.moqui.edge.EdgeServices.receive#EdgeEcho"/>
         <!-- calls with the edge node as media node (E7): its media events and its captions' reads, writes and
             transcription run on the local node, which has the call state and the agent runtime's quota; its recordings'
             segments and their end go through the queue, in the recording's order. The signaling goes over the link
             itself (Link.Signal), not one of these. -->
-        <delegate service="org.moqui.impl.CallServices.note#MediaEvent"/>
-        <delegate service="org.moqui.impl.CallCaptionServices.get#CaptionSpeaker"/>
-        <delegate service="org.moqui.impl.CallCaptionServices.store#CallTranscript"/>
-        <delegate service="org.moqui.impl.CallCaptionServices.transcribe#CaptionAudio"/>
-        <queue-kind name="callRecording" service="org.moqui.impl.CallRecordingServices.receive#EdgeRecording"/>
+        <delegate service="org.moqui.call.CallServices.note#MediaEvent"/>
+        <delegate service="org.moqui.call.CallCaptionServices.get#CaptionSpeaker"/>
+        <delegate service="org.moqui.call.CallCaptionServices.store#CallTranscript"/>
+        <delegate service="org.moqui.call.CallCaptionServices.transcribe#CaptionAudio"/>
+        <queue-kind name="callRecording" service="org.moqui.call.CallRecordingServices.receive#EdgeRecording"/>
         <!-- SIP on the edge node (E8): its engine's routing, registrar, IVR and voicemail decisions run on the local
             node, which has the numbers, the users and the boxes. Routing waits less than the user agent does for a
             call it rings (10 s), so a local node that does not answer still leaves time for the fallback. The phones'
             digest verifiers stay here: the registrar sends their answers to check#SipDeviceDigest instead. -->
-        <delegate service="org.moqui.impl.VoiceServices.receive#PhoneCall" timeout-seconds="7"/>
-        <delegate service="org.moqui.impl.VoiceServices.note#PhoneLeg"/>
-        <delegate service="org.moqui.impl.VoiceServices.note#TrunkStatus"/>
-        <delegate service="org.moqui.impl.VoiceServices.record#AuthFailure"/>
-        <delegate service="org.moqui.impl.VoiceServices.get#CallAudio" timeout-seconds="10"/>
-        <delegate service="org.moqui.impl.SipDeviceServices.check#SipDeviceDigest" timeout-seconds="5"/>
-        <delegate service="org.moqui.impl.SipDeviceServices.store#SipRegistration"/>
-        <delegate service="org.moqui.impl.SipDeviceServices.receive#DeviceCall" timeout-seconds="7"/>
-        <delegate service="org.moqui.impl.IvrServices.route#IvrCall" timeout-seconds="10"/>
-        <delegate service="org.moqui.impl.CallQueueServices.tick#QueueCall" timeout-seconds="10"/>
-        <delegate service="org.moqui.impl.CallTransferServices.expire#CallTransfer"/>
-        <delegate service="org.moqui.impl.CallTransferServices.refer#Call" timeout-seconds="10"/>
-        <delegate service="org.moqui.impl.VoicemailServices.begin#Voicemail" timeout-seconds="10"/>
-        <delegate service="org.moqui.impl.VoicemailServices.check#VoicemailPin" timeout-seconds="10"/>
-        <delegate service="org.moqui.impl.VoicemailServices.act#PhoneVoicemail"/>
-        <delegate service="org.moqui.impl.VoicemailServices.get#PhoneVoicemailAudio" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.VoiceServices.receive#PhoneCall" timeout-seconds="7"/>
+        <delegate service="org.moqui.call.VoiceServices.note#PhoneLeg"/>
+        <delegate service="org.moqui.call.VoiceServices.note#TrunkStatus"/>
+        <delegate service="org.moqui.call.VoiceServices.record#AuthFailure"/>
+        <delegate service="org.moqui.call.VoiceServices.get#CallAudio" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.SipDeviceServices.check#SipDeviceDigest" timeout-seconds="5"/>
+        <delegate service="org.moqui.call.SipDeviceServices.store#SipRegistration"/>
+        <delegate service="org.moqui.call.SipDeviceServices.receive#DeviceCall" timeout-seconds="7"/>
+        <delegate service="org.moqui.call.IvrServices.route#IvrCall" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.CallQueueServices.tick#QueueCall" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.CallTransferServices.expire#CallTransfer"/>
+        <delegate service="org.moqui.call.CallTransferServices.refer#Call" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.VoicemailServices.begin#Voicemail" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.VoicemailServices.check#VoicemailPin" timeout-seconds="10"/>
+        <delegate service="org.moqui.call.VoicemailServices.act#PhoneVoicemail"/>
+        <delegate service="org.moqui.call.VoicemailServices.get#PhoneVoicemailAudio" timeout-seconds="10"/>
         <!-- the messages its engine records (edge to local; the local node finds the box and tells its owner), and the
             boxes' greetings, which its fallback plays while the local node is away (local to edge) -->
-        <queue-kind name="voicemail" service="org.moqui.impl.VoicemailServices.receive#EdgeVoicemail"/>
-        <queue-kind name="callAudio" service="org.moqui.impl.VoiceServices.store#EdgeCallAudio"/>
+        <queue-kind name="voicemail" service="org.moqui.call.VoicemailServices.receive#EdgeVoicemail"/>
+        <queue-kind name="callAudio" service="org.moqui.call.VoiceServices.store#EdgeCallAudio"/>
         <!-- its engine's trunks and policy (get#EngineConfig on the edge node reads the copy, so the trunks register
             and take calls while the local node is away), and each number's fallback for that time -->
         <replicate set="voiceTrunks">
@@ -1471,34 +1471,34 @@
         <load-data location="component://framework/data/SftpDemoData.xml"/>
     </entity-facade>
     <database-list>
-        <dictionary-type type="id" java-type="java.lang.String" default-sql-type="VARCHAR(40)"/>
-        <dictionary-type type="id-long" java-type="java.lang.String" default-sql-type="VARCHAR(255)"/>
+        <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>
+        <dictionary-type type="id-long" java-type="String" default-sql-type="VARCHAR(255)"/>
 
-        <dictionary-type type="date" java-type="java.sql.Date" default-sql-type="DATE"/>
-        <dictionary-type type="time" java-type="java.sql.Time" default-sql-type="TIME"/>
-        <dictionary-type type="date-time" java-type="java.sql.Timestamp" default-sql-type="TIMESTAMP"/>
+        <dictionary-type type="date" java-type="Date" default-sql-type="DATE"/>
+        <dictionary-type type="time" java-type="Time" default-sql-type="TIME"/>
+        <dictionary-type type="date-time" java-type="Timestamp" default-sql-type="TIMESTAMP"/>
 
-        <dictionary-type type="number-integer" java-type="java.lang.Long" default-sql-type="NUMERIC(20,0)"/>
-        <dictionary-type type="number-decimal" java-type="java.math.BigDecimal" default-sql-type="NUMERIC(26,6)"/>
-        <dictionary-type type="number-float" java-type="java.lang.Double" default-sql-type="DOUBLE"/>
+        <dictionary-type type="number-integer" java-type="Long" default-sql-type="NUMERIC(20,0)"/>
+        <dictionary-type type="number-decimal" java-type="BigDecimal" default-sql-type="NUMERIC(26,6)"/>
+        <dictionary-type type="number-float" java-type="Double" default-sql-type="DOUBLE"/>
 
-        <dictionary-type type="currency-amount" java-type="java.math.BigDecimal" default-sql-type="NUMERIC(24,4)"/>
-        <dictionary-type type="currency-precise" java-type="java.math.BigDecimal" default-sql-type="NUMERIC(25,5)"/>
+        <dictionary-type type="currency-amount" java-type="BigDecimal" default-sql-type="NUMERIC(24,4)"/>
+        <dictionary-type type="currency-precise" java-type="BigDecimal" default-sql-type="NUMERIC(25,5)"/>
 
-        <dictionary-type type="text-indicator" java-type="java.lang.String" default-sql-type="CHAR(1)"/>
-        <dictionary-type type="text-short" java-type="java.lang.String" default-sql-type="VARCHAR(63)"/>
-        <dictionary-type type="text-medium" java-type="java.lang.String" default-sql-type="VARCHAR(255)"/>
-        <dictionary-type type="text-intermediate" java-type="java.lang.String" default-sql-type="VARCHAR(1023)"/>
+        <dictionary-type type="text-indicator" java-type="String" default-sql-type="CHAR(1)"/>
+        <dictionary-type type="text-short" java-type="String" default-sql-type="VARCHAR(63)"/>
+        <dictionary-type type="text-medium" java-type="String" default-sql-type="VARCHAR(255)"/>
+        <dictionary-type type="text-intermediate" java-type="String" default-sql-type="VARCHAR(1023)"/>
         <!-- text-long was 32000, but changed to 4095 because MySQL max size is 21K or so for a VARCHAR, and 64K for a
             row (not including text-very-long), and it seems that the limit is bytes, not characters, so 4K characters
             is 12K bytes... just like the old annoying column size which is now in characters, but the row size still
             in bytes -->
-        <dictionary-type type="text-long" java-type="java.lang.String" default-sql-type="VARCHAR(4095)"/>
-        <dictionary-type type="text-very-long" java-type="java.lang.String" default-sql-type="CLOB"/>
+        <dictionary-type type="text-long" java-type="String" default-sql-type="VARCHAR(4095)"/>
+        <dictionary-type type="text-very-long" java-type="String" default-sql-type="CLOB"/>
         <!-- text-fts is a string column whose LIKE / NOT LIKE use the database fts-style. Storage matches text-very-long per database. -->
-        <dictionary-type type="text-fts" java-type="java.lang.String" default-sql-type="CLOB"/>
+        <dictionary-type type="text-fts" java-type="String" default-sql-type="CLOB"/>
 
-        <dictionary-type type="binary-very-long" java-type="java.sql.Blob" default-sql-type="BLOB"/>
+        <dictionary-type type="binary-very-long" java-type="Blob" default-sql-type="BLOB"/>
 
         <!--
         * DB2:

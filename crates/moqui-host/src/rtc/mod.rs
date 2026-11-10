@@ -69,7 +69,7 @@ pub(crate) use driver::Route;
 const COMMAND_QUEUE: usize = 4_096;
 /// How often the node registers itself.
 const REGISTER_EVERY: Duration = Duration::from_secs(20);
-const REGISTER_SERVICE: &str = "org.moqui.impl.CallServices.register#MediaNode";
+const REGISTER_SERVICE: &str = "org.moqui.call.CallServices.register#MediaNode";
 
 /// Something for the driver.
 pub(crate) enum Command {

@@ -20,7 +20,7 @@
 //! ([`Sfu::handle_receive`]) and the time ([`Sfu::handle_timeout`]), and takes out datagrams to send, signaling events and
 //! the next timeout ([`Sfu::poll_output`]). The caller also passes in the signaling commands: a leg joining with its
 //! offer ([`Sfu::join`]), answers and offers in either direction, candidates, subscriptions and leaving. Nothing here
-//! decides who may join: moqui-host checks the call, leg and connection generation with `org.moqui.impl.CallServices`
+//! decides who may join: moqui-host checks the call, leg and connection generation with `org.moqui.call.CallServices`
 //! before a command reaches the SFU, and the generation passed with each command fences an older connection of the same
 //! leg.
 //!

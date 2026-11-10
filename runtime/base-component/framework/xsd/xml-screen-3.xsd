@@ -585,7 +585,7 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:complexType>
     <xs:element name="inbox-source" type="provider-type"><xs:annotation><xs:documentation>
         Comms providers (plans/Comms-Framework.md §3.3). The framework calls every provider of a hook declared by the app roots
-        the user may open (org.moqui.impl.ShellServices.call#Providers) and combines the answers: a read runs each in its own
+        the user may open (org.moqui.ui.ShellServices.call#Providers) and combines the answers: a read runs each in its own
         transaction, and one that fails is logged and listed in failedParts while the others answer; a mutation reports the
         first failure; with no provider the feature is skipped (unavailable). inbox-source: accounts, settings and pages of
         threads (the Internal account and mailboxes of IronStone BOSS).
@@ -1383,7 +1383,7 @@ along with this software (see the LICENSE.md file). If not, see
         and the transitions the user may take from the current status as buttons: the next stage as the primary action, the
         others (Hold, Cancel) as secondary ones, those that end badly in the negative color. Each button posts the transition
         with the new status in parameter-name (statusId) and the parameters, after a confirmation. The stages and transitions
-        come from org.moqui.impl.StatusServices.get#StatusBar (the StatusItem rows of the type in sequence order and the
+        come from org.moqui.ui.StatusServices.get#StatusBar (the StatusItem rows of the type in sequence order and the
         StatusFlowTransition rows of the flow); the colors from the status color map (StatusItem.statusColor, else the words of
         the status id: get#StatusColors). In qvt an m-status-bar; in a server-static screen the attributes are bound over the
         screen's actions data and the browser asks the root screen's statusBar transition for the flow. In html chips and

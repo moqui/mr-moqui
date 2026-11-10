@@ -151,7 +151,7 @@ fn wait_until(limit: Duration, what: &str, check: impl Fn() -> bool) {
 
 /// Whether the edge node has the local node's down connection.
 fn down(edge: &Gate) -> bool {
-    let out = call(edge, "org.moqui.impl.EdgeServices.get#EdgeClients", &[]);
+    let out = call(edge, "org.moqui.edge.EdgeServices.get#EdgeClients", &[]);
     let Some(Value::List(list)) = out.get("clientList") else {
         panic!("clientList: {out:?}")
     };
@@ -264,7 +264,7 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
     let config = json!({"apiKey": "KEY-1", "publicKey": public, "apiBaseUrl": telnyx, "allowInternalAddresses": true});
     call(
         &local,
-        "org.moqui.impl.ChatBridgeServices.store#Bridge",
+        "org.moqui.chat.ChatBridgeServices.store#Bridge",
         &[
             ("name", Value::string("Telnyx")),
             ("typeEnumId", Value::string("CbtSms")),
@@ -325,7 +325,7 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
         .build()
         .unwrap();
     let url = format!("https://localhost:{edge_port}");
-    let code = to_plain_string(&call(&edge, "org.moqui.impl.EdgeServices.create#PairingCode", &[])["code"]);
+    let code = to_plain_string(&call(&edge, "org.moqui.edge.EdgeServices.create#PairingCode", &[])["code"]);
     let mut pairing = PairConfig::new(&url, &code, NODE);
     pairing.trust_root = Some(root.clone());
     pairing.connect_timeout = Duration::from_secs(5);
@@ -371,7 +371,7 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
     let disable = |flag: &str| {
         call(
             &local,
-            "org.moqui.impl.ChatBridgeServices.store#Bridge",
+            "org.moqui.chat.ChatBridgeServices.store#Bridge",
             &[
                 ("chatBridgeId", Value::string(bridge_id)),
                 ("disabled", Value::string(flag)),

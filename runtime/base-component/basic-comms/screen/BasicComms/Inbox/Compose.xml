@@ -55,7 +55,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="textBlocks" method="get" read-only="true">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.find#EmailTextBlocks').parameter('searchText', searchText || null).call()
+            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.find#EmailTextBlocks').parameter('searchText', searchText || null).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {textBlockList: out.textBlockList})
         ]]></script></actions>
         <default-response type="none"/>
@@ -139,7 +139,7 @@ along with this software (see the LICENSE.md file). If not, see
         so none is held during the SMTP session (deliver#DraftMessage) -->
     <transition name="sendDue" begin-transaction="false">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.send#DueDrafts').parameter('emailMessageId', emailMessageId || '').call()
+            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.send#DueDrafts').parameter('emailMessageId', emailMessageId || '').call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {sentCount: out.sentCount, failedCount: out.failedCount})
         ]]></script></actions>
         <default-response type="none"/>

@@ -30,7 +30,7 @@ feature("a 100,000 row CSV loads through an ETL mapping in batches under the tim
                 const started = Date.now()
                 // as from the Tools app (its authorization for all actions), as the ETL screens call it
                 ec.artifactExecution.runAsUser("component://tools/screen/Tools.xml", () => {
-                    out = ec.service.sync().name("org.moqui.impl.EtlServices.run#EtlMapping").parameters({ mapping, wait: true }).call() || {}
+                    out = ec.service.sync().name("org.moqui.dev.EtlServices.run#EtlMapping").parameters({ mapping, wait: true }).call() || {}
                 })
                 const seconds = (Date.now() - started) / 1000
                 const errors = ec.message.hasError() ? ec.message.errorsString : null

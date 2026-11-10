@@ -1,4 +1,4 @@
-// The IVR and auto attendant (org.moqui.impl.IvrServices and Ivr.js; plans/Comms-Framework.md §5.3, §5.4, V5): only a voice
+// The IVR and auto attendant (org.moqui.call.IvrServices and Ivr.js; plans/Comms-Framework.md §5.3, §5.4, V5): only a voice
 // admin keeps menus (the same parameters refused for anyone else); a number routed to a menu is answered with the menu
 // (receive#PhoneCall's ivr); the caller's keys route through route#IvrCall: to a user (V3's plan: their tabs ring), a
 // nested menu, a queue, a voicemail box; no key goes to the timeout target, a key no option has to the invalid target
@@ -30,7 +30,7 @@ function as(userId, name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.impl.IvrServices." + name)
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.IvrServices." + name)
             .parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
@@ -97,13 +97,13 @@ function clean() {
 }
 function nodesUp() {
     sys(() => {
-        ec.service.sync().name("org.moqui.impl.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
-        ec.service.sync().name("org.moqui.impl.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
+        ec.service.sync().name("org.moqui.call.CallServices.register#MediaNode").parameters({instanceId: NODE, mediaAddress: "127.0.0.1:10000"}).call()
+        ec.service.sync().name("org.moqui.call.VoiceServices.register#SipNode").parameters({instanceId: NODE, sipAddress: "127.0.0.1:5060"}).call()
     })
 }
-const receive = (atMs) => engine("org.moqui.impl.VoiceServices.receive#PhoneCall", {toNumber: MAIN_NUMBER, fromNumber: CALLER,
+const receive = (atMs) => engine("org.moqui.call.VoiceServices.receive#PhoneCall", {toNumber: MAIN_NUMBER, fromNumber: CALLER,
     fromName: "Ivr Caller", instanceId: NODE, atMs: atMs || null})
-const route = (call, ivrMenuId, kind, digits) => engine("org.moqui.impl.IvrServices.route#IvrCall", {callSessionId: call.callSessionId,
+const route = (call, ivrMenuId, kind, digits) => engine("org.moqui.call.IvrServices.route#IvrCall", {callSessionId: call.callSessionId,
     callLegId: call.callLegId, ivrMenuId, kind, digits: digits || null}).answer || {}
 const offered = (callSessionId, userId) => sys(() => {
     const p = ec.entity.find("moqui.call.CallParticipant").condition({callSessionId, userId}).one()
@@ -144,7 +144,7 @@ feature("only a voice admin keeps menus and routes a number to one; a bad target
         const made = as(ADMIN, "store#IvrMenu", fields)
         main = made.ivrMenuId
         sub = as(ADMIN, "store#IvrMenu", {name: "Ivr spec sales"}).ivrMenuId
-        queueId = as(ADMIN, "org.moqui.impl.CallQueueServices.store#CallQueue", {name: "Ivr spec queue"}).callQueueId
+        queueId = as(ADMIN, "org.moqui.call.CallQueueServices.store#CallQueue", {name: "Ivr spec queue"}).callQueueId
         const optionRefused = as(OUT, "store#IvrOption", {ivrMenuId: main, digits: "1", targetTypeEnumId: "CtgUser", targetId: SALES})
         as(ADMIN, "store#IvrOption", {ivrMenuId: main, digits: "1", targetTypeEnumId: "CtgUser", targetId: SALES})
         as(ADMIN, "store#IvrOption", {ivrMenuId: main, digits: "2", targetTypeEnumId: "CtgMenu", targetId: sub})
@@ -155,9 +155,9 @@ feature("only a voice admin keeps menus and routes a number to one; a bad target
         const badUser = as(ADMIN, "store#IvrOption", {ivrMenuId: main, digits: "4", targetTypeEnumId: "CtgUser", targetId: "NO_SUCH_USER"})
         // the deployment's policy holds an admin's number target too: international is off
         const abroad = as(ADMIN, "store#IvrOption", {ivrMenuId: main, digits: "5", targetTypeEnumId: "CtgNumber", targetId: "+442071234567"})
-        const routed = as(ADMIN, "org.moqui.impl.VoiceServices.store#PhoneNumber", {phoneNumber: MAIN_NUMBER, voiceTrunkId: TRUNK,
+        const routed = as(ADMIN, "org.moqui.call.VoiceServices.store#PhoneNumber", {phoneNumber: MAIN_NUMBER, voiceTrunkId: TRUNK,
             routeTypeEnumId: "PnrIvr", routeId: main})
-        const badRoute = as(ADMIN, "org.moqui.impl.VoiceServices.store#PhoneNumber", {phoneNumber: MAIN_NUMBER, voiceTrunkId: TRUNK,
+        const badRoute = as(ADMIN, "org.moqui.call.VoiceServices.store#PhoneNumber", {phoneNumber: MAIN_NUMBER, voiceTrunkId: TRUNK,
             routeTypeEnumId: "PnrIvr", routeId: "NO_SUCH_MENU"})
         const found = as(ADMIN, "find#IvrMenus")
         const findRefused = as(OUT, "find#IvrMenus")
@@ -194,7 +194,7 @@ feature("DTMF routing: a call to the number gets the menu; 1 rings the user, 2 t
         const toBox = route(call2, sub, "option", "9")
         const path = sys(() => ec.entity.find("moqui.call.CallIvrState").condition("callSessionId", call2.callSessionId).one())
         // the engine starts voicemail with the plan's token
-        const deposit = engine("org.moqui.impl.VoicemailServices.begin#Voicemail", {callSessionId: call2.callSessionId,
+        const deposit = engine("org.moqui.call.VoicemailServices.begin#Voicemail", {callSessionId: call2.callSessionId,
             callLegId: call2.callLegId, reason: "busy", stepToken: toBox.stepToken})
         endCall(call2.callSessionId)
         const call3 = receive()
@@ -258,9 +258,9 @@ feature("no key goes to the timeout target, a key no option has to the invalid t
 
 feature("outside its schedule a menu goes to its closed target; with none the call ends; a loop of menus ends", {
     when() {
-        const hours = as(ADMIN, "org.moqui.impl.CallHandlingServices.store#CommsSchedule", {name: "Ivr spec hours", timeZone: "UTC", shared: true})
+        const hours = as(ADMIN, "org.moqui.call.CallHandlingServices.store#CommsSchedule", {name: "Ivr spec hours", timeZone: "UTC", shared: true})
         for (const dayOfWeek of [1, 2, 3, 4, 5]) {
-            as(ADMIN, "org.moqui.impl.CallHandlingServices.store#CommsScheduleRule", {commsScheduleId: hours.commsScheduleId, ruleTypeEnumId: "CsrWeekly",
+            as(ADMIN, "org.moqui.call.CallHandlingServices.store#CommsScheduleRule", {commsScheduleId: hours.commsScheduleId, ruleTypeEnumId: "CsrWeekly",
                 dayOfWeek, fromTime: "09:00", thruTime: "17:00"})
         }
         as(ADMIN, "store#IvrMenu", {ivrMenuId: main, commsScheduleId: hours.commsScheduleId, closedTypeEnumId: "CtgVoicemail", closedId: boxId})

@@ -1,7 +1,7 @@
 // The data grid's services (plans/archive/Tools-Database.md §9, §15 step 5): pages without a count, a SQL result's
 // entity, and the save rules: a refused row rolls back the rest, a stale stamp is refused, a restricted entity is
 // refused.
-const D = 'org.moqui.impl.DatabaseServices.'
+const D = 'org.moqui.dev.DatabaseServices.'
 const E = 'moqui.basic.Enumeration'
 const source = { type: 'entity', entityName: E, conditions: { enumTypeId: 'GridSpec' } }
 // A Tools screen's transition calls these with the screen's inherited TOOLS_APP authorization; outside a screen the

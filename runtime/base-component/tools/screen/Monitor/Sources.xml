@@ -14,7 +14,7 @@
     <transition name="partitionTables" method="post" authz-action="all">
         <actions><script><![CDATA[
             // Moves each telemetry table made before search-facade postgres partition-telemetry was on into day partitions.
-            const result=ec.service.sync().name('org.moqui.impl.TelemetryServices.partition#TelemetryTables').call()
+            const result=ec.service.sync().name('org.moqui.monitor.TelemetryServices.partition#TelemetryTables').call()
             for (const failure of result.failed || []) ec.message.addError(failure)
             if (result.moved) ec.message.addPublic(ec.l10n.localize('Moved {0} telemetry tables ({1} rows) into day partitions. The old tables are kept to drop: {2}').replace('{0}',result.moved).replace('{1}',result.rows).replace('{2}',(result.kept || []).join(', ')),'success')
             else if (!(result.failed || []).length) ec.message.addPublic(ec.l10n.localize('No telemetry table needed moving.'),'info')

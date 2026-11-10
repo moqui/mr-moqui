@@ -93,7 +93,7 @@
         sets a local node replicates are in MoquiDefaultConf.xml, read by both ends (mail's since E5a, chat's since
         E6, calls' since E7, SIP's since E8), with grants for _EDGE_; an entry may wait less than the link for its
         answer, as SIP's routing does while the caller's phone rings:
-            <delegate service="org.moqui.impl.VoiceServices.receive#PhoneCall" timeout-seconds="7"/>
-        To check a delegated call end to end, list org.moqui.impl.EdgeServices.echo#Delegate on both nodes. -->
+            <delegate service="org.moqui.call.VoiceServices.receive#PhoneCall" timeout-seconds="7"/>
+        To check a delegated call end to end, list org.moqui.edge.EdgeServices.echo#Delegate on both nodes. -->
     <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-attempts="10" queue-retry-seconds="5"/>
 </moqui-conf>

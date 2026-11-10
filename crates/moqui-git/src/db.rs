@@ -148,7 +148,7 @@ fn now_millis() -> i64 {
 }
 
 fn stamp_value(millis: i64) -> Value {
-    basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
+    basic_convert(&Value::I64(millis), "Timestamp").value
 }
 
 fn kind_of(name: &str) -> Result<Kind, Error> {
@@ -234,7 +234,7 @@ impl DbStore {
         let size = as_u64(long(value.get("objectSize")));
         let data = match value.get("objectData") {
             None => None,
-            Some(data) => match basic_convert(data, "java.sql.Blob").value {
+            Some(data) => match basic_convert(data, "Blob").value {
                 Value::Bytes(bytes) => Some(bytes),
                 Value::Null => Some(Vec::new()),
                 other => return Err(Error::new(format!("GitObject {id} data is {other:?}"))),

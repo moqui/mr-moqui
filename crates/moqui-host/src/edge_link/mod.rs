@@ -46,7 +46,7 @@
 //!   30 s ([`dial`]); a refused node waits up to 10 minutes.
 //!
 //! The parts take explicit configuration ([`LocalConfig`], [`PairConfig`], [`EdgeConfig`]) read from properties once,
-//! so a test runs an edge end and a local end in one process. [`hook`] is what `org.moqui.impl.EdgeServices` calls
+//! so a test runs an edge end and a local end in one process. [`hook`] is what `org.moqui.edge.EdgeServices` calls
 //! through `moqui_core::edge`.
 
 use std::time::Duration;

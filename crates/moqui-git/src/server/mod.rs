@@ -529,8 +529,11 @@ fn drive_access(id: &str) -> (i64, bool) {
         disable_authz: true,
         ..Default::default()
     };
-    match moqui_core::service::call::sync_checked("org.moqui.impl.FileServices.get#DriveAccess", &parameters, &options)
-    {
+    match moqui_core::service::call::sync_checked(
+        "org.moqui.resource.FileServices.get#DriveAccess",
+        &parameters,
+        &options,
+    ) {
         Ok(out) => {
             let level = out
                 .get("level")

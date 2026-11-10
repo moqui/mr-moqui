@@ -1,4 +1,4 @@
-// The changes feeds of chat (org.moqui.impl.ChatServices record#UserChange, get#UserChanges, record#RoomChange and
+// The changes feeds of chat (org.moqui.chat.ChatServices record#UserChange, get#UserChanges, record#RoomChange and
 // get#RoomChanges; the Chat screen's chatChanges and roomChanges): what a client that keeps chat offline reads after its
 // cursors. Each user's feed has only what is theirs: membership as state, the room, their settings and read marker, and
 // retention, one row per room and kind. A room's message changes (edits, reactions, redactions, pins, link previews and
@@ -241,7 +241,7 @@ feature("an agent member gets no changes of its own, while the others hear of it
         const added = sys(() =>
             ec.service
                 .sync()
-                .name("org.moqui.impl.ChatServices.add#Member")
+                .name("org.moqui.chat.ChatServices.add#Member")
                 .parameters({chatRoomId: roomId, userId: AGENT, roleEnumId: "agent"})
                 .call()
         )
@@ -303,7 +303,7 @@ feature("a change pushed to a message is the room's; retention is a range tombst
         sys(() =>
             ec.service
                 .sync()
-                .name("org.moqui.impl.ChatServices.push#Update")
+                .name("org.moqui.chat.ChatServices.push#Update")
                 .parameters({chatRoomId: roomId, eventSeq: secondSeq, fields: {linkPreviews: []}})
                 .call()
         )
@@ -319,7 +319,7 @@ feature("a change pushed to a message is the room's; retention is a range tombst
                 .updateAll({sentDate: twoDaysAgo})
             return ec.service
                 .sync()
-                .name("org.moqui.impl.ChatServices.clean#RoomRetention")
+                .name("org.moqui.chat.ChatServices.clean#RoomRetention")
                 .parameter("chatRoomId", roomId)
                 .call()
         })
@@ -377,7 +377,7 @@ feature("after the feeds are purged, an older cursor is a reset; a cursor past t
         const cleaned = sys(() =>
             ec.service
                 .sync()
-                .name("org.moqui.impl.ChatServices.clean#ChatChanges")
+                .name("org.moqui.chat.ChatServices.clean#ChatChanges")
                 .parameters({beforeDate: Number(ec.user.nowTimestamp) + 60000, userIdList: [MEMBER], chatRoomIdList: [roomId]})
                 .call()
         )

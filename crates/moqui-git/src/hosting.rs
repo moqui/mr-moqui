@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Hosting a repository through Moqui, for the services of `org.moqui.impl.GitServices` the code screens use: a
+//! Hosting a repository through Moqui, for the services of `org.moqui.git.GitServices` the code screens use: a
 //! directory with each entry's last commit, comparing two revisions, writing refs (a branch, a tag, a delete) and
 //! merging, each ref write under the repository's lock with the branch rules ([`super::rules`]) and the gitECA
 //! events of source `write` (pre events in the write, post events from its `GitUpdate`, as for a push). Callers check

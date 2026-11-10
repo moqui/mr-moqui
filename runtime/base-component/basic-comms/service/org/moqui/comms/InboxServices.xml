@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The Inbox of BasicComms over the user's mail (plans/Comms-Framework.md §3.2, A3; first built as IronStone Comms' InboxServices,
     mr-boss design-drawers-commons.md §12): the rail's accounts, folders, labels and saved searches, a page of threads of a
     view, the reading pane's thread, its files, actions on threads, the palette's search and one message's details, each over
-    org.moqui.impl.EmailClientServices, which checks the user's access to every account and message.
+    org.moqui.mail.EmailClientServices, which checks the user's access to every account and message.
 
     The screens call run#Operation, which hands an operation to an app's inbox-source provider when there is one (its page is
     the list: IronStone's merges its internal messages and mailboxes with the mail) and else to these services. Links go
@@ -32,7 +32,7 @@ along with this software (see the LICENSE.md file). If not, see
             mail alone (this file, ComposeServices, CommsHomeServices); an operation only an app has (a mailbox, filing on a
             record, an invitation) is refused as not available here.
 
-            The provider is called as the app that declares it (org.moqui.impl.ShellServices.call#Providers, hook
+            The provider is called as the app that declares it (org.moqui.ui.ShellServices.call#Providers, hook
             inbox-source) with operation and parameters, and answers handled and result (the operation's out-parameters). A
             read runs in its own transaction; a provider that fails is an error, so a page never comes back without the
             app's messages it should have.
@@ -84,7 +84,7 @@ along with this software (see the LICENSE.md file). If not, see
                 'remove#ComposeAttachment': ['org.moqui.comms.ComposeServices.remove#ComposeAttachment', true],
                 'discard#ComposeDraft': ['org.moqui.comms.ComposeServices.discard#ComposeDraft', true],
                 'get#CommsHome': ['org.moqui.comms.CommsHomeServices.get#CommsHome', false],
-                'get#MailChanges': ['org.moqui.impl.EmailClientServices.get#MailChanges', false]
+                'get#MailChanges': ['org.moqui.mail.EmailClientServices.get#MailChanges', false]
             }
             const known = OPERATIONS[operation]
             if (!known) { ec.message.addError(`Unknown Comms operation ${operation}`); return }
@@ -93,7 +93,7 @@ along with this software (see the LICENSE.md file). If not, see
             // a request a client may send again after a lost answer: once per clientRef
             const clientRef = ['set#ThreadState', 'apply#ViewAction'].includes(operation) && input.clientRef ? String(input.clientRef) : null
             if (clientRef) {
-                const claim = ec.service.sync().name('org.moqui.impl.ClientSyncServices.claim#ClientRequest').parameters({clientRef: clientRef,
+                const claim = ec.service.sync().name('org.moqui.edge.ClientSyncServices.claim#ClientRequest').parameters({clientRef: clientRef,
                     serviceName: 'comms:' + operation}).call()
                 if (ec.message.hasError()) return
                 if (claim.duplicate) {
@@ -103,13 +103,13 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             }
             const answered = () => {
-                if (clientRef && !ec.message.hasError()) ec.service.sync().name('org.moqui.impl.ClientSyncServices.store#ClientRequest').parameters({
+                if (clientRef && !ec.message.hasError()) ec.service.sync().name('org.moqui.edge.ClientSyncServices.store#ClientRequest').parameters({
                     clientRef: clientRef, serviceName: 'comms:' + operation, result: {result: result, source: source}}).call()
             }
-            const sources = ec.service.sync().name('org.moqui.impl.ShellServices.get#Providers').parameter('hook', 'inbox-source').call()
+            const sources = ec.service.sync().name('org.moqui.ui.ShellServices.get#Providers').parameter('hook', 'inbox-source').call()
             const provider = Array.from(sources?.providerList || [])[0]
             if (provider) {
-                const out = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'inbox-source',
+                const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers').parameters({hook: 'inbox-source',
                     sourceId: provider.sourceId, mutation: mutation, parameters: {operation: operation, parameters: input}}).call()
                 if (ec.message.hasError()) return
                 const failed = Array.from(out?.failedParts || [])
@@ -128,7 +128,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="InboxData">
         <description>
             The rail and the user's settings, of the user's mail accounts alone: the accounts
-            (org.moqui.impl.EmailClientServices.get#UserEmailAccounts: each mail account with its folders by kind and path,
+            (org.moqui.mail.EmailClientServices.get#UserEmailAccounts: each mail account with its folders by kind and path,
             labels, identities, unread, draft and Outbox counts, and its sync state: syncing while its sync lock holds, a
             warning when its sign-in or its last sync failed), no mailboxes (an app's), the saved searches, the
             Unified, Drafts and Outbox totals, me (the user, party and own addresses) and the Inbox preferences (reading pane,
@@ -165,7 +165,7 @@ along with this software (see the LICENSE.md file). If not, see
             searchList = []
             failedParts = []
             const nowMillis = toMillis(ec.user.nowTimestamp)
-            const users = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#UserEmailAccounts').call()
+            const users = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#UserEmailAccounts').call()
             if (ec.message.hasError()) return
             // mail accounts only: the Internal account is an app's (its inbox-source answers this operation)
             const mailAccounts = Array.from(users.accountList || []).filter((account) => !account.isInternal)
@@ -251,7 +251,7 @@ along with this software (see the LICENSE.md file). If not, see
             // saved searches: a part of its own
             ec.message.pushErrors()
             try {
-                const saved = ec.service.sync().name('org.moqui.impl.EmailClientServices.find#EmailSearches').requireNewTransaction(true).call()
+                const saved = ec.service.sync().name('org.moqui.mail.EmailClientServices.find#EmailSearches').requireNewTransaction(true).call()
                 if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
                 searchList = Array.from(saved.searchList || [])
             } catch (err) {
@@ -306,7 +306,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="find" noun="InboxRows">
         <description>
-            A page of the thread list of the user's mail (org.moqui.impl.EmailClientServices.find#Messages) for a view of the
+            A page of the thread list of the user's mail (org.moqui.mail.EmailClientServices.find#Messages) for a view of the
             rail: inbox (every account's Inbox), flagged, snoozed, scheduled, drafts, sent, archive, junk, trash, outbox and
             all, with emailAccountId one account's (and emailFolderId one folder, emailLabelId one label). A search
             (searchText, with Gmail's operators) is a view of all mail, or of the account open, unless it names an in:.
@@ -356,7 +356,7 @@ along with this software (see the LICENSE.md file). If not, see
             conversationView = ec.user.getPreference('MAIL_CONVERSATION') === 'messages' ? 'messages' : 'threads'
             params.threadMode = conversationView !== 'messages'
             findView = params.view
-            const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.find#Messages').parameters(params).call()
+            const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.find#Messages').parameters(params).call()
             if (ec.message.hasError()) return
             threadList = Array.from(out.threadList || []).map((row) => Object.assign({}, row, {store: 'email',
                 rowKey: 'email:' + (params.threadMode ? row.threadId : row.emailMessageId)}))
@@ -368,7 +368,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="ThreadView">
         <description>
-            The thread of the reading pane, oldest message first, through org.moqui.impl.EmailClientServices.get#Thread
+            The thread of the reading pane, oldest message first, through org.moqui.mail.EmailClientServices.get#Thread
             ("not found" for a thread the user may not see). Each message has its sender and recipients, date, HTML or text
             body, attachments (inline ones in cidMap by Content-ID), its flags and how it may be unsubscribed. The thread has
             its labels and what the user may do: reply (canReply), send from its account (canSend). The records a message is
@@ -410,7 +410,7 @@ along with this software (see the LICENSE.md file). If not, see
             thread = null
             const partyId = ec.user.userAccount?.partyId || null
             if (store === 'email') {
-                const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#Thread').parameter('rootEmailMessageId', threadId).call()
+                const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#Thread').parameter('rootEmailMessageId', threadId).call()
                 if (ec.message.hasError()) return
                 const messages = Array.from(out.messageList || [])
                 const addresses = []
@@ -419,7 +419,7 @@ along with this software (see the LICENSE.md file). If not, see
                     for (const entry of splitAddresses(message.toAddresses).concat(splitAddresses(message.ccAddresses))) addresses.push(entry.address)
                 }
                 const parties = {}
-                const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess').call()
+                const access = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#EmailAccountAccess').call()
                 const mine = new Set()
                 if (ec.user.userAccount?.emailAddress) mine.add(String(ec.user.userAccount.emailAddress).toLowerCase())
                 for (const account of Array.from(access.accountList || [])) if (account.emailAddress) mine.add(String(account.emailAddress).toLowerCase())
@@ -495,7 +495,7 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.pushErrors()
                 let readable = false
                 try {
-                    const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#Thread').parameter('emailMessageId', file.emailMessageId).requireNewTransaction(true).call()
+                    const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#Thread').parameter('emailMessageId', file.emailMessageId).requireNewTransaction(true).call()
                     readable = !ec.message.hasError() && Array.from(out.messageList || []).some((message) => message.emailMessageId === file.emailMessageId)
                 } finally { ec.message.clearErrors(); ec.message.popErrors() }
                 if (!readable) { notFound(); return }
@@ -538,7 +538,7 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.pushErrors()
                 let readable = false
                 try {
-                    const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#Thread').parameter('emailMessageId', emailMessageId).requireNewTransaction(true).call()
+                    const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#Thread').parameter('emailMessageId', emailMessageId).requireNewTransaction(true).call()
                     readable = !ec.message.hasError() && Array.from(out.messageList || []).some((message) => message.emailMessageId === emailMessageId)
                 } finally { ec.message.clearErrors(); ec.message.popErrors() }
                 if (!readable) { ec.message.addError(L('Attachment not found') + ': ' + emailMessageId); return }
@@ -587,7 +587,7 @@ along with this software (see the LICENSE.md file). If not, see
                     const stream = file.location ? ec.resource.getLocationReference(file.location).openStream() : null
                     if (!stream) throw new Error(L('Attachment not found') + ': ' + label)
                     try {
-                        const out = ec.service.sync().name('org.moqui.impl.FileServices.upload#Resource').parameters({driveId: driveId, path: path || '',
+                        const out = ec.service.sync().name('org.moqui.resource.FileServices.upload#Resource').parameters({driveId: driveId, path: path || '',
                             file: stream, relativePathList: [safe(label)], conflictPolicy: 'keepBoth', versionNote: L('Saved from a message')})
                                 .requireNewTransaction(true).call()
                         if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
@@ -611,7 +611,7 @@ along with this software (see the LICENSE.md file). If not, see
             {store email, threadId, emailMessageId (one message instead of the thread), seen}. Actions: read, unread, flag (the
             thread's newest message, or the message), unflag, archive, unarchive, trash, deleteForever (mail in Trash), spam and
             notSpam, snooze (snoozedThruDate) and unsnooze, move (emailFolderId), labels (addLabelIdList and removeLabelIdList,
-            through apply#Labels). Mail goes through org.moqui.impl.EmailClientServices (set#MessageFlags, archive#Messages,
+            through apply#Labels). Mail goes through org.moqui.mail.EmailClientServices (set#MessageFlags, archive#Messages,
             trash#Messages, report#Spam, snooze#Messages, move#Messages, apply#Labels); each checks the user's access, and
             a target the user does not reach is "not found". Each target is changed in a transaction of its own: one that is
             refused or fails is named in failedList ({key, message}) with why, and the others are changed.
@@ -653,7 +653,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (action === 'snooze' && snoozedThruDate == null) { ec.message.addError(ec.l10n.localize('Snooze until when?')); return }
             if (action === 'move' && !emailFolderId) { ec.message.addError(ec.l10n.localize('Move to which folder?')); return }
             const asList = (value) => value == null ? [] : (typeof value === 'string' ? value.split(',') : Array.from(value)).map((id) => String(id).trim()).filter((id) => id)
-            const MAIL = 'org.moqui.impl.EmailClientServices'
+            const MAIL = 'org.moqui.mail.EmailClientServices'
             for (const target of targets) {
                 const store = target?.store
                 const key = `${store}:${target?.emailMessageId || target?.communicationEventId || target?.threadId}`
@@ -823,7 +823,7 @@ along with this software (see the LICENSE.md file). If not, see
             let message = null
             let canSend = false
             if (row.emailAccountId) {
-                const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#Thread').parameters({emailMessageId: emailMessageId, includeHeaders: true}).call()
+                const out = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#Thread').parameters({emailMessageId: emailMessageId, includeHeaders: true}).call()
                 if (ec.message.hasError()) return
                 message = Array.from(out.messageList || []).find((item) => item.emailMessageId === emailMessageId)
                 canSend = message.canSend === true

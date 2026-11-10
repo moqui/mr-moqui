@@ -318,7 +318,7 @@ access is a service call. It does read audio files itself, through `factory.reso
   the delay starts at 30 s and grows up to 10 minutes.
 - **Limits.** A checking or pairing connection stays open at most 30 s, with at most 4 calls and 2 streams. Pair is
   limited to 10 tries per IP address per 10 minutes.
-- **Services.** `org.moqui.impl.EdgeServices` (`framework/service/org/moqui/impl/EdgeServices.xml`, bodies in Rust):
+- **Services.** `org.moqui.edge.EdgeServices` (`framework/service/org/moqui/edge/EdgeServices.xml`, bodies in Rust):
   - on a local node: `get#LinkStatus`, `check#EdgeNode`, `pair#EdgeNode` and `unpair#EdgeNode`;
   - on an edge node: `create#PairingCode`, `get#EdgeClients`, `revoke#EdgeClient` and `ping#EdgeClient`.
 
@@ -344,7 +344,7 @@ one of the four ways. The MMS copy the local node uploads to the edge node is pa
 
 - **Delegate.**
   - On the edge node, with `node_role=edge`, the service facade sends the services a conf lists over the link, such as
-    `<edge-delegate service="org.moqui.impl.VoiceServices.receive#PhoneCall"/>`.
+    `<edge-delegate service="org.moqui.call.VoiceServices.receive#PhoneCall"/>`.
   - The call runs on the local node as a dedicated user, `_EDGE_` in the group `EDGE_DELEGATE`, which is granted only
     those services. The original caller's identity travels as data, never as a login.
   - The comms engines also read and write entities directly, or through services the edge node cannot run: heartbeats,
@@ -590,7 +590,7 @@ release.
 - **Kinds and set.** The `<edge>` entries are in MoquiDefaultConf.xml, since both ends need them: queue kinds `mail`,
   `mailOut` and `mailStatus`, and the replicated set `mailRecipients` (`EmailAccount` address, kind, status and server;
   `EmailIdentity` address and account; `EmailServer` `storeHost`, so an account the sync feeds is not a recipient). The
-  handlers are `org.moqui.impl.EmailServices` services with Rust bodies in `moqui-mail/src/edge_mail.rs`, granted to
+  handlers are `org.moqui.mail.EmailServices` services with Rust bodies in `moqui-mail/src/edge_mail.rs`, granted to
   `_EDGE_`; each refuses to run on the other role.
 - **Recipients.** `EdgeReplicaValue` has no index on field values, so the edge node's listener keeps the copies in
   memory as a `RecipientMap` per local node (`moqui-mail` `delivery.rs`, the same rules as `find_recipient`, plus tags

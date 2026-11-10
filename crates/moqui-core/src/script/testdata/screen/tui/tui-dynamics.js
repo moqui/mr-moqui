@@ -409,7 +409,7 @@ $closeChildren();
     if ($statusId && $statusId !== "null") {
         try {
             const $readOnly = String("") === "true";
-            const $out = ec.service.sync().name("org.moqui.impl.StatusServices.get#StatusBar").parameters({statusId:$statusId,statusTypeId:"" || null,statusFlowId:"" || null,stageStatusIds:$ids(ec.resource.expression("stageIds", "")),allowedToStatusIds:$readOnly ? [] : $ids("A,B")}).disableAuthz().call() || {};
+            const $out = ec.service.sync().name("org.moqui.ui.StatusServices.get#StatusBar").parameters({statusId:$statusId,statusTypeId:"" || null,statusFlowId:"" || null,stageStatusIds:$ids(ec.resource.expression("stageIds", "")),allowedToStatusIds:$readOnly ? [] : $ids("A,B")}).disableAuthz().call() || {};
             $bar = {readOnly:$readOnly,current:$out.current || null,stages:Array.from($out.stages || []),transitions:$readOnly ? [] : Array.from($out.transitions || [])};
         } catch ($err) {
             ec.logger.error("Leaving the stages of status-bar Bar out for status " + $statusId + ": " + $err);

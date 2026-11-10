@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The mail settings of `org.moqui.impl.EmailClientServices` against the scripted local servers of
+//! The mail settings of `org.moqui.mail.EmailClientServices` against the scripted local servers of
 //! [`super::fake_servers`]: a separate SMTP sign-in (used, tried before it is stored, cleared), the account kind
 //! (personal and shared), a folder kind a user chose and an unsubscribed folder through the sync, the automatic reply's
 //! audience with the contact hook, a rule tried without acting, a removed account deleted by its owner, and the live
@@ -76,10 +76,10 @@ fn install_with(stubs: Option<&std::path::Path>) {
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let mut paths = vec![
         framework.join("EmailServices.xml"),
-        framework.join("impl/EmailServices.xml"),
-        framework.join("impl/EmailClientServices.xml"),
+        framework.join("mail/EmailServices.xml"),
+        framework.join("mail/EmailClientServices.xml"),
         framework.join("admin/IdentityServices.xml"),
-        framework.join("impl/ShellServices.xml"),
+        framework.join("ui/ShellServices.xml"),
     ];
     if let Some(dir) = stubs {
         paths.push(dir.join("service/test/MailStub.xml"));
@@ -267,7 +267,7 @@ fn a_separate_smtp_sign_in_is_used_tried_and_cleared() {
         ],
     );
     let sent = moqui_core::service::sync(
-        "org.moqui.impl.EmailServices.send#EmailMessage",
+        "org.moqui.mail.EmailServices.send#EmailMessage",
         &BTreeMap::from([("emailMessageId".to_string(), text("SMTP_SEND"))]),
     )
     .unwrap();

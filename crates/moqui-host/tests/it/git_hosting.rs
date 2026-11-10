@@ -183,7 +183,7 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         moqui_core::user::internal_login_user("john.doe").unwrap();
         let _authz = context.disable_authz();
         let (refs, errors) = sync(
-            "org.moqui.impl.GitServices.get#GitRefs",
+            "org.moqui.git.GitServices.get#GitRefs",
             &[("repositoryId", Value::string("hosted"))],
         );
         assert!(errors.is_empty(), "{errors}");
@@ -192,7 +192,7 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         };
         assert_eq!(list.len(), 1);
         let (log, errors) = sync(
-            "org.moqui.impl.GitServices.get#GitLog",
+            "org.moqui.git.GitServices.get#GitLog",
             &[("repositoryId", Value::string("hosted-db"))],
         );
         assert!(errors.is_empty(), "{errors}");
@@ -201,7 +201,7 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         };
         assert_eq!(commits.len(), 2);
         let (urls, _) = sync(
-            "org.moqui.impl.GitServices.get#GitCloneUrls",
+            "org.moqui.git.GitServices.get#GitCloneUrls",
             &[("repositoryId", Value::string("hosted"))],
         );
         assert!(urls
@@ -212,7 +212,7 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         // a collection of the database repository (nothing is old enough to delete; the rows are repacked), then
         // every row decodes, and it still clones
         let (gc, errors) = sync(
-            "org.moqui.impl.GitServices.gc#GitRepositories",
+            "org.moqui.git.GitServices.gc#GitRepositories",
             &[("repositoryId", Value::string("hosted-db"))],
         );
         assert!(errors.is_empty(), "{errors}");
@@ -224,7 +224,7 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         };
         assert_eq!(result.get("deletedCount"), Some(&Value::I64(0)), "{result:?}");
         let (fsck, errors) = sync(
-            "org.moqui.impl.GitServices.fsck#GitRepository",
+            "org.moqui.git.GitServices.fsck#GitRepository",
             &[("repositoryId", Value::string("hosted-db"))],
         );
         assert!(errors.is_empty(), "{errors}");

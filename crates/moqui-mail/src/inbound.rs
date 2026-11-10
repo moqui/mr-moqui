@@ -1245,5 +1245,5 @@ pub(super) fn header_one(headers: &IndexMap<String, Value>, name: &str) -> Strin
 }
 
 pub(super) fn stamp_millis(millis: i64) -> Value {
-    basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
+    basic_convert(&Value::I64(millis), "Timestamp").value
 }

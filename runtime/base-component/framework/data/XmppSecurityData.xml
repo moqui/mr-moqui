@@ -18,11 +18,11 @@ along with this software (see the LICENSE.md file). If not, see
 <entity-facade-xml type="seed">
     <moqui.security.ArtifactGroup artifactGroupId="XmppClientServices" description="Chat services of XMPP clients"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="XmppClientServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
-            artifactName="org\.moqui\.impl\.ChatServices\.(send#Message|edit#Message|redact#Message|react#Message|mark#Read|signal#Typing|add#Member|find#Rooms|set#UserStatus|heartbeat#UserStatus)"/>
+            artifactName="org\.moqui\.chat\.ChatServices\.(send#Message|edit#Message|redact#Message|react#Message|mark#Read|signal#Typing|add#Member|find#Rooms|set#UserStatus|heartbeat#UserStatus)"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="XmppClientServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
-            artifactName="org\.moqui\.impl\.XmppServices\.(get#Users|get#Roster|get#DirectRoom|get#RoomInfo|get#Archive|find#EventByRef|store#EncryptedMessage|get#PepItems|publish#PepItem|retract#PepItem|configure#PepNode)"/>
+            artifactName="org\.moqui\.chat\.XmppServices\.(get#Users|get#Roster|get#DirectRoom|get#RoomInfo|get#Archive|find#EventByRef|store#EncryptedMessage|get#PepItems|publish#PepItem|retract#PepItem|configure#PepNode)"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="XmppClientServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
-            artifactName="org\.moqui\.impl\.XmppServices\.(delete#PepNode|get#BlockedJids|block#Jids|unblock#Jids|enable#Push|disable#Push|create#UploadSlot|attach#Upload|get#AttachmentUrls|get#IceServers)"/>
+            artifactName="org\.moqui\.chat\.XmppServices\.(delete#PepNode|get#BlockedJids|block#Jids|unblock#Jids|enable#Push|disable#Push|create#UploadSlot|attach#Upload|get#AttachmentUrls|get#IceServers)"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="XmppClientServicesALL" userGroupId="ALL_USERS" artifactGroupId="XmppClientServices"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

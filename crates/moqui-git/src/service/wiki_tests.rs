@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.WikiServices` for knowledge and notes (IronStone M9): version notes on both storages with history,
+//! `org.moqui.resource.WikiServices` for knowledge and notes (IronStone M9): version notes on both storages with history,
 //! compare and restore; the links of a page's text and its backlinks across a rename, an alias and a page taking a
 //! path; a move into a git space that replays the history with each version's author and date, and one on the
 //! database tree that keeps its history rows; spaces made and cloned on a git repository; a page cloned under a new
@@ -30,7 +30,7 @@ use moqui_lib::object::{to_plain_string, Value};
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::EntityFacade;
 
-const WIKI: &str = "org.moqui.impl.WikiServices";
+const WIKI: &str = "org.moqui.resource.WikiServices";
 
 /// One hour, for version dates set apart.
 const HOUR: i64 = 3_600_000;
@@ -54,10 +54,10 @@ fn install() {
     let paths: Vec<_> = [
         "EntityServices.xml",
         "EmailServices.xml",
-        "impl/EmailServices.xml",
-        "impl/NotificationServices.xml",
-        "impl/WikiServices.xml",
-        "impl/GitServices.xml",
+        "mail/EmailServices.xml",
+        "ui/NotificationServices.xml",
+        "resource/WikiServices.xml",
+        "git/GitServices.xml",
     ]
     .iter()
     .map(|file| framework.join(file))
@@ -1295,7 +1295,7 @@ fn a_review_is_requested_decided_from_the_tray_and_cancelled() {
     // bob approves from the tray: the version is published, alice is told
     login("bob");
     let approved = call_named(
-        "org.moqui.impl.NotificationServices.approve#NotificationMessage",
+        "org.moqui.ui.NotificationServices.approve#NotificationMessage",
         &[("notificationMessageId", text(&message_id))],
     );
     assert_eq!(errors(), "", "{approved:?}");
@@ -1356,12 +1356,12 @@ fn a_review_is_requested_decided_from_the_tray_and_cancelled() {
     );
     login("bob");
     let _ = call_named(
-        "org.moqui.impl.NotificationServices.refuse#NotificationMessage",
+        "org.moqui.ui.NotificationServices.refuse#NotificationMessage",
         &[("notificationMessageId", text(&second_message))],
     );
     assert!(errors().contains("reason is required"));
     let _ = call_named(
-        "org.moqui.impl.NotificationServices.refuse#NotificationMessage",
+        "org.moqui.ui.NotificationServices.refuse#NotificationMessage",
         &[
             ("notificationMessageId", text(&second_message)),
             ("reason", text("Fix the typo")),
@@ -2043,7 +2043,7 @@ fn a_page_is_deleted_with_its_rows_and_a_decision_opens_the_requests_link() {
     );
     login("bob");
     let approved = call_named(
-        "org.moqui.impl.NotificationServices.approve#NotificationMessage",
+        "org.moqui.ui.NotificationServices.approve#NotificationMessage",
         &[("notificationMessageId", text(&message_id))],
     );
     assert_eq!(errors(), "", "{approved:?}");

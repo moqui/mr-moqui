@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="saveFile">
         <actions>
-            <service-call name="org.moqui.impl.ComponentServices.save#ConfFile" out-map="saved"
+            <service-call name="org.moqui.dev.ComponentServices.save#ConfFile" out-map="saved"
                     in-map="{fileIndex:fileIndex, text:fileText, expectedHash:expectedHash}"/>
             <if condition="!ec.message.hasError()">
                 <set field="waiting" from="(saved.report?.changes || []).filter(change =&gt; change.outcome == 'pending-restart')
@@ -37,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
     <actions>
         <set field="canEditConf" from="ec.user.hasPermission('CONF_EDIT')"/>
         <if condition="canEditConf">
-            <service-call name="org.moqui.impl.ComponentServices.get#ConfFile" out-map="confFile" transaction="force-new" ignore-error="true"
+            <service-call name="org.moqui.dev.ComponentServices.get#ConfFile" out-map="confFile" transaction="force-new" ignore-error="true"
                     in-map="{fileIndex:fileIndex}"/>
             <set field="readError" from="ec.message.hasError() ? ec.message.errorsString : null"/>
             <script>ec.message.clearErrors()</script>

@@ -33,7 +33,7 @@ use moqui_core::web::{WebRequest, WebResponse};
 
 use crate::SharedSinkGuard;
 
-const NOTIFICATIONS: &str = "org.moqui.impl.NotificationServices";
+const NOTIFICATIONS: &str = "org.moqui.ui.NotificationServices";
 const MESSAGE_USER: &str = "moqui.security.user.NotificationMessageUser";
 const MAIL_WAIT: Duration = Duration::from_secs(10);
 
@@ -143,7 +143,7 @@ fn email_eca_runs_its_action_and_sends_the_screen_mail() {
                     <condition><expression>true</expression></condition>
                     <actions>
                         <script>ec.message.addMessage("emailEcaRan");</script>
-                        <service-call name="org.moqui.impl.EmailServices.send#EmailTemplate">
+                        <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate">
                             <field-map field-name="emailTemplateId" value="T1"/>
                             <field-map field-name="toAddresses" value="a@example.com"/>
                         </service-call>
@@ -552,7 +552,7 @@ fn a_send_is_refused_under_the_read_fence() {
     moqui_core::service::load_definitions().unwrap();
     let guard = moqui_core::entity::fence::enter("tool run_tool");
     let message = BTreeMap::from([("emailMessageId".to_string(), Value::string("NO_SUCH_MESSAGE"))]);
-    let _ = moqui_core::service::sync("org.moqui.impl.EmailServices.send#EmailMessage", &message);
+    let _ = moqui_core::service::sync("org.moqui.mail.EmailServices.send#EmailMessage", &message);
     let errors = errors();
     assert!(
         errors.contains(moqui_core::entity::fence::FENCE_ERROR) && errors.contains("mail (send#EmailMessage)"),

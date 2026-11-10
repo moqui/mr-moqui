@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The edge link (framework/entity/EdgeEntities.xml, org.moqui.impl.EdgeServices, plans/Edge-Node.md): the statuses of a
+<!-- The edge link (framework/entity/EdgeEntities.xml, org.moqui.edge.EdgeServices, plans/Edge-Node.md): the statuses of a
     paired local node, the modes of its public host names, and the user and grants of delegated calls. -->
 <entity-facade-xml type="seed">
     <moqui.basic.StatusType statusTypeId="EdgeClient" description="Edge Client"/>
@@ -29,80 +29,80 @@ along with this software (see the LICENSE.md file). If not, see
         It has no password, so nobody logs in as it; the caller's identity travels as data. It holds only the
         EDGE_DELEGATE group, which is granted only the services in the EDGE_DELEGATE artifact group, and the local node
         also runs only the services its own edge conf lists (delegate, queue-kind). The group starts with the diagnostic
-        org.moqui.impl.EdgeServices.echo#Delegate, which has no effect beyond its answer; the comms phases add theirs. -->
+        org.moqui.edge.EdgeServices.echo#Delegate, which has no effect beyond its answer; the comms phases add theirs. -->
     <moqui.security.UserAccount userId="_EDGE_" username="_edge_" userFullName="Edge Node"/>
     <moqui.security.UserGroup userGroupId="EDGE_DELEGATE" description="Edge Node Delegates" groupTypeEnumId="UgtRemoteSystems"/>
     <moqui.security.UserGroupMember userGroupId="EDGE_DELEGATE" userId="_EDGE_" fromDate="1265184000000"/>
     <moqui.security.ArtifactGroup artifactGroupId="EDGE_DELEGATE" description="Edge Node Delegated Services"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.EdgeServices.echo#Delegate"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.edge.EdgeServices.echo#Delegate"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <!-- mail through the edge node (E5a): the handlers of the queue kinds mail and mailStatus on a local node, mailOut on
         an edge node; each refuses to run on the other role -->
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.EmailServices.deliver#EdgeMail"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.mail.EmailServices.deliver#EdgeMail"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.EmailServices.deliver#EdgeOutboundMail"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.mail.EmailServices.deliver#EdgeOutboundMail"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.EmailServices.note#EdgeMailStatus"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.mail.EmailServices.note#EdgeMailStatus"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <!-- chat bridges and SMS through the edge node (E6): chatWebhook's handler on a local node, chatMedia's on an edge
         node; each refuses to run on the other role -->
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.ChatBridgeServices.apply#EdgeWebhook"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.chat.ChatBridgeServices.apply#EdgeWebhook"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.ChatBridgeServices.store#EdgeMedia"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.chat.ChatBridgeServices.store#EdgeMedia"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <!-- attaching a local node (E10): the Test step's round trips, on both ends -->
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.EdgeServices.receive#EdgeEcho"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.edge.EdgeServices.receive#EdgeEcho"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <!-- calls with the edge node as media node (E7): its media events and captions, delegated, and its recordings,
         queued; on a local node only -->
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.CallServices.note#MediaEvent"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.CallServices.note#MediaEvent"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.CallCaptionServices.get#CaptionSpeaker"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.CallCaptionServices.get#CaptionSpeaker"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.CallCaptionServices.store#CallTranscript"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.CallCaptionServices.store#CallTranscript"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.CallCaptionServices.transcribe#CaptionAudio"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.CallCaptionServices.transcribe#CaptionAudio"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.CallRecordingServices.receive#EdgeRecording"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.CallRecordingServices.receive#EdgeRecording"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <!-- SIP on the edge node (E8): its engine's routing, registrar checks, IVR, transfers and voicemail, delegated, and
         its messages, queued, on a local node; the boxes' greetings, queued, on an edge node. Run as _edge_, each refuses
         a call whose media is not on this node's edge node, and the registrar's calls a phone it did not just check. -->
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.VoiceServices.receive#PhoneCall"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.VoiceServices.receive#PhoneCall"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.VoiceServices.note#PhoneLeg"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.VoiceServices.note#PhoneLeg"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.VoiceServices.note#TrunkStatus"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.VoiceServices.note#TrunkStatus"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.VoiceServices.record#AuthFailure"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.VoiceServices.record#AuthFailure"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.VoiceServices.get#CallAudio"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.VoiceServices.get#CallAudio"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.VoiceServices.store#EdgeCallAudio"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.VoiceServices.store#EdgeCallAudio"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.SipDeviceServices.check#SipDeviceDigest"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.SipDeviceServices.check#SipDeviceDigest"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.SipDeviceServices.store#SipRegistration"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.SipDeviceServices.store#SipRegistration"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.SipDeviceServices.receive#DeviceCall"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.SipDeviceServices.receive#DeviceCall"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.IvrServices.route#IvrCall"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.IvrServices.route#IvrCall"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.CallQueueServices.tick#QueueCall"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.CallQueueServices.tick#QueueCall"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.CallTransferServices.expire#CallTransfer"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.CallTransferServices.expire#CallTransfer"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.CallTransferServices.refer#Call"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.CallTransferServices.refer#Call"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.VoicemailServices.begin#Voicemail"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.VoicemailServices.begin#Voicemail"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.VoicemailServices.check#VoicemailPin"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.VoicemailServices.check#VoicemailPin"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.VoicemailServices.act#PhoneVoicemail"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.VoicemailServices.act#PhoneVoicemail"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.VoicemailServices.get#PhoneVoicemailAudio"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.VoicemailServices.get#PhoneVoicemailAudio"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
-    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.impl.VoicemailServices.receive#EdgeVoicemail"
+    <moqui.security.ArtifactGroupMember artifactGroupId="EDGE_DELEGATE" artifactName="org.moqui.call.VoicemailServices.receive#EdgeVoicemail"
             nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="EDGE_DELEGATE" userGroupId="EDGE_DELEGATE" artifactGroupId="EDGE_DELEGATE"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>

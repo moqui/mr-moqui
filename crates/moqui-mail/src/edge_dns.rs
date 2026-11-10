@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.EdgeServices.check#EdgeDns` (plans/Edge-Node.md §5.7, the Apply step, E10): the DNS records a
+//! `org.moqui.edge.EdgeServices.check#EdgeDns` (plans/Edge-Node.md §5.7, the Apply step, E10): the DNS records a
 //! local node behind an edge node needs, each looked up now with this crate's resolver ([`super::dns`]) and compared
 //! with what it should be: MX, SPF, the DKIM key and DMARC for each mail domain, A and AAAA for each host name, and
 //! the XMPP domain's client SRV records (`_xmpp-client._tcp`, `_xmpps-client._tcp`), which name the edge node and its

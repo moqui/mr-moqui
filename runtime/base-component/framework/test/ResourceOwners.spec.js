@@ -130,7 +130,7 @@ spec({
 
 feature("a shared drive is its owner's to see and moves only with DRIVE_OWNER_CHANGE, to an enabled internal account", {
     when() {
-        const F = "org.moqui.impl.FileServices."
+        const F = "org.moqui.resource.FileServices."
         const C = "org.moqui.admin.IdentityServices.call#OwnedResourceService"
         const move = toUserId => invoke(F + "transfer#DriveOwner", {driveId: P + "SHARED", fromUserId: ownerId, toUserId})
         return {
@@ -177,7 +177,7 @@ feature("a shared drive is its owner's to see and moves only with DRIVE_OWNER_CH
 
 feature("a shared mail account moves to an enabled account with EMAIL_ACCOUNT_OWNER_CHANGE; a personal account stays", {
     when() {
-        const E = "org.moqui.impl.EmailClientServices."
+        const E = "org.moqui.mail.EmailClientServices."
         return {
             listed: as(operatorId, () => invoke(E + "find#OwnedEmailAccounts", {userId: ownerId})),
             peek: as(heirId, () => invoke(E + "find#OwnedEmailAccounts", {userId: ownerId})),

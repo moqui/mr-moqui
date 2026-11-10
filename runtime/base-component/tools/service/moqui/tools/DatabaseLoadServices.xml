@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     §6). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="run" noun="LoadWrap" transaction="ignore">
-        <description>A data load or a snapshot import between the two jobs of org.moqui.impl.DatabaseServices.plan#LoadWrap:
+        <description>A data load or a snapshot import between the two jobs of org.moqui.dev.DatabaseServices.plan#LoadWrap:
             the drop job runs first (waited on), then the load when every key was dropped, and then, whatever the drop or
             the load did, the restore job (ignorePreviousError), so the keys never stay dropped because the load failed. A
             restore that does not finish is a failed or pending DbjLoadWrap job, which Database › Overview and Jobs name.
@@ -61,7 +61,7 @@ along with this software (see the LICENSE.md file). If not, see
             // actions (the Data › Load transition), so entity authorization and the security checks of what it writes apply
             ec.artifactExecution.runAsUser('component://tools/screen/Tools.xml', () => {
             const runJob = (jobId) => {
-                const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.run#DatabaseJob').parameters({jobId, wait: true})
+                const out = ec.service.sync().name('org.moqui.dev.DatabaseServices.run#DatabaseJob').parameters({jobId, wait: true})
                     .ignorePreviousError(true).call() || {}
                 return out
             }

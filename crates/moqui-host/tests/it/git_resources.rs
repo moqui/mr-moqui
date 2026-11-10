@@ -142,7 +142,7 @@ fn a_database_git_repository_is_written_through_resources_and_exported() {
         "/Tools/Service/ServiceRun/runJson",
         &format!(
             "serviceName={}&repositoryId=gate-git&targetPath={}",
-            encode("org.moqui.impl.GitServices.export#GitRepository"),
+            encode("org.moqui.git.GitServices.export#GitRepository"),
             encode(&target.to_string_lossy())
         ),
     );

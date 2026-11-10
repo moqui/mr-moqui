@@ -85,11 +85,8 @@ fn the_llm_tables_the_registry_the_usage_and_the_screens_on_postgres() {
             }
             row.create(&facade).unwrap_or_else(|error| panic!("{entity}: {error}"));
         };
-        let now = moqui_lib::object::basic_convert(
-            &Value::I64(jiff::Timestamp::now().as_millisecond()),
-            "java.sql.Timestamp",
-        )
-        .value;
+        let now =
+            moqui_lib::object::basic_convert(&Value::I64(jiff::Timestamp::now().as_millisecond()), "Timestamp").value;
         create(
             "moqui.agent.AgentConversation",
             &[

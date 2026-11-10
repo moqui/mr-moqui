@@ -29,11 +29,11 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
     </transition>
     <transition name="makeDefault">
-        <service-call name="org.moqui.impl.EmailClientServices.update#EmailIdentity" in-map="{emailIdentityId:emailIdentityId, isDefault:true}"/>
+        <service-call name="org.moqui.mail.EmailClientServices.update#EmailIdentity" in-map="{emailIdentityId:emailIdentityId, isDefault:true}"/>
         <default-response url="."/>
     </transition>
     <transition name="deleteIdentity">
-        <service-call name="org.moqui.impl.EmailClientServices.delete#EmailIdentity" in-map="{emailIdentityId:emailIdentityId}"/>
+        <service-call name="org.moqui.mail.EmailClientServices.delete#EmailIdentity" in-map="{emailIdentityId:emailIdentityId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Identity deleted</message></if></actions>
         <default-response url="."/>
     </transition>

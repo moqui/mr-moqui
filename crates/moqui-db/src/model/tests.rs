@@ -15,7 +15,7 @@ fn framework_entities_and_dictionary_load() {
     let model = framework_model();
     assert!(!model.full_names().is_empty());
     let id = model.dictionary_type("id").unwrap();
-    assert_eq!(id.java_type, "java.lang.String");
+    assert_eq!(id.java_type, "String");
     assert_eq!(id.default_sql_type, "VARCHAR(40)");
     assert!(model.dictionary_type("text-fts").is_some());
 
@@ -95,7 +95,7 @@ fn artifact_authz_check_view_keeps_members() {
         Some("moqui.security.ArtifactGroupMember")
     );
     assert_eq!(alias.field_type.as_deref(), Some("text-medium"));
-    assert_eq!(alias.java_type, "java.lang.String");
+    assert_eq!(alias.java_type, "String");
     assert!(alias.is_pk);
     assert_eq!(
         view.pk_field_names(),
@@ -112,7 +112,8 @@ fn artifact_authz_check_view_keeps_members() {
 fn extend_entity_adds_a_field() {
     let root = workspace_root();
     let conf = MNode::parse_file(root.join("runtime/base-component/framework/conf/MoquiDefaultConf.xml")).unwrap();
-    let mut documents = entity_documents(&root.join("runtime/base-component/framework/entity"), &mut Vec::new()).unwrap();
+    let mut documents =
+        entity_documents(&root.join("runtime/base-component/framework/entity"), &mut Vec::new()).unwrap();
     documents.push(
         MNode::parse_text(
             "inline-extend.xml",
@@ -161,7 +162,7 @@ fn id_conf() -> MNode {
     MNode::parse_text(
         "conf.xml",
         r#"<database-list>
-            <dictionary-type type="id" java-type="java.lang.String" default-sql-type="VARCHAR(40)"/>
+            <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>
         </database-list>"#,
     )
     .unwrap()

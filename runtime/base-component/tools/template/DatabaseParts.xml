@@ -15,13 +15,13 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Database selection for the Data, SQL, Schema, ETL and Database screens. A section screen resolves `db` in its
     always-actions; a screen that acts on the chosen database includes the selectDatabase transition and the
     DatabasePicker section. `db` is `group:<groupName>`, the first of the groups on that database
-    (org.moqui.impl.DatabaseServices.get#DatabaseList, with label); the last choice is the user preference database.selected. -->
+    (org.moqui.dev.DatabaseServices.get#DatabaseList, with label); the last choice is the user preference database.selected. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
     <transition name="selectDatabase">
         <actions><script><![CDATA[
             // the posted value: the section's always-actions have already put a known database in place of an unknown one
             const posted = String(ec.web.requestParameters.db || '')
-            const databases = (ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseList').parameters({includeExternal: true}).call() || {}).databases || []
+            const databases = (ec.service.sync().name('org.moqui.dev.DatabaseServices.get#DatabaseList').parameters({includeExternal: true}).call() || {}).databases || []
             const chosen = databases.find((database) => database.db == posted)
             if (chosen) ec.user.setPreference('database.selected', chosen.db)
             else ec.message.addError(ec.l10n.localize('Unknown database'))
@@ -36,7 +36,7 @@ along with this software (see the LICENSE.md file). If not, see
             droppedKeyJobs = []
             try {
                 for (const statusId of ['DbjsPending', 'DbjsFailed']) {
-                    const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseJobs').parameters({statusId, limit: 50}).call() || {}
+                    const out = ec.service.sync().name('org.moqui.dev.DatabaseServices.get#DatabaseJobs').parameters({statusId, limit: 50}).call() || {}
                     for (const job of out.jobs || []) if (job.kindEnumId == 'DbjLoadWrap' && /restore/i.test(job.description || ''))
                         droppedKeyJobs.push({jobId: job.jobId, db: job.db, failed: statusId == 'DbjsFailed'})
                 }

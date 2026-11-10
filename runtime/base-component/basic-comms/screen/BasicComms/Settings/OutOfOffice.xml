@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     the message everyone gets (m-rich-text) and, when it should differ, the one people inside the organization get (users of
     this system, the domains of its shared and hosted accounts, and the other domains listed here), once per sender every so many days; who gets it (Reply to:
     everyone, your contacts and people inside, or people inside only; a contact is whom the contact predicate of the user's
-    theme says (STRT_EMAIL_CONTACT_SERVICE, through org.moqui.impl.EmailClientServices.filter#ContactAddresses; an app sets
+    theme says (STRT_EMAIL_CONTACT_SERVICE, through org.moqui.mail.EmailClientServices.filter#ContactAddresses; an app sets
     it, as IronStone BOSS sets its contact books), and without one only people inside); and the same reply on every account at
     once. The framework sends it from the sync (send#OutOfOfficeReplies: never to lists, bulk mail, other
     automatic replies or spam). org.moqui.comms.MailSettingsServices get and store#OutOfOffice; the access is the framework's. -->
@@ -34,7 +34,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const hasBody = Object.prototype.hasOwnProperty.call(posted, 'bodyHtml')
                 const hasInternalBody = Object.prototype.hasOwnProperty.call(posted, 'internalBodyHtml')
                 if (!hasBody || !hasInternalBody) {
-                    const current = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailOutOfOffice')
+                    const current = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#EmailOutOfOffice')
                         .parameter('emailAccountId', emailAccountId).call()
                     if (!ec.message.hasError()) {
                         if (!hasBody) bodyHtml = current?.outOfOffice?.bodyHtml ?? null
@@ -54,10 +54,10 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="turnOff">
         <actions><script><![CDATA[
-            const current = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailOutOfOffice').parameter('emailAccountId', emailAccountId).call()
+            const current = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#EmailOutOfOffice').parameter('emailAccountId', emailAccountId).call()
             if (ec.message.hasError()) return
             const reply = current?.outOfOffice || {}
-            ec.service.sync().name('org.moqui.impl.EmailClientServices.store#EmailOutOfOffice').parameters({emailAccountId: emailAccountId, enabled: false,
+            ec.service.sync().name('org.moqui.mail.EmailClientServices.store#EmailOutOfOffice').parameters({emailAccountId: emailAccountId, enabled: false,
                 fromDate: reply.fromDate ? new Date(reply.fromDate) : null, thruDate: reply.thruDate ? new Date(reply.thruDate) : null, subject: reply.subject || null,
                 bodyHtml: reply.bodyHtml || null, internalBodyHtml: reply.internalBodyHtml || null, replyOncePerDays: reply.replyOncePerDays ?? 4,
                 replyAudienceEnumId: reply.replyAudienceEnumId || 'EraEveryone', internalDomains: reply.internalDomains || null}).call()

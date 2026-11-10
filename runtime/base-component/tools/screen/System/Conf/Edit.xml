@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="file" method="get" read-only="true">
         <actions>
-            <service-call name="org.moqui.impl.ComponentServices.get#ConfFile" in-map="{fileIndex:fileIndex}" out-map="fileOut"/>
+            <service-call name="org.moqui.dev.ComponentServices.get#ConfFile" in-map="{fileIndex:fileIndex}" out-map="fileOut"/>
             <script><![CDATA[
                 const errors = ec.message.hasError() ? ec.message.errorsString : null
                 ec.message.clearErrors()
@@ -37,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="check" method="post">
         <actions>
-            <service-call name="org.moqui.impl.ComponentServices.check#ConfFile" in-map="{fileIndex:fileIndex, text:fileText}" out-map="checkOut"/>
+            <service-call name="org.moqui.dev.ComponentServices.check#ConfFile" in-map="{fileIndex:fileIndex, text:fileText}" out-map="checkOut"/>
             <script><![CDATA[
                 const errors = ec.message.hasError() ? ec.message.errorsString : null
                 ec.message.clearErrors()
@@ -48,7 +48,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="save" method="post">
         <actions>
-            <service-call name="org.moqui.impl.ComponentServices.save#ConfFile" out-map="saveOut"
+            <service-call name="org.moqui.dev.ComponentServices.save#ConfFile" out-map="saveOut"
                     in-map="{fileIndex:fileIndex, text:fileText, expectedHash:expectedHash}"/>
             <script><![CDATA[
                 const errors = ec.message.hasError() ? ec.message.errorsString : null

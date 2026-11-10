@@ -87,7 +87,7 @@ fn edge_node_process() {
         let context = factory.new_context();
         let _entered = context.enter();
         moqui_core::user::internal_login_user("john.doe").unwrap();
-        text(&call("org.moqui.impl.EdgeServices.create#PairingCode", &[]), "code")
+        text(&call("org.moqui.edge.EdgeServices.create#PairingCode", &[]), "code")
     };
     println!(
         "EDGE_NODE node={node} code={code} media={} sip={} runtime={}",
@@ -167,7 +167,7 @@ fn voicemails(
     let context = factory.new_context();
     let _entered = context.enter();
     moqui_core::user::internal_login_user("john.doe").unwrap();
-    let found = call("org.moqui.impl.VoicemailServices.find#Voicemails", &[]);
+    let found = call("org.moqui.call.VoicemailServices.find#Voicemails", &[]);
     match found.get("voicemailList") {
         Some(Value::List(list)) => list
             .iter()
@@ -260,7 +260,7 @@ fn a_trunk_call_to_the_edge_node_is_routed_by_the_local_node_and_a_message_left_
         let since = moqui_core::user::now_millis();
         let trunk_id = text(
             &call(
-                "org.moqui.impl.VoiceServices.store#VoiceTrunk",
+                "org.moqui.call.VoiceServices.store#VoiceTrunk",
                 &[
                     ("name", Value::string("Fake trunk")),
                     ("host", Value::string("127.0.0.1")),
@@ -277,7 +277,7 @@ fn a_trunk_call_to_the_edge_node_is_routed_by_the_local_node_and_a_message_left_
         );
         let john = moqui_core::user::current_user_id().unwrap().expect("john is signed in");
         call(
-            "org.moqui.impl.VoiceServices.store#PhoneNumber",
+            "org.moqui.call.VoiceServices.store#PhoneNumber",
             &[
                 ("phoneNumber", Value::string(NUMBER)),
                 ("voiceTrunkId", Value::string(&trunk_id)),
@@ -292,7 +292,7 @@ fn a_trunk_call_to_the_edge_node_is_routed_by_the_local_node_and_a_message_left_
         );
         // the fallback for while this node is away (the edge link writes them every minute; a paired node's services
         // as their sources change, which this test's dialer, not the link hook, does not make)
-        let refreshed = call("org.moqui.impl.VoiceServices.refresh#PhoneFallbacks", &[]);
+        let refreshed = call("org.moqui.call.VoiceServices.refresh#PhoneFallbacks", &[]);
         assert_eq!(text(&refreshed, "writtenCount"), "1", "{refreshed:?}");
         assert_eq!(
             field("moqui.call.PhoneNumberFallback", "phoneNumber", NUMBER, "voicemailFlag"),
@@ -350,7 +350,7 @@ fn a_trunk_call_to_the_edge_node_is_routed_by_the_local_node_and_a_message_left_
         );
         moqui_core::user::internal_login_user(DESK).unwrap();
         let device = call(
-            "org.moqui.impl.SipDeviceServices.create#SipDevice",
+            "org.moqui.call.SipDeviceServices.create#SipDevice",
             &[("name", Value::string("Home desk"))],
         );
         (text(&created, "userId"), device)
@@ -388,14 +388,14 @@ fn a_trunk_call_to_the_edge_node_is_routed_by_the_local_node_and_a_message_left_
             Duration::from_secs(5),
             "the desk phone's binding kept on the local node",
             || {
-                let listed = call("org.moqui.impl.SipDeviceServices.find#SipDevices", &[]);
+                let listed = call("org.moqui.call.SipDeviceServices.find#SipDevices", &[]);
                 matches!(listed.get("deviceList"), Some(Value::List(list)) if list.iter().any(|d| matches!(d,
                 Value::Map(m) if matches!(m.get("registrationList"), Some(Value::List(r)) if !r.is_empty()))))
             },
         );
         moqui_core::user::internal_login_user("john.doe").unwrap();
         let started = call(
-            "org.moqui.impl.CallServices.start#Call",
+            "org.moqui.call.CallServices.start#Call",
             &[("calleeUserIdList", Value::List(vec![Value::string(&desk_id)]))],
         );
         assert!(!text(&started, "callSessionId").is_empty(), "{started:?}");
@@ -450,7 +450,7 @@ fn a_trunk_call_to_the_edge_node_is_routed_by_the_local_node_and_a_message_left_
         let _entered = context.enter();
         moqui_core::user::internal_login_user("john.doe").unwrap();
         let file = call(
-            "org.moqui.impl.VoicemailServices.get#VoicemailAudio",
+            "org.moqui.call.VoicemailServices.get#VoicemailAudio",
             &[("voicemailId", later["voicemailId"].clone())],
         );
         let _authz = context.disable_authz();

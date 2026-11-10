@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.SpreadsheetServices`: read a spreadsheet (xlsx, xlsm, xlsb, xls, or ods) into rows, and load those
+//! `org.moqui.resource.SpreadsheetServices`: read a spreadsheet (xlsx, xlsm, xlsb, xls, or ods) into rows, and load those
 //! rows into an entity. New with the moqui-poi port; the Java component wrote xlsx and read nothing.
 //!
 //! The file is `contentBytes` or the resource at `location`. The format is found from the content. A cell keeps its

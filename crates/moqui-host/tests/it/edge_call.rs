@@ -214,7 +214,7 @@ fn edge_node_process() {
         let context = factory.new_context();
         let _entered = context.enter();
         moqui_core::user::internal_login_user("john.doe").unwrap();
-        text(&call("org.moqui.impl.EdgeServices.create#PairingCode", &[]), "code")
+        text(&call("org.moqui.edge.EdgeServices.create#PairingCode", &[]), "code")
     };
     println!(
         "EDGE_NODE node={node} code={code} media={} runtime={}",
@@ -341,17 +341,17 @@ fn an_outside_and_an_office_browser_call_through_the_edge_node_and_the_recording
         let callee = text(&created, "userId");
         moqui_core::user::internal_login_user("john.doe").unwrap();
         let started = call(
-            "org.moqui.impl.CallServices.start#Call",
+            "org.moqui.call.CallServices.start#Call",
             &[("calleeUserIdList", Value::List(vec![Value::string(&callee)]))],
         );
         let call_id = text(&started, "callSessionId");
         let ice = ice_servers(&call(
-            "org.moqui.impl.CallServices.get#IceServers",
+            "org.moqui.call.CallServices.get#IceServers",
             &[("callSessionId", Value::string(&call_id))],
         ));
         moqui_core::user::internal_login_user(CALLEE).unwrap();
         let answered = call(
-            "org.moqui.impl.CallServices.answer#Call",
+            "org.moqui.call.CallServices.answer#Call",
             &[("callSessionId", Value::string(&call_id))],
         );
         assert_eq!(
@@ -429,7 +429,7 @@ fn an_outside_and_an_office_browser_call_through_the_edge_node_and_the_recording
     };
     let recording_id = text(
         &as_john(
-            "org.moqui.impl.CallRecordingServices.start#Recording",
+            "org.moqui.call.CallRecordingServices.start#Recording",
             &[("callSessionId", Value::string(&call_id))],
         ),
         "callRecordingId",
@@ -450,7 +450,7 @@ fn an_outside_and_an_office_browser_call_through_the_edge_node_and_the_recording
     );
     run_until(&mut [&mut john, &mut callee], Duration::from_millis(1_000), |_| false);
     as_john(
-        "org.moqui.impl.CallRecordingServices.stop#Recording",
+        "org.moqui.call.CallRecordingServices.stop#Recording",
         &[("callSessionId", Value::string(&call_id))],
     );
     let mut segments = Vec::new();
@@ -458,7 +458,7 @@ fn an_outside_and_an_office_browser_call_through_the_edge_node_and_the_recording
     while Instant::now() < until {
         run_until(&mut [&mut john, &mut callee], Duration::from_millis(100), |_| false);
         let found = as_john(
-            "org.moqui.impl.CallRecordingServices.find#Recordings",
+            "org.moqui.call.CallRecordingServices.find#Recordings",
             &[("callSessionId", Value::string(&call_id))],
         );
         segments = list_of(found.get("recordingList"))
@@ -489,7 +489,7 @@ fn an_outside_and_an_office_browser_call_through_the_edge_node_and_the_recording
     for segment in &segments {
         let location = text(
             &as_john(
-                "org.moqui.impl.CallRecordingServices.get#RecordingFile",
+                "org.moqui.call.CallRecordingServices.get#RecordingFile",
                 &[("callRecordingSegmentId", segment["callRecordingSegmentId"].clone())],
             ),
             "location",

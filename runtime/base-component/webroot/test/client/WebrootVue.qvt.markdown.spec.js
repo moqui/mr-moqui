@@ -61,7 +61,7 @@ browser.runInPage({
 })
 
 // Tools' SQL screen (component://tools/screen/Tools/Sql.qvue) mounted in the page with its transitions answered by fixtures
-// shaped like org.moqui.impl.DatabaseServices' answers: a statement at the cursor with a :name parameter, its result in the
+// shaped like org.moqui.dev.DatabaseServices' answers: a statement at the cursor with a :name parameter, its result in the
 // grid and Fetch more, a run with changes through classify#Sql's confirmation and the typed database name, and an
 // explain's plan with its marks. The services themselves are tested in crates/moqui-tools.
 feature("the SQL screen runs a statement, fetches more, confirms changes and shows a plan", {
@@ -157,7 +157,7 @@ feature("the SQL screen runs a statement, fetches more, confirms changes and sho
 })
 
 // Tools' data grid (component://tools/screen/Tools/Data/Grid.qvue) mounted in the page on the vendored Tabulator, its
-// transitions answered by fixtures shaped like org.moqui.impl.DatabaseServices' data grid answers: the rows, an edit, a
+// transitions answered by fixtures shaped like org.moqui.dev.DatabaseServices' data grid answers: the rows, an edit, a
 // save with a refused row marked and its edits kept, a pasted range, undo, and an export sent as a download.
 feature("the data grid loads rows, edits, saves with a refused row, pastes a range, undoes and exports", {
     expect() {

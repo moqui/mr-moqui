@@ -1,11 +1,11 @@
-// Knowledge and notes (org.moqui.impl.WikiServices, IronStone M9) on the real database: a note in the user's notes space
+// Knowledge and notes (org.moqui.resource.WikiServices, IronStone M9) on the real database: a note in the user's notes space
 // (R22) moved into a space in a git repository with its history replayed, a page's links and backlinks across a rename,
 // a new top-level page that is its own file beside a nested page of the same name, a review approved and refused from the
 // notification tray, and search that leaves out another user's notes. The rules in full are the Rust tests in
 // crates/moqui-core/src/service/wiki_tests.rs.
 
-const WIKI = "org.moqui.impl.WikiServices"
-const NOTIFY = "org.moqui.impl.NotificationServices"
+const WIKI = "org.moqui.resource.WikiServices"
+const NOTIFY = "org.moqui.ui.NotificationServices"
 // space ids are 3 to 8 characters; a suffix keeps each run's spaces apart on a database kept between runs
 const RUN = Date.now().toString(36).slice(-4).toUpperCase()
 const KB = "SK" + RUN

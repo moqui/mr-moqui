@@ -40,7 +40,7 @@ along with this software (see the LICENSE.md file). If not, see
             const term = String(ec.web.parameters.term || '').trim().toLowerCase()
             const selected = String(ec.web.parameters.value || '').trim()
             const L = (text) => ec.l10n.localize(text)
-            const options = ec.service.sync().name('org.moqui.impl.IvrServices.get#CallTargetOptions').requireNewTransaction(true).disableAuthz().call() || {}
+            const options = ec.service.sync().name('org.moqui.call.IvrServices.get#CallTargetOptions').requireNewTransaction(true).disableAuthz().call() || {}
             ec.message.clearErrors()
             let out = [{value: 'CtgEnd:', label: L('End the call')}, {value: 'CtgRepeat:', label: L('This menu again')}]
             const add = (type, prefix, list) => { for (const o of Array.from(list || [])) out.push({value: type + ':' + o.key, label: L(prefix) + ': ' + o.text}) }

@@ -22,10 +22,10 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <service-call name="create#moqui.resource.GitRepository" in-map="context"/>
             <if condition="contentRepository == 'Y'">
-                <service-call name="org.moqui.impl.GitServices.setup#GitLfs" in-map="{repositoryId:repositoryId}"/></if>
+                <service-call name="org.moqui.git.GitServices.setup#GitLfs" in-map="{repositoryId:repositoryId}"/></if>
         </actions>
         <default-response url="../GitRepositoryDetail"/></transition>
-    <transition name="fetchGitRepository"><service-call name="org.moqui.impl.GitServices.fetch#GitRepository"/>
+    <transition name="fetchGitRepository"><service-call name="org.moqui.git.GitServices.fetch#GitRepository"/>
         <default-response url="."/></transition>
 
     <actions>

@@ -588,7 +588,7 @@ pub(crate) fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> 
                 ("bodyParameters".into(), moqui_lib::json::from_json(payload)),
             ]);
             let sent = moqui_core::service::call::sync_checked(
-                "org.moqui.impl.EmailServices.send#EmailTemplate",
+                "org.moqui.mail.EmailServices.send#EmailTemplate",
                 &params,
                 &moqui_core::service::call::CallOptions {
                     ignore_previous_error: true,

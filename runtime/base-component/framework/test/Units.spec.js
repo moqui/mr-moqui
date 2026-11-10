@@ -1,4 +1,4 @@
-const S='org.moqui.impl.UnitServices.'
+const S='org.moqui.ui.UnitServices.'
 const one=(n,p)=>ec.entity.find(n).condition(p).disableAuthz().one()
 function as(user,fn){login(user);ec.artifactExecution.disableAuthz();try{return fn()}finally{ec.message.clearErrors();login('john.doe')}}
 function invoke(n,p){try{const result=call(n,p)||{},error=ec.message.getErrorsString();ec.message.clearErrors();return Object.assign({},result,{error})}catch(e){ec.message.clearErrors();return{error:String(e.message||e)}}}

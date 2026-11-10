@@ -1,6 +1,6 @@
 # The development kit, on top of moqui-core (plans/archive/Crate-Split.md): reload and the file watcher, moqui check,
 # the artifact index, the Groovy converter, typegen (moqui types), the spec runner (moqui test) and
-# org.moqui.impl.DevToolsServices. Its own crate so an edit here does not rebuild the framework, and notify stays out of
+# org.moqui.dev.DevToolsServices. Its own crate so an edit here does not rebuild the framework, and notify stays out of
 # core. Core reaches it only through moqui_core::extension, which this crate fills with an inventory entry; moqui-host
 # links it in every build, moqui-llm and the dev-aide component use it.
 

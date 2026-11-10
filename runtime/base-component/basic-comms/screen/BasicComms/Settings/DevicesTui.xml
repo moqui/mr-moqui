@@ -13,14 +13,14 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The terminal twin of Devices (style-guide §4.8): the browsers that hold the user's encryption keys, with Rename and
-    Remove (org.moqui.impl.ChatKeyServices). The terminal has no crypto device of its own, so verification and the key
+    Remove (org.moqui.chat.ChatKeyServices). The terminal has no crypto device of its own, so verification and the key
     backup (C7) are the browser's; it says so. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="My devices" default-menu-include="false">
 
     <transition name="rename">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.ChatKeyServices.update#ChatDevice').parameters({deviceId: deviceId || '',
+            ec.service.sync().name('org.moqui.chat.ChatKeyServices.update#ChatDevice').parameters({deviceId: deviceId || '',
                 displayName: displayName || ''}).requireNewTransaction(true).disableAuthz().call()
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Device renamed'), 'success')
         ]]></script></actions>
@@ -29,7 +29,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="revoke">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.ChatKeyServices.revoke#ChatDevice').parameter('deviceId', deviceId || '')
+            ec.service.sync().name('org.moqui.chat.ChatKeyServices.revoke#ChatDevice').parameter('deviceId', deviceId || '')
                 .requireNewTransaction(true).disableAuthz().call()
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Device removed'), 'success')
         ]]></script></actions>
@@ -39,7 +39,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- removing a device with keys needs a sign-in in the last five minutes: the password (and the code of a second factor) -->
     <transition name="reauth">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.RecentAuthServices.reauthenticate#User').parameters({password: password || '',
+            const out = ec.service.sync().name('org.moqui.sso.RecentAuthServices.reauthenticate#User').parameters({password: password || '',
                 code: code || ''}).requireNewTransaction(true).disableAuthz().call() || {}
             if (!ec.message.hasError()) {
                 if (out.reauthenticated) ec.message.addMessage(ec.l10n.localize('Confirmed: you may remove a device for the next five minutes'), 'success')
@@ -51,7 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
 
     <actions><script><![CDATA[
-        const out = ec.service.sync().name('org.moqui.impl.ChatKeyServices.find#ChatDevices').requireNewTransaction(true).disableAuthz().call() || {}
+        const out = ec.service.sync().name('org.moqui.chat.ChatKeyServices.find#ChatDevices').requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         const when = (millis) => millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : ''
         const fingerprint = (key) => key ? String(key).replace(/(.{4})/g, '$1 ').trim() : ''

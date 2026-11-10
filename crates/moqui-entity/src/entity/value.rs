@@ -1742,7 +1742,7 @@ impl EntityFacade {
                 .and_then(|duration| i64::try_from(duration.as_millis()).ok())
                 .unwrap_or(0)
         });
-        basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
+        basic_convert(&Value::I64(millis), "Timestamp").value
     }
 
     fn reject_view(&self, entity_name: &str, verb: &str) -> Result<(), Error> {

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.RecentAuthServices`: the recent sign-in check of sensitive actions and the re-authentication that
+//! `org.moqui.sso.RecentAuthServices`: the recent sign-in check of sensitive actions and the re-authentication that
 //! satisfies it. No Java counterpart.
 //!
 //! - `check#RecentAuth`: whether the session's user signed in within `maxAgeSeconds` (5 minutes by default), as

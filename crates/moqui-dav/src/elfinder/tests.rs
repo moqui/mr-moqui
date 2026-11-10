@@ -46,7 +46,7 @@ fn setup() -> Setup {
 }
 
 fn install() {
-    let services = moqui_core::context::framework_dir().join("service/org/moqui/impl/ElFinderServices.xml");
+    let services = moqui_core::context::framework_dir().join("service/org/moqui/resource/ElFinderServices.xml");
     let failures = moqui_core::service::lint(&[services]).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
 }

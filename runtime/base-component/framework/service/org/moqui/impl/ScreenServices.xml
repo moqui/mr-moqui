@@ -181,7 +181,7 @@ along with this software (see the LICENSE.md file). If not, see
                     </if>
                     <if condition="toAddressSet.size"><then>
                         <set field="toAddresses" from="[...toAddressSet].join(',')"/>
-                        <service-call name="org.moqui.impl.EmailServices.send#EmailTemplate" ignore-error="true" transaction="force-new"
+                        <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate" ignore-error="true" transaction="force-new"
                                 in-map="{emailTemplateId: emailTemplate.emailTemplateId, bodyParameters: bodyParameters,
                                     attachments: [attachmentInfo], toAddresses: toAddresses, createEmailMessage: false}"/>
                     </then><else>

@@ -21,13 +21,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="runJob" method="post" authz-action="all">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.DatabaseServices.run#DatabaseJob').parameters({jobId: String(jobId || ''), wait: false}).call()
+            ec.service.sync().name('org.moqui.dev.DatabaseServices.run#DatabaseJob').parameters({jobId: String(jobId || ''), wait: false}).call()
         ]]></script></actions>
         <default-response url="."><parameter name="jobId"/></default-response>
         <error-response url="."><parameter name="jobId"/></error-response>
     </transition>
     <transition name="cancelJob" method="post" authz-action="all">
-        <actions><service-call name="org.moqui.impl.DatabaseServices.cancel#DatabaseJob" in-map="{jobId: jobId}"/></actions>
+        <actions><service-call name="org.moqui.dev.DatabaseServices.cancel#DatabaseJob" in-map="{jobId: jobId}"/></actions>
         <default-response url="."><parameter name="jobId"/></default-response>
         <error-response url="."><parameter name="jobId"/></error-response>
     </transition>
@@ -36,7 +36,7 @@ along with this software (see the LICENSE.md file). If not, see
         <script><![CDATA[
             let found = null
             jobError = null
-            try { found = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseJobStatus').parameters({jobId: String(jobId || '')}).call() }
+            try { found = ec.service.sync().name('org.moqui.dev.DatabaseServices.get#DatabaseJobStatus').parameters({jobId: String(jobId || '')}).call() }
             catch (e) { jobError = String(e.message || e) }
             if (ec.message.hasError()) { jobError = ec.message.errorsString; ec.message.clearErrors() }
             job = (found && found.job) || {}
@@ -60,7 +60,7 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <label text="${jobError}" type="p" style="text-negative" condition="jobError"/>
         <label text="${job.description || ('Database job ' + jobId)}: ${jobStatus}" type="h5"/>
-        <label text="${job.db || ''} · planned ${job.createdDate ? ec.l10n.format(basicConvert(job.createdDate, 'java.sql.Timestamp'), null) : ''}" type="p" style="m-muted"/>
+        <label text="${job.db || ''} · planned ${job.createdDate ? ec.l10n.format(basicConvert(job.createdDate, 'Timestamp'), null) : ''}" type="p" style="m-muted"/>
         <link url="runJob" text="Run ${statementList.length} statements" link-type="hidden-form" btn-type="primary"
                 condition="canAdmin &amp;&amp; job.statusId == 'DbjsPending' &amp;&amp; statementList.length"
                 confirmation="Run these ${statementList.length} statements on ${job.db || 'the database'}?"/>

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.CollabServices`: a co-edited document (the crate root) saved as a version of its record now, and
+//! `org.moqui.resource.CollabServices`: a co-edited document (the crate root) saved as a version of its record now, and
 //! its open state, for the editor's screen.
 
 use std::collections::BTreeMap;

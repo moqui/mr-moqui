@@ -221,15 +221,9 @@ fn timestamp_text_converts_in_the_session_zone_else_the_servers() {
     assert_eq!(time_zone(), server_time_zone());
     assert_eq!(server_time_zone(), TimeZone::UTC);
     assert_eq!(server_time_zone_name(), "UTC");
-    assert_eq!(
-        basic_convert(&text, "java.sql.Timestamp").value,
-        stamp("2016-11-01T08:30:00Z")
-    );
+    assert_eq!(basic_convert(&text, "Timestamp").value, stamp("2016-11-01T08:30:00Z"));
     crate::user::session::set_time_zone(Some("America/Chicago"));
-    assert_eq!(
-        basic_convert(&text, "java.sql.Timestamp").value,
-        stamp("2016-11-01T13:30:00Z")
-    );
+    assert_eq!(basic_convert(&text, "Timestamp").value, stamp("2016-11-01T13:30:00Z"));
     assert_eq!(convert_checked(&text, "Timestamp"), Some(stamp("2016-11-01T13:30:00Z")));
     assert!(compare(&text, "equals", &stamp("2016-11-01T13:30:00Z"), "Timestamp").unwrap());
     assert_eq!(parse_timestamp("2016-11-01"), Some(stamp("2016-11-01T05:00:00Z")));
@@ -238,7 +232,7 @@ fn timestamp_text_converts_in_the_session_zone_else_the_servers() {
         stamp("2016-11-01T08:30:00Z")
     );
     assert_eq!(
-        basic_convert(&Value::string("2016-11-01"), "java.sql.Date").value,
+        basic_convert(&Value::string("2016-11-01"), "Date").value,
         Value::Date(jiff::civil::date(2016, 11, 1))
     );
     crate::user::session::set_time_zone(Some("Not/AZone"));
@@ -294,7 +288,10 @@ fn l10n_component_present(dir: &std::path::Path) -> bool {
     if dir.is_dir() {
         return true;
     }
-    eprintln!("skipped: {} is not here (the mr-l10n component is not in this runtime)", dir.display());
+    eprintln!(
+        "skipped: {} is not here (the mr-l10n component is not in this runtime)",
+        dir.display()
+    );
     false
 }
 

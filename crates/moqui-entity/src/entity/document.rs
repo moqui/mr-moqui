@@ -1233,7 +1233,7 @@ fn expression_value(field: &DocField, value: Value) -> Value {
         _ => None,
     };
     match millis {
-        Some(millis) => moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value,
+        Some(millis) => moqui_lib::object::basic_convert(&Value::I64(millis), "Timestamp").value,
         None => value,
     }
 }
@@ -1264,14 +1264,14 @@ fn post_conditions_pass(info: &DocumentInfo, doc: &Document) -> bool {
 /// value, then compared, so `5` matches a number `5.00` and a date in any form the conversion reads.
 fn typed_equals(value: &Value, expected: &str) -> bool {
     let java_type = match value {
-        Value::Decimal(_) => "java.math.BigDecimal",
-        Value::I32(_) => "java.lang.Integer",
-        Value::I64(_) => "java.lang.Long",
-        Value::F64(_) => "java.lang.Double",
-        Value::Bool(_) => "java.lang.Boolean",
-        Value::Timestamp(_) => "java.sql.Timestamp",
-        Value::Date(_) => "java.sql.Date",
-        Value::Time(_) => "java.sql.Time",
+        Value::Decimal(_) => "BigDecimal",
+        Value::I32(_) => "Integer",
+        Value::I64(_) => "Long",
+        Value::F64(_) => "Double",
+        Value::Bool(_) => "Boolean",
+        Value::Timestamp(_) => "Timestamp",
+        Value::Date(_) => "Date",
+        Value::Time(_) => "Time",
         _ => return to_plain_string(value) == expected,
     };
     let converted = crate::hooks::basic_convert(&Value::string(expected), java_type).value;

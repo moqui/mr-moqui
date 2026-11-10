@@ -384,7 +384,7 @@ fn mysql_end(
 fn upsert_params(prepared: &SeqSql, name: Value, first_end: i64, increment: i64, hint_end: i64) -> Vec<Value> {
     let mut params = vec![name, long_param(first_end)];
     if prepared.stamp {
-        params.push(basic_convert(&Value::I64(crate::hooks::now_millis()), "java.sql.Timestamp").value);
+        params.push(basic_convert(&Value::I64(crate::hooks::now_millis()), "Timestamp").value);
     }
     params.push(long_param(increment));
     params.push(long_param(hint_end));

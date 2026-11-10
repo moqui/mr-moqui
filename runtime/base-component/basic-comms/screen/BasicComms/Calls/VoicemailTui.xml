@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The terminal twin of Voicemail (style-guide §4.8): one of the user's messages (org.moqui.impl.VoicemailServices
+<!-- The terminal twin of Voicemail (style-guide §4.8): one of the user's messages (org.moqui.call.VoicemailServices
     get#Voicemail): who, when, how long, its transcript or the transcript's state, with Mark heard or unheard, Delete or Put
     back, and Retry for a failed transcript. There is no player in the terminal: the message plays in the browser. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="mark">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.VoicemailServices.mark#VoicemailHeard').parameters({voicemailId: voicemailId || '',
+            ec.service.sync().name('org.moqui.call.VoicemailServices.mark#VoicemailHeard').parameters({voicemailId: voicemailId || '',
                 heard: String(heard) !== 'false'}).requireNewTransaction(true).disableAuthz().call()
         ]]></script></actions>
         <default-response url="."><parameter name="voicemailId"/></default-response>
@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="delete">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.delete#Voicemail').parameter('voicemailId', voicemailId || '')
+            const out = ec.service.sync().name('org.moqui.call.VoicemailServices.delete#Voicemail').parameter('voicemailId', voicemailId || '')
                 .requireNewTransaction(true).disableAuthz().call() || {}
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize(out.deleted ? 'Voicemail deleted' : 'Voicemail moved to the Trash'), 'success')
         ]]></script></actions>
@@ -39,7 +39,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="restore">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.VoicemailServices.restore#Voicemail').parameter('voicemailId', voicemailId || '')
+            ec.service.sync().name('org.moqui.call.VoicemailServices.restore#Voicemail').parameter('voicemailId', voicemailId || '')
                 .requireNewTransaction(true).disableAuthz().call()
         ]]></script></actions>
         <default-response url="."><parameter name="voicemailId"/></default-response>
@@ -47,7 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="retry">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.VoicemailServices.retry#VoicemailTranscript').parameter('voicemailId', voicemailId || '')
+            ec.service.sync().name('org.moqui.call.VoicemailServices.retry#VoicemailTranscript').parameter('voicemailId', voicemailId || '')
                 .requireNewTransaction(true).disableAuthz().call()
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Transcribing again'), 'success')
         ]]></script></actions>
@@ -57,7 +57,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const out = ec.service.sync().name('org.moqui.impl.VoicemailServices.get#Voicemail').parameter('voicemailId', voicemailId || '')
+        const out = ec.service.sync().name('org.moqui.call.VoicemailServices.get#Voicemail').parameter('voicemailId', voicemailId || '')
             .requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         const v = out.voicemail

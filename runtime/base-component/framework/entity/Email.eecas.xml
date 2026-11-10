@@ -41,7 +41,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (id && changed && ((before && before.emailAccountId) || (after && after.emailAccountId))) {
                 ec.message.pushErrors()
                 try {
-                    ec.service.sync().name('org.moqui.impl.EmailClientServices.note#MessageChange').parameters({emailMessageId: id,
+                    ec.service.sync().name('org.moqui.mail.EmailClientServices.note#MessageChange').parameters({emailMessageId: id,
                         operation: operation, before: before, after: after}).disableAuthz().call()
                     if (ec.message.hasError()) ec.logger.error(`The mail change of message ${id} is not noted: ${ec.message.errorsString}`)
                 } catch (err) {
@@ -56,7 +56,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (id) {
                 ec.message.pushErrors()
                 try {
-                    ec.service.sync().name('org.moqui.impl.EmailClientServices.note#MessageChange').parameters({emailMessageId: id,
+                    ec.service.sync().name('org.moqui.mail.EmailClientServices.note#MessageChange').parameters({emailMessageId: id,
                         operation: 'related'}).disableAuthz().call()
                 } catch (err) {
                     ec.logger.error(`The label change of message ${id} is not noted: ${err && err.message ? err.message : err}`)
@@ -70,7 +70,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (id) {
                 ec.message.pushErrors()
                 try {
-                    ec.service.sync().name('org.moqui.impl.EmailClientServices.note#MessageChange').parameters({emailMessageId: id,
+                    ec.service.sync().name('org.moqui.mail.EmailClientServices.note#MessageChange').parameters({emailMessageId: id,
                         operation: 'related'}).disableAuthz().call()
                 } catch (err) {
                     ec.logger.error(`The attachment change of message ${id} is not noted: ${err && err.message ? err.message : err}`)

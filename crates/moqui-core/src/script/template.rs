@@ -1363,7 +1363,7 @@ pub(super) fn format_snapshot_value(value: Value, pattern: Option<&str>) -> Resu
                 .unwrap_or(Value::String(text)),
             // No pattern: epoch millis text is the time stamp it was, as `ec.l10n.format` reads it.
             None => crate::l10n::epoch_millis_text(&text)
-                .map(|millis| moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value)
+                .map(|millis| moqui_lib::object::basic_convert(&Value::I64(millis), "Timestamp").value)
                 .unwrap_or(Value::String(text)),
         },
         other => other,

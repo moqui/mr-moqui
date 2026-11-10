@@ -8,10 +8,10 @@ their per-sender call keys over the same device layer. The design is [plans/Comm
 
 - **Browser:** `webroot/screen/webroot/js/WebrootCrypto.js` (`moqui.crypto`), over matrix-sdk-crypto's `OlmMachine`
   (the vendored `@matrix-org/matrix-sdk-crypto-wasm` 18.9.0, `/libs/matrix-sdk-crypto/`).
-- **Services:** `org.moqui.impl.ChatKeyServices` and `ChatKeys.js` (framework), with `ChatDevice`, `ChatDeviceKey` and
+- **Services:** `org.moqui.chat.ChatKeyServices` and `ChatKeys.js` (framework), with `ChatDevice`, `ChatDeviceKey` and
   `ChatToDevice` in `framework/entity/ChatKeyEntities.xml`, with the cross-signing and backup entities; the `/ChatKeys`
   transitions (webroot `ChatKeys.xml`).
-- **Encrypted rooms:** `org.moqui.impl.ChatServices` (`ChatRoom.encrypted`, `ChatEvent.encrypted`: the C7 block of
+- **Encrypted rooms:** `org.moqui.chat.ChatServices` (`ChatRoom.encrypted`, `ChatEvent.encrypted`: the C7 block of
   `ChatEntities.xml`); in the browser `moqui.chat` (`js/WebrootChat.js`: `sealMessage`, `openEvents`, `openEvent`) and
   BasicComms Chat (`Chat.qvue`).
 - **Screens:** BasicComms Settings, My devices (`Settings/Devices`, `Devices.qvue`, `DevicesTui.xml`): devices,

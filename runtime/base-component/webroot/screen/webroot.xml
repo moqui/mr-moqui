@@ -76,7 +76,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- The columns of a form-list board and the colors of a calendar in a server-static screen, which the browser asks for
-        (m-list-views infoUrl): what org.moqui.impl.StatusServices.get#ListViewColumns answers ({columns, transitions, colors})
+        (m-list-views infoUrl): what org.moqui.ui.StatusServices.get#ListViewColumns answers ({columns, transitions, colors})
         for values (a comma list), statusTypeId, statusFlowId (Default when empty) and status (true for a status field). transitions is the flow by status
         ({statusId: [toStatusId]}), colors the color by value. Status items, enumerations and flows are configuration, read
         without authorization. -->
@@ -85,7 +85,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const params = ec.web.parameters
             const values = params.values == null || params.values === '' ? [] : String(params.values).split(',').map((value) => value.trim()).filter((value) => value)
-            const out = ec.service.sync().name('org.moqui.impl.StatusServices.get#ListViewColumns').parameters({values: values.slice(0, 500),
+            const out = ec.service.sync().name('org.moqui.ui.StatusServices.get#ListViewColumns').parameters({values: values.slice(0, 500),
                 statusTypeId: params.statusTypeId || null, statusFlowId: params.statusFlowId || null,
                 status: String(params.status || '') === 'true'}).disableAuthz().call() || {}
             const columns = Array.from(out.columns || []).map((column) => ({value: column.value, label: column.label, color: column.color ?? null}))
@@ -98,7 +98,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- The status flow of a status-bar in a server-static screen, which the browser asks for (m-status-bar barUrl): what
-        org.moqui.impl.StatusServices.get#StatusBar answers ({current, stages, transitions, next}) for statusId, statusTypeId,
+        org.moqui.ui.StatusServices.get#StatusBar answers ({current, stages, transitions, next}) for statusId, statusTypeId,
         statusFlowId, stages and allowedStatusIds (comma lists) and readOnly (no transitions). Status items and flows are
         configuration, read without authorization; a transition with a userPermissionId is offered only with that permission. -->
     <transition name="statusBar" read-only="true" begin-transaction="false">
@@ -109,7 +109,7 @@ along with this software (see the LICENSE.md file). If not, see
             const list = (value) => value == null || value === '' ? null : String(value).split(',').map((id) => id.trim()).filter((id) => id)
             const readOnly = String(params.readOnly || '') === 'true'
             const allowed = readOnly ? [] : (params.allowedStatusIds == null ? null : (list(params.allowedStatusIds) || []))
-            const out = ec.service.sync().name('org.moqui.impl.StatusServices.get#StatusBar').parameters({statusId: params.statusId || null,
+            const out = ec.service.sync().name('org.moqui.ui.StatusServices.get#StatusBar').parameters({statusId: params.statusId || null,
                 statusTypeId: params.statusTypeId || null, statusFlowId: params.statusFlowId || null, stageStatusIds: list(params.stages),
                 allowedToStatusIds: allowed}).disableAuthz().call() || {}
             ec.web.sendJsonResponse({current: out.current ?? null, stages: out.stages || [], transitions: out.transitions || [], next: out.next ?? null})
@@ -117,7 +117,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- The badge counts alone, for the shell's poll while the notification socket is down: {counts}, what
-        org.moqui.impl.ShellServices.get#ShellCounts answers for the current user (null without a counts service). 401
+        org.moqui.ui.ShellServices.get#ShellCounts answers for the current user (null without a counts service). 401
         without a user. -->
     <transition name="shellCounts" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
@@ -126,20 +126,20 @@ along with this software (see the LICENSE.md file). If not, see
             } else {
                 // the current user's own counts (no userId is passed): no app's authorization covers this or the counts
                 // service the theme names, so it runs without authorization, as shellData does
-                const out = ec.service.sync().name('org.moqui.impl.ShellServices.get#ShellCounts').disableAuthz().call()
+                const out = ec.service.sync().name('org.moqui.ui.ShellServices.get#ShellCounts').disableAuthz().call()
                 ec.web.sendJsonResponse({counts: out.counts ?? null})
             }
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- The chat store of the shell (js/WebrootChat.js; org.moqui.impl.ChatServices): the current user's status and
+    <!-- The chat store of the shell (js/WebrootChat.js; org.moqui.chat.ChatServices): the current user's status and
         heartbeat, the presence of other users, typing, and the chat counts by room. Each acts as the current user only: no
         app's authorization covers these, so they run without it, as shellCounts does, and pass no userId, so a service
         that serves another user for internal work never does here. 401 without a user. -->
     <transition name="userStatus" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
-                const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#UserStatuses').parameter('userIdList', [ec.user.userId])
+                const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#UserStatuses').parameter('userIdList', [ec.user.userId])
                         .disableAuthz().call()
                 ec.web.sendJsonResponse({myStatus: out ? out.myStatus ?? null : null})
             }
@@ -158,7 +158,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (params.clearAtDate) call.clearAtDate = /^\d+$/.test(String(params.clearAtDate)) ? Number(params.clearAtDate) : String(params.clearAtDate)
                 if (params.clearAfterMinutes != null && params.clearAfterMinutes !== '') call.clearAfterMinutes = Number(params.clearAfterMinutes)
                 if (String(params.clearStatus) === 'true') call.clearStatus = true
-                const out = ec.service.sync().name('org.moqui.impl.ChatServices.set#UserStatus').parameters(call).disableAuthz().call()
+                const out = ec.service.sync().name('org.moqui.chat.ChatServices.set#UserStatus').parameters(call).disableAuthz().call()
                 ec.web.sendJsonResponse({myStatus: out ? out.myStatus ?? null : null})
             }
             ]]></script></actions>
@@ -169,7 +169,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
                 const idle = Number(ec.web.parameters.idleSeconds)
-                const out = ec.service.sync().name('org.moqui.impl.ChatServices.heartbeat#UserStatus')
+                const out = ec.service.sync().name('org.moqui.chat.ChatServices.heartbeat#UserStatus')
                         .parameters(Number.isFinite(idle) ? {idleSeconds: Math.max(0, Math.floor(idle))} : {active: true}).disableAuthz().call()
                 ec.web.sendJsonResponse({myStatus: out ? out.myStatus ?? null : null})
             }
@@ -181,7 +181,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
                 const ids = String(ec.web.parameters.userIds || '').split(',').map((id) => id.trim()).filter((id) => id).slice(0, 500)
-                const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#UserStatuses').parameter('userIdList', ids)
+                const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#UserStatuses').parameter('userIdList', ids)
                         .disableAuthz().call()
                 ec.web.sendJsonResponse({statusMap: out ? out.statusMap ?? {} : {}})
             }
@@ -193,7 +193,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
                 const params = ec.web.parameters
-                ec.service.sync().name('org.moqui.impl.ChatServices.signal#Typing').parameters({chatRoomId: String(params.chatRoomId),
+                ec.service.sync().name('org.moqui.chat.ChatServices.signal#Typing').parameters({chatRoomId: String(params.chatRoomId),
                     typing: String(params.typing) !== 'false'}).disableAuthz().call()
                 ec.web.sendJsonResponse({})
             }
@@ -219,7 +219,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="chatUnread" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
-                const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#UnreadCounts').disableAuthz().call() || {}
+                const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#UnreadCounts').disableAuthz().call() || {}
                 ec.web.sendJsonResponse({total: out.total ?? 0, unread: out.unread ?? 0, mentions: out.mentions ?? 0, roomCounts: out.roomCounts ?? {}})
             }
             ]]></script></actions>
@@ -228,7 +228,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="richTextImage" method="post">
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
-                const out = ec.service.sync().name('org.moqui.impl.ResourceServices.upload#RichTextImage')
+                const out = ec.service.sync().name('org.moqui.resource.ResourceServices.upload#RichTextImage')
                     .parameter('contentFile', ec.web.multiPartParameters.contentFile).disableAuthz().call()
                 if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
                 else ec.web.sendJsonResponse({ url: out && out.url ? out.url : '' })
@@ -240,7 +240,7 @@ along with this software (see the LICENSE.md file). If not, see
         <path-parameter name="imageId"/>
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
-                const out = ec.service.sync().name('org.moqui.impl.ResourceServices.get#RichTextImage')
+                const out = ec.service.sync().name('org.moqui.resource.ResourceServices.get#RichTextImage')
                     .parameter('imageId', String(imageId || '')).disableAuthz().call()
                 if (ec.message.hasError() || !out || !out.location) ec.web.sendJsonError(404, 'No image')
                 else ec.web.sendResourceResponse(out.location, true)
@@ -249,7 +249,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- An interface to the ResourceFacade over one root (resourceRoot: dbresource://, content://, git://, component://,
-        file:...), in the elFinder client-server protocol (org.moqui.impl.ElFinderServices.run#Command; no elFinder client
+        file:...), in the elFinder client-server protocol (org.moqui.resource.ElFinderServices.run#Command; no elFinder client
         is shipped). A command answers JSON; cmd=file sends the file (ranges, ETag; streamed); cmd=upload takes multipart
         files, spooled as they arrive. Some clients send commands as GET, so it is read-only and takes either method.
         Refused without a user (401) and without the ResourceCommandServices authorization (ADMIN, SecurityTypeData.xml);
@@ -259,7 +259,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
                 const root = resourceRoot || ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content'
-                const out = ec.service.sync().name('org.moqui.impl.ElFinderServices.run#Command')
+                const out = ec.service.sync().name('org.moqui.resource.ElFinderServices.run#Command')
                     .parameters(Object.assign({}, context, {resourceRoot: root, otherParameters: ec.web.parameters})).call()
                 if (ec.message.hasError() || out == null) {
                     const errors = ec.message.errorsString; ec.message.clearErrors()

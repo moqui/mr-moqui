@@ -1056,7 +1056,7 @@ fn source_label(source: &PaletteSource) -> Result<String, Error> {
 /// `sri.getShellData()`: the shell data of the `shellData` transition, or None when a 401 was sent for a request with
 /// no user. `apps` are the app roots the user may open with their menus and providers, `shell` the shell's theme values
 /// of the user's qapps theme (`DEFAULT_QUASAR` when none is set for the user), and `counts` those of
-/// `org.moqui.impl.ShellServices.get#ShellCounts` for the user, null without a counts service.
+/// `org.moqui.ui.ShellServices.get#ShellCounts` for the user, null without a counts service.
 ///
 /// # Errors
 ///

@@ -10,10 +10,10 @@ call out as their user.
 - The SIP user agent and B2BUA are in `crates/moqui-sip`, on rsipstack; the registrar's bindings are its
   `registrar.rs`, and its side of the user agent `ua_phones.rs`.
 - The engine, the listeners and the RTP sockets are in `crates/moqui-host/src/sip/`.
-- The voice services are `org.moqui.impl.VoiceServices` (`framework/service/org/moqui/impl/Voice.js`), with
-  `framework/entity/VoiceEntities.xml`; the phones' are `org.moqui.impl.SipDeviceServices` (`SipDevices.js`); call
-  handling, ring groups and schedules are `org.moqui.impl.CallHandlingServices` (`CallHandling.js`, V3); the IVR, queues and
-  transfers are `org.moqui.impl.IvrServices`, `CallQueueServices` and `CallTransferServices` (`Ivr.js`, `CallQueues.js`,
+- The voice services are `org.moqui.call.VoiceServices` (`framework/service/org/moqui/call/Voice.js`), with
+  `framework/entity/VoiceEntities.xml`; the phones' are `org.moqui.call.SipDeviceServices` (`SipDevices.js`); call
+  handling, ring groups and schedules are `org.moqui.call.CallHandlingServices` (`CallHandling.js`, V3); the IVR, queues and
+  transfers are `org.moqui.call.IvrServices`, `CallQueueServices` and `CallTransferServices` (`Ivr.js`, `CallQueues.js`,
   `CallTransfers.js`, V5), with the engine's side in `src/sip/ivr.rs`.
 - Administration is System, Voice (in basic-comms).
 - The design is [plans/Comms-Framework.md](../../plans/Comms-Framework.md) §5.2, and "The V1 gate" in §6.2.

@@ -76,11 +76,11 @@ fn values_round_trip_through_the_entity_conversions() {
     assert_eq!(row.get("stamp"), Some(&Value::string("2026-10-14 12:34:56.789000")));
     assert_eq!(row.get("data"), Some(&Value::Bytes(vec![0, 1, 2])));
     let convert = |name: &str, java: &str| basic_convert(row.get(name).unwrap(), java).value;
-    assert_eq!(convert("stamp", "java.sql.Timestamp"), Value::Timestamp(stamp));
-    assert_eq!(convert("day", "java.sql.Date"), Value::Date(date));
-    assert_eq!(convert("at", "java.sql.Time"), Value::Time(time));
+    assert_eq!(convert("stamp", "Timestamp"), Value::Timestamp(stamp));
+    assert_eq!(convert("day", "Date"), Value::Date(date));
+    assert_eq!(convert("at", "Time"), Value::Time(time));
     // The value survives; the scale does not (NUMERIC affinity stores 12.34).
-    let Value::Decimal(read) = convert("amount", "java.math.BigDecimal") else {
+    let Value::Decimal(read) = convert("amount", "BigDecimal") else {
         panic!("amount is not a decimal");
     };
     assert_eq!(read.normalize(), rust_decimal::Decimal::from_str("12.34").unwrap());

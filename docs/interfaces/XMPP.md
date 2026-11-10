@@ -11,8 +11,8 @@ is C3b, not built. The XMPP view is of the same rooms, messages and presence the
 - The host's side is `crates/moqui-host/src/xmpp/`: the listeners, the certificates, `/xmpp-websocket` (`ws.rs`),
   `/xmpp-upload/` (`upload.rs`), the backend (each call on a request worker) and the subscription to the notification
   bus.
-- The services are `org.moqui.impl.XmppServices`, with `framework/entity/XmppEntities.xml`; chat is
-  `org.moqui.impl.ChatServices`, called as the signed-in user.
+- The services are `org.moqui.chat.XmppServices`, with `framework/entity/XmppEntities.xml`; chat is
+  `org.moqui.chat.ChatServices`, called as the signed-in user.
 - The design is [plans/Comms-Framework.md](../../plans/Comms-Framework.md) §4.3 "XMPP server (C3)", §6.5 and D-C3.
 
 ## Settings

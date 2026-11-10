@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Chat and presence (framework/entity/ChatEntities.xml, org.moqui.impl.ChatServices): the search document of chat
+<!-- Chat and presence (framework/entity/ChatEntities.xml, org.moqui.chat.ChatServices): the search document of chat
     messages and the jobs. -->
 <entity-facade-xml type="seed-initial">
     <!-- A chat message in the search index: its room, its sender and its current text. ChatServices indexes it on
@@ -43,15 +43,15 @@ along with this software (see the LICENSE.md file). If not, see
         idle (away) is published on the userStatus topic to the user's room members. Each user is on their own.
         A success is not kept: the status is the record. -->
     <moqui.service.job.ServiceJob jobName="expire_UserStatuses_frequent" description="Clear expired user statuses and publish presence changes"
-            serviceName="org.moqui.impl.ChatServices.expire#UserStatuses" cronExpression="0 * * * * ?" paused="N"
+            serviceName="org.moqui.chat.ChatServices.expire#UserStatuses" cronExpression="0 * * * * ?" paused="N"
             errorHistoryOnly="Y"/>
     <!-- Chat files uploaded and never sent with a message, after a day -->
     <moqui.service.job.ServiceJob jobName="clean_ChatAttachments_daily" description="Remove chat files never sent"
-            serviceName="org.moqui.impl.ChatServices.clean#PendingAttachments" cronExpression="0 30 3 * * ?" paused="N"/>
+            serviceName="org.moqui.chat.ChatServices.clean#PendingAttachments" cronExpression="0 30 3 * * ?" paused="N"/>
     <!-- Retention: the events older than a room's retentionDays. Each room is on its own. -->
     <moqui.service.job.ServiceJob jobName="clean_ChatRetention_daily" description="Delete chat events past their room's retention"
-            serviceName="org.moqui.impl.ChatServices.clean#ChatRetention" cronExpression="0 45 3 * * ?" paused="N"/>
+            serviceName="org.moqui.chat.ChatServices.clean#ChatRetention" cronExpression="0 45 3 * * ?" paused="N"/>
     <!-- The changes feeds of users and rooms: changes older than chat_changes_keep_days (30). Each is on its own. -->
     <moqui.service.job.ServiceJob jobName="clean_ChatChanges_daily" description="Remove old chat changes from the users' and rooms' feeds"
-            serviceName="org.moqui.impl.ChatServices.clean#ChatChanges" cronExpression="0 50 3 * * ?" paused="N"/>
+            serviceName="org.moqui.chat.ChatServices.clean#ChatChanges" cronExpression="0 50 3 * * ?" paused="N"/>
 </entity-facade-xml>

@@ -33,7 +33,7 @@ use moqui_core::entity::crypto::CryptConfig;
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_core::user::session::{session_attribute, set_session_attribute};
 
-const SERVICES: &str = "org.moqui.impl.EmailClientServices";
+const SERVICES: &str = "org.moqui.mail.EmailClientServices";
 const PROVIDER: &str = "moqui.basic.email.EmailOAuthProvider";
 const ACCOUNT: &str = "moqui.basic.email.EmailAccount";
 const SERVER: &str = "moqui.basic.email.EmailServer";
@@ -103,10 +103,10 @@ fn install() {
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
         framework.join("EmailServices.xml"),
-        framework.join("impl/EmailServices.xml"),
-        framework.join("impl/EmailClientServices.xml"),
+        framework.join("mail/EmailServices.xml"),
+        framework.join("mail/EmailClientServices.xml"),
         framework.join("admin/IdentityServices.xml"),
-        framework.join("impl/ShellServices.xml"),
+        framework.join("ui/ShellServices.xml"),
     ];
     let failures = moqui_core::service::lint(&paths).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
@@ -966,7 +966,7 @@ fn xoauth2_for_the_sync_the_server_test_and_a_send() {
         ],
     );
     let sent = ok(
-        "org.moqui.impl.EmailServices.send#EmailMessage",
+        "org.moqui.mail.EmailServices.send#EmailMessage",
         &[("emailMessageId", text("OAUTH_SEND"))],
     );
     assert!(!out_text(&sent, "messageId").is_empty(), "{sent:?}");
@@ -1019,7 +1019,7 @@ fn xoauth2_for_the_sync_the_server_test_and_a_send() {
         ],
     );
     let sent = ok(
-        "org.moqui.impl.EmailServices.send#EmailMessage",
+        "org.moqui.mail.EmailServices.send#EmailMessage",
         &[("emailMessageId", text("OAUTH_SEND_2"))],
     );
     assert!(!out_text(&sent, "messageId").is_empty(), "{sent:?}");

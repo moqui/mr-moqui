@@ -309,12 +309,12 @@ fn webdav_serves_the_users_drives_through_the_file_services() {
     );
     login("alice");
     let drive_id = to_plain_string(
-        service("org.moqui.impl.FileServices.get#UserDrives", &[])
+        service("org.moqui.resource.FileServices.get#UserDrives", &[])
             .get("personalDriveId")
             .unwrap(),
     );
     let versions = service(
-        "org.moqui.impl.FileServices.get#Versions",
+        "org.moqui.resource.FileServices.get#Versions",
         &[
             ("driveId", Value::string(&drive_id)),
             ("path", Value::string("Docs/a.txt")),
@@ -386,7 +386,7 @@ fn webdav_serves_the_users_drives_through_the_file_services() {
     assert_eq!(alice.send("GET", &format!("{base}/Docs/b.txt"), &[], "").status, 404);
     login("alice");
     let trash = service(
-        "org.moqui.impl.FileServices.list#Trash",
+        "org.moqui.resource.FileServices.list#Trash",
         &[("driveId", Value::string(&drive_id))],
     );
     assert!(
@@ -454,7 +454,7 @@ fn a_lock_holds_another_users_client_on_the_same_file_and_not_the_file_beside_it
     };
     login("alice");
     service(
-        "org.moqui.impl.FileServices.create#Drive",
+        "org.moqui.resource.FileServices.create#Drive",
         &[
             ("driveName", Value::string("Team")),
             (
@@ -622,12 +622,12 @@ fn the_sftp_tree_writes_versions_and_refuses_what_the_drive_does_not_allow() {
     tree::write("/My files/Docs/a.txt", b"two".to_vec()).unwrap();
     assert_eq!(tree::read("/My files/Docs/a.txt").unwrap(), b"two");
     let drive_id = to_plain_string(
-        service("org.moqui.impl.FileServices.get#UserDrives", &[])
+        service("org.moqui.resource.FileServices.get#UserDrives", &[])
             .get("personalDriveId")
             .unwrap(),
     );
     let versions = service(
-        "org.moqui.impl.FileServices.get#Versions",
+        "org.moqui.resource.FileServices.get#Versions",
         &[
             ("driveId", Value::string(&drive_id)),
             ("path", Value::string("Docs/a.txt")),
@@ -638,7 +638,7 @@ fn the_sftp_tree_writes_versions_and_refuses_what_the_drive_does_not_allow() {
     };
     assert!(versions.len() >= 2, "each write is a version: {versions:?}");
     service(
-        "org.moqui.impl.FileServices.create#Drive",
+        "org.moqui.resource.FileServices.create#Drive",
         &[
             ("driveName", Value::string("Viewed")),
             (

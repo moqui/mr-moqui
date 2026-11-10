@@ -157,7 +157,7 @@ const DEFAULT_IDLE: std::time::Duration = std::time::Duration::from_secs(3600);
 /// reload opens its socket again well within it, so presence does not flicker.
 const OFFLINE_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
 /// Marks a user offline at once and publishes it on the userStatus topic.
-const DISCONNECT_SERVICE: &str = "org.moqui.impl.ChatServices.disconnect#UserStatus";
+const DISCONNECT_SERVICE: &str = "org.moqui.chat.ChatServices.disconnect#UserStatus";
 
 struct Slot {
     id: u64,

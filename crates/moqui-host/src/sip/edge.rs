@@ -49,8 +49,8 @@ const FALLBACKS_SET: &str = "voiceFallbacks";
 const FALLBACK_ENTITY: &str = "moqui.call.PhoneNumberFallback";
 /// The queue kind of a message the engine recorded.
 const VOICEMAIL_KIND: &str = "voicemail";
-const CALL_AUDIO_SERVICE: &str = "org.moqui.impl.VoiceServices.get#CallAudio";
-const MESSAGE_AUDIO_SERVICE: &str = "org.moqui.impl.VoicemailServices.get#PhoneVoicemailAudio";
+const CALL_AUDIO_SERVICE: &str = "org.moqui.call.VoiceServices.get#CallAudio";
+const MESSAGE_AUDIO_SERVICE: &str = "org.moqui.call.VoicemailServices.get#PhoneVoicemailAudio";
 /// Where saved messages are kept on the local node (`VOICEMAIL_ROOT` in moqui-core `service/call_media.rs`).
 const VOICEMAIL_ROOT: &str = "dbresource://moqui/call/voicemail/";
 /// The most trunks read from the copy.

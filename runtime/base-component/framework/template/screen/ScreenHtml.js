@@ -1669,7 +1669,7 @@
             const statusId = xn(at(n, "status-id"));
             if (!statusId || statusId === "null") return;
             const readOnly = xn(at(n, "read-only")) === "true";
-            const bar = ec.service.sync().name("org.moqui.impl.StatusServices.get#StatusBar").parameters({
+            const bar = ec.service.sync().name("org.moqui.ui.StatusServices.get#StatusBar").parameters({
                 statusId, statusTypeId: xn(at(n, "status-type-id")) || null, statusFlowId: xn(at(n, "status-flow-id")) || null,
                 stageStatusIds: idList(at(n, "stages")), allowedToStatusIds: readOnly ? [] : idList(at(n, "allowed-status-ids"))
             }).disableAuthz().call() || {};

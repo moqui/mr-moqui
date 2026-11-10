@@ -900,9 +900,9 @@ fn service(
     }
 }
 
-const SPEAKER_SERVICE: &str = "org.moqui.impl.CallCaptionServices.get#CaptionSpeaker";
-const STORE_SERVICE: &str = "org.moqui.impl.CallCaptionServices.store#CallTranscript";
-const TRANSCRIBE_SERVICE: &str = "org.moqui.impl.CallCaptionServices.transcribe#CaptionAudio";
+const SPEAKER_SERVICE: &str = "org.moqui.call.CallCaptionServices.get#CaptionSpeaker";
+const STORE_SERVICE: &str = "org.moqui.call.CallCaptionServices.store#CallTranscript";
+const TRANSCRIBE_SERVICE: &str = "org.moqui.call.CallCaptionServices.transcribe#CaptionAudio";
 
 /// The `moqui-llm` endpoint bound to `transcribe`.
 struct LlmTranscriber {

@@ -10,7 +10,7 @@ with a messaging bridge and no trunk texts.
   (`telnyx.rs`) and its webhook (`webhook.rs`). `crates/moqui-core/src/service/chat_bridge_web.rs`: the webhook and media
   routes' core (`chat_bridge::webhook`, `media`, `media_url`), `store#BridgeMedia` and `send#BridgeDirect`. The host's
   routes are `crates/moqui-host/src/channels.rs`.
-- **Services:** `org.moqui.impl.SmsServices` and `Sms.js` (the pair room, the checks before a send, texts that come in),
+- **Services:** `org.moqui.call.SmsServices` and `Sms.js` (the pair room, the checks before a send, texts that come in),
   `org.moqui.SmsServices.send#SmsMessage` (the system's sender), `ChatBridgeServices` (`ingest#Event` with media,
   `note#DeliveryReceipt`), the SMS parts of `VoiceServices`/`Voice.js` (a number's `messagingBridgeId`, the SMS limits).
 - **Entities:** the C4-SMS block of `framework/entity/VoiceEntities.xml`: `SmsOptOut`, `SmsSendCount`, the SMS fields of

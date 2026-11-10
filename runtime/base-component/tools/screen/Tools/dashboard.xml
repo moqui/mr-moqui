@@ -33,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
             // on production or without DATABASE_EXTERNAL); asked only of a DATABASE_EXTERNAL holder
             canExternal = false
             if (ec.user.hasPermission('DATABASE_EXTERNAL')) {
-                try { ec.service.sync().name('org.moqui.impl.DatabaseServices.find#DatabaseConnections').call(); canExternal = !ec.message.hasError() } catch (e) { canExternal = false }
+                try { ec.service.sync().name('org.moqui.dev.DatabaseServices.find#DatabaseConnections').call(); canExternal = !ec.message.hasError() } catch (e) { canExternal = false }
                 ec.message.clearErrors()
             }
         ]]></script>

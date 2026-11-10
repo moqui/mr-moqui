@@ -1524,7 +1524,7 @@ fn millis_of(value: &Value) -> Option<i64> {
 }
 
 fn timestamp_value(millis: i64) -> Value {
-    basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
+    basic_convert(&Value::I64(millis), "Timestamp").value
 }
 
 fn clip(text: &str) -> String {

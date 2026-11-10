@@ -34,7 +34,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.email.EmailTemplate emailTemplateId="NOTIFICATION" description="Default Notification" emailServerId="SYSTEM"
             emailTypeEnumId="EMT_NOTIFICATION" bodyScreenLocation="classpath://screen/NotificationEmail.xml" webappName="webroot"
             fromAddress="" fromName="" ccAddresses="" bccAddresses="" subject="${title}" sendPartial="Y"/>
-    <!-- EmailTemplate for the daily notification digest (org.moqui.impl.NotificationServices.send#NotificationDigests) -->
+    <!-- EmailTemplate for the daily notification digest (org.moqui.ui.NotificationServices.send#NotificationDigests) -->
     <moqui.basic.email.EmailTemplate emailTemplateId="NOTIFICATION_DIGEST" description="Notification Digest" emailServerId="SYSTEM"
             emailTypeEnumId="EMT_NOTIFICATION_DIGEST" bodyScreenLocation="classpath://screen/NotificationDigestEmail.xml" webappName="webroot"
             fromAddress="" fromName="" ccAddresses="" bccAddresses="" subject="Your notifications (${notificationCount})" sendPartial="Y"/>
@@ -64,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
         <parameters parameterName="daysToKeep" parameterValue="30"/>
     </moqui.service.job.ServiceJob>
     <moqui.service.job.ServiceJob jobName="clean_GitUpdates_daily" description="Clean done GitUpdate rows past 90 days"
-            serviceName="org.moqui.impl.GitServices.clean#GitUpdates" cronExpression="0 0 2 * * ?" paused="N">
+            serviceName="org.moqui.git.GitServices.clean#GitUpdates" cronExpression="0 0 2 * * ?" paused="N">
         <parameters parameterName="daysToKeep" parameterValue="90"/>
     </moqui.service.job.ServiceJob>
 
@@ -103,31 +103,31 @@ along with this software (see the LICENSE.md file). If not, see
          These three run every minute or every five. A success is not kept: the delivery, the repository, or the
          GitUpdate row is the record. -->
     <moqui.service.job.ServiceJob jobName="retry_GitWebhookDeliveries_frequent" description="Retry Git webhook deliveries"
-            serviceName="org.moqui.impl.GitServices.retry#GitWebhookDeliveries" cronExpression="0 * * * * ?" paused="N"
+            serviceName="org.moqui.git.GitServices.retry#GitWebhookDeliveries" cronExpression="0 * * * * ?" paused="N"
             errorHistoryOnly="Y"/>
     <moqui.service.job.ServiceJob jobName="fetch_AllGitRepositories_frequent" description="Fetch remote Git repository mirrors"
-            serviceName="org.moqui.impl.GitServices.fetch#AllGitRepositories" cronExpression="0 0/5 * * * ?" paused="N"
+            serviceName="org.moqui.git.GitServices.fetch#AllGitRepositories" cronExpression="0 0/5 * * * ?" paused="N"
             errorHistoryOnly="Y"/>
     <!-- Runs the gitECA post events of git updates left pending (a full git pool, a restart); each runs soon after its
         push, fetch or write as a rule, so this usually finds nothing -->
     <moqui.service.job.ServiceJob jobName="process_PendingGitUpdates_frequent" description="Run pending gitECA events"
-            serviceName="org.moqui.impl.GitServices.process#PendingGitUpdates" cronExpression="0 * * * * ?" paused="N"
+            serviceName="org.moqui.git.GitServices.process#PendingGitUpdates" cronExpression="0 * * * * ?" paused="N"
             errorHistoryOnly="Y"/>
     <!-- Delete the unreachable objects of db and local git repositories and repack them, nightly -->
     <moqui.service.job.ServiceJob jobName="gc_GitRepositories_daily" description="Collect and repack db and local git repositories"
-            serviceName="org.moqui.impl.GitServices.gc#GitRepositories" cronExpression="0 30 3 * * ?" paused="N"
+            serviceName="org.moqui.git.GitServices.gc#GitRepositories" cronExpression="0 30 3 * * ?" paused="N"
             transactionTimeout="3900"/>
     <!-- Delete the content blobs nothing refers to any more (after the git collection, which may leave some), nightly -->
     <moqui.service.job.ServiceJob jobName="gc_ContentBlobs_daily" description="Delete unreferenced content blobs"
-            serviceName="org.moqui.impl.ResourceServices.gc#ContentBlobs" cronExpression="0 30 4 * * ?" paused="N"/>
+            serviceName="org.moqui.resource.ResourceServices.gc#ContentBlobs" cronExpression="0 30 4 * * ?" paused="N"/>
     <!-- The drive zips, exports and previews under runtime/tmp older than a day (FileServices.clean#DriveTempFiles) -->
     <moqui.service.job.ServiceJob jobName="clean_DriveTempFiles_hourly" description="Remove drive temporary files older than a day"
-            serviceName="org.moqui.impl.FileServices.clean#DriveTempFiles" cronExpression="0 17 * * * ?" paused="N"/>
+            serviceName="org.moqui.resource.FileServices.clean#DriveTempFiles" cronExpression="0 17 * * * ?" paused="N"/>
 
     <!-- Change paused to 'N' to run the poll EmailServer job; NOTE emailServerId=SYSTEM, change if needed along with run frequency.
          A success is not kept: the messages are the record. -->
     <moqui.service.job.ServiceJob jobName="poll_EmailServer_frequent" description="Poll EmailServer to get new messages"
-            serviceName="org.moqui.impl.EmailServices.poll#EmailServer" cronExpression="0 0/15 * * * ?" paused="Y"
+            serviceName="org.moqui.mail.EmailServices.poll#EmailServer" cronExpression="0 0/15 * * * ?" paused="Y"
             errorHistoryOnly="Y">
         <parameters parameterName="emailServerId" parameterValue="SYSTEM"/>
     </moqui.service.job.ServiceJob>
@@ -137,32 +137,32 @@ along with this software (see the LICENSE.md file). If not, see
          Hourly at minute 0 so each user is checked in their hour (NOTIFICATION_DIGEST_HOUR, default 6) in their zone.
          A database loaded with the old cron 0 0 6 * * ? keeps that row until it is updated; startup does not rewrite it. -->
     <moqui.service.job.ServiceJob jobName="send_NotificationDigests_daily" description="Send each user's notification digest at their hour"
-            serviceName="org.moqui.impl.NotificationServices.send#NotificationDigests" cronExpression="0 0 * * * ?" paused="N">
+            serviceName="org.moqui.ui.NotificationServices.send#NotificationDigests" cronExpression="0 0 * * * ?" paused="N">
         <parameters parameterName="hours" parameterValue="24"/>
     </moqui.service.job.ServiceJob>
-    <!-- The mail client (org.moqui.impl.EmailClientServices): scheduled sends and undo-send holds that are due, and
+    <!-- The mail client (org.moqui.mail.EmailClientServices): scheduled sends and undo-send holds that are due, and
          snoozed mail whose time has come. Each message is on its own; one that fails is logged and the rest go on.
          A success is not kept: the message or the account is the record. -->
     <moqui.service.job.ServiceJob jobName="send_DueDrafts_frequent" description="Send scheduled and held email drafts that are due"
-            serviceName="org.moqui.impl.EmailClientServices.send#DueDrafts" cronExpression="0 * * * * ?" paused="N"
+            serviceName="org.moqui.mail.EmailClientServices.send#DueDrafts" cronExpression="0 * * * * ?" paused="N"
             errorHistoryOnly="Y"/>
     <moqui.service.job.ServiceJob jobName="return_SnoozedMessages_frequent" description="Bring back snoozed email whose time has come"
-            serviceName="org.moqui.impl.EmailClientServices.return#SnoozedMessages" cronExpression="0 * * * * ?" paused="N"
+            serviceName="org.moqui.mail.EmailClientServices.return#SnoozedMessages" cronExpression="0 * * * * ?" paused="N"
             errorHistoryOnly="Y"/>
     <!-- Each IMAP and POP3 account whose last sync is older than its interval (syncIntervalMinutes, else the
          email-client sync-interval in the conf); the IMAP IDLE workers sync an Inbox at once between runs. -->
     <moqui.service.job.ServiceJob jobName="sync_EmailAccounts_frequent" description="Sync the mail accounts that are due"
-            serviceName="org.moqui.impl.EmailClientServices.sync#DueEmailAccounts" cronExpression="0 * * * * ?" paused="N"
+            serviceName="org.moqui.mail.EmailClientServices.sync#DueEmailAccounts" cronExpression="0 * * * * ?" paused="N"
             errorHistoryOnly="Y"/>
     <!-- What clients that keep data offline rely on (plans/Mobile-Desktop.md MD5): the mail change logs past
          mail_change_keep_days, the clientRefs past client_request_keep_days, and the chunked uploads left past
          client_upload_expire_hours. Each user or upload is on its own. -->
     <moqui.service.job.ServiceJob jobName="clean_MailChanges_daily" description="Remove old mail change logs"
-            serviceName="org.moqui.impl.EmailClientServices.clean#MailChanges" cronExpression="0 10 4 * * ?" paused="N"/>
+            serviceName="org.moqui.mail.EmailClientServices.clean#MailChanges" cronExpression="0 10 4 * * ?" paused="N"/>
     <moqui.service.job.ServiceJob jobName="clean_ClientRequests_daily" description="Remove old client request references"
-            serviceName="org.moqui.impl.ClientSyncServices.clean#ClientRequests" cronExpression="0 20 4 * * ?" paused="N"/>
+            serviceName="org.moqui.edge.ClientSyncServices.clean#ClientRequests" cronExpression="0 20 4 * * ?" paused="N"/>
     <moqui.service.job.ServiceJob jobName="clean_ClientUploads_hourly" description="Remove chunked uploads left unfinished or not taken"
-            serviceName="org.moqui.impl.ClientSyncServices.clean#ClientUploads" cronExpression="0 23 * * * ?" paused="N"/>
+            serviceName="org.moqui.edge.ClientSyncServices.clean#ClientUploads" cronExpression="0 23 * * * ?" paused="N"/>
 
     <!-- Render ScheduledScreens -->
     <moqui.service.job.ServiceJob jobName="render_ScheduledScreens_frequent" description="Render Scheduled Screens"

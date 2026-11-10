@@ -1,4 +1,4 @@
-// Chat key trust and backup (org.moqui.impl.ChatKeyServices and ChatKeys.js; framework/entity/ChatKeyEntities.xml;
+// Chat key trust and backup (org.moqui.chat.ChatKeyServices and ChatKeys.js; framework/entity/ChatKeyEntities.xml;
 // plans/Comms-Framework.md §4.5, C7; docs/interfaces/Chat-Keys.md): a device's store key, answered only to its own user,
 // stable, absent from the device list and cleared by a revoke; cross-signing keys uploaded once, the same again a no-op,
 // a different master key refused unless reset; signatures by the caller's keys over what those keys may sign, merged into
@@ -10,7 +10,7 @@ const A = "CHATKEYB_SPEC_A"
 const B = "CHATKEYB_SPEC_B"
 const C = "CHATKEYB_SPEC_C"
 const USERS = [A, B, C]
-const SERVICES = "org.moqui.impl.ChatKeyServices."
+const SERVICES = "org.moqui.chat.ChatKeyServices."
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -135,7 +135,7 @@ spec({
         // A and B share a room; C shares nothing
         ec.user.internalLoginUser(username(A))
         sys(() =>
-            call("org.moqui.impl.ChatServices.create#Room", {
+            call("org.moqui.chat.ChatServices.create#Room", {
                 roomTypeEnumId: "CrtPrivate",
                 roomName: "Trust spec",
                 memberUserIdList: [B]
@@ -575,7 +575,7 @@ feature("device_lists.left names a co-member once the only shared room ends, on 
     when() {
         ec.user.internalLoginUser(username(A))
         const shared = sys(() =>
-            call("org.moqui.impl.ChatServices.create#Room", {
+            call("org.moqui.chat.ChatServices.create#Room", {
                 roomTypeEnumId: "CrtPrivate",
                 roomName: "Trust spec left",
                 memberUserIdList: [B, C]

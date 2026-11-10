@@ -941,19 +941,19 @@ fn scrape_targets_and_synthetic_checks_write_metrics_and_kept_spans() {
         }
     }
     // Every due target runs; the bad one fails on its own row and the good one is still scraped.
-    let first = invoke("org.moqui.impl.TelemetryServices.scrape#Targets", json!({}));
+    let first = invoke("org.moqui.monitor.TelemetryServices.scrape#Targets", json!({}));
     assert_eq!(first["scraped"], 2, "{first}");
     assert_eq!(first["failed"], 1, "{first}");
     // Not due again within its interval.
     assert_eq!(
-        invoke("org.moqui.impl.TelemetryServices.scrape#Targets", json!({}))["scraped"],
+        invoke("org.moqui.monitor.TelemetryServices.scrape#Targets", json!({}))["scraped"],
         0
     );
     let dropped = moqui_core::telemetry::for_factory(factory).counters().dropped;
     // Forced; the second scrape turns the first one's cumulative baselines into deltas.
     std::thread::sleep(Duration::from_millis(1100));
     let second = invoke(
-        "org.moqui.impl.TelemetryServices.scrape#Targets",
+        "org.moqui.monitor.TelemetryServices.scrape#Targets",
         json!({"targetId":"self"}),
     );
     assert_eq!(second["failed"], 0, "{second}");
@@ -963,7 +963,7 @@ fn scrape_targets_and_synthetic_checks_write_metrics_and_kept_spans() {
         dropped,
         "baselines are not telemetry loss"
     );
-    let checks = invoke("org.moqui.impl.TelemetryServices.run#Checks", json!({}));
+    let checks = invoke("org.moqui.monitor.TelemetryServices.run#Checks", json!({}));
     assert_eq!(checks["run"], 2, "{checks}");
     assert_eq!(checks["failed"], 1, "{checks}");
     let (gone, missing, health) = {

@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The drive picker of BasicComms (plans/Comms-Framework.md §7.4 DP): Compose's Attach from Files and the Inbox's Save to
     Files list the user's drives, a folder, the recent files and a search through these services (the pickerData,
     pickerFolder and pickerSearch transitions of Inbox/Compose.xml and Inbox/Mail.xml). Every read goes through
-    org.moqui.impl.FileServices, which checks the drive's members and shares, and on a records drive the records; what the
+    org.moqui.resource.FileServices, which checks the drive's members and shares, and on a records drive the records; what the
     user may not reach is "not found". A path is relative to its drive's root, '/'-separated. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
@@ -50,7 +50,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!own.length || own[0].archivedDate == null) { hasDrive = true; return }
                 includeRecent = false
             }
-            const drives = ec.service.sync().name('org.moqui.impl.FileServices.get#UserDrives').parameter('includeUsage', false).call()
+            const drives = ec.service.sync().name('org.moqui.resource.FileServices.get#UserDrives').parameter('includeUsage', false).call()
             if (ec.message.hasError()) return
             driveList = Array.from(drives.driveList || []).map((drive) => ({driveId: drive.driveId,
                 driveName: drive.isPersonal ? ec.l10n.localize('My files') : drive.driveName, isPersonal: drive.isPersonal === true,
@@ -59,7 +59,7 @@ along with this software (see the LICENSE.md file). If not, see
             // an archived personal drive is not one to open
             if (drives.personalDriveId && driveList.some((drive) => drive.driveId === drives.personalDriveId)) personalDriveId = drives.personalDriveId
             if (!hasDrive || !includeRecent) return
-            const recent = ec.service.sync().name('org.moqui.impl.FileServices.find#Recent').parameter('limit', recentLimit || 12).call()
+            const recent = ec.service.sync().name('org.moqui.resource.FileServices.find#Recent').parameter('limit', recentLimit || 12).call()
             if (ec.message.hasError()) return
             recentList = Array.from(recent.resultList || []).map((row) => {
                 const kind = ec.service.sync().name('org.moqui.comms.FilePickerServices.get#FileType').parameters({name: row.name, isDirectory: false}).call()
@@ -87,7 +87,7 @@ along with this software (see the LICENSE.md file). If not, see
             fileList = []
             breadcrumbList = []
             canWrite = false
-            const out = ec.service.sync().name('org.moqui.impl.FileServices.list#Folder').parameters({driveId: driveId, path: path || ''}).call()
+            const out = ec.service.sync().name('org.moqui.resource.FileServices.list#Folder').parameters({driveId: driveId, path: path || ''}).call()
             if (ec.message.hasError()) return
             canWrite = !!(out.folder && (out.folder.canWrite || out.folder.canUpload))
             breadcrumbList = Array.from(out.breadcrumbList || []).map((crumb, index) => ({name: index === 0 && out.drive && out.drive.driveKindEnumId === 'RdkPersonal'
@@ -116,7 +116,7 @@ along with this software (see the LICENSE.md file). If not, see
             fileList = []
             const term = String(text || '').trim()
             if (!term) return
-            const found = ec.service.sync().name('org.moqui.impl.FileServices.find#Resources').parameters({text: term, limit: limit || 50}).call()
+            const found = ec.service.sync().name('org.moqui.resource.FileServices.find#Resources').parameters({text: term, limit: limit || 50}).call()
             if (ec.message.hasError()) return
             fileList = Array.from(found.resultList || []).map((row) => {
                 const isDirectory = row.isDirectory === true

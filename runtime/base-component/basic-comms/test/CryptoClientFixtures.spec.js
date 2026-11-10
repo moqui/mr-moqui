@@ -1,5 +1,5 @@
 // The room the client spec CryptoFlow (test/client, moqui test-client basic-comms) needs: john.doe and calls.client.b
-// (CallClientFixtures) in a private room, so each may reach the other's crypto devices (org.moqui.impl.ChatKeyServices).
+// (CallClientFixtures) in a private room, so each may reach the other's crypto devices (org.moqui.chat.ChatKeyServices).
 // moqui test-client basic-comms --serve runs this spec on its server's scratch database; for another server:
 //     moqui test basic-comms --spec CallClientFixtures,CryptoClientFixtures --db existing
 // The room is made only when missing. Not demo data.
@@ -25,7 +25,7 @@ feature("john.doe and calls.client.b share a private room", {
         let chatRoomId = existing ? existing.chatRoomId : null
         if (!chatRoomId && john && other) {
             ec.user.internalLoginUser("john.doe")
-            chatRoomId = sys(() => call("org.moqui.impl.ChatServices.create#Room", {roomTypeEnumId: "CrtPrivate", roomName: ROOM_NAME,
+            chatRoomId = sys(() => call("org.moqui.chat.ChatServices.create#Room", {roomTypeEnumId: "CrtPrivate", roomName: ROOM_NAME,
                 memberUserIdList: [other.userId]})).chatRoomId
         }
         return {john, other, chatRoomId}

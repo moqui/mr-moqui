@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Rust part of `org.moqui.impl.ChatKeyServices` (the rest is `ChatKeys.js`): `derive#ChatStoreKey`, the passphrase a
+//! The Rust part of `org.moqui.chat.ChatKeyServices` (the rest is `ChatKeys.js`): `derive#ChatStoreKey`, the passphrase a
 //! browser encrypts a crypto device's store with (docs/interfaces/Chat-Keys.md, "At rest"). It is derived, not stored:
 //! HMAC-SHA-256 under the platform secret `chat_store_key_secret` (an `is-secret` default-property, generated when unset)
 //! of `userId|deviceId|revision`, as 43 characters of URL-safe base64. So no table holds it: an administrator who reads

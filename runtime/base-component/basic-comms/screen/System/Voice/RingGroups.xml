@@ -15,36 +15,36 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Voice, Ring groups (plans/Comms-Framework.md §5.3, §5.4, V3): a number routed to a ring group (Numbers) rings its members by its
     strategy (all at once, in order, round robin), each for its ring seconds; members in do not disturb or busy are skipped;
     with nobody answering, or outside its schedule, the fallback runs: the group's voicemail (its members share the box), another
-    group, an outside number, or the end. org.moqui.impl.CallHandlingServices find#, store#, delete#RingGroup and store#,
+    group, an outside number, or the end. org.moqui.call.CallHandlingServices find#, store#, delete#RingGroup and store#,
     delete#RingGroupMember (the VoiceAdmin permission). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Ring groups" default-menu-index="8">
 
     <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
     <transition name="storeGroup">
-        <service-call name="org.moqui.impl.CallHandlingServices.store#RingGroup" in-map="{ringGroupId:ringGroupId || null, name:name || '',
+        <service-call name="org.moqui.call.CallHandlingServices.store#RingGroup" in-map="{ringGroupId:ringGroupId || null, name:name || '',
                 strategyEnumId:strategyEnumId || null, ringSeconds:ringSeconds || null, fallbackTypeEnumId:fallbackTypeEnumId || null,
                 fallbackId:(fallbackTypeEnumId == 'RgfGroup' ? fallbackGroupId : fallbackNumber) || '', commsScheduleId:commsScheduleId || ''}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Ring group saved</message></if></actions>
         <default-response url="."/>
     </transition>
     <transition name="deleteGroup">
-        <service-call name="org.moqui.impl.CallHandlingServices.delete#RingGroup" in-map="{ringGroupId:ringGroupId}"/>
+        <service-call name="org.moqui.call.CallHandlingServices.delete#RingGroup" in-map="{ringGroupId:ringGroupId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Ring group removed</message></if></actions>
         <default-response url="."/>
     </transition>
     <transition name="storeMember">
-        <service-call name="org.moqui.impl.CallHandlingServices.store#RingGroupMember" in-map="{ringGroupId:ringGroupId, userId:userId, sequenceNum:sequenceNum || null}"/>
+        <service-call name="org.moqui.call.CallHandlingServices.store#RingGroupMember" in-map="{ringGroupId:ringGroupId, userId:userId, sequenceNum:sequenceNum || null}"/>
         <default-response url="."/>
     </transition>
     <transition name="deleteMember">
-        <service-call name="org.moqui.impl.CallHandlingServices.delete#RingGroupMember" in-map="{ringGroupId:ringGroupId, userId:userId}"/>
+        <service-call name="org.moqui.call.CallHandlingServices.delete#RingGroupMember" in-map="{ringGroupId:ringGroupId, userId:userId}"/>
         <default-response url="."/>
     </transition>
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const call = (name, parameters) => ec.service.sync().name('org.moqui.impl.CallHandlingServices.' + name).parameters(parameters || {})
+        const call = (name, parameters) => ec.service.sync().name('org.moqui.call.CallHandlingServices.' + name).parameters(parameters || {})
             .requireNewTransaction(true).disableAuthz().call() || {}
         const enums = (enumTypeId) => Array.from(ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', enumTypeId).orderBy('sequenceNum')
             .disableAuthz().list()).map((e) => ({key: e.enumId, text: L(e.description)}))

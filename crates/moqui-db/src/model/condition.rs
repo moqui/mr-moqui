@@ -164,7 +164,7 @@ impl DateFilter {
         let valid = match &self.valid_date {
             Some(text) => {
                 let text = expand(values, text)?;
-                values.convert(&text, "java.sql.Timestamp")?
+                values.convert(&text, "Timestamp")?
             }
             None => Value::Null,
         };

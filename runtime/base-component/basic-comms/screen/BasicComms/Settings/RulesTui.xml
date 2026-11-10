@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="setEnabled">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.EmailClientServices.update#EmailRule').parameters({emailRuleId: emailRuleId || '',
+            ec.service.sync().name('org.moqui.mail.EmailClientServices.update#EmailRule').parameters({emailRuleId: emailRuleId || '',
                 enabled: enabled === 'Y' ? 'Y' : 'N'}).call()
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize(enabled === 'Y' ? 'Rule turned on' : 'Rule turned off'), 'success')
         ]]></script></actions>
@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="deleteRule">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.EmailClientServices.delete#EmailRule').parameter('emailRuleId', emailRuleId || '').call()
+            ec.service.sync().name('org.moqui.mail.EmailClientServices.delete#EmailRule').parameter('emailRuleId', emailRuleId || '').call()
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize(String(unblock) === 'true' ? 'Unblocked' : 'Rule deleted'), 'success')
         ]]></script></actions>
         <default-response url="../Rules"/>

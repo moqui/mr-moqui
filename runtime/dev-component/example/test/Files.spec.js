@@ -1,10 +1,10 @@
-// Drives and files (org.moqui.impl.FileServices) on the real database: uploads as versions with notes on the database
+// Drives and files (org.moqui.resource.FileServices) on the real database: uploads as versions with notes on the database
 // tree and as one commit on a git drive in the database, the list's modified-by from the path index, a change set, trash
 // and restore, a public link with a password through its token check, and the MoquiDriveFile search document. The access
 // rules, shares, quotas, the records drive and previews in full are the Rust tests in
 // crates/moqui-core/src/service/files_tests.rs.
 
-const SERVICES = "org.moqui.impl.FileServices"
+const SERVICES = "org.moqui.resource.FileServices"
 let folderDriveId
 let gitDriveId
 

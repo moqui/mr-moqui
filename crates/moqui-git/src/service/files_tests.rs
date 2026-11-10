@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.FileServices` over the resource facade, on both storages: who reaches a drive and with what
+//! `org.moqui.resource.FileServices` over the resource facade, on both storages: who reaches a drive and with what
 //! permission, the personal drive on first use, uploads as one commit on git and as versions on the database tree,
 //! version notes, change sets, the git path index (modified by, history across a move), trash and restore, shares and
 //! public links (password, expiry, revoke, opened count, the upload-only drop), quotas, a records drive's folder map,
@@ -28,7 +28,7 @@ use moqui_core::context::{ExecutionContext, ExecutionContextFactory, ResourceCha
 use moqui_core::entity::EntityFacade;
 use moqui_core::web::multipart::UploadedFile;
 
-const SERVICES: &str = "org.moqui.impl.FileServices";
+const SERVICES: &str = "org.moqui.resource.FileServices";
 
 fn setup() -> (ExecutionContext, EntityFacade) {
     let ctx = ExecutionContextFactory::test_context_in(
@@ -46,9 +46,9 @@ fn setup() -> (ExecutionContext, EntityFacade) {
 fn install() {
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
-        framework.join("impl/FileServices.xml"),
+        framework.join("resource/FileServices.xml"),
         framework.join("admin/IdentityServices.xml"),
-        framework.join("impl/GitServices.xml"),
+        framework.join("git/GitServices.xml"),
     ];
     let failures = moqui_core::service::lint(&paths).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
@@ -1446,10 +1446,10 @@ fn install_with_record_hook() -> std::path::PathBuf {
     std::fs::write(dir.join("service/test/DriveStub.xml"), RECORD_HOOK).unwrap();
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
-        framework.join("impl/FileServices.xml"),
+        framework.join("resource/FileServices.xml"),
         framework.join("admin/IdentityServices.xml"),
-        framework.join("impl/GitServices.xml"),
-        framework.join("impl/ChatServices.xml"),
+        framework.join("git/GitServices.xml"),
+        framework.join("chat/ChatServices.xml"),
         dir.join("service/test/DriveStub.xml"),
     ];
     let failures = moqui_core::service::lint(&paths).unwrap();
@@ -2571,7 +2571,7 @@ fn a_stream_passed_to_a_service_stays_its_bytes_and_anything_else_is_never_writt
     );
     let root = format!("dbresource://drive/shared/{team}");
     moqui_core::script::run_script(&format!(
-        r#"const out = ec.service.sync().name('org.moqui.impl.FileServices.upload#Resource').parameters({{driveId: '{team}',
+        r#"const out = ec.service.sync().name('org.moqui.resource.FileServices.upload#Resource').parameters({{driveId: '{team}',
             fileList: [ec.resource.getLocationReference('{root}/source.bin').openStream(), {{}}],
             relativePathList: ['copy.bin', 'object.bin']}}).call()
         ec.context.sharedMap.outcomes = out.uploadedList.map((row) => row.outcome + ':' + (row.error || ''))"#
@@ -2664,10 +2664,10 @@ fn an_external_user_reaches_no_records_drive() {
     std::fs::write(dir.join("service/test/DriveStub.xml"), RECORD_HOOK).unwrap();
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let failures = moqui_core::service::lint(&[
-        framework.join("impl/FileServices.xml"),
+        framework.join("resource/FileServices.xml"),
         framework.join("admin/IdentityServices.xml"),
-        framework.join("impl/GitServices.xml"),
-        framework.join("impl/ChatServices.xml"),
+        framework.join("git/GitServices.xml"),
+        framework.join("chat/ChatServices.xml"),
         dir.join("service/test/DriveStub.xml"),
     ])
     .unwrap();
@@ -2786,7 +2786,7 @@ fn an_external_user_reaches_no_records_drive() {
     assert_eq!(level(&records, Some("")), 0);
     assert_eq!(level(&records, Some("party/OPEN1/content_1/shared.pdf")), 0);
     let visible = moqui_core::service::sync(
-        "org.moqui.impl.ChatServices.check#RecordVisible",
+        "org.moqui.chat.ChatServices.check#RecordVisible",
         &BTreeMap::from([
             ("recordEntityName".to_string(), text("moqui.test.Party")),
             ("recordId".to_string(), text("OPEN1")),

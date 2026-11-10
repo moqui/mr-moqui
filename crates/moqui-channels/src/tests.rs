@@ -459,7 +459,7 @@ impl Bed {
     fn send(&self, room: &str, body: &str, files: &[String]) -> i64 {
         login("alice");
         let out = ok(
-            "org.moqui.impl.ChatServices.send#Message",
+            "org.moqui.chat.ChatServices.send#Message",
             &[
                 ("chatRoomId", text(room)),
                 ("body", text(&format!("<p>{body}</p>"))),
@@ -475,7 +475,7 @@ impl Bed {
     fn round(&self, offset: i64) {
         let _authz = self.ctx.disable_authz();
         ok(
-            "org.moqui.impl.ChatBridgeServices.run#BridgeDeliveries",
+            "org.moqui.chat.ChatBridgeServices.run#BridgeDeliveries",
             &[("nowMillis", Value::I64(now() + offset))],
         );
     }
@@ -740,7 +740,7 @@ fn a_reply_goes_out_and_its_receipts_come_back() {
     assert_eq!((state.as_str(), receipt.as_str()), ("CdsAccepted", "delivered"));
     login("alice");
     let deliveries = ok(
-        "org.moqui.impl.ChatBridgeServices.get#EventDeliveries",
+        "org.moqui.chat.ChatBridgeServices.get#EventDeliveries",
         &[
             ("chatRoomId", text(&room)),
             ("eventSeq", Value::I64(seq)),
@@ -963,7 +963,7 @@ fn refusals_come_before_the_provider() {
     // an international number: refused for a user and for the system, before any room or send
     login("alice");
     let out = call(
-        "org.moqui.impl.SmsServices.open#PairRoom",
+        "org.moqui.call.SmsServices.open#PairRoom",
         &[("toNumber", text("+442071234567")), ("fromNumber", text(OURS))],
     );
     assert_eq!(out_text(&out, "reasonCode"), "internationalNotEnabled");
@@ -971,14 +971,14 @@ fn refusals_come_before_the_provider() {
     // carol may text from no number; the same parameters as alice's
     login("carol");
     let out = call(
-        "org.moqui.impl.SmsServices.open#PairRoom",
+        "org.moqui.call.SmsServices.open#PairRoom",
         &[("toNumber", text("+15552223333")), ("fromNumber", text(OURS))],
     );
     assert_eq!(out_text(&out, "reasonCode"), "noMessaging");
     errors();
     login("alice");
     let opened = ok(
-        "org.moqui.impl.SmsServices.open#PairRoom",
+        "org.moqui.call.SmsServices.open#PairRoom",
         &[("toNumber", text("(555) 222-3333")), ("fromNumber", text(OURS))],
     );
     assert!(!out_text(&opened, "chatRoomId").is_empty());
@@ -1082,7 +1082,7 @@ fn a_text_and_a_call_share_the_pair_room() {
     let received = {
         let _authz = bed.ctx.disable_authz();
         ok(
-            "org.moqui.impl.VoiceServices.receive#PhoneCall",
+            "org.moqui.call.VoiceServices.receive#PhoneCall",
             &[
                 ("toNumber", text(OURS)),
                 ("fromNumber", text(THEIRS)),
@@ -1109,7 +1109,7 @@ fn a_text_and_a_call_share_the_pair_room() {
     // bob, a member of the room, is not in the call by being in the room
     login("bob");
     let seen = call(
-        "org.moqui.impl.CallServices.get#Call",
+        "org.moqui.call.CallServices.get#Call",
         &[("callSessionId", text(&session))],
     );
     assert!(out_text(&seen, "call").is_empty());
@@ -1173,7 +1173,7 @@ fn the_pair_room_keeps_only_the_users_the_number_reaches() {
     // a member may not add someone the number does not reach; the same parameters as for a room of their own
     login("alice");
     call(
-        "org.moqui.impl.ChatServices.add#Member",
+        "org.moqui.chat.ChatServices.add#Member",
         &[("chatRoomId", text(&room)), ("userId", text("carol"))],
     );
     assert!(errors().contains("members its number reaches"));
@@ -1204,7 +1204,7 @@ fn the_pair_room_keeps_only_the_users_the_number_reaches() {
     // a caller with authorization on cannot say a batch's transport was checked
     login("alice");
     let out = call(
-        "org.moqui.impl.ChatBridgeServices.ingest#Event",
+        "org.moqui.chat.ChatBridgeServices.ingest#Event",
         &[
             ("chatBridgeId", text(BRIDGE)),
             ("transactionId", text("forged-1")),
@@ -1253,7 +1253,7 @@ fn ec_revoke(bed: &Bed, user: &str) {
     }
     login("voiceadmin");
     let out = ok(
-        "org.moqui.impl.VoiceServices.revoke#CallerId",
+        "org.moqui.call.VoiceServices.revoke#CallerId",
         &[("phoneNumber", text(OURS)), ("userId", text(user))],
     );
     assert_eq!(out_text(&out, "revokedCount"), "1", "{out:?}");

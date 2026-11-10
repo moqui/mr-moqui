@@ -3,7 +3,7 @@
 // extensions with whether their targets are there. The per-file update after a reload, the restart that keeps the rows
 // and a broken anchor are in the host's integration test (crates/moqui-host/tests/it/devaide.rs).
 // Run: ./moq test dev-aide --spec ArtifactIndex
-const svc = (name) => ec.service.sync().name("org.moqui.impl.DevToolsServices." + name)
+const svc = (name) => ec.service.sync().name("org.moqui.dev.DevToolsServices." + name)
 
 spec({
     setupSpec() { login("john.doe") },

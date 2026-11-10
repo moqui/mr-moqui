@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- One moqui.resource.GitRepository: its settings, the fetch, init, export and import actions of
-    org.moqui.impl.GitServices (docs/data/Revision-Management.md), the storage of a db one with its collection and check,
+    org.moqui.git.GitServices (docs/data/Revision-Management.md), the storage of a db one with its collection and check,
     Git LFS, its clone URLs, branches and tags, recent commits, and the log of its updates (pushes, fetches, imports)
     with the outcome of their gitECA rules (docs/interfaces/Git-Hosting.md). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
@@ -31,24 +31,24 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
         <default-response url="."/>
     </transition>
-    <transition name="fetchGitRepository"><service-call name="org.moqui.impl.GitServices.fetch#GitRepository"/>
+    <transition name="fetchGitRepository"><service-call name="org.moqui.git.GitServices.fetch#GitRepository"/>
         <default-response url="."/></transition>
-    <transition name="initGitRepository"><service-call name="org.moqui.impl.GitServices.init#GitRepository"/>
+    <transition name="initGitRepository"><service-call name="org.moqui.git.GitServices.init#GitRepository"/>
         <default-response url="."/></transition>
-    <transition name="exportGitRepository"><service-call name="org.moqui.impl.GitServices.export#GitRepository"/>
+    <transition name="exportGitRepository"><service-call name="org.moqui.git.GitServices.export#GitRepository"/>
         <default-response url="."/></transition>
-    <transition name="importGitRepository"><service-call name="org.moqui.impl.GitServices.import#GitRepository"/>
+    <transition name="importGitRepository"><service-call name="org.moqui.git.GitServices.import#GitRepository"/>
         <default-response url="."/></transition>
-    <transition name="gcGitRepository"><service-call name="org.moqui.impl.GitServices.gc#GitRepositories"/>
+    <transition name="gcGitRepository"><service-call name="org.moqui.git.GitServices.gc#GitRepositories"/>
         <default-response url="."/></transition>
-    <transition name="fsckGitRepository"><service-call name="org.moqui.impl.GitServices.fsck#GitRepository"/>
+    <transition name="fsckGitRepository"><service-call name="org.moqui.git.GitServices.fsck#GitRepository"/>
         <default-response url="."/></transition>
-    <transition name="setupGitLfs"><service-call name="org.moqui.impl.GitServices.setup#GitLfs"/>
+    <transition name="setupGitLfs"><service-call name="org.moqui.git.GitServices.setup#GitLfs"/>
         <default-response url="."/></transition>
     <!-- run the gitECA post events of an update again -->
     <transition name="rerunGitUpdate">
         <service-call name="update#moqui.resource.GitUpdate" in-map="{updateId:updateId, ecaStatus:'pending', ecaError:null}"/>
-        <actions><service-call name="org.moqui.impl.GitServices.process#GitUpdate" in-map="{updateId:updateId}"/></actions>
+        <actions><service-call name="org.moqui.git.GitServices.process#GitUpdate" in-map="{updateId:updateId}"/></actions>
         <default-response url="."/></transition>
 
     <actions>
@@ -57,13 +57,13 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="isRemote" from="gitRepository?.repositoryKind == 'remote'"/>
         <set field="isDb" from="gitRepository?.repositoryKind == 'db'"/>
         <set field="hasAccessToken" from="!!gitRepository?.accessToken"/>
-        <service-call name="org.moqui.impl.GitServices.get#GitCloneUrls" in-map="{repositoryId:repositoryId}" out-map="cloneUrls"/>
+        <service-call name="org.moqui.git.GitServices.get#GitCloneUrls" in-map="{repositoryId:repositoryId}" out-map="cloneUrls"/>
         <!-- a mirror not fetched yet has no refs or commits to show -->
         <set field="refList" from="[]"/><set field="commitList" from="[]"/>
         <if condition="!isRemote || gitRepository?.lastFetchDate">
-            <service-call name="org.moqui.impl.GitServices.get#GitRefs" in-map="{repositoryId:repositoryId}" out-map="refsOut"/>
+            <service-call name="org.moqui.git.GitServices.get#GitRefs" in-map="{repositoryId:repositoryId}" out-map="refsOut"/>
             <set field="refList" from="refsOut.refList ?? []"/>
-            <service-call name="org.moqui.impl.GitServices.get#GitLog" in-map="{repositoryId:repositoryId, limit:20}" out-map="logOut"/>
+            <service-call name="org.moqui.git.GitServices.get#GitLog" in-map="{repositoryId:repositoryId, limit:20}" out-map="logOut"/>
             <set field="commitList" from="logOut.commitList ?? []"/>
         </if>
         <entity-find entity-name="moqui.resource.GitUpdate" list="updateList" limit="30">

@@ -16,13 +16,13 @@ along with this software (see the LICENSE.md file). If not, see
     engine last reported it (a trunk that registers by its registration, one that does not by an OPTIONS ping each minute:
     Reachable or Failed) and its last error, its provider profile (and whether a live check verified it), whether it takes
     emergency calls. Add and Edit are dialogs; TLS with SRTP is the default, and UDP, TCP or plain RTP only with a profile that
-    allows them. The password is never shown: an empty one keeps the old. org.moqui.impl.VoiceServices find#, store# and
+    allows them. The password is never shown: an empty one keeps the old. org.moqui.call.VoiceServices find#, store# and
     delete#VoiceTrunk. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Trunks" default-menu-index="2">
 
     <transition name="storeTrunk">
-        <service-call name="org.moqui.impl.VoiceServices.store#VoiceTrunk" in-map="{voiceTrunkId:voiceTrunkId || null, name:name, host:host,
+        <service-call name="org.moqui.call.VoiceServices.store#VoiceTrunk" in-map="{voiceTrunkId:voiceTrunkId || null, name:name, host:host,
                 port:port || null, transportEnumId:transportEnumId, mediaEncryptionEnumId:mediaEncryptionEnumId, providerProfileEnumId:providerProfileEnumId,
                 username:username || '', password:password || null, authUsername:authUsername || '', realm:realm || '', algorithms:algorithms || '',
                 registerFlag:registerFlag || 'N', emergencyCapable:emergencyCapable || 'N', inboundAddresses:inboundAddresses || '', fromDomain:fromDomain || '',
@@ -31,14 +31,14 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
     </transition>
     <transition name="deleteTrunk">
-        <service-call name="org.moqui.impl.VoiceServices.delete#VoiceTrunk" in-map="{voiceTrunkId:voiceTrunkId}"/>
+        <service-call name="org.moqui.call.VoiceServices.delete#VoiceTrunk" in-map="{voiceTrunkId:voiceTrunkId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Trunk removed</message></if></actions>
         <default-response url="."/>
     </transition>
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const out = ec.service.sync().name('org.moqui.impl.VoiceServices.find#VoiceTrunks').requireNewTransaction(true).disableAuthz().call() || {}
+        const out = ec.service.sync().name('org.moqui.call.VoiceServices.find#VoiceTrunks').requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         const when = (millis) => (millis ? ec.l10n.format(new Date(Number(millis)), 'MMM d, h:mm a') : '')
         trunkList = Array.from(out.trunkList || []).map((t) => Object.assign({}, t, {

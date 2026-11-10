@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The recent sign-in check of sensitive actions, in the browser: moqui.reauth (org.moqui.impl.RecentAuthServices over the
+ * The recent sign-in check of sensitive actions, in the browser: moqui.reauth (org.moqui.sso.RecentAuthServices over the
  * /ReAuth transitions; docs/security/Recent-Auth.md). An action the server guards with check#RecentAuth is refused with
  * reasonCode reauthRequired when the user did not sign in in the last five minutes; this asks the user to confirm who they
  * are and lets the caller try again.

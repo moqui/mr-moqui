@@ -1,4 +1,4 @@
-// Native push registrations (org.moqui.impl.NotificationServices register#PushDevice, unregister#PushDevice, the
+// Native push registrations (org.moqui.ui.NotificationServices register#PushDevice, unregister#PushDevice, the
 // /qapps/registerClientPush and unregisterClientPush transitions; service/web_push.rs and service/fcm.rs;
 // plans/Mobile-Desktop.md §5): only a request signed in by a device key registers, the registration is tied to that key
 // (revoking the key deletes it, renewing moves it, an ended key's goes at the next push), and send#WebPush sends it to
@@ -102,7 +102,7 @@ function post(transition, parameters, key) {
 const register = (token, key) => post("registerClientPush", {provider: "fcm", token, appId: "org.moqui.mobile", platform: "android"}, key)
 const row = token => sys(() => ec.entity.find(SUBSCRIPTION).condition("endpoint", token).one())
 const sendPush = parameters =>
-    sys(() => call("org.moqui.impl.NotificationServices.send#WebPush", Object.assign({userIdList: [JOHN], title: "Hi"}, parameters)))
+    sys(() => call("org.moqui.ui.NotificationServices.send#WebPush", Object.assign({userIdList: [JOHN], title: "Hi"}, parameters)))
 const fcmAnswer = (status, body) => ({method: "POST", url: SEND_URL, status, contentType: "application/json", body: JSON.stringify(body)})
 const tokenAnswer = {
     method: "POST",
@@ -185,7 +185,7 @@ feature("unregistering forgets the device's token, and another user cannot forge
         const phone = deviceKey("Push spec phone")
         register(TOKEN_PREFIX + "one", phone.key)
         ec.user.internalLoginUser("pushdevice.spec.other")
-        const other = sys(() => call("org.moqui.impl.NotificationServices.unregister#PushDevice", {token: TOKEN_PREFIX + "one"}))
+        const other = sys(() => call("org.moqui.ui.NotificationServices.unregister#PushDevice", {token: TOKEN_PREFIX + "one"}))
         const kept = row(TOKEN_PREFIX + "one")
         login("john.doe")
         const own = post("unregisterClientPush", {}, phone.key)
@@ -373,7 +373,7 @@ feature("a browser's subscription with no provider is still a Web Push subscript
             value.setSequencedIdPrimary()
             value.create()
         })
-        const status = sys(() => call("org.moqui.impl.NotificationServices.get#WebPushStatus", {}))
+        const status = sys(() => call("org.moqui.ui.NotificationServices.get#WebPushStatus", {}))
         sys(() => ec.entity.find(SUBSCRIPTION).condition("endpoint", endpoint).deleteAll())
         return {status}
     },

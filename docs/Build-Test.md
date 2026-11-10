@@ -157,9 +157,9 @@ build, with no features of its own.
 | `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Maximal (the default) and Debug | | | yes |
 | `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes |
 | `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | yes | yes |
-| `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.impl.GitServices`, the git server over HTTP and SSH, LFS | | yes | yes |
+| `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.git.GitServices`, the git server over HTTP and SSH, LFS | | yes | yes |
 | `image` | core | `org.moqui.impl.ImageServices` (`convert#Image`) and elFinder thumbnails | | yes | yes |
-| `xlsx` | core, moqui-report | The `xlsx` render mode, `org.moqui.impl.SpreadsheetServices` and the xlsx format of a scheduled report | | yes | yes |
+| `xlsx` | core, moqui-report | The `xlsx` render mode, `org.moqui.resource.SpreadsheetServices` and the xlsx format of a scheduled report | | yes | yes |
 | `llm` | host | The agents and the model providers (the `moqui-llm` crate, `org.moqui.agent.AgentAdminServices`; [LLM-A2A-Assist](../plans/LLM-A2A-Assist.md)) | yes | yes | yes |
 | `http`, `cluster-tls` | core | Remote REST, `http` locations, the OpenSearch client; the cluster certificate | yes | yes | yes |
 
@@ -178,7 +178,7 @@ The definitions still load, so components, screens and service files are the sam
 - An `xlsx` render fails with `xlsx is not built into this host`; an elFinder thumbnail is left out; a `git://`
   location has no provider, and `/git/...` is not routed.
 - gitECA rules are still read and checked; nothing runs them, since there are no git events.
-- Without `edge`, the `org.moqui.impl.EdgeServices` that need the link (pairing, clients, hosts, ping) fail with
+- Without `edge`, the `org.moqui.edge.EdgeServices` that need the link (pairing, clients, hosts, ping) fail with
   `edge link not built into this host` (`get#LinkStatus` answers state `notBuilt`), and `ec.service.passAuthority`
   throws `gRPC not built into this host`, so mr-pass takes REST.
 - Without `embedded-postgres`, `entity_ds_db_conf` must name an external `postgres` or `mysql` database, the sim
@@ -809,7 +809,7 @@ const capture = ec.factory.getTool("MailCapture")
 spec({ setupSpec() { capture.enable() }, cleanupSpec() { capture.reset() } })
 // in a feature
 capture.clear()
-const sent = call("org.moqui.impl.EmailClientServices.send#Draft", { emailMessageId: draftId })
+const sent = call("org.moqui.mail.EmailClientServices.send#Draft", { emailMessageId: draftId })
 capture.last().toList            // ["customer@example.com"]
 ```
 
@@ -861,7 +861,7 @@ spec credentials to a provider's sandbox. A spec that needs a real host opens it
 ### Notifications
 
 A `moqui test` run has no notification socket, and what is sent only to someone listening (the shell counts of
-`org.moqui.impl.ShellServices.publish#ShellCounts`) is not sent at all. A spec that checks those notifications turns on
+`org.moqui.ui.ShellServices.publish#ShellCounts`) is not sent at all. A spec that checks those notifications turns on
 the notification capture, which listens on the notification topic as the server's socket does and keeps each message in
 memory:
 

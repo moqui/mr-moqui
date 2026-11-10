@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.ChatServices`: who reaches a room (members, a public room's readers, a private room's strangers, a
+//! `org.moqui.chat.ChatServices`: who reaches a room (members, a public room's readers, a private room's strangers, a
 //! record room through a stub of the record visibility hook), direct rooms one per set of users, the timeline (pages,
 //! edits, redactions, reactions, threads, replies, pins), unread and mention counts by notification level, the pushes
 //! (to members only, after the commit), presence (status, heartbeat, auto-away, clear-at, do not disturb), the search
@@ -32,7 +32,7 @@ use moqui_lib::object::{to_plain_string, Value};
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::entity::EntityFacade;
 
-const SERVICES: &str = "org.moqui.impl.ChatServices";
+const SERVICES: &str = "org.moqui.chat.ChatServices";
 const MINUTE: i64 = 60_000;
 
 /// The stubs the tests point the hooks at: the record visibility service (a record whose id starts with OPEN is
@@ -48,7 +48,7 @@ const STUBS: &str = r#"<services>
     <service verb="push" noun="ThenFail">
         <in-parameters><parameter name="userId"/></in-parameters>
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatUser:' + userId,
+            ec.service.sync().name('org.moqui.chat.ChatServices.push#Signal').parameters({topic: 'chatUser:' + userId,
                 userIdList: [userId], message: {kind: 'room', action: 'rolledBack'}}).call()
             ec.message.addError('failed after the push')
         ]]></script></actions>
@@ -68,7 +68,7 @@ const STUBS: &str = r#"<services>
             <parameter name="threadRootEventSeq" type="Integer"/></in-parameters>
         <actions><script><![CDATA[
             ec.artifactExecution.disableAuthz()
-            ec.service.sync().name('org.moqui.impl.ChatServices.send#Message').parameters({chatRoomId: chatRoomId,
+            ec.service.sync().name('org.moqui.chat.ChatServices.send#Message').parameters({chatRoomId: chatRoomId,
                 senderUserId: agentUserId, body: '<p>echo: ' + bodyText + '</p>', threadRootEventSeq: threadRootEventSeq}).call()
         ]]></script></actions>
     </service>
@@ -88,8 +88,8 @@ fn setup(name: &str, pools: crate::service::ServicePools) -> (ExecutionContext, 
 fn install(dir: &std::path::Path) {
     let framework = crate::context::framework_dir().join("service/org/moqui");
     let paths = vec![
-        framework.join("impl/ChatServices.xml"),
-        framework.join("impl/ShellServices.xml"),
+        framework.join("chat/ChatServices.xml"),
+        framework.join("ui/ShellServices.xml"),
         dir.join("service/test/ChatStub.xml"),
     ];
     let failures = crate::service::lint(&paths).unwrap();

@@ -17,14 +17,14 @@ along with this software (see the LICENSE.md file). If not, see
     ringing), and their settings: the strategy (longest idle, round robin, all at once), how long an offer rings, the wait
     and length limits and the fallback past them, wrap-up after a call, how often the caller hears their place, hold music
     and a position prompt (uploaded; without them a tone pattern), and hours. Route a number to a queue under Numbers.
-    org.moqui.impl.CallQueueServices (the VoiceAdmin permission). -->
+    org.moqui.call.CallQueueServices (the VoiceAdmin permission). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Queues" default-menu-index="11">
 
     <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>
     <transition-include name="searchTargets" location="component://basic-comms/template/VoiceTransitions.xml"/>
     <transition name="storeQueue">
-        <service-call name="org.moqui.impl.CallQueueServices.store#CallQueue" in-map="{callQueueId:callQueueId || null, name:name || '',
+        <service-call name="org.moqui.call.CallQueueServices.store#CallQueue" in-map="{callQueueId:callQueueId || null, name:name || '',
                 description:description || '', strategyEnumId:strategyEnumId || null, ringSeconds:ringSeconds || null, maxWaitSeconds:maxWaitSeconds || null,
                 maxLength:maxLength || null, wrapUpSeconds:wrapUpSeconds, announceSeconds:announceSeconds, commsScheduleId:commsScheduleId || '',
                 fallbackTypeEnumId:fallbackNumber ? 'CtgNumber' : (fallbackTarget ? fallbackTarget.split(':')[0] : ''),
@@ -33,28 +33,28 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/>
     </transition>
     <transition name="deleteQueue">
-        <service-call name="org.moqui.impl.CallQueueServices.delete#CallQueue" in-map="{callQueueId:callQueueId}"/>
+        <service-call name="org.moqui.call.CallQueueServices.delete#CallQueue" in-map="{callQueueId:callQueueId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Queue removed</message></if></actions>
         <default-response url="."/>
     </transition>
     <transition name="storeAgent">
-        <service-call name="org.moqui.impl.CallQueueServices.store#CallQueueAgent" in-map="{callQueueId:callQueueId, userId:userId, sequenceNum:sequenceNum || null}"/>
+        <service-call name="org.moqui.call.CallQueueServices.store#CallQueueAgent" in-map="{callQueueId:callQueueId, userId:userId, sequenceNum:sequenceNum || null}"/>
         <default-response url="."/>
     </transition>
     <transition name="deleteAgent">
-        <service-call name="org.moqui.impl.CallQueueServices.delete#CallQueueAgent" in-map="{callQueueId:callQueueId, userId:userId}"/>
+        <service-call name="org.moqui.call.CallQueueServices.delete#CallQueueAgent" in-map="{callQueueId:callQueueId, userId:userId}"/>
         <default-response url="."/>
     </transition>
     <transition name="uploadAudio">
         <actions><script><![CDATA[
-            ec.service.sync().name('org.moqui.impl.CallQueueServices.store#CallQueueAudio').parameters({callQueueId: ec.web.parameters.callQueueId,
+            ec.service.sync().name('org.moqui.call.CallQueueServices.store#CallQueueAudio').parameters({callQueueId: ec.web.parameters.callQueueId,
                 kind: ec.web.parameters.kind || 'music', file: ec.web.multiPartParameters.audioFile || null}).call()
             if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize('Audio saved'), 'success')
         ]]></script></actions>
         <default-response url="."/>
     </transition>
     <transition name="removeAudio">
-        <service-call name="org.moqui.impl.CallQueueServices.store#CallQueueAudio" in-map="{callQueueId:callQueueId, kind:kind, remove:true}"/>
+        <service-call name="org.moqui.call.CallQueueServices.store#CallQueueAudio" in-map="{callQueueId:callQueueId, kind:kind, remove:true}"/>
         <default-response url="."/>
     </transition>
 
@@ -65,9 +65,9 @@ along with this software (see the LICENSE.md file). If not, see
             .disableAuthz().list()).map((e) => ({key: e.enumId, text: L(e.description)}))
         strategyOptions = enums('CallQueueStrategy')
         const strategyText = new Map(strategyOptions.map((o) => [o.key, o.text]))
-        scheduleOptions = Array.from(call('org.moqui.impl.CallHandlingServices.find#CommsSchedules', {shared: true}).scheduleList || [])
+        scheduleOptions = Array.from(call('org.moqui.call.CallHandlingServices.find#CommsSchedules', {shared: true}).scheduleList || [])
             .map((s) => ({key: s.commsScheduleId, text: s.name + (s.timeZone ? ' (' + s.timeZone + ')' : '')}))
-        const queues = Array.from(call('org.moqui.impl.CallQueueServices.find#CallQueues').queueList || [])
+        const queues = Array.from(call('org.moqui.call.CallQueueServices.find#CallQueues').queueList || [])
         ec.message.clearErrors()
         const STATES = {available: L('Available'), out: L('Logged out'), paused: L('Paused'), wrapUp: L('In wrap-up'), inCall: L('In a call'),
             offered: L('Ringing'), disabled: L('Disabled')}

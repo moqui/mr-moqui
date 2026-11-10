@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions>
         <script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.EtlServices.get#EtlRuns').parameters({mappingId: context.mappingId || null, limit: 100}).call() || {}
+            const out = ec.service.sync().name('org.moqui.dev.EtlServices.get#EtlRuns').parameters({mappingId: context.mappingId || null, limit: 100}).call() || {}
             runsError = ec.message.hasError() ? ec.message.errorsString : null
             ec.message.clearErrors()
             const statuses = {EtlrPending: 'Pending', EtlrRunning: 'Running', EtlrDone: 'Done', EtlrFailed: 'Failed'}

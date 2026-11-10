@@ -14,37 +14,37 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Voice, Schedules (plans/Comms-Framework.md §5.3, §5.4, V3): the deployment's business hours, for ring groups and for anyone's
     call handling rules: weekly hours, hours on dates, and holidays (once, or each year), read in the schedule's time zone; with
-    whether each is open now. org.moqui.impl.CallHandlingServices find#CommsSchedules (shared), store#, delete#CommsSchedule,
+    whether each is open now. org.moqui.call.CallHandlingServices find#CommsSchedules (shared), store#, delete#CommsSchedule,
     store#, delete#CommsScheduleRule and check#CommsSchedule (the VoiceAdmin permission). A user's own schedules are theirs. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Schedules" default-menu-index="9">
 
     <transition name="storeSchedule">
-        <service-call name="org.moqui.impl.CallHandlingServices.store#CommsSchedule" in-map="{commsScheduleId:commsScheduleId || null, name:name || '',
+        <service-call name="org.moqui.call.CallHandlingServices.store#CommsSchedule" in-map="{commsScheduleId:commsScheduleId || null, name:name || '',
                 timeZone:timeZone || '', description:description || '', shared:true}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Schedule saved</message></if></actions>
         <default-response url="."/>
     </transition>
     <transition name="deleteSchedule">
-        <service-call name="org.moqui.impl.CallHandlingServices.delete#CommsSchedule" in-map="{commsScheduleId:commsScheduleId}"/>
+        <service-call name="org.moqui.call.CallHandlingServices.delete#CommsSchedule" in-map="{commsScheduleId:commsScheduleId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Schedule removed</message></if></actions>
         <default-response url="."/>
     </transition>
     <transition name="storeRule">
-        <service-call name="org.moqui.impl.CallHandlingServices.store#CommsScheduleRule" in-map="{commsScheduleId:commsScheduleId, ruleTypeEnumId:ruleTypeEnumId,
+        <service-call name="org.moqui.call.CallHandlingServices.store#CommsScheduleRule" in-map="{commsScheduleId:commsScheduleId, ruleTypeEnumId:ruleTypeEnumId,
                 dayOfWeek:dayOfWeek || null, fromTime:fromTime || '', thruTime:thruTime || '', onDate:onDate || '', thruDate:thruDate || '',
                 repeatYearly:repeatYearly || 'N', description:description || ''}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Hours saved</message></if></actions>
         <default-response url="."/>
     </transition>
     <transition name="deleteRule">
-        <service-call name="org.moqui.impl.CallHandlingServices.delete#CommsScheduleRule" in-map="{commsScheduleId:commsScheduleId, ruleSeqId:ruleSeqId}"/>
+        <service-call name="org.moqui.call.CallHandlingServices.delete#CommsScheduleRule" in-map="{commsScheduleId:commsScheduleId, ruleSeqId:ruleSeqId}"/>
         <default-response url="."/>
     </transition>
 
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)
-        const call = (name, parameters) => ec.service.sync().name('org.moqui.impl.CallHandlingServices.' + name).parameters(parameters || {})
+        const call = (name, parameters) => ec.service.sync().name('org.moqui.call.CallHandlingServices.' + name).parameters(parameters || {})
             .requireNewTransaction(true).disableAuthz().call() || {}
         const DAYS = ['', L('Monday'), L('Tuesday'), L('Wednesday'), L('Thursday'), L('Friday'), L('Saturday'), L('Sunday')]
         dayOptions = DAYS.slice(1).map((text, i) => ({key: String(i + 1), text}))

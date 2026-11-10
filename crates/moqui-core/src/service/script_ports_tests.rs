@@ -199,15 +199,15 @@ fn recaptcha_without_a_secret_is_skipped_and_without_a_token_fails() {
     let (_facade, context) = setup();
     let _entered = context.enter();
     let _authz = context.disable_authz();
-    install(&["impl/GoogleServices.xml"]);
+    install(&["ext/GoogleServices.xml"]);
     crate::service::sync(
-        "org.moqui.impl.GoogleServices.verify#ReCaptcha",
+        "org.moqui.ext.GoogleServices.verify#ReCaptcha",
         &params(&[("reCaptchaToken", "t")]),
     )
     .unwrap();
     assert_eq!(errors(&context), "");
     let _ = crate::service::sync(
-        "org.moqui.impl.GoogleServices.verify#ReCaptcha",
+        "org.moqui.ext.GoogleServices.verify#ReCaptcha",
         &params(&[("reCaptchaSecret", "s")]),
     );
     assert!(errors(&context).contains("No reCAPTCHA token"), "{}", errors(&context));
@@ -219,11 +219,11 @@ fn seed_instance(facade: &EntityFacade, port: u16) {
         "moqui.server.instance.InstanceHostType",
         &[
             ("hostTypeId", "Docker"),
-            ("initService", "org.moqui.impl.InstanceServices.init#InstanceDocker"),
-            ("startService", "org.moqui.impl.InstanceServices.start#InstanceDocker"),
-            ("stopService", "org.moqui.impl.InstanceServices.stop#InstanceDocker"),
-            ("removeService", "org.moqui.impl.InstanceServices.remove#InstanceDocker"),
-            ("checkService", "org.moqui.impl.InstanceServices.check#InstanceDocker"),
+            ("initService", "org.moqui.dev.InstanceServices.init#InstanceDocker"),
+            ("startService", "org.moqui.dev.InstanceServices.start#InstanceDocker"),
+            ("stopService", "org.moqui.dev.InstanceServices.stop#InstanceDocker"),
+            ("removeService", "org.moqui.dev.InstanceServices.remove#InstanceDocker"),
+            ("checkService", "org.moqui.dev.InstanceServices.check#InstanceDocker"),
         ],
     );
     seed(
@@ -291,7 +291,7 @@ fn docker_services_call_the_host_admin_api_and_keep_the_container_id() {
     let (facade, context) = setup();
     let _entered = context.enter();
     let _authz = context.disable_authz();
-    install(&["impl/InstanceServices.xml"]);
+    install(&["dev/InstanceServices.xml"]);
     let (listener, port) = loopback();
     seed_instance(&facade, port);
     let server = serve(
@@ -312,7 +312,7 @@ fn docker_services_call_the_host_admin_api_and_keep_the_container_id() {
     );
 
     let out = crate::service::sync(
-        "org.moqui.impl.InstanceServices.init#InstanceDocker",
+        "org.moqui.dev.InstanceServices.init#InstanceDocker",
         &params(&[("appInstanceId", "A1")]),
     )
     .unwrap();
@@ -330,33 +330,33 @@ fn docker_services_call_the_host_admin_api_and_keep_the_container_id() {
     );
 
     let out = crate::service::sync(
-        "org.moqui.impl.InstanceServices.start#InstanceDocker",
+        "org.moqui.dev.InstanceServices.start#InstanceDocker",
         &params(&[("appInstanceId", "A1")]),
     )
     .unwrap();
     assert_eq!(text(&out, "instanceStarted"), "true");
     let out = crate::service::sync(
-        "org.moqui.impl.InstanceServices.stop#InstanceDocker",
+        "org.moqui.dev.InstanceServices.stop#InstanceDocker",
         &params(&[("appInstanceId", "A1")]),
     )
     .unwrap();
     assert_eq!(text(&out, "instanceStopped"), "false");
     assert!(messages(&context).contains("was not running"), "{}", messages(&context));
     let out = crate::service::sync(
-        "org.moqui.impl.InstanceServices.get#DockerStatus",
+        "org.moqui.dev.InstanceServices.get#DockerStatus",
         &params(&[("appInstanceId", "A1")]),
     )
     .unwrap();
     assert_eq!(text(&out, "instanceRunning"), "true");
     assert_eq!(text(&out, "statusString"), "running");
     let out = crate::service::sync(
-        "org.moqui.impl.InstanceServices.get#DockerLog",
+        "org.moqui.dev.InstanceServices.get#DockerLog",
         &params(&[("appInstanceId", "A1")]),
     )
     .unwrap();
     assert_eq!(text(&out, "instanceLog"), "started");
     let out = crate::service::sync(
-        "org.moqui.impl.InstanceServices.remove#InstanceDocker",
+        "org.moqui.dev.InstanceServices.remove#InstanceDocker",
         &params(&[("appInstanceId", "A1")]),
     )
     .unwrap();
@@ -504,7 +504,7 @@ fn database_services_run_their_admin_sql_on_the_database_host_conf() {
     let (facade, context) = setup();
     let _entered = context.enter();
     let _authz = context.disable_authz();
-    install(&["impl/InstanceServices.xml"]);
+    install(&["dev/InstanceServices.xml"]);
     let statements = Arc::new(Mutex::new(Vec::new()));
     // create: no database, no user; then check: both there
     let counts = Arc::new(Mutex::new(vec![0, 0, 1, 1]));
@@ -527,9 +527,9 @@ fn database_services_run_their_admin_sql_on_the_database_host_conf() {
             ("confName", "postgres"),
             (
                 "createService",
-                "org.moqui.impl.InstanceServices.create#DatabasePostgres",
+                "org.moqui.dev.InstanceServices.create#DatabasePostgres",
             ),
-            ("checkService", "org.moqui.impl.InstanceServices.check#DatabasePostgres"),
+            ("checkService", "org.moqui.dev.InstanceServices.check#DatabasePostgres"),
         ],
     );
     seed(
@@ -567,7 +567,7 @@ fn database_services_run_their_admin_sql_on_the_database_host_conf() {
     }
 
     let out = crate::service::sync(
-        "org.moqui.impl.InstanceServices.create#AppDatabase",
+        "org.moqui.dev.InstanceServices.create#AppDatabase",
         &params(&[("appInstanceId", "A2")]),
     )
     .unwrap();
@@ -575,7 +575,7 @@ fn database_services_run_their_admin_sql_on_the_database_host_conf() {
     assert_eq!(text(&out, "databaseCreated"), "true");
     assert_eq!(text(&out, "userCreated"), "true");
     let out = crate::service::sync(
-        "org.moqui.impl.InstanceServices.check#AppDatabase",
+        "org.moqui.dev.InstanceServices.check#AppDatabase",
         &params(&[("appInstanceId", "A2")]),
     )
     .unwrap();
@@ -612,7 +612,7 @@ fn database_services_run_their_admin_sql_on_the_database_host_conf() {
     env.set("envValue", Value::string("x; DROP TABLE y"));
     env.update(&facade).unwrap();
     let err = crate::service::sync(
-        "org.moqui.impl.InstanceServices.create#AppDatabase",
+        "org.moqui.dev.InstanceServices.create#AppDatabase",
         &params(&[("appInstanceId", "A2")]),
     );
     assert!(
@@ -649,7 +649,7 @@ fn user_wiki_spaces_are_each_listed_once_with_their_page_count() {
     let (facade, context) = setup();
     let _entered = context.enter();
     let _authz = context.disable_authz();
-    install(&["EntityServices.xml", "impl/WikiServices.xml"]);
+    install(&["EntityServices.xml", "resource/WikiServices.xml"]);
     for (space, restrict) in [("WOPEN", "N"), ("WSHUT", "Y"), ("WNONE", "Y")] {
         seed(
             &facade,
@@ -701,7 +701,7 @@ fn user_wiki_spaces_are_each_listed_once_with_their_page_count() {
     }
     let spaces = |user: &str| -> Vec<(String, String, String, String)> {
         let out = crate::service::sync(
-            "org.moqui.impl.WikiServices.get#UserWikiSpaces",
+            "org.moqui.resource.WikiServices.get#UserWikiSpaces",
             &params(&[("userId", user)]),
         )
         .unwrap_or_else(|err| panic!("{err}; {}", errors(&context)));
@@ -743,9 +743,9 @@ fn wiki_pages_keep_versions_and_move_clone_and_delete() {
     let _entered = context.enter();
     let _authz = context.disable_authz();
     // get#WikiPageManualDocumentData implements add#ManualDocumentData.
-    install(&["EntityServices.xml", "impl/WikiServices.xml"]);
+    install(&["EntityServices.xml", "resource/WikiServices.xml"]);
     let sync = |name: &str, pairs: &[(&str, &str)]| {
-        let out = crate::service::sync(&format!("org.moqui.impl.WikiServices.{name}"), &params(pairs))
+        let out = crate::service::sync(&format!("org.moqui.resource.WikiServices.{name}"), &params(pairs))
             .unwrap_or_else(|err| panic!("{name}: {err}; {}", errors(&context)));
         assert_eq!(errors(&context), "", "{name}");
         out
@@ -918,7 +918,7 @@ fn wiki_pages_keep_versions_and_move_clone_and_delete() {
     // a page with a child is kept (an error, so a SECA's work before it rolls back); the child, then the page, are
     // deleted
     let _ = crate::service::sync(
-        "org.moqui.impl.WikiServices.delete#WikiPage",
+        "org.moqui.resource.WikiServices.delete#WikiPage",
         &params(&[("wikiSpaceId", "TS2"), ("pagePath", "Renamed")]),
     );
     assert!(errors(&context).contains("has pages under it"), "{}", errors(&context));
@@ -949,7 +949,7 @@ fn wiki_pages_keep_versions_and_move_clone_and_delete() {
 fn a_users_notes_space_is_made_on_first_use_and_kept() {
     let (facade, context) = setup();
     let _entered = context.enter();
-    install(&["EntityServices.xml", "impl/WikiServices.xml"]);
+    install(&["EntityServices.xml", "resource/WikiServices.xml"]);
     {
         let _authz = context.disable_authz();
         seed(
@@ -969,7 +969,7 @@ fn a_users_notes_space_is_made_on_first_use_and_kept() {
         crate::user::internal_login_user("noter").unwrap();
     }
     let ensure = |pairs: &[(&str, &str)]| {
-        crate::service::sync("org.moqui.impl.WikiServices.ensure#UserNotesSpace", &params(pairs)).unwrap()
+        crate::service::sync("org.moqui.resource.WikiServices.ensure#UserNotesSpace", &params(pairs)).unwrap()
     };
     let first = ensure(&[]);
     assert_eq!(errors(&context), "");
@@ -1014,7 +1014,7 @@ fn a_users_notes_space_is_made_on_first_use_and_kept() {
     assert_eq!(errors(&context), "");
     // the owner may write in it, as QuickNote does
     let note = crate::service::sync(
-        "org.moqui.impl.WikiServices.update#WikiPage",
+        "org.moqui.resource.WikiServices.update#WikiPage",
         &params(&[
             ("wikiSpaceId", "NOTES_NOTER"),
             ("pageName", "Groceries"),
@@ -1027,7 +1027,7 @@ fn a_users_notes_space_is_made_on_first_use_and_kept() {
 
     // another user's space is not made for a caller with authorization on
     let theirs = crate::service::sync(
-        "org.moqui.impl.WikiServices.ensure#UserNotesSpace",
+        "org.moqui.resource.WikiServices.ensure#UserNotesSpace",
         &params(&[("userId", "OTHER")]),
     )
     .unwrap();

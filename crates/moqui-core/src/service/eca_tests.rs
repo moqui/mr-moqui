@@ -283,7 +283,7 @@ fn privileged_group_membership_is_denied_to_a_non_member() {
         let mut row = facade.make_value("moqui.security.UserGroupMember").unwrap();
         row.set("userGroupId", Value::string(group));
         row.set("userId", Value::string("U1"));
-        row.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
+        row.set("fromDate", basic_convert(&Value::I64(0), "Timestamp").value);
         let err = row.create(&facade).expect_err("privileged group");
         let text = err.to_string();
         assert!(
@@ -330,7 +330,7 @@ fn the_security_checks_run_on_each_engine() {
             let mut row = facade.make_value("moqui.security.UserGroupMember").unwrap();
             row.set("userGroupId", Value::string(group));
             row.set("userId", Value::string("U1"));
-            row.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
+            row.set("fromDate", basic_convert(&Value::I64(0), "Timestamp").value);
             row
         };
         let document_field = |seq: &str| {
@@ -361,7 +361,9 @@ fn the_security_checks_run_on_each_engine() {
         crate::script::clear_context_stack();
         assert!(!user_in_group(&facade, "ADMIN").unwrap());
         // a plain group, a plain path: allowed to the same user
-        member("ALL_USERS").create(&facade).expect("a group that is not privileged");
+        member("ALL_USERS")
+            .create(&facade)
+            .expect("a group that is not privileged");
         let _authz = context.disable_authz();
         member("ADMIN").create(&facade).expect("authz disabled");
         permission_row(&facade, "ADMIN", "ADMIN_PASSWORD")
@@ -391,7 +393,7 @@ fn a_group_and_a_permission_a_conf_adds_by_element_are_guarded_beside_the_defaul
         let mut row = facade.make_value("moqui.security.UserGroupMember").unwrap();
         row.set("userGroupId", Value::string(group));
         row.set("userId", Value::string("U1"));
-        row.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
+        row.set("fromDate", basic_convert(&Value::I64(0), "Timestamp").value);
         let err = row.create(&facade).expect_err("privileged group");
         assert!(
             err.to_string().contains(&format!("membership of group {group}")),
@@ -426,7 +428,7 @@ fn a_group_and_a_permission_a_conf_adds_by_element_are_guarded_beside_the_defaul
 fn a_membership_in_a_group_granting_a_sealed_permission_needs_its_holder() {
     let (facade, context, _runtime) = boot_security();
     let _entered = context.enter();
-    let stamp = |millis: i64| basic_convert(&Value::I64(millis), "java.sql.Timestamp").value;
+    let stamp = |millis: i64| basic_convert(&Value::I64(millis), "Timestamp").value;
     {
         let _authz = context.disable_authz();
         seed_entity_allow(&facade);
@@ -479,7 +481,7 @@ fn a_membership_in_a_group_granting_a_sealed_permission_needs_its_holder() {
 #[test]
 fn a_membership_ends_sooner_only_by_an_update_to_an_earlier_set_end() {
     use crate::service::membership_ends_sooner;
-    let stamp = |millis: i64| basic_convert(&Value::I64(millis), "java.sql.Timestamp").value;
+    let stamp = |millis: i64| basic_convert(&Value::I64(millis), "Timestamp").value;
     assert!(!membership_ends_sooner(&stamp(1_000), None), "a create");
     assert!(
         membership_ends_sooner(&stamp(1_000), Some(&Value::Null)),
@@ -566,7 +568,7 @@ fn a_permission_granted_to_all_users_counts_only_with_a_membership_row() {
     let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
     member.set("userGroupId", Value::string("ALL_USERS"));
     member.set("userId", Value::string("U1"));
-    member.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
+    member.set("fromDate", basic_convert(&Value::I64(0), "Timestamp").value);
     member.create(&facade).unwrap();
     assert!(user_has_permission(&facade, "ALL_USERS_PERM").unwrap());
 }
@@ -641,7 +643,7 @@ fn permission_row(facade: &EntityFacade, group_id: &str, permission_id: &str) ->
     let mut row = facade.make_value("moqui.security.UserGroupPermission").unwrap();
     row.set("userGroupId", Value::string(group_id));
     row.set("userPermissionId", Value::string(permission_id));
-    row.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
+    row.set("fromDate", basic_convert(&Value::I64(0), "Timestamp").value);
     row
 }
 
@@ -649,7 +651,7 @@ fn member_row(facade: &EntityFacade, group_id: &str, user_id: &str) -> EntityVal
     let mut row = facade.make_value("moqui.security.UserGroupMember").unwrap();
     row.set("userGroupId", Value::string(group_id));
     row.set("userId", Value::string(user_id));
-    row.set("fromDate", basic_convert(&Value::I64(0), "java.sql.Timestamp").value);
+    row.set("fromDate", basic_convert(&Value::I64(0), "Timestamp").value);
     row
 }
 

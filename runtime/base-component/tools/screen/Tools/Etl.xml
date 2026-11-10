@@ -14,20 +14,20 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Mappings that load a file, a query result or entity data into an entity or a service
     (plans/archive/Tools-Database.md §10.4): Mappings, a Mapping's form (Mapping.qvue), Runs, a Run and Value maps, over
-    org.moqui.impl.EtlServices. The JSON transitions here serve Mapping.qvue and the data grid's "Load into…"; every
+    org.moqui.dev.EtlServices. The JSON transitions here serve Mapping.qvue and the data grid's "Load into…"; every
     write is a POST. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="ETL" default-menu-index="5" menu-image="sym_o_move_down" menu-image-type="icon">
     <always-actions>
         <!-- the database: db, else the last choice, else the default group's (template/DatabaseParts.xml) -->
         <!-- the databases of get#DatabaseList, the entity groups' only -->
-        <set field="databaseList" from="((ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseList').parameters({includeExternal: false}).call() || {}).databases || []).map((database) =&gt; Object.assign({}, database, {groupNames: database.groupNames || [], label: database.external ? (database.description || database.db) + ' (external)' : (database.groupNames || []).join(', ') + ' (' + database.databaseConf + ')'}))"/>
+        <set field="databaseList" from="((ec.service.sync().name('org.moqui.dev.DatabaseServices.get#DatabaseList').parameters({includeExternal: false}).call() || {}).databases || []).map((database) =&gt; Object.assign({}, database, {groupNames: database.groupNames || [], label: database.external ? (database.description || database.db) + ' (external)' : (database.groupNames || []).join(', ') + ' (' + database.databaseConf + ')'}))"/>
         <set field="db" from="[db, ec.user.getPreference('database.selected')].find((name) =&gt; databaseList.some((database) =&gt; database.db == name)) || databaseList[0]?.db"/>
         <set field="selectedDatabase" from="databaseList.find((database) =&gt; database.db == db)"/>
     </always-actions>
 
     <!-- ===== JSON transitions for Etl/Mapping (Mapping.qvue) and the data grid's "Load into…" (Data/Grid.qvue), over
-        org.moqui.impl.EtlServices; each answers {..., errors} ===== -->
+        org.moqui.dev.EtlServices; each answers {..., errors} ===== -->
     <!-- what the forms offer: the targets holding term, the value maps, whether the user may write expressions -->
     <transition name="etlInfo" method="get" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
@@ -64,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (text == null || text === '') return fallback
                     try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
                 }
-                out = ec.service.sync().name('org.moqui.impl.EtlServices.get#EtlMapping').parameters({mappingId: String(context.mappingId || '')}).call() || {}
+                out = ec.service.sync().name('org.moqui.dev.EtlServices.get#EtlMapping').parameters({mappingId: String(context.mappingId || '')}).call() || {}
             } catch (e) { errors = String(e.message || e) }
             if (ec.message.hasError()) errors = ec.message.errorsString
             ec.message.clearErrors()
@@ -83,7 +83,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (text == null || text === '') return fallback
                     try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
                 }
-                out = ec.service.sync().name('org.moqui.impl.EtlServices.store#EtlMapping').parameters({mapping: body('mappingJson', null)}).call() || {}
+                out = ec.service.sync().name('org.moqui.dev.EtlServices.store#EtlMapping').parameters({mapping: body('mappingJson', null)}).call() || {}
             } catch (e) { errors = String(e.message || e) }
             if (ec.message.hasError()) errors = ec.message.errorsString
             ec.message.clearErrors()
@@ -102,7 +102,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (text == null || text === '') return fallback
                     try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
                 }
-                out = ec.service.sync().name('org.moqui.impl.EtlServices.match#EtlFields').parameters({columns: body('columnsJson', []), targetTypeEnumId: context.targetTypeEnumId || 'EtltEntity', targetName: String(context.targetName || '')}).call() || {}
+                out = ec.service.sync().name('org.moqui.dev.EtlServices.match#EtlFields').parameters({columns: body('columnsJson', []), targetTypeEnumId: context.targetTypeEnumId || 'EtltEntity', targetName: String(context.targetName || '')}).call() || {}
             } catch (e) { errors = String(e.message || e) }
             if (ec.message.hasError()) errors = ec.message.errorsString
             ec.message.clearErrors()
@@ -121,7 +121,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (text == null || text === '') return fallback
                     try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
                 }
-                out = ec.service.sync().name('org.moqui.impl.EtlServices.get#GridFileInfo').parameters({location: String(context.location || ''), sheet: context.sheet || null, headerRow: Number(context.headerRow || 1), format: context.format || 'auto', limit: Number(context.limit || 20)}).call() || {}
+                out = ec.service.sync().name('org.moqui.dev.EtlServices.get#GridFileInfo').parameters({location: String(context.location || ''), sheet: context.sheet || null, headerRow: Number(context.headerRow || 1), format: context.format || 'auto', limit: Number(context.limit || 20)}).call() || {}
             } catch (e) { errors = String(e.message || e) }
             if (ec.message.hasError()) errors = ec.message.errorsString
             ec.message.clearErrors()
@@ -140,7 +140,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (text == null || text === '') return fallback
                     try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
                 }
-                out = ec.service.sync().name('org.moqui.impl.EtlServices.check#EtlSample').parameters({mappingId: context.mappingId || null, mapping: body('mappingJson', null), location: context.location || null, maxRows: Number(context.maxRows || 200)}).call() || {}
+                out = ec.service.sync().name('org.moqui.dev.EtlServices.check#EtlSample').parameters({mappingId: context.mappingId || null, mapping: body('mappingJson', null), location: context.location || null, maxRows: Number(context.maxRows || 200)}).call() || {}
             } catch (e) { errors = String(e.message || e) }
             if (ec.message.hasError()) errors = ec.message.errorsString
             ec.message.clearErrors()
@@ -159,7 +159,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (text == null || text === '') return fallback
                     try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
                 }
-                out = ec.service.sync().name('org.moqui.impl.EtlServices.run#EtlMapping').parameters({mappingId: context.mappingId || null, mapping: body('mappingJson', null), check: String(context.check) == 'true', location: context.location || null,
+                out = ec.service.sync().name('org.moqui.dev.EtlServices.run#EtlMapping').parameters({mappingId: context.mappingId || null, mapping: body('mappingJson', null), check: String(context.check) == 'true', location: context.location || null,
                     startRow: context.startRow ? Number(context.startRow) : null}).call() || {}
             } catch (e) { errors = String(e.message || e) }
             if (ec.message.hasError()) errors = ec.message.errorsString
@@ -179,7 +179,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (text == null || text === '') return fallback
                     try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
                 }
-                out = ec.service.sync().name('org.moqui.impl.EtlServices.get#EtlRuns').parameters({mappingId: context.mappingId || null, limit: Number(context.limit || 20)}).call() || {}
+                out = ec.service.sync().name('org.moqui.dev.EtlServices.get#EtlRuns').parameters({mappingId: context.mappingId || null, limit: Number(context.limit || 20)}).call() || {}
             } catch (e) { errors = String(e.message || e) }
             if (ec.message.hasError()) errors = ec.message.errorsString
             ec.message.clearErrors()
@@ -198,7 +198,7 @@ along with this software (see the LICENSE.md file). If not, see
                     if (text == null || text === '') return fallback
                     try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
                 }
-                out = ec.service.sync().name('org.moqui.impl.EtlServices.upload#GridFile').parameters({file: context.file}).call() || {}
+                out = ec.service.sync().name('org.moqui.dev.EtlServices.upload#GridFile').parameters({file: context.file}).call() || {}
             } catch (e) { errors = String(e.message || e) }
             if (ec.message.hasError()) errors = ec.message.errorsString
             ec.message.clearErrors()
@@ -222,16 +222,16 @@ along with this software (see the LICENSE.md file). If not, see
                 try { nextRun = ec.service.nextCronExecution(cronExpression, null) } catch (e) { throw new Error('Not a cron expression: ' + String(e.message || e)) }
                 if (nextRun == null) throw new Error('The cron expression ' + cronExpression + ' is never due')
                 // the same check as a change of the mapping: store it as it is
-                const mapping = (ec.service.sync().name('org.moqui.impl.EtlServices.get#EtlMapping').parameters({mappingId}).call() || {}).mapping
+                const mapping = (ec.service.sync().name('org.moqui.dev.EtlServices.get#EtlMapping').parameters({mappingId}).call() || {}).mapping
                 if (!mapping || failed()) throw new Error(ec.message.errorsString || 'No mapping ' + mappingId)
-                ec.service.sync().name('org.moqui.impl.EtlServices.store#EtlMapping').parameters({mapping}).call()
+                ec.service.sync().name('org.moqui.dev.EtlServices.store#EtlMapping').parameters({mapping}).call()
                 if (failed()) throw new Error(ec.message.errorsString)
                 // a name of at most 60 that keeps its unique end: the mapping id is cut, never the time and random part
                 const unique = '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
                 jobName = 'EtlMapping_' + mappingId.slice(0, 60 - 'EtlMapping_'.length - unique.length) + unique
                 // made paused, and unpaused only once its parameter and user are there, so the scheduler never sees half
                 ec.service.sync().name('create#moqui.service.job.ServiceJob').parameters({jobName, description: 'ETL mapping ' + (mapping.description || mappingId),
-                    serviceName: 'org.moqui.impl.EtlServices.run#EtlMapping', cronExpression, paused: 'Y'}).call()
+                    serviceName: 'org.moqui.dev.EtlServices.run#EtlMapping', cronExpression, paused: 'Y'}).call()
                 if (failed()) { jobName = null; throw new Error(ec.message.errorsString) }
                 ec.service.sync().name('create#moqui.service.job.ServiceJobParameter').parameters({jobName, parameterName: 'mappingId', parameterValue: mappingId}).call()
                 if (failed()) throw new Error(ec.message.errorsString)

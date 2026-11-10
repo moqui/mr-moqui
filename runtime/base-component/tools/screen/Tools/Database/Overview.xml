@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The chosen database: its server, version, uptime and size, what the Tools screens can do on it and why not the rest
-    (org.moqui.impl.DatabaseServices.get#Capabilities, kept five minutes; Refresh asks again), the backup of the embedded
+    (org.moqui.dev.DatabaseServices.get#Capabilities, kept five minutes; Refresh asks again), the backup of the embedded
     database, and the entity groups on each database. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Overview" default-menu-index="1">
@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
     <transition name="refresh" read-only="true">
         <actions>
-            <service-call name="org.moqui.impl.DatabaseServices.get#Capabilities" in-map="{db: db, refresh: true}"/>
+            <service-call name="org.moqui.dev.DatabaseServices.get#Capabilities" in-map="{db: db, refresh: true}"/>
         </actions>
         <default-response url="."><parameter name="db"/></default-response>
         <error-response url="."/>
@@ -33,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
             capabilities = null
             capabilitiesError = null
             try {
-                capabilities = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#Capabilities').parameters({db}).call()
+                capabilities = ec.service.sync().name('org.moqui.dev.DatabaseServices.get#Capabilities').parameters({db}).call()
             } catch (e) {
                 capabilitiesError = String(e.message || e)
             }
@@ -56,7 +56,7 @@ along with this software (see the LICENSE.md file). If not, see
 
             const backendLabels = {'embedded-postgres': 'Embedded PostgreSQL', postgres: 'PostgreSQL', mysql: 'MySQL', mariadb: 'MariaDB'}
             backendText = backendLabels[capabilities?.backend] || capabilities?.backend || selectedDatabase?.databaseConf || ''
-            startText = capabilities?.startTime == null ? '' : ec.l10n.format(basicConvert(capabilities.startTime, 'java.sql.Timestamp'), null)
+            startText = capabilities?.startTime == null ? '' : ec.l10n.format(basicConvert(capabilities.startTime, 'Timestamp'), null)
             const seconds = capabilities?.uptimeSeconds
             uptimeText = seconds == null ? '' : `${Math.floor(seconds / 86400)}d ${Math.floor(seconds % 86400 / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`
             const size = capabilities?.databaseSize
@@ -68,7 +68,7 @@ along with this software (see the LICENSE.md file). If not, see
             // on production or without DATABASE_EXTERNAL); asked only of a DATABASE_EXTERNAL holder
             canExternal = false
             if (ec.user.hasPermission('DATABASE_EXTERNAL')) {
-                try { ec.service.sync().name('org.moqui.impl.DatabaseServices.find#DatabaseConnections').call(); canExternal = !ec.message.hasError() } catch (e) { canExternal = false }
+                try { ec.service.sync().name('org.moqui.dev.DatabaseServices.find#DatabaseConnections').call(); canExternal = !ec.message.hasError() } catch (e) { canExternal = false }
                 ec.message.clearErrors()
             }
             databaseRows = databaseList.map((database) => ({db: database.db, groups: database.label,

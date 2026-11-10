@@ -584,8 +584,8 @@ along with this software (see the LICENSE.md file). If not, see
                         <xs:attribute name="path" type="xs:string" use="required"><xs:annotation><xs:documentation>
                             The path for the endpoint, relative to webapp, must start with forward slash ('/')</xs:documentation></xs:annotation></xs:attribute>
                         <xs:attribute name="class" type="xs:string"><xs:annotation><xs:documentation>
-                            In Rust the host serves /notws and /termws itself and this is not used. Java: must extend javax.websocket.Endpoint. For Moqui-specific features including setting up an ExecutionContext
-                            extend org.moqui.impl.webapp.MoquiAbstractEndpoint. Even if not using MoquiAbstractEndpoint it will try
+                            In Rust the host serves /notws and /termws itself and this is not used. Java: must extend the websocket Endpoint. For Moqui-specific features including setting up an ExecutionContext
+                            extend MoquiAbstractEndpoint. Even if not using MoquiAbstractEndpoint it will try
                             to add the following ServerEndpointConfig user properties: handshakeRequest, httpSession,
                             executionContextFactory, and maxIdleTimeout (set to value of @timeout).</xs:documentation></xs:annotation></xs:attribute>
                         <xs:attribute name="timeout" type="xs:integer"><xs:annotation><xs:documentation>
@@ -1028,11 +1028,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="extension" type="xs:string" use="required"/>
             <xs:attribute name="class" type="xs:string" use="optional">
                 <xs:annotation><xs:documentation>If specified should point to a class that implements the
-                    org.moqui.context.ScriptRunner interface.</xs:documentation></xs:annotation>
+                    ScriptRunner interface.</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="engine" type="xs:string" use="optional">
                 <xs:annotation><xs:documentation>The JSR-223 engine name, i.e. the name passed to the
-                    javax.script.ScriptEngine.getEngineByName() method. If you use this attribute do not use the class
+                    ScriptEngine getEngineByName() method. If you use this attribute do not use the class
                     attribute as that will override this setting.
 
                     NOTE: If you use a default extension supported in JSR-223 for the desired scripting language you do
@@ -1224,7 +1224,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:documentation>Day-partition the telemetry tables (otel_spans, otel_logs, otel_metrics by
                     granularity then day, monitor_annotations; not otel_errors) made from now on, so retention drops
                     whole days instead of deleting rows. A table made before stays unpartitioned, with a warning, until
-                    org.moqui.impl.TelemetryServices.partition#TelemetryTables (Monitor › Sources) moves its rows and
+                    org.moqui.monitor.TelemetryServices.partition#TelemetryTables (Monitor › Sources) moves its rows and
                     keeps the old table as &lt;table&gt;_unpartitioned to drop.</xs:documentation>
                 </xs:annotation></xs:attribute>
                 <xs:attribute name="partition-days-ahead" type="xs:nonNegativeInteger"><xs:annotation>
@@ -1580,7 +1580,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ===================== Server Elements (no Java counterpart) ===================== -->
 
     <xs:element name="email-client">
-        <xs:annotation><xs:documentation>The mail client (org.moqui.impl.EmailClientServices).</xs:documentation></xs:annotation>
+        <xs:annotation><xs:documentation>The mail client (org.moqui.mail.EmailClientServices).</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:attribute name="allowed-hosts" type="xs:string"><xs:annotation><xs:documentation>Comma separated hostnames and IPs poll#EmailServer and send#Email may connect
                 to; empty allows any host. smtp.example.com matches example.com; notexample.com does not.</xs:documentation></xs:annotation></xs:attribute>
@@ -1844,10 +1844,10 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:attribute>
             <xs:attribute name="object-factory" type="xs:string" default="org.moqui.impl.entity.EntityDatasourceFactoryImpl">
                 <xs:annotation><xs:documentation>The references class must implement the
-                    org.moqui.entity.EntityDatasourceFactory interface.</xs:documentation></xs:annotation>
+                    EntityDatasourceFactory interface.</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="sequence-primary-use-uuid" type="boolean-expandable" default="false">
-                <xs:annotation><xs:documentation>Uses java.util.UUID.randomUUID() to get sequenced IDs for all entities in this datasource.</xs:documentation></xs:annotation>
+                <xs:annotation><xs:documentation>Uses a random UUID as the sequenced ID for all entities in this datasource.</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="start-server-args" type="xs:string">
                 <xs:annotation><xs:documentation>Currently only for the H2 database. Start a remote access server for
@@ -2115,7 +2115,10 @@ along with this software (see the LICENSE.md file). If not, see
     <xs:element name="dictionary-type">
         <xs:complexType>
             <xs:attribute name="type" type="xs:string" use="required"/>
-            <xs:attribute name="java-type" type="xs:string" use="required"/>
+            <xs:attribute name="java-type" type="xs:string" use="required">
+                <xs:annotation><xs:documentation>The value type of a field of this type, a simple type name (String,
+                    Timestamp, BigDecimal, Long and so on).</xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="default-sql-type" type="xs:string"/>
         </xs:complexType>
     </xs:element>
@@ -2133,9 +2136,9 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType><xs:sequence><xs:element minOccurs="0" maxOccurs="unbounded" ref="repository"/></xs:sequence></xs:complexType>
     </xs:element>
     <xs:element name="repository">
-        <xs:annotation><xs:documentation>Configuration for a javax.jcr.Repository retrieved through a
-            javax.jcr.RepositoryFactory using parameter sub-elements (with name and value attributes), and a
-            javax.jcr.Session using the workspace, username, and password attributes.</xs:documentation></xs:annotation>
+        <xs:annotation><xs:documentation>Configuration for a JCR Repository retrieved through a
+            RepositoryFactory using parameter sub-elements (with name and value attributes), and a
+            JCR Session using the workspace, username, and password attributes.</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:sequence>
                 <xs:element ref="init-param" minOccurs="0" maxOccurs="unbounded"/>

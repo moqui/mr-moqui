@@ -20,7 +20,7 @@
 //!   as TURN's) on `sip_tls_host`; each leg's RTP on a port of `sip_rtp_ports` on `sip_rtp_host`. `sip_public_address`
 //!   is the address in Contact headers and SDP when the bound one is not what the trunk reaches.
 //! - **The user agent** is [`moqui_sip::ua::Ua`] on a small Tokio runtime of its own: signaling only, no business logic.
-//!   What a call may do is the voice services' (`org.moqui.impl.VoiceServices`), called on a request worker: the engine
+//!   What a call may do is the voice services' (`org.moqui.call.VoiceServices`), called on a request worker: the engine
 //!   reads its trunks and policy with `get#EngineConfig`, hands an incoming call to `receive#PhoneCall`, reports each
 //!   leg with `note#PhoneLeg`, a trunk's registration with `note#TrunkStatus` and a source its failed digests blocked
 //!   with `record#AuthFailure`, and registers itself every 20 seconds (`register#SipNode`).
@@ -86,12 +86,12 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use leg::{LegCommand, LegMedia, LegNote, PortRange, Prompt};
 
-const CONFIG_SERVICE: &str = "org.moqui.impl.VoiceServices.get#EngineConfig";
-const RECEIVE_SERVICE: &str = "org.moqui.impl.VoiceServices.receive#PhoneCall";
-const NOTE_LEG_SERVICE: &str = "org.moqui.impl.VoiceServices.note#PhoneLeg";
-const NOTE_TRUNK_SERVICE: &str = "org.moqui.impl.VoiceServices.note#TrunkStatus";
-const AUTH_FAILURE_SERVICE: &str = "org.moqui.impl.VoiceServices.record#AuthFailure";
-const REGISTER_SERVICE: &str = "org.moqui.impl.VoiceServices.register#SipNode";
+const CONFIG_SERVICE: &str = "org.moqui.call.VoiceServices.get#EngineConfig";
+const RECEIVE_SERVICE: &str = "org.moqui.call.VoiceServices.receive#PhoneCall";
+const NOTE_LEG_SERVICE: &str = "org.moqui.call.VoiceServices.note#PhoneLeg";
+const NOTE_TRUNK_SERVICE: &str = "org.moqui.call.VoiceServices.note#TrunkStatus";
+const AUTH_FAILURE_SERVICE: &str = "org.moqui.call.VoiceServices.record#AuthFailure";
+const REGISTER_SERVICE: &str = "org.moqui.call.VoiceServices.register#SipNode";
 /// How often the node registers itself.
 const REGISTER_EVERY: Duration = Duration::from_secs(20);
 /// How long a call given up (decided too late) takes no dial.

@@ -46,13 +46,7 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "hasPermission", [Value], None, has_permission),
         method!("ec.user", "isInGroup", [Value], None, is_in_group),
         method!("ec.user", "getUserGroupIdSet", [OptValue], None, group_id_set),
-        method!(
-            "ec.user",
-            "setPreference",
-            [Value, OptValue],
-            None,
-            set_preference
-        ),
+        method!("ec.user", "setPreference", [Value, OptValue], None, set_preference),
         method!("ec.user", "getClientIp", [], client_ip),
         method!("ec.user", "getLoginKey", [OptNumber], login_key),
         method!("ec.user", "hashPassword", [Text], hash_password),
@@ -262,7 +256,7 @@ fn now_timestamp(_: &mut Call<'_>) -> Result<Ret, HostError> {
 /// A time stamp from a script's value: epoch millis, a time stamp, or text, which is in the session time zone unless it
 /// has an offset.
 fn timestamp_of(value: &Value) -> Value {
-    crate::l10n::basic_convert(value, "java.sql.Timestamp").value
+    crate::l10n::basic_convert(value, "Timestamp").value
 }
 
 /// `setEffectiveTime(time)`: `nowTimestamp`, date filters with no date and the defaults Java takes from it use `time`
@@ -463,7 +457,7 @@ fn timestamp_millis(call: &mut Call<'_>) -> Result<Ret, HostError> {
     if moqui_lib::object::is_empty(&host) {
         return Ok(Ret::Value(Value::Null));
     }
-    match crate::l10n::basic_convert(&host, "java.sql.Timestamp").value {
+    match crate::l10n::basic_convert(&host, "Timestamp").value {
         #[allow(clippy::cast_precision_loss)] // Milliseconds of real dates fit a double exactly.
         Value::Timestamp(stamp) => Ok(Ret::Value(Value::F64(stamp.as_millisecond() as f64))),
         _ => Ok(Ret::Value(Value::Null)),

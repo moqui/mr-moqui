@@ -16,7 +16,7 @@
 //! and unpairing on a local node, and on an edge node its pairing codes, paired local nodes and their public host
 //! names. Core has no network stack; a host built with the `edge` feature installs an [`EdgeLink`]
 //! (`crates/moqui-host/src/edge_link/`). With none installed a call fails with [`NOT_BUILT`].
-//! `org.moqui.impl.EdgeServices` (`crate::service::edge`) calls these.
+//! `org.moqui.edge.EdgeServices` (`crate::service::edge`) calls these.
 //!
 //! How work crosses the link (§5.2) is here too, as far as it needs no network: the `<edge>` conf ([`conf`]), the
 //! service facade's hand-off of delegated calls ([`delegate`]), the queue's rows, receipts and handlers ([`queue`]),

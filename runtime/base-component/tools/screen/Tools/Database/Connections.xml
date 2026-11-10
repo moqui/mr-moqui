@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="storeConnection" method="post" begin-transaction="false" authz-action="all">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.store#DatabaseConnection').parameters({
+            const out = ec.service.sync().name('org.moqui.dev.DatabaseServices.store#DatabaseConnection').parameters({
                 connectionId: String(context.connectionId || ''), description: context.description || null, dbType: String(context.dbType || ''),
                 host: context.host || null, port: context.port || null, databaseName: context.databaseName || null, userName: context.userName || null,
                 password: ec.web.secureRequestParameters.password || null, sslMode: context.sslMode || null, sslRootCert: context.sslRootCert || null,
@@ -36,14 +36,14 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="deleteConnection" method="post" begin-transaction="false" authz-action="all">
-        <actions><service-call name="org.moqui.impl.DatabaseServices.delete#DatabaseConnection" in-map="{connectionId: connectionId}"/>
+        <actions><service-call name="org.moqui.dev.DatabaseServices.delete#DatabaseConnection" in-map="{connectionId: connectionId}"/>
             <message>Connection deleted</message></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
     <transition name="testConnection" method="post" begin-transaction="false" authz-action="all">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.test#DatabaseConnection').parameters({connectionId: String(context.connectionId || '')}).call() || {}
+            const out = ec.service.sync().name('org.moqui.dev.DatabaseServices.test#DatabaseConnection').parameters({connectionId: String(context.connectionId || '')}).call() || {}
             if (!ec.message.hasError()) {
                 if (out.connected) ec.message.addMessage(ec.resource.expand('Connected: ${version}', '', {version: out.version || ''}), 'success')
                 else ec.message.addMessage(ec.resource.expand('Not connected: ${reason}', '', {reason: out.reason || ''}), 'warning')
@@ -61,7 +61,7 @@ along with this software (see the LICENSE.md file). If not, see
             connectionList = []
             connectionsError = null
             if (allowed) {
-                try { connectionList = (ec.service.sync().name('org.moqui.impl.DatabaseServices.find#DatabaseConnections').call() || {}).connections || [] }
+                try { connectionList = (ec.service.sync().name('org.moqui.dev.DatabaseServices.find#DatabaseConnections').call() || {}).connections || [] }
                 catch (e) { connectionsError = String(e.message || e) }
                 if (ec.message.hasError()) { connectionsError = ec.message.errorsString; ec.message.clearErrors() }
                 if (connectionsError && connectionsError.includes('Not available')) { allowed = false; connectionsError = null }

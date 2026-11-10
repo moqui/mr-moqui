@@ -125,7 +125,7 @@ with an `artifact` override and the receiver limits written out:
   time. `otel_errors` is not split. Partitions are made from yesterday to the days ahead when a table is first used
   and by the retention job, which drops the days wholly past retention and then deletes the rows left. A table made
   before the option was on stays as it is, with a warning, until Monitor › Sources › Move telemetry tables into day
-  partitions (`org.moqui.impl.TelemetryServices.partition#TelemetryTables`) copies its rows into a partitioned table
+  partitions (`org.moqui.monitor.TelemetryServices.partition#TelemetryTables`) copies its rows into a partitioned table
   and keeps the old one as `<table>_unpartitioned` to drop.
 - **`interval-seconds`** is for tests; the metric documents are minute documents.
 - A screen with `track-artifact-hit="false"` records no artifact spans or metrics for itself and anything under it.

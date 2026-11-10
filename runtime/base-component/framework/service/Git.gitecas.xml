@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
 <gitecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/git-eca-3.xsd">
     <giteca rule-name="Merge requests follow their branches" id="FrameworkRefreshMergeRequests" event="ref-update"
             ref-type="branch" source="push,fetch,import,write" priority="7" run-on-error="true">
-        <actions><service-call name="org.moqui.impl.GitReviewServices.refresh#MergeRequests" in-map="context"/></actions>
+        <actions><service-call name="org.moqui.git.GitReviewServices.refresh#MergeRequests" in-map="context"/></actions>
     </giteca>
     <!-- Not on write: a definition save writes its own file, which needs no pulling back. -->
     <giteca rule-name="Report definitions follow their synced directories" id="FrameworkPullDefinitionGitSyncs" event="ref-update"
@@ -28,6 +28,6 @@ along with this software (see the LICENSE.md file). If not, see
     </giteca>
     <giteca rule-name="Webhooks of pushes and tags" id="FrameworkWebhookPush" event="post-receive"
             source="push,fetch,import,write" priority="8" run-on-error="true">
-        <actions><service-call name="org.moqui.impl.GitServices.queue#GitWebhookPush" in-map="context"/></actions>
+        <actions><service-call name="org.moqui.git.GitServices.queue#GitWebhookPush" in-map="context"/></actions>
     </giteca>
 </gitecas>

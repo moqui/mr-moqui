@@ -561,7 +561,7 @@ pub fn typed_value(java_type: Option<&str>, value: Value) -> Value {
         return value;
     }
     let source = match text.trim().parse::<i64>() {
-        Ok(millis) if temporal => moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value,
+        Ok(millis) if temporal => moqui_lib::object::basic_convert(&Value::I64(millis), "Timestamp").value,
         _ => value.clone(),
     };
     match moqui_lib::object::basic_convert_text(&source, java_type).value {
@@ -1042,26 +1042,26 @@ mod typed_tests {
 
     #[test]
     fn text_is_converted_to_a_date_time_or_number_field() {
-        let date = column("java.sql.Date").typed(Value::string("1791936000000"));
+        let date = column("Date").typed(Value::string("1791936000000"));
         assert!(matches!(date, Value::Date(_)), "{date:?}");
         assert!(matches!(
-            column("java.sql.Date").typed(Value::string("2026-10-14")),
+            column("Date").typed(Value::string("2026-10-14")),
             Value::Date(_)
         ));
         assert!(matches!(
-            column("java.sql.Timestamp").typed(Value::string("1791936000000")),
+            column("Timestamp").typed(Value::string("1791936000000")),
             Value::Timestamp(_)
         ));
         assert!(matches!(
-            column("java.math.BigDecimal").typed(Value::string("12.50")),
+            column("BigDecimal").typed(Value::string("12.50")),
             Value::Decimal(_)
         ));
         assert_eq!(
-            column("java.lang.String").typed(Value::string("1791936000000")),
+            column("String").typed(Value::string("1791936000000")),
             Value::string("1791936000000")
         );
         assert_eq!(
-            column("java.sql.Date").typed(Value::string("not a date")),
+            column("Date").typed(Value::string("not a date")),
             Value::string("not a date")
         );
     }

@@ -14,7 +14,7 @@ packs.
 | HTTPS | `https://<host>/git/<repositoryId>.git` (`.git` is optional) |
 | SSH | `ssh://<username>@<host>:<ssh_port>/<repositoryId>.git`, or `<username>@<host>:<repositoryId>.git` on port 22 |
 
-`org.moqui.impl.GitServices.get#GitCloneUrls` gives both, from `git_public_url` (else the webapp host and port
+`org.moqui.git.GitServices.get#GitCloneUrls` gives both, from `git_public_url` (else the webapp host and port
 properties), and `ssh_public_host` and `ssh_public_port` (else the webapp host and `ssh_port`). The SSH username is
 the Moqui username. The kinds of repository behave as they do for `git://` locations:
 
@@ -158,8 +158,8 @@ webhooks get pushes and tags ([Hosting through Moqui](#hosting-through-moqui)).
 
 ## Hosting through Moqui
 
-The services of `org.moqui.impl.GitServices` (Rust: `crates/moqui-git/src/service/hosting.rs` over
-`resource/git/hosting.rs`, `merge.rs` and `rules.rs`) and `org.moqui.impl.GitReviewServices` serve the code screens of
+The services of `org.moqui.git.GitServices` (Rust: `crates/moqui-git/src/service/hosting.rs` over
+`resource/git/hosting.rs`, `merge.rs` and `rules.rs`) and `org.moqui.git.GitReviewServices` serve the code screens of
 an application (IronStone Projects' Code). Each checks the repository's rights as the git server does; the rows they
 keep (`GitCommitStatus`, `GitWebhook`, `GitBranchRule`, `GitMergeRequest`, `GitMergeRequestReviewer`) are `moqui.*`
 entities that entity filters do not reach, so a screen reads them only through these services. All of it is
@@ -254,7 +254,7 @@ request events by the review services.
 
 ### Merge requests
 
-`org.moqui.impl.GitReviewServices` keeps a merge request of a source branch into a target branch of one repository
+`org.moqui.git.GitReviewServices` keeps a merge request of a source branch into a target branch of one repository
 (`moqui.resource.GitMergeRequest`, numbered per repository from 1, statuses `GmrDraft`, `GmrOpen`, `GmrMerged`,
 `GmrClosed`) and its reviewers (`GitMergeRequestReviewer`: `GmrrRequested`, `GmrrApproved`, `GmrrChangesRequested`,
 `GmrrCommented`, each with the head it was given on):
@@ -376,7 +376,7 @@ Large content is a `moqui.resource.ContentBlob`, by the SHA-256 of its bytes, in
 `resource-facade` `blob-chunk-size` (1 MiB) written a chunk per transaction: Git LFS objects, the large objects of `db` repositories, and
 `dbresource://` files over 64 KiB. The same bytes are stored once; two uploads of them at once, or a crash halfway
 (`ContentBlobUpload`), leave one blob and no stray chunks. A row refers to a blob by a relationship to `ContentBlob`,
-and `gc#ContentBlobs` (`org.moqui.impl.ResourceServices`, the `gc_ContentBlobs_daily` job, 04:30) deletes the blobs no
+and `gc#ContentBlobs` (`org.moqui.resource.ResourceServices`, the `gc_ContentBlobs_daily` job, 04:30) deletes the blobs no
 row refers to and that were not written or referenced again in the last `resource-facade` `blob-gc-prune-days` (14) days.
 
 File responses stream (`sendResourceResponse`, a screen's static files): a file over 256 KiB is read a window at a time

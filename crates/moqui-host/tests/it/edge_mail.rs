@@ -322,7 +322,7 @@ fn smtp(address: SocketAddr, helo: &str, from: &str, recipients: &[&str], messag
 
 /// Whether the edge node has the local node's down connection.
 fn down(edge: &Gate) -> bool {
-    let out = call(edge, "org.moqui.impl.EdgeServices.get#EdgeClients", &[]);
+    let out = call(edge, "org.moqui.edge.EdgeServices.get#EdgeClients", &[]);
     let Some(Value::List(list)) = out.get("clientList") else {
         panic!("clientList: {out:?}")
     };
@@ -362,7 +362,7 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
         to_plain_string(
             &call(
                 &local,
-                "org.moqui.impl.EmailClientServices.create#EmailAccount",
+                "org.moqui.mail.EmailClientServices.create#EmailAccount",
                 &[
                     ("accountKindEnumId", Value::string(kind)),
                     ("emailAddress", Value::string(address)),
@@ -400,7 +400,7 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
         .build()
         .unwrap();
     let url = format!("https://localhost:{edge_port}");
-    let code = to_plain_string(&call(&edge, "org.moqui.impl.EdgeServices.create#PairingCode", &[])["code"]);
+    let code = to_plain_string(&call(&edge, "org.moqui.edge.EdgeServices.create#PairingCode", &[])["code"]);
     let mut pairing = PairConfig::new(&url, &code, NODE);
     pairing.trust_root = Some(root);
     pairing.connect_timeout = Duration::from_secs(5);
@@ -560,7 +560,7 @@ fn mail_crosses_the_edge_node_both_ways_and_waits_while_the_link_is_down() {
         );
         let sent = call(
             &local,
-            "org.moqui.impl.EmailServices.send#EmailMessage",
+            "org.moqui.mail.EmailServices.send#EmailMessage",
             &[("emailMessageId", Value::string(id))],
         );
         assert!(!to_plain_string(&sent["messageId"]).is_empty(), "{sent:?}");
@@ -674,7 +674,7 @@ fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
     let sales = to_plain_string(
         &call(
             &local,
-            "org.moqui.impl.EmailClientServices.create#EmailAccount",
+            "org.moqui.mail.EmailClientServices.create#EmailAccount",
             &[
                 ("accountKindEnumId", Value::string("EakHosted")),
                 ("emailAddress", Value::string("sales@example.com")),
@@ -714,7 +714,7 @@ fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
         .build()
         .unwrap();
     let url = format!("https://localhost:{edge_port}");
-    let code = to_plain_string(&call(&edge, "org.moqui.impl.EdgeServices.create#PairingCode", &[])["code"]);
+    let code = to_plain_string(&call(&edge, "org.moqui.edge.EdgeServices.create#PairingCode", &[])["code"]);
     let mut pairing = PairConfig::new(&url, &code, NODE);
     pairing.trust_root = Some(root);
     pairing.connect_timeout = Duration::from_secs(5);
@@ -808,7 +808,7 @@ fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
         );
         let sent = call(
             &local,
-            "org.moqui.impl.EmailServices.send#EmailMessage",
+            "org.moqui.mail.EmailServices.send#EmailMessage",
             &[("emailMessageId", Value::string(id))],
         );
         assert_eq!(sent.get("sendError"), None, "{sent:?}");
@@ -833,7 +833,7 @@ fn the_moqui_mta_takes_port_25_and_delivers_to_the_mx() {
         .unwrap_or_default()
         .to_string();
     assert!(signed.starts_with("DKIM-Signature: v=1; a=rsa-sha256;"), "{signed}");
-    let record = to_plain_string(&call(&edge, "org.moqui.impl.EmailServices.get#DkimRecord", &[])["record"]);
+    let record = to_plain_string(&call(&edge, "org.moqui.mail.EmailServices.get#DkimRecord", &[])["record"]);
     assert!(record.starts_with("v=DKIM1; k=rsa; p="), "{record}");
     let fixed = moqui_mail::dns::Records::offline();
     fixed.fix_txt("moqui._domainkey.example.com", &record).unwrap();

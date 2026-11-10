@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Components (plans/archive/Component-Deploy.md, Phase 2; guide docs/tools/Component-Deploy.md): the loaded components, the
     ones a deploy loaded with their state (moqui.server.DeployedComponent), and the ones found in a component directory
-    that are not loaded (org.moqui.impl.ComponentServices.scan#Components), placed by ./moq component-get or a clone
+    that are not loaded (org.moqui.dev.ComponentServices.scan#Components), placed by ./moq component-get or a clone
     since the start. Preview shows what loading one would do (preview#ComponentLoad): why it cannot be loaded now, the
     conf changes of its MoquiConf.xml with their class, its entities, and its data files by type. Load loads it on the
     running server, or with Load at Next Start records it for the next start (load#Component). Remove leaves a deployed
@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Components" default-menu-index="2" menu-image="sym_o_extension" menu-image-type="icon">
 
     <transition name="loadComponent" authz-action="update">
-        <service-call name="org.moqui.impl.ComponentServices.load#Component"
+        <service-call name="org.moqui.dev.ComponentServices.load#Component"
                 in-map="{componentName:componentName, mode:mode, dataTypes:dataTypes}" out-map="loadOut"/>
         <actions><if condition="!ec.message.hasError()">
             <if condition="loadOut.restarting"><then>
@@ -45,7 +45,7 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="previewDeploy" authz-action="update">
-        <service-call name="org.moqui.impl.ComponentServices.preview#ComponentDeploy" out-map="deployOut"
+        <service-call name="org.moqui.dev.ComponentServices.preview#ComponentDeploy" out-map="deployOut"
                 in-map="{url:url, branch:branch, storage:storage, directory:directory, username:username, accessToken:accessToken}"/>
         <actions><if condition="!ec.message.hasError()">
             <message type="success">${deployOut.preview?.component} ${(deployOut.preview?.commit || '').substring(0, 12)} is staged; check what deploying it does below</message>
@@ -54,7 +54,7 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="deployComponent" authz-action="update">
-        <service-call name="org.moqui.impl.ComponentServices.deploy#Component"
+        <service-call name="org.moqui.dev.ComponentServices.deploy#Component"
                 in-map="{componentName:componentName, mode:mode, dataTypes:dataTypes}" out-map="deployOut"/>
         <actions><if condition="!ec.message.hasError()">
             <message type="success">${componentName} deployed (${deployOut.report?.status}${deployOut.restarting ? ', the server is restarting' : ''}): ${deployOut.report?.records ?? 0} records, ${(deployOut.report?.problems || []).length} problems</message>
@@ -63,12 +63,12 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="discardDeploy" authz-action="update">
-        <service-call name="org.moqui.impl.ComponentServices.discard#ComponentDeploy" in-map="{componentName:componentName}"/>
+        <service-call name="org.moqui.dev.ComponentServices.discard#ComponentDeploy" in-map="{componentName:componentName}"/>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
     <transition name="checkUpdate" authz-action="update">
-        <service-call name="org.moqui.impl.ComponentServices.preview#ComponentUpdate" in-map="{componentName:componentName}" out-map="updateOut"/>
+        <service-call name="org.moqui.dev.ComponentServices.preview#ComponentUpdate" in-map="{componentName:componentName}" out-map="updateOut"/>
         <actions><script><![CDATA[
             const preview = updateOut.preview || {}
             if (!ec.message.hasError()) {
@@ -82,7 +82,7 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="updateComponent" authz-action="update">
-        <service-call name="org.moqui.impl.ComponentServices.update#Component" in-map="{componentName:componentName, mode:mode}" out-map="updateOut"/>
+        <service-call name="org.moqui.dev.ComponentServices.update#Component" in-map="{componentName:componentName, mode:mode}" out-map="updateOut"/>
         <actions><if condition="!ec.message.hasError()">
             <message type="success">${componentName} updated${updateOut.restarting ? ', the server is restarting' : ''}: ${(updateOut.report?.problems || []).join('; ') || 'no problems'}</message>
         </if></actions>
@@ -90,7 +90,7 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="removeComponent" authz-action="update">
-        <service-call name="org.moqui.impl.ComponentServices.remove#Component" in-map="{componentName:componentName, confirmDirty:confirmDirty}" out-map="removeOut"/>
+        <service-call name="org.moqui.dev.ComponentServices.remove#Component" in-map="{componentName:componentName, confirmDirty:confirmDirty}" out-map="removeOut"/>
         <actions><if condition="!ec.message.hasError()">
             <if condition="(removeOut.dirty || []).length"><then>
                 <message type="warning">${componentName} is a working clone with changes; it was not removed</message>
@@ -104,7 +104,7 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="loadData" authz-action="update">
-        <service-call name="org.moqui.impl.ComponentServices.load#ComponentData"
+        <service-call name="org.moqui.dev.ComponentServices.load#ComponentData"
                 in-map="{componentName:componentName, dataTypes:dataTypes}" out-map="dataOut"/>
         <actions><if condition="!ec.message.hasError()">
             <message type="${(dataOut.report?.problems || []).length ? 'warning' : 'success'}">${componentName}: ${dataOut.report?.records ?? 0} records loaded, ${(dataOut.report?.problems || []).length} problems</message>
@@ -120,8 +120,8 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="loadedList" from="CollectionUtilities.orderMapList(ec.factory.getComponentInfoList(), ['^name'])"/>
         <entity-find entity-name="moqui.server.DeployedComponent" list="deployedList">
             <order-by field-name="componentName"/></entity-find>
-        <service-call name="org.moqui.impl.ComponentServices.scan#Components" out-map="scanOut"/>
-        <service-call name="org.moqui.impl.ComponentServices.get#PendingRestart" out-map="pendingOut"/>
+        <service-call name="org.moqui.dev.ComponentServices.scan#Components" out-map="scanOut"/>
+        <service-call name="org.moqui.dev.ComponentServices.get#PendingRestart" out-map="pendingOut"/>
         <script><![CDATA[
             foundList = scanOut.components || []
             pendingList = pendingOut.changes || []
@@ -132,7 +132,7 @@ along with this software (see the LICENSE.md file). If not, see
             dataComponent = dataName && Array.from(loadedList).some((info) => info.name === dataName) ? dataName : null
             preview = null
             if (componentName && foundList.some((found) => found.name === componentName)) {
-                const previewOut = ec.service.sync().name('org.moqui.impl.ComponentServices.preview#ComponentLoad')
+                const previewOut = ec.service.sync().name('org.moqui.dev.ComponentServices.preview#ComponentLoad')
                     .parameters({componentName}).call() || {}
                 preview = previewOut.preview || null
             }

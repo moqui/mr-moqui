@@ -1152,8 +1152,8 @@ fn member_relationship_and_alias_all_expand_at_load() {
     let order_id = view.alias("orderId").unwrap();
     assert!(order_id.from_alias_all);
     assert!(order_id.is_pk);
-    assert_eq!(order_id.java_type, "java.lang.String");
-    assert_eq!(view.alias("quantity").unwrap().java_type, "java.math.BigDecimal");
+    assert_eq!(order_id.java_type, "String");
+    assert_eq!(view.alias("quantity").unwrap().java_type, "BigDecimal");
 }
 
 #[test]
@@ -1553,7 +1553,7 @@ fn a_view_member_is_a_sub_select_of_that_view() {
     ));
     let postgres = sample_postgres();
     let view = model.entity("sample.OrderAndSum").unwrap();
-    assert_eq!(view.alias("quantity").unwrap().java_type, "java.math.BigDecimal");
+    assert_eq!(view.alias("quantity").unwrap().java_type, "BigDecimal");
     let sql = select_view(view, &model, &postgres, &values(), None, &[], LimitOffset::default())
         .unwrap()
         .sql;
@@ -1936,5 +1936,5 @@ fn foreign_key_and_index_names_are_unique() {
 
 /// The `billingDate` condition text as the timestamp it binds: text compared to a timestamp field is converted.
 fn billing_from() -> Value {
-    moqui_lib::object::basic_convert(&Value::string("2026-01-01"), "java.sql.Timestamp").value
+    moqui_lib::object::basic_convert(&Value::string("2026-01-01"), "Timestamp").value
 }

@@ -231,7 +231,7 @@ feature("DAV is off and the sync addresses offer no SFTP", {
     when() {
         ec.artifactExecution.disableAuthz()
         try {
-            return { out: call("org.moqui.impl.DavServices.get#SyncAddresses", {}) }
+            return { out: call("org.moqui.resource.DavServices.get#SyncAddresses", {}) }
         } finally {
             ec.artifactExecution.enableAuthz()
         }

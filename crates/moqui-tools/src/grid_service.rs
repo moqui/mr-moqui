@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The data grid's services of `org.moqui.impl.DatabaseServices` (plans/archive/Tools-Database.md §9), on
+//! The data grid's services of `org.moqui.dev.DatabaseServices` (plans/archive/Tools-Database.md §9), on
 //! [`crate::grid`]. An entity source needs the Tools app; a SQL source needs SQL (`SQL_RUNNER_WEB` and all actions on
 //! the Tools app). A refusal is a message error and no out-parameters.
 

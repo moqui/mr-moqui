@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     the queues and receipts both ends keep. Every row that belongs to one local node is keyed by its pairedNodeId, the
     local node's instance id (decision 1), so several local nodes on one edge node can come later. A local node keeps
     its own side of the link (the URL, its key and the edge node's pin) in runtime/.env, not here. The services are
-    org.moqui.impl.EdgeServices; the link is crates/moqui-host/src/edge_link/. No Java counterpart. -->
+    org.moqui.edge.EdgeServices; the link is crates/moqui-host/src/edge_link/. No Java counterpart. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
 
     <entity entity-name="EdgePairingCode" package="moqui.edge" use="transactional" cache="never">
@@ -66,7 +66,7 @@ along with this software (see the LICENSE.md file). If not, see
             its own certificate; while the link is down the connection is refused. In EdgeHostTerminate mode the edge
             node ends TLS with its own certificate and forwards each request down the link as HTTP/2, adding the
             client's address; while the link is down it answers with the offline page. The edge node keeps these in
-            memory and loads them again when org.moqui.impl.EdgeServices changes one.</description>
+            memory and loads them again when org.moqui.edge.EdgeServices changes one.</description>
         <field name="hostName" type="text-medium" is-pk="true"/>
         <field name="pairedNodeId" type="id" not-null="true"/>
         <field name="modeEnumId" type="id" not-null="true"/>

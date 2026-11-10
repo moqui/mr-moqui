@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Add account step 3, the test (mr-boss design-drawers-commons.md §17 AccountTest): signing in to the outgoing and the incoming
-    server now (org.moqui.comms.MailSettingsServices.test#MailAccount over org.moqui.impl.EmailClientServices.test#EmailAccount),
+    server now (org.moqui.comms.MailSettingsServices.test#MailAccount over org.moqui.mail.EmailClientServices.test#EmailAccount),
     each step with what the server said and, when it failed, what it most likely means and what to try, with the provider's
     help; on success how the server's folders map to Inbox, Sent, Drafts, Spam, Trash and Archive, and Send a test message
     (org.moqui.comms.MailSettingsServices.send#AccountTestMessage: to the account's own address, back in the Inbox with the first

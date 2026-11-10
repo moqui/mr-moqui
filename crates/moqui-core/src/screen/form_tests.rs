@@ -171,8 +171,8 @@ fn conditional_fields_merge_by_condition() {
 fn a_view_alias_default_display_decides_a_form_list_auto_field() {
     let conf = parse(
         r#"<database-list>
-                <dictionary-type type="id" java-type="java.lang.String" default-sql-type="VARCHAR(40)"/>
-                <dictionary-type type="text-very-long" java-type="java.lang.String" default-sql-type="TEXT"/>
+                <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>
+                <dictionary-type type="text-very-long" java-type="String" default-sql-type="TEXT"/>
             </database-list>"#,
     );
     let entities = parse(
@@ -210,8 +210,8 @@ fn a_view_alias_default_display_decides_a_form_list_auto_field() {
 fn a_view_alias_function_sets_the_find_display_total() {
     let conf = parse(
         r#"<database-list>
-                <dictionary-type type="id" java-type="java.lang.String" default-sql-type="VARCHAR(40)"/>
-                <dictionary-type type="number-decimal" java-type="java.math.BigDecimal" default-sql-type="NUMERIC(26,6)"/>
+                <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>
+                <dictionary-type type="number-decimal" java-type="BigDecimal" default-sql-type="NUMERIC(26,6)"/>
             </database-list>"#,
     );
     let entities = parse(
@@ -258,7 +258,7 @@ fn a_view_alias_function_sets_the_find_display_total() {
 fn a_pq_expression_alias_with_default_display_is_an_auto_display_field() {
     let conf = parse(
         r#"<database-list>
-                <dictionary-type type="id" java-type="java.lang.String" default-sql-type="VARCHAR(40)"/>
+                <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>
             </database-list>"#,
     );
     let entities = parse(

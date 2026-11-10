@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- NOTE: this screen is not meant to be rendered, it is just a library of transitions and sections to include -->
 
     <transition name="emailScreenAsync" read-only="true">
-        <service-call name="org.moqui.impl.EmailServices.send#ScreenRenderEmail" async="true"
+        <service-call name="org.moqui.mail.EmailServices.send#ScreenRenderEmail" async="true"
                 in-map="Object.assign({}, context, {screenLocation: sri.getActiveScreenDef().location, bodyParameters: ec.web.requestParameters})"/>
         <actions>
             <if condition="!ec.message.hasError()">
@@ -27,7 +27,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="." parameter-map="ec.web.requestParameters"/>
     </transition>
     <transition name="emailScreenUserAsync" read-only="true">
-        <service-call name="org.moqui.impl.EmailServices.send#ScreenRenderEmail" async="true"
+        <service-call name="org.moqui.mail.EmailServices.send#ScreenRenderEmail" async="true"
                 in-map="Object.assign({}, context, {screenLocation: sri.getActiveScreenDef().location, bodyParameters: ec.web.requestParameters, toAddresses: ec.user.userAccount?.emailAddress})"/>
         <actions>
             <if condition="!ec.message.hasError()">

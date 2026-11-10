@@ -18,7 +18,7 @@
 //!
 //! ```xml
 //! <token-route name="s" screen-location="component://mr-boss/screen/PublicShare.xml"
-//!         token-service="org.moqui.impl.FileServices.check#PublicShareToken" title="Shared files"/>
+//!         token-service="org.moqui.resource.FileServices.check#PublicShareToken" title="Shared files"/>
 //! ```
 //!
 //! - `/<name>/<token>`: the public shell page (the webroot screen `PublicShell`, `webroot/PublicShell.xml`): Vue,

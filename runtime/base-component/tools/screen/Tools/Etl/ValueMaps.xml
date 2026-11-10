@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const fromValue = line.substring(0, at).trim()
                 if (fromValue) entries.push({fromValue, toValue: line.substring(at + 1).trim()})
             }
-            const out = ec.service.sync().name('org.moqui.impl.EtlServices.store#EtlValueMap').parameters({valueMapId: context.valueMapId || null,
+            const out = ec.service.sync().name('org.moqui.dev.EtlServices.store#EtlValueMap').parameters({valueMapId: context.valueMapId || null,
                 description: context.description || null, entries}).call() || {}
             if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand('Value map ${id} saved, ${count} entries', '', {id: out.valueMapId, count: entries.length}), 'success')
         ]]></script></actions>
@@ -36,7 +36,7 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="deleteValueMap" method="post" begin-transaction="false" authz-action="all">
-        <actions><service-call name="org.moqui.impl.EtlServices.delete#EtlValueMap" in-map="{valueMapId: valueMapId}"/>
+        <actions><service-call name="org.moqui.dev.EtlServices.delete#EtlValueMap" in-map="{valueMapId: valueMapId}"/>
             <message>Value map deleted</message></actions>
         <default-response url="."/>
         <error-response url="."/>

@@ -39,7 +39,7 @@ use tokio::sync::watch;
 
 use crate::common::Gate;
 
-const SERVICES: &str = "org.moqui.impl.EdgeServices";
+const SERVICES: &str = "org.moqui.edge.EdgeServices";
 
 /// A test certificate authority and the edge node's `localhost` certificate and key (PEM) it signed.
 struct Certs {

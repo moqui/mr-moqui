@@ -15,13 +15,13 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Voice, Phones (plans/Comms-Framework.md §5.2 "Registrar for phones", V4): every user's desk and soft phones and their live
     registrations (the contact, the address and port and transport each registered from, its user agent, when it expires,
     Outbound), whether the registrar is on, and Remove. Users add their own in Settings, Desk and soft phones; an admin
-    removes one here. org.moqui.impl.SipDeviceServices find#SipDevices (allUsers) and revoke#SipDevice, which need the
+    removes one here. org.moqui.call.SipDeviceServices find#SipDevices (allUsers) and revoke#SipDevice, which need the
     VoiceAdmin permission for another user's phones. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Phones" default-menu-index="7">
 
     <transition name="revokeDevice">
-        <service-call name="org.moqui.impl.SipDeviceServices.revoke#SipDevice" in-map="{sipDeviceId:sipDeviceId}"/>
+        <service-call name="org.moqui.call.SipDeviceServices.revoke#SipDevice" in-map="{sipDeviceId:sipDeviceId}"/>
         <actions><if condition="!ec.message.hasError()"><message type="success">Phone removed</message></if></actions>
         <default-response url="."/>
     </transition>
@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         showingRemoved = includeRevoked === 'Y'
-        const out = ec.service.sync().name('org.moqui.impl.SipDeviceServices.find#SipDevices').parameters({allUsers: true,
+        const out = ec.service.sync().name('org.moqui.call.SipDeviceServices.find#SipDevices').parameters({allUsers: true,
             includeRevoked: showingRemoved}).requireNewTransaction(true).disableAuthz().call() || {}
         ec.message.clearErrors()
         const L = (text) => ec.l10n.localize(text)

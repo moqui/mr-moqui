@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     edge node it is paired with, with Unpair; Pair is the pairing wizard (the edge node's address and pairing code, then
     its name and fingerprint to confirm). On an edge node (node_role=edge) and in a build without the edge link, Status
     says so. The menu cannot leave this screen out by node role, so it is listed on every node. Every call goes through
-    org.moqui.impl.EdgeServices. -->
+    org.moqui.edge.EdgeServices. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Edge Node" default-menu-index="17" menu-image="sym_o_cloud_sync" menu-image-type="icon">
     <subscreens default-item="Status"/>

@@ -1025,7 +1025,14 @@ static METHODS: &[Method] = &[
     method!("tools", "getComponentInfoList", [], get_component_info_list),
     method!("tools", "getRuntimePath", [], get_runtime_path),
     method!("tools", "getInstanceId", [], get_instance_id),
-    method!("tools", "runAsUser", [Text, Callback, Callback], None, leaf, run_as_user),
+    method!(
+        "tools",
+        "runAsUser",
+        [Text, Callback, Callback],
+        None,
+        leaf,
+        run_as_user
+    ),
     method!("tools", "runAsSystem", [Callback, Callback], None, leaf, run_as_system),
     method!("tools", "getThreadList", [], get_thread_list),
     method!("tools", "waitWorkerPoolEmpty", [OptNumber], wait_worker_pool_empty),
@@ -1173,7 +1180,7 @@ fn count_of(value: Option<&Value>, default: usize) -> usize {
 /// A timestamp argument as epoch millis: none for null or none, or for a value that is not a moment.
 fn millis_of(value: Option<&Value>) -> Option<i64> {
     let value = value.filter(|value| !value.is_null())?;
-    match crate::l10n::basic_convert(value, "java.sql.Timestamp").value {
+    match crate::l10n::basic_convert(value, "Timestamp").value {
         Value::Timestamp(stamp) => Some(stamp.as_millisecond()),
         _ => None,
     }
@@ -1403,11 +1410,11 @@ fn get_query_stats_list(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(list(rows))
 }
 
-/// `ec.entity.clearQueryStats()`: through `org.moqui.impl.DatabaseServices.reset#QueryStats` (moqui-tools), which
+/// `ec.entity.clearQueryStats()`: through `org.moqui.dev.DatabaseServices.reset#QueryStats` (moqui-tools), which
 /// needs `DATABASE_ADMIN` and writes the audit row; a refusal is a message error, as the service adds it.
 fn clear_query_stats(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     crate::service::call::sync_with(
-        "org.moqui.impl.DatabaseServices.reset#QueryStats",
+        "org.moqui.dev.DatabaseServices.reset#QueryStats",
         &std::collections::BTreeMap::new(),
         &crate::service::call::CallOptions::default(),
     )
@@ -2650,7 +2657,7 @@ fn next_cron_execution(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let cron = call.text_or_empty(0);
     let after = call.value(1).cloned();
     let after = match after.as_ref().filter(|value| !value.is_null()) {
-        Some(value) => match crate::l10n::basic_convert(value, "java.sql.Timestamp").value {
+        Some(value) => match crate::l10n::basic_convert(value, "Timestamp").value {
             Value::Timestamp(stamp) => stamp.as_millisecond(),
             _ => return Err(HostError::message("nextCronExecution needs a moment to start after")),
         },

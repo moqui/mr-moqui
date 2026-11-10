@@ -55,10 +55,10 @@ function build(ec, sri, options) {
     }
     // Appearance (docs/ui/Qvt-Client.md, Appearance): the theme's color schemes and fonts, the user's choices the theme's policy
     // allows, the effective scheme and the style sheets the page links before the client starts, after the theme's
-    // STRT_APPEARANCE_SERVICE extensions (org.moqui.impl.ShellServices.get#Appearance). A failure is logged and the shell keeps its own look.
+    // STRT_APPEARANCE_SERVICE extensions (org.moqui.ui.ShellServices.get#Appearance). A failure is logged and the shell keeps its own look.
     let appearance = { colorSchemes: [], fonts: [], values: {}, links: [], policy: {}, keys: [], tokens: {} }
     try {
-        appearance = ec.service.sync().name('org.moqui.impl.ShellServices.get#Appearance')
+        appearance = ec.service.sync().name('org.moqui.ui.ShellServices.get#Appearance')
                 .parameter('screenThemeId', sri.getCurrentThemeId()).disableAuthz().call().appearance || appearance
     } catch (e) { ec.logger.error('Appearance of theme ' + sri.getCurrentThemeId() + ' not built: ' + e) }
     const lockedKeys = (appearance.policy && appearance.policy.lockedKeys) || []

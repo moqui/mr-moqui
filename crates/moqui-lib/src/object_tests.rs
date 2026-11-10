@@ -115,7 +115,7 @@ fn timestamp_text_is_read_in_the_zone_given() {
         ("1478779200000", "2016-11-10T12:00:00Z", "2016-11-10T12:00:00Z"),
     ] {
         assert_eq!(
-            basic_convert_in(&Value::string(text), "java.sql.Timestamp", &chicago).value,
+            basic_convert_in(&Value::string(text), "Timestamp", &chicago).value,
             stamp(in_chicago),
             "{text}"
         );
@@ -125,13 +125,13 @@ fn timestamp_text_is_read_in_the_zone_given() {
             "{text}"
         );
         assert_eq!(
-            basic_convert(&Value::string(text), "java.sql.Timestamp").value,
+            basic_convert(&Value::string(text), "Timestamp").value,
             stamp(in_utc),
             "{text}"
         );
     }
     assert_eq!(
-        basic_convert_in(&Value::string("2016-11-01"), "java.sql.Date", &chicago).value,
+        basic_convert_in(&Value::string("2016-11-01"), "Date", &chicago).value,
         Value::Date(Date::new(2016, 11, 1).unwrap())
     );
     assert!(compare_in(
@@ -150,7 +150,7 @@ fn timestamp_text_is_read_in_the_zone_given() {
 
 #[test]
 fn timestamps_dates_and_plain_millis() {
-    let converted = basic_convert(&Value::string("2020-01-02 03:04:05"), "java.sql.Timestamp");
+    let converted = basic_convert(&Value::string("2020-01-02 03:04:05"), "Timestamp");
     let Value::Timestamp(timestamp) = converted.value else {
         panic!("not a timestamp");
     };

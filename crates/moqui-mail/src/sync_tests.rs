@@ -28,7 +28,7 @@ use super::fake_servers::{fake_dns, fake_http, FakeImap, FakePop};
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::{EntityFacade, EntityValue};
 
-const SERVICES: &str = "org.moqui.impl.EmailClientServices";
+const SERVICES: &str = "org.moqui.mail.EmailClientServices";
 const MESSAGE: &str = "moqui.basic.email.EmailMessage";
 const FOLDER: &str = "moqui.basic.email.EmailFolder";
 
@@ -54,10 +54,10 @@ pub(super) fn install() {
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
         framework.join("EmailServices.xml"),
-        framework.join("impl/EmailServices.xml"),
-        framework.join("impl/EmailClientServices.xml"),
+        framework.join("mail/EmailServices.xml"),
+        framework.join("mail/EmailClientServices.xml"),
         framework.join("admin/IdentityServices.xml"),
-        framework.join("impl/ShellServices.xml"),
+        framework.join("ui/ShellServices.xml"),
     ];
     let failures = moqui_core::service::lint(&paths).unwrap();
     assert!(failures.is_empty(), "{failures:?}");
@@ -77,7 +77,7 @@ pub(super) fn map(pairs: &[(&str, &str)]) -> Value {
 }
 
 pub(super) fn stamp(millis: i64) -> Value {
-    basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
+    basic_convert(&Value::I64(millis), "Timestamp").value
 }
 
 pub(super) fn now() -> i64 {

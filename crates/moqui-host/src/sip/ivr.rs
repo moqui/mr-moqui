@@ -38,10 +38,10 @@ use super::leg::{LegCommand, Prompt};
 use super::prompt::tone;
 use super::{call_service, number, step_token, text, Command, Engine};
 
-const ROUTE_SERVICE: &str = "org.moqui.impl.IvrServices.route#IvrCall";
-const TICK_SERVICE: &str = "org.moqui.impl.CallQueueServices.tick#QueueCall";
-const EXPIRE_TRANSFER_SERVICE: &str = "org.moqui.impl.CallTransferServices.expire#CallTransfer";
-const REFER_SERVICE: &str = "org.moqui.impl.CallTransferServices.refer#Call";
+const ROUTE_SERVICE: &str = "org.moqui.call.IvrServices.route#IvrCall";
+const TICK_SERVICE: &str = "org.moqui.call.CallQueueServices.tick#QueueCall";
+const EXPIRE_TRANSFER_SERVICE: &str = "org.moqui.call.CallTransferServices.expire#CallTransfer";
+const REFER_SERVICE: &str = "org.moqui.call.CallTransferServices.refer#Call";
 const RATE: usize = 48_000;
 /// The longest prompt or music read; longer is cut.
 const MAX_AUDIO_SECONDS: usize = 120;

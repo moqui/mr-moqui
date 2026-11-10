@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- send#Email and send#EmailTemplate are moqui_mail::send_template.
+         send#EmailMessage is moqui_mail::send_message.
+         poll#EmailServer is moqui_mail::poll_server.
+         test#EmailServer is moqui_mail::test_server.
+         deliver#EdgeMail, deliver#EdgeOutboundMail, note#EdgeMailStatus and fail#EdgeOutboundMail are
+         moqui_mail::edge_mail. get#DkimRecord is moqui_mail::auth. -->
+    <service verb="send" noun="Email" type="rust" location="moqui_mail::send_template" allow-remote="false">
+        <implements service="org.moqui.EmailServices.send#EmailTemplate"/>
+        <in-parameters>
+            <parameter name="body" allow-html="any"/>
+            <parameter name="bodyText" allow-html="any"/>
+        </in-parameters>
+    </service>
+    <service verb="send" noun="EmailTemplate" type="rust" location="moqui_mail::send_template"
+            authenticate="anonymous-view" allow-remote="false">
+        <description>NOTE: this service is meant for internal use and authentication is not required. Do not export or
+            allow this service to be called remotely.</description>
+        <implements service="org.moqui.EmailServices.send#EmailTemplate"/>
+        <in-parameters>
+            <parameter name="body" allow-html="any"/>
+            <parameter name="bodyText" allow-html="any"/>
+        </in-parameters>
+    </service>
+    <service verb="send" noun="EmailMessage" type="rust" location="moqui_mail::send_message">
+        <description>Send a stored EmailMessage that is not a draft. The server is the message's emailServerId, else the
+            EmailServer of its mail client account (emailAccountId). A message of the mail client also brings its
+            identity's reply-to address, its EmailMessageAttachment files (inline ones by Content-ID, in a related part)
+            and its In-Reply-To and References headers (inReplyTo, referencesHeader). A Ready or Bounced message becomes
+            Sent with its new messageId. A delivery that fails is a message, not an error, as in Java, and its text is
+            sendError. A client message (one with an emailAccountId) is the mail client's to keep: what stops it after the
+            status checks is its sendError, not an error, and its Sent status is written in the caller's transaction
+            (a template's message in a new one, as in Java). An SMTP session that does not end within two minutes is a
+            sendError with an uncertain deliveryOutcome.</description>
+        <in-parameters>
+            <parameter name="emailMessageId" required="true"/>
+            <parameter name="markSent" type="Boolean" default="true"><description>False leaves a client message's
+                status as it is: the mail client's deliver#DraftMessage records the result in a transaction of its own
+                (record#SendResult)</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="emailMessageId"/>
+            <parameter name="messageId"><description>The Message-ID it went out with; empty when nothing was sent</description></parameter>
+            <parameter name="sendError"><description>Why the delivery failed</description></parameter>
+            <parameter name="deliveryOutcome"><description>On an SMTP failure, as send#EmailTemplate's: retryable for an
+                explicit temporary rejection or a server that was not reached, permanent for an explicit permanent
+                rejection, uncertain when acceptance is unknown.</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="test" noun="EmailServer" type="rust" location="moqui_mail::test_server"
+            transaction="ignore" allow-remote="false">
+        <description>Whether a server's settings work, for the mail account wizard; nothing is changed. SMTP connects,
+            upgrades to TLS as configured and signs in; the store (when it has a storeHost) connects and signs in, and IMAP
+            lists its folders. Each step is {step (smtp, storeLogin, storeList), ok, message}. folderList has each IMAP
+            folder's {folderPath, delimiter, attributeList, folderKindEnumId}: INBOX, else its special-use attribute
+            (\Sent, \Drafts, \Trash, \Junk, \Archive), else EfkOther. Use org.moqui.mail.EmailClientServices.test#EmailAccount,
+            which checks the user may manage the account. SMTP signs in as smtpUsername when the server has one, else as
+            mailUsername; smtpUsername and smtpPassword given here are tried instead of the stored ones (nothing is
+            stored), so a wizard can test a separate SMTP sign-in before saving it.</description>
+        <in-parameters>
+            <parameter name="emailServerId" required="true"/>
+            <parameter name="testSmtp" type="Boolean" default="true"/>
+            <parameter name="testStore" type="Boolean" default="true"/>
+            <parameter name="smtpUsername"><description>Given (even empty: the store's sign-in), the SMTP user to try</description></parameter>
+            <parameter name="smtpPassword" allow-html="any"><description>Given, the SMTP password to try</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="success" type="Boolean"/>
+            <parameter name="stepList" type="List"><parameter name="step" type="Map"/></parameter>
+            <parameter name="folderList" type="List"><parameter name="folder" type="Map"/></parameter>
+        </out-parameters>
+    </service>
+
+    <!-- ========== Mail through an edge node (plans/Edge-Node.md §5.4): the handlers of the link's queue kinds mail,
+        mailOut and mailStatus (MoquiDefaultConf.xml edge), granted to _EDGE_ in EdgeSetupData.xml ========== -->
+    <service verb="apply" noun="EdgeQueueItem" type="interface">
+        <description>What the handler of a mail queue kind gets (moqui_core::edge::queue::apply): the item, on the node
+            that received it, run as _EDGE_ in the transaction of its receipt. contentLocation is where this node kept
+            the item's content (the message), removed once the delivery is answered. An error the handler adds rolls the
+            receipt back, so the sender tries the item again, counted; retryLater (the reason) rolls it back too, for a
+            cause that is not the item's (a relay or database away), and the item waits, not counted.</description>
+        <in-parameters>
+            <parameter name="queueItemId" required="true"/>
+            <parameter name="pairedNodeId"><description>The local node of the pair (on a local node, its own id)</description></parameter>
+            <parameter name="kind"/>
+            <parameter name="conversationKey"/>
+            <parameter name="idempotencyKey"/>
+            <parameter name="payload" allow-html="any"/>
+            <parameter name="contentLocation"/>
+        </in-parameters>
+        <out-parameters><parameter name="retryLater"/></out-parameters>
+    </service>
+
+    <service verb="deliver" noun="EdgeMail" type="rust" location="moqui_mail::deliver_edge_mail" allow-remote="false">
+        <description>On a local node, the queue kind mail: a message the edge node's listener took (the payload has its
+            envelope and recipient addresses with their DSN parameters, the content is the message), delivered as the
+            SMTP listener delivers to the hosted and shared accounts the addresses resolve to here; the edge node's
+            account ids are never used. An address no account takes now is logged and left out. A store that fails
+            answers retryLater, so the queue tries again, not counted; an account that stored it has its Message-ID and
+            does not store it twice. A message that is not mail is an error. Refused on an edge node.</description>
+        <implements service="org.moqui.mail.EmailServices.apply#EdgeQueueItem"/>
+    </service>
+    <service verb="deliver" noun="EdgeOutboundMail" type="rust" location="moqui_mail::deliver_edge_outbound_mail"
+            allow-remote="false">
+        <description>On an edge node, the queue kind mailOut: a message its local node sent through an EmailServer with
+            smtpHost edge:, sent from the VERP sender bounce+(item id)@(edge_mail_bounce_domain) when that is set. With
+            edge_mail_mta moqui (the default) it is DKIM-signed and recorded as one moqui.edge.EdgeMailDelivery per
+            recipient domain in this item's transaction, which the MX delivery thread delivers (moqui_mail::mx); the
+            answers come back as mailStatus from there. With edge_mail_mta postfix it is relayed to the MTA beside the
+            edge node (edge_mail_relay_host, edge_mail_relay_port), and its answer (accepted, or bounced for a 5xx or an
+            address it could never take, with the reply) queued back as mailStatus in a transaction of its own; an item
+            whose answer is queued is not relayed again. A relay that cannot be reached, answers 4xx or drops the
+            connection answers retryLater. Refused on a local node.</description>
+        <implements service="org.moqui.mail.EmailServices.apply#EdgeQueueItem"/>
+    </service>
+    <service verb="note" noun="EdgeMailStatus" type="rust" location="moqui_mail::note_edge_mail_status"
+            allow-remote="false">
+        <description>On a local node, the queue kind mailStatus: the edge node's answer (from its relay, or a later
+            delivery status notification to the VERP address) for one of this node's mailOut items, which names the
+            message; nothing the edge node names is trusted for it. A bounce puts a mail client's message back in the
+            Outbox (ES_READY with sendError, no folder) and marks another message ES_BOUNCED with sendError, only while
+            it is still Sent with the Message-ID it went out with; accepted and delayed are logged. Refused on an edge
+            node.</description>
+        <implements service="org.moqui.mail.EmailServices.apply#EdgeQueueItem"/>
+    </service>
+    <service verb="fail" noun="EdgeOutboundMail" type="rust" location="moqui_mail::fail_edge_outbound_mail"
+            allow-remote="false">
+        <description>On a local node, the failed-service of the queue kind mailOut: a message that never reached the edge
+            node (unpaired, past the retention period or the size cap) is put back as a bounce is, with the reason as
+            its sendError, so the failure is not silent.</description>
+        <in-parameters>
+            <parameter name="queueItemId" required="true"/>
+            <parameter name="kind"/>
+            <parameter name="conversationKey"/>
+            <parameter name="payload" allow-html="any"/>
+            <parameter name="error" allow-html="any"/>
+        </in-parameters>
+    </service>
+
+    <service verb="get" noun="DkimRecord" type="rust" location="moqui_mail::get_dkim_record" allow-remote="false">
+        <description>The DNS TXT record of this node's DKIM key (mail_dkim_key, generated into runtime/.env the first
+            time it is needed), to publish at (selector)._domainkey.(domain): v=DKIM1; k=rsa; p=(public key). The
+            domains are mail_dkim_domains, else the domains of the hosted and shared accounts.</description>
+        <out-parameters>
+            <parameter name="selector"/>
+            <parameter name="record"/>
+            <parameter name="domainList" type="List"/>
+        </out-parameters>
+    </service>
+
+    <service verb="poll" noun="EmailServer" type="rust" location="moqui_mail::poll_server"
+            authenticate="anonymous-all" transaction-timeout="600"
+            semaphore="fail" semaphore-parameter="emailServerId">
+        <!-- org.moqui.mail.EmailServices.poll#EmailServer -->
+        <description>
+            Poll an email server (IMAP or POP3) to receive messages. Each new message is processed using
+            the Email-ECA rules. Messages are flagged as seen (if supported). Messages are deleted if the storeDelete
+            flag is set on the moqui.basic.email.EmailServer record.
+
+            This is meant to be called as a scheduled service, run as often as you want to poll for new messages on a
+            particular server (configured in the corresponding moqui.basic.email.EmailServer record).
+
+            Add a job in the quartz_data.xml file for this service to run this scheduled.
+        </description>
+        <in-parameters>
+            <parameter name="emailServerId" required="true"/>
+        </in-parameters>
+    </service>
+    
+    <service verb="save" noun="EcaEmailMessage">
+        <!-- org.moqui.mail.EmailServices.save#EcaEmailMessage -->
+        <implements service="org.moqui.EmailServices.process#EmailEca"/>
+        <in-parameters>
+            <parameter name="statusId" default-value="ES_RECEIVED"/>
+        </in-parameters>
+        <out-parameters><parameter name="emailMessageId"/></out-parameters>
+        <actions>
+            <set field="messageId" from="headers ? headers['message-id'] : null"/>
+            <if condition="messageId">
+                <entity-find entity-name="moqui.basic.email.EmailMessage" list="emailMessageList">
+                    <econdition field-name="emailServerId" ignore-if-empty="true"/>
+                    <econdition field-name="messageId"/>
+                </entity-find>
+                <if condition="emailMessageList.length">
+                    <return message="Found duplicate message with Message-ID [${messageId}] from server [${emailServerId}]"/></if>
+            </if>
+
+            <set field="body" from="bodyPartList?.length ? bodyPartList[0].contentText : null"/>
+            <!-- The address lists are stored comma separated, as send#EmailTemplate stores them and send#EmailMessage
+                splits them; Java's List.toString() stores "[a, b]", which sends to "[a" and "b]". -->
+            <service-call name="create#moqui.basic.email.EmailMessage" out-map="context"
+                in-map="{sentDate:fields.sentDate, receivedDate:fields.receivedDate, statusId:statusId,
+                    subject:fields.subject, body:body,
+                    fromAddress:fields.from, toAddresses:fields.toList?.join(', '),
+                    ccAddresses:fields.ccList?.join(', '), bccAddresses:fields.bccList?.join(', '),
+                    messageId:messageId, emailServerId:emailServerId}"/>
+        </actions>
+    </service>
+
+    <service verb="send" noun="ScreenRenderEmail">
+        <in-parameters>
+            <parameter name="screenLocation" required="true"/>
+            <parameter name="screenRenderMode" required="true"/>
+            <parameter name="fileName"/>
+
+            <parameter name="toAddresses" required="true"><description>Comma separated list of to email addresses</description></parameter>
+            <parameter name="ccAddresses"><description>Comma separated list of CC email addresses</description></parameter>
+            <parameter name="bccAddresses"><description>Comma separated list of BCC email addresses</description></parameter>
+
+            <parameter name="emailTemplateId" default-value="SCREEN_RENDER"/>
+            <parameter name="createEmailMessage" type="Boolean" default="false"/>
+            <parameter name="bodyParameters" type="Map"/>
+            <parameter name="title"/>
+        </in-parameters>
+        <actions>
+            <set field="attachments" from="[{fileName: fileName, attachmentLocation: screenLocation, screenRenderMode: screenRenderMode}]"/>
+            <if condition="bodyParameters == null"><set field="bodyParameters" from="{}"/></if>
+            <if condition="title"><set field="bodyParameters.title" from="title"/></if>
+
+            <!-- default pageNoLimit=true and lastStandalone=true -->
+            <if condition="!bodyParameters.pageNoLimit"><set field="bodyParameters.pageNoLimit" value="true"/></if>
+            <if condition="!bodyParameters.lastStandalone"><set field="bodyParameters.lastStandalone" value="true"/></if>
+
+            <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate" in-map="context"/>
+        </actions>
+    </service>
+</services>
