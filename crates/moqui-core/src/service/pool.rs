@@ -40,7 +40,7 @@ use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
 use crate::entity::EntityFacade;
 use crate::transaction::TransactionManager;
 
-const DEFAULT_WORKERS: usize = 25;
+const DEFAULT_WORKERS: usize = 22;
 /// Java's `makeWorkerPool` default; `MoquiDefaultConf.xml` sets 65535.
 const DEFAULT_QUEUE: usize = 65_536;
 const DEFAULT_CHECK_SECONDS: u64 = 60;

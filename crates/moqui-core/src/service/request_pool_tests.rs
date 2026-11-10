@@ -140,17 +140,17 @@ fn caps_read_request_and_service_max() {
     let text = r#"<tools request-pool-max="3" request-queue="5" worker-pool-max="9"/>"#;
     assert_eq!(caps(text), (3, 9));
     assert_eq!(super::request_sizes(text).unwrap(), (3, 5));
-    assert_eq!(caps("<moqui-conf/>"), (8, 25));
-    assert_eq!(super::request_sizes("<moqui-conf/>").unwrap(), (8, 64));
+    assert_eq!(caps("<moqui-conf/>"), (16, 22));
+    assert_eq!(super::request_sizes("<moqui-conf/>").unwrap(), (16, 64));
     let junk =
         r#"<moqui-conf><tools request-pool-max="nope" request-queue="nope" worker-pool-max="nope"/></moqui-conf>"#;
-    assert_eq!(caps(junk), (8, 25));
-    assert_eq!(super::request_sizes(junk).unwrap(), (8, 64));
+    assert_eq!(caps(junk), (16, 22));
+    assert_eq!(super::request_sizes(junk).unwrap(), (16, 64));
     let conf = std::fs::read_to_string(framework_dir().join("conf/MoquiDefaultConf.xml")).unwrap();
-    assert_eq!(caps(&conf), (8, 25));
+    assert_eq!(caps(&conf), (16, 22));
     let root = MNode::parse_text("moqui-conf", &conf).unwrap();
     let tools = root.first_named("tools").unwrap();
-    assert_eq!(tools.attribute("request-pool-max").as_deref(), Some("8"));
+    assert_eq!(tools.attribute("request-pool-max").as_deref(), Some("16"));
     assert_eq!(tools.attribute("request-queue").as_deref(), Some("64"));
 }
 
@@ -171,12 +171,12 @@ fn panic_is_an_error_and_the_worker_continues() {
 }
 
 #[test]
-fn serve_caps_reject_a_small_pool_and_accept_8_and_25() {
+fn serve_caps_reject_a_small_pool_and_accept_16_and_22() {
     let ctx = ExecutionContextFactory::test_context();
     let factory = ctx.factory();
     let missing = check_serve_caps(factory).unwrap_err();
     assert!(missing.to_string().contains("no entity facade"), "{missing}");
-    assert_eq!(caps(&factory.conf_text()), (8, 25));
+    assert_eq!(caps(&factory.conf_text()), (16, 22));
 
     factory.set_entity(facade(PoolConfig {
         min: 0,
@@ -186,11 +186,11 @@ fn serve_caps_reject_a_small_pool_and_accept_8_and_25() {
         ..Default::default()
     }));
     let err = check_serve_caps(factory).unwrap_err();
-    assert!(err.to_string().contains("(8 + 25) * 2"), "{err}");
+    assert!(err.to_string().contains("(16 + 22) * 2"), "{err}");
 
-    // 66 for the request and service workers, one agent worker with the llm feature, and the 4 transfer reads (the
-    // content shares this pool, as with an external transactional database) within 80 less 8 reserve
-    factory.set_entity(facade(sized(80)));
+    // 76 for the request and service workers, one agent worker with the llm feature, and the 4 transfer reads (the
+    // content shares this pool, as with an external transactional database) within 90 less 8 reserve
+    factory.set_entity(facade(sized(90)));
     check_serve_caps(factory).unwrap();
     assert_eq!(super::transfer_readers(factory), 4);
     assert_eq!(super::spare_connections(factory), Some(2));
@@ -212,10 +212,10 @@ fn transfer_reads_count_in_the_content_pool() {
     let conf = MNode::parse_text("moqui-conf", &text).unwrap();
     let transactional = crate::entity::datasource::datasource_conf(&conf, "transactional").unwrap();
     let content = crate::entity::datasource::datasource_conf(&conf, "content").unwrap();
-    assert_eq!((transactional.pool.max, transactional.pool.reserve), (80, 8));
-    assert_eq!((content.pool.max, content.pool.reserve), (80, 8));
-    assert_eq!(caps(&text), (8, 25));
-    // (8 + 25) * 2 + 1 + 4 = 71 of 72: a content database of its own fits all 4 reads
+    assert_eq!((transactional.pool.max, transactional.pool.reserve), (90, 8));
+    assert_eq!((content.pool.max, content.pool.reserve), (90, 8));
+    assert_eq!(caps(&text), (16, 22));
+    // (16 + 22) * 2 + 1 + 4 = 81 of 82: a content database of its own fits all 4 reads
     factory.set_entity(two_groups(transactional.pool.clone(), content.pool.clone()));
     check_serve_caps(factory).unwrap();
     assert_eq!(super::transfer_readers(factory), 4);
@@ -226,19 +226,19 @@ fn transfer_reads_count_in_the_content_pool() {
     assert_eq!(super::transfer_readers(factory), 4);
 
     // a content pool with 2 left beside the workers reads fewer at once
-    factory.set_entity(two_groups(sized(80), sized(76)));
+    factory.set_entity(two_groups(sized(90), sized(86)));
     check_serve_caps(factory).unwrap();
     let readers = super::transfer_readers(factory);
     assert_eq!(readers, (2 - agent).max(1));
     assert_eq!(super::spare_connections(factory), Some(2u32.saturating_sub(readers)));
 
     // the transactional pool is not the content's: transfers leave it alone
-    factory.set_entity(two_groups(sized(66 + agent + 8), sized(80)));
+    factory.set_entity(two_groups(sized(76 + agent + 8), sized(90)));
     check_serve_caps(factory).unwrap();
     assert_eq!(super::transfer_readers(factory), 4);
 
     // a content pool that has no room past the workers and the agent worker still reads one at a time
-    factory.set_entity(two_groups(sized(80), sized(74 + agent)));
+    factory.set_entity(two_groups(sized(90), sized(84 + agent)));
     check_serve_caps(factory).unwrap();
     assert_eq!(super::transfer_readers(factory), 1);
 }

@@ -131,18 +131,18 @@ fn call_future_without_a_context_names_it() {
 #[test]
 fn default_conf_sizes_and_drop_joins() {
     let text = std::fs::read_to_string(framework_dir().join("conf/MoquiDefaultConf.xml")).unwrap();
-    // `worker-pool-max` 25, less the 2 job workers of `job-pool-core`.
+    // `worker-pool-max` 22, less the 2 job workers of `job-pool-core`.
     let pools = super::super::start_pools(&text).unwrap();
-    assert_eq!(pools.sizes(), (23, 65_535));
+    assert_eq!(pools.sizes(), (20, 65_535));
     drop(pools);
     // With no `worker-queue`, Java's code default.
     let missing = super::super::start_pools("<moqui-conf/>").unwrap();
-    assert_eq!(missing.sizes(), (23, 65_536));
+    assert_eq!(missing.sizes(), (20, 65_536));
     drop(missing);
     let junk =
         super::super::start_pools(r#"<moqui-conf><tools worker-pool-max="nope" worker-queue="nope"/></moqui-conf>"#)
             .unwrap();
-    assert_eq!(junk.sizes(), (23, 65_536));
+    assert_eq!(junk.sizes(), (20, 65_536));
     drop(junk);
     let none = super::super::start_pools(r#"<moqui-conf><tools worker-pool-max="0"/></moqui-conf>"#);
     assert!(none.is_err(), "a pool with no workers can never run anything");
