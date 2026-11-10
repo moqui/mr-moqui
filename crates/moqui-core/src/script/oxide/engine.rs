@@ -1495,7 +1495,12 @@ pub(super) fn with_run<T>(
     // frame. Written back here, they would go to whatever frame the host call left on top (a service's context), and
     // the outer run would lose them (`setup#UserOrganizationInfo`'s `userOrgIds.push` across an entity find). The
     // binder flushes before a method that reads or changes the stack, before the call changes it.
+    // the outer run's bound names come off the global object for the nested run, which has its own context
+    // (plans/Profiling3.md S2), and go back when it returns
+    let set_aside = nested && super::tracked::set_aside_bindings(&mut context, &engine).is_ok();
     let state = RunState::enter(&engine, nested);
+    // only a run that writes its names back binds them: its end takes the bindings off again
+    engine.run_values().borrow_mut().binds = writes;
     let _real_ec = nested.then(|| super::widget::RealEcForNested::enter(&engine));
     let _render = super::units::set_aside_render_body();
     let mut poisoned = false;
@@ -1530,6 +1535,9 @@ pub(super) fn with_run<T>(
     }
     let fallback = FALLBACK.with(Cell::take);
     drop(state);
+    if set_aside && super::tracked::restore_bindings(&mut context, &engine).is_err() {
+        tracing::error!("the bound names of a run could not be put back after a nested run");
+    }
     // a runtime a run left as the later scripts must not see goes when its outermost run ends, its peak kept
     if !nested && take_discard(&engine) {
         counts::POISONED.fetch_add(1, Relaxed);

@@ -89,7 +89,11 @@ impl ExoticClass for GlobalNames {
         };
         let name = super::convert::text_of(&name);
         crate::telemetry::profile::count("name.read");
-        guarded_hook(scope, |scope| super::tracked::read_name(scope, &name))
+        guarded_hook(scope, |scope| {
+            let value = super::tracked::read_name(scope, &name)?;
+            super::tracked::note_access(scope, &name, &value)?;
+            Ok(value)
+        })
     }
 
     fn set(&self, scope: &mut ExoticScope<'_>, _: &(), key: &PropertyKey, value: Value) -> JsResult<Hook<bool>> {
@@ -100,6 +104,7 @@ impl ExoticClass for GlobalNames {
         crate::telemetry::profile::count("name.write");
         guarded_hook(scope, |scope| {
             super::tracked::write_name(scope, &name, &value)?;
+            super::tracked::note_access(scope, &name, &value)?;
             Ok(true)
         })
     }

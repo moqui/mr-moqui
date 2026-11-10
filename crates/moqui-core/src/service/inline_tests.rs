@@ -707,3 +707,39 @@ fn tx_commit_rules_run_under_the_authorization_of_their_call() {
     assert!(ran.starts_with("asyncinherit/"), "{ran}");
     assert_eq!(medium(&facade, "RULE-OPEN"), None);
 }
+
+/// A bare name read often in a script is bound on the global object (plans/Profiling3.md S2): what the script writes
+/// to it is on the stack after the run and when `context` reads it meanwhile, a service the script calls does not see
+/// it (its own context), the binding has its value again after the call, and `delete context.name` unbinds it.
+#[test]
+fn a_bound_name_writes_back_and_stays_out_of_a_nested_run() {
+    let (_facade, ctx) = inline_context();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    crate::script::set_context_name("extra", Value::I64(0)).unwrap();
+    crate::script::run_script(
+        r#"for (let i = 0; i < 10; i++) extra = extra + 1;
+        viaContext = context.extra;
+        seenByService = ec.service.sync().name("inline#Undeclared").call().seen;
+        afterCall = extra;
+        extra = extra + 5;"#,
+    )
+    .unwrap();
+    for check in [
+        "extra == 15",
+        "viaContext == 10",
+        "seenByService == null",
+        "afterCall == 10",
+    ] {
+        assert!(crate::script::eval_condition(check).unwrap(), "{check}");
+    }
+    crate::script::run_script(
+        r#"for (let i = 0; i < 10; i++) extra = extra + 1;
+        delete context.extra;
+        gone = context.extra == null && extra == null && !context.containsKey('extra');"#,
+    )
+    .unwrap();
+    // a missing name reads as null, as in Groovy
+    assert!(crate::script::eval_condition("gone === true").unwrap());
+    crate::script::clear_context_stack();
+}
