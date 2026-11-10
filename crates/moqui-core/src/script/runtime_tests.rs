@@ -52,6 +52,11 @@ fn the_small_entries_run_and_are_counted_by_kind() -> Result<(), Error> {
     // `${}` strings and map literals
     let expands = oxide_runs("expand");
     assert_eq!(expand("n is ${n}, \\${not} `ticked`")?, "n is 3, ${not} `ticked`");
+    // the code of a `${}` is copied as written: its escapes, backticks, comments and regular expressions
+    assert_eq!(
+        expand("\\d ${'it\\'s'} ${`a${n}`} ${/\\d}/.test('3}') /* } */} ${n // don't\n}")?,
+        "\\d it's a3 true 3"
+    );
     assert_eq!(crate::script::expand_localized("${n + 1}")?, "4");
     assert!(oxide_runs("expand") >= expands + 2);
     let maps = oxide_runs("eval_map");

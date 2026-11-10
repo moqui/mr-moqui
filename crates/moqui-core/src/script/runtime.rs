@@ -540,14 +540,22 @@ pub(crate) fn as_expression(source: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// A `${}` template as a JavaScript template literal: a backslash before `${` keeps it literal, any other backslash is
-/// itself, and a backtick is escaped.
+/// A `${}` template as a JavaScript template literal: in the text a backslash before `${` keeps it literal, any other
+/// backslash is itself, and a backtick is escaped. A `${}` expression is JavaScript and is copied as written, its
+/// escapes, backticks, comments and regular expressions with it, as Java's Groovy string left the code of a `${}`.
 pub(crate) fn template_literal(template: &str) -> String {
     let mut source = String::with_capacity(template.len() + 2);
     source.push('`');
     let bytes = template.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
+        if bytes[index] == b'$' && bytes.get(index + 1) == Some(&b'{') {
+            if let Some(end) = crate::script::template::scan_expression(template, index + 2, b'}') {
+                source.push_str(&template[index..=end]);
+                index = end + 1;
+                continue;
+            }
+        }
         if bytes[index] == b'\\' {
             if bytes.get(index + 1) == Some(&b'$') && bytes.get(index + 2) == Some(&b'{') {
                 source.push_str("\\${");

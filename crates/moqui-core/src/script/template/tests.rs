@@ -632,6 +632,74 @@ fn the_extension_set_lists_each_registered_extension_once_in_conf_order() {
 }
 
 #[test]
+fn expressions_skip_comments_regular_expressions_and_escaped_quotes() {
+    on_template_engines(expressions_skip_comments_regular_expressions_and_escaped_quotes_on);
+}
+
+/// The `${}` and tag scanner reads JavaScript: an apostrophe in a comment, a `}` or `>` in a comment or a regular
+/// expression, and an escaped quote in a string do not end the expression, and a `/` after an operand divides.
+fn expressions_skip_comments_regular_expressions_and_escaped_quotes_on() {
+    for (source, expected) in [
+        ("${'a' // don't\n}", "a"),
+        ("${1 /* } ' */ + 1}", "2"),
+        ("${/[}'\"]/.test('}') ? 'y' : 'n'}", "y"),
+        ("${'a}b'.replace(/}/g, '-')}", "a-b"),
+        ("${(() => { return /'}/.source })()}", "'}"),
+        ("${6 / 3}x${(8) / 2}y${[9][0] / 3}", "2x4y3"),
+        ("${'it\\'s'}", "it's"),
+        ("${\"say \\\"}\\\"\"}", "say \"}\""),
+        ("${`a${'}'}b`}", "a}b"),
+        ("<#if (4 / 2 > 1)>yes</#if>", "yes"),
+        ("<#if /[>]/.test('>') /* isn't > */>yes</#if>", "yes"),
+        // after a postfix ++ or --, and after a property named as a keyword, a / divides
+        ("<#assign a = 3><#assign b = 4>${a++ / 2} x\\y ${b / 2}", "1.5 x\\y 2"),
+        (
+            "<#assign dims = {in: 24}><#assign c = 4>${dims.in / 12} ${c / 2} ${dims?.in / 12}",
+            "2 2 2",
+        ),
+        ("<#assign d = 8>${d-- / 2}|${d / 7}", "4|1"),
+        ("<#if /* > */ true>yes</#if>", "yes"),
+    ] {
+        assert_eq!(render_trusted(source, Escape::None).unwrap(), expected, "{source}");
+    }
+    let err = check_template("${a /* }").expect_err("an open comment");
+    assert!(err.message().contains("no closing"), "{}", err.message());
+    // a line comment in a tag would run past its `>`
+    let err = check_template("<#if a // isn't\n>yes</#if>").expect_err("a line comment in a tag");
+    assert!(
+        err.message().contains("a // comment in a tag (<#if>): use /* */"),
+        "{}",
+        err.message()
+    );
+    assert!(check_template("<#if a == 'http://x'>yes</#if>").is_ok());
+}
+
+#[test]
+fn a_tui_json_template_reads_its_expression_as_raw_javascript() {
+    on_template_engines(a_tui_json_template_reads_its_expression_as_raw_javascript_on);
+}
+
+/// The shape of a `.tui.json` with `template="fancy"` (as `tools/screen/Tools/Load/Run.tui.json`): one `${}` around
+/// JavaScript that builds the nodes, with a comment holding an apostrophe and a string holding an escaped one. The
+/// expression is raw JavaScript, not JSON-escaped text.
+fn a_tui_json_template_reads_its_expression_as_raw_javascript_on() {
+    let source = "${JSON.stringify((() => {\n    // don't count the header\n    const label = 'it\\'s done'\n    \
+                  const nodes = [{t: 'text', id: 'Done', text: label}]\n    /* a } here is a comment */\n    \
+                  return nodes.filter(node => /^[A-Z]/.test(node.id))\n})())}\n";
+    let out = render_trusted(source, Escape::None).unwrap();
+    assert_eq!(out, "[{\"t\":\"text\",\"id\":\"Done\",\"text\":\"it's done\"}]\n");
+}
+
+#[test]
+fn markdown_holds_a_whole_expression_with_a_comment_or_a_regular_expression() {
+    let source = "# ${title // don't escape\n}\n\n${'a}'.replace(/}/, '')} and <#if /[>]/.test(x)>x</#if>\n";
+    let prepared = markdown_fancy_source(source).unwrap();
+    assert!(prepared.contains("${title // don't escape\n}"), "{prepared}");
+    assert!(prepared.contains("${'a}'.replace(/}/, '')}"), "{prepared}");
+    assert!(prepared.contains("<#if /[>]/.test(x)>"), "{prepared}");
+}
+
+#[test]
 fn list_tags_split_at_the_last_as_word() {
     assert_eq!(split_last_word("a.b as item", "as"), Some(("a.b", "item")));
     assert_eq!(split_last_word("x as y as z", "as"), Some(("x as y", "z")));
