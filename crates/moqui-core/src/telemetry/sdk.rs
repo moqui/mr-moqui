@@ -107,6 +107,7 @@ impl Runtime {
         let provider = SdkTracerProvider::builder()
             .with_resource(resource.clone())
             .with_sampler(opentelemetry_sdk::trace::Sampler::AlwaysOn)
+            .with_id_generator(PresetIds::default())
             .with_simple_exporter(LocalSpanExporter(Arc::clone(&shared)))
             .build();
         let tracer = provider.tracer("moqui");
@@ -241,6 +242,14 @@ impl Runtime {
         retain: bool,
         sample_ratio: f64,
     ) -> Span {
+        // An unsampled span of a trace whose root is open on this thread waits there as a record, made a span only if
+        // the trace is kept (plans/Profiling3.md R60): most such traces are dropped whole at their root.
+        if let Some(parent) = parent.as_ref().filter(|parent| parent.local && !retain && started.is_none()) {
+            if !sampled_by(&parent.trace_id, sample_ratio) && tail_open(&parent.trace_id.0) {
+                return pending_span(&self.tracer, name, kind, parent);
+            }
+        }
+        let is_root = parent.as_ref().is_none_or(|parent| !parent.local);
         let parent_context = parent.as_ref().map_or_else(Context::new, sdk_context);
         let mut builder = self.tracer.span_builder(name.to_string());
         builder.start_time = started;
@@ -256,12 +265,7 @@ impl Runtime {
         let trace_id = super::HexId(span_context.trace_id().to_bytes());
         // The configured ratio decides from the trace id, not a caller's sampled flag, so a client cannot turn full
         // tracing on, and every span of a trace (and every service with the same ratio) decides alike.
-        let sampled = retain || {
-            let mut high = [0u8; 8];
-            high.copy_from_slice(&trace_id.0[..8]);
-            let value = u64::from_be_bytes(high);
-            (value as f64 / u64::MAX as f64) < sample_ratio
-        };
+        let sampled = retain || sampled_by(&trace_id, sample_ratio);
         let context = TraceContext {
             trace_id,
             span_id: super::HexId(span_context.span_id().to_bytes()),
@@ -270,12 +274,27 @@ impl Runtime {
             local: true,
         };
         span.set_attribute(KeyValue::new("moqui.head.sampled", sampled));
+        // a root of its trace on this thread: the spans that wait under it are decided when it ends
+        let root = is_root.then(|| {
+            open_tail(context.trace_id.0);
+            Box::new(RootTail {
+                trace: context.trace_id.0,
+                tracer: self.tracer.clone(),
+                started: std::time::Instant::now(),
+                slow: self.shared.live.load().slow_root,
+                sampled,
+            })
+        });
         Span {
             context: Some(context),
             inner: Some(OwnedSpan {
                 span,
                 suppressed: false,
+                error: false,
+                closed: false,
+                root,
             }),
+            pending: None,
         }
     }
 
@@ -517,54 +536,308 @@ fn sdk_context(context: &TraceContext) -> Context {
 pub(super) struct OwnedSpan {
     span: opentelemetry_sdk::trace::Span,
     suppressed: bool,
+    error: bool,
+    closed: bool,
+    /// Set when the span is the root of its trace on this thread.
+    root: Option<Box<RootTail>>,
+}
+
+/// What a root needs at its end to decide the spans of its trace that wait on this thread, as the export worker's tail
+/// rule decides the trace: kept when the root is sampled, fails or is slow, or a span under it failed or was a slow
+/// artifact hit.
+struct RootTail {
+    trace: [u8; 16],
+    tracer: SdkTracer,
+    started: std::time::Instant,
+    slow: Duration,
+    sampled: bool,
+}
+
+/// A span attribute as a span keeps it: a name the framework does not set from its own values is checked for a
+/// secret, and text is clipped and redacted. None for one that is not kept.
+fn attribute_value(key: &str, value: Value) -> Option<KeyValue> {
+    let safe = safe_key(key);
+    if !safe && super::sensitive_key(key) {
+        return None;
+    }
+    let value = match value {
+        Value::String(value) if safe => Value::String(clip_owned(value, 4096)),
+        Value::String(value) => Value::String(super::redact_owned(clip_owned(value, 4096))),
+        value => value,
+    };
+    Some(KeyValue::new(attribute_key(key), sdk_value(value)))
+}
+
+/// An error message as a span keeps it, clipped and redacted.
+fn error_message(message: &str) -> String {
+    super::redact_text(&clip_text(message, 4096)).chars().take(4096).collect()
+}
+
+/// The error of a span: its status, an `exception.message` and an `exception` event.
+fn mark_error(span: &mut opentelemetry_sdk::trace::Span, message: String) {
+    span.set_status(opentelemetry::trace::Status::error(message.clone()));
+    span.set_attribute(KeyValue::new("exception.message", message.clone()));
+    span.add_event("exception", vec![KeyValue::new("exception.message", message)]);
 }
 
 impl OwnedSpan {
     pub(super) fn set_attribute(&mut self, key: &str, value: Value) {
-        let safe = safe_key(key);
-        if !safe && super::sensitive_key(key) {
-            return;
+        if let Some(attribute) = attribute_value(key, value) {
+            self.span.set_attribute(attribute);
         }
-        let value = match value {
-            Value::String(value) if safe => Value::String(clip_owned(value, 4096)),
-            Value::String(value) => Value::String(super::redact_owned(clip_owned(value, 4096))),
-            value => value,
-        };
-        self.span
-            .set_attribute(KeyValue::new(attribute_key(key), sdk_value(value)));
     }
     pub(super) fn set_error(&mut self, message: &str) {
-        let message = super::redact_text(&clip_text(message, 4096));
-        let message = message.as_str();
-        self.span
-            .set_status(opentelemetry::trace::Status::error(message.to_string()));
-        self.span.set_attribute(KeyValue::new(
-            "exception.message",
-            message.chars().take(4096).collect::<String>(),
-        ));
-        self.span.add_event(
-            "exception",
-            vec![KeyValue::new(
-                "exception.message",
-                message.chars().take(4096).collect::<String>(),
-            )],
-        );
+        self.error = true;
+        mark_error(&mut self.span, error_message(message));
     }
     pub(super) fn suppress(&mut self) {
         self.suppressed = true;
         self.span.set_attribute(KeyValue::new("moqui.suppressed", true));
     }
     pub(super) fn finish(mut self) {
+        self.close();
+    }
+    /// End the span; a root first decides the spans that waited under it, which go out before it when its trace is
+    /// kept and are dropped, never made spans, when it is not.
+    fn close(&mut self) {
+        if std::mem::replace(&mut self.closed, true) {
+            return;
+        }
+        if let Some(root) = self.root.take() {
+            let tail = close_tail(&root.trace);
+            let keep = root.sampled || self.error || root.started.elapsed() > root.slow || tail.important;
+            if keep {
+                for span in tail.spans {
+                    span.materialize(&root.tracer);
+                }
+            }
+        }
         self.span.end();
     }
 }
 
 impl Drop for OwnedSpan {
     fn drop(&mut self) {
-        if std::thread::panicking() && !self.suppressed {
+        if std::thread::panicking() && !self.suppressed && !self.closed {
             self.set_error("execution panicked");
         }
-        self.span.end();
+        self.close();
+    }
+}
+
+/// An unsampled span under a root open on this thread, kept as a record until its trace is decided.
+pub(super) struct PendingSpan {
+    tracer: SdkTracer,
+    trace: TraceId,
+    span_id: SpanId,
+    parent: SpanId,
+    name: String,
+    kind: opentelemetry::trace::SpanKind,
+    start: SystemTime,
+    started: std::time::Instant,
+    attributes: Vec<KeyValue>,
+    error: Option<String>,
+    suppressed: bool,
+    closed: bool,
+}
+
+/// A pending span that ended: what makes it a span when its trace is kept.
+struct DoneSpan {
+    trace: TraceId,
+    span_id: SpanId,
+    parent: SpanId,
+    name: String,
+    kind: opentelemetry::trace::SpanKind,
+    start: SystemTime,
+    end: SystemTime,
+    attributes: Vec<KeyValue>,
+    error: Option<String>,
+}
+
+impl PendingSpan {
+    pub(super) fn set_attribute(&mut self, key: &str, value: Value) {
+        if let Some(attribute) = attribute_value(key, value) {
+            self.attributes.push(attribute);
+        }
+    }
+    pub(super) fn set_error(&mut self, message: &str) {
+        self.error = Some(error_message(message));
+    }
+    pub(super) fn suppress(&mut self) {
+        self.suppressed = true;
+    }
+    pub(super) fn finish(mut self) {
+        self.close();
+    }
+    fn close(&mut self) {
+        if std::mem::replace(&mut self.closed, true) || self.suppressed {
+            return;
+        }
+        let elapsed = self.started.elapsed();
+        let slow_hit = self.attributes.iter().any(|attribute| {
+            attribute.key.as_str() == "moqui.artifact.slow" && attribute.value == opentelemetry::Value::Bool(true)
+        }) && elapsed > Duration::from_secs(1);
+        let important = self.error.is_some() || slow_hit;
+        let done = DoneSpan {
+            trace: self.trace,
+            span_id: self.span_id,
+            parent: self.parent,
+            name: std::mem::take(&mut self.name),
+            kind: self.kind.clone(),
+            start: self.start,
+            end: self.start + elapsed,
+            attributes: std::mem::take(&mut self.attributes),
+            error: self.error.take(),
+        };
+        // its root ended first (the span left its thread): it goes out as it would have, to the export's tail rule
+        if let Some(done) = add_to_tail(done, important) {
+            done.materialize(&self.tracer);
+        }
+    }
+}
+
+impl Drop for PendingSpan {
+    fn drop(&mut self) {
+        if std::thread::panicking() && !self.suppressed && !self.closed {
+            self.set_error("execution panicked");
+        }
+        self.close();
+    }
+}
+
+impl DoneSpan {
+    /// The span it would have been: its ids, times, attributes and error, unsampled at the head.
+    fn materialize(self, tracer: &SdkTracer) {
+        let parent = SpanContext::new(self.trace, self.parent, TraceFlags::default(), true, TraceState::default());
+        let mut attributes = self.attributes;
+        attributes.push(KeyValue::new("moqui.head.sampled", false));
+        let mut builder = tracer.span_builder(self.name);
+        builder.span_kind = Some(self.kind);
+        builder.start_time = Some(self.start);
+        builder.attributes = Some(attributes);
+        PRESET_SPAN_ID.with(|preset| preset.set(Some(self.span_id)));
+        let mut span = tracer.build_with_context(builder, &Context::new().with_remote_span_context(parent));
+        PRESET_SPAN_ID.with(|preset| preset.set(None));
+        if let Some(message) = self.error {
+            mark_error(&mut span, message);
+        }
+        span.end_with_timestamp(self.end);
+    }
+}
+
+/// The spans waiting under a root open on this thread, by trace.
+#[derive(Default)]
+struct Tail {
+    trace: [u8; 16],
+    important: bool,
+    spans: Vec<DoneSpan>,
+}
+
+thread_local! {
+    /// The roots open on this thread and the spans waiting under each (plans/Profiling3.md R60).
+    static TAILS: std::cell::RefCell<Vec<Tail>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The id the next span made gets ([`PresetIds`]): a pending span keeps the id its children named.
+    static PRESET_SPAN_ID: std::cell::Cell<Option<SpanId>> = const { std::cell::Cell::new(None) };
+}
+
+/// The most roots a thread tracks open; past them a span is made at once, as before.
+const MAX_OPEN_TAILS: usize = 64;
+
+fn tail_open(trace: &[u8; 16]) -> bool {
+    TAILS.with_borrow(|tails| tails.iter().any(|tail| &tail.trace == trace))
+}
+
+fn open_tail(trace: [u8; 16]) {
+    TAILS.with_borrow_mut(|tails| {
+        if tails.len() < MAX_OPEN_TAILS {
+            tails.push(Tail {
+                trace,
+                ..Tail::default()
+            });
+        }
+    });
+}
+
+fn close_tail(trace: &[u8; 16]) -> Tail {
+    TAILS.with_borrow_mut(|tails| match tails.iter().rposition(|tail| &tail.trace == trace) {
+        Some(at) => tails.remove(at),
+        None => Tail::default(),
+    })
+}
+
+/// Add an ended pending span to its trace's tail; the span back when its root is not open on this thread.
+fn add_to_tail(done: DoneSpan, important: bool) -> Option<DoneSpan> {
+    let trace = done.trace.to_bytes();
+    TAILS.with_borrow_mut(|tails| match tails.iter_mut().rev().find(|tail| tail.trace == trace) {
+        Some(tail) => {
+            tail.important |= important;
+            tail.spans.push(done);
+            None
+        }
+        None => Some(done),
+    })
+}
+
+/// A pending span under `parent`.
+fn pending_span(tracer: &SdkTracer, name: &str, kind: SpanKind, parent: &TraceContext) -> Span {
+    use opentelemetry_sdk::trace::IdGenerator as _;
+    let span_id = opentelemetry_sdk::trace::RandomIdGenerator::default().new_span_id();
+    let context = TraceContext {
+        trace_id: parent.trace_id,
+        span_id: super::HexId(span_id.to_bytes()),
+        sampled: false,
+        tracestate: parent.tracestate.clone(),
+        local: true,
+    };
+    Span {
+        context: Some(context),
+        inner: None,
+        pending: Some(Box::new(PendingSpan {
+            tracer: tracer.clone(),
+            trace: TraceId::from_bytes(parent.trace_id.0),
+            span_id,
+            parent: SpanId::from_bytes(parent.span_id.0),
+            name: name.to_string(),
+            kind: sdk_kind(kind),
+            start: SystemTime::now(),
+            started: std::time::Instant::now(),
+            attributes: Vec::new(),
+            error: None,
+            suppressed: false,
+            closed: false,
+        })),
+    }
+}
+
+/// Whether the configured ratio samples `trace`: decided from the trace id, not a caller's sampled flag, so a client
+/// cannot turn full tracing on, and every span of a trace (and every service with the same ratio) decides alike.
+fn sampled_by(trace: &super::HexId<16>, ratio: f64) -> bool {
+    let mut high = [0u8; 8];
+    high.copy_from_slice(&trace.0[..8]);
+    let value = u64::from_be_bytes(high);
+    (value as f64 / u64::MAX as f64) < ratio
+}
+
+fn sdk_kind(kind: SpanKind) -> opentelemetry::trace::SpanKind {
+    match kind {
+        SpanKind::Server => opentelemetry::trace::SpanKind::Server,
+        SpanKind::Client => opentelemetry::trace::SpanKind::Client,
+        SpanKind::Internal => opentelemetry::trace::SpanKind::Internal,
+        SpanKind::Producer => opentelemetry::trace::SpanKind::Producer,
+        SpanKind::Consumer => opentelemetry::trace::SpanKind::Consumer,
+    }
+}
+
+/// Span ids from the SDK's random generator, or the one a pending span kept ([`PRESET_SPAN_ID`]) when it is made.
+#[derive(Debug, Default)]
+struct PresetIds(opentelemetry_sdk::trace::RandomIdGenerator);
+
+impl opentelemetry_sdk::trace::IdGenerator for PresetIds {
+    fn new_trace_id(&self) -> TraceId {
+        self.0.new_trace_id()
+    }
+    fn new_span_id(&self) -> SpanId {
+        PRESET_SPAN_ID.with(std::cell::Cell::take).unwrap_or_else(|| self.0.new_span_id())
     }
 }
 

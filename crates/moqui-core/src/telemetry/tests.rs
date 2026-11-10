@@ -1532,18 +1532,64 @@ mod configured {
             let (telemetry, _memory) = telemetry(conf);
             let first = telemetry.start_span("first", SpanKind::Server, None);
             let second = telemetry.start_span("second", SpanKind::Server, None);
-            telemetry
-                .start_span("first.child", SpanKind::Internal, first.context())
-                .finish();
-            telemetry
-                .start_span("second.child", SpanKind::Internal, second.context())
-                .finish();
+            // on another thread, where the roots are not open: the children wait in the export's tail buffer, as work a
+            // request queued does (on the roots' thread they would wait there instead, and never reach it)
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    telemetry
+                        .start_span("first.child", SpanKind::Internal, first.context())
+                        .finish();
+                    telemetry
+                        .start_span("second.child", SpanKind::Internal, second.context())
+                        .finish();
+                });
+            });
             first.finish();
             second.finish();
             telemetry.flush();
             assert_eq!(telemetry.counters().dropped, dropped, "{conf}");
             telemetry.shutdown();
         }
+    }
+
+    /// An unsampled span under a root open on its thread waits there as a record (plans/Profiling3.md R60): a trace
+    /// that is not kept exports nothing of it, and one kept by an error below exports every span with the ids and
+    /// parents it had, a grandchild's parent its child.
+    #[test]
+    fn spans_under_an_open_root_wait_and_go_out_only_with_a_kept_trace() {
+        let (telemetry, memory) = telemetry("<telemetry/>");
+        let quiet = telemetry.start_span("quiet", SpanKind::Server, None);
+        telemetry
+            .start_span("quiet.child", SpanKind::Internal, quiet.context())
+            .finish();
+        quiet.finish();
+        let root = telemetry.start_span("failed", SpanKind::Server, None);
+        let child = telemetry.start_span("child", SpanKind::Internal, root.context());
+        let mut grandchild = telemetry.start_span("grandchild", SpanKind::Client, child.context());
+        let (child_id, grandchild_id) = (child.context().unwrap().span_id, grandchild.context().unwrap().span_id);
+        grandchild.set_error("failure 7");
+        grandchild.finish();
+        child.finish();
+        let root_id = root.context().unwrap().span_id;
+        root.finish();
+        telemetry.flush();
+        let spans: Vec<Document> = lock(&memory.0)
+            .iter()
+            .filter(|(index, _)| index == "otel_spans")
+            .map(|(_, document)| document.clone())
+            .collect();
+        let names: Vec<String> = spans.iter().map(|span| text(span, "name")).collect();
+        assert_eq!(names.len(), 4, "{names:?}");
+        assert!(!names.contains(&"quiet.child".to_string()), "{names:?}");
+        let by_name = |name: &str| spans.iter().find(|span| text(span, "name") == name).unwrap();
+        let hex = |id: &super::HexId<8>| id.0.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        assert_eq!(text(by_name("child"), "span_id"), hex(&child_id));
+        assert_eq!(text(by_name("child"), "parent_span_id"), hex(&root_id));
+        assert_eq!(text(by_name("grandchild"), "span_id"), hex(&grandchild_id));
+        assert_eq!(text(by_name("grandchild"), "parent_span_id"), hex(&child_id));
+        assert_eq!(text(by_name("grandchild"), "status_code"), "ERROR");
+        assert_eq!(text(by_name("child"), "trace_id"), text(by_name("failed"), "trace_id"));
+        telemetry.shutdown();
     }
 
     #[test]
