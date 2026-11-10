@@ -112,11 +112,6 @@ fn menu_entry(
     if !crate::screen::menu::permitted_under(parents, &target) {
         return Ok(None);
     }
-    if let Some(condition) = &target.root.condition {
-        if !crate::screen::render::check_condition(condition)? {
-            return Ok(None);
-        }
-    }
     let disabled = match &item.disable_when {
         Some(expression) => script::eval_condition(expression)?,
         None => false,
