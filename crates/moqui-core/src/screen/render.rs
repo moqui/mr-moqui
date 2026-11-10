@@ -2125,25 +2125,20 @@ fn respond(
             save_parameters();
         }
         if screen_has_error() {
-            if json {
-                // A failed AJAX action needs its errors even when it has no redirect or explicit response body.
-                web::send_json_response(Value::Map(Default::default()));
-            } else {
-                save_error_parameters();
-            }
+            save_error_parameters();
         }
         return Ok(());
     }
     if response.save_parameters {
         save_parameters();
     }
-    // JSON clients keep their failed form locally. Queuing its fields would overwrite fresh values
-    // (including concurrency tokens) on the next page; redirects still need both messages and inputs.
+    // A JSON answer carries the messages itself, so they are not kept for the next page as well.
     if !json {
         save_messages();
-        if screen_has_error() {
-            save_error_parameters();
-        }
+    }
+    // As Java: the failed inputs are kept for the next request, which takes them whether or not it renders a form.
+    if screen_has_error() {
+        save_error_parameters();
     }
     let mut url = script::expand(&response.url)?;
     let mut url_type = response.url_type.clone();

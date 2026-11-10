@@ -807,34 +807,37 @@ fn the_error_response_is_used_when_the_actions_leave_errors() {
     assert_eq!(location_of(&fine), Some("/Sub"));
 }
 
-/// JSON clients retain their failed form locally; a later reload must get current concurrency fields.
-/// Ordinary redirects still carry the user's inputs to the page that follows the refusal.
+/// As Java: a refused JSON submit keeps its inputs for the next request, and that request takes them whatever it is (a
+/// menu, a notification poll), so a page loaded later shows current fields such as a concurrency token.
 #[test]
-fn failed_json_submits_do_not_save_stale_fields_for_the_next_page() {
+fn failed_json_submits_keep_their_inputs_for_the_next_request_only() {
     let world = World::open("");
-    for path in ["/failTx", "/failNone"] {
+    let submit = |path: &str| {
         let mut submit = request("POST", path);
         submit.set_header("content-type", "application/x-www-form-urlencoded");
         submit.body = b"moquiFormName=EditRecord&expectedVersion=old-version".to_vec();
         submit.set_header("accept", "application/json");
         let response = serve_at(&world.factory, submit, &fixture_root());
-        assert_eq!(response.status, 500, "{path}: {}", response.body_text());
-        assert!(response.body_text().contains("bad input"), "{}", response.body_text());
         let cookie = super::header_value(&response, "Set-Cookie").expect("session cookie");
-        let value = cookie.split(';').next().unwrap().split_once('=').unwrap().1;
+        cookie.split(';').next().unwrap().to_string()
+    };
+    let saved_errors = |cookie: &str| {
         let context = world.factory.new_context();
         let _entered = context.enter();
-        let _session = crate::user::bind(&world.factory, Some(value), None, false).unwrap();
-        assert!(
-            crate::user::session::take_saved_for_page().error_parameters.is_empty(),
-            "{path}: a JSON refusal must not override the next page's current fields"
-        );
+        let _session = crate::user::bind(&world.factory, Some(cookie.split_once('=').unwrap().1), None, false).unwrap();
+        crate::user::session::take_error_parameters()
+    };
+    for path in ["/failTx", "/failNone"] {
+        let cookie = submit(path);
+        assert_eq!(saved_errors(&cookie).get("expectedVersion").map(String::as_str), Some("old-version"), "{path}");
+
+        let cookie = submit(path);
+        let mut next = request("GET", "/goNone");
+        next.set_header("cookie", &cookie);
+        next.set_header("accept", "application/json");
+        assert_eq!(serve_at(&world.factory, next, &fixture_root()).status, 200);
+        assert!(saved_errors(&cookie).is_empty(), "{path}: the next request takes the refused inputs");
     }
-    let mut empty = request("GET", "/goNone");
-    empty.set_header("accept", "application/json");
-    let response = serve_at(&world.factory, empty, &fixture_root());
-    assert_eq!(response.status, 200);
-    assert!(response.body.is_empty(), "a successful no-response transition stays empty");
 }
 
 #[test]
