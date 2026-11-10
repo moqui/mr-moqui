@@ -28,6 +28,8 @@ Design, status and review documents for MR Moqui. User guides for built features
 **Dev tools**
 - [design-dev-aide.md](design-dev-aide.md): Dev AIDE, the assisted IDE at `/qapps/dev`: workspace, editor, git, live reload, the artifact index and browser, the entity modeler, service writer and screen builder, and the dev agent.
 
+- [LoadRunner.md](LoadRunner.md): a general load runner in place of the Tools app's Service Load Runner screen: load scripts in JavaScript on the `moqui test-client` harness, kept in a component's `test/load/` and run from Tools › Load, from `moqui test-load` or from a client spec, against services in process or any server over HTTP, with runs kept as result files and compared; the first script is order to cash on Moqui Java and MR Moqui. Research and plan; nothing built.
+
 **Maps**
 - [Maps.md](Maps.md): shared OpenLayers Maps app and address dialogs in Tools, OpenFreeMap, ResourceFacade-backed PMTiles, global/personal configuration, postal-code coordinate lookup and Rust server work for BOSS, HOME and other consumers.
 
