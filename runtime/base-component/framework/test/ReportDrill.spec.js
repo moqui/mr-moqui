@@ -329,6 +329,26 @@ feature("the semantic guards refuse an amount across units, a ratio averaged, a 
                 ]
             })
         )
+        // the unit's group beside the sum instead of above it, and the grouped rows totalled again, add across units too
+        const beside = asReader(R + "run#Query", {
+            query: Object.assign(
+                {
+                    datasetId: "rdr-sales",
+                    aggs: {currency: {terms: {field: "parentEnumId"}}, total: {sum: {field: "sequenceNum"}}}
+                },
+                range
+            )
+        })
+        const footer = asReader(
+            R + "run#Query",
+            sum("rdr-sales", {
+                totals: ["sum"],
+                aggregations: [
+                    {id: "currency", type: "terms", role: "x-axis", params: {field: "parentEnumId"}},
+                    {id: "total", type: "sum", params: {field: "sequenceNum"}}
+                ]
+            })
+        )
         const oneUnit = asReader(
             R + "run#Query",
             sum("rdr-sales", {filters: [{query: {field: {name: "parentEnumId", op: "eq", value: "USD"}}}]})
@@ -367,6 +387,8 @@ feature("the semantic guards refuse an amount across units, a ratio averaged, a 
                 .sort((a, b) => a - b)
                 .join(","),
             groupedError: grouped.error || "",
+            beside: beside.error || "",
+            footer: footer.error || "",
             oneUnit: value(oneUnit.out).join(","),
             ratio: ratio.error || "",
             balance: balance.error || "",
@@ -376,12 +398,14 @@ feature("the semantic guards refuse an amount across units, a ratio averaged, a 
             totalled: totalled.error || ""
         }
     },
-    then({mixed, grouped, groupedError, oneUnit, ratio, balance, byRegion, sampleNotice, sampleCount, totalled}) {
+    then({mixed, grouped, groupedError, beside, footer, oneUnit, ratio, balance, byRegion, sampleNotice, sampleCount, totalled}) {
         mixed.includes("UNIT_MIXED")
         mixed.includes("parentEnumId")
         groupedError == ""
         // 5 in EUR and 37 in USD, each apart
         grouped == "5,37"
+        beside.includes("UNIT_MIXED")
+        footer.includes("UNIT_MIXED")
         oneUnit == "37"
         ratio.includes("RATIO_AGGREGATE")
         ratio.includes("won")

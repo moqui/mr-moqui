@@ -5,6 +5,9 @@
 //! - `unitField` (an amount's currency, a quantity's unit): a sum, average, least or greatest of the field over documents of
 //!   several units is refused (`UNIT_MIXED`) until the query groups by the unit field or is filtered to one unit; a measure in
 //!   one named unit (a conversion the owner computes, with a fixed `unit`) has no `unitField` and is not held to this.
+//!   The group is a terms aggregation of the unit field above the amount (one beside it, or a group that only carries the
+//!   field's name, does not pass), and rows grouped so are not added again: a subtotal, a footer total, or a reduce, groupBy
+//!   or pivot step across the unit is refused as well.
 //! - `ratio` (a stored rate, with its `numerator` and `denominator` fields): never summed or averaged (`RATIO_AGGREGATE`);
 //!   the rate of a group is its summed numerator over its summed denominator, a calculate step.
 //! - `nonAdditive` (the dimensions a balance or snapshot is not added across, usually its date): a sum needs each of them as
@@ -178,46 +181,147 @@ pub(super) fn returns_records(aggs: &IndexMap<String, search::Agg>) -> bool {
 }
 
 /// The unit guard, on the result: an amount whose documents carry several units (the engine found them when it looked for
-/// the amount's unit) is refused for a business dataset, where it was shown without a unit.
-pub(super) fn check_units(aggs: &IndexMap<String, search::Agg>, frame: &super::frame::Frame) -> Result<(), Error> {
-    fn counts(aggs: &IndexMap<String, search::Agg>, out: &mut BTreeSet<String>, groups: &mut BTreeSet<String>) {
+/// the amount's unit) is refused for a business dataset, where it was shown without a unit. An amount is in one unit a row
+/// only under a group by its unit field: a terms aggregation of that field above it, not one beside it, and not a group that
+/// only carries the field's name. Grouped so, its rows are still not added together: a subtotal, a footer total, or a
+/// reduce, groupBy or pivot step that adds them across units is refused as the ungrouped sum is.
+pub(super) fn check_units(
+    options: &Json,
+    aggs: &IndexMap<String, search::Agg>,
+    frame: &super::frame::Frame,
+) -> Result<(), Error> {
+    // each measure with what it does and the fields grouped above it, once for every place its id appears; and the ids of
+    // the terms groups of each field
+    struct Seen {
+        measures: Vec<(String, Measure, Vec<String>)>,
+        groups: Vec<(String, String)>,
+    }
+    fn walk(aggs: &IndexMap<String, search::Agg>, above: &mut Vec<String>, seen: &mut Seen) {
         for (id, agg) in aggs {
-            if matches!(measure(agg), Some((_, Measure::Count))) {
-                out.insert(id.clone());
+            if let Some((_, kind)) = measure(agg) {
+                seen.measures.push((id.clone(), kind, above.clone()));
             }
-            if let search::Agg::Terms(terms) = agg {
-                groups.insert(terms.field.strip_suffix(".keyword").unwrap_or(&terms.field).to_owned());
-            }
+            let group = match agg {
+                search::Agg::Terms(terms) => {
+                    Some(terms.field.strip_suffix(".keyword").unwrap_or(&terms.field).to_owned())
+                }
+                _ => None,
+            };
             if let Some(children) = agg.sub_aggs() {
-                counts(children, out, groups);
+                if let Some(group) = &group {
+                    seen.groups.push((id.clone(), group.clone()));
+                    above.push(group.clone());
+                }
+                walk(children, above, seen);
+                if group.is_some() {
+                    above.pop();
+                }
             }
         }
     }
-    let mut counted = BTreeSet::new();
-    // the fields the query groups by: an amount grouped by its unit field is one unit a row, whatever the group is named
-    let mut groups = BTreeSet::new();
-    counts(aggs, &mut counted, &mut groups);
+    let mut seen = Seen {
+        measures: Vec::new(),
+        groups: Vec::new(),
+    };
+    walk(aggs, &mut Vec::new(), &mut seen);
     for field in &frame.fields {
-        let Some(units) = field.config.get("unitMixed").and_then(Json::as_array) else {
+        let Some(unit_field) = field.config.get("unitField").and_then(Json::as_str) else {
             continue;
         };
+        // the units of the field's records: those the engine found over the query's documents, or its rows' own
+        let mut units = BTreeSet::new();
+        for key in ["unitMixed", "units"] {
+            units.extend(
+                field
+                    .config
+                    .get(key)
+                    .and_then(Json::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Json::as_str),
+            );
+        }
+        if units.len() < 2 {
+            continue;
+        }
+        let named = |id: &str| field.name == id || field.name.ends_with(&format!(".{id}"));
+        let places = seen.measures.iter().filter(|(id, _, _)| named(id)).collect::<Vec<_>>();
         // a count of amounts is a count, in no unit
-        if counted.contains(&field.name) {
+        if !places.is_empty() && places.iter().all(|(_, kind, _)| *kind == Measure::Count) {
             continue;
         }
-        let unit_field = field
-            .config
-            .get("unitField")
-            .and_then(Json::as_str)
-            .unwrap_or("its unit");
-        if groups.contains(unit_field) {
-            continue;
+        let listed = units.iter().copied().collect::<Vec<_>>().join(", ");
+        let grouped = !places.is_empty()
+            && places
+                .iter()
+                .all(|(_, _, above)| above.iter().any(|group| group == unit_field));
+        if !grouped {
+            return Err(fail(format!(
+                "UNIT_MIXED: {} covers records in several units ({listed}): group by {unit_field}, filter to one, or use a measure converted to one unit",
+                field.name
+            )));
         }
-        let units = units.iter().filter_map(Json::as_str).collect::<Vec<_>>().join(", ");
-        return Err(fail(format!(
-            "UNIT_MIXED: {} covers records in several units ({units}): group by {unit_field}, filter to one, or use a measure converted to one unit",
-            field.name
-        )));
+        // grouped by its unit, one unit a row: nothing may add those rows together again
+        let unit_columns = seen
+            .groups
+            .iter()
+            .filter(|(_, group)| group == unit_field)
+            .map(|(id, _)| id.as_str())
+            .collect::<Vec<_>>();
+        let adds = |name: &str| !matches!(name, "count" | "first" | "last");
+        let calculations = |step: &Json, default: &str| -> Vec<String> {
+            let mut names = step["calculations"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Json::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if let Some(name) = step["calculation"].as_str() {
+                names.push(name.to_owned());
+            }
+            if names.is_empty() {
+                names.push(default.to_owned());
+            }
+            names
+        };
+        let keeps_unit = |names: &[&Json]| {
+            names
+                .iter()
+                .filter_map(|name| name.as_str())
+                .any(|name| unit_columns.contains(&name))
+        };
+        let mut added = options["subtotals"] == true
+            || options["totals"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Json::as_str)
+                .any(adds);
+        for step in options["transformations"].as_array().into_iter().flatten() {
+            if step["disabled"] == true {
+                continue;
+            }
+            added |= match text(step, "type", "") {
+                "reduce" => calculations(step, "last").iter().any(|name| adds(name)),
+                "groupBy" => {
+                    !keeps_unit(&step["fields"].as_array().into_iter().flatten().collect::<Vec<_>>())
+                        && calculations(step, "sum").iter().any(|name| adds(name))
+                }
+                "pivot" => {
+                    !keeps_unit(&[&step["row"], &step["column"]])
+                        || step["rowTotals"] == true
+                        || step["columnTotals"] == true
+                }
+                _ => false,
+            };
+        }
+        if added {
+            return Err(fail(format!(
+                "UNIT_MIXED: {} is in one unit a row ({listed}), and a subtotal, total, reduce, groupBy or pivot of its rows adds them across {unit_field}: keep {unit_field} in every group and total nothing across it",
+                field.name
+            )));
+        }
     }
     Ok(())
 }
@@ -335,14 +439,67 @@ mod tests {
                 "config":{"unitField":"currencyUomId","unitMixed":["EUR","USD"]}}]}))
             .unwrap()
         };
+        let none = json!({});
         let total = aggs(json!({"total":{"sum":{"field":"amount"}}}));
-        let refused = check_units(&total, &frame("total")).unwrap_err();
+        let refused = check_units(&none, &total, &frame("total")).unwrap_err();
         assert!(refused.message().starts_with("UNIT_MIXED"), "{}", refused.message());
         assert!(refused.message().contains("currencyUomId"));
         let grouped =
             aggs(json!({"currency":{"terms":{"field":"currencyUomId"},"aggs":{"total":{"sum":{"field":"amount"}}}}}));
-        assert!(check_units(&grouped, &frame("total")).is_ok());
+        assert!(check_units(&none, &grouped, &frame("total")).is_ok());
         let counted = aggs(json!({"n":{"value_count":{"field":"amount"}}}));
-        assert!(check_units(&counted, &frame("n")).is_ok());
+        assert!(check_units(&none, &counted, &frame("n")).is_ok());
+        // one unit in the records: nothing to refuse, whatever the shape
+        let single: crate::frame::Frame = serde_json::from_value(json!({"fields":[{"name":"total","type":"number",
+            "values":[42],"config":{"unitField":"currencyUomId","unit":"USD"}}]}))
+        .unwrap();
+        assert!(check_units(&json!({"subtotals":true}), &total, &single).is_ok());
+    }
+
+    #[test]
+    fn a_group_beside_the_amount_or_only_named_as_its_unit_does_not_pass_and_grouped_rows_are_not_added_again() {
+        let mixed = |name: &str, config: Json| -> crate::frame::Frame {
+            serde_json::from_value(json!({"fields":[{"name":name,"type":"number","values":[1,2],"config":config}]}))
+                .unwrap()
+        };
+        let found = json!({"unitField":"currencyUomId","unitMixed":["EUR","USD"]});
+        let none = json!({});
+        // the unit's group beside the sum, not above it
+        let beside = aggs(json!({"currency":{"terms":{"field":"currencyUomId"}},"total":{"sum":{"field":"amount"}}}));
+        assert!(check_units(&none, &beside, &mixed("total", found.clone())).is_err());
+        // a group of another field that carries the unit field's name gives the rows "units" that are not units
+        let named =
+            aggs(json!({"currencyUomId":{"terms":{"field":"statusId"},"aggs":{"total":{"sum":{"field":"amount"}}}}}));
+        let rows = json!({"unitField":"currencyUomId","units":["Approved","Placed"]});
+        assert!(check_units(&none, &named, &mixed("total", rows)).is_err());
+        // grouped by the unit: its rows are not added together again
+        let grouped =
+            aggs(json!({"currency":{"terms":{"field":"currencyUomId"},"aggs":{"total":{"sum":{"field":"amount"}}}}}));
+        let frame = mixed("total", found);
+        for added in [
+            json!({"subtotals":true}),
+            json!({"totals":["sum"]}),
+            json!({"transformations":[{"type":"reduce","calculations":["sum"]}]}),
+            json!({"transformations":[{"type":"groupBy","fields":["region"]}]}),
+            json!({"transformations":[{"type":"pivot","row":"region","column":"period","cell":"total"}]}),
+            json!({"transformations":[{"type":"pivot","row":"currency","column":"period","cell":"total","columnTotals":true}]}),
+        ] {
+            let refused = check_units(&added, &grouped, &frame).unwrap_err();
+            assert!(
+                refused.message().starts_with("UNIT_MIXED"),
+                "{added}: {}",
+                refused.message()
+            );
+        }
+        for kept in [
+            json!({"totals":["count"]}),
+            json!({"transformations":[{"type":"reduce"}]}),
+            json!({"transformations":[{"type":"reduce","calculations":["sum"],"disabled":true}]}),
+            json!({"transformations":[{"type":"groupBy","fields":["currency","region"]}]}),
+            json!({"transformations":[{"type":"pivot","row":"currency","column":"period","cell":"total"}]}),
+            json!({"transformations":[{"type":"sort","field":"total"}]}),
+        ] {
+            assert!(check_units(&kept, &grouped, &frame).is_ok(), "{kept}");
+        }
     }
 }

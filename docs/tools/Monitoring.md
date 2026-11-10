@@ -487,7 +487,7 @@ dataset that is not a business one is read as before.
 
 | Declared on a field | Refused | Until |
 |---|---|---|
-| `unitField` (an amount's currency, a quantity's unit) | `UNIT_MIXED`: a sum, average, least or greatest over records of several units (it was shown without a unit) | the query groups by the unit field, or is filtered to one unit; a count of the field is in no unit; a measure the owner converts to one unit has a fixed `unit` and no `unitField` |
+| `unitField` (an amount's currency, a quantity's unit) | `UNIT_MIXED`: a sum, average, least or greatest over records of several units (it was shown without a unit) | the query groups by the unit field (a terms aggregation of it above the amount, not beside it), or is filtered to one unit; a count of the field is in no unit; a measure the owner converts to one unit has a fixed `unit` and no `unitField`. Rows grouped by the unit are not added again: `subtotals`, a footer total (`totals`), or a `reduce`, `groupBy` or `pivot` step that adds across the unit is `UNIT_MIXED` too |
 | `ratio: {numerator, denominator}` (a stored rate) | `RATIO_AGGREGATE`: a sum or an average of it | the group's rate is computed from the summed numerator and denominator (a calculate step) |
 | `nonAdditive: [dimension, ...]` (a balance or snapshot) | `NONADDITIVE`: a sum across one of the dimensions | each is a group of the query, or pinned to one value by a filter |
 
@@ -516,7 +516,8 @@ query, a dataset, an entity or a service.
 - The answer is the saved query narrowed by those predicates: `selected`, `panelFrames` (the panel's result, whose buckets may
   be chosen), `dimensions` (the dataset's aggregatable fields), `breakdown` (the saved measures by one of them, or `refused` with
   a guard's reason), and `rows` with `columns` (the query's time, groups and measured fields), `total` and `bounded` (a page is
-  a sample).
+  a sample). A page holds at most 100 records and the pages reach the first 10,000; past that the viewer chooses a bucket or
+  a shorter range.
 - A viewer who reads the dataset's aggregates and not its records gets `rowsAvailable` false with `rowsReason` and no record
   (nothing is fetched). A panel the viewer cannot read, or whose value is not an aggregate of a dataset, answers `available`
   false with its reason.

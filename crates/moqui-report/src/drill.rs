@@ -20,6 +20,8 @@ use super::{
 const SELECTION_LIMIT: usize = 8;
 const SPAN_LIMIT: usize = 200;
 const PAGE_LIMIT: u64 = 100;
+/// The records a drill pages through: past these the viewer narrows the selection (a deep page is a scan of all before it).
+const WINDOW_LIMIT: u64 = 10_000;
 
 fn plain(value: &Json) -> String {
     match value {
@@ -281,6 +283,11 @@ pub fn get_drill(ec: &ExecutionContext, _service: &ServiceInfo<'_>, params: &Par
     }
     let page_size = params["pageSize"].as_u64().unwrap_or(20).clamp(1, PAGE_LIMIT);
     let page_index = params["pageIndex"].as_u64().unwrap_or(0);
+    if page_index.saturating_mul(page_size) >= WINDOW_LIMIT {
+        return Err(fail(format!(
+            "a drill pages through at most {WINDOW_LIMIT} records; choose a bucket or a shorter range"
+        )));
+    }
     let mut rows_query = narrowed_query;
     rows_query["pageSize"] = json!(page_size);
     rows_query["pageIndex"] = json!(page_index);

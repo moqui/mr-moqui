@@ -1097,7 +1097,7 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
     }
     configure_frame(ec, &dataset, options, &mut frame)?;
     if business.is_some() {
-        semantics::check_units(&aggs, &frame)?;
+        semantics::check_units(options, &aggs, &frame)?;
     }
     let (frames, inspection) = apply_transformations(vec![frame], options)?;
     Ok(
