@@ -145,24 +145,12 @@
             let i = 0;
             while (i < text.length) {
                 if (text.charAt(i) === "$" && text.charAt(i + 1) === "{") {
-                    let depth = 1;
-                    let j = i + 2;
-                    let quote = "";
-                    while (j < text.length && depth > 0) {
-                        const ch = text.charAt(j);
-                        if (quote) {
-                            if (ch === "\\") j++;
-                            else if (ch === quote) quote = "";
-                        } else if (ch === "'" || ch === '"' || ch === "`") quote = ch;
-                        else if (ch === "{") depth++;
-                        else if (ch === "}") depth--;
-                        j++;
-                    }
-                    if (depth === 0) {
+                    const end = renderModes.exprEnd(text, i + 2);
+                    if (end >= 0) {
                         if (literal) out.push({ text: literal });
                         literal = "";
-                        out.push({ expr: text.slice(i + 2, j - 1) });
-                        i = j;
+                        out.push({ expr: text.slice(i + 2, end) });
+                        i = end + 1;
                         continue;
                     }
                 }

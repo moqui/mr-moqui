@@ -390,6 +390,10 @@ Every value goes through `JSON.stringify`: a bare `${}` can write a quote that b
 text is an HTML injection. The lint reports a `${` outside `JSON.stringify(`. A text that is not JSON, or not nodes,
 becomes an error node naming the screen, and the rest of the page is kept. A static file uses `template="false"`.
 
+The code inside a `${}` is raw JavaScript, not JSON text: it is not JSON-escaped, so a string in it is written as in
+a script (`'it\'s'`), and it may hold `//` and `/* */` comments and regular expressions
+([Screen-Output, Templates](Screen-Output.md#templates)). Only the text outside the `${}` is the JSON.
+
 The node types and their properties are documented with the other client contracts in
 [Qvt-Client](Qvt-Client.md) ("The tui screen model"); the serde types in
 `crates/moqui-tui/src/model.rs` are the schema.

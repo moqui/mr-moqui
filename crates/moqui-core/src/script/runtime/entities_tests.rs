@@ -91,6 +91,28 @@ fn xml_find_retains_executed_sql_for_later_screen_sections() {
     holds("firstQueryCount === 1 && cachedQueryCount === 0");
 }
 
+/// `forNoKeyUpdate` is a lock as `forUpdate` is: it needs a transaction and makes the iterator scroll sensitive, and
+/// `forUpdate(false)` leaves it. A related find takes it after `forUpdate`, and not both.
+#[test]
+fn for_no_key_update_locks_as_for_update_does() {
+    let context = enumerations();
+    let _entered = context.enter();
+    seed();
+    holds(
+        r#"ec.entity.find("moqui.basic.Enumeration").forNoKeyUpdate(true).forUpdate(false).getResultSetType() === 1005
+            && ec.entity.find("moqui.basic.Enumeration").forNoKeyUpdate(true).forNoKeyUpdate(false).getResultSetType() === 1003"#,
+    );
+    let outside =
+        run_script(r#"ec.entity.find("moqui.basic.Enumeration").condition("enumId", "E1").forNoKeyUpdate(true).one()"#)
+            .unwrap_err();
+    assert!(outside.to_string().contains("needs a transaction"), "{outside}");
+    let both = run_script(
+        r#"ec.entity.find("moqui.basic.Enumeration").condition("enumId", "E1").one().findRelatedOne("type", null, true, true)"#,
+    )
+    .unwrap_err();
+    assert!(both.to_string().contains("both forUpdate and forNoKeyUpdate"), "{both}");
+}
+
 #[test]
 fn tx_cache_db_refuses_flush_mode_and_needs_an_overlay() {
     let context = enumerations();
@@ -586,7 +608,7 @@ fn the_entity_members_keep_their_names_and_lengths() {
          isEntityDefined/0 isTxCacheActive/0 makeDataLoader/0 makeDataWriter/0 makeValue/1 \
          runSqlCountConf/3 runSqlStatement/2 runSqlUpdateConf/2 sequencedIdPrimary/1 startTxCacheDb/1 \
          stopTxCache/0 tempResetSequencedIdPrimary/1 tempSetSequencedIdPrimary/3 testConfConnection/1",
-        "condition/1 conditionDate/2 copy/0 count/0 deleteAll/0 disableAuthz/0 distinct/1 forUpdate/1 \
+        "condition/1 conditionDate/2 copy/0 count/0 deleteAll/0 disableAuthz/0 distinct/1 forNoKeyUpdate/1 forUpdate/1 \
          getLimit/0 getOffset/0 getPageIndex/0 getPageSize/0 getQueryTextList/0 getResultSetType/0 havingCondition/1 \
          iterator/0 limit/1 list/0 offset/1 one/0 oneMaster/0 orderBy/1 purge/0 \
          requireSearchFormParameters/0 resultSetConcurrency/1 resultSetType/1 searchFormMap/0 selectField/1 \

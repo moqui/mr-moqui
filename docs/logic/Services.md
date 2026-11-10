@@ -114,6 +114,17 @@ created so the next one waits on it) takes it with a `for-update` find of a row 
 `force-new` call first (as `ChatServices.record#UserChange` makes a user's `ChatUserState` with `ensure#UserStates`),
 or runs without the cache. A very large operation may want its locks as it goes, and runs without it too.
 
+**A lock on a parent row.** A `for-no-key-update` find (`forNoKeyUpdate(true)` in a script, an MR Moqui addition) locks
+as `for-update` does, with Postgres's `FOR NO KEY UPDATE` (other databases lock for update): it still makes a second
+locking transaction wait, but not another transaction's insert of a child row, whose foreign key check takes
+`FOR KEY SHARE` on the parent. Use it for a row locked only to serialize work, such as an organization's `Party` that
+Mantle locks before it posts to the ledger, when the transaction changes none of the row's key fields (the primary key,
+or a unique index's fields): with `FOR UPDATE` such a lock deadlocks with a transaction that holds a row the poster
+needs and inserts a child of the locked one (an `Invoice` of the organization). Nor does it wait for another
+transaction's insert of a child row that is in flight, as `FOR UPDATE` would. The two attributes cannot both be true.
+Taking `FOR UPDATE` on a row the same transaction already holds no-key upgrades the lock, and that waits for the other
+transactions holding `FOR KEY SHARE` on the row (their uncommitted child inserts).
+
 **Errors.** An update of a row the transaction deleted or read as missing fails at once; one of a row it knows nothing
 of fails at the commit if it changes no row, as a direct update does. A create of a row the database has fails at the
 first find that loads that row, else at the commit; the commit's failure names the write, its key and the service that

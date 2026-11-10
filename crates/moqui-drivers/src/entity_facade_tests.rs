@@ -554,6 +554,93 @@ fn a_held_update_of_a_locked_row_does_not_block_an_inner_force_new_on_postgres()
     drop(cluster);
 }
 
+/// A parent row held `FOR NO KEY UPDATE` does not block another transaction's insert of a child row, whose foreign key
+/// check takes `FOR KEY SHARE` on the parent; held `FOR UPDATE` it does, until the inserting transaction's statement
+/// timeout. This is the lock an organization's `Party` row takes to serialize postings, which a deadlock with an
+/// `Invoice` insert showed (plans/LoadRunner.md section 11).
+#[test]
+fn a_no_key_lock_does_not_block_a_child_insert_and_a_for_update_lock_does_on_postgres() {
+    use moqui_core::transaction::TransactionAttribute;
+
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let driver: Arc<dyn DbDriver> = Arc::new(driver);
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let facade = open_entity_facade(
+        &framework,
+        driver,
+        PoolConfig {
+            min: 0,
+            max: 4,
+            reserve: 1,
+            acquire_timeout: Duration::from_secs(30),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (parent, child) = ("moqui.basic.EnumerationType", "moqui.basic.Enumeration");
+    facade.check_tables(&[parent, child]).unwrap();
+    let mut row = facade.make_value(parent).unwrap();
+    row.set("enumTypeId", Value::string("NK_TYPE"));
+    row.create(&facade).unwrap();
+
+    let tx = facade.transactions_for(parent).unwrap();
+    // The insert runs in a transaction of its own (another connection) while the outer one holds the lock. The no-key
+    // case has a generous deadline, so a loaded machine does not fail it; the for-update one, meant to block, ends at a
+    // short one (statement_timeout) instead of hanging the test.
+    let insert_child = |id: &str, no_key: bool| {
+        let insert_wait = Some(if no_key {
+            Duration::from_secs(10)
+        } else {
+            Duration::from_millis(750)
+        });
+        tx.run(TransactionAttribute::UseOrBegin, Some(Duration::from_secs(10)), || {
+            let find = facade.find(parent)?.eq("enumTypeId", Value::string("NK_TYPE"));
+            let find = if no_key {
+                find.for_no_key_update(true)
+            } else {
+                find.for_update(true)
+            };
+            assert!(find.one()?.is_some());
+            let inserted = tx.run(TransactionAttribute::ForceNew, insert_wait, || {
+                let mut enumeration = facade.make_value(child)?;
+                enumeration.set("enumId", Value::string(id));
+                enumeration.set("enumTypeId", Value::string("NK_TYPE"));
+                enumeration.create(&facade)
+            });
+            Ok(inserted)
+        })
+        .unwrap()
+    };
+    // Warm the pool: a second connection is open before either lock is taken.
+    tx.run(TransactionAttribute::UseOrBegin, None, || {
+        tx.run(TransactionAttribute::ForceNew, None, || facade.find(child)?.count())
+    })
+    .unwrap();
+    insert_child("NK_1", true).expect("the insert does not wait on a no-key lock");
+    let blocked = insert_child("NK_2", false);
+    let blocked = format!(
+        "{:?}",
+        blocked.expect_err("the insert waits on a for-update lock until its timeout")
+    );
+    // 57014: the statement was cancelled at the deadline, waiting on the lock
+    assert!(blocked.contains("57014"), "{blocked}");
+    let found = |id: &str| {
+        facade
+            .find(child)
+            .unwrap()
+            .eq("enumId", Value::string(id))
+            .one()
+            .unwrap()
+            .is_some()
+    };
+    assert!(found("NK_1") && !found("NK_2"));
+
+    drop(facade);
+    drop(cluster);
+}
+
 /// A data file's writes go without waiting for their results. A failed one fails its file as before: the file
 /// rolls back and the error is the failed statement's, wherever in the file it was.
 #[test]

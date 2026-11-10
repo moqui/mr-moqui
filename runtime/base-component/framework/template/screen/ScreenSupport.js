@@ -345,20 +345,124 @@
             const canonical = (name) => name === "xsl-fo" ? "html-print" : name;
             return String(type || "").split(",").map((name) => canonical(name.trim())).includes(canonical(mode));
         };
-        // Last explicit match wins over the last fallback, regardless of their document order.
+        // A print-only screen: its widgets are render-mode elements alone, as SimpleScreens' Facility/PrintBoxTypes. A screen
+        // with other widgets keeps its html-print blocks (a print header, a page style) out of its html render.
+        const printOnlyScreen = (node) => {
+            const widgets = node.parent;
+            return !!widgets && widgets.name === "widgets" && !!widgets.parent && widgets.parent.name === "screen"
+                && (widgets.children || []).every((child) => child.name === "render-mode");
+        };
+        // An html-print text html can show: inline, or from a location that is an HTML template (not a FO one such as a
+        // configured .xsl-fo.ftl, nor an expression whose file is not known here). xsl-fo texts are FO and never qualify.
+        const htmlPrintText = (text) => {
+            const attrs = text.attrs || {};
+            if (!String(attrs.type || "").split(",").some((name) => name.trim() === "html-print")) return false;
+            const location = String(attrs.location || "");
+            return !location || (!location.includes("${") && /\.html?(\.|#|$)/i.test(location));
+        };
+        // Last explicit match wins over the last fallback, regardless of their document order. An html render of a
+        // print-only screen with neither takes the last html-print HTML text, so the screen opened in a browser shows its
+        // content rather than a blank page (Java renders nothing there). Other modes do not: in qvt the print page's
+        // styles would reach the whole app, and the browser apps open a print screen through /fop or renderMode=html-print.
         const chooseRenderModeText = (node, mode) => {
             let fallback = null;
             let matching = null;
+            let print = null;
             (node.children || []).filter((text) => text.name === "text").forEach((text) => {
                 const type = (text.attrs || {}).type;
                 if (!type || type === "any") fallback = text;
                 else if (renderModeTypeMatches(type, mode)) matching = text;
+                else if (mode === "html" && htmlPrintText(text)) print = text;
             });
-            return matching || fallback;
+            return matching || fallback || (print && printOnlyScreen(node) ? print : null);
         };
-        return { renderModeTypeMatches, chooseRenderModeText };
+        // Where the ${...} expression that starts at `from` ends: the index of its closing } outside brackets, strings, template literals,
+        // comments and regular expressions, or -1. A / starts a regular expression where an operand may come (at the start, after a
+        // punctuator other than ) and ], or after a keyword such as return; a word after . or ?. is a property name) and divides everywhere
+        // else, as after a postfix ++ or --. As the host's scan_expression.
+        const OPERAND_KEYWORDS = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"]);
+        const WORD = /[A-Za-z0-9_$\u0080-\uffff]/;
+        const regexEnd = (text, start) => {
+            let j = start + 1;
+            let inClass = false;
+            for (; j < text.length; j++) {
+                const ch = text.charAt(j);
+                if (ch === "\n" || ch === "\r") return -1;
+                if (ch === "\\") j++;
+                else if (ch === "[") inClass = true;
+                else if (ch === "]") inClass = false;
+                else if (ch === "/" && !inClass) break;
+            }
+            if (j >= text.length) return -1;
+            j++;
+            while (j < text.length && /[A-Za-z]/.test(text.charAt(j))) j++;
+            return j;
+        };
+        const exprEnd = (text, from) => {
+            let depth = 0;
+            let operandNext = true;
+            let propertyNext = false;
+            let j = from;
+            while (j < text.length) {
+                const ch = text.charAt(j);
+                const next = text.charAt(j + 1);
+                const property = propertyNext;
+                if (!/\s/.test(ch)) propertyNext = ch === ".";
+                if (ch === "'" || ch === '"') {
+                    for (j++; j < text.length && text.charAt(j) !== ch; j++) if (text.charAt(j) === "\\") j++;
+                    operandNext = false;
+                } else if (ch === "`") {
+                    for (j++; j < text.length && text.charAt(j) !== "`"; j++) {
+                        if (text.charAt(j) === "\\") j++;
+                        else if (text.charAt(j) === "$" && text.charAt(j + 1) === "{") {
+                            j = exprEnd(text, j + 2);
+                            if (j < 0) return -1;
+                        }
+                    }
+                    operandNext = false;
+                } else if (ch === "/" && next === "/") {
+                    const nl = text.indexOf("\n", j);
+                    j = nl < 0 ? text.length : nl;
+                    continue;
+                } else if (ch === "/" && next === "*") {
+                    const close = text.indexOf("*/", j + 2);
+                    if (close < 0) return -1;
+                    j = close + 2;
+                    continue;
+                } else if (ch === "/" && operandNext && regexEnd(text, j) >= 0) {
+                    j = regexEnd(text, j);
+                    operandNext = false;
+                    continue;
+                } else if (WORD.test(ch)) {
+                    const start = j;
+                    while (j < text.length && WORD.test(text.charAt(j))) j++;
+                    operandNext = !property && OPERAND_KEYWORDS.has(text.slice(start, j));
+                    continue;
+                } else if (/\s/.test(ch)) {
+                    // whitespace leaves what may come next as it was
+                } else if ((ch === "+" || ch === "-") && next === ch) {
+                    // a postfix ++ or -- leaves an operand, a prefix one an operator: what may come next is as it was
+                    j += 2;
+                    continue;
+                } else if (ch === "(" || ch === "[" || ch === "{") {
+                    depth++;
+                    operandNext = true;
+                } else if (ch === ")" || ch === "]") {
+                    depth = Math.max(0, depth - 1);
+                    operandNext = false;
+                } else if (ch === "}") {
+                    if (depth === 0) return j;
+                    depth--;
+                    operandNext = true;
+                } else operandNext = true;
+                j++;
+            }
+            return -1;
+        };
+
+        return { renderModeTypeMatches, chooseRenderModeText, exprEnd };
     };
-    const { renderModeTypeMatches, chooseRenderModeText } = renderModeHelpers();
+    const { renderModeTypeMatches, chooseRenderModeText, exprEnd } = renderModeHelpers();
 
     // The macros every mode shares: include-screen, render-mode, text and the subscreen and section calls.
     const anyMacros = (mode) => {
@@ -530,6 +634,6 @@
     return {
         beginLits, endLits, hoist, allElements, opaqueElements, unknownElementCode, expandExpr, expandNoL10nExpr, reportPropsExpr, reportRenderExpr, htmlViewTextFn, htmlViewTextExpr, markdownTextExpr, statusTextExpr, nodeLit, bareLit, write, indent, widgetsSource,
         setCode, widgetless, fieldChain, hideGuard, titleText, localizedTitle, fieldLit, renderTextCode, renderModeHelpers, renderModeTypeMatches, chooseRenderModeText, anyMacros,
-        displayValueExpr, linkTextExpr, labelTextExpr, dateTimeFormat, listFieldHiddenWidget, bufferedListRows, cellNeedsContext, formListColumns, headerSub, heldCode, parseOrder, noops
+        displayValueExpr, linkTextExpr, labelTextExpr, dateTimeFormat, listFieldHiddenWidget, bufferedListRows, cellNeedsContext, formListColumns, headerSub, heldCode, parseOrder, exprEnd, noops
     };
 })

@@ -646,13 +646,18 @@ fn scan_tui(screen: &MNode, file: &mut FileReport) {
     }
 }
 
-/// A `${...}` whose expression is not a `JSON.stringify(...)` call.
+/// A `${...}` whose expression is not a `JSON.stringify(...)` call. A `${` inside an expression (a template literal
+/// in the `JSON.stringify` call, a string, a comment) is part of that expression, not one of the text's.
 fn has_bare_expansion(body: &str) -> bool {
-    let mut rest = body;
-    while let Some(at) = rest.find("${") {
-        rest = &rest[at + 2..];
-        if !rest.trim_start().starts_with("JSON.stringify(") {
+    let mut index = 0;
+    while let Some(at) = body[index..].find("${") {
+        let start = index + at + 2;
+        if !body[start..].trim_start().starts_with("JSON.stringify(") {
             return true;
+        }
+        match moqui_core::script::template::interpolation_end(body, start) {
+            Some(end) => index = end + 1,
+            None => return false,
         }
     }
     false

@@ -24,8 +24,8 @@ use super::{
     add_column, count, count_view, count_with, create_fk_index, create_foreign_key, create_index, create_table, delete,
     drop_fts_index, foreign_key_index_name, foreign_key_name, fts_index_name, fts_index_sql, fts_old_index_name,
     insert, insert_if_missing, insert_or_update, render_condition, select, select_view, select_view_with, select_with,
-    supports_insert_if_missing, supports_upsert, update, CompareOp, Condition, FieldRef, LimitOffset, Nulls, OrderBy,
-    PlainValues, SelectOptions, Statement,
+    supports_insert_if_missing, supports_upsert, update, CompareOp, Condition, FieldRef, LimitOffset, Lock, Nulls,
+    OrderBy, PlainValues, SelectOptions, Statement,
 };
 
 fn workspace_root() -> std::path::PathBuf {
@@ -1242,7 +1242,7 @@ fn distinct_and_for_update_are_written_and_cannot_be_combined() {
         sql.sql
     );
     let locking = SelectOptions {
-        for_update: true,
+        lock: Lock::Update,
         ..SelectOptions::default()
     };
     let sql = select_with(
@@ -1281,7 +1281,7 @@ fn distinct_and_for_update_are_written_and_cannot_be_combined() {
     );
     let both = SelectOptions {
         distinct: true,
-        for_update: true,
+        lock: Lock::Update,
         ..SelectOptions::default()
     };
     assert!(select_with(order, &postgres, &[], None, &[], LimitOffset::default(), &both).is_err());
@@ -1314,12 +1314,76 @@ fn distinct_and_for_update_are_written_and_cannot_be_combined() {
 }
 
 #[test]
+fn no_key_update_is_written_per_database() {
+    let (model, dialects) = framework();
+    let entity = model.entity("moqui.basic.Enumeration").unwrap();
+    let select = |name: &str, lock: Lock, skip_locked: bool| {
+        let dialect = dialects.get(name).unwrap();
+        let options = SelectOptions {
+            lock,
+            skip_locked,
+            ..SelectOptions::default()
+        };
+        select_with(entity, dialect, &[], None, &[], LimitOffset::default(), &options)
+            .unwrap()
+            .sql
+    };
+    let ends = |sql: String, tail: &str| assert!(sql.ends_with(tail), "{sql} should end with {tail:?}");
+    ends(select("postgres", Lock::NoKeyUpdate, false), " FOR NO KEY UPDATE");
+    ends(select("postgres", Lock::Update, false), " FOR UPDATE");
+    ends(
+        select("postgres", Lock::NoKeyUpdate, true),
+        " FOR NO KEY UPDATE SKIP LOCKED",
+    );
+    // Elsewhere the mode falls back to the database's for-update text.
+    ends(select("mysql8", Lock::NoKeyUpdate, false), " FOR UPDATE");
+    ends(select("mysql8", Lock::NoKeyUpdate, true), " FOR UPDATE SKIP LOCKED");
+    ends(select("mysql", Lock::NoKeyUpdate, true), " FOR UPDATE");
+    ends(select("db2", Lock::NoKeyUpdate, true), " FOR UPDATE WITH RS");
+    let sqlite = select("sqlite", Lock::NoKeyUpdate, true);
+    assert!(!sqlite.contains("FOR") && !sqlite.ends_with(' '), "{sqlite}");
+    assert!(!select("postgres", Lock::None, true).contains("FOR "));
+    // A view locks in the same mode.
+    let (sample, postgres) = (totals_model(), sample_postgres());
+    let view = sample.entity("sample.OrderAndItem").unwrap();
+    let options = SelectOptions {
+        lock: Lock::NoKeyUpdate,
+        ..SelectOptions::default()
+    };
+    let sql = select_view_with(
+        view,
+        &sample,
+        &postgres,
+        &values(),
+        None,
+        &[],
+        LimitOffset::default(),
+        &options,
+    )
+    .unwrap()
+    .sql;
+    assert!(sql.ends_with(" FOR NO KEY UPDATE"), "{sql}");
+}
+
+#[test]
+fn a_for_update_lock_covers_no_key_but_not_the_reverse() {
+    assert!(Lock::Update.covers(Lock::NoKeyUpdate));
+    assert!(Lock::Update.covers(Lock::Update));
+    assert!(Lock::NoKeyUpdate.covers(Lock::NoKeyUpdate));
+    assert!(!Lock::NoKeyUpdate.covers(Lock::Update));
+    assert!(!Lock::None.covers(Lock::NoKeyUpdate));
+    assert_eq!(Lock::NoKeyUpdate.stronger(Lock::Update), Lock::Update);
+    assert_eq!(Lock::Update.stronger(Lock::NoKeyUpdate), Lock::Update);
+    assert_eq!(Lock::None.stronger(Lock::NoKeyUpdate), Lock::NoKeyUpdate);
+}
+
+#[test]
 fn skip_locked_is_written_where_the_database_has_it() {
     let model = totals_model();
     let postgres = sample_postgres();
     let order = model.entity("sample.Order").unwrap();
     let skipping = SelectOptions {
-        for_update: true,
+        lock: Lock::Update,
         skip_locked: true,
         ..SelectOptions::default()
     };

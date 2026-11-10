@@ -284,6 +284,8 @@ fn browser_only_parts_and_bare_expansions_in_tui_texts_are_listed() {
         r#"<widgets>
             <render-mode><text type="qvt"><![CDATA[<m-chart/>]]></text></render-mode>
             <render-mode><text type="qvt">x</text><text type="tui"><![CDATA[{"t":"text","text":${JSON.stringify(a)}}]]></text></render-mode>
+            <render-mode><text type="tui"><![CDATA[${JSON.stringify({t: 'text', text: `n ${a}`, // don't
+                note: '${b}'})}]]></text></render-mode>
             <render-mode><text type="tui"><![CDATA[{"t":"text","text":"${a}"}]]></text></render-mode>
             </widgets>"#,
     );

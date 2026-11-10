@@ -32,14 +32,60 @@ use super::ident::{
 };
 use super::Statement;
 
+/// The row lock a select takes until the transaction ends.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum Lock {
+    /// No lock.
+    #[default]
+    None,
+    /// `FOR UPDATE`, or the database's `for-update` text.
+    Update,
+    /// `FOR NO KEY UPDATE` where the database has it (Postgres), else as [`Lock::Update`]: the database's
+    /// `for-no-key-update` text, falling back to its `for-update` text. Unlike `FOR UPDATE` it does not block another
+    /// transaction's foreign key check on the row (`FOR KEY SHARE`), so serializing on a parent row (an organization's
+    /// `Party`) does not deadlock with inserts of its children. For a lock whose transaction changes no key column of
+    /// the row.
+    NoKeyUpdate,
+}
+
+impl Lock {
+    /// Whether the select takes a lock at all.
+    #[must_use]
+    pub fn is_locking(self) -> bool {
+        self != Self::None
+    }
+
+    /// Whether a row already held with this lock needs no further lock for `wanted`: a `FOR UPDATE` covers both
+    /// modes, a `FOR NO KEY UPDATE` only itself.
+    #[must_use]
+    pub fn covers(self, wanted: Self) -> bool {
+        match wanted {
+            Self::None => true,
+            Self::NoKeyUpdate => self.is_locking(),
+            Self::Update => self == Self::Update,
+        }
+    }
+
+    /// The stronger of two locks on one row.
+    #[must_use]
+    pub fn stronger(self, other: Self) -> Self {
+        if self.covers(other) {
+            self
+        } else {
+            other
+        }
+    }
+}
+
 /// What a select can ask for beyond conditions, order, and paging.
 #[derive(Debug, Clone, Default)]
 pub struct SelectOptions {
     pub distinct: bool,
     /// Lock the selected rows. Needs a transaction, and cannot go with `distinct` or a `GROUP BY`.
-    pub for_update: bool,
-    /// With `for_update`: leave out the rows another transaction holds instead of waiting for them (`SKIP LOCKED`), on
-    /// the databases that have it ([`crate::dialect::Dialect::skips_locked`]); elsewhere the lock waits as `for_update` alone does.
+    pub lock: Lock,
+    /// With a `lock`: leave out the rows another transaction holds instead of waiting for them (`SKIP LOCKED`), on
+    /// the databases that have it ([`crate::dialect::Dialect::skips_locked`]); elsewhere the lock waits as the lock alone
+    /// does.
     pub skip_locked: bool,
     /// A condition on an aggregate. Only a view with an aggregate alias has a `GROUP BY` for it.
     pub having: Option<Condition>,
@@ -379,7 +425,7 @@ pub fn select_with(
             entity.full_name
         )));
     }
-    if options.for_update && options.distinct {
+    if options.lock.is_locking() && options.distinct {
         return Err(Error::new("a select cannot be both distinct and for update"));
     }
     let mut out = Writer::new(dialect);
@@ -457,18 +503,16 @@ fn select_tail(
     let columns = |field: &FieldRef| Ok(entity_column(entity, dialect, field));
     out.order_by(order_by, page.is_set(), &columns)?;
     out.page(page);
-    if options.for_update {
-        for_update(&mut out);
-        if options.skip_locked && out.dialect.skips_locked() {
-            out.push(" SKIP LOCKED");
-        }
+    lock_rows(&mut out, options.lock);
+    if options.lock.is_locking() && options.skip_locked && out.dialect.skips_locked_with(options.lock) {
+        out.push(" SKIP LOCKED");
     }
     Ok(out.finish())
 }
 
-/// `FOR UPDATE`, or the database's `for-update` text.
-pub(crate) fn for_update(out: &mut Writer<'_>) {
-    let text = out.dialect.for_update.as_deref().unwrap_or("FOR UPDATE").to_string();
+/// The database's text for `lock` ([`Dialect::lock_text`]), when it has one.
+pub(crate) fn lock_rows(out: &mut Writer<'_>, lock: Lock) {
+    let text = out.dialect.lock_text(lock).to_string();
     if text.is_empty() {
         return;
     }

@@ -163,7 +163,7 @@ impl EntityFind {
             || !self.having.is_empty()
             || self.limit.is_some()
             || self.offset.is_some()
-            || self.for_update
+            || self.lock.is_locking()
         {
             return Ok(false);
         }

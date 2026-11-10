@@ -417,6 +417,23 @@ Service Load Runner screen.
 | in-process service calls | A load script's `service.call` runs as the user who started the run, with authorization required and the tarpit off for the run's contexts; Java's Service Load Runner ran the calls as anonymous with authorization off. A service the user is not granted is counted as an error and does not run | A load run is no way around authorization; an override is added only when a real case needs one (LoadRunner §16) (`moqui-host/src/load_runner/service_call.rs`, `run.rs`) |
 | screens | Tools › Service › Service Load Runner (`ServiceLoadRunner.xml`, `ec.service.getLoadRunner()`) is removed. Tools › Load replaces it: load scripts (`<component>/test/load/*.load.js`) of one or more scenarios over HTTP or in-process service calls, run from Tools, `moqui test-load` or a client spec, with live numbers, stops, a live change of users or rate, kept result files, import and compare. What the Java screen did is the shipped script `tools/test/load/ServiceCall.load.js`. Java's per-call entity find and write counts are not shown; the permission is `LOAD_RUNNER` in place of `SERVICE_LOAD_RUNNER` | One engine for every load, with history and comparison; Java's runner called only services in the same server ([Load-Runner](../docs/tools/Load-Runner.md), LoadRunner D7, D9) |
 
+## FOR NO KEY UPDATE (2026-11-10)
+
+An addition with no Java counterpart, from the OrderToCash load run's deadlocks ([LoadRunner](LoadRunner.md) §11).
+
+| Area | Difference | Rationale / where documented |
+|---|---|---|
+| entity find | A find takes a second lock mode beside for-update: `EntityFind::for_no_key_update` (Rust), `forNoKeyUpdate(flag)` (scripts, and a last argument of `findRelated` and `findRelatedOne`), `for-no-key-update="true"` (XML Actions `entity-find-one`, `entity-find`, `entity-find-related-one`, `entity-find-related`, refused with `for-update="true"`). It writes the database's `for-no-key-update` text, Postgres's `FOR NO KEY UPDATE`, else its `for-update` text (`Dialect::lock_text`, `moqui-db/src/dialect.rs`; `Lock`, `moqui-db/src/sql/statement.rs`), and is otherwise a for-update find: it needs a transaction, bypasses the caches, reads no clone and goes through the transaction cache, which knows each row it locked by the stronger lock taken (`FrameHold::note_locked`) | A `FOR UPDATE` lock on a parent row blocks the `FOR KEY SHARE` lock of another transaction's foreign key check on it, so serializing on an organization's `Party` row deadlocked with an `Invoice` insert. Mantle's organization locks use it; the party conversion and merge services, which change Party key columns, keep for-update. Tests `no_key_update_is_written_per_database`, `a_no_key_lock_is_kept_by_the_frame_by_its_mode`, `a_no_key_lock_does_not_block_a_child_insert_and_a_for_update_lock_does_on_postgres` (`moqui-drivers/src/entity_facade_tests.rs`) |
+
+## Template expressions and print-only screens (2026-11-10)
+
+Two fixes the load runner's screens ran into.
+
+| Area | Difference | Rationale / where documented |
+|---|---|---|
+| render-mode | On a print-only screen (its widgets are `render-mode` elements alone), an `html` render of a `render-mode` with no `html`, untyped or `any` text takes its `html-print` text when that is HTML (inline, or a location naming an `.html` file; never an `xsl-fo` text or a FO template), so a screen such as SimpleScreens' Facility/PrintBoxTypes opened in a browser shows its content; Java renders nothing there. A screen with other widgets keeps its html-print blocks (a print header, a page style) out of html. Other modes do not fall back: qvt would bring the print page's styles into the app, and the browser apps open a print screen through `/fop` or `renderMode=html-print` | An improvement on Java (`chooseRenderModeText` in `ScreenSupport.js`) |
+| `${}` expressions | A fancy template's `${}` and tag expressions, `ec.resource.expand` and server-static qvt's `${}` texts read their code as JavaScript: `//` and `/* */` comments and regular expressions are skipped as well as strings, and the code of an expand `${}` keeps its backslashes and backticks as written (they were escaped as text, so `'it\'s'` or `/\d/` broke) | Java's Groovy string parsed the code of a `${}` as code ([Screen-Output, Templates](../docs/ui/Screen-Output.md#templates); `scan_expression` in `script/template.rs`, `template_literal` in `script/runtime.rs`, `exprEnd` in `ScreenQvtStatic.js`) |
+
 ## Menus and render-mode files (2026-11-10)
 
 | Area | Difference | Rationale / where documented |

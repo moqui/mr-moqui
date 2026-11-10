@@ -352,6 +352,15 @@ along with this software (see the LICENSE.md file). If not, see
                     entity definition.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="for-no-key-update" type="boolean" default="false">
+                <xs:annotation><xs:documentation>
+                    MR Moqui: as for-update, with a lock that does not block another transaction's foreign key check
+                    on the record (Postgres SELECT ... FOR NO KEY UPDATE; other databases lock as for-update). Use it
+                    for a lock that serializes work on a parent record, such as an organization's Party, when the
+                    transaction changes none of the record's primary or unique key fields: an insert of a child row
+                    then does not wait for it, and cannot deadlock with it. Cannot be true with for-update.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="use-clone" default="false" type="boolean">
                 <xs:annotation><xs:documentation>Use a datasource clone, if one is configured</xs:documentation></xs:annotation>
             </xs:attribute>
@@ -406,6 +415,15 @@ along with this software (see the LICENSE.md file). If not, see
 
                     If this is true the cache will not be used, regardless of the cache attribute here and on the
                     entity definition.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="for-no-key-update" type="boolean" default="false">
+                <xs:annotation><xs:documentation>
+                    MR Moqui: as for-update, with a lock that does not block another transaction's foreign key check
+                    on the record (Postgres SELECT ... FOR NO KEY UPDATE; other databases lock as for-update). Use it
+                    for a lock that serializes work on a parent record, such as an organization's Party, when the
+                    transaction changes none of the record's primary or unique key fields: an insert of a child row
+                    then does not wait for it, and cannot deadlock with it. Cannot be true with for-update.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="distinct" default="false" type="boolean">
@@ -699,6 +717,15 @@ along with this software (see the LICENSE.md file). If not, see
                     cache will not be used, regardless of the cache attribute here and on the entity definition.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="for-no-key-update" type="boolean" default="false">
+                <xs:annotation><xs:documentation>
+                    MR Moqui: as for-update, with a lock that does not block another transaction's foreign key check
+                    on the record (Postgres SELECT ... FOR NO KEY UPDATE; other databases lock as for-update). Use it
+                    for a lock that serializes work on a parent record, such as an organization's Party, when the
+                    transaction changes none of the record's primary or unique key fields: an insert of a child row
+                    then does not wait for it, and cannot deadlock with it. Cannot be true with for-update.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="to-value-field" type="xs:string" use="required">
                 <xs:annotation><xs:documentation>Name of field to put the entity value result in.</xs:documentation></xs:annotation>
             </xs:attribute>
@@ -730,6 +757,15 @@ along with this software (see the LICENSE.md file). If not, see
                     rolled back). This does not have to be set to true in order to update the record, it just keeps
                     other transactions from updating it. In SQL this does a select for update. If this is true the
                     cache will not be used, regardless of the cache attribute here and on the entity definition.
+                </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="for-no-key-update" type="boolean" default="false">
+                <xs:annotation><xs:documentation>
+                    MR Moqui: as for-update, with a lock that does not block another transaction's foreign key check
+                    on the record (Postgres SELECT ... FOR NO KEY UPDATE; other databases lock as for-update). Use it
+                    for a lock that serializes work on a parent record, such as an organization's Party, when the
+                    transaction changes none of the record's primary or unique key fields: an insert of a child row
+                    then does not wait for it, and cannot deadlock with it. Cannot be true with for-update.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="list" type="xs:string" use="required">

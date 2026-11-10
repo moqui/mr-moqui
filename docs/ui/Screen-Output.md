@@ -77,3 +77,14 @@ A screen's `text` element (a `.fancy` file or `<text template="true">`) writes i
 `<div>${sri.renderSubscreen()}</div>` writes the `div`, then the subscreen, then `</div>`. An interpolation that names
 `sri.` runs between the text before it and the text after it. Rendered for its value (`sri.renderTextValue`,
 `sri.renderInlineText`, a template from a script), a template returns its output as before.
+
+The expression of a `${}`, and of an `<#if>`, `<#elseif>`, `<#list>` or `<#assign>` tag, is JavaScript, and the
+template reads it as JavaScript to find its end. Brackets, strings (with their escapes, as `'it\'s'`), template
+literals, `//` comments (to the end of the line) and `/* */` comments, and regular expressions are skipped, so an
+apostrophe in a comment or a `}` in a regular expression does not end it. A `/` is a regular expression where an
+operand may start: at the start, after a punctuator other than `)` and `]`, or after a keyword such as `return` or
+`typeof`; elsewhere it divides, as after a postfix `++` or `--` and after a property named as a keyword (`dims.in / 12`).
+A tag ends at the first `>` outside brackets, so a comparison in a tag goes in parentheses (`<#if (a > b)>`), and a
+`//` comment in a tag is refused, since it would run past the tag's `>`: use `/* */` there. The same reading applies to `ec.resource.expand` and the `${}` in a screen or service
+XML attribute: the code of a `${}` is kept as written, as Java's Groovy string kept it, and only the text around it
+has its backslashes and backticks escaped.

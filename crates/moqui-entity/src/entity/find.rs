@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use moqui_db::sql::{
     count_view, count_with, select_view_with, select_with, select_with_head, Condition, ConditionValues, FieldRef,
-    LimitOffset, OrderBy, SelectOptions,
+    LimitOffset, Lock, OrderBy, SelectOptions,
 };
 use moqui_lib::error::Error;
 use moqui_lib::object::{basic_convert, Value};
@@ -55,7 +55,10 @@ pub struct EntityFind {
     pub(super) limit: Option<i64>,
     pub(super) offset: Option<i64>,
     distinct: bool,
-    pub(super) for_update: bool,
+    /// The row lock: the stronger of [`Self::for_update`] and [`Self::for_no_key_update`].
+    pub(super) lock: Lock,
+    /// Which of the two lock calls are on; both on is refused when the find runs.
+    lock_calls: LockCalls,
     skip_locked: bool,
     pub(super) having: Vec<Condition>,
     select_fields: Vec<String>,
@@ -84,6 +87,13 @@ pub struct EntityFind {
     map_fields: Vec<String>,
 }
 
+/// The lock calls of a find that are on ([`EntityFind::for_update`], [`EntityFind::for_no_key_update`]).
+#[derive(Clone, Copy, Debug, Default)]
+struct LockCalls {
+    update: bool,
+    no_key: bool,
+}
+
 impl EntityFind {
     pub(crate) fn new(facade: EntityFacade, entity_name: String) -> Self {
         Self {
@@ -94,7 +104,8 @@ impl EntityFind {
             limit: None,
             offset: None,
             distinct: false,
-            for_update: false,
+            lock: Lock::None,
+            lock_calls: LockCalls::default(),
             skip_locked: false,
             having: Vec::new(),
             select_fields: Vec::new(),
@@ -265,16 +276,48 @@ impl EntityFind {
     }
 
     /// Lock the rows read until the transaction ends. The find fails outside a transaction. It
-    /// reads from the database, not from the entity cache or the rows a transaction cache holds.
-    pub fn for_update(mut self, lock: bool) -> Self {
-        self.for_update = lock;
+    /// reads from the database, not from the entity cache or the rows a transaction cache holds. `false` clears a lock
+    /// this set, not one of [`Self::for_no_key_update`].
+    pub fn for_update(self, lock: bool) -> Self {
+        self.set_lock(Lock::Update, lock)
+    }
+
+    /// As [`Self::for_update`], with Postgres's weaker `FOR NO KEY UPDATE` (on other databases the for-update lock): it
+    /// still serializes on the rows, but does not block another transaction's foreign key check on them, so an insert
+    /// of a child row does not wait for it (`FOR KEY SHARE`). For a lock whose transaction changes no primary key or
+    /// unique key column of the rows, such as an organization's `Party` row that serializes its postings. An MR Moqui
+    /// addition. `false` clears a lock this set, not one of [`Self::for_update`].
+    pub fn for_no_key_update(self, lock: bool) -> Self {
+        self.set_lock(Lock::NoKeyUpdate, lock)
+    }
+
+    fn set_lock(mut self, mode: Lock, on: bool) -> Self {
+        match mode {
+            Lock::Update => self.lock_calls.update = on,
+            Lock::NoKeyUpdate => self.lock_calls.no_key = on,
+            Lock::None => {}
+        }
+        // the stronger of the modes that are on, whatever the order of the calls
+        let mut lock = Lock::None;
+        if self.lock_calls.no_key {
+            lock = lock.stronger(Lock::NoKeyUpdate);
+        }
+        if self.lock_calls.update {
+            lock = lock.stronger(Lock::Update);
+        }
+        self.lock = lock;
+        let locking = self.lock.is_locking();
         // as Java's forUpdate: a locking find's iterator is scroll sensitive, else forward only
-        self.result_set_type = if lock { TYPE_SCROLL_SENSITIVE } else { TYPE_FORWARD_ONLY };
-        self.scrollable = lock;
+        self.result_set_type = if locking {
+            TYPE_SCROLL_SENSITIVE
+        } else {
+            TYPE_FORWARD_ONLY
+        };
+        self.scrollable = locking;
         self
     }
 
-    /// With [`Self::for_update`]: leave out the rows another transaction holds instead of waiting for them, where the
+    /// With [`Self::for_update`] or [`Self::for_no_key_update`]: leave out the rows another transaction holds instead of waiting for them, where the
     /// database has `SKIP LOCKED` (Postgres, MySQL 8, Oracle). Elsewhere the lock waits. For a worker claiming rows.
     pub fn skip_locked(mut self, skip: bool) -> Self {
         self.skip_locked = skip;
@@ -336,13 +379,16 @@ impl EntityFind {
     /// select-field find of a cached entity by reading every field, so it answers with whole, non-distinct rows; this
     /// reads the database and returns what was asked for.
     fn bypasses_cache(&self) -> bool {
-        self.distinct || self.for_update || !self.having.is_empty() || !self.select_fields.is_empty()
+        self.distinct || self.lock.is_locking() || !self.having.is_empty() || !self.select_fields.is_empty()
     }
 
     /// What [`Self::bypasses_cache`] looks at, for a find in a transaction-cache frame ([`cache::before_selective_find`]).
     fn selective(&self) -> cache::Selective {
         cache::Selective {
-            lock: self.for_update.then_some(self.skip_locked),
+            lock: self.lock.is_locking().then_some(cache::RowLock {
+                mode: self.lock,
+                skip_locked: self.skip_locked,
+            }),
             fields: self.select_fields.clone(),
             aggregate: self.distinct || !self.having.is_empty(),
         }
@@ -747,7 +793,14 @@ impl EntityFind {
     }
 
     fn require_transaction_for_lock(&self) -> Result<(), Error> {
-        if self.for_update && !self.facade.transactions_for(&self.entity_name)?.in_transaction() {
+        // XML Actions refuse both literal attributes; this catches both set by expressions or by code
+        if self.lock_calls.update && self.lock_calls.no_key {
+            return Err(Error::new(format!(
+                "find of {} cannot be both for update and for no key update",
+                self.entity_name
+            )));
+        }
+        if self.lock.is_locking() && !self.facade.transactions_for(&self.entity_name)?.in_transaction() {
             return Err(Error::new(format!(
                 "find of {} for update needs a transaction in place",
                 self.entity_name
@@ -806,10 +859,10 @@ impl EntityFind {
             [one] => Some(one.clone()),
             all => Some(Condition::and(all.to_vec())),
         };
-        let use_clone = self.use_clone && !self.for_update;
+        let use_clone = self.use_clone && !self.lock.is_locking();
         // In a transaction-cache frame, a view, and a distinct or having find of an entity the frame holds rows of, read
         // the frame's held rows through shadowed tables (or have them written first).
-        let aggregate = (self.distinct || !self.having.is_empty()) && !self.for_update;
+        let aggregate = (self.distinct || !self.having.is_empty()) && !self.lock.is_locking();
         let shadows = cache::read_shadows(&self.facade, &self.entity_name, condition.as_ref(), aggregate)?;
         self.facade
             .with_read_group(&self.entity_name, use_clone, |entity, dialect, model, tx| {
@@ -829,7 +882,7 @@ impl EntityFind {
                     .collect();
                 let options = SelectOptions {
                     distinct: self.distinct,
-                    for_update: self.for_update,
+                    lock: self.lock,
                     skip_locked: self.skip_locked,
                     having: having.clone(),
                     fields: select_fields.clone(),
@@ -1085,7 +1138,7 @@ fn lone_pk_equals<'a>(
     page: LimitOffset,
     options: &SelectOptions,
 ) -> Option<&'a Value> {
-    if !order.is_empty() || page.is_set() || options.distinct || options.for_update || options.having.is_some() {
+    if !order.is_empty() || page.is_set() || options.distinct || options.lock.is_locking() || options.having.is_some() {
         return None;
     }
     let mut keys = entity.fields.iter().filter(|field| field.is_pk);

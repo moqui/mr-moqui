@@ -289,6 +289,51 @@ fn a_limit_or_offset_with_an_expression_is_expanded_and_a_literal_is_as_written(
 }
 
 #[test]
+fn for_no_key_update_is_a_lock_of_its_own_and_not_with_for_update() {
+    let one = generate(
+        r#"<actions><entity-find-one entity-name="mantle.party.Party" value-field="org" for-no-key-update="true"><field-map field-name="partyId"/></entity-find-one></actions>"#,
+    )
+    .unwrap();
+    assert!(
+        one.contains(".forNoKeyUpdate(true)") && !one.contains(".forUpdate("),
+        "{one}"
+    );
+    let related = generate(
+        r#"<actions><entity-find-related-one value-field="org" relationship-name="Organization" to-value-field="o" for-no-key-update="true"/>
+            <entity-find-related value-field="org" relationship-name="roles" list="roles" for-no-key-update="true"/></actions>"#,
+    )
+    .unwrap();
+    assert!(
+        related.contains(r#".findRelatedOne("Organization", null, null, true)"#),
+        "{related}"
+    );
+    assert!(
+        related.contains(r#".findRelated("roles", null, null, null, null, true)"#),
+        "{related}"
+    );
+    // without the attribute the related finds are as before
+    let plain = generate(
+        r#"<actions><entity-find-related-one value-field="org" relationship-name="Organization" to-value-field="o" for-update="true"/></actions>"#,
+    )
+    .unwrap();
+    assert!(
+        plain.contains(r#".findRelatedOne("Organization", null, true);"#),
+        "{plain}"
+    );
+    for both in [
+        r#"<actions><entity-find entity-name="mantle.party.Party" list="l" for-update="true" for-no-key-update="true"/></actions>"#,
+        r#"<actions><entity-find-related value-field="org" relationship-name="roles" list="roles" for-update="true" for-no-key-update="true"/></actions>"#,
+    ] {
+        let err = generate(both).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("cannot be both for-update and for-no-key-update"),
+            "{err}"
+        );
+    }
+}
+
+#[test]
 fn golden_entity_value() {
     assert_golden_named("entity-value");
 }

@@ -1562,6 +1562,10 @@ fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
     };
     // One connection at a time holds the store, so a row lock has nothing more to do, and no row is held by another.
     if cur.eat_keyword("FOR") {
+        // FOR NO KEY UPDATE locks as FOR UPDATE here
+        if cur.eat_keyword("NO") && !cur.eat_keyword("KEY") {
+            return Err(cur.fail("unexpected sql"));
+        }
         if !cur.eat_keyword("UPDATE") {
             return Err(cur.fail("unexpected sql"));
         }
