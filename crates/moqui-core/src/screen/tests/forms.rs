@@ -1820,7 +1820,8 @@ fn an_auto_foreign_key_is_a_drop_down_and_from_date_defaults_to_now() {
 
 /// A form-list's `list` that is a name in the context is that list as it is, as Java's `expression(list)` gives the object:
 /// a time stamp in a row a host call put there is formatted by its field's format and keeps its class, and a long is a
-/// Long, where a read through a script gave the time stamp's milliseconds and an Integer. An expression is evaluated.
+/// Long, where a read through a script gave the time stamp's milliseconds and an Integer. An expression is evaluated, and
+/// its time stamp's milliseconds text shows in the date format.
 #[test]
 fn a_form_list_reads_a_context_list_with_its_value_types() {
     use indexmap::IndexMap;
@@ -1873,8 +1874,12 @@ fn a_form_list_reads_a_context_list_with_its_value_types() {
         "{typed}"
     );
     assert!(typed.contains(r#"<span class="display Long">7</span>"#), "{typed}");
-    // The expression still goes through the script: its time stamp is the milliseconds, as before.
+    // The expression still goes through the script, where its time stamp is the milliseconds' text; under the display's
+    // date format that text is the time stamp it was.
     let nested = &text[text.find("Nested").unwrap()..];
-    assert!(nested.contains(r#"<span class="display String">1709"#), "{nested}");
+    assert!(
+        nested.contains(r#"<span class="display String">2024-03-05 14:07</span>"#),
+        "{nested}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

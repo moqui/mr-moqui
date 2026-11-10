@@ -2278,3 +2278,66 @@ fn a_no_current_selected_key_expression_is_expanded() {
         assert_eq!(field["w"]["value"], json!(expected), "{field:?}");
     }
 }
+
+/// A list column titled "" has no header, as in qvt (a column of Remove links), whether the default-field or only a
+/// conditional-field says so. A cell text of several lines is one part, the array of its lines (a score per scorer),
+/// which the client draws a line each, as a stacked column, and a cell is at most four lines. Epoch millis text, as a
+/// time stamp reaches a script's row, shows in a display's date format, and an input keeps it, to post it as it was.
+#[test]
+fn an_empty_column_title_the_lines_of_a_cell_and_millis_under_a_date_format() {
+    let xml = r#"<screen require-authentication="false">
+        <actions><script>
+            rows = [{name: 'Alpha', scores: 'one: 1\n\ntwo: 0', notes: 'a\nb\nc\nd\ne', started: '1709647629000'}]
+            startedAt = '1709647629000'
+        </script></actions>
+        <widgets><form-list name="Rows" list="rows" skip-form="true">
+            <field name="name"><default-field><display/></default-field></field>
+            <field name="scores"><default-field title=""><display/></default-field></field>
+            <field name="flag"><conditional-field condition="true" title=""><display text="x"/></conditional-field></field>
+            <field name="started"><default-field><display format="yyyy-MM-dd"/></default-field></field>
+            <field name="notes"><default-field><display/></default-field></field>
+            <form-list-column><field-ref name="name"/></form-list-column>
+            <form-list-column><field-ref name="scores"/></form-list-column>
+            <form-list-column><field-ref name="flag"/></form-list-column>
+            <form-list-column><field-ref name="started"/></form-list-column>
+            <form-list-column><field-ref name="name"/><field-ref name="notes"/></form-list-column>
+        </form-list>
+        <form-single name="Edit">
+            <field name="startedAt"><default-field><text-line format="yyyy-MM-dd"/></default-field></field>
+        </form-single></widgets></screen>"#;
+    let output = render("cell-lines", xml, BTreeMap::new());
+    let doc = document(&output);
+    let list = list_named(&doc, "Rows");
+    let titles: Vec<&Json> = list["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|column| &column["title"])
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            &json!("Name"),
+            &json!(""),
+            &json!(""),
+            &json!("Started"),
+            &json!("Name / Notes")
+        ],
+        "{list:?}"
+    );
+    // the stacked column: the name, then the notes' lines as one part, cut to the cell's four lines
+    assert_eq!(
+        list["rows"][0]["cells"],
+        json!([
+            "Alpha",
+            ["one: 1", "two: 0"],
+            "x",
+            "2024-03-05",
+            ["Alpha", ["a", "b", "c d e"]]
+        ]),
+        "{list:?}"
+    );
+    let edit = field_named(&doc, "startedAt");
+    assert_eq!(edit["w"]["value"], json!("1709647629000"), "{edit:?}");
+    client_model(&output.body_text());
+}

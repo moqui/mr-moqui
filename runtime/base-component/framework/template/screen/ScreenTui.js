@@ -151,6 +151,9 @@ const $withRemote = ($w, $r, $urlKey, $paramsKey) => {
     return $w;
 };
 // A list cell: its parts, a field's texts joined on one line and a node a part of its own; one part is the cell itself.
+// A text of several lines (a score per line) is one part that is the array of its lines, which the client draws a line
+// each, as a stacked column; $cellOf keeps a cell to $cellLines lines.
+const $cellLines = 4;
 const $addPart = ($parts, $start, $piece) => {
     if ($piece == null) return;
     if (Array.isArray($piece)) {
@@ -163,10 +166,30 @@ const $addPart = ($parts, $start, $piece) => {
     }
     const $text = String($piece);
     if (!$text) return;
-    if ($parts.length > $start && typeof $parts[$parts.length - 1] === "string") $parts[$parts.length - 1] += " " + $text;
-    else $parts.push($text);
+    const $lines = $text.includes("\\n") ? $text.split("\\n").map(($line) => $line.trim()).filter(($line) => $line) : [$text];
+    if (!$lines.length) return;
+    // the field's text before this joins its last line, as one line of text did
+    const $last = $parts.length > $start ? $parts[$parts.length - 1] : null;
+    if (typeof $last === "string" || Array.isArray($last)) {
+        $parts.pop();
+        const $before = typeof $last === "string" ? [$last] : $last;
+        $lines.splice(0, 1, ...$before.slice(0, -1), $before[$before.length - 1] + " " + $lines[0]);
+    }
+    $parts.push($lines.length === 1 ? $lines[0] : $lines);
 };
-const $cellOf = ($parts) => ($parts.length === 0 ? "" : $parts.length === 1 ? $parts[0] : $parts);
+// A cell of its parts, at most $cellLines lines: the lines of a text past them join its last line kept.
+const $cellOf = ($parts) => {
+    let $room = $cellLines - $parts.filter(($part) => !Array.isArray($part)).length;
+    for (let $at = 0; $at < $parts.length; $at++) {
+        const $lines = $parts[$at];
+        if (!Array.isArray($lines)) continue;
+        const $keep = Math.max(1, $room);
+        if ($lines.length > $keep) $lines.splice($keep - 1, $lines.length, $lines.slice($keep - 1).join(" "));
+        $room -= $lines.length;
+        if ($lines.length === 1) $parts[$at] = $lines[0];
+    }
+    return $parts.length === 0 ? "" : $parts.length === 1 ? $parts[0] : $parts;
+};
 const $range = ($from, $thru) => ($from && $thru ? $from + " – " + $thru : $from ? $from + " –" : $thru ? "– " + $thru : "");
 // A list of ids: an array, a list, or a comma list.
 const $ids = ($value) => {
@@ -1103,7 +1126,12 @@ try {
         }).join("") : "";
         const titles = (columns) => columns.map((column) => {
             const parts = column.map((field) => {
+                // a title the field gives, even an empty one (a column of Remove links), is the header, as qvt's titleCode:
+                // the header-field's, else the default-field's, else that of the part the header is drawn from
                 const sub = S.headerSub(field);
+                const holder = [child(field, "header-field"), child(field, "default-field"), sub]
+                    .find((part) => part?.attrs?.title !== undefined);
+                if (holder) return attr(holder, "title") ? `String(${S.localizedTitle(holder)} || "")` : '""';
                 return sub ? `String(${S.localizedTitle(sub)} || "")` : jsString(attr(field, "name") || "");
             });
             // orderBy is the orderByField value for the column's first field with show-order-by, as the html header links send it

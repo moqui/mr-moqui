@@ -94,7 +94,7 @@ fn format_for_mode<'a>(state: &RenderState, widget: &'a NodeLit) -> Option<&'a s
 pub fn get_field_value_string(state: &RenderState, widget: &NodeLit) -> Result<String, Error> {
     let field = widget.field().ok_or_else(|| Error::new("widget has no field"))?;
     let value = get_field_value(field, widget.attr("default-value"))?;
-    value_string(&value, format_for_mode(state, widget))
+    widget_value_string(widget, &value, format_for_mode(state, widget))
 }
 
 /// `sri.getFieldValueString(field, default, format, type)`. A date-time widget names its `type`, so a
@@ -125,6 +125,23 @@ pub fn get_field_value_string_for(
         }
     }
     value_string(&value, format)
+}
+
+/// The text a widget shows of its value. A time stamp reaches a script as its epoch millis text (a row a script made
+/// with `getMap()`): a display or label widget with a date pattern shows epoch millis text (12–13 digits, 2001–2099),
+/// the rule `ec.l10n.format` uses with no pattern, as that time stamp. An input keeps the text, so it posts the value
+/// it was given.
+fn widget_value_string(widget: &NodeLit, value: &Value, format: Option<&str>) -> Result<String, Error> {
+    if let Value::String(text) = value {
+        let shown = matches!(widget.name.as_str(), "display" | "label");
+        if shown && format.is_some_and(l10n::is_date_pattern) {
+            if let Some(millis) = l10n::epoch_millis_text(text) {
+                let stamp = moqui_lib::object::basic_convert(&Value::I64(millis), "Timestamp").value;
+                return l10n::format_value(&stamp, format);
+            }
+        }
+    }
+    value_string(value, format)
 }
 
 fn value_string(value: &Value, format: Option<&str>) -> Result<String, Error> {
@@ -170,7 +187,7 @@ pub fn get_field_value_texts(state: &RenderState, widget: &NodeLit, with_string:
     let string = if !with_string {
         String::new()
     } else if widget.attr("default-value").is_empty() {
-        value_string(&value, format_for_mode(state, widget))?
+        widget_value_string(widget, &value, format_for_mode(state, widget))?
     } else {
         get_field_value_string(state, widget)?
     };

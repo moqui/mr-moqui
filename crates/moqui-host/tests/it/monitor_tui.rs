@@ -16,6 +16,38 @@ use std::collections::BTreeSet;
 
 const TRACE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+/// The Evals fixture, run as john.doe: the rows the screens' own transitions make (entity-auto creates) and the eval
+/// services for the rest.
+const EVAL_FIXTURE: &str = r#"
+    const S = 'org.moqui.agent.AgentEvalServices.'
+    const call = (name, parameters) => ec.service.sync().name(name).parameters(parameters).call() || {}
+    // an entity-auto create without authorization, as the screens' transitions make them
+    const make = (entity, parameters) => ec.service.sync().name('create#' + entity).parameters(parameters).disableAuthz().call() || {}
+    make('moqui.agent.AgentDefinition', {agentId: 'TUI_EVAL_AGENT', agentName: 'TUI eval agent', surfaces: 'job'})
+    make('moqui.agent.AgentScorer', {scorerId: 'TUI_SCORER', scorerName: 'TUI says ships', scorerTypeEnumId: 'AgstService',
+        serviceName: S + 'score#Contains', configJson: '{"terms": ["ships"]}', passThreshold: 0.5, createdDate: ec.user.nowTimestamp})
+    make('moqui.agent.AgentDataset', {datasetId: 'TUI_EVAL_DS', datasetName: 'TUI eval cases', description: 'TUI dataset',
+        agentId: 'TUI_EVAL_AGENT', versionNum: 0, createdDate: ec.user.nowTimestamp})
+    call(S + 'add#DatasetItem', {datasetId: 'TUI_EVAL_DS', inputText: 'TUI first case', groundTruth: 'No expected output'})
+    call(S + 'add#DatasetItem', {datasetId: 'TUI_EVAL_DS', inputText: 'TUI second case', groundTruth: 'No phrases'})
+    for (const scorerId of ['CONTAINS', 'EXACT_MATCH'])
+        make('moqui.agent.AgentScorerAttach', {scorerId, datasetId: 'TUI_EVAL_DS', fromDate: '2000-01-01 00:00:00'})
+    // score#ExactMatch answers 'No expected output' and score#Contains 'No phrases to look for': two fixed outputs
+    call(S + 'start#Experiment', {datasetId: 'TUI_EVAL_DS', serviceName: S + 'score#ExactMatch', experimentName: 'TUI baseline'})
+    call(S + 'start#Experiment', {datasetId: 'TUI_EVAL_DS', serviceName: S + 'score#Contains', experimentName: 'TUI candidate',
+        notes: 'TUI candidate notes'})
+    make('moqui.agent.AgentRun', {runId: 'TUI_EVAL_RUN', agentId: 'TUI_EVAL_AGENT', userId: ec.user.userId, statusId: 'AgrCompleted',
+        submittedDate: ec.user.nowTimestamp, endedDate: ec.user.nowTimestamp, resultJson: JSON.stringify({text: 'The TUI order ships Tuesday.'})})
+    const message = make('moqui.agent.AgentMessage', {conversationId: 'TUI_EVAL_CONV', messageSeq: 1, runId: 'TUI_EVAL_RUN',
+        role: 'user', createdDate: ec.user.nowTimestamp})
+    make('moqui.agent.AgentMessagePart', {messageId: message.messageId, partSeq: 1, partKindEnumId: 'AgpkText',
+        textValue: 'When does the TUI order ship?'})
+    call(S + 'score#Run', {runId: 'TUI_EVAL_RUN', scorerId: 'TUI_SCORER'})
+    make('moqui.agent.AgentScorerAttach', {scorerId: 'TUI_SCORER', agentId: 'TUI_EVAL_AGENT', samplingRate: 1,
+        fromDate: '2000-01-01 00:00:00', lastScoredDate: ec.user.nowTimestamp})
+    if (ec.message.hasError()) throw new Error('Evals fixture: ' + ec.message.getErrorsString())
+"#;
+
 fn document(value: Json) -> Document {
     let Value::Map(map) = moqui_lib::json::from_json(&value) else {
         panic!("fixture object")
@@ -40,14 +72,13 @@ fn error(model: &ScreenModel) -> Option<String> {
     error
 }
 fn open(link: &HostLink, path: &str) -> AppView<HostLink> {
+    open_at(link, path, path.split('?').next().unwrap())
+}
+/// [`open`] for a screen that lands on `landing`, as a tab panel on its default tab.
+fn open_at(link: &HostLink, path: &str, landing: &str) -> AppView<HostLink> {
     let mut view = AppView::with_session(Session::start(path), link.clone());
     view.run_requests();
-    assert_eq!(
-        view.session().path(),
-        path.split('?').next().unwrap(),
-        "{path}: {}",
-        view.session().message()
-    );
+    assert_eq!(view.session().path(), landing, "{path}: {}", view.session().message());
     assert!(
         error(view.session().model()).is_none(),
         "{path}: {:?}",
@@ -204,6 +235,8 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         ("Monitor/Incidents", "/apps/monitor/Incidents"),
         ("Monitor/IncidentDetail", "/apps/monitor/IncidentDetail?incidentId=TUI_INCIDENT"),
         ("Monitor/Recovery", "/apps/monitor/Recovery"),
+        // its subscreens are walked by evals_screens_work_in_the_terminal
+        ("Monitor/Evals", "/apps/monitor/Evals"),
         ("Monitor/Settings", "/apps/monitor/Settings"),
         ("Monitor/Artifacts", "/apps/monitor/Artifacts?from=now-1h&thru=now"),
         (
@@ -302,7 +335,11 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     for (name, path) in cases {
         // Independent views are checked together; one failure does not hide the rest.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut view = open(&link, path);
+            // a tab panel opens on its default tab
+            let mut view = match name {
+                "Monitor/Evals" => open_at(&link, path, "/apps/monitor/Evals/Experiments"),
+                _ => open(&link, path),
+            };
             for (id, info) in &view.session().index().components {
                 assert!(
                     moqui_tui::find_component(&info.name).is_some(),
@@ -768,6 +805,349 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         !text.contains("tui-marker line"),
         "the Dashboards mount still needs DASHBOARDS_APP: {text}"
     );
+}
+
+/// Press the submit button `id` of a form and wait for the answer, which must not be an error.
+fn submit(view: &mut AppView<HostLink>, id: &str) {
+    focus(view, id);
+    press(view, Key::Enter);
+    view.run_requests();
+    assert!(!view.session().message_is_error(), "{id}: {}", view.session().message());
+}
+/// Follow the link of the current screen whose url holds `fragment`.
+fn follow(view: &mut AppView<HostLink>, fragment: &str) {
+    let id = link_id(view, fragment);
+    focus(view, &id);
+    press(view, Key::Enter);
+    view.run_requests();
+}
+/// F10 on the list `list` at its current row, then the action whose label starts with `label`.
+fn row_action(view: &mut AppView<HostLink>, list: &str, label: &str) {
+    focus(view, list);
+    press(view, Key::F(10));
+    let Some(moqui_tui::Overlay::Menu(menu)) = view.session().top_overlay() else {
+        panic!("no actions on {list}: {:?}", view.session().overlays());
+    };
+    let at = menu
+        .items
+        .iter()
+        .position(|item| item.label.starts_with(label))
+        .unwrap_or_else(|| panic!("no {label} on {list}: {:?}", menu.items));
+    for _ in 0..at {
+        press(view, Key::Down);
+    }
+    press(view, Key::Enter);
+    view.run_requests();
+}
+/// Whether `text` holds epoch millis: a run of 13 digits.
+fn has_millis(text: &str) -> bool {
+    text.split(|ch: char| !ch.is_ascii_digit()).any(|run| run.len() == 13)
+}
+fn rows_text(view: &AppView<HostLink>, list: &str) -> String {
+    serde_json::to_string(&view.session().list_page(list)).unwrap()
+}
+fn at(view: &AppView<HostLink>, path: &str) {
+    assert_eq!(view.session().path(), path, "{}", view.session().message());
+}
+
+/// Whether `text` holds a date and time as `yyyy-MM-dd HH:mm` draws it.
+fn has_date(text: &str) -> bool {
+    text.as_bytes().windows(16).any(|window| {
+        window.iter().enumerate().all(|(at, byte)| match at {
+            4 | 7 => *byte == b'-',
+            10 => *byte == b' ',
+            13 => *byte == b':',
+            _ => byte.is_ascii_digit(),
+        })
+    })
+}
+/// The url of the link of the current screen whose url holds `fragment`.
+fn link_url(view: &AppView<HostLink>, fragment: &str) -> String {
+    let mut found = None;
+    moqui_tui::walk(&view.session().model().c, &mut |node| {
+        if let Node::Link { url, .. } = node {
+            if url.contains(fragment) {
+                found.get_or_insert_with(|| url.clone());
+            }
+        }
+    });
+    found.unwrap_or_else(|| panic!("no {fragment} link on {}", view.session().path()))
+}
+
+/// Monitor › Evals in the terminal; the gate above covers only its tab panel. Each screen is drawn once, but where a
+/// form's answer comes back to it: the tabs, the row links to the detail screens, and every form (start an experiment,
+/// a review, compare, create a dataset, add and remove an item, remove and attach a scorer, create a scorer, live
+/// scoring, find, score and save a run).
+#[test]
+fn evals_screens_work_in_the_terminal() {
+    if !crate::common::own_process() {
+        return;
+    }
+    moqui_host::logging::install();
+    let gate = common::start("monitor-tui-evals");
+    let factory = gate.server.factory();
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        // john.doe holds MONITOR_EVAL and MONITOR_EVAL_RUN through ADMIN (AgentEvalData.xml). A scorer, a dataset with
+        // two items and the scorers attached, two service-target experiments of it (which complete at once) for Compare,
+        // and a scored agent run with live scoring for Runs and Scorers.
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        moqui_core::script::run_script(EVAL_FIXTURE).unwrap();
+    }
+    // by name: TUI baseline, TUI candidate
+    let experiments: Vec<String> = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let mut rows = factory
+            .entity()
+            .unwrap()
+            .find("moqui.agent.AgentExperiment")
+            .unwrap()
+            .eq("datasetId", Value::string("TUI_EVAL_DS"))
+            .list()
+            .unwrap()
+            .values()
+            .iter()
+            .map(|row| {
+                (
+                    moqui_lib::object::to_plain_string(row.get("experimentName").unwrap()),
+                    moqui_lib::object::to_plain_string(row.get("experimentId").unwrap()),
+                )
+            })
+            .collect::<Vec<_>>();
+        rows.sort();
+        rows.into_iter().map(|(_, id)| id).collect()
+    };
+    assert_eq!(experiments.len(), 2, "{experiments:?}");
+    let link = HostLink::as_user(factory, "john.doe");
+    const E: &str = "/apps/monitor/Evals/";
+
+    // Experiments, the tab panel's default: its rows link to each experiment and to Compare from it.
+    let mut view = open_at(&link, "/apps/monitor/Evals", &format!("{E}Experiments"));
+    let text = view.screen_text(100, 40);
+    assert!(
+        text.contains("1:Experiments") && text.contains("4:Runs") && text.contains("TUI baseline"),
+        "{text}"
+    );
+    let details = row_urls(&view, "Experiments", "/ExperimentDetail?");
+    let compares = row_urls(&view, "Experiments", "/Compare?");
+    for id in &experiments {
+        assert!(
+            details
+                .iter()
+                .any(|url| url.starts_with(&format!("{E}ExperimentDetail?"))
+                    && url.contains(&format!("experimentId={id}"))),
+            "{details:?}"
+        );
+        assert!(
+            compares
+                .iter()
+                .any(|url| url.starts_with(&format!("{E}Compare?")) && url.contains(&format!("baseId={id}"))),
+            "{compares:?}"
+        );
+    }
+    // Start an experiment: a service target completes at once, on its own screen.
+    set_field(&mut view, "StartExperiment.datasetId", "TUI_EVAL_DS");
+    set_field(
+        &mut view,
+        "StartExperiment.serviceName",
+        "org.moqui.agent.AgentEvalServices.score#ExactMatch",
+    );
+    set_field(&mut view, "StartExperiment.experimentName", "TUI started here");
+    submit(&mut view, "StartExperiment.submitButton");
+    at(&view, &format!("{E}ExperimentDetail"));
+    let started = view.session().parameters()["experimentId"].clone();
+    // its summary, and each result's scores, a line per scorer
+    let text = view.screen_text(240, 60);
+    assert!(
+        text.contains("TUI started here") && text.contains("Completed · 2/2 done"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Contains: ") && text.contains("Matches expected: 0.00"),
+        "{text}"
+    );
+    assert!(link_url(&view, "/DatasetDetail?").contains("datasetId=TUI_EVAL_DS"));
+    // A person's review is a score of the result.
+    let result = view.session().index().choices("ReviewResult.resultId")[0].value.clone();
+    set_field(&mut view, "ReviewResult.resultId", &result);
+    set_field(&mut view, "ReviewResult.scorerId", "HUMAN_REVIEW");
+    set_field(&mut view, "ReviewResult.score", "1");
+    set_field(&mut view, "ReviewResult.reason", "TUI reviewed");
+    submit(&mut view, "ReviewResult.submitButton");
+    at(&view, &format!("{E}ExperimentDetail"));
+    assert!(rows_text(&view, "ScorerSummary").contains("Human review"));
+    // Compare with another, then pick the baseline.
+    follow(&mut view, "/Compare?");
+    at(&view, &format!("{E}Compare"));
+    assert_eq!(view.session().parameters()["baseId"], started);
+    set_field(&mut view, "Pick.otherId", &experiments[0]);
+    submit(&mut view, "Pick.submitButton");
+    at(&view, &format!("{E}Compare"));
+    assert_eq!(view.session().parameters()["otherId"], experiments[0]);
+    // the change's word column is titled "", as in the browser
+    let titles: Vec<String> = view
+        .session()
+        .list("Compare")
+        .unwrap()
+        .columns
+        .iter()
+        .map(|column| column.title.clone())
+        .collect();
+    assert_eq!(titles, ["Item", "Before", "After", "Change", ""]);
+    let compare = rows_text(&view, "Compare");
+    assert!(
+        compare.contains("TUI first case") && compare.contains("TUI second case"),
+        "{compare}"
+    );
+    let text = view.screen_text(240, 40);
+    assert!(
+        text.contains("TUI started here: mean") && text.contains("TUI baseline: mean"),
+        "{text}"
+    );
+
+    // Datasets (tab 2): its row links to the dataset; a new one opens on its own screen.
+    view.on_key(&KeyPress::with_alt(Key::Char('2')));
+    view.run_requests();
+    at(&view, &format!("{E}Datasets"));
+    let datasets = row_urls(&view, "Datasets", "/DatasetDetail?");
+    assert!(
+        datasets
+            .iter()
+            .any(|url| url.starts_with(&format!("{E}DatasetDetail?")) && url.contains("datasetId=TUI_EVAL_DS")),
+        "{datasets:?}"
+    );
+    set_field(&mut view, "CreateDataset.datasetId", "TUI_EVAL_NEW");
+    set_field(&mut view, "CreateDataset.datasetName", "TUI new dataset");
+    submit(&mut view, "CreateDataset.submitButton");
+    at(&view, &format!("{E}DatasetDetail"));
+    assert_eq!(view.session().parameters()["datasetId"], "TUI_EVAL_NEW");
+    assert!(view
+        .screen_text(100, 40)
+        .contains("TUI new dataset · version 0 · 0 items"));
+
+    // Scorers (tab 3): a new one, and live scoring of an agent's runs started and stopped.
+    view.on_key(&KeyPress::with_alt(Key::Char('3')));
+    view.run_requests();
+    at(&view, &format!("{E}Scorers"));
+    // a time stamp a script put in a row (epoch millis text) shows in its display's date format
+    let live = rows_text(&view, "LiveScoring");
+    assert!(has_date(&live) && !has_millis(&live), "{live}");
+    set_field(&mut view, "CreateScorer.scorerId", "TUI_NEW_SCORER");
+    set_field(&mut view, "CreateScorer.scorerName", "TUI new scorer");
+    set_field(&mut view, "CreateScorer.scorerTypeEnumId", "AgstHuman");
+    submit(&mut view, "CreateScorer.submitButton");
+    at(&view, &format!("{E}Scorers"));
+    assert!(rows_text(&view, "Scorers").contains("TUI new scorer"));
+    set_field(&mut view, "AttachAgent.scorerId", "EXACT_MATCH");
+    set_field(&mut view, "AttachAgent.agentId", "TUI_EVAL_AGENT");
+    set_field(&mut view, "AttachAgent.samplingRate", "0.5");
+    submit(&mut view, "AttachAgent.submitButton");
+    assert_eq!(view.session().list_page("LiveScoring").len(), 2);
+    let stop = view
+        .session()
+        .list_page("LiveScoring")
+        .iter()
+        .position(|row| serde_json::to_string(row).unwrap().contains("Matches expected"))
+        .unwrap_or_else(|| panic!("{}", rows_text(&view, "LiveScoring")));
+    focus(&mut view, "LiveScoring");
+    for _ in 0..stop {
+        press(&mut view, Key::Down);
+    }
+    row_action(&mut view, "LiveScoring", "Stop");
+    assert_eq!(
+        view.session().list_page("LiveScoring").len(),
+        1,
+        "{}",
+        view.session().message()
+    );
+    // The live row's Scores opens Runs for its agent.
+    focus(&mut view, "LiveScoring");
+    press(&mut view, Key::Enter);
+    view.run_requests();
+    at(&view, &format!("{E}Runs"));
+    assert_eq!(view.session().parameters()["agentId"], "TUI_EVAL_AGENT");
+
+    // Runs: find a run, score it, and save it as an item of the dataset.
+    set_field(&mut view, "RunFilter.runId", "TUI_EVAL_RUN");
+    submit(&mut view, "RunFilter.submitButton");
+    assert_eq!(view.session().parameters()["runId"], "TUI_EVAL_RUN");
+    let runs = rows_text(&view, "Runs");
+    assert!(
+        runs.contains("When does the TUI order ship?") && runs.contains("TUI says ships"),
+        "{runs}"
+    );
+    set_field(&mut view, "ScoreRun.runId", "TUI_EVAL_RUN");
+    set_field(&mut view, "ScoreRun.scorerId", "EXACT_MATCH");
+    submit(&mut view, "ScoreRun.submitButton");
+    at(&view, &format!("{E}Runs"));
+    assert!(rows_text(&view, "Runs").contains("Matches expected"));
+    set_field(&mut view, "SaveRun.runId", "TUI_EVAL_RUN");
+    set_field(&mut view, "SaveRun.datasetId", "TUI_EVAL_DS");
+    set_field(&mut view, "SaveRun.useOutput", "Y");
+    submit(&mut view, "SaveRun.submitButton");
+
+    // The dataset: the saved run is its third item, a new version.
+    at(&view, &format!("{E}DatasetDetail"));
+    assert_eq!(view.session().parameters()["datasetId"], "TUI_EVAL_DS");
+    assert!(view
+        .screen_text(100, 40)
+        .contains("TUI eval cases · version 3 · 3 items"));
+    let items = rows_text(&view, "Items");
+    assert!(
+        items.contains("When does the TUI order ship?") && items.contains("The TUI order ships Tuesday."),
+        "{items}"
+    );
+    let experiment_rows = rows_text(&view, "DatasetExperiments");
+    assert!(
+        has_date(&experiment_rows) && !has_millis(&experiment_rows),
+        "{experiment_rows}"
+    );
+    assert_eq!(row_urls(&view, "DatasetExperiments", "/ExperimentDetail?").len(), 3);
+    assert!(link_url(&view, "/Experiments?").contains("datasetId=TUI_EVAL_DS"));
+    // An item added is a new version; Remove (a row action) asks first, and leaves it out of the next.
+    set_field(&mut view, "AddItem.inputText", "TUI fourth case");
+    set_field(&mut view, "AddItem.groundTruth", "ships");
+    submit(&mut view, "AddItem.submitButton");
+    assert!(view.screen_text(100, 40).contains("version 4 · 4 items"));
+    focus(&mut view, "Items");
+    for _ in 0..3 {
+        press(&mut view, Key::Down);
+    }
+    row_action(&mut view, "Items", "Remove");
+    assert!(
+        matches!(view.session().top_overlay(), Some(moqui_tui::Overlay::Confirm(_))),
+        "{:?}",
+        view.session().overlays()
+    );
+    press(&mut view, Key::Right);
+    press(&mut view, Key::Enter);
+    view.run_requests();
+    assert!(!rows_text(&view, "Items").contains("TUI fourth case"));
+    assert!(view.screen_text(100, 40).contains("version 5 · 3 items"));
+    // A scorer removed (a row action) and attached again.
+    assert_eq!(view.session().list_page("Attached").len(), 2);
+    row_action(&mut view, "Attached", "Remove");
+    assert_eq!(
+        view.session().list_page("Attached").len(),
+        1,
+        "{}",
+        view.session().message()
+    );
+    let again = view
+        .session()
+        .index()
+        .choices("AttachScorer.scorerId")
+        .iter()
+        .find(|choice| choice.value == "CONTAINS" || choice.value == "EXACT_MATCH")
+        .expect("the removed scorer is offered again")
+        .value
+        .clone();
+    set_field(&mut view, "AttachScorer.scorerId", &again);
+    submit(&mut view, "AttachScorer.submitButton");
+    assert_eq!(view.session().list_page("Attached").len(), 2);
 }
 
 fn all_props(view: &AppView<HostLink>, name: &str) -> Vec<Json> {
