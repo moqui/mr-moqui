@@ -23,6 +23,7 @@
 
 mod manager;
 mod pool;
+mod shapes;
 
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]

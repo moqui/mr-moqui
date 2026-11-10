@@ -382,6 +382,7 @@ impl TransactionManager {
             let fired = Arc::new(AtomicBool::new(false));
             let deadline_token = NEXT_DEADLINE.fetch_add(1, Ordering::Relaxed);
             register_deadline(deadline_token, deadline, Arc::clone(&fired));
+            super::shapes::begin(deadline_token);
             frames.push(Frame {
                 join_depth: 0,
                 deadline,
@@ -968,6 +969,7 @@ impl TransactionManager {
                 line.committed,
                 line.round_trips,
                 line.micros,
+                &line.shapes,
             );
         }
         for member in resumes {
@@ -1609,7 +1611,9 @@ fn end_trace(phase: &mut Phase, committed: bool, census: bool) -> Option<CensusL
         CacheMode::Hold => "hold",
         CacheMode::ReadThrough => "read-through",
     };
+    let shapes = super::shapes::end(phase.token);
     let line = census.then(|| CensusLine {
+        shapes,
         mode,
         stats: stats.clone(),
         committed,
@@ -1645,6 +1649,8 @@ fn end_trace(phase: &mut Phase, committed: bool, census: bool) -> Option<CensusL
 
 /// A frame's census line (plans/archive/TX-Cache.md D1), written once for the transaction after its frames end.
 struct CensusLine {
+    /// The frame's statement shapes as JSON members (plans/Profiling3.md M2).
+    shapes: String,
     mode: &'static str,
     stats: Option<crate::entity::cache::TxCacheStats>,
     committed: bool,

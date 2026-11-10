@@ -554,6 +554,86 @@ fn a_held_update_of_a_locked_row_does_not_block_an_inner_force_new_on_postgres()
     drop(cluster);
 }
 
+/// A held update goes out through the pool as one the server fails when it changes no row (Round 18), so its commit
+/// waits once for both, and an update of a row gone since the frame read it still fails the commit
+/// (plans/Profiling3.md R54: the pooled connection had not passed `execute_deferred_update` on).
+#[test]
+fn a_held_update_commits_in_one_round_trip_and_fails_for_a_row_gone_on_postgres() {
+    use moqui_core::transaction::TransactionAttribute;
+
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let driver: Arc<dyn DbDriver> = Arc::new(driver);
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let facade = open_entity_facade(
+        &framework,
+        driver,
+        PoolConfig {
+            min: 0,
+            max: 4,
+            reserve: 1,
+            acquire_timeout: Duration::from_secs(30),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    facade.check_tables(&["moqui.test.TestEntity"]).unwrap();
+    for id in ["U0", "U1", "U2"] {
+        let mut row = facade.make_value("moqui.test.TestEntity").unwrap();
+        row.set("testId", Value::string(id));
+        row.set("testMedium", Value::string("before"));
+        row.create(&facade).unwrap();
+    }
+    let tx = facade.transactions_for("moqui.test.TestEntity").unwrap();
+    let find = |id: &str| {
+        facade
+            .find("moqui.test.TestEntity")
+            .unwrap()
+            .eq("testId", Value::string(id))
+            .one()
+            .unwrap()
+    };
+
+    let held_update = |id: &str| {
+        let mut commit_trips = 0;
+        tx.run(TransactionAttribute::Cache, None, || {
+            let mut row = find(id).expect("a row");
+            row.set("testMedium", Value::string("held"));
+            row.update(&facade)?;
+            commit_trips = moqui_core::driver::thread_round_trips();
+            Ok(())
+        })
+        .unwrap();
+        moqui_core::driver::thread_round_trips() - commit_trips
+    };
+    // the first prepares the statements
+    held_update("U0");
+    assert_eq!(held_update("U1"), 1, "the held update and the commit wait once");
+    assert_eq!(
+        find("U1").unwrap().get("testMedium").and_then(Value::as_str),
+        Some("held")
+    );
+
+    let gone = tx.run(TransactionAttribute::Cache, None, || {
+        let mut row = find("U2").expect("U2");
+        tx.run(TransactionAttribute::ForceNew, None, || {
+            facade
+                .find("moqui.test.TestEntity")?
+                .eq("testId", Value::string("U2"))
+                .delete_all()
+                .map(|_| ())
+        })?;
+        row.set("testMedium", Value::string("held"));
+        row.update(&facade)
+    });
+    assert!(gone.is_err(), "an update of a row gone fails the commit");
+    assert!(find("U2").is_none());
+
+    drop(facade);
+    drop(cluster);
+}
+
 /// A data file's writes go without waiting for their results. A failed one fails its file as before: the file
 /// rolls back and the error is the failed statement's, wherever in the file it was.
 #[test]
