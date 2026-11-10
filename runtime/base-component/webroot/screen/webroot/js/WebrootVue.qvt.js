@@ -8412,6 +8412,7 @@
                 return { height: (this.height || 24) + "px", colorScheme: this.isDark && !this.designed ? "dark" : "light" };
             }
         },
+        // Change 4: Mount with the first body ready; updating an initial empty frame can leave its document blank.
         template:
             '<div class="m-html-view" :data-state="state" :data-blocked="blocked">' +
                 '<div v-if="blocked && !remoteAllowed && imagesBar" class="m-html-view-images row items-center no-wrap">' +
@@ -8419,7 +8420,7 @@
                     '<span class="col m-muted">{{t("Images from this sender are hidden")}}</span>' +
                     '<q-btn flat dense no-caps color="primary" class="m-html-view-show" :label="t(\'Show images\')" @click="showImages"></q-btn>' +
                 '</div>' +
-                '<iframe ref="frame" class="m-html-view-frame" :class="{\'m-html-view-card\': designed && isDark}" :title="title"' +
+                '<iframe v-if="srcdoc" ref="frame" class="m-html-view-frame" :class="{\'m-html-view-card\': designed && isDark}" :title="title"' +
                     ' sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"' +
                     ' :srcdoc="srcdoc" :style="frameStyle" @load="onLoad"></iframe>' +
             '</div>',

@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="showAll"/>
 
     <actions>
-        <set field="currentScreenDef" from="sri.getRootScreenDef()"/>
+        <!-- Change 2: Use the supported, authorization-filtered menu facade. -->
         <set field="currentScreenPath" value=""/>
     </actions>
     <widgets>

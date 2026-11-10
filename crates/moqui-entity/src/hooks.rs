@@ -88,6 +88,8 @@ pub struct EntityHooks {
     pub locale: fn() -> String,
     /// The user's time zone, else the server's.
     pub time_zone: fn() -> TimeZone,
+    /// The server default zone, distinct from a logged-in user's zone (Java JVM default).
+    pub server_time_zone: fn() -> TimeZone,
     pub entity_eca_disabled: fn() -> bool,
     /// An attribute of an element of the factory's conf, `${}` expanded.
     pub conf_setting: fn(&str, &str) -> String,
@@ -164,6 +166,7 @@ impl EntityHooks {
         in_group: |_| Ok(false),
         locale: || "en_US".to_string(),
         time_zone: moqui_lib::object::text_time_zone,
+        server_time_zone: || TimeZone::UTC,
         entity_eca_disabled: || false,
         conf_setting: |_, _| String::new(),
         // a file path or `file:` location; the component and classpath roots are the framework's
@@ -287,6 +290,11 @@ fn is_timestamp_text(value: &Value, java_type: &str) -> bool {
 /// The user's time zone, else the server's.
 pub fn time_zone() -> TimeZone {
     (get().time_zone)()
+}
+
+/// The default zone used to parse explicit period anchor dates.
+pub fn server_time_zone() -> TimeZone {
+    (get().server_time_zone)()
 }
 
 /// A `resource-facade` attribute of the conf, trimmed; empty with no context or when the conf leaves it out.

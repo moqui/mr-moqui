@@ -17,7 +17,8 @@ along with this software (see the LICENSE.md file). If not, see
         require-authentication="false" screen-theme-type-enum-id="STT_INTERNAL"
         track-artifact-hit="false" standalone="true" allow-extra-path="true" default-menu-include="false">
 
+    <!-- Change 3: Read URL metadata through the supported renderer accessor. -->
     <widgets>
-        <label text="Extra path: ${sri.screenUrlInfo.extraPathNameList}" type="span"/>
+        <label text="Extra path: ${sri.getScreenUrlInfo().extraPathNameList}" type="span"/>
     </widgets>
 </screen>

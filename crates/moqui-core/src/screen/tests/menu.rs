@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use super::{basic, request, World};
+use super::{World, basic, request};
 use crate::screen::serve_at;
 
 fn screen_authz_conf() -> &'static str {
@@ -650,5 +650,71 @@ fn menu_data_takes_the_image_of_a_default_subscreen_at_an_apps_root() {
     assert_eq!(status, 200, "{menu}");
     assert_eq!(menu[1]["name"], "Plain");
     assert_eq!(menu[1]["image"], "sym_o_hub", "{menu}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// Change 2: Show All changes menu visibility, not authorization or parameter requirements.
+#[test]
+fn site_map_hidden_items_still_require_permission_and_expose_required_parameters() {
+    let (dir, root) = tree("site-map-hidden");
+    let root_text = std::fs::read_to_string(&root).unwrap().replace(
+        "<subscreens default-item=\"App\"/>",
+        r#"<transition name="items" read-only="true"><actions><script>
+            ec.web.sendJsonResponse({normal: sri.getMenuItems('/App'), all: sri.getMenuItems('/App', true)})
+        </script></actions><default-response type="none"/></transition>
+        <subscreens default-item="App"/>"#,
+    );
+    std::fs::write(&root, root_text).unwrap();
+    let app = dir.join("Root/App.xml");
+    std::fs::write(
+        &app,
+        std::fs::read_to_string(&app)
+            .unwrap()
+            .replace("name=\"Secret\"", "name=\"Secret\" menu-include=\"false\""),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/App/Hidden.xml"),
+        r#"<screen require-authentication="true" default-menu-include="false"><widgets/></screen>"#,
+    )
+    .unwrap();
+    let world = World::open(screen_authz_conf());
+    world.user("admin", Some("ADMIN"));
+    world.user("plain", None);
+    for (id, group, file) in [
+        ("OPEN_VIEW", "ALL_USERS", "Open"),
+        ("HIDDEN_VIEW", "ALL_USERS", "Hidden"),
+        ("NEEDS_VIEW", "ALL_USERS", "Needs"),
+        ("SECRET_VIEW", "ADMIN", "Secret"),
+    ] {
+        allow(
+            &world,
+            id,
+            group,
+            &dir.join(format!("Root/App/{file}.xml")).to_string_lossy(),
+        );
+    }
+    let (status, plain) = get_menu(&world, &root, Some("plain"), "/items");
+    assert_eq!(status, 200, "{plain}");
+    let names = |items: &serde_json::Value| -> Vec<String> {
+        items
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(!names(&plain["normal"]).contains(&"Hidden".to_string()), "{plain}");
+    assert!(names(&plain["all"]).contains(&"Hidden".to_string()), "{plain}");
+    assert!(!names(&plain["all"]).contains(&"Secret".to_string()), "{plain}");
+    let required = plain["all"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["name"] == "Needs")
+        .unwrap();
+    assert_eq!(required["hasRequiredParameters"], true);
+    let (_, admin) = get_menu(&world, &root, Some("admin"), "/items");
+    assert!(names(&admin["all"]).contains(&"Secret".to_string()), "{admin}");
     let _ = std::fs::remove_dir_all(&dir);
 }

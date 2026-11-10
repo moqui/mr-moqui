@@ -22,7 +22,7 @@ use moqui_lib::node::MNode;
 use super::*;
 use crate::screen::generate::{self, Unit, UnitRequest};
 use crate::screen::sri::{self as logic, NodeLit, Runner};
-use crate::screen::{with_current_render, RenderState};
+use crate::screen::{RenderState, with_current_render};
 
 /// Run `body` on the script runtime with a [`Runner`] for the render in progress.
 pub(crate) fn with_screen_runner<R>(body: impl FnOnce(&dyn Runner) -> Result<R, Error>) -> Result<R, Error> {
@@ -939,14 +939,21 @@ fn sri_get_field_transition_value<'js>(
     })
 }
 
-fn sri_get_menu_items<'js>(ctx: Ctx<'js>, screen_path: Opt<String>) -> rquickjs::Result<Array<'js>> {
+fn sri_get_menu_items<'js>(
+    ctx: Ctx<'js>,
+    screen_path: Opt<String>,
+    include_hidden: Opt<bool>,
+) -> rquickjs::Result<Array<'js>> {
     host_guard(&ctx, || {
-        let items = with_render(&ctx, false, |state| logic::menu_items(state, screen_path.0.as_deref()))?;
+        let items = with_render(&ctx, false, |state| {
+            logic::menu_items(state, screen_path.0.as_deref(), include_hidden.0.unwrap_or(false))
+        })?;
         let out = Array::new(ctx.clone())?;
         for (index, item) in items.into_iter().enumerate() {
             let object = Object::new(ctx.clone())?;
             object.set("name", item.name)?;
             object.set("hasParameters", item.has_parameters)?;
+            object.set("hasRequiredParameters", item.has_required_parameters)?;
             object.set("title", item.title)?;
             object.set("url", item.url)?;
             object.set("disabled", item.disabled)?;

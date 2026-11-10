@@ -1444,3 +1444,45 @@ fn bulk_deletes_run_each_rows_rule_and_a_purge_passes_over_a_failed_chunk() {
     );
     clear_context_stack();
 }
+
+// Change 5: Entity downloads preserve binary bytes through the script facade and servlet output stream.
+#[test]
+fn entity_binary_field_download_writes_exact_bytes() {
+    let context = database();
+    let _entered = context.enter();
+    let _web = crate::web::install(std::collections::BTreeMap::new());
+    crate::web::set_request(
+        std::sync::Arc::new(crate::web::WebRequest::new("GET", "/download")),
+        bytes::Bytes::new(),
+    );
+    run_script(
+        r#"const job = ec.entity.makeValue("moqui.basic.print.PrintJob");
+            job.printJobId = "BinaryDownload";
+            if (job.getBytes("document") !== null) throw new Error("unset binary field is not null");
+            job.document = new Uint8Array([0, 255, 128, 10, 13, 65]);
+            job.create();
+            const found = ec.entity.find("moqui.basic.print.PrintJob").condition("printJobId", "BinaryDownload").one();
+            const bytes = found.getBytes("document");
+            if (!(bytes instanceof Uint8Array)) throw new Error("binary getter did not return bytes");
+            ec.web.response.setContentType("application/octet-stream");
+            ec.web.response.setHeader("Content-Disposition", "attachment");
+            ec.web.response.outputStream.write(bytes);
+            found.document = new Uint8Array([]);
+            if (found.getBytes("document").length !== 0) throw new Error("empty bytes changed");
+            found.document = null;
+            if (found.getBytes("document") !== null) throw new Error("null bytes changed");"#,
+    )
+    .unwrap();
+    let response = crate::web::take_response();
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, vec![0, 255, 128, 10, 13, 65]);
+    assert!(response
+        .headers
+        .iter()
+        .any(|(name, value)| name.eq_ignore_ascii_case("Content-Type") && value == "application/octet-stream"));
+    assert!(response
+        .headers
+        .iter()
+        .any(|(name, value)| name.eq_ignore_ascii_case("Content-Disposition") && value == "attachment"));
+    clear_context_stack();
+}

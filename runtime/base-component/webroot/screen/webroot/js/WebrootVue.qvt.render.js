@@ -4579,7 +4579,7 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-html-view": { hash: "b2da5b44", make: function (Vue) {
+        "m-html-view": { hash: "fd159df5", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle } = Vue
 
             return function render(_ctx, _cache) {
@@ -4613,16 +4613,19 @@
                       }, null, 8, ["label", "onClick"])
                     ]))
                   : _createCommentVNode("", true),
-                _createElementVNode("iframe", {
-                  ref: "frame",
-                  class: _normalizeClass(["m-html-view-frame", {'m-html-view-card': _ctx.designed && _ctx.isDark}]),
-                  title: _ctx.title,
-                  sandbox: "allow-same-origin allow-popups allow-popups-to-escape-sandbox",
-                  referrerpolicy: "no-referrer",
-                  srcdoc: _ctx.srcdoc,
-                  style: _normalizeStyle(_ctx.frameStyle),
-                  onLoad: _ctx.onLoad
-                }, null, 46, ["title", "srcdoc", "onLoad"])
+                (_ctx.srcdoc)
+                  ? (_openBlock(), _createElementBlock("iframe", {
+                      key: 1,
+                      ref: "frame",
+                      class: _normalizeClass(["m-html-view-frame", {'m-html-view-card': _ctx.designed && _ctx.isDark}]),
+                      title: _ctx.title,
+                      sandbox: "allow-same-origin allow-popups allow-popups-to-escape-sandbox",
+                      referrerpolicy: "no-referrer",
+                      srcdoc: _ctx.srcdoc,
+                      style: _normalizeStyle(_ctx.frameStyle),
+                      onLoad: _ctx.onLoad
+                    }, null, 46, ["title", "srcdoc", "onLoad"]))
+                  : _createCommentVNode("", true)
               ], 8, ["data-state", "data-blocked"]))
             }
         } },
