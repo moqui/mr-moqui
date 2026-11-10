@@ -170,6 +170,34 @@ fn decimal(text: &str) -> Value {
     basic_convert(&Value::string(text), "BigDecimal").value
 }
 
+/// A decimal read by name is tracked as a list is: after a host call that may change the stack (a releasing flush), a
+/// read is the same object while the stack holds an equal decimal, and a new one once the call put another there.
+#[test]
+fn a_decimal_read_again_after_a_release_is_the_same_object_until_the_stack_changes() -> Result<(), Error> {
+    use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
+    clear_context_stack();
+    push_context_frame();
+    set_context_name("price", decimal("10.25"))?;
+    let context = super::engine::context_for_tests();
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "release", 1, move |scope: &mut Scope<'_>| -> Result<JsValue, _> {
+            let change = matches!(scope.arg(0), JsValue::Bool(true));
+            super::tracked::flush(scope, super::tracked::Flush::Release)
+                .map_err(|conv| super::engine::host_error(scope, conv))?;
+            if change {
+                set_context_name("price", decimal("2")).unwrap();
+            }
+            Ok(JsValue::Undefined)
+        })
+        .unwrap();
+    assert!(condition("(() => { const a = price; release(false); return a === price; })()"));
+    assert!(condition(
+        "(() => { const a = price; release(true); return a !== price && price.eq(2) && a.eq('10.25'); })()"
+    ));
+    Ok(())
+}
+
 #[test]
 fn bare_names_read_the_context_stack() -> Result<(), Error> {
     clear_context_stack();

@@ -611,9 +611,31 @@ fn resource_reference_is_a_global_of_each_whole_runtime() -> Result<(), Error> {
 }
 
 
-/// The builtins QuickJS's main context had that quickjs-oxide lacks (`queueMicrotask`, `atob`, `btoa`, `performance`,
+/// What the fork has as other engines do, on a whole runtime: `using` and `await using` (explicit resource management),
+/// `Error.captureStackTrace` and `Error.stackTraceLimit`, and `performance.now()` in fractions of a millisecond.
+#[test]
+fn a_script_has_using_capture_stack_trace_and_a_fractional_performance_clock() -> Result<(), Error> {
+    clear_context_stack();
+    let answer = eval_value(
+        r#"(() => {
+            const log = [];
+            const resource = (name) => ({ [Symbol.dispose]() { log.push(name); } });
+            { using a = resource("a"); using b = resource("b"); log.push("body"); }
+            function inner(o) { Error.captureStackTrace(o, inner); }
+            function outer() { const o = {}; inner(o); return o.stack.trim().split(" ")[1]; }
+            let a = performance.now(), b = a, spins = 0;
+            while (b === a && spins++ < 1e7) b = performance.now();
+            return [log.join(), outer(), typeof Error.stackTraceLimit, b - a < 1, typeof performance.timeOrigin].join("|");
+        })()"#,
+    )?;
+    assert_eq!(moqui_lib::object::to_plain_string(&answer), "body,b,a|outer|number|true|number");
+    Ok(())
+}
+
+/// The builtins QuickJS's main context had that quickjs-oxide lacked (`queueMicrotask`, `atob`, `btoa`, `performance`,
 /// `DOMException`, `SuppressedError`, `DisposableStack`, `AsyncDisposableStack`, `Symbol.dispose` and
-/// `Symbol.asyncDispose`) are on the runtime (`oxide/builtins.rs`), each answering as QuickJS's did: its descriptor,
+/// `Symbol.asyncDispose`) are on the runtime (`oxide/builtins.rs`, the fork's own for `performance` and explicit
+/// resource management), each answering as QuickJS's did: its descriptor,
 /// length, members, errors and results (the answers QuickJS gave, kept when it was removed).
 #[test]
 fn the_quickjs_builtins_are_on_the_runtime() -> Result<(), Error> {

@@ -49,11 +49,11 @@ typeof Object.getOwnPropertyDescriptor(DOMException.prototype, 'name').get: func
 JSON.stringify(Object.getOwnPropertyDescriptor(DisposableStack.prototype, 'disposed').get !== undefined): true
 DisposableStack.prototype[Symbol.dispose] === DisposableStack.prototype.dispose: true
 AsyncDisposableStack.prototype[Symbol.asyncDispose] === AsyncDisposableStack.prototype.disposeAsync: true
-(() => { const s = new DisposableStack(); s.dispose(); try { s.defer(() => 1) } catch (e) { return String(e) } })(): ReferenceError: DisposableStack has been disposed
+(() => { const s = new DisposableStack(); s.dispose(); try { s.defer(() => 1) } catch (e) { return String(e) } })(): ReferenceError: stack is already disposed
 (() => { const s = new DisposableStack(); s.defer(() => { throw new Error('one') }); try { s.dispose() } catch (e) { return String(e) } })(): Error: one
 (() => { const e = new SuppressedError(1, 2); return JSON.stringify(Object.getOwnPropertyDescriptor(e, 'error')) })(): {"value":1,"writable":true,"enumerable":false,"configurable":true}
 queueMicrotask.name + queueMicrotask.length + atob.name + btoa.name + (typeof queueMicrotask.prototype): queueMicrotask1atobbtoaundefined
-Object.getOwnPropertyNames(Symbol).filter(n => n.includes('ispose')).join(): dispose,asyncDispose
+Object.getOwnPropertyNames(Symbol).filter(n => n.includes('ispose')).join(): asyncDispose,dispose
 JSON.stringify(Object.getOwnPropertyDescriptor(Symbol, 'dispose')): {"writable":false,"enumerable":false,"configurable":false}
 btoa(String.fromCharCode(0,1,2,255)): AAEC/w==
 atob('AAEC/w==').split('').map(c => c.charCodeAt(0)).join(): 0,1,2,255

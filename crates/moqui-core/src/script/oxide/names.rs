@@ -321,11 +321,8 @@ pub(super) fn missing(name: &str) -> Result<Value, Conv> {
 /// Global names a script written for QuickJS may use that quickjs-oxide does not bind: a bare one is an error naming
 /// it, not a context name that is not set.
 pub(crate) const QUICKJS_ONLY_GLOBALS: &[&str] = &[
-    // QuickJS builtins quickjs-oxide does not have
-    "AsyncDisposableStack",
+    // QuickJS builtins quickjs-oxide does not have (the fork has explicit resource management's own)
     "DOMException",
-    "DisposableStack",
-    "SuppressedError",
     "atob",
     "btoa",
     "performance",

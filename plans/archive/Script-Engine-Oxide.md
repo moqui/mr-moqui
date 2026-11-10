@@ -404,9 +404,9 @@ proceed in parallel and land in the order the phases need them.
   - The fork's `fix/lower-heap-oom` (3f5d5809). It reports a compile that runs out of heap while lowering as out of
     memory. Our side maps it already (`errors::compile_out_of_memory`), so the revision is not bumped for it.
   - A decimal read again after a releasing flush is a new object on oxide (`===` is false), where QuickJS gives back
-    the same one.
+    the same one. Fixed 2026-11-09.
   - `entity_proxy`'s scan grows with a run's rows.
-  - `using` declarations, which need the fork's parser.
+  - `using` declarations, which need the fork's parser. In the fork since 2026-11-09.
   - A back-reference compared in one unpolled step.
   - On both engines, a filter's `try`/`catch` around `chain.doFilter()` cannot keep a servlet's error from the
     response.
@@ -449,10 +449,13 @@ The heap of the test-apps workers is as at Round 48: 91 to 118 MB at their peaks
 What `oxide` still shows differently from QuickJS, found by the generation comparison
 (`screen::generate::tests`) and kept on purpose or left to the fork:
 
-- **Stack columns.** quickjs-oxide places a call's column at its `(`, QuickJS at the callee's name
-  (`eval_script:3:48` against `3:43`); the lines agree. The generation tests compare stacks without columns. Fork.
-- **Native messages.** `stack overflow` where QuickJS says `Maximum call stack size exceeded`, `cannot convert to
-  object` where it says `Cannot convert undefined or null to object`. Fork; not worked around.
+- **Stack columns.** quickjs-oxide places a call's column at its `(`, rquickjs at the callee's name
+  (`eval_script:3:48` against `3:43`); the lines agree. The generation tests compare stacks without columns. Settled
+  (2026-11-09): rquickjs bundled quickjs-ng 0.16, and Bellard's QuickJS 2026-06-04, the fork's reference, places the
+  column at the `(` too. No standard covers it, so oxide's stays.
+- **Native messages.** `stack overflow` where rquickjs said `Maximum call stack size exceeded`, `cannot convert to
+  object` where it said `Cannot convert undefined or null to object`. Settled (2026-11-09): those are quickjs-ng's (and
+  V8's); Bellard's QuickJS gives oxide's, and no standard covers them, so oxide's stay.
 - **Out of memory.** oxide's `InternalError: out of memory` is one preallocated error with no stack, where QuickJS's
   has the frame that ran out (`Error: out of memory\n    at hungry (eval_script:4:87)`).
 - **A thrown value that is not an error** (`throw "x"`, `throw {a: 1}`): oxide prints the value (`"x"`, `{ a: 1 }`),
@@ -511,8 +514,10 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
   to QuickJS under `small-oxide`. On both engines the helper objects, `System` and the functions on them
   are frozen, so a script cannot replace one (a `UserSecurityChecks` check among them) for the later scripts on the
   thread.
-- A bare assignment to a helper's name (`StringUtilities = x`) writes the context stack on QuickJS; on oxide the name is
-  a read-only global and the assignment throws a TypeError. A context value named after a helper (a request parameter
+- A bare assignment to a helper's name (`StringUtilities = x`) wrote the context stack on QuickJS; on oxide the name is
+  a read-only global and the assignment throws a TypeError. Kept on purpose (2026-11-09): no JavaScript standard covers
+  it, the global fails safe for `UserSecurityChecks`, and it is close to Moqui Java, where Groovy resolves a class name
+  before a binding variable. A context value named after a helper (a request parameter
   `UserSecurityChecks`, say) hides the helper on QuickJS, whose bare names read the stack first; on oxide the global
   wins. On QuickJS a check so hidden fails closed: the stack's value is not callable (a function does not convert to
   the stack), so the write the check guards fails while the value is on the stack (`service/eca_tests.rs`,
@@ -554,10 +559,12 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
     `iterator()`) is its rows, read whole; a find is a builder; a `dbresource://` stream reads its chunks per call;
     transactions are the thread's. An entity list's rows (and other plain values) are memory only and still wait for
     the collector on oxide; the heap's pressure check does not count them.
-- A decimal or entity value a script reads by name is one object until the next host call that may change the stack
-  (a `Release` flush): QuickJS reads an entity value from the stack each time and releases a decimal there. Oxide had
-  kept it for the whole run, so in a render (one run) each form-list row read the first row's row-action value
-  (mr-marble PostedBalanceSummary's class names, the Tools AutoFind and AutoEditDetail lists).
+- An entity value a script reads by name is one object until the next host call that may change the stack (a
+  `Release` flush), as QuickJS read an entity value from the stack each time. Oxide had kept it for the whole run, so in
+  a render (one run) each form-list row read the first row's row-action value (mr-marble PostedBalanceSummary's class
+  names, the Tools AutoFind and AutoEditDetail lists). A decimal is tracked as a list or map is (2026-11-09): a release
+  notes it, and a read after the host call is the same object while the stack holds an equal decimal, as on QuickJS
+  (`a_decimal_read_again_after_a_release_is_the_same_object_until_the_stack_changes`).
 - Error columns: oxide places a call at its `(`, QuickJS at the callee's name.
 - An assignment through a list on the prototype chain (`Object.create(list).x = 1`) defines on the receiver on both
   engines now; oxide's list ignored it, as it ignores one to the list itself.
@@ -565,13 +572,17 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
   `SuppressedError`, `DisposableStack`, `AsyncDisposableStack`, and `Symbol.dispose` and `Symbol.asyncDispose`) are
   made in JavaScript on a whole oxide runtime (`oxide/builtins.rs`), as builtins (writable, configurable, not frozen),
   and answer as QuickJS's do (`the_quickjs_builtins_are_on_each_whole_runtime`). What still differs:
-  - `using` and `await using` declarations are syntax quickjs-oxide's parser does not have (`SyntaxError: expecting
-    ';'`); QuickJS runs them. Fork.
-  - `performance.timeOrigin` is the runtime's start in epoch milliseconds on oxide, a monotonic clock reading on
-    QuickJS; `performance.now()` counts whole milliseconds on oxide, fractions on QuickJS.
+  - `using` and `await using` declarations: in the fork since 2026-11-09 (FORK-EXPLICIT-RESOURCE-MANAGEMENT-001), with
+    native `SuppressedError`, `DisposableStack`, `AsyncDisposableStack` and the dispose symbols in place of the
+    bindings' JavaScript ones. Bellard's QuickJS does not have them; quickjs-ng did.
+  - `performance` is the fork's (`Context::install_performance`, 2026-11-09), as the High Resolution Time standard has
+    it: `now()` in fractional milliseconds on a monotonic clock, `timeOrigin` the epoch time at which it read 0
+    (QuickJS's was a monotonic reading).
   - The prototypes' own keys come in another order (`constructor` first, as a class makes them), and a
     `SuppressedError` has an own `stack`, as every oxide error does.
-  - `Error.captureStackTrace` and `Error.prototype.stack` are QuickJS's only.
+  - `Error.captureStackTrace` and `Error.stackTraceLimit` are the fork's (FORK-CAPTURE-STACK-TRACE-001, 2026-11-09),
+    as V8 and quickjs-ng have them. An error keeps its own `stack` data property, as Bellard's QuickJS does, so there is
+    no `Error.prototype.stack` accessor (quickjs-ng's).
   - A `queueMicrotask` callback that throws: QuickJS's job throws and rquickjs's `execute_pending_job` drains the
     exception; oxide's callback runs after an `await`, so the throw rejects a promise nothing holds. Neither reaches
     `settle` or the run, so a spec sees the same.
