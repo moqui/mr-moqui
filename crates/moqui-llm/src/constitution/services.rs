@@ -21,7 +21,6 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use indexmap::IndexMap;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 use serde_json::Value as Json;
@@ -119,7 +118,12 @@ fn out(entries: impl IntoIterator<Item = (&'static str, Value)>) -> BTreeMap<Str
 }
 
 fn map(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
-    Value::Map(entries.into_iter().map(|(key, value)| (key.to_string(), value)).collect::<IndexMap<_, _>>())
+    Value::Map(
+        entries
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect::<moqui_lib::object::ValueMap>(),
+    )
 }
 
 fn opt(value: Option<&str>) -> Value {

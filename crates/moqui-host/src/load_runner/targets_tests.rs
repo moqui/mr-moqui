@@ -131,11 +131,11 @@ fn target_kinds_are_service_this_and_url() {
 #[test]
 fn scenario_users_must_be_whole_and_positive() {
     let scenarios = |users: Value| {
-        let mut browse = indexmap::IndexMap::new();
+        let mut browse = indexmap::IndexMap::default();
         browse.insert("users".to_string(), users);
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert("browse".to_string(), Value::Map(browse));
-        map.insert("order".to_string(), Value::Map(indexmap::IndexMap::new()));
+        map.insert("order".to_string(), Value::Map(indexmap::IndexMap::default()));
         Value::Map(map)
     };
     let users = override_users(Some(&scenarios(Value::I64(3)))).unwrap();

@@ -33,7 +33,7 @@ const ENTRY_SCOPE_PREFIXES: [&str; 4] = ["mqDisable_", "mqOpt_", "mqPlain_", "mq
 /// the sections the render reaches. A section-iterate runs its actions for each entry, and the list is kept as those actions left it.
 pub(super) fn prepare_screen(state: &RenderState, def: &ScreenDef) -> Result<(), Error> {
     if let Some(actions) = &def.root.actions {
-        script::run_actions(&actions.xml)?;
+        actions.run()?;
     }
     if let Some(widgets) = &def.root.widgets {
         walk_widgets(state, def, &widgets.shared_node()?, 0)?;
@@ -83,7 +83,7 @@ fn walk_widgets(state: &RenderState, owner: &ScreenDef, node: &MNode, depth: usi
                 }
                 let other = state.facade.screen_def(&state.factory, &location)?;
                 if let Some(actions) = &other.root.actions {
-                    script::run_actions(&actions.xml)?;
+                    actions.run()?;
                 }
                 if let Some(widgets) = &other.root.widgets {
                     walk_widgets(state, &other, &widgets.shared_node()?, depth + 1)?;
@@ -134,7 +134,7 @@ fn prepare_section(state: &RenderState, owner: &ScreenDef, section: &SectionDef,
                 script::set_context_name(&format!("{entry}_index"), index_value)?;
                 script::set_context_name(&format!("{entry}_has_next"), Value::Bool(index + 1 < count))?;
                 if let Some(actions) = &section.actions {
-                    script::run_actions(&actions.xml)?;
+                    actions.run()?;
                 }
                 if let Some(widgets) = &section.widgets {
                     walk_widgets(state, owner, &widgets.shared_node()?, depth + 1)?;
@@ -167,7 +167,7 @@ fn prepare_section(state: &RenderState, owner: &ScreenDef, section: &SectionDef,
     };
     let fragment = if holds {
         if let Some(actions) = &section.actions {
-            script::run_actions(&actions.xml)?;
+            actions.run()?;
         }
         section.widgets.as_ref()
     } else {

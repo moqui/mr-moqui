@@ -58,7 +58,7 @@ pub(crate) trait OxideHooks {
         Ok(())
     }
     /// The whole context as a script sees it, the tracked values written back first.
-    fn whole_context(&self, scope: &mut Scope<'_>) -> JsResult<indexmap::IndexMap<String, Value>> {
+    fn whole_context(&self, scope: &mut Scope<'_>) -> JsResult<moqui_lib::object::ValueMap> {
         self.flush(scope, FlushBefore::Keep)?;
         Ok(crate::script::context_combined())
     }
@@ -521,10 +521,10 @@ enum Outcome {
 }
 
 fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'_>) -> JsResult<JsValue> {
-    let _profile = crate::screen::profile::span("host", method.path);
+    let _profile = crate::telemetry::profile::span("host", method.path);
     let mut callbacks = Vec::new();
     let engine = EngineCall;
-    let args_span = crate::screen::profile::span("phase", "host.args");
+    let args_span = crate::telemetry::profile::span("phase", "host.args");
     let args = convert_args(binder, scope, method.args, &mut callbacks)?;
     drop(args_span);
     // the receiver's datum read from the call, with no handle; the receiver itself lifted only when returned
@@ -547,7 +547,7 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
         let flushed = match method.flush {
             FlushBefore::None => Ok(()),
             mode => {
-                let _flush = crate::screen::profile::span("phase", "flush.before");
+                let _flush = crate::telemetry::profile::span("phase", "flush.before");
                 ops.flush(mode)
             }
         };
@@ -559,8 +559,12 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
                 // made before the lend: the flush above, and the whole context an argument passes.
                 let passes_context =
                     (0..method.args.len()).any(|index| matches!(args.get(index), Some(Arg::WholeContext)));
-                let whole = if passes_context { Some(ops.whole_context()?) } else { None };
-                let mut lent = LentOps { whole };
+                // The tracked values are written back now; the body reads the context from the stack itself, the whole
+                // of it or only what it needs (a service call's declared in-parameters, plans/Profiling3.md W2).
+                if passes_context {
+                    ops.flush(FlushBefore::Keep)?;
+                }
+                let mut lent = LentOps { flushed: passes_context };
                 // A panic in the body's own code is caught inside the lend and thrown as an error. One that unwinds
                 // out of the lend came through the engine's frames (a nested script, whose trampoline resumed it
                 // marked): the runtime is poisoned, so it goes on to the embedder ([`EngineCall`]).
@@ -587,7 +591,7 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
         }
     };
     let _engine = EngineCall;
-    let _ret = crate::screen::profile::span("phase", "host.ret");
+    let _ret = crate::telemetry::profile::span("phase", "host.ret");
     match outcome {
         Outcome::Done(Ret::Value(value)) => binder.hooks.to_js(scope, value),
         Outcome::Done(Ret::This) => Ok(scope.this()),
@@ -859,10 +863,10 @@ fn marked_error(scope: &mut impl Js, marked: &host::Thrown<'_>) -> JsResult<Obje
     Ok(error)
 }
 
-/// [`EngineOps`] of a body the engine is lent to (a method that is not [`Method::leaf`]): only the whole context the
-/// binder read before the lend.
+/// [`EngineOps`] of a body the engine is lent to (a method that is not [`Method::leaf`]): only the context, whose
+/// tracked values the binder wrote back before the lend when an argument passes it.
 struct LentOps {
-    whole: Option<indexmap::IndexMap<String, Value>>,
+    flushed: bool,
 }
 
 impl LentOps {
@@ -880,12 +884,19 @@ impl EngineOps for LentOps {
         Err(Self::refused())
     }
 
-    fn flush(&mut self, _mode: FlushBefore) -> Result<(), HostError> {
+    /// A keeping flush is the one the binder made before the lend; any other is refused.
+    fn flush(&mut self, mode: FlushBefore) -> Result<(), HostError> {
+        if self.flushed && mode == FlushBefore::Keep {
+            return Ok(());
+        }
         Err(Self::refused())
     }
 
-    fn whole_context(&mut self) -> Result<indexmap::IndexMap<String, Value>, HostError> {
-        self.whole.take().ok_or_else(Self::refused)
+    fn whole_context(&mut self) -> Result<moqui_lib::object::ValueMap, HostError> {
+        if !self.flushed {
+            return Err(Self::refused());
+        }
+        Ok(crate::script::context_combined())
     }
 
     /// The units a render runs from the lent body run on this runtime, in the script that made the call.
@@ -965,7 +976,7 @@ impl EngineOps for OxideOps<'_, '_> {
         }
     }
 
-    fn whole_context(&mut self) -> Result<indexmap::IndexMap<String, Value>, HostError> {
+    fn whole_context(&mut self) -> Result<moqui_lib::object::ValueMap, HostError> {
         let hooks = Rc::clone(&self.binder.hooks);
         let _engine = EngineCall;
         hooks.whole_context(self.scope).map_err(|err| self.failed(err))

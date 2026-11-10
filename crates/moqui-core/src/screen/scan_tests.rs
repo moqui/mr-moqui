@@ -12,7 +12,6 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use indexmap::IndexMap;
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 
@@ -23,7 +22,7 @@ fn item(pairs: &[(&str, &str)]) -> Value {
         pairs
             .iter()
             .map(|(key, value)| ((*key).to_string(), Value::string(*value)))
-            .collect::<IndexMap<_, _>>(),
+            .collect::<moqui_lib::object::ValueMap>(),
     )
 }
 

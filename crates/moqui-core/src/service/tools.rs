@@ -258,7 +258,7 @@ fn print_screen_document(
 }
 
 /// A record's fields, a `PrintJob` or a `NetworkPrinter`.
-type Fields = IndexMap<String, Value>;
+type Fields = moqui_lib::object::ValueMap;
 /// A `NetworkPrinter`, its server, and the server's printer.
 type Resolved = (Fields, PrintServer, PrinterInfo);
 
@@ -281,7 +281,7 @@ fn update_print_job(print_job_id: &str, fields: &[(&str, Value)], options: &Call
 /// The server of a `NetworkPrinter`: no `serverPort`, or 0, is 631, the field's documented default. Java's
 /// `(int) networkPrinter.serverPort ?: 631` casts before the default, so a record with no port fails there (accepted,
 /// P8a-38).
-fn server_of(printer: &IndexMap<String, Value>) -> PrintServer {
+fn server_of(printer: &moqui_lib::object::ValueMap) -> PrintServer {
     let port = match printer.get("serverPort") {
         Some(value) if !is_empty(value) => to_plain_string(value).parse().unwrap_or(IPP_PORT),
         _ => IPP_PORT,
@@ -302,7 +302,7 @@ fn make_printer(facade: &EntityFacade, network_printer_id: &str) -> Result<Resul
     else {
         return Ok(Err(format!("Could not find NetworkPrinter [{network_printer_id}]")));
     };
-    let record: IndexMap<String, Value> = record
+    let record: moqui_lib::object::ValueMap = record
         .fields()
         .iter()
         .map(|(name, value)| (name.to_string(), value.clone()))
@@ -380,7 +380,7 @@ fn send_print_job_internal(
 }
 
 fn send_job(
-    job: &IndexMap<String, Value>,
+    job: &moqui_lib::object::ValueMap,
     facade: &EntityFacade,
 ) -> Result<Result<crate::print::PrintResult, String>, LibError> {
     // A printer that cannot be had (no record, no such printer, no server or no client) is a failed send recorded on
@@ -448,7 +448,7 @@ fn job_and_server(facade: &EntityFacade, print_job_id: &str) -> Result<Option<(F
         add_error(format!("Could not find PrintJob [{print_job_id}]"));
         return Ok(None);
     };
-    let job: IndexMap<String, Value> = job
+    let job: moqui_lib::object::ValueMap = job
         .fields()
         .iter()
         .map(|(name, value)| (name.to_string(), value.clone()))
@@ -461,7 +461,7 @@ fn job_and_server(facade: &EntityFacade, print_job_id: &str) -> Result<Option<(F
         add_error(format!("Could not find NetworkPrinter for PrintJob [{print_job_id}]"));
         return Ok(None);
     };
-    let printer: IndexMap<String, Value> = printer
+    let printer: moqui_lib::object::ValueMap = printer
         .fields()
         .iter()
         .map(|(name, value)| (name.to_string(), value.clone()))
@@ -469,7 +469,7 @@ fn job_and_server(facade: &EntityFacade, print_job_id: &str) -> Result<Option<(F
     Ok(Some((job, server_of(&printer))))
 }
 
-fn job_id_of(job: &IndexMap<String, Value>) -> Option<i32> {
+fn job_id_of(job: &moqui_lib::object::ValueMap) -> Option<i32> {
     map_text(job, "jobId").parse().ok()
 }
 
@@ -799,7 +799,7 @@ fn rewrite_encrypted_in_pages(
         .map(|name| Condition::is_not_null(name.as_str()))
         .collect();
     let mut updated = 0_i64;
-    let mut last: Option<IndexMap<String, Value>> = None;
+    let mut last: Option<moqui_lib::object::ValueMap> = None;
     loop {
         let mut find = facade
             .find(&full_name)?
@@ -819,7 +819,7 @@ fn rewrite_encrypted_in_pages(
         let page = find.list()?;
         let read = page.len();
         for value in page.values() {
-            let mut row: IndexMap<String, Value> = IndexMap::new();
+            let mut row: moqui_lib::object::ValueMap = IndexMap::default();
             for name in pk_names.iter().chain(encrypt_names.iter()) {
                 row.insert(name.clone(), value.get(name).cloned().unwrap_or(Value::Null));
             }
@@ -870,7 +870,7 @@ fn rewrite_encrypted_in_pages(
 }
 
 /// The rows whose primary key sorts after `last`'s: `p1 > v1 OR (p1 = v1 AND p2 > v2) OR ...`.
-fn key_after(pk_names: &[String], last: &IndexMap<String, Value>) -> Condition {
+fn key_after(pk_names: &[String], last: &moqui_lib::object::ValueMap) -> Condition {
     let value = |name: &String| last.get(name).cloned().unwrap_or(Value::Null);
     let mut options = Vec::with_capacity(pk_names.len());
     for (index, name) in pk_names.iter().enumerate() {

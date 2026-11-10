@@ -168,9 +168,9 @@ fn gaps_fill_between_first_and_last() {
         panic!()
     };
     let day = |text: &str| Value::Timestamp(text.parse().unwrap());
-    let mut first = IndexMap::new();
+    let mut first = IndexMap::default();
     first.insert("doc_count".to_string(), Value::I64(2));
-    let mut third = IndexMap::new();
+    let mut third = IndexMap::default();
     third.insert("doc_count".to_string(), Value::I64(1));
     let buckets = histogram_buckets(
         histogram,
@@ -237,7 +237,7 @@ fn a_fixed_offset_zone_is_an_interval_and_buckets_at_its_midnight() {
         panic!()
     };
     let key = |text: &str| Value::Timestamp(text.parse().unwrap());
-    let count = |n: i64| IndexMap::from([("doc_count".to_string(), Value::I64(n))]);
+    let count = |n: i64| IndexMap::from_iter([("doc_count".to_string(), Value::I64(n))]);
     let buckets = histogram_buckets(
         histogram,
         vec![
@@ -283,13 +283,13 @@ fn terms_order_by_metric_then_key_and_trim() {
             name: "totalSales".into(),
             descending: true,
         },
-        aggs: IndexMap::new(),
+        aggs: IndexMap::default(),
         missing: None,
         other: None,
         min_doc_count: 1,
     };
     let row = |key: &str, total: i64| {
-        let mut content = IndexMap::new();
+        let mut content = IndexMap::default();
         content.insert("doc_count".to_string(), Value::I64(1));
         content.insert("totalSales".to_string(), Value::I64(total));
         (Value::string(key), content)

@@ -70,7 +70,7 @@ pub struct NotificationMessage {
     sub_topic: Option<String>,
     user_ids: Vec<String>,
     user_group_id: Option<String>,
-    message_map: Option<IndexMap<String, Value>>,
+    message_map: Option<moqui_lib::object::ValueMap>,
     message_json: Option<String>,
     title_template: Option<String>,
     link_template: Option<String>,
@@ -127,7 +127,7 @@ impl NotificationMessage {
         self
     }
 
-    pub fn message_map(&mut self, message: IndexMap<String, Value>) -> &mut Self {
+    pub fn message_map(&mut self, message: moqui_lib::object::ValueMap) -> &mut Self {
         self.message_json = None;
         self.message_map = Some(message);
         self
@@ -408,12 +408,12 @@ impl NotificationMessage {
     }
 
     /// The message map, or the message JSON read as one: a copy, which the wrapped message takes.
-    fn resolved_message(&self) -> Result<IndexMap<String, Value>, Error> {
+    fn resolved_message(&self) -> Result<moqui_lib::object::ValueMap, Error> {
         if let Some(message) = &self.message_map {
             return Ok(message.clone());
         }
         let Some(json) = self.message_json.as_deref().filter(|json| !json.is_empty()) else {
-            return Ok(IndexMap::new());
+            return Ok(IndexMap::default());
         };
         let parsed = serde_json::from_str::<serde_json::Value>(json)
             .map_err(|err| Error::new(format!("notification message is not JSON: {err}")))?;
@@ -619,14 +619,14 @@ pub const ROUTE_USER_IDS: &str = "userIds";
 fn wrapped_message(
     message: &NotificationMessage,
     topic: Option<&EntityValue>,
-    body: IndexMap<String, Value>,
+    body: moqui_lib::object::ValueMap,
     type_name: &str,
     persist: bool,
     show_alert: bool,
     alert_no_auto_hide: bool,
     sent: Option<&Value>,
-) -> IndexMap<String, Value> {
-    let mut wrapped = IndexMap::new();
+) -> moqui_lib::object::ValueMap {
+    let mut wrapped = IndexMap::default();
     wrapped.insert("topic".to_string(), Value::string(&message.topic));
     wrapped.insert(
         "subTopic".to_string(),
@@ -711,7 +711,7 @@ fn send_emails(
     users: &[String],
     caller_template: Option<&str>,
     caller_save: Option<bool>,
-    wrapped: &IndexMap<String, Value>,
+    wrapped: &moqui_lib::object::ValueMap,
     notification_message_id: Option<&str>,
 ) -> HashMap<String, String> {
     let mut sent_ids = HashMap::new();
@@ -884,7 +884,7 @@ fn restore_messages(saved: SavedMessages) {
     });
 }
 
-fn expand_template(template: &str, message: &IndexMap<String, Value>) -> Result<String, Error> {
+fn expand_template(template: &str, message: &moqui_lib::object::ValueMap) -> Result<String, Error> {
     if !template.contains('$') || template.ends_with('$') {
         return Ok(template.to_string());
     }
@@ -936,7 +936,7 @@ fn resolve_bool(set: Option<bool>, topic: Option<&EntityValue>, field: &str) -> 
     topic.and_then(|row| yn(row, field)).unwrap_or(false)
 }
 
-fn stored_json(message: &IndexMap<String, Value>, raw: Option<&str>) -> Option<String> {
+fn stored_json(message: &moqui_lib::object::ValueMap, raw: Option<&str>) -> Option<String> {
     if let Some(raw) = raw.filter(|text| !text.is_empty()) {
         return Some(raw.to_string());
     }
@@ -1033,9 +1033,9 @@ pub(crate) fn service_job_error(
     job_run_id: &str,
     errors: &str,
     user_ids: &[String],
-    extra: IndexMap<String, Value>,
+    extra: moqui_lib::object::ValueMap,
 ) -> Result<(), Error> {
-    let mut message = IndexMap::new();
+    let mut message = IndexMap::default();
     message.insert("jobName".to_string(), Value::string(job_name));
     message.insert("errors".to_string(), Value::string(errors));
     message.insert("message".to_string(), Value::string(errors));

@@ -187,7 +187,7 @@ fn message(call: &mut Call<'_>) -> Result<Ret, HostError> {
             message.message_map(map);
         }),
         Value::Null => changed(call, |message| {
-            message.message_map(indexmap::IndexMap::new());
+            message.message_map(indexmap::IndexMap::default());
         }),
         other => {
             let json = to_plain_string(&other);

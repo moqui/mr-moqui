@@ -249,7 +249,7 @@ fn wake_of(factory: &ExecutionContextFactory) -> Arc<Notify> {
 }
 
 fn attributes(direction: &str, kind: &str) -> moqui_core::entity::document::Document {
-    let mut attributes = moqui_core::entity::document::Document::new();
+    let mut attributes = moqui_core::entity::document::Document::default();
     attributes.insert("moqui.edgelink.direction".to_string(), Value::string(direction));
     attributes.insert("moqui.edgelink.kind".to_string(), Value::string(kind));
     attributes
@@ -496,7 +496,7 @@ pub(crate) fn maintain(factory: &Arc<ExecutionContextFactory>, mut shutdown: tok
                 .status()
                 .iter()
                 .map(|set| {
-                    let mut attributes = moqui_core::entity::document::Document::new();
+                    let mut attributes = moqui_core::entity::document::Document::default();
                     attributes.insert("moqui.edgelink.set".to_string(), Value::string(&set.name));
                     (attributes, value(set, now))
                 })

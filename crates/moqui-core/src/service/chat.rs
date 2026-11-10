@@ -107,7 +107,7 @@ fn push_signal(
     }
     let message = match parameters.get("message") {
         Some(Value::Map(map)) => map.clone(),
-        _ => IndexMap::new(),
+        _ => IndexMap::default(),
     };
     let users = without_external(facade, &topic, &message, users);
     if users.is_empty() {
@@ -144,7 +144,7 @@ fn push_signal(
 fn without_external(
     facade: &EntityFacade,
     topic: &str,
-    message: &IndexMap<String, Value>,
+    message: &moqui_lib::object::ValueMap,
     users: Vec<String>,
 ) -> Vec<String> {
     if topic == STATUS_TOPIC {
@@ -225,9 +225,9 @@ fn send_push(
     factory: Option<&Weak<ExecutionContextFactory>>,
     topic: &str,
     users: &[String],
-    message: IndexMap<String, Value>,
+    message: moqui_lib::object::ValueMap,
 ) {
-    let send = |message: IndexMap<String, Value>| {
+    let send = |message: moqui_lib::object::ValueMap| {
         crate::notify::NotificationMessage::new()
             .topic(topic)
             .user_ids(users.iter().cloned())

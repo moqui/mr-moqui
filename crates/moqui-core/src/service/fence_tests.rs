@@ -185,7 +185,7 @@ fn async_remote_and_print_calls_are_refused_under_the_fence() {
     );
 
     // printing
-    let print_job: indexmap::IndexMap<String, Value> = [("printJobId".to_string(), Value::string("FENCED_JOB"))]
+    let print_job: moqui_lib::object::ValueMap = [("printJobId".to_string(), Value::string("FENCED_JOB"))]
         .into_iter()
         .collect();
     let job = BTreeMap::from([("printJob".to_string(), Value::Map(print_job))]);

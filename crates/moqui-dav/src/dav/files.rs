@@ -67,7 +67,7 @@ struct Entry {
 }
 
 impl Entry {
-    fn from_map(map: &IndexMap<String, Value>, can_write: bool) -> Self {
+    fn from_map(map: &moqui_lib::object::ValueMap, can_write: bool) -> Self {
         Self {
             path: text_of(map, "path"),
             name: text_of(map, "name"),
@@ -117,7 +117,7 @@ fn entry_href(context: &Context<'_>, drive: &Drive, path: &str, is_directory: bo
 fn drives() -> Result<Vec<Drive>, String> {
     let out = call(&format!("{FILES}.get#UserDrives"), &[])?;
     let rows = maps(out.get("driveList"));
-    let base_name = |row: &IndexMap<String, Value>| {
+    let base_name = |row: &moqui_lib::object::ValueMap| {
         let name = text_of(row, "driveName").replace('/', "-").trim().to_string();
         if name.is_empty() {
             text_of(row, "driveId")
@@ -191,7 +191,7 @@ fn info(drive: &Drive, path: &str) -> Result<Option<Entry>, String> {
             Ok(out) => {
                 let folder = match out.get("folder") {
                     Some(Value::Map(map)) => map.clone(),
-                    _ => IndexMap::new(),
+                    _ => IndexMap::default(),
                 };
                 Ok(Some(Entry {
                     path: String::new(),

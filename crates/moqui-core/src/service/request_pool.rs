@@ -42,7 +42,6 @@ pub struct RequestPool {
 
 struct Shared {
     state: Mutex<State>,
-    wake: Condvar,
     workers: usize,
     queue_cap: usize,
     handles: Mutex<Vec<JoinHandle<()>>>,
@@ -52,6 +51,8 @@ struct Shared {
 struct State {
     stop: bool,
     queue: VecDeque<Work>,
+    /// The workers waiting for work, woken one at a time (plans/Profiling3.md W13).
+    idle: super::idle::Idle,
 }
 
 type JobOutput = Box<dyn Any + Send>;
@@ -138,8 +139,8 @@ impl RequestPool {
                 return Err(Error::of_kind(ErrorKind::Unavailable, "request queue is full"));
             }
             state.queue.push_back(pack(factory, job, done));
+            state.idle.wake_one();
         }
-        shared.wake.notify_all();
         Ok(())
     }
 
@@ -378,7 +379,6 @@ fn widen(value: u32) -> usize {
 fn make_shared(workers: usize, queue: usize) -> Result<Arc<Shared>, Error> {
     let shared = Arc::new(Shared {
         state: Mutex::new(State::default()),
-        wake: Condvar::new(),
         workers,
         queue_cap: queue,
         handles: Mutex::new(Vec::new()),
@@ -413,12 +413,14 @@ fn spawn_worker(shared: &Arc<Shared>, index: usize) -> Result<JoinHandle<()>, Er
 
 fn worker_loop(shared: Arc<Shared>) {
     crate::script::mark_request_thread();
-    while let Some(work) = next_work(&shared) {
+    let waiter = Arc::new(Condvar::new());
+    while let Some(work) = next_work(&shared, &waiter) {
         run_work(work);
     }
 }
 
-fn next_work(shared: &Shared) -> Option<Work> {
+/// The next job, waiting on `waiter`, this worker's own, while there is none.
+fn next_work(shared: &Shared, waiter: &Arc<Condvar>) -> Option<Work> {
     let mut state = lock(&shared.state);
     loop {
         if state.stop {
@@ -427,7 +429,9 @@ fn next_work(shared: &Shared) -> Option<Work> {
         if let Some(work) = state.queue.pop_front() {
             return Some(work);
         }
-        state = wait(&shared.wake, state);
+        state.idle.enter(waiter);
+        state = wait(waiter, state);
+        state.idle.leave(waiter);
     }
 }
 
@@ -453,9 +457,9 @@ fn shutdown(shared: &Shared) {
     let pending = {
         let mut state = lock(&shared.state);
         state.stop = true;
+        state.idle.wake_all();
         std::mem::take(&mut state.queue)
     };
-    shared.wake.notify_all();
     for work in pending {
         (work.finish)(Err(Error::new("request pool is not running")));
     }
@@ -472,8 +476,8 @@ fn stop_started(shared: &Shared, handles: Vec<JoinHandle<()>>) {
     {
         let mut state = lock(&shared.state);
         state.stop = true;
+        state.idle.wake_all();
     }
-    shared.wake.notify_all();
     for handle in handles {
         join_one(handle);
     }

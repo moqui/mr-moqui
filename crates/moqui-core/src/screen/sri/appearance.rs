@@ -194,7 +194,7 @@ impl ColorScheme {
         let mode = |colors: &[(String, String)]| {
             Value::Map(colors.iter().map(|(name, value)| (name.clone(), Value::string(value))).collect())
         };
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("id".to_string(), Value::string(&self.id));
         map.insert("description".to_string(), Value::string(&self.description));
         map.insert("light".to_string(), mode(&self.light));
@@ -399,7 +399,7 @@ impl AppearancePolicy {
     /// The policy as the page and an appearance service read it: `appearance`, a flag per group (`mode` may instead
     /// name a forced mode), `theme`, and `lockedKeys`, every key it locks.
     pub fn as_value(&self) -> Value {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("appearance".to_string(), Value::Bool(!self.locked));
         for group in APPEARANCE_GROUPS {
             map.insert((*group).to_string(), Value::Bool(!self.locked && !self.locked_groups.contains(*group)));
@@ -424,8 +424,8 @@ fn names(list: &[&str]) -> Value {
 /// The appearance before the extension point: the theme's schemes (its own, then its parent's), the fonts, the
 /// themes the user may choose, the default scheme, the policy, the user's values and the names the page and an
 /// appearance service need.
-fn base_appearance(user_id: Option<&str>, theme_id: &str) -> Result<IndexMap<String, Value>, Error> {
-    let mut appearance = IndexMap::new();
+fn base_appearance(user_id: Option<&str>, theme_id: &str) -> Result<moqui_lib::object::ValueMap, Error> {
+    let mut appearance = IndexMap::default();
     let mut schemes = Vec::new();
     let mut fonts = Vec::new();
     let mut themes = Vec::new();
@@ -459,7 +459,7 @@ fn base_appearance(user_id: Option<&str>, theme_id: &str) -> Result<IndexMap<Str
             .collect();
         found.sort();
         for (description, id) in found {
-            themes.push(Value::Map(IndexMap::from([
+            themes.push(Value::Map(IndexMap::from_iter([
                 ("id".to_string(), Value::String(id)),
                 ("description".to_string(), Value::String(description)),
             ])));
@@ -476,7 +476,7 @@ fn base_appearance(user_id: Option<&str>, theme_id: &str) -> Result<IndexMap<Str
                 "SFK_SERIF" => "serif",
                 _ => "sans",
             };
-            let mut font = IndexMap::new();
+            let mut font = IndexMap::default();
             font.insert(
                 "description".to_string(),
                 Value::string(Some(field(row, "description")).filter(|text| !text.is_empty()).unwrap_or_else(|| id.clone())),
@@ -497,7 +497,7 @@ fn base_appearance(user_id: Option<&str>, theme_id: &str) -> Result<IndexMap<Str
     };
     let policy = AppearancePolicy::parse(first(APPEARANCE_POLICY).as_deref());
     // only the user's own choices of the keys the page applies; the mode and density are the shell's own settings
-    let mut values = IndexMap::new();
+    let mut values = IndexMap::default();
     let signed_in = user_id.is_some_and(|id| !id.is_empty());
     for (key, _) in APPEARANCE_KEYS.iter().filter(|(key, _)| signed_in && key.starts_with("THEME_")) {
         if let Ok(Some(value)) = crate::user::get_preference_for(key, user_id) {
@@ -509,13 +509,13 @@ fn base_appearance(user_id: Option<&str>, theme_id: &str) -> Result<IndexMap<Str
     let keys = APPEARANCE_KEYS
         .iter()
         .map(|(key, group)| {
-            Value::Map(IndexMap::from([
+            Value::Map(IndexMap::from_iter([
                 ("key".to_string(), Value::string(*key)),
                 ("group".to_string(), Value::string(*group)),
             ]))
         })
         .collect();
-    let mut tokens = IndexMap::new();
+    let mut tokens = IndexMap::default();
     tokens.insert("brand".to_string(), names(BRAND_TOKENS));
     tokens.insert("surface".to_string(), names(SURFACE_TOKENS));
     tokens.insert("shape".to_string(), names(SHAPE_TOKENS));
@@ -534,7 +534,11 @@ fn base_appearance(user_id: Option<&str>, theme_id: &str) -> Result<IndexMap<Str
 /// Each `STRT_APPEARANCE_SERVICE` of the theme in sequence, with the appearance so far; its `appearance` answer is
 /// what the next one gets, each in its own transaction with authorization disabled. One that fails or answers no map is
 /// logged and skipped.
-fn call_appearance_services(user_id: Option<&str>, theme_id: &str, mut appearance: IndexMap<String, Value>) -> IndexMap<String, Value> {
+fn call_appearance_services(
+    user_id: Option<&str>,
+    theme_id: &str,
+    mut appearance: moqui_lib::object::ValueMap,
+) -> moqui_lib::object::ValueMap {
     let services = theme_resource_values(theme_id, APPEARANCE_SERVICE).unwrap_or_else(|err| {
         tracing::error!("Could not read {APPEARANCE_SERVICE} of theme {theme_id}: {err}");
         Vec::new()
@@ -575,11 +579,11 @@ fn url_component(text: &str) -> String {
     out
 }
 
-fn text_of(map: &IndexMap<String, Value>, key: &str) -> String {
+fn text_of(map: &moqui_lib::object::ValueMap, key: &str) -> String {
     map.get(key).map(to_plain_string).unwrap_or_default()
 }
 
-fn scheme_ids(appearance: &IndexMap<String, Value>) -> Vec<String> {
+fn scheme_ids(appearance: &moqui_lib::object::ValueMap) -> Vec<String> {
     match appearance.get("colorSchemes") {
         Some(Value::List(items)) => items
             .iter()
@@ -596,12 +600,12 @@ fn scheme_ids(appearance: &IndexMap<String, Value>) -> Vec<String> {
 /// locks), the locked values left out, the default scheme only when it is a scheme of the theme, the effective scheme
 /// (`schemeId`, the user's, else the default) and the style sheets the page links before the client starts (`links`:
 /// the effective scheme's, and the font of each role, the user's else the scheme's).
-fn finish_appearance(mut appearance: IndexMap<String, Value>) -> IndexMap<String, Value> {
+fn finish_appearance(mut appearance: moqui_lib::object::ValueMap) -> moqui_lib::object::ValueMap {
     let policy = AppearancePolicy::from_value(appearance.get("policy").unwrap_or(&Value::Null));
     let locked = policy.all_locked_keys();
     let mut values = match appearance.get("values") {
         Some(Value::Map(values)) => values.clone(),
-        _ => IndexMap::new(),
+        _ => IndexMap::default(),
     };
     values.retain(|key, value| !locked.contains(key) && !(policy.locked && is_appearance_key(key)) && !to_plain_string(value).is_empty());
     let ids = scheme_ids(&appearance);
@@ -622,7 +626,7 @@ fn finish_appearance(mut appearance: IndexMap<String, Value>) -> IndexMap<String
     let mut links: Vec<Value> = Vec::new();
     let mut link = |id: &str, href: String| {
         if !href.is_empty() && !links.iter().any(|link| matches!(link, Value::Map(map) if text_of(map, "href") == href)) {
-            links.push(Value::Map(IndexMap::from([
+            links.push(Value::Map(IndexMap::from_iter([
                 ("id".to_string(), Value::string(id)),
                 ("href".to_string(), Value::String(href)),
             ])));
@@ -666,7 +670,7 @@ fn finish_appearance(mut appearance: IndexMap<String, Value>) -> IndexMap<String
 /// # Errors
 ///
 /// Returns an error when the theme's entities cannot be read.
-pub fn build_appearance(user_id: Option<&str>, theme_id: &str) -> Result<IndexMap<String, Value>, Error> {
+pub fn build_appearance(user_id: Option<&str>, theme_id: &str) -> Result<moqui_lib::object::ValueMap, Error> {
     let base = base_appearance(user_id, theme_id)?;
     Ok(finish_appearance(call_appearance_services(user_id, theme_id, base)))
 }

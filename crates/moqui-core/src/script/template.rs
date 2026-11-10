@@ -635,7 +635,8 @@ impl Token {
 /// names (`<#assign String = ...>`, a `var` of the function) does not change its escaping or its lists.
 const INTRINSICS: &str = "const $String = String, $Array = Array, $Object = Object, $Symbol = Symbol;\n";
 
-const PRELUDE: &str = r#"const $esc = (v) => $String(v).replace(/[&<>"']/g, (c) => c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;");
+const PRELUDE: &str = r#"const $escAny = /[&<>"']/, $escAll = /[&<>"']/g;
+const $esc = (v) => { const s = $String(v); return $escAny.test(s) ? s.replace($escAll, (c) => c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;") : s; };
 class $Raw { constructor(s) { this.s = s; } }
 const $s = (v) => v instanceof $Raw ? v.s : v == null ? "" : $String(v);
 const $h = (v) => v instanceof $Raw ? v.s : v == null ? "" : $esc(v);
@@ -1341,7 +1342,7 @@ fn write_snapshot_items(items: &[Value], out: &mut String) {
     out.push(']');
 }
 
-fn write_snapshot_entries(entries: &indexmap::IndexMap<String, Value>, out: &mut String) {
+fn write_snapshot_entries(entries: &moqui_lib::object::ValueMap, out: &mut String) {
     let write = |out: &mut String, index: usize, key: &str, item: &Value| {
         if index > 0 {
             out.push(',');

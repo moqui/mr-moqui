@@ -432,7 +432,7 @@ impl EdgeServer {
 
     /// Add one to the counter `name`, of a tunnel or forward `kind`.
     pub(crate) fn count(&self, name: &str, kind: &str) {
-        let mut attributes = moqui_core::entity::document::Document::new();
+        let mut attributes = moqui_core::entity::document::Document::default();
         attributes.insert(
             "moqui.edgelink.kind".to_string(),
             moqui_lib::object::Value::string(kind),
@@ -1042,7 +1042,7 @@ impl EdgeServer {
                 .map_or(0, |_| u64::try_from(wait.as_millis()).unwrap_or(u64::MAX)),
         };
         let started = Instant::now();
-        let mut attributes = moqui_core::entity::document::Document::new();
+        let mut attributes = moqui_core::entity::document::Document::default();
         attributes.insert(
             "moqui.artifact.name".to_string(),
             moqui_lib::object::Value::string(&call.service),

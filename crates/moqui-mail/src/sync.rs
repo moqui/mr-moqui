@@ -1301,9 +1301,9 @@ impl Progress {
         }
     }
 
-    fn message(&self, report: Option<&SyncReport>) -> indexmap::IndexMap<String, Value> {
+    fn message(&self, report: Option<&SyncReport>) -> moqui_lib::object::ValueMap {
         let count = |number: usize| Value::I64(i64::try_from(number).unwrap_or(i64::MAX));
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert("emailAccountId".to_string(), Value::string(&self.account_id));
         map.insert("done".to_string(), Value::Bool(report.is_some()));
         map.insert("folderCount".to_string(), count(self.folder_count));

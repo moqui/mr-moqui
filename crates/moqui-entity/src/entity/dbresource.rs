@@ -500,7 +500,7 @@ impl EntityFacade {
         for (index, segment) in parts.iter().enumerate() {
             let mut found = Vec::new();
             for parent in &parents {
-                found.extend(self.find_nodes(parent.as_deref(), segment)?);
+                found.extend(self.find_nodes_cached(parent.as_deref(), segment)?);
             }
             if found.is_empty() {
                 // made by this process after this transaction's snapshot ([`Self::make_directory`])
@@ -646,7 +646,22 @@ impl EntityFacade {
 
     /// Every node named `filename` under `parent`, the oldest first ([`oldest_first`]).
     fn find_nodes(&self, parent: Option<&str>, filename: &str) -> Result<Vec<Node>, Error> {
-        let mut find = self.find(DB_RESOURCE)?.eq("filename", Value::string(filename));
+        self.find_nodes_with(parent, filename, false)
+    }
+
+    /// [`Self::find_nodes`] through the entity cache, as Java's `findDirectoryId` reads a path: a location read again
+    /// is no query a segment (plans/Profiling3.md R57: 22 waited reads of a get#PaymentFinanceDetail, 50 of the same
+    /// row in a data feed run). A write of the entity clears the cache; a node made after this transaction's snapshot
+    /// is found by `lately_made`, as before.
+    fn find_nodes_cached(&self, parent: Option<&str>, filename: &str) -> Result<Vec<Node>, Error> {
+        self.find_nodes_with(parent, filename, true)
+    }
+
+    fn find_nodes_with(&self, parent: Option<&str>, filename: &str, cached: bool) -> Result<Vec<Node>, Error> {
+        let mut find = self
+            .find(DB_RESOURCE)?
+            .use_cache(cached)
+            .eq("filename", Value::string(filename));
         find = match parent {
             Some(parent) => find.eq("parentResourceId", Value::string(parent)),
             None => find.condition(Condition::is_null("parentResourceId")),

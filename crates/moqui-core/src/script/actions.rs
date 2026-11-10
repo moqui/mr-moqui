@@ -59,31 +59,82 @@ pub fn run_actions(actions: &str) -> Result<(), Error> {
     run_actions_at(actions, None)
 }
 
+/// The prepared form of one definition's action text, kept on the definition that owns the text (plans/Profiling3.md
+/// W1): filled at its first run, after which a run takes no lock, hashes no XML and is not bound by the shared cache's
+/// cap. Clones share it. It belongs to the text its owner was made with; an owner whose text changes makes a new one.
+#[derive(Clone, Default)]
+pub struct PreparedActions(std::sync::Arc<OnceLock<Prepared>>);
+
+impl std::fmt::Debug for PreparedActions {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(if self.0.get().is_some() { "PreparedActions(ready)" } else { "PreparedActions" })
+    }
+}
+
+impl PreparedActions {
+    /// Run `actions`, the text this cell belongs to, named after `source` in errors and stack traces.
+    pub fn run(&self, actions: &str, source: Option<&moqui_lib::error::SourceLocation>) -> Result<(), Error> {
+        self.run_with(|| std::borrow::Cow::Borrowed(actions), source)
+    }
+
+    /// [`Self::run`] of a text made only when the cell is still empty (a rule's actions wrapped in `<actions>`).
+    pub fn run_with<'a>(
+        &self,
+        actions: impl FnOnce() -> std::borrow::Cow<'a, str>,
+        source: Option<&moqui_lib::error::SourceLocation>,
+    ) -> Result<(), Error> {
+        let prepared = match self.0.get() {
+            Some(prepared) => prepared,
+            None => {
+                let actions = actions();
+                if actions.as_bytes().contains(&0) {
+                    return Err(Error::new("script source contains a null byte"));
+                }
+                let mut prepared = generated(&actions)?;
+                if let Some(file_name) = file_name_of(source) {
+                    prepared.script = prepared.script.with_file_name(&file_name);
+                }
+                // another thread may have filled it first: the same text gives the same script
+                let _ = self.0.set(prepared);
+                self.0.get().expect("the cell was just set")
+            }
+        };
+        let _profile = crate::telemetry::profile::span("phase", "actions");
+        run_prepared(prepared)
+    }
+}
+
+fn file_name_of(source: Option<&moqui_lib::error::SourceLocation>) -> Option<String> {
+    source.and_then(|source| {
+        source
+            .file
+            .as_ref()
+            .map(|file| format!("{file}#actions-{}-{}.generated.js", source.line, source.column))
+    })
+}
+
+/// Run a prepared text: its plan when it has one that applies, else its script.
+fn run_prepared(prepared: &Prepared) -> Result<(), Error> {
+    if let Some(done) = prepared.plan.as_deref().and_then(set::SetPlan::run) {
+        return done;
+    }
+    // Data preparation may do what a browser cannot, so a widget check in progress stands down while the actions run.
+    let _unchecked = super::runtime::WidgetWrap::set(false);
+    let script = &prepared.script;
+    super::runtime::eval_script_text(script).map_err(|err| with_source_line(err, script.text(), script.file_name()))
+}
+
 /// Name generated JavaScript after its owning actions, without pretending generated lines are XML lines.
 pub(crate) fn run_actions_at(actions: &str, source: Option<&moqui_lib::error::SourceLocation>) -> Result<(), Error> {
     if actions.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
-    let _profile = crate::screen::profile::span("phase", "actions");
-    let prepared = generated(actions)?;
-    if let Some(done) = prepared.plan.as_deref().and_then(set::SetPlan::run) {
-        return done;
+    let _profile = crate::telemetry::profile::span("phase", "actions");
+    let mut prepared = generated(actions)?;
+    if let Some(file_name) = file_name_of(source) {
+        prepared.script = prepared.script.with_file_name(&file_name);
     }
-    let script = prepared.script;
-    let file_name = source.and_then(|source| {
-        source
-            .file
-            .as_ref()
-            .map(|file| format!("{file}#actions-{}-{}.generated.js", source.line, source.column))
-    });
-    let script = match &file_name {
-        Some(file_name) => script.with_file_name(file_name),
-        None => script,
-    };
-    let file_name = file_name.as_deref().unwrap_or("eval_script");
-    // Data preparation may do what a browser cannot, so a widget check in progress stands down while the actions run.
-    let _unchecked = super::runtime::WidgetWrap::set(false);
-    super::runtime::eval_script_text(&script).map_err(|err| with_source_line(err, script.text(), file_name))
+    run_prepared(&prepared)
 }
 
 /// Evaluate a `<condition>` element as `<if>` does. Its children are xml-actions conditions

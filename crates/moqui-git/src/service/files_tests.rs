@@ -139,7 +139,7 @@ fn number(value: Option<&Value>) -> i64 {
         .unwrap_or(-1)
 }
 
-fn maps(out: &BTreeMap<String, Value>, key: &str) -> Vec<IndexMap<String, Value>> {
+fn maps(out: &BTreeMap<String, Value>, key: &str) -> Vec<moqui_lib::object::ValueMap> {
     match out.get(key) {
         Some(Value::List(items)) => items
             .iter()
@@ -152,11 +152,11 @@ fn maps(out: &BTreeMap<String, Value>, key: &str) -> Vec<IndexMap<String, Value>
     }
 }
 
-fn field(map: &IndexMap<String, Value>, key: &str) -> String {
+fn field(map: &moqui_lib::object::ValueMap, key: &str) -> String {
     map.get(key).map(to_plain_string).unwrap_or_default()
 }
 
-fn flag(map: &IndexMap<String, Value>, key: &str) -> bool {
+fn flag(map: &moqui_lib::object::ValueMap, key: &str) -> bool {
     matches!(map.get(key), Some(Value::Bool(true)))
 }
 
@@ -222,7 +222,7 @@ fn a_drive_is_reached_by_its_owner_and_members_by_permission_and_not_by_a_strang
         "Team",
         &[(
             "memberList",
-            Value::List(vec![Value::Map(IndexMap::from([
+            Value::List(vec![Value::Map(IndexMap::from_iter([
                 ("userId".to_string(), text("bob")),
                 ("permissionEnumId".to_string(), text("RdpEdit")),
             ]))]),
@@ -1480,8 +1480,8 @@ fn a_records_drive_shows_its_folder_map_and_only_the_records_a_user_may_see() {
                     (
                         "memberList",
                         Value::List(vec![
-                            Value::Map(IndexMap::from([("userGroupId".to_string(), text("ALL_USERS"))])),
-                            Value::Map(IndexMap::from([
+                            Value::Map(IndexMap::from_iter([("userGroupId".to_string(), text("ALL_USERS"))])),
+                            Value::Map(IndexMap::from_iter([
                                 ("userId".to_string(), text("eve")),
                                 ("permissionEnumId".to_string(), text("RdpEdit")),
                             ])),
@@ -2009,8 +2009,8 @@ impl moqui_core::search::SearchBackend for RecordingBackend {
         _mapping: &moqui_core::search::DocumentMapping,
         _filter: &moqui_core::search::Query,
         _aggs: &IndexMap<String, moqui_core::search::Agg>,
-    ) -> Result<IndexMap<String, Value>, moqui_lib::error::Error> {
-        Ok(IndexMap::new())
+    ) -> Result<moqui_lib::object::ValueMap, moqui_lib::error::Error> {
+        Ok(IndexMap::default())
     }
     fn drop_index(&self, _mapping: &moqui_core::search::DocumentMapping) -> Result<(), moqui_lib::error::Error> {
         Ok(())
@@ -2725,11 +2725,11 @@ fn an_external_user_reaches_no_records_drive() {
                     (
                         "memberList",
                         Value::List(vec![
-                            Value::Map(IndexMap::from([
+                            Value::Map(IndexMap::from_iter([
                                 ("userGroupId".to_string(), text("ALL_USERS")),
                                 ("permissionEnumId".to_string(), text("RdpEdit")),
                             ])),
-                            Value::Map(IndexMap::from([
+                            Value::Map(IndexMap::from_iter([
                                 ("userId".to_string(), text("outsider")),
                                 ("permissionEnumId".to_string(), text("RdpManage")),
                             ])),
@@ -2843,7 +2843,7 @@ fn a_webdav_lock_holds_every_writer_of_that_file_and_nothing_beside_it() {
             &format!("Locked {storage}"),
             &[(
                 "memberList",
-                Value::List(vec![Value::Map(IndexMap::from([
+                Value::List(vec![Value::Map(IndexMap::from_iter([
                     ("userId".to_string(), text("bob")),
                     ("permissionEnumId".to_string(), text("RdpEdit")),
                 ]))]),

@@ -45,6 +45,7 @@ pub(crate) type EntityCell = Mutex<EntityValue>;
 /// The functions of `ec.entity` the table installs, each its own path.
 pub(super) static PATHS: &[Path] = &[
     Path::function("ec.entity.find", &FIND_FN),
+    Path::function("ec.entity.findOneXml", &FIND_ONE_XML),
     Path::function("ec.entity.makeValue", &MAKE_VALUE),
     Path::function("ec.entity.startTxCacheDb", &START_TX_CACHE_DB),
     Path::function("ec.entity.stopTxCache", &STOP_TX_CACHE),
@@ -61,6 +62,15 @@ pub(super) static PATHS: &[Path] = &[
 ];
 
 static FIND_FN: Method = method!("ec.entity", "find", [Text], None, leaf, find);
+// a generated <entity-find-one>, one crossing for its chain (plans/Profiling3.md S3b)
+static FIND_ONE_XML: Method = method!(
+    "ec.entity",
+    "findOneXml",
+    [Text, Int, Parameters, Value, Value],
+    None,
+    leaf,
+    find_one_xml
+);
 static MAKE_VALUE: Method = method!("ec.entity", "makeValue", [Text], make_value);
 static START_TX_CACHE_DB: Method = method!("ec.entity", "startTxCacheDb", [Bool], start_tx_cache_db);
 static STOP_TX_CACHE: Method = method!("ec.entity", "stopTxCache", [], stop_tx_cache);
@@ -499,7 +509,7 @@ fn condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
         return chain(call, |find| find.condition(condition));
     }
     let entries = match &first {
-        Value::List(_) => IndexMap::new(),
+        Value::List(_) => IndexMap::default(),
         other => crate::script::value_map(other)
             .ok_or_else(|| HostError::message("entity condition needs a field and a value"))?,
     };
@@ -507,13 +517,15 @@ fn condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
     // of an entity defined at run time may be read from rows, so it is read with the engine lent (`find`).
     let facade = entity_facade()?;
     let (state, mut find) = take_find(call)?;
+    // which of the entries are fields, in their order: no set of every field name made per call
+    // (plans/Profiling3.md W8)
     let mut fields = None;
     let lent = call.ops.lend(&mut || {
         fields = Some(facade.with_entity(find.entity_name(), |entity, _, _| {
-            Ok(entity.field_names().into_iter().map(str::to_string).collect())
+            Ok(entries.keys().map(|key| entity.has_field(key)).collect())
         }));
     });
-    let known: Result<std::collections::BTreeSet<String>, HostError> = lent.and_then(|()| {
+    let known: Result<Vec<bool>, HostError> = lent.and_then(|()| {
         fields
             .ok_or_else(|| HostError::message("entity fields were not read"))?
             .map_err(lib)
@@ -526,8 +538,8 @@ fn condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
         }
     };
     let mut failed = None;
-    for (key, value) in entries {
-        if !known.contains(&key) {
+    for ((key, value), is_field) in entries.into_iter().zip(known) {
+        if !is_field {
             continue;
         }
         match comparison(&key, "equals", value) {
@@ -744,6 +756,104 @@ fn one(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// `cached(find)` when it answers, else `run(find)` with the engine lent.
+/// The bits of [`find_one_xml`]'s options, as XmlActions.js's entity-find-one macro sets them.
+const XML_CACHE_SET: i32 = 1;
+const XML_CACHE: i32 = 2;
+const XML_FOR_UPDATE_SET: i32 = 4;
+const XML_FOR_UPDATE: i32 = 8;
+const XML_CLONE_SET: i32 = 16;
+const XML_CLONE: i32 = 32;
+const XML_DISABLE_AUTHZ: i32 = 64;
+const XML_NO_KEY_SET: i32 = 128;
+const XML_NO_KEY: i32 = 256;
+
+/// `ec.entity.findOneXml(name, flags, autoMap, fields, selectFields)`: a generated `<entity-find-one>` in one crossing,
+/// where `find(..)`, an option each, `.condition(..)` each, `.selectField(..)` each and `.one()` were five or more
+/// (plans/Profiling3.md S3b). `flags` are the options' bits; `autoMap` is the auto-field-map (`ec.context`: the
+/// entity's fields read from the stack, not a copy of the whole context), a map whose entries that are fields
+/// condition the find, or null; `fields` the field-maps as an object (each an equals condition) or null; and
+/// `selectFields` an array of field names or null. The result is `one()`'s.
+fn find_one_xml(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.text_or_empty(0);
+    let flags = call.int(1).unwrap_or(0);
+    let on = |bit: i32| flags & bit != 0;
+    let facade = entity_facade()?;
+    let mut find = if facade.with_model(|model| model.entity(&name).is_ok()) {
+        facade.find(&name).map_err(lib)?
+    } else {
+        // an entity defined at run time is made with the engine lent, as `find` makes it
+        let mut found = None;
+        call.ops.lend(&mut || found = Some(facade.find(&name)))?;
+        found
+            .ok_or_else(|| HostError::message("entity find was not made"))?
+            .map_err(lib)?
+    };
+    if on(XML_CACHE_SET) {
+        find = find.use_cache(on(XML_CACHE));
+    }
+    if on(XML_FOR_UPDATE_SET) {
+        find = find.for_update(on(XML_FOR_UPDATE));
+    }
+    if on(XML_NO_KEY_SET) {
+        find = find.for_no_key_update(on(XML_NO_KEY));
+    }
+    if on(XML_CLONE_SET) {
+        find = find.use_clone(on(XML_CLONE));
+    }
+    if on(XML_DISABLE_AUTHZ) {
+        find = find.disable_authz();
+    }
+    let auto = match call.arg(2) {
+        super::Arg::WholeContext => {
+            // the script's values written back first, as `ec.context` is read
+            call.ops.flush(super::FlushBefore::Keep)?;
+            let fields: Vec<String> = facade
+                .with_entity(find.entity_name(), |entity, _, _| {
+                    Ok(entity.field_names().into_iter().map(str::to_string).collect())
+                })
+                .map_err(lib)?;
+            let mut entries = moqui_lib::object::ValueMap::default();
+            for field in fields {
+                if let Some(value) = crate::script::context_value(&field) {
+                    entries.insert(field, value);
+                }
+            }
+            Some(entries)
+        }
+        _ => {
+            let value = call.value_or_null(2);
+            if value.is_null() {
+                None
+            } else {
+                let entries = crate::script::value_map(&value)
+                    .ok_or_else(|| HostError::message("entity condition needs a field and a value"))?;
+                // a map such as `context` carries names that are not fields: only fields apply
+                let known: Vec<bool> = facade
+                    .with_entity(find.entity_name(), |entity, _, _| {
+                        Ok(entries.keys().map(|key| entity.has_field(key)).collect())
+                    })
+                    .map_err(lib)?;
+                Some(entries.into_iter().zip(known).filter(|(_, field)| *field).map(|(entry, _)| entry).collect())
+            }
+        }
+    };
+    for (field, value) in auto.into_iter().flatten() {
+        find = find.condition_from_map(comparison(&field, "equals", value).map_err(lib)?);
+    }
+    if let Some(fields) = crate::script::value_map(&call.value_or_null(3)) {
+        for (field, value) in fields {
+            find = find.condition(comparison(&field, "equals", value).map_err(lib)?);
+        }
+    }
+    if let Value::List(selected) = call.value_or_null(4) {
+        for field in &selected {
+            find = find.select_field(&moqui_lib::object::to_plain_string(field));
+        }
+    }
+    let found = run_lent(call, &find, EntityFind::one_from_cache, EntityFind::one)?;
+    Ok(Ret::Value(found.map_or(Value::Null, value_of)))
+}
+
 fn run_lent<T>(
     call: &mut Call<'_>,
     find: &EntityFind,
@@ -1354,7 +1464,7 @@ fn value_clone(call: &mut Call<'_>) -> Result<Ret, HostError> {
 fn value_equals(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let cell = this_cell(call)?;
     let other = call.value_or_null(0);
-    let theirs: IndexMap<String, Value> = match &other {
+    let theirs: moqui_lib::object::ValueMap = match &other {
         Value::Map(entries) => entries.clone(),
         Value::Object(object) => match object.downcast::<EntityCell>() {
             Some(theirs) => val(&theirs)
@@ -1397,7 +1507,7 @@ fn value_equals(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// `getMap()`: the fields as a plain map, the localized ones in the user's locale.
 fn value_get_map(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let map: IndexMap<String, Value> = field_map(&*this_cell(call)?).into_iter().collect();
+    let map: moqui_lib::object::ValueMap = field_map(&*this_cell(call)?).into_iter().collect();
     Ok(Ret::Value(Value::Map(map)))
 }
 
@@ -1419,8 +1529,8 @@ fn plain_value_map(
     value: &EntityValue,
     levels: i32,
     parent_pks: &[String],
-) -> Result<IndexMap<String, Value>, moqui_lib::error::Error> {
-    let mut map = IndexMap::new();
+) -> Result<moqui_lib::object::ValueMap, moqui_lib::error::Error> {
+    let mut map = IndexMap::default();
     for (name, field) in crate::entity::string_map(value.fields()) {
         if field.is_null() || parent_pks.iter().any(|pk| pk == &name) {
             continue;
@@ -1548,7 +1658,7 @@ fn value_set_fields(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// What `setFields` reads its fields from, as the QuickJS object's `in` and property read saw it: a map's entries, an
 /// entity value's fields (a field its entity defines that it does not hold is there, as null), a list's indexes.
 enum FieldSource {
-    Entries(IndexMap<String, Value>),
+    Entries(moqui_lib::object::ValueMap),
     Entity(Arc<EntityCell>),
 }
 
@@ -1574,7 +1684,7 @@ fn setfields_source(value: Option<&Value>) -> Option<FieldSource> {
         Value::Map(entries) => FieldSource::Entries(entries.clone()),
         Value::Object(object) => match object.downcast::<EntityCell>() {
             Some(cell) => FieldSource::Entity(cell),
-            None => FieldSource::Entries(IndexMap::new()),
+            None => FieldSource::Entries(IndexMap::default()),
         },
         _ => return None,
     })
@@ -1626,7 +1736,7 @@ fn value_primary_keys(call: &mut Call<'_>) -> Result<Ret, HostError> {
             Ok(entity.pk_field_names().iter().map(|name| (*name).to_string()).collect())
         })
         .map_err(lib)?;
-    let map: IndexMap<String, Value> = names
+    let map: moqui_lib::object::ValueMap = names
         .into_iter()
         .map(|name| {
             let field = value.get(&name).cloned().unwrap_or(Value::Null);

@@ -1224,7 +1224,7 @@ fn deliver(
                     moqui_core::screen::PdfRenderer::render_png(&rendered.html).map_err(fail)?
                 };
                 let image_id = "report-image@moqui";
-                let inline = Value::Map(indexmap::IndexMap::from([
+                let inline = Value::Map(indexmap::IndexMap::from_iter([
                     ("contentId".into(), Value::string(image_id)),
                     ("fileName".into(), Value::string("dashboard.png")),
                     ("contentType".into(), Value::string("image/png")),
@@ -1234,7 +1234,7 @@ fn deliver(
                     .files
                     .iter()
                     .map(|(name, bytes)| {
-                        Value::Map(indexmap::IndexMap::from([
+                        Value::Map(indexmap::IndexMap::from_iter([
                             ("fileName".into(), Value::string(name)),
                             ("contentType".into(), Value::string(rendered.mime)),
                             ("contentBytes".into(), Value::Bytes(bytes.clone())),
@@ -1253,7 +1253,7 @@ fn deliver(
                         ("createEmailMessage".into(), Value::Bool(false)),
                         (
                             "bodyParameters".into(),
-                            Value::Map(indexmap::IndexMap::from([
+                            Value::Map(indexmap::IndexMap::from_iter([
                                 ("reportLink".into(), Value::string(&rendered.link)),
                                 (
                                     "title".into(),

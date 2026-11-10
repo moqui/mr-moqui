@@ -128,6 +128,8 @@ rust_decimal = { version = "1", features = ["serde"] }
 indexmap = "2"
 # A fast hash for the internal maps keyed by SQL or script text and frame tokens. Already in the tree under hashbrown.
 foldhash = "0.2"
+# The thread's CPU clock for the operation profile (moqui-core telemetry/profile.rs); already in the tree.
+rustix = { version = "1", default-features = false, features = ["std", "time"] }
 # The binaries' global allocator (crates/moqui, and the binary ./moq build generates); not on MSVC.
 tikv-jemallocator = "0.6"
 serde = { version = "1", features = ["derive"] }

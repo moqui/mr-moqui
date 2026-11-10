@@ -853,24 +853,24 @@ pub(crate) fn status_of_error(error: &str) -> u16 {
     }
 }
 
-pub(crate) fn text_of(map: &indexmap::IndexMap<String, Value>, key: &str) -> String {
+pub(crate) fn text_of(map: &moqui_lib::object::ValueMap, key: &str) -> String {
     map.get(key)
         .filter(|value| !is_empty(value))
         .map(to_plain_string)
         .unwrap_or_default()
 }
 
-pub(crate) fn flag_of(map: &indexmap::IndexMap<String, Value>, key: &str) -> bool {
+pub(crate) fn flag_of(map: &moqui_lib::object::ValueMap, key: &str) -> bool {
     map.get(key)
         .is_some_and(|value| matches!(value, Value::Bool(true)) || to_plain_string(value) == "true")
 }
 
-pub(crate) fn millis_of(map: &indexmap::IndexMap<String, Value>, key: &str) -> Option<i64> {
+pub(crate) fn millis_of(map: &moqui_lib::object::ValueMap, key: &str) -> Option<i64> {
     map.get(key).and_then(moqui_core::user::value_millis)
 }
 
 /// The maps of a list a service returned.
-pub(crate) fn maps(value: Option<&Value>) -> Vec<indexmap::IndexMap<String, Value>> {
+pub(crate) fn maps(value: Option<&Value>) -> Vec<moqui_lib::object::ValueMap> {
     match value {
         Some(Value::List(list)) => list
             .iter()

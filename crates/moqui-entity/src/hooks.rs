@@ -22,7 +22,6 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use indexmap::IndexMap;
 use jiff::tz::TimeZone;
 use moqui_db::model::EntityDefinition;
 use moqui_db::sql::Condition;
@@ -128,7 +127,7 @@ pub struct EntityHooks {
     pub expand: fn(&str) -> Result<String, Error>,
     pub context_value: fn(&str) -> Option<Value>,
     /// The fields of a map or a script's entity value.
-    pub value_map: fn(&Value) -> Option<IndexMap<String, Value>>,
+    pub value_map: fn(&Value) -> Option<moqui_lib::object::ValueMap>,
     pub value_items: fn(&Value) -> Option<Vec<Value>>,
     // services
     /// Call a service, with authorization off when asked.
@@ -136,7 +135,15 @@ pub struct EntityHooks {
     pub store_entity: fn(&EntityFacade, &str, &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, LibError>,
     /// Run the matched entity ECA rules of one phase.
     pub run_eca:
-        fn(&EntityFacade, &str, &str, bool, &[EcaRule], &mut FieldMap, Option<&EntityValue>) -> Result<(), LibError>,
+        fn(
+            &EntityFacade,
+            &str,
+            &str,
+            bool,
+            &[std::sync::Arc<EcaRule>],
+            &mut FieldMap,
+            Option<&EntityValue>,
+        ) -> Result<(), LibError>,
     pub run_data_file_service: fn(&EntityFacade, &DataFileService) -> Result<(), LibError>,
     pub schedule_feed_receive: fn(&EntityFacade, Vec<String>) -> Result<(), LibError>,
     /// The service a data file names, as Java's `isServiceDefined` takes it.

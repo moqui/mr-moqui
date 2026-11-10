@@ -233,16 +233,54 @@ impl Tracked {
     }
 }
 
+/// Run a statement on a pooled connection, noting its shape for the census (plans/Profiling3.md M2).
+fn noted<T>(
+    sql: &str,
+    params: &[Value],
+    kind: impl FnOnce() -> super::shapes::Kind,
+    rows: impl FnOnce(&T) -> u64,
+    body: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
+    if !super::shapes::enabled() {
+        return body();
+    }
+    let before = crate::driver::thread_round_trips();
+    let result = body();
+    let waited = crate::driver::thread_round_trips() > before;
+    let count = result.as_ref().map_or(0, rows);
+    super::shapes::note(sql, params, kind(), waited, count);
+    result
+}
+
 impl DbConnection for Tracked {
     fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64, Error> {
-        self.conn.execute(sql, params)
+        noted(
+            sql,
+            params,
+            || super::shapes::Kind::of_sql(sql),
+            |n| *n,
+            || self.conn.execute(sql, params),
+        )
     }
 
     fn execute_deferred(&mut self, sql: &str, params: Vec<Value>, zero_rows: Option<String>) -> Result<(), Error> {
+        if super::shapes::enabled() {
+            super::shapes::note(sql, &params, super::shapes::Kind::WriteSent, false, 0);
+        }
         self.conn.execute_deferred(sql, params, zero_rows)
     }
 
+    fn execute_deferred_update(&mut self, sql: &str, params: Vec<Value>, missing: String) -> Result<(), Error> {
+        if super::shapes::enabled() {
+            super::shapes::note(sql, &params, super::shapes::Kind::WriteSent, false, 0);
+        }
+        self.conn.execute_deferred_update(sql, params, missing)
+    }
+
     fn execute_deferred_row(&mut self, sql: &str, params: Vec<Value>, key: u64) -> Result<(), Error> {
+        if super::shapes::enabled() {
+            super::shapes::note(sql, &params, super::shapes::Kind::WriteSent, false, 0);
+        }
         self.conn.execute_deferred_row(sql, params, key)
     }
 
@@ -251,15 +289,35 @@ impl DbConnection for Tracked {
     }
 
     fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
-        self.conn.query(sql, params)
+        let rows = |rows: &Vec<DbRow>| rows.len() as u64;
+        noted(
+            sql,
+            params,
+            || super::shapes::Kind::of_sql(sql),
+            rows,
+            || self.conn.query(sql, params),
+        )
     }
 
     fn query_once(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
-        self.conn.query_once(sql, params)
+        let rows = |rows: &Vec<DbRow>| rows.len() as u64;
+        noted(
+            sql,
+            params,
+            || super::shapes::Kind::of_sql(sql),
+            rows,
+            || self.conn.query_once(sql, params),
+        )
     }
 
     fn open_stream(&mut self, sql: &str, params: &[Value]) -> Result<(), Error> {
-        self.conn.open_stream(sql, params)
+        noted(
+            sql,
+            params,
+            || super::shapes::Kind::Stream,
+            |()| 0,
+            || self.conn.open_stream(sql, params),
+        )
     }
 
     fn next_row(&mut self) -> Result<Option<DbRow>, Error> {
@@ -279,25 +337,65 @@ impl DbConnection for Tracked {
     }
 
     fn begin(&mut self) -> Result<(), Error> {
-        self.conn.begin()?;
+        noted(
+            "BEGIN",
+            &[],
+            || super::shapes::Kind::Begin,
+            |()| 0,
+            || self.conn.begin(),
+        )?;
         self.in_tx = true;
         Ok(())
     }
 
     fn commit(&mut self) -> Result<(), Error> {
-        self.conn.commit()?;
+        noted(
+            "COMMIT",
+            &[],
+            || super::shapes::Kind::Commit,
+            |()| 0,
+            || self.conn.commit(),
+        )?;
         self.in_tx = false;
         Ok(())
     }
 
     fn rollback(&mut self) -> Result<(), Error> {
-        self.conn.rollback()?;
+        noted(
+            "ROLLBACK",
+            &[],
+            || super::shapes::Kind::Rollback,
+            |()| 0,
+            || self.conn.rollback(),
+        )?;
         self.in_tx = false;
         Ok(())
     }
 
     fn savepoint(&mut self, name: &str) -> Result<(), Error> {
-        self.conn.savepoint(name)
+        if !super::shapes::enabled() {
+            return self.conn.savepoint(name);
+        }
+        noted(
+            &format!("SAVEPOINT {name}"),
+            &[],
+            || super::shapes::Kind::Savepoint,
+            |()| 0,
+            || self.conn.savepoint(name),
+        )
+    }
+
+    fn savepoint_behind(&mut self, name: &str) -> Result<(), Error> {
+        if !super::shapes::enabled() {
+            return self.conn.savepoint_behind(name);
+        }
+        noted(
+            &format!("SAVEPOINT {name}"),
+            &[],
+            || super::shapes::Kind::Savepoint,
+            |()| 0,
+            || self.conn.savepoint_behind(name),
+        )
     }
 
     fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), Error> {

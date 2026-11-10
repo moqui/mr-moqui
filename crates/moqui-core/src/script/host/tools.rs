@@ -1139,7 +1139,7 @@ static METHODS: &[Method] = &[
     ),
 ];
 
-fn list(rows: Vec<indexmap::IndexMap<String, Value>>) -> Ret {
+fn list(rows: Vec<moqui_lib::object::ValueMap>) -> Ret {
     Ret::Value(Value::List(rows.into_iter().map(Value::Map).collect()))
 }
 
@@ -1188,9 +1188,9 @@ fn millis_of(value: Option<&Value>) -> Option<i64> {
 
 // ---- cache ----
 
-fn cache_info_row(info: &moqui_lib::cache::CacheInfo) -> indexmap::IndexMap<String, Value> {
+fn cache_info_row(info: &moqui_lib::cache::CacheInfo) -> moqui_lib::object::ValueMap {
     let number = |value: u64| Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
-    let mut row = indexmap::IndexMap::new();
+    let mut row = indexmap::IndexMap::default();
     row.insert("name".to_string(), Value::string(&info.name));
     row.insert("expireTimeIdle".to_string(), Value::I64(info.expire_idle_ms / 1000));
     row.insert("expireTimeLive".to_string(), Value::I64(info.expire_live_ms / 1000));
@@ -1254,7 +1254,7 @@ fn get_all_caches_info(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// Order maps by one field, `-` descending, numbers by value and the rest as text.
-fn order_maps(rows: &mut [indexmap::IndexMap<String, Value>], order_by: &str) {
+fn order_maps(rows: &mut [moqui_lib::object::ValueMap], order_by: &str) {
     let descending = order_by.starts_with('-');
     let field = order_by.trim_start_matches(['-', '+', '^']);
     if field.is_empty() {
@@ -1290,7 +1290,7 @@ fn make_element_info_list(call: &mut Call<'_>) -> Result<Ret, HostError> {
         .unwrap_or_default()
         .into_iter()
         .map(|entry| {
-            let mut row = indexmap::IndexMap::new();
+            let mut row = indexmap::IndexMap::default();
             row.insert("key".to_string(), Value::string(entry.key));
             row.insert("value".to_string(), entry.value);
             row.insert(
@@ -1508,7 +1508,7 @@ fn check_tables(call: &mut Call<'_>) -> Result<Ret, HostError> {
             }
         }
     }
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert(
         "ddl".to_string(),
         Value::List(ddl.into_iter().map(Value::String).collect()),
@@ -1520,7 +1520,7 @@ fn check_tables(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let failed = failed
         .into_iter()
         .map(|(name, error)| {
-            let mut row = indexmap::IndexMap::new();
+            let mut row = indexmap::IndexMap::default();
             row.insert("entityName".to_string(), Value::String(name));
             row.insert("error".to_string(), Value::String(error));
             Value::Map(row)
@@ -1538,7 +1538,7 @@ fn run_sql_statement(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let facade = entity_facade()?;
     let result =
         crate::entity::info::run_sql(&facade, &group, &sql, count_of(limit.as_ref(), 500)).map_err(HostError::Lib)?;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert(
         "columns".to_string(),
         Value::List(result.columns.into_iter().map(Value::String).collect()),
@@ -1632,7 +1632,7 @@ fn write_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
     }
     let first = text_of(first.as_ref());
     let second = text_of(second.as_ref());
-    let mut out = indexmap::IndexMap::new();
+    let mut out = indexmap::IndexMap::default();
     let lib = |result: Result<u64, moqui_lib::error::Error>| result.map_err(HostError::Lib);
     let count = match mode.as_str() {
         "file" => lib(writer.file(&first))?,
@@ -1742,7 +1742,7 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
     facade.set_disable_audit_log(before.disable_audit_log);
     facade.set_disable_data_feed(before.disable_data_feed);
     let (records, messages) = loaded.map_err(HostError::Lib)?;
-    let mut out = indexmap::IndexMap::new();
+    let mut out = indexmap::IndexMap::default();
     out.insert(
         "records".to_string(),
         Value::I64(i64::try_from(records).unwrap_or(i64::MAX)),
@@ -1861,7 +1861,7 @@ fn get_all_service_info(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let rows = counts
         .into_iter()
         .map(|(name, services)| {
-            let mut row = indexmap::IndexMap::new();
+            let mut row = indexmap::IndexMap::default();
             row.insert("name".to_string(), Value::String(name));
             row.insert("services".to_string(), Value::I64(services));
             row
@@ -1912,7 +1912,7 @@ fn convert_validate_clean_parameters(call: &mut Call<'_>) -> Result<Ret, HostErr
 /// root's `xml`; the wrapper writes an element below it only when its `toString()` is called, rather than the XML of
 /// every element being written here, each one again inside each of its ancestors.
 fn node_value(node: &MNode) -> Value {
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("name".to_string(), Value::string(node.name()));
     map.insert(
         "attributes".to_string(),
@@ -1951,7 +1951,7 @@ fn job_runner_info(_call: &mut Call<'_>) -> Result<Ret, HostError> {
         return Ok(Ret::Value(Value::Null));
     };
     let number = |value: u64| Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert(
         "lastExecuteTime".to_string(),
         jiff::Timestamp::from_millisecond(stats.last_execute_millis).map_or(Value::Null, Value::Timestamp),
@@ -1967,7 +1967,7 @@ fn worker_pool_info(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     let factory = factory()?;
     let status = factory.service_pools().status();
     let number = |value: usize| Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("workers".to_string(), number(status.workers));
     map.insert("active".to_string(), number(status.active));
     map.insert("queued".to_string(), number(status.queued));
@@ -2069,7 +2069,7 @@ fn resource_info_value(resource: &crate::context::ResourceRef) -> Value {
 
 fn info_value(location: &str, exists: bool, directory: bool, file: bool) -> Value {
     let file_name = location.rsplit('/').next().unwrap_or_default().to_string();
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("location".to_string(), Value::string(location));
     map.insert("fileName".to_string(), Value::string(&file_name));
     map.insert("exists".to_string(), Value::Bool(exists));
@@ -2097,7 +2097,7 @@ fn resource_stat(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let location = call.text_or_empty(0);
     match with_ec(|ec| ec.factory().resource().get(&location))? {
         Ok(resource) => {
-            let mut map = indexmap::IndexMap::new();
+            let mut map = indexmap::IndexMap::default();
             map.insert(
                 "size".to_string(),
                 resource
@@ -2266,7 +2266,7 @@ fn resource_supports_version(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 fn version_value(version: crate::context::ResourceVersion) -> Value {
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("versionName".to_string(), Value::string(version.version_name));
     map.insert(
         "previousVersionName".to_string(),
@@ -2572,7 +2572,7 @@ fn rest_send(call: &mut Call<'_>) -> Result<Ret, HostError> {
             err.message()
         ))
     })?;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("statusCode".to_string(), Value::I64(i64::from(response.status)));
     map.insert(
         "reasonPhrase".to_string(),
@@ -2966,7 +2966,7 @@ fn message_infos(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     let rows = messages
         .into_iter()
         .map(|message| {
-            let mut row = indexmap::IndexMap::new();
+            let mut row = indexmap::IndexMap::default();
             row.insert("message".to_string(), Value::String(message));
             row.insert("typeString".to_string(), Value::string("info"));
             row
@@ -3036,7 +3036,7 @@ fn write_data_documents(call: &mut Call<'_>) -> Result<Ret, HostError> {
     };
     let stamp = |value: Option<&Value>| value.filter(|value| !value.is_null()).and_then(timestamp_at);
     let (from, thru) = (stamp(call.value(4)), stamp(call.value(5)));
-    let mut out = indexmap::IndexMap::new();
+    let mut out = indexmap::IndexMap::default();
     let count = match mode.as_str() {
         "text" => {
             let (text, count) = crate::entity::document::documents_json(&facade, &ids, condition, from, thru, pretty)

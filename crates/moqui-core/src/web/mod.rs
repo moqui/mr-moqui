@@ -1021,7 +1021,7 @@ pub(crate) fn send_json_response(value: Value) {
     if !messages.is_empty() {
         match &mut value {
             Value::Null => {
-                value = Value::Map(indexmap::IndexMap::from([(
+                value = Value::Map(indexmap::IndexMap::from_iter([(
                     "messages".to_string(),
                     Value::string(messages.join("\n")),
                 )]));
@@ -1141,7 +1141,7 @@ fn request_accept() -> String {
 
 /// `{"errorCode","errors"}` as JSON.
 pub(crate) fn send_json_error(status: u16, message: &str) {
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     map.insert("errorCode".to_string(), Value::I64(i64::from(status)));
     map.insert("errors".to_string(), Value::string(message));
     send_bytes(
@@ -2189,7 +2189,7 @@ pub(crate) fn add_retry_after(headers: &mut Vec<(String, String)>, err: &Error) 
 }
 
 pub(crate) fn json_error(status: u16, message: &str) -> WebResponse {
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     map.insert("errorCode".to_string(), Value::I64(i64::from(status)));
     map.insert("errors".to_string(), Value::string(message));
     let mut response = WebResponse::new(status, query_rest::encode_json(&Value::Map(map)).into_bytes());

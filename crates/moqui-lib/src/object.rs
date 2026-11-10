@@ -41,6 +41,13 @@ use crate::error::Error;
 mod regex_match;
 pub use regex_match::CompiledRegex;
 
+/// A map of values, as `Value::Map` and the context stack's frames hold them. Its hasher is foldhash: a bare name read
+/// hashes the name once for each frame it looks in, and SipHash of it showed in profiles (plans/Profiling3.md W10).
+pub type ValueMap = IndexMap<String, Value, ValueMapHasher>;
+
+/// The hasher of [`ValueMap`], for `indexmap::indexmap_with_default!` and a map made with a capacity.
+pub type ValueMapHasher = foldhash::fast::RandomState;
+
 /// A value that can cross a facade without an `ExecutionContext`.
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -56,7 +63,7 @@ pub enum Value {
     Time(Time),
     Bytes(Vec<u8>),
     List(Vec<Value>),
-    Map(IndexMap<String, Value>),
+    Map(ValueMap),
     /// A shared host object a script holds by reference, such as an entity value.
     Object(HostObject),
 }

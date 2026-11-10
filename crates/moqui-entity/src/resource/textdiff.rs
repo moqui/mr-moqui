@@ -299,7 +299,7 @@ impl TextDiff {
     /// The diff as a script value: `{fromName, toName, unifiedDiff, html, stats: {insertions, deletions, hunks},
     /// hunks: [{oldStart, oldLines, newStart, newLines, lines: [{tag, oldNo, newNo, text}]}]}`.
     pub fn to_value(&self) -> Value {
-        let mut stats = IndexMap::new();
+        let mut stats = IndexMap::default();
         stats.insert("insertions".to_string(), count(self.stats.insertions));
         stats.insert("deletions".to_string(), count(self.stats.deletions));
         stats.insert("hunks".to_string(), count(self.stats.hunks));
@@ -311,7 +311,7 @@ impl TextDiff {
                     .lines
                     .iter()
                     .map(|line| {
-                        let mut map = IndexMap::new();
+                        let mut map = IndexMap::default();
                         map.insert("tag".to_string(), Value::string(line.tag.name()));
                         map.insert("oldNo".to_string(), line.old_no.map_or(Value::Null, count));
                         map.insert("newNo".to_string(), line.new_no.map_or(Value::Null, count));
@@ -319,7 +319,7 @@ impl TextDiff {
                         Value::Map(map)
                     })
                     .collect();
-                let mut map = IndexMap::new();
+                let mut map = IndexMap::default();
                 map.insert("oldStart".to_string(), count(hunk.old_start));
                 map.insert("oldLines".to_string(), count(hunk.old_lines));
                 map.insert("newStart".to_string(), count(hunk.new_start));
@@ -328,7 +328,7 @@ impl TextDiff {
                 Value::Map(map)
             })
             .collect();
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("fromName".to_string(), Value::string(&self.from_name));
         map.insert("toName".to_string(), Value::string(&self.to_name));
         map.insert("unifiedDiff".to_string(), Value::string(self.unified()));

@@ -687,7 +687,7 @@ impl Drop for SampleFlush<'_> {
 /// A job with a `moquiPreview` token on a dev instance renders from the proposed text the token names (F14,
 /// plans/design-dev-aide.md 13.3): under the read fence, so nothing it runs writes, and framed by the page that asked.
 pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<(), Error> {
-    let _profile = super::profile::request(job.path);
+    let _profile = crate::telemetry::profile::request(job.path);
     let _samples = SampleFlush(job.path);
     let mut token = text_of(job.parameters.get("moquiPreview"));
     if token.is_empty() {
@@ -743,7 +743,7 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
     if last_standalone == 0 && standalone_json(requested_mode(job, None)) {
         last_standalone = 1;
     }
-    let url_span = super::profile::span("phase", "url");
+    let url_span = crate::telemetry::profile::span("phase", "url");
     let mut info = ScreenUrlInfo::parse(factory, job.root, job.path, last_standalone)?;
     if last_standalone == 0 && standalone_json(requested_mode(job, Some(&info))) {
         info = ScreenUrlInfo::parse(factory, job.root, job.path, 1)?;
@@ -790,7 +790,7 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
     let client = client_mode(job.request, &mode_screen(&info, &picked), &picked);
     let negotiated = client.is_some();
     let mode = client.unwrap_or(picked);
-    super::profile::set_mode(&mode);
+    crate::telemetry::profile::set_mode(&mode);
     let rendered = mode_screen(&info, &mode);
     if !rendered.allows_render_mode(&mode) {
         // A qvue-only screen still answers tui: one placeholder, so the screen list stays a document.
@@ -1017,7 +1017,7 @@ fn render_screens(state: &RenderState, facade: &ScreenFacade) -> Result<(), Erro
             frames.enter_screen(def, index == last)?;
             state.screen_path_index.set(index);
             if let Some(actions) = &def.always_actions {
-                script::run_actions(&actions.xml)?;
+                actions.run()?;
             }
         }
     }
@@ -1062,7 +1062,7 @@ fn render_screens(state: &RenderState, facade: &ScreenFacade) -> Result<(), Erro
             if index >= first_pre {
                 state.screen_path_index.set(index);
                 if let Some(actions) = &def.pre_actions {
-                    script::run_actions(&actions.xml)?;
+                    actions.run()?;
                 }
             }
         }
@@ -1132,7 +1132,7 @@ fn render_body(state: &RenderState) -> Result<(), Error> {
         }
         return Ok(());
     }
-    let _output = super::profile::span("phase", "output");
+    let _output = crate::telemetry::profile::span("phase", "output");
     super::sri::flush_end_text(state);
     if state.output_kind == OutputKind::Json && !state.dont_do_render.get() {
         wrap_json_envelope(state);
@@ -1836,7 +1836,7 @@ fn run_transition_steps(
         frames.apply_anonymous(def)?;
         state.screen_path_index.set(index);
         if let Some(actions) = &def.always_actions {
-            script::run_actions(&actions.xml)?;
+            actions.run()?;
         }
     }
     let screen = Arc::clone(&info.target_screen);
@@ -2077,7 +2077,7 @@ fn wants_json(job: &Job<'_>, info: &ScreenUrlInfo) -> bool {
 }
 
 fn run_transition_actions(actions: &Actions) -> Result<(), Error> {
-    script::run_actions(&actions.xml)
+    actions.run()
 }
 
 /// Java's `messageFacade.hasError()` on the screen path: the error list or a validation error.
@@ -2297,7 +2297,7 @@ fn same_origin(url: &str) -> bool {
 /// `redirectUrl`, with the messages and the current parameters. The errors make it a 500, as for any JSON answer.
 fn send_json_redirect(screen_path: Option<Vec<String>>, location: &str, parameters: &BTreeMap<String, String>) {
     use moqui_lib::object::Value as V;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     match screen_path {
         Some(names) => {
             map.insert(
@@ -2354,7 +2354,7 @@ fn send_json_redirect(screen_path: Option<Vec<String>>, location: &str, paramete
                 messages
                     .iter()
                     .map(|(message, kind)| {
-                        let mut info = indexmap::IndexMap::new();
+                        let mut info = indexmap::IndexMap::default();
                         info.insert("message".to_string(), V::string(message));
                         info.insert("type".to_string(), V::string(kind));
                         V::Map(info)
@@ -2533,7 +2533,7 @@ pub(crate) fn check_condition(condition: &Condition) -> Result<bool, Error> {
         Condition::Expression(expression) => script::eval_condition(expression),
         Condition::Wrapped(actions) => {
             let _frame = ContextFrame::push();
-            script::run_actions(&actions.xml)?;
+            actions.run()?;
             Ok(matches!(
                 script::context_value(CONDITION_FIELD),
                 Some(Value::Bool(true))

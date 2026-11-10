@@ -243,10 +243,10 @@ fn birthday(property: &Property, text: &str) -> String {
 }
 
 /// The contacts of a vCard file, one map per card (group cards are not contacts), keyed as the module doc says.
-pub(crate) fn parse(text: &str) -> Vec<IndexMap<String, Value>> {
+pub(crate) fn parse(text: &str) -> Vec<moqui_lib::object::ValueMap> {
     let cards = cards(text);
     // the groups each member is in, by UID
-    let mut groups_of: IndexMap<String, Vec<String>> = IndexMap::new();
+    let mut groups_of: IndexMap<String, Vec<String>> = IndexMap::default();
     for card in cards.iter().filter(|card| card.kind() == "group") {
         let name = card
             .first("FN")
@@ -290,9 +290,9 @@ pub(crate) fn parse(text: &str) -> Vec<IndexMap<String, Value>> {
         .collect()
 }
 
-fn contact(card: &Card, member_of: Vec<String>) -> IndexMap<String, Value> {
-    let mut out: IndexMap<String, Value> = IndexMap::new();
-    let put = |out: &mut IndexMap<String, Value>, key: String, value: String| {
+fn contact(card: &Card, member_of: Vec<String>) -> moqui_lib::object::ValueMap {
+    let mut out: moqui_lib::object::ValueMap = IndexMap::default();
+    let put = |out: &mut moqui_lib::object::ValueMap, key: String, value: String| {
         let value = value.trim().to_string();
         if !value.is_empty() {
             out.insert(key, Value::String(value));
@@ -495,7 +495,7 @@ struct Address {
     types: Vec<&'static str>,
 }
 
-fn text_of(map: &IndexMap<String, Value>, keys: &[&str]) -> String {
+fn text_of(map: &moqui_lib::object::ValueMap, keys: &[&str]) -> String {
     keys.iter()
         .filter_map(|key| map.get(*key))
         .map(|value| to_plain_string(value).trim().to_string())
@@ -503,7 +503,7 @@ fn text_of(map: &IndexMap<String, Value>, keys: &[&str]) -> String {
         .unwrap_or_default()
 }
 
-fn flag_of(map: &IndexMap<String, Value>, key: &str) -> bool {
+fn flag_of(map: &moqui_lib::object::ValueMap, key: &str) -> bool {
     match map.get(key) {
         Some(Value::Bool(flag)) => *flag,
         Some(value) => matches!(
@@ -514,7 +514,7 @@ fn flag_of(map: &IndexMap<String, Value>, key: &str) -> bool {
     }
 }
 
-fn list_of<'a>(map: &'a IndexMap<String, Value>, key: &str) -> Vec<&'a IndexMap<String, Value>> {
+fn list_of<'a>(map: &'a moqui_lib::object::ValueMap, key: &str) -> Vec<&'a moqui_lib::object::ValueMap> {
     match map.get(key) {
         Some(Value::List(items)) => items
             .iter()
@@ -575,7 +575,7 @@ struct Contact {
 
 /// A contact from the map of an export (emails, phones, addresses and websites as lists of contact mech maps with
 /// a contactMechPurposeId) or the flat map `parse` gives (email1, phone1.label, address1.city, ...).
-fn contact_of(map: &IndexMap<String, Value>) -> Contact {
+fn contact_of(map: &moqui_lib::object::ValueMap) -> Contact {
     let text = |keys: &[&str]| text_of(map, keys);
     let party_id = text(&["partyId"]);
     let uid = match text(&["uid", "universalId"]) {

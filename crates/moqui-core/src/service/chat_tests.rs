@@ -26,7 +26,6 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use indexmap::IndexMap;
 use moqui_lib::object::{to_plain_string, Value};
 
 use crate::context::{ExecutionContext, ExecutionContextFactory};
@@ -192,7 +191,7 @@ fn out_number(out: &BTreeMap<String, Value>, key: &str) -> i64 {
         .unwrap_or(-1)
 }
 
-fn maps(value: Option<&Value>) -> Vec<IndexMap<String, Value>> {
+fn maps(value: Option<&Value>) -> Vec<moqui_lib::object::ValueMap> {
     match value {
         Some(Value::List(items)) => items
             .iter()
@@ -205,22 +204,22 @@ fn maps(value: Option<&Value>) -> Vec<IndexMap<String, Value>> {
     }
 }
 
-fn field(map: &IndexMap<String, Value>, key: &str) -> String {
+fn field(map: &moqui_lib::object::ValueMap, key: &str) -> String {
     map.get(key).map(to_plain_string).unwrap_or_default()
 }
 
-fn number(map: &IndexMap<String, Value>, key: &str) -> i64 {
+fn number(map: &moqui_lib::object::ValueMap, key: &str) -> i64 {
     field(map, key).parse().unwrap_or(-1)
 }
 
-fn sub(map: &IndexMap<String, Value>, key: &str) -> IndexMap<String, Value> {
+fn sub(map: &moqui_lib::object::ValueMap, key: &str) -> moqui_lib::object::ValueMap {
     match map.get(key) {
         Some(Value::Map(inner)) => inner.clone(),
         other => panic!("{key} is not a map: {other:?}"),
     }
 }
 
-fn out_map(out: &BTreeMap<String, Value>, key: &str) -> IndexMap<String, Value> {
+fn out_map(out: &BTreeMap<String, Value>, key: &str) -> moqui_lib::object::ValueMap {
     match out.get(key) {
         Some(Value::Map(inner)) => inner.clone(),
         other => panic!("{key} is not a map: {other:?}"),
@@ -249,7 +248,7 @@ fn timeline(room: &str, more: &[(&str, Value)]) -> BTreeMap<String, Value> {
     ok("get#Timeline", &parameters)
 }
 
-fn events(out: &BTreeMap<String, Value>) -> Vec<IndexMap<String, Value>> {
+fn events(out: &BTreeMap<String, Value>) -> Vec<moqui_lib::object::ValueMap> {
     maps(out.get("eventList"))
 }
 
@@ -1769,7 +1768,7 @@ fn preference(facade: &EntityFacade, user_id: &str, key: &str, value: &str) {
     );
 }
 
-fn one_event(room: &str, seq: i64) -> IndexMap<String, Value> {
+fn one_event(room: &str, seq: i64) -> moqui_lib::object::ValueMap {
     let found = events(&timeline(room, &[("eventSeq", int(seq))]));
     assert_eq!(found.len(), 1, "event {seq}");
     found[0].clone()

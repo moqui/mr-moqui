@@ -91,9 +91,9 @@ struct ChildLevel<'t> {
     agg: &'t Agg,
 }
 
-type Row = (Vec<Value>, IndexMap<String, Value>);
+type Row = (Vec<Value>, moqui_lib::object::ValueMap);
 /// A child level's rows by the parent key tuple: the own key and the bucket content.
-type Grouped = HashMap<String, Vec<(Value, IndexMap<String, Value>)>>;
+type Grouped = HashMap<String, Vec<(Value, moqui_lib::object::ValueMap)>>;
 
 /// Run `aggs` over the documents matching `filter`.
 ///
@@ -107,7 +107,7 @@ pub fn aggregate(
     filter: &Query,
     aggs: &IndexMap<String, Agg>,
     run: &mut Runner<'_>,
-) -> Result<IndexMap<String, Value>, Error> {
+) -> Result<moqui_lib::object::ValueMap, Error> {
     aggregate_population(table, mapping, text, filter, aggs, None, run)
 }
 
@@ -119,7 +119,7 @@ pub fn aggregate_population(
     aggs: &IndexMap<String, Agg>,
     documents: Option<&[std::sync::Arc<DocumentMapping>]>,
     run: &mut Runner<'_>,
-) -> Result<IndexMap<String, Value>, Error> {
+) -> Result<moqui_lib::object::ValueMap, Error> {
     let base = Compiler::with_text(mapping, text)
         .with_documents(documents)
         .where_sql(filter)?;
@@ -343,7 +343,7 @@ fn read_rows(
         let tuple: Vec<Value> = (0..key_count)
             .map(|index| row.get(&format!("k{index}")).cloned().unwrap_or(Value::Null))
             .collect();
-        let mut content = IndexMap::new();
+        let mut content = IndexMap::default();
         content.insert("doc_count".to_string(), count_value(row.get("dc")));
         for (name, value) in agg_empty_results(aggs) {
             content.insert(name, value);
@@ -473,7 +473,7 @@ fn attach_children(
             samples
                 .entry(tuple_key(&tuple))
                 .or_default()
-                .push(Value::Map(IndexMap::from([
+                .push(Value::Map(IndexMap::from_iter([
                     ("id".into(), row.get("doc_id").cloned().unwrap_or(Value::Null)),
                     ("body".into(), body),
                     (
@@ -495,7 +495,7 @@ fn attach_children(
             conditions.extend(child.conds.iter().cloned());
             conditions.push(compiler.where_sql(filter)?);
             let rows = run_level(ctx, keys, &conditions, aggs)?;
-            let mut found: HashMap<String, IndexMap<String, Value>> = rows
+            let mut found: HashMap<String, moqui_lib::object::ValueMap> = rows
                 .into_iter()
                 .map(|(tuple, content)| (tuple_key(&tuple), content))
                 .collect();
@@ -511,7 +511,7 @@ fn attach_children(
             }
         }
         for (parent, content) in out {
-            let mut holder = IndexMap::new();
+            let mut holder = IndexMap::default();
             holder.insert(
                 "buckets".into(),
                 Value::List(buckets.remove(&tuple_key(parent)).unwrap_or_default()),
@@ -582,7 +582,7 @@ fn attach_children(
             }
             _ => Vec::new(),
         };
-        let mut holder = IndexMap::new();
+        let mut holder = IndexMap::default();
         holder.insert("buckets".to_string(), Value::List(buckets));
         set_path(parent_content, &child.path, Value::Map(holder));
     }
@@ -775,10 +775,10 @@ fn terms_key(compiler: &Compiler<'_>, terms: &Terms, depth: usize) -> Result<Key
 
 fn histogram_buckets(
     histogram: &DateHistogram,
-    rows: Vec<(Value, IndexMap<String, Value>)>,
+    rows: Vec<(Value, moqui_lib::object::ValueMap)>,
 ) -> Result<Vec<Value>, Error> {
     let zone = histogram_zone(histogram.time_zone.as_deref())?;
-    let mut by_key: Vec<(Timestamp, IndexMap<String, Value>)> = Vec::with_capacity(rows.len());
+    let mut by_key: Vec<(Timestamp, moqui_lib::object::ValueMap)> = Vec::with_capacity(rows.len());
     for (key, content) in rows {
         let Some(at) = timestamp_of(&key) else {
             continue;
@@ -830,7 +830,7 @@ fn histogram_buckets(
                     continue;
                 }
                 _ => {
-                    let mut empty = IndexMap::new();
+                    let mut empty = IndexMap::default();
                     empty.insert("doc_count".to_string(), Value::I64(0));
                     for (name, value) in agg_empty_results(&histogram.aggs) {
                         empty.insert(name, value);
@@ -864,7 +864,7 @@ fn histogram_buckets(
         if partial && histogram.drop_partial {
             continue;
         }
-        let mut bucket = IndexMap::new();
+        let mut bucket = IndexMap::default();
         if partial {
             bucket.insert("partial".into(), Value::Bool(true));
         }
@@ -881,7 +881,7 @@ fn histogram_buckets(
     Ok(out)
 }
 
-fn terms_buckets(terms: &Terms, rows: Vec<(Value, IndexMap<String, Value>)>) -> Vec<Value> {
+fn terms_buckets(terms: &Terms, rows: Vec<(Value, moqui_lib::object::ValueMap)>) -> Vec<Value> {
     let mut rows = rows;
     rows.retain(|(_, content)| doc_count(content) >= terms.min_doc_count);
     let key_order =
@@ -920,7 +920,7 @@ fn terms_buckets(terms: &Terms, rows: Vec<(Value, IndexMap<String, Value>)>) -> 
     rows.truncate(terms.size);
     rows.into_iter()
         .map(|(key, content)| {
-            let mut bucket = IndexMap::new();
+            let mut bucket = IndexMap::default();
             bucket.insert("key".to_string(), key);
             for (name, value) in content {
                 bucket.insert(name, value);
@@ -930,7 +930,7 @@ fn terms_buckets(terms: &Terms, rows: Vec<(Value, IndexMap<String, Value>)>) -> 
         .collect()
 }
 
-fn doc_count(content: &IndexMap<String, Value>) -> u64 {
+fn doc_count(content: &moqui_lib::object::ValueMap) -> u64 {
     match content.get("doc_count") {
         Some(Value::I64(count)) => u64::try_from(*count).unwrap_or(0),
         Some(Value::I32(count)) => u64::try_from(*count).unwrap_or(0),
@@ -980,7 +980,7 @@ fn tuple_key(values: &[Value]) -> String {
     values.iter().map(to_plain_string).collect::<Vec<_>>().join("\u{1}")
 }
 
-fn set_path(map: &mut IndexMap<String, Value>, path: &[String], value: Value) {
+fn set_path(map: &mut moqui_lib::object::ValueMap, path: &[String], value: Value) {
     let Some((last, parents)) = path.split_last() else {
         return;
     };
@@ -988,9 +988,9 @@ fn set_path(map: &mut IndexMap<String, Value>, path: &[String], value: Value) {
     for name in parents {
         let entry = current
             .entry(name.clone())
-            .or_insert_with(|| Value::Map(IndexMap::new()));
+            .or_insert_with(|| Value::Map(IndexMap::default()));
         if !matches!(entry, Value::Map(_)) {
-            *entry = Value::Map(IndexMap::new());
+            *entry = Value::Map(IndexMap::default());
         }
         let Value::Map(next) = entry else {
             return;

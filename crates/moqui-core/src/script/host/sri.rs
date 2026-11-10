@@ -647,7 +647,7 @@ fn get_screen_url_info(_: &mut Call<'_>) -> Result<Ret, HostError> {
             .rev()
             .find_map(|def| def.density.clone())
             .unwrap_or_default();
-        let mut object = IndexMap::new();
+        let mut object = IndexMap::default();
         object.insert("extraPathNameList".to_string(), texts(&info.extra_path));
         object.insert("fullPathNameList".to_string(), texts(&info.full_path));
         object.insert("minimalPathNameList".to_string(), texts(&info.minimal_path));
@@ -869,13 +869,13 @@ fn form_list_column_char_widths(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// An element as `{name, text, attrs, children}`.
 fn node_value(node: &MNode) -> Value {
-    let mut object = IndexMap::new();
+    let mut object = IndexMap::default();
     object.insert("name".to_string(), node.with_name(|name| text(name)));
     object.insert(
         "text".to_string(),
         node.with_text(|found| text(found.unwrap_or_default())),
     );
-    let mut attrs = IndexMap::new();
+    let mut attrs = IndexMap::default();
     node.for_each_attribute(|key, value| {
         attrs.insert(key.to_string(), text(value));
     });
@@ -926,9 +926,9 @@ fn get_form_hidden_parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let form = node(call, 0)?;
     let parameters = match form.child("hidden-parameters") {
         Some(hidden) => in_render(|_| logic::node_parameters(hidden))?,
-        None => IndexMap::new(),
+        None => IndexMap::default(),
     };
-    let mut out = IndexMap::new();
+    let mut out = IndexMap::default();
     for (key, value) in parameters {
         let text = moqui_lib::object::to_plain_string(&value);
         if !text.is_empty() {
@@ -993,7 +993,7 @@ fn get_section_included_node(call: &mut Call<'_>) -> Result<Ret, HostError> {
 fn get_field_validation(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let sub = node(call, 0)?;
     let found = in_render(|_| logic::field_validation(&sub))?;
-    let mut object = IndexMap::new();
+    let mut object = IndexMap::default();
     object.insert("classes".to_string(), text(found.classes.join(" ")));
     if let Some((regexp, message)) = found.regexp {
         object.insert("regexp".to_string(), Value::String(regexp));
@@ -1020,7 +1020,7 @@ fn get_field_validation_rules(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let rules = in_render(|_| logic::field_validation_rules(&sub))?;
     let mut out = Vec::with_capacity(rules.len());
     for (rule, message) in rules {
-        let mut object = IndexMap::new();
+        let mut object = IndexMap::default();
         // A rule's JSON is one flat object of strings, booleans and nulls.
         if let serde_json::Value::Object(fields) = rule.json() {
             for (key, value) in fields {

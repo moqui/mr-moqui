@@ -124,7 +124,7 @@ fn documents_insert_as_rows_of_one_statement_with_a_cast_per_typed_column() {
     assert!(insert_sql("t", "doc_id", &columns, 1, true).ends_with(" WHERE t.indexed_at <= EXCLUDED.indexed_at"));
 
     let at: Timestamp = "2026-01-05T10:00:00Z".parse().unwrap();
-    let mut body = Document::new();
+    let mut body = Document::default();
     body.insert("combinedName".into(), Value::string("Ada"));
     body.insert("partyCount".into(), Value::string("3.0"));
     body.insert("active".into(), Value::Null);
@@ -160,12 +160,12 @@ fn dates_given_as_text_are_stored_as_times_at_the_root_and_in_child_elements() {
     mapping.root.children.insert("classifications".into(), classes);
     let columns = insert_columns(&mapping);
     let element = |from: &str, thru: &str| {
-        let mut element = Document::new();
+        let mut element = Document::default();
         element.insert("classFromDate".into(), Value::string(from));
         element.insert("classThruDate".into(), Value::string(thru));
         Value::Map(element)
     };
-    let mut body = Document::new();
+    let mut body = Document::default();
     body.insert("createdDate".into(), Value::string("1767607200000"));
     body.insert(
         "classifications".into(),
@@ -189,7 +189,7 @@ fn dates_given_as_text_are_stored_as_times_at_the_root_and_in_child_elements() {
 
 #[test]
 fn body_json_keeps_dates_and_drops_nulls() {
-    let mut body = Document::new();
+    let mut body = Document::default();
     body.insert(
         "placedDate".into(),
         Value::Timestamp("2026-01-05T10:00:00Z".parse().unwrap()),

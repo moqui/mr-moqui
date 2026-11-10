@@ -251,7 +251,7 @@ impl AuthInfo {
 }
 
 /// The enum id for an action name. Ids pass through.
-pub(crate) fn action_enum(action: &str) -> String {
+pub(crate) fn action_enum(action: &str) -> &str {
     match action {
         "view" => "AUTHZA_VIEW",
         "create" => "AUTHZA_CREATE",
@@ -260,7 +260,6 @@ pub(crate) fn action_enum(action: &str) -> String {
         "all" => AUTHZA_ALL,
         other => other,
     }
-    .to_string()
 }
 
 /// True while an [`crate::context::ExecutionContext::enter`] guard is live on this thread.
@@ -450,7 +449,7 @@ pub(crate) fn is_permitted(
     if let Some(last) = last {
         if last.inheritable
             && last.authz_type.as_deref() == Some(AUTHZT_ALWAYS)
-            && (last.action.as_deref() == Some(AUTHZA_ALL) || last.action.as_deref() == Some(action_id.as_str()))
+            && (last.action.as_deref() == Some(AUTHZA_ALL) || last.action.as_deref() == Some(action_id))
         {
             return Ok((true, last.clone()));
         }
@@ -499,7 +498,7 @@ pub(crate) fn is_permitted(
             let mut authz_type = check.authz_type.clone();
             if !check.authz_service_name.is_empty() {
                 if let Some(overridden) =
-                    authz_service_type(&check.authz_service_name, &user_id, &action_id, artifact_type, name)?
+                    authz_service_type(&check.authz_service_name, &user_id, action_id, artifact_type, name)?
                 {
                     authz_type = overridden;
                 }
@@ -517,7 +516,7 @@ pub(crate) fn is_permitted(
                 return Ok((true, info));
             }
             if permit.is_access {
-                record_failure(&facade, artifact_type, name, &action_id, &user_id, true);
+                record_failure(&facade, artifact_type, name, action_id, &user_id, true);
             }
             return Ok((false, info));
         }
@@ -527,7 +526,7 @@ pub(crate) fn is_permitted(
         if let Some(last) = last {
             if last.inheritable
                 && (last.user_id == "_NA_" || last.user_id == user_id)
-                && (last.action.as_deref() == Some(AUTHZA_ALL) || last.action.as_deref() == Some(action_id.as_str()))
+                && (last.action.as_deref() == Some(AUTHZA_ALL) || last.action.as_deref() == Some(action_id))
                 && last.authz_type.as_deref() != Some(AUTHZT_DENY)
             {
                 return Ok((true, last.clone()));
@@ -540,7 +539,7 @@ pub(crate) fn is_permitted(
             return Ok((true, info));
         }
         if permit.is_access {
-            record_failure(&facade, artifact_type, name, &action_id, &user_id, false);
+            record_failure(&facade, artifact_type, name, action_id, &user_id, false);
         }
     }
     info.granted = Some(false);
@@ -638,29 +637,31 @@ fn check_tarpit(artifact_type: &str, name: &str) -> Result<(), Error> {
     let _guard = disable_authz_guard()?;
     let facade = entity_facade()?;
     let checks = tarpit_checks(&facade, artifact_type)?;
-    if checks.is_empty() {
+    // the rules for this artifact first: with none, no user, key or lock of the hit map is needed (plans/Profiling3.md
+    // W7), as for an artifact type that has rules but not for this name
+    let matching: Vec<_> = checks
+        .iter()
+        .filter(|check| {
+            if check.name_is_pattern {
+                pattern_matches(&check.artifact_name, name).unwrap_or_else(|err| {
+                    tracing::error!(error = %err, "tarpit record did not evaluate; it does not apply");
+                    false
+                })
+            } else {
+                check.artifact_name == name
+            }
+        })
+        .collect();
+    if matching.is_empty() {
         return Ok(());
     }
     let user_id = current_user_id()?.unwrap_or_default();
     let key = format!("{user_id}@{artifact_type}:{name}");
     let now = now_millis();
     let times = ExecutionContext::with_current(|ec| ec.factory().tarpit_times(&key)).unwrap_or_default();
-    let mut record = false;
     let mut lock_for = 0_i64;
     let mut longest = 0_i64;
-    for check in checks.iter() {
-        let matched = if check.name_is_pattern {
-            pattern_matches(&check.artifact_name, name).unwrap_or_else(|err| {
-                tracing::error!(error = %err, "tarpit record did not evaluate; it does not apply");
-                false
-            })
-        } else {
-            check.artifact_name == name
-        };
-        if !matched {
-            continue;
-        }
-        record = true;
+    for check in matching {
         let window_ms = check.max_hits_duration.saturating_mul(1000);
         longest = longest.max(window_ms);
         let recent = times
@@ -678,26 +679,24 @@ fn check_tarpit(artifact_type: &str, name: &str) -> Result<(), Error> {
             );
         }
     }
-    if record {
-        ExecutionContext::with_current(|ec| {
-            ec.factory().record_tarpit_hit(&key, now, longest.max(60_000));
-        });
-        let releases = tarpit_releases(&facade, &user_id, name, artifact_type)?;
-        let now_value = super::login::now_value();
-        for release in releases.iter() {
-            if moqui_lib::object::compare_obj(release, &now_value).ok() == Some(std::cmp::Ordering::Greater) {
-                let seconds = match release {
-                    Value::Timestamp(stamp) => (stamp.as_millisecond() - now) / 1000,
-                    _ => 0,
-                };
-                return Err(Error::of_kind(
-                    crate::context::ErrorKind::Tarpit,
-                    format!(
-                        "User {user_id} has accessed {artifact_type} {name} too many times; retry after {seconds} seconds"
-                    ),
-                )
-                .with_retry_after(u64::try_from(seconds).unwrap_or(0)));
-            }
+    ExecutionContext::with_current(|ec| {
+        ec.factory().record_tarpit_hit(&key, now, longest.max(60_000));
+    });
+    let releases = tarpit_releases(&facade, &user_id, name, artifact_type)?;
+    let now_value = super::login::now_value();
+    for release in releases.iter() {
+        if moqui_lib::object::compare_obj(release, &now_value).ok() == Some(std::cmp::Ordering::Greater) {
+            let seconds = match release {
+                Value::Timestamp(stamp) => (stamp.as_millisecond() - now) / 1000,
+                _ => 0,
+            };
+            return Err(Error::of_kind(
+                crate::context::ErrorKind::Tarpit,
+                format!(
+                    "User {user_id} has accessed {artifact_type} {name} too many times; retry after {seconds} seconds"
+                ),
+            )
+            .with_retry_after(u64::try_from(seconds).unwrap_or(0)));
         }
     }
     if lock_for > 0 {

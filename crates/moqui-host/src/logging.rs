@@ -569,7 +569,7 @@ impl Subscriber for LineSubscriber {
         if level == Level::DEBUG || level == Level::TRACE || moqui_core::telemetry::is_suppressed() {
             return;
         }
-        let mut entry = Document::new();
+        let mut entry = Document::default();
         entry.insert("@timestamp".into(), Value::I64(millis));
         entry.insert("level".into(), Value::string(level.as_str()));
         entry.insert("thread_name".into(), Value::String(thread_name));
@@ -586,7 +586,7 @@ impl Subscriber for LineSubscriber {
             }
         }
         if let Some((name, message)) = fields.error {
-            let mut thrown = Document::new();
+            let mut thrown = Document::default();
             thrown.insert("name".into(), Value::string(name));
             thrown.insert("message".into(), Value::string(message));
             entry.insert("thrown".into(), Value::Map(thrown));

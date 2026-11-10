@@ -103,7 +103,7 @@ fn js_safe_object(value: &Value) -> String {
     }
 }
 
-pub(crate) fn js_safe_map(entries: &indexmap::IndexMap<String, Value>) -> String {
+pub(crate) fn js_safe_map(entries: &moqui_lib::object::ValueMap) -> String {
     let parts: Vec<String> = entries
         .iter()
         .map(|(key, value)| format!("'{}':{}", encode_html_js_safe(key), js_safe_object(value)))
@@ -116,7 +116,7 @@ pub(crate) fn js_safe_map(entries: &indexmap::IndexMap<String, Value>) -> String
 /// `CollectionUtilities.flattenNestedMap(map)`: the leaves of nested maps and lists in one map; null for a value that
 /// is not a map.
 pub(crate) fn flatten_nested_map(value: &Value) -> Value {
-    fn flatten(value: &Value, out: &mut indexmap::IndexMap<String, Value>) {
+    fn flatten(value: &Value, out: &mut moqui_lib::object::ValueMap) {
         let Some(entries) = super::values::value_map(value) else {
             return;
         };
@@ -135,7 +135,7 @@ pub(crate) fn flatten_nested_map(value: &Value) -> Value {
     if super::values::value_map(value).is_none() {
         return Value::Null;
     }
-    let mut out = indexmap::IndexMap::new();
+    let mut out = indexmap::IndexMap::default();
     flatten(value, &mut out);
     Value::Map(out)
 }

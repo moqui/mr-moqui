@@ -604,7 +604,7 @@ fn telemetry_bulk_acknowledges_individual_inputs_and_rejects_incomplete_response
     let mapping = crate::search::telemetry::telemetry_mapping("otel_logs").unwrap();
     let documents: Vec<_> = ["good", "retry", "bad"]
         .iter()
-        .map(|id| (id.to_string(), Document::new()))
+        .map(|id| (id.to_string(), Document::default()))
         .collect();
     let outcomes = backend.index_telemetry_batch(&mapping, &documents).unwrap();
     assert!(matches!(

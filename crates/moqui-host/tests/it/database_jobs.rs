@@ -20,7 +20,6 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use indexmap::IndexMap;
 use moqui_core::transaction::TransactionAttribute;
 use moqui_lib::object::{to_plain_string, Value};
 
@@ -51,7 +50,7 @@ fn text(map: &BTreeMap<String, Value>, key: &str) -> String {
 }
 
 /// A job as get#DatabaseJobStatus gives it: its status, whether its runner ended, its statements, and the whole out.
-type JobStatus = (String, bool, Vec<IndexMap<String, Value>>, BTreeMap<String, Value>);
+type JobStatus = (String, bool, Vec<moqui_lib::object::ValueMap>, BTreeMap<String, Value>);
 
 fn status_of(job_id: &str) -> JobStatus {
     let out = call("get#DatabaseJobStatus", &[("jobId", Value::string(job_id))]);
@@ -63,12 +62,12 @@ fn status_of(job_id: &str) -> JobStatus {
     (to_plain_string(&job["statusId"]), ended, statements, out)
 }
 
-fn status(job_id: &str) -> (String, Vec<IndexMap<String, Value>>) {
+fn status(job_id: &str) -> (String, Vec<moqui_lib::object::ValueMap>) {
     let (status, _, statements, _) = status_of(job_id);
     (status, statements)
 }
 
-fn list(map: &BTreeMap<String, Value>, key: &str) -> Vec<IndexMap<String, Value>> {
+fn list(map: &BTreeMap<String, Value>, key: &str) -> Vec<moqui_lib::object::ValueMap> {
     match map.get(key) {
         Some(Value::List(rows)) => rows
             .iter()

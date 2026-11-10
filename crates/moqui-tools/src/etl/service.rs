@@ -412,7 +412,7 @@ fn error_values(outcome: &RunOutcome, limit: usize) -> Value {
             .iter()
             .take(limit)
             .map(|error| {
-                let mut map = IndexMap::new();
+                let mut map = IndexMap::default();
                 map.insert("rowNumber".to_string(), Value::I64(error.row_number));
                 map.insert("fieldName".to_string(), Value::string(&error.field));
                 map.insert("message".to_string(), Value::string(&error.message));
@@ -759,7 +759,7 @@ pub(crate) fn check_etl_sample(
             number => number,
         };
         row.remove(ROW_NUMBER_KEY);
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("rowNumber".to_string(), Value::I64(number));
         map.insert(
             "source".to_string(),
@@ -768,10 +768,10 @@ pub(crate) fn check_etl_sample(
         match transformer.transform_row(&row) {
             Ok(values) => {
                 map.insert("values".to_string(), Value::Map(values.into_iter().collect()));
-                map.insert("errors".to_string(), Value::Map(IndexMap::new()));
+                map.insert("errors".to_string(), Value::Map(IndexMap::default()));
             }
             Err(failed) => {
-                map.insert("values".to_string(), Value::Map(IndexMap::new()));
+                map.insert("values".to_string(), Value::Map(IndexMap::default()));
                 map.insert(
                     "errors".to_string(),
                     Value::Map(
@@ -924,7 +924,7 @@ pub(crate) fn match_etl_fields(
     let matches = match_fields(&columns, &fields)
         .into_iter()
         .map(|(column, field, how)| {
-            let mut map = IndexMap::new();
+            let mut map = IndexMap::default();
             map.insert("column".to_string(), Value::String(column));
             map.insert("targetField".to_string(), field.map_or(Value::Null, Value::String));
             map.insert("how".to_string(), Value::string(how));
@@ -995,7 +995,7 @@ fn save_mapping(facade: &EntityFacade, mapping: &Mapping) -> Result<String, LibE
             }
             row.set(name.as_str(), value.clone());
         }
-        let conditions: IndexMap<String, Value> = mapping.source_conditions.clone().into_iter().collect();
+        let conditions: moqui_lib::object::ValueMap = mapping.source_conditions.clone().into_iter().collect();
         row.set(
             "sourceConditionsJson",
             if conditions.is_empty() {
@@ -1534,7 +1534,7 @@ fn inline_spreadsheet_load(parameters: &BTreeMap<String, Value>) -> Result<BTree
             })
         })
         .collect();
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     map.insert("sourceTypeEnumId".to_string(), Value::string("EtlsFile"));
     map.insert("fileFormat".to_string(), Value::string("xlsx"));
     map.insert("sheetName".to_string(), Value::string(&sheet.sheet_name));

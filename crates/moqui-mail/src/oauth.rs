@@ -1000,7 +1000,7 @@ fn user_id() -> String {
 }
 
 /// The access level of the current user to an account (get#EmailAccountAccess), with the account's map.
-fn account_access(account_id: &str) -> Result<(i64, IndexMap<String, Value>), LibError> {
+fn account_access(account_id: &str) -> Result<(i64, moqui_lib::object::ValueMap), LibError> {
     let mut parameters = BTreeMap::new();
     parameters.insert("emailAccountId".to_string(), Value::string(account_id));
     let out = moqui_core::service::sync(&format!("{SERVICES}.get#EmailAccountAccess"), &parameters)
@@ -1008,7 +1008,7 @@ fn account_access(account_id: &str) -> Result<(i64, IndexMap<String, Value>), Li
     let level = value_number(out.get("level")).unwrap_or(0);
     let account = match out.get("account") {
         Some(Value::Map(map)) => map.clone(),
-        _ => IndexMap::new(),
+        _ => IndexMap::default(),
     };
     Ok((level, account))
 }
@@ -2038,7 +2038,7 @@ pub(super) fn providers_service(
     let list = load_providers(facade)?
         .into_iter()
         .map(|provider| {
-            let mut map = IndexMap::new();
+            let mut map = IndexMap::default();
             map.insert("oauthProviderEnumId".to_string(), Value::string(&provider.id));
             map.insert("description".to_string(), Value::string(&provider.name));
             map.insert("configured".to_string(), Value::Bool(provider.configured()));

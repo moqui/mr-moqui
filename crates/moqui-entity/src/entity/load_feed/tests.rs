@@ -832,9 +832,11 @@ fn a_missing_table_probe_fails_when_the_savepoint_rollback_fails() {
     let rows = probe_query(&mut conn, "SELECT * FROM data_feed", &[]).unwrap();
     assert!(rows.is_empty());
 
+    // the savepoint went out behind what was unanswered, so a rollback that fails is taken for an earlier failure:
+    // the transaction cannot commit either way
     script.broken_rollback.store(true, Ordering::SeqCst);
     let err = probe_query(&mut conn, "SELECT * FROM data_feed", &[]).unwrap_err();
-    assert!(err.to_string().contains("aborted"), "{err}");
+    assert!(err.to_string().contains("before the data feed failed"), "{err}");
 }
 
 fn enlist(tx: &TransactionManager) {
@@ -1064,7 +1066,7 @@ fn eca_rule_entities_are_full_names_and_rules_with_no_id_come_first() {
     .unwrap();
     let ids: Vec<String> = eca_rules(&facade, "moqui.test.TestEntity")
         .into_iter()
-        .map(|rule| rule.id)
+        .map(|rule| rule.id.clone())
         .collect();
     assert_eq!(ids, ["", "ShortName"]);
     assert!(eca_rules(&facade, "no.such.Entity").is_empty());

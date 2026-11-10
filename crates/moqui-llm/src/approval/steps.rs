@@ -499,7 +499,7 @@ fn run_steps(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Re
 }
 
 fn step_value(step: &StepOutcome, read_after_each_step: bool) -> Value {
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("ok".to_string(), Value::Bool(step.ok));
     if let Some(error) = &step.error {
         map.insert("error".to_string(), Value::string(error));

@@ -43,6 +43,8 @@ pub(super) struct SecaRule {
     /// What the rule checks: as Java, the first child of `<condition>` only, made into the condition group once.
     condition_check: Option<String>,
     actions: String,
+    /// `actions` prepared at the rule's first run (plans/Profiling3.md W1).
+    actions_prepared: crate::script::PreparedActions,
 }
 
 /// Run SECA actions whose service and `when` match. A false condition skips the rule.
@@ -88,7 +90,7 @@ pub fn run_seca_rules(
             None => true,
         };
         if passed {
-            super::rule_actions::run_stored_actions(&rule.actions).map_err(in_rule)?;
+            super::rule_actions::run_prepared_actions(&rule.actions, &rule.actions_prepared).map_err(in_rule)?;
         }
         read_back("parameters", parameters);
         if let Some(results) = results.as_deref_mut() {
@@ -111,18 +113,21 @@ pub(super) fn has_rules(service: &str, when: &str) -> bool {
 }
 
 /// The positions of the pattern rules that matched, by `when`, then service name. Nested, so a lookup makes no key.
-type PatternHits = HashMap<String, HashMap<String, Arc<[usize]>>>;
+type PatternHits = Map<String, Map<String, Arc<[usize]>>>;
+
+/// The index's maps hash with foldhash: each of a call's phases looks a service up twice (plans/Profiling3.md W5).
+type Map<K, V> = HashMap<K, V, foldhash::fast::RandomState>;
 
 /// The SECA rules by `when` and service, made once when the rules load, so a call does not scan every rule at each of
 /// its phases. Each list holds positions in the priority order.
 #[derive(Default)]
 pub(super) struct SecaIndex {
     /// By `when`, then by the service name without `#`.
-    exact: HashMap<String, HashMap<String, Vec<usize>>>,
+    exact: Map<String, Map<String, Vec<usize>>>,
     /// The rules whose name is a pattern, by `when`. A pattern is matched against the name a call has, the first time a
     /// service is called (`pattern_hits`); Java expands it at load to the known services, so there it never runs for a
     /// service it did not know then, as an implicit entity-auto one (an accepted difference, P7a-08).
-    patterns: HashMap<String, Vec<usize>>,
+    patterns: Map<String, Vec<usize>>,
     /// The pattern rules that matched, by `when` and service name, so each pattern runs once for a service.
     pattern_hits: std::sync::RwLock<PatternHits>,
 }
@@ -155,10 +160,11 @@ impl SecaIndex {
         if patterns.is_empty() && exact.is_none() {
             return Cow::Borrowed(&[]);
         }
-        let plain: Cow<'_, str> = if service.contains('#') {
-            Cow::Owned(service.replace('#', ""))
-        } else {
-            Cow::Borrowed(service)
+        // the name without `#`, in a buffer on the stack when it fits: a call looks a service up at each phase
+        let mut buffer = [0u8; 256];
+        let plain: Cow<'_, str> = match plain_name(service, &mut buffer) {
+            Some(plain) => Cow::Borrowed(plain),
+            None => Cow::Owned(service.replace('#', "")),
         };
         let named = exact
             .and_then(|by_service| by_service.get(plain.as_ref()))
@@ -192,7 +198,23 @@ impl SecaIndex {
     }
 }
 
-fn to_index_map(values: &BTreeMap<String, Value>) -> indexmap::IndexMap<String, Value> {
+/// `service` without its `#`, in `buffer`; None when it does not fit. Removing an ASCII `#` leaves valid UTF-8.
+fn plain_name<'a>(service: &'a str, buffer: &'a mut [u8; 256]) -> Option<&'a str> {
+    if !service.contains('#') {
+        return Some(service);
+    }
+    let mut len = 0;
+    for &byte in service.as_bytes() {
+        if byte == b'#' {
+            continue;
+        }
+        *buffer.get_mut(len)? = byte;
+        len += 1;
+    }
+    std::str::from_utf8(&buffer[..len]).ok()
+}
+
+fn to_index_map(values: &BTreeMap<String, Value>) -> moqui_lib::object::ValueMap {
     values
         .iter()
         .map(|(name, value)| (name.clone(), value.clone()))
@@ -237,6 +259,7 @@ pub(super) fn seca_rule_from(node: &MNode) -> Result<SecaRule, Error> {
             .first_named("actions")
             .map(|child| child.write_string())
             .unwrap_or_default(),
+        actions_prepared: crate::script::PreparedActions::default(),
     })
 }
 

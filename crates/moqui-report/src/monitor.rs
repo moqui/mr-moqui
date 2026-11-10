@@ -136,7 +136,7 @@ fn source_status(ec: &ExecutionContext, _: &ServiceInfo<'_>, _: &Parameters) -> 
     let mut out = BTreeMap::new();
     out.insert(
         "counters".into(),
-        Value::Map(indexmap::IndexMap::from([
+        Value::Map(indexmap::IndexMap::from_iter([
             ("queued".into(), Value::I64(counters.queued as i64)),
             ("exported".into(), Value::I64(counters.exported as i64)),
             ("dropped".into(), Value::I64(counters.dropped as i64)),
@@ -156,7 +156,7 @@ fn source_status(ec: &ExecutionContext, _: &ServiceInfo<'_>, _: &Parameters) -> 
         ])),
     );
     let resource = moqui_core::telemetry::for_factory(ec.factory());
-    let mut sources = vec![Value::Map(indexmap::IndexMap::from([
+    let mut sources = vec![Value::Map(indexmap::IndexMap::from_iter([
         ("service".into(), Value::string(&resource.resource().service_name)),
         ("instance".into(), Value::string(&resource.resource().instance_id)),
         (
@@ -175,7 +175,7 @@ fn source_status(ec: &ExecutionContext, _: &ServiceInfo<'_>, _: &Parameters) -> 
         ),
     ]))];
     if !ec.factory().conf_setting("telemetry", "otlp-endpoint").is_empty() {
-        sources.push(Value::Map(indexmap::IndexMap::from([
+        sources.push(Value::Map(indexmap::IndexMap::from_iter([
             ("service".into(), Value::string("external collector")),
             ("instance".into(), Value::Null),
             (
@@ -193,7 +193,7 @@ fn source_status(ec: &ExecutionContext, _: &ServiceInfo<'_>, _: &Parameters) -> 
     let _authz = ec.disable_authz();
     let rows = entity(ec)?.find(KEYS)?.eq("userId", Value::string(owner()?)).list()?;
     for row in rows.iter() {
-        sources.push(Value::Map(indexmap::IndexMap::from([
+        sources.push(Value::Map(indexmap::IndexMap::from_iter([
             ("service".into(), row.get("source").cloned().unwrap_or(Value::Null)),
             ("instance".into(), Value::Null),
             ("lastSeen".into(), row.get("lastSeen").cloned().unwrap_or(Value::Null)),

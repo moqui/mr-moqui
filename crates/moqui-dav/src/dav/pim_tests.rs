@@ -29,8 +29,8 @@ fn a_time_range_is_read_in_utc() {
     assert_eq!(ical_utc_millis("20240101T0\u{e9}0000Z"), None);
 }
 
-fn object(name: &str) -> IndexMap<String, Value> {
-    let mut row = IndexMap::new();
+fn object(name: &str) -> moqui_lib::object::ValueMap {
+    let mut row = IndexMap::default();
     row.insert("name".to_string(), Value::string(name));
     row.insert("etag".to_string(), Value::string(format!("e-{name}")));
     row

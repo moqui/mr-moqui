@@ -96,7 +96,7 @@ fn record(messages: &Captured, message: &TopicMessage) {
     let Value::Map(body) = moqui_lib::json::from_json(&message.body) else {
         return;
     };
-    let mut kept = IndexMap::new();
+    let mut kept = IndexMap::default();
     for key in ["topic", "subTopic", ROUTE_USER_IDS, "title", "link", "message"] {
         kept.insert(key.to_string(), body.get(key).cloned().unwrap_or(Value::Null));
     }
@@ -121,7 +121,7 @@ fn topic_of(message: &Value) -> String {
 fn with_date(message: &Value, at: i64) -> Value {
     let mut out = match message {
         Value::Map(map) => map.clone(),
-        _ => IndexMap::new(),
+        _ => IndexMap::default(),
     };
     out.insert("capturedDate".to_string(), Value::I64(at));
     Value::Map(out)

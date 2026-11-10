@@ -414,7 +414,7 @@ fn receive_checked(
         Some(Value::List(ids)) => ids,
         _ => Vec::new(),
     };
-    let mut reply = IndexMap::new();
+    let mut reply = IndexMap::default();
     reply.insert("systemMessageIdList".to_string(), Value::List(ids));
     web::send_json_response(Value::Map(reply));
     Ok(())

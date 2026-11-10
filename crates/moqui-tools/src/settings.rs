@@ -41,7 +41,7 @@ const POSTGRES_SETTINGS: &str = "SELECT name AS name, setting AS setting, unit A
      FROM pg_settings ORDER BY name";
 const MYSQL_VARIABLES: &str = "SHOW VARIABLES";
 /// The bytes of a `pg_settings` row's value: `setting` times its `unit` (`8kB`, `kB`, `MB`, `B`).
-fn running_bytes(row: &IndexMap<String, Value>) -> Option<u64> {
+fn running_bytes(row: &moqui_lib::object::ValueMap) -> Option<u64> {
     let setting: u64 = row.get("setting").map(to_plain_string)?.trim().parse().ok()?;
     let unit = row.get("unit").map(to_plain_string).unwrap_or_default();
     let digits = unit.chars().take_while(char::is_ascii_digit).count();
@@ -56,7 +56,7 @@ pub struct SettingsOutcome {
     /// Each row: Postgres `name`, `setting`, `unit`, `category`, `short_desc`, `source`, `pending_restart`, `context`;
     /// MySQL and MariaDB `name` and `setting`. On the embedded cluster the conf's four also have `confAttribute`,
     /// `confValue` (null when the conf does not set it) and `differs`.
-    pub settings: Vec<IndexMap<String, Value>>,
+    pub settings: Vec<moqui_lib::object::ValueMap>,
     pub embedded: bool,
 }
 
@@ -107,7 +107,7 @@ pub fn read(db: &GroupDb, filter: &str, embedded: Option<&EmbeddedSettings>) -> 
             if !keep(&name) {
                 continue;
             }
-            let mut out = IndexMap::new();
+            let mut out = IndexMap::default();
             out.insert("name".to_string(), Value::String(name));
             out.insert("setting".to_string(), row.get("value").cloned().unwrap_or(Value::Null));
             settings.push(out);

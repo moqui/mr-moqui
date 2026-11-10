@@ -59,7 +59,7 @@ pub(crate) fn commit_value(commit: &CommitDetails) -> Value {
         .map_or("", |(_, rest)| rest)
         .trim()
         .to_string();
-    let mut trailers: IndexMap<String, Value> = IndexMap::new();
+    let mut trailers: moqui_lib::object::ValueMap = IndexMap::default();
     for (name, value) in commit.trailers() {
         if let Value::List(values) = trailers.entry(name).or_insert_with(|| Value::List(Vec::new())) {
             values.push(Value::string(value));

@@ -57,7 +57,7 @@ fn a_spreadsheet_loads_through_an_inline_mapping() {
             ["ETL_SHEET_B", "Sheet B", "UT_LENGTH_MEASURE", "x"],
         ])),
     );
-    let mut field_map = indexmap::IndexMap::new();
+    let mut field_map = indexmap::IndexMap::default();
     field_map.insert("Name".to_string(), Value::string("description"));
     call.insert("fieldMap".to_string(), Value::Map(field_map));
     let out = inline_spreadsheet_load(&call).unwrap();

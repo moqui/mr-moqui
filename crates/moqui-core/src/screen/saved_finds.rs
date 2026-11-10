@@ -182,7 +182,7 @@ fn present_extension(text: &str) -> Option<String> {
 pub(crate) fn find_parameters(form_list_find_id: &str) -> Result<IndexMap<String, String>, Error> {
     let facade = facade()?;
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    let mut out = IndexMap::new();
+    let mut out = IndexMap::default();
     out.insert("formListFindId".to_string(), form_list_find_id.to_string());
     for field in rows(
         &facade,
@@ -326,7 +326,7 @@ pub(crate) fn user_form_list_finds(saved_location: &str) -> Result<Vec<Value>, E
         if !by_user && !by_group {
             continue;
         }
-        let mut parameters: IndexMap<String, Value> = find_parameters(&id)?
+        let mut parameters: moqui_lib::object::ValueMap = find_parameters(&id)?
             .into_iter()
             .map(|(name, value)| (name, Value::string(value)))
             .collect();
@@ -335,7 +335,7 @@ pub(crate) fn user_form_list_finds(saved_location: &str) -> Result<Vec<Value>, E
             parameters.insert("orderByField".to_string(), Value::string(order));
         }
         let description = text(&find, "description");
-        let mut info = IndexMap::new();
+        let mut info = IndexMap::default();
         info.insert("description".to_string(), Value::string(description.clone()));
         info.insert(
             "formListFind".to_string(),
@@ -400,7 +400,7 @@ pub(crate) fn form_list_find_screen_scheduled(find_id: &str) -> Result<Option<Va
         let cron = text(&row, "cronExpression");
         // A cron the parser does not read is shown as it is.
         let description = crate::service::info::cron_description(&cron).unwrap_or_else(|_| cron.clone());
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("renderMode".to_string(), Value::string(text(&row, "renderMode")));
         map.insert("cronExpression".to_string(), Value::string(cron));
         map.insert("cronDescription".to_string(), Value::string(description));
@@ -452,7 +452,7 @@ fn split_form_location(posted: &str, screen_location: &str) -> Option<FormLocati
 
 /// The fields of a form-list a saved find records, as `makeFormListFindFields`: each field (not the header submit, nor
 /// a `skip-fields` one) with a value, an operator, a period, or a from or thru value in the context.
-fn find_fields(form: &moqui_lib::node::MNode) -> Vec<IndexMap<String, Value>> {
+fn find_fields(form: &moqui_lib::node::MNode) -> Vec<moqui_lib::object::ValueMap> {
     let skip: Vec<String> = form
         .first_named("entity-find")
         .and_then(|find| find.first_named("search-form-inputs"))
@@ -468,7 +468,7 @@ fn find_fields(form: &moqui_lib::node::MNode) -> Vec<IndexMap<String, Value>> {
         if name.is_empty() || header_submit || skip.contains(&name) {
             continue;
         }
-        let mut row = IndexMap::new();
+        let mut row = IndexMap::default();
         row.insert("fieldName".to_string(), Value::string(name.clone()));
         let flag = |suffix: &str| matches!(context_text(&format!("{name}{suffix}")).as_str(), "Y" | "true");
         if context_has(&name) || context_has(&format!("{name}_op")) {
@@ -1269,7 +1269,7 @@ pub(crate) fn screen_document_list(screen_location: &str) -> Result<Vec<Value>, 
             let file = location.rsplit('/').next().unwrap_or(&location);
             title = file.split('.').next().unwrap_or(file).to_string();
         }
-        let mut item = IndexMap::new();
+        let mut item = IndexMap::default();
         item.insert("title".to_string(), Value::string(title));
         item.insert(
             "index".to_string(),

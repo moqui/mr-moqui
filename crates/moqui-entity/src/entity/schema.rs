@@ -55,7 +55,7 @@ fn bad_request(message: impl Into<String>) -> Error {
 struct Builder<'a> {
     model: &'a EntityModel,
     /// The schemas a relationship refers to, by full entity name (`full.master` for a master in the catalog).
-    defs: IndexMap<String, Value>,
+    defs: moqui_lib::object::ValueMap,
     /// The key of a standalone document's own entity: a relationship back to it refers to the root, `#`.
     root: Option<String>,
     enums: FieldEnums<'a>,
@@ -65,7 +65,7 @@ impl<'a> Builder<'a> {
     fn new(facade: &'a EntityFacade, model: &'a EntityModel) -> Self {
         Self {
             model,
-            defs: IndexMap::new(),
+            defs: IndexMap::default(),
             root: None,
             enums: FieldEnums::new(facade),
         }
@@ -100,7 +100,7 @@ impl<'a> Builder<'a> {
             }
         }
         self.defs.sort_keys();
-        let mut root = IndexMap::new();
+        let mut root = IndexMap::default();
         root.insert("$schema".to_string(), Value::string(SCHEMA));
         root.insert("title".to_string(), Value::string("Moqui Entity REST API"));
         root.insert("$defs".to_string(), Value::Map(std::mem::take(&mut self.defs)));
@@ -143,8 +143,8 @@ impl<'a> Builder<'a> {
         entity: &EntityDefinition,
         details: Option<&[MasterDetail]>,
         nest: bool,
-    ) -> IndexMap<String, Value> {
-        let mut properties = IndexMap::new();
+    ) -> moqui_lib::object::ValueMap {
+        let mut properties = IndexMap::default();
         // A view's fields are its aliases, as Java's getAllFieldNames.
         for name in entity.field_names() {
             let field_type = if entity.is_view {
@@ -182,7 +182,7 @@ impl<'a> Builder<'a> {
             }
         }
         let required: Vec<Value> = entity.pk_field_names().into_iter().map(Value::string).collect();
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("type".to_string(), Value::string("object"));
         map.insert("properties".to_string(), Value::Map(properties));
         if !required.is_empty() {
@@ -214,7 +214,7 @@ impl<'a> Builder<'a> {
     /// for a `many`.
     fn add_relationship(
         &mut self,
-        properties: &mut IndexMap<String, Value>,
+        properties: &mut moqui_lib::object::ValueMap,
         relationship: &Relationship,
         details: Option<&[MasterDetail]>,
         nest: bool,
@@ -230,10 +230,10 @@ impl<'a> Builder<'a> {
             self.add_def(key, related, details, nest);
             target
         };
-        let mut reference = IndexMap::new();
+        let mut reference = IndexMap::default();
         reference.insert("$ref".to_string(), Value::string(target));
         let property = if relationship.relationship_type == "many" {
-            let mut array = IndexMap::new();
+            let mut array = IndexMap::default();
             array.insert("type".to_string(), Value::string("array"));
             array.insert("items".to_string(), Value::Map(reference));
             array
@@ -308,12 +308,12 @@ impl<'a> FieldEnums<'a> {
     }
 }
 
-fn field_schema(field_type: &str) -> IndexMap<String, Value> {
+fn field_schema(field_type: &str) -> moqui_lib::object::ValueMap {
     let json_type = match field_type {
         "number-integer" | "number-float" | "number-decimal" | "currency-amount" | "currency-precise" => "number",
         _ => "string",
     };
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     map.insert("type".to_string(), Value::string(json_type));
     let format = match field_type {
         "date-time" => Some("date-time"),

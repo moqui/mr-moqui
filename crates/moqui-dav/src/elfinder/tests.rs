@@ -19,7 +19,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use indexmap::IndexMap;
 use moqui_lib::object::{to_plain_string, Value};
 
 use super::{parent_location, safe_entry_name, unhash, writes_restricted, Connector, RUN_COMMAND};
@@ -59,7 +58,7 @@ fn hash(path: &str) -> String {
 
 /// Run one command. `other` holds the request parameters as `ec.web.parameters` would.
 fn command(root: &str, cmd: &str, target: &str, other: Vec<(&str, Value)>) -> BTreeMap<String, Value> {
-    let other: IndexMap<String, Value> = other.into_iter().map(|(key, value)| (key.to_string(), value)).collect();
+    let other: moqui_lib::object::ValueMap = other.into_iter().map(|(key, value)| (key.to_string(), value)).collect();
     let mut parameters = BTreeMap::new();
     parameters.insert("cmd".to_string(), Value::string(cmd));
     parameters.insert("target".to_string(), Value::string(target));

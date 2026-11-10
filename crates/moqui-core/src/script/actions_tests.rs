@@ -159,7 +159,7 @@ fn an_element_changed_in_an_iterate_is_changed_in_the_next_one() {
     let ctx = ExecutionContextFactory::test_context();
     let _guard = ctx.enter();
     let item = |name: &str| {
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert("name".to_string(), Value::string(name));
         Value::Map(map)
     };
@@ -294,9 +294,19 @@ fn for_no_key_update_is_a_lock_of_its_own_and_not_with_for_update() {
         r#"<actions><entity-find-one entity-name="mantle.party.Party" value-field="org" for-no-key-update="true"><field-map field-name="partyId"/></entity-find-one></actions>"#,
     )
     .unwrap();
+    // the one-call find carries the lock in its flags: for-no-key-update set (128) and true (256), no for-update bits
     assert!(
-        one.contains(".forNoKeyUpdate(true)") && !one.contains(".forUpdate("),
+        one.contains(r#"ec.entity.findOneXml("mantle.party.Party", 384, "#),
         "{one}"
+    );
+    // an expression keeps the chain, which says the lock as a call
+    let chained = generate(
+        r#"<actions><entity-find-one entity-name="mantle.party.Party" value-field="org" for-no-key-update="${lockIt}"><field-map field-name="partyId"/></entity-find-one></actions>"#,
+    )
+    .unwrap();
+    assert!(
+        chained.contains(".forNoKeyUpdate(") && !chained.contains("findOneXml") && !chained.contains(".forUpdate("),
+        "{chained}"
     );
     let related = generate(
         r#"<actions><entity-find-related-one value-field="org" relationship-name="Organization" to-value-field="o" for-no-key-update="true"/>
@@ -365,7 +375,7 @@ fn nested_blocks_indent_but_inline_script_text_is_unchanged() {
 #[test]
 fn debug_adds_a_comment_naming_each_element() {
     let source = generate_with("<actions><set field=\"a\" value=\"b\"/></actions>", true).unwrap();
-    assert!(source.contains("    // <set field=\"a\" value=\"b\">\n    a = ec.resource.expand(\"b\");\n"));
+    assert!(source.contains("    // <set field=\"a\" value=\"b\">\n    a = \"b\";\n"));
     let plain = generate_with("<actions><set field=\"a\" value=\"b\"/></actions>", false).unwrap();
     assert!(!plain.contains("//"));
 }

@@ -95,7 +95,7 @@ pub(crate) fn find_in_form(form: &MNode, field_name: &str) -> Option<MNode> {
 /// The fields of `form` whose `scan-input`s post their scan id under the same name, or None when each has its own. Two
 /// scans of one form under one name would post one operation key for both, so the key would no longer name one scan.
 pub(crate) fn shared_scan_id(form: &MNode) -> Option<(String, Vec<String>)> {
-    let mut by_name: indexmap::IndexMap<String, Vec<String>> = indexmap::IndexMap::new();
+    let mut by_name: indexmap::IndexMap<String, Vec<String>> = indexmap::IndexMap::default();
     for field in form.children_named("field") {
         for sub in field.children() {
             if let Some(input) = sub.first_named("scan-input") {
@@ -230,7 +230,7 @@ pub(crate) fn resolve(
             _ => None,
         })
         .collect();
-    let mut out = IndexMap::new();
+    let mut out = IndexMap::default();
     out.insert("scanId".to_string(), Value::string(&scan_id));
     out.insert("scanText".to_string(), Value::string(&scan_text));
     out.insert("matches".to_string(), Value::List(matches));
@@ -246,7 +246,7 @@ pub(crate) fn matches_of(value: Option<&Value>, allowed: &[String]) -> Vec<Value
     let Some(Value::List(list)) = value else {
         return Vec::new();
     };
-    let field = |map: &IndexMap<String, Value>, name: &str| {
+    let field = |map: &moqui_lib::object::ValueMap, name: &str| {
         map.get(name)
             .map(to_plain_string)
             .filter(|text| text != "null")
@@ -261,7 +261,7 @@ pub(crate) fn matches_of(value: Option<&Value>, allowed: &[String]) -> Vec<Value
                 return None;
             }
             let label = field(map, "label");
-            let mut out = IndexMap::new();
+            let mut out = IndexMap::default();
             out.insert("identityType".to_string(), Value::string(&identity_type));
             out.insert("id".to_string(), Value::string(&id));
             out.insert(
@@ -275,7 +275,7 @@ pub(crate) fn matches_of(value: Option<&Value>, allowed: &[String]) -> Vec<Value
         .collect()
 }
 
-fn option_label(map: &IndexMap<String, Value>) -> String {
+fn option_label(map: &moqui_lib::object::ValueMap) -> String {
     let text = |name: &str| map.get(name).map(to_plain_string).unwrap_or_default();
     let mut label = text("label");
     let detail = text("detail");

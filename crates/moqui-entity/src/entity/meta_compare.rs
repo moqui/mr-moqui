@@ -624,7 +624,7 @@ impl SchemaDiff {
     /// names (`missingColumns`, `columnTypes`, `missingIndexes`, `missingForeignKeys`, …).
     #[must_use]
     pub fn to_value(&self) -> Value {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert(
             "checked".to_string(),
             Value::I64(i64::try_from(self.checked).unwrap_or(i64::MAX)),
@@ -641,7 +641,7 @@ impl SchemaDiff {
 impl TableDiff {
     #[must_use]
     pub fn to_value(&self) -> Value {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("entityName".to_string(), Value::string(&self.entity_name));
         map.insert("groupName".to_string(), Value::string(&self.group));
         map.insert("tableName".to_string(), Value::string(&self.table_name));

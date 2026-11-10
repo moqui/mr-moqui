@@ -34,7 +34,7 @@ pub fn get_field_options(state: &RenderState, widget: &NodeLit) -> Result<Vec<(S
     let field_name = widget.field().map_or("", |field| field.attr("name"));
     // A key given again keeps the place it was first given and takes the last label (plans/High-Level-Review.md
     // HL-005): what `IndexMap::insert` does, without a scan of the options so far.
-    let mut options: IndexMap<String, String> = IndexMap::new();
+    let mut options: IndexMap<String, String> = IndexMap::default();
     let mut put = |key: String, text: String| {
         options.insert(key, text);
     };
@@ -59,7 +59,7 @@ pub fn get_field_options(state: &RenderState, widget: &NodeLit) -> Result<Vec<(S
                             put(key, text);
                         }
                     } else if has_key_or_text {
-                        let wrapped = Value::Map(IndexMap::from([("entry".to_string(), item)]));
+                        let wrapped = Value::Map(IndexMap::from_iter([("entry".to_string(), item)]));
                         if let Some((key, text)) = field_option(field_name, child, &wrapped)? {
                             put(key, text);
                         }
@@ -98,7 +98,7 @@ pub fn get_field_options(state: &RenderState, widget: &NodeLit) -> Result<Vec<(S
 fn render_transition(
     state: &RenderState,
     transition: &str,
-    parameters: IndexMap<String, Value>,
+    parameters: moqui_lib::object::ValueMap,
 ) -> Result<crate::screen::screen_test::TestRender, Error> {
     let url = crate::screen::urls::build_url(state, transition)?;
     let root = state
@@ -144,7 +144,7 @@ fn dynamic_options(state: &RenderState, node: &NodeLit) -> Result<Vec<(String, S
         },
         _ => Vec::new(),
     };
-    let mut options: IndexMap<String, String> = IndexMap::new();
+    let mut options: IndexMap<String, String> = IndexMap::default();
     for entry in &list {
         let Value::Map(entry) = entry else {
             continue;

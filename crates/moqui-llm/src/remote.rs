@@ -1087,7 +1087,7 @@ fn test_mcp_server(parameters: &Parameters, facade: &EntityFacade) -> Out {
                     let row = allowed
                         .iter()
                         .find(|row| text_of(row, "toolName").as_deref() == Some(tool.name.as_str()));
-                    let mut map = indexmap::IndexMap::new();
+                    let mut map = indexmap::IndexMap::default();
                     map.insert("toolName".to_string(), Value::string(&tool.name));
                     map.insert("title".to_string(), Value::string(&tool.title));
                     map.insert(

@@ -86,7 +86,7 @@ fn actions_leave_the_context_they_compute() -> Result<(), Error> {
     clear_context_stack();
     set_context_name("a", Value::I32(2))?;
     let item = |name: &str, qty: i32| {
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert("name".to_string(), Value::string(name));
         map.insert("qty".to_string(), Value::I32(qty));
         Value::Map(map)
@@ -387,7 +387,7 @@ fn a_tracked_value_the_script_did_not_change_keeps_the_stack_value() -> Result<(
     clear_context_stack();
     let stamp = Value::Timestamp(jiff::Timestamp::from_second(1_700_000_000).unwrap());
     let row = |id: &str| {
-        Value::Map(indexmap::IndexMap::from([
+        Value::Map(indexmap::IndexMap::from_iter([
             ("id".to_string(), Value::string(id)),
             ("qty".to_string(), Value::I64(3)),
             ("when".to_string(), stamp.clone()),

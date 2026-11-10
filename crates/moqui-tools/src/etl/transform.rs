@@ -113,7 +113,7 @@ fn csv_line(cells: &[&str]) -> String {
 /// A source row as JSON, for an error row.
 #[must_use]
 pub fn row_json(row: &BTreeMap<String, Value>) -> String {
-    let map: IndexMap<String, Value> = row.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let map: moqui_lib::object::ValueMap = row.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     moqui_lib::json::to_json(&Value::Map(map)).to_string()
 }
 
@@ -416,7 +416,7 @@ impl MappingTransformer {
             if !self.scripts_allowed {
                 return Err(super::access::SCRIPTS_REFUSED.to_string());
             }
-            let mut entries = IndexMap::new();
+            let mut entries = IndexMap::default();
             entries.insert(
                 "row".to_string(),
                 Value::Map(input.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),

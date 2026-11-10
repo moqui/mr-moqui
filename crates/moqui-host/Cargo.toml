@@ -43,6 +43,8 @@ axum = [
     "axum/http2",
 ]
 pdf = ["dep:tokio-tungstenite", "dep:futures-util"]
+# The script engine's inline-cache counters in js_speed's section reports (plans/Profiling3.md M6). A measuring build.
+ic-stats = ["moqui-core/ic-stats"]
 # SSH and SFTP: the SFTP client of moqui_core::sftp, the built-in SSH server (SFTP, admin shell, git over SSH), and
 # the SSH cluster channel.
 ssh = ["dep:russh", "dep:russh-sftp"]

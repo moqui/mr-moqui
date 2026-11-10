@@ -431,7 +431,7 @@ pub trait SearchBackend: Send + Sync {
         mapping: &DocumentMapping,
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
-    ) -> Result<IndexMap<String, Value>, Error>;
+    ) -> Result<moqui_lib::object::ValueMap, Error>;
     /// Execute against the union of these already-authorized stores before calculating
     /// metrics. Backends must never approximate this by merging local percentiles/top-Ns.
     fn aggregate_many(
@@ -440,7 +440,7 @@ pub trait SearchBackend: Send + Sync {
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
         fresh_by: Option<std::time::Instant>,
-    ) -> Result<IndexMap<String, Value>, Error> {
+    ) -> Result<moqui_lib::object::ValueMap, Error> {
         let _ = (mappings, filter, aggs, fresh_by);
         Err(Error::new(
             "this backend does not support combined-population aggregations",
@@ -455,7 +455,7 @@ pub trait SearchBackend: Send + Sync {
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
         _fresh_by: Option<std::time::Instant>,
-    ) -> Result<IndexMap<String, Value>, Error> {
+    ) -> Result<moqui_lib::object::ValueMap, Error> {
         self.aggregate(mapping, filter, aggs)
     }
     /// Replica lag and how many reads fell back to the primary, when reads go to a replica.
@@ -809,7 +809,7 @@ impl SearchFacade {
     /// Returns an error when a document has no `_type` or `_id`, or the store write fails.
     pub fn index_documents(&self, documents: &[Document]) -> Result<usize, Error> {
         // By type, and by the time the document's data was read (`_timestamp`, set when a document is assembled).
-        let mut grouped: IndexMap<ReadGroup, Vec<(String, Document)>> = IndexMap::new();
+        let mut grouped: IndexMap<ReadGroup, Vec<(String, Document)>> = IndexMap::default();
         for doc in documents {
             let doc_type = control_text(doc, "_type").ok_or_else(|| Error::new("a document to index has no _type"))?;
             let id = control_text(doc, "_id").ok_or_else(|| Error::new(format!("a {doc_type} document has no _id")))?;
@@ -1011,7 +1011,7 @@ impl SearchFacade {
         target: &Target,
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
-    ) -> Result<IndexMap<String, Value>, Error> {
+    ) -> Result<moqui_lib::object::ValueMap, Error> {
         self.aggregate_fresh(target, filter, aggs, None)
     }
 
@@ -1026,7 +1026,7 @@ impl SearchFacade {
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
         fresh_by: Option<std::time::Instant>,
-    ) -> Result<IndexMap<String, Value>, Error> {
+    ) -> Result<moqui_lib::object::ValueMap, Error> {
         let normalized = filter.normalized()?;
         let filter = &normalized;
         let ids = self.target_documents(target)?;
@@ -1067,7 +1067,7 @@ impl SearchFacade {
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
         fresh_by: Option<std::time::Instant>,
-    ) -> Result<IndexMap<String, Value>, Error> {
+    ) -> Result<moqui_lib::object::ValueMap, Error> {
         let compiled = compile_document_terms(aggs);
         let mut result = self.backend.aggregate_fresh(mapping, filter, &compiled, fresh_by)?;
         restore_document_terms(aggs, &mut result, &mapping.document_id);
@@ -1083,7 +1083,7 @@ impl SearchFacade {
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
         fresh_by: Option<std::time::Instant>,
-    ) -> Result<Option<IndexMap<String, Value>>, Error> {
+    ) -> Result<Option<moqui_lib::object::ValueMap>, Error> {
         let facets: Vec<(&String, &agg::Terms)> = aggs
             .iter()
             .filter_map(|(name, agg)| match agg {
@@ -1114,7 +1114,7 @@ impl SearchFacade {
                 counts.push((id.clone(), total));
             }
         }
-        let mut out = IndexMap::new();
+        let mut out = IndexMap::default();
         for (name, terms) in facets {
             let mut buckets = counts.clone();
             match &terms.order {
@@ -1139,7 +1139,7 @@ impl SearchFacade {
             let list = buckets
                 .into_iter()
                 .map(|(id, count)| {
-                    let mut bucket = IndexMap::new();
+                    let mut bucket = IndexMap::default();
                     bucket.insert("key".to_string(), Value::String(id.clone()));
                     bucket.insert("key_display".to_string(), Value::String(id));
                     bucket.insert(
@@ -1149,7 +1149,7 @@ impl SearchFacade {
                     Value::Map(bucket)
                 })
                 .collect();
-            let mut result = IndexMap::new();
+            let mut result = IndexMap::default();
             result.insert("buckets".to_string(), Value::List(list));
             out.insert(name.clone(), Value::Map(result));
         }
@@ -1198,7 +1198,7 @@ fn compile_document_terms(aggs: &IndexMap<String, Agg>) -> IndexMap<String, Agg>
     compiled
 }
 
-fn restore_document_terms(aggs: &IndexMap<String, Agg>, results: &mut IndexMap<String, Value>, document_id: &str) {
+fn restore_document_terms(aggs: &IndexMap<String, Agg>, results: &mut moqui_lib::object::ValueMap, document_id: &str) {
     for (name, agg) in aggs {
         let Some(value) = results.get_mut(name) else { continue };
         if let Agg::Terms(terms) = agg {
@@ -1217,7 +1217,7 @@ fn restore_document_terms(aggs: &IndexMap<String, Agg>, results: &mut IndexMap<S
                         buckets.push(Value::Map(bucket));
                     }
                 }
-                *value = Value::Map(IndexMap::from([("buckets".into(), Value::List(buckets))]));
+                *value = Value::Map(IndexMap::from_iter([("buckets".into(), Value::List(buckets))]));
                 continue;
             }
         }
@@ -1238,8 +1238,8 @@ fn restore_document_terms(aggs: &IndexMap<String, Agg>, results: &mut IndexMap<S
 }
 
 /// Results for a store that does not exist yet: empty buckets and zero metrics.
-pub fn agg_empty_results(aggs: &IndexMap<String, Agg>) -> IndexMap<String, Value> {
-    let mut out = IndexMap::new();
+pub fn agg_empty_results(aggs: &IndexMap<String, Agg>) -> moqui_lib::object::ValueMap {
+    let mut out = IndexMap::default();
     for (name, agg) in aggs {
         out.insert(name.clone(), agg_empty(agg));
     }
@@ -1250,7 +1250,7 @@ pub fn agg_empty_results(aggs: &IndexMap<String, Agg>) -> IndexMap<String, Value
 pub fn agg_empty(agg: &Agg) -> Value {
     match agg {
         Agg::TopHits { .. } => Value::List(Vec::new()),
-        Agg::HistogramMerge { bounds } => Value::Map(IndexMap::from([
+        Agg::HistogramMerge { bounds } => Value::Map(IndexMap::from_iter([
             (
                 "bounds".into(),
                 Value::List(bounds.iter().copied().map(Value::F64).collect()),
@@ -1274,7 +1274,7 @@ pub fn agg_empty(agg: &Agg) -> Value {
             Value::Map(map)
         }
         Agg::DateHistogram(_) | Agg::Terms(_) | Agg::Histogram { .. } | Agg::NamedFilters { .. } => {
-            let mut map = IndexMap::new();
+            let mut map = IndexMap::default();
             map.insert("buckets".to_string(), Value::List(Vec::new()));
             Value::Map(map)
         }

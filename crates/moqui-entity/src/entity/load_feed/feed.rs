@@ -270,7 +270,7 @@ pub(super) fn insert_pending(
     // The transaction cache's commit batch may still be unanswered on `conn`. It is waited for before the feed's first
     // read, so a failure of it is the transaction's, passed on, never logged as the feed's and committed past. The
     // pending rows alone (a write of a document's primary entity, the configuration known) go out behind it, in their
-    // savepoint, and their one wait answers both ([`probe`] with `behind`).
+    // savepoint, and their one wait answers both ([`probe_behind`] with `behind`).
     let mut batch = Unanswered(true);
     // A frame that wrote a feed definition reads its own uncommitted rows, which no other frame may see.
     let own_definitions = aggs.keys().any(|entity_name| {
@@ -1113,8 +1113,11 @@ fn select_sql(
     })
 }
 
+/// A read in its own savepoint, which goes out behind what is unanswered (the previous probe's release): a savepoint
+/// that waited for that release was a round trip of its own for every read after the first, 20 of place#Order's 66
+/// (plans/Profiling3.md R54). A failure of an earlier statement comes out of the read, as [`earlier_failure`].
 pub(super) fn probe_query(conn: &mut dyn DbConnection, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
-    probe(conn, Vec::new(), |conn| conn.query(sql, params))
+    probe_behind(conn, Vec::new(), true, |conn| conn.query(sql, params))
 }
 
 /// A savepoint that could not be rolled back: the transaction is unusable and must not commit.
@@ -1156,18 +1159,9 @@ fn is_unusable(err: &Error) -> bool {
     false
 }
 
-/// Runs `run` inside a savepoint. A missing table gives `missing`, once the savepoint is rolled
-/// back; if that rollback fails the transaction is unusable, so that error is returned.
-fn probe<T>(
-    conn: &mut dyn DbConnection,
-    missing: T,
-    run: impl FnOnce(&mut dyn DbConnection) -> Result<T, Error>,
-) -> Result<T, Error> {
-    probe_behind(conn, missing, false, run)
-}
-
-/// [`probe`]; with `behind`, the savepoint goes out behind statements still unanswered
-/// ([`DbConnection::savepoint_behind`]). A failure of theirs then comes out of `run`, and the rollback to the savepoint
+/// Runs `run` inside a savepoint. A missing table gives `missing`, once the savepoint is rolled back; if that rollback
+/// fails the transaction is unusable, so that error is returned. With `behind`, the savepoint goes out behind
+/// statements still unanswered ([`DbConnection::savepoint_behind`]). A failure of theirs then comes out of `run`, and the rollback to the savepoint
 /// fails (the transaction failed before it was made): that is the error, naming their failure.
 fn probe_behind<T>(
     conn: &mut dyn DbConnection,

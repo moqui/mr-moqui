@@ -85,7 +85,7 @@ pub(super) fn run_sync(
     sync.update(facade)?;
 
     // The main work is in a separate transaction so it is independent of updating the status.
-    let fields: IndexMap<String, Value> = sync.fields().iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+    let fields: moqui_lib::object::ValueMap = sync.fields().iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
     let results = call_service(
         INTERNAL_RUN,
         pairs([
@@ -362,7 +362,7 @@ pub(super) fn include_list(
         .into_iter()
         .map(|(name, filters)| {
             let dependents = if with_dependents.contains(&name) { "Y" } else { "N" };
-            let mut entry = IndexMap::new();
+            let mut entry = IndexMap::default();
             entry.insert("entityName".to_string(), Value::string(&name));
             entry.insert("includeFilterList".to_string(), Value::List(filters));
             entry.insert("dependents".to_string(), Value::string(dependents));
@@ -443,7 +443,7 @@ fn non_view_entity_names(facade: &EntityFacade) -> Vec<String> {
 
 /// A remote call whose failure is a message error, as `callJsonRpc` reported one. The result is empty then.
 fn remote_or_error(
-    sync: &IndexMap<String, Value>,
+    sync: &moqui_lib::object::ValueMap,
     operation: &str,
     parameters: BTreeMap<String, Value>,
     sim: bool,
@@ -458,7 +458,7 @@ fn remote_or_error(
 }
 
 fn call_remote(
-    sync: &IndexMap<String, Value>,
+    sync: &moqui_lib::object::ValueMap,
     operation: &str,
     parameters: &BTreeMap<String, Value>,
     sim: bool,
@@ -519,7 +519,7 @@ fn call_remote(
 }
 
 /// A field of the EntitySync map, null when it is missing, so the remote service applies its default.
-fn field(sync: &IndexMap<String, Value>, name: &str) -> Value {
+fn field(sync: &moqui_lib::object::ValueMap, name: &str) -> Value {
     sync.get(name).cloned().unwrap_or(Value::Null)
 }
 

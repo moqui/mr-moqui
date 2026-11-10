@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Scorers" default-menu-index="3">
+    <transition name="storeScorer" method="post">
+        <actions><script><![CDATA[
+            if (!ec.user.hasPermission('MONITOR_EVAL')) { ec.message.addError(ec.l10n.localize('This needs the MONITOR_EVAL permission')); return }
+            if (configJson) { try { JSON.parse(configJson) } catch (e) { ec.message.addError(ec.l10n.localize('Config is not JSON')); return } }
+            const fields = {scorerName, description, scorerTypeEnumId, serviceName: serviceName || null, rubric: rubric || null, configJson: configJson || null, passThreshold: passThreshold || null}
+            const old = scorerId ? ec.entity.find('moqui.agent.AgentScorer').condition({scorerId}).disableAuthz().one() : null
+            ec.service.sync().name((old ? 'update' : 'create') + '#moqui.agent.AgentScorer').parameters(Object.assign({scorerId: scorerId || null}, fields, old ? {} : {createdDate: ec.user.nowTimestamp})).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="attachAgent" method="post">
+        <actions><script><![CDATA[
+            if (!ec.user.hasPermission('MONITOR_EVAL')) { ec.message.addError(ec.l10n.localize('This needs the MONITOR_EVAL permission')); return }
+            const rate = Number(samplingRate); if (!(rate > 0 && rate <= 1)) { ec.message.addError(ec.l10n.localize('Sampling rate is more than 0 and at most 1')); return }
+            ec.service.sync().name('create#moqui.agent.AgentScorerAttach').parameters({scorerId, agentId, samplingRate: rate, fromDate: ec.user.nowTimestamp, lastScoredDate: ec.user.nowTimestamp}).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="detach" method="post">
+        <actions><script><![CDATA[
+            if (!ec.user.hasPermission('MONITOR_EVAL')) { ec.message.addError(ec.l10n.localize('This needs the MONITOR_EVAL permission')); return }
+            ec.service.sync().name('update#moqui.agent.AgentScorerAttach').parameters({attachId, thruDate: ec.user.nowTimestamp}).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."/>
+    </transition>
+    <transition name="runs"><default-response url="../Runs"/></transition>
+    <actions>
+        <entity-find entity-name="moqui.agent.AgentScorer" list="scorerList"><order-by field-name="scorerName"/></entity-find>
+        <entity-find entity-name="moqui.basic.Enumeration" list="typeList"><econdition field-name="enumTypeId" value="AgentScorerType"/><order-by field-name="sequenceNum"/></entity-find>
+        <script><![CDATA[
+            canEdit = ec.user.hasPermission('MONITOR_EVAL')
+            const num = v => v == null ? null : v.toNumber ? v.toNumber() : Number(v)
+            const now = Date.now(), live = a => a.thruDate == null || Date.parse(String(a.thruDate)) > now
+            const names = {}; for (const s of scorerList) names[s.scorerId] = s.scorerName || s.scorerId
+            liveList = Array.from(ec.entity.find('moqui.agent.AgentScorerAttach').disableAuthz().list()).filter(a => a.agentId && live(a))
+                .map(a => Object.assign(a.getMap(), {scorerName: names[a.scorerId] || a.scorerId, rate: Math.round(num(a.samplingRate) * 100) + '%'}))
+            agentOptions = Array.from(ec.entity.find('moqui.agent.AgentDefinition').disableAuthz().list()).map(a => ({value: a.agentId, label: a.agentName || a.agentId}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="A scorer gives an output a score from 0 to 1 and says why. Service: code you write (a service with input, output, groundTruth, runId, config in and score, reason out). Judge: a model grades by the rubric, using the eval-judge feature's model when one is bound in System › LLM. Human: a person scores." type="p"/>
+        <form-list name="Scorers" list="scorerList" transition="storeScorer">
+            <field name="scorerId"><default-field title="ID"><hidden/><display/></default-field></field>
+            <field name="scorerName"><default-field title="Name"><text-line size="18"/></default-field></field>
+            <field name="scorerTypeEnumId"><default-field title="Type"><drop-down><list-options list="typeList" key="${enumId}" text="${description}"/></drop-down></default-field></field>
+            <field name="description"><default-field><text-area rows="2" cols="30"/></default-field></field>
+            <field name="serviceName"><default-field title="Service"><text-line size="30"/></default-field></field>
+            <field name="rubric"><default-field title="Rubric (judge)"><text-area rows="3" cols="40"/></default-field></field>
+            <field name="configJson"><default-field title="Config (JSON)"><text-line size="15"/></default-field></field>
+            <field name="passThreshold"><default-field title="Pass at"><text-line size="4"/></default-field></field>
+            <field name="update"><default-field title=""><submit text="Save"/></default-field></field>
+        </form-list>
+        <section name="CreateSection" condition="canEdit"><widgets>
+            <label text="New scorer" type="h6"/>
+            <form-single name="CreateScorer" transition="storeScorer">
+                <field name="scorerId"><default-field title="Scorer ID"><text-line size="20"/></default-field></field>
+                <field name="scorerName"><default-field title="Name"><text-line size="30"/></default-field></field>
+                <field name="scorerTypeEnumId"><default-field title="Type"><drop-down><list-options list="typeList" key="${enumId}" text="${description}"/></drop-down></default-field></field>
+                <field name="description"><default-field><text-line size="60"/></default-field></field>
+                <field name="serviceName"><default-field title="Service (service type)"><text-line size="60"/></default-field></field>
+                <field name="rubric"><default-field title="Rubric (judge type)"><text-area rows="4" cols="70"/></default-field></field>
+                <field name="configJson"><default-field title="Config (JSON)"><text-line size="40"/></default-field></field>
+                <field name="passThreshold"><default-field title="Pass at (0 to 1)"><text-line size="4" default-value="0.5"/></default-field></field>
+                <field name="submitButton"><default-field title=""><submit text="Add scorer"/></default-field></field>
+            </form-single>
+        </widgets></section>
+
+        <label text="Live scoring" type="h6"/>
+        <label text="A scorer attached to an agent scores that share of the agent's completed runs, chosen by run ID, every five minutes from now on. Live runs have no expected output, so use a judge, or a service scorer whose config names what to look for (Contains: {&quot;terms&quot;: [...]}, Called tool: {&quot;tools&quot;: [...]}). Judge scorers cost a model call each." type="p"/>
+        <form-list name="LiveScoring" list="liveList" skip-form="true">
+            <field name="scorerName"><default-field title="Scorer"><display/></default-field></field>
+            <field name="agentId"><default-field title="Agent"><display/></default-field></field>
+            <field name="rate"><default-field title="Sampled"><display/></default-field></field>
+            <field name="lastScoredDate"><default-field title="Read up to"><display format="yyyy-MM-dd HH:mm"/></default-field></field>
+            <field name="scores"><default-field title=""><link url="runs" text="Scores" link-type="anchor"><parameter name="agentId"/></link></default-field></field>
+            <field name="detach"><default-field title=""><link condition="canEdit" url="detach" text="Stop" link-type="hidden-form"><parameter name="attachId"/></link></default-field></field>
+        </form-list>
+        <form-single name="AttachAgent" transition="attachAgent">
+            <field name="scorerId"><default-field title="Scorer"><drop-down><list-options list="scorerList" key="${scorerId}" text="${scorerName || scorerId}"/></drop-down></default-field></field>
+            <field name="agentId"><default-field title="Agent"><drop-down><list-options list="agentOptions" key="${value}" text="${label}"/></drop-down></default-field></field>
+            <field name="samplingRate"><default-field title="Share of runs (0 to 1)"><text-line size="4" default-value="0.1"/></default-field></field>
+            <field name="submitButton"><default-field title=""><submit text="Score live runs"/></default-field></field>
+        </form-single>
+    </widgets>
+</screen>

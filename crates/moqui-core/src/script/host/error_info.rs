@@ -98,7 +98,7 @@ fn artifact_info(call: &mut Call<'_>) -> Result<Ret, HostError> {
         artifact.type_description(),
     );
     let text = format!("{kind} {name} ({action})");
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     map.insert("name".to_string(), Value::String(name));
     map.insert("actionDescription".to_string(), Value::String(action));
     map.insert("typeDescription".to_string(), Value::String(kind));

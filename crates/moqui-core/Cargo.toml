@@ -64,6 +64,9 @@ p256 = { workspace = true, optional = true, features = ["ecdh"] }
 hkdf = { workspace = true, optional = true }
 aes-gcm = { workspace = true, optional = true }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true }
+
 # Default on. The browser build (crates/moqui-browser, plans/archive/Wasm.md) turns them all off so no
 # socket, TLS (aws-lc), or blocking-HTTP code is linked. The packages (docs/Build-Test.md) pick them through moqui-host.
 # A service of a feature left out is still registered and reports that the feature is not built into this host.
@@ -85,6 +88,9 @@ xlsx = ["dep:rust_xlsxwriter", "dep:calamine"]
 # moqui_core::testing, the in-memory entity facade, and the test helpers of the crates on this one (moqui-llm,
 # moqui-git, moqui-mail).
 test-support = ["moqui-entity/test-support"]
+# The script engine's inline-cache counters (plans/Profiling3.md M6), for `script::engine_counters`. Slower: a
+# measuring build only.
+ic-stats = ["quickjs-oxide/ic-stats"]
 
 [dev-dependencies]
 # moqui_core::testing in core's own tests.

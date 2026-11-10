@@ -32,7 +32,6 @@ pub mod info;
 pub(crate) mod menu;
 pub mod overlay;
 mod pdf;
-pub(crate) mod profile;
 mod public_site;
 pub use public_site::hosts as public_site_hosts;
 mod render;
@@ -504,7 +503,7 @@ fn stamp_http_log(response: &mut WebResponse) {
         visitor_id,
         username: remote_user,
     } = user::http_log_identity();
-    let mut attributes = crate::entity::document::Document::new();
+    let mut attributes = crate::entity::document::Document::default();
     for key in ["type", "name", "action", "sub_type", "slow"] {
         if let Some(value) = web::attribute(&format!("moqui.telemetry.artifact.{key}")) {
             attributes.insert(format!("moqui.artifact.{key}"), value);

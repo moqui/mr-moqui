@@ -113,7 +113,7 @@ fn start_run(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(run_id.into())
 }
 
-fn text_option(map: &indexmap::IndexMap<String, moqui_lib::object::Value>, key: &str) -> Option<String> {
+fn text_option(map: &moqui_lib::object::ValueMap, key: &str) -> Option<String> {
     map.get(key)
         .filter(|value| !value.is_null())
         .map(moqui_lib::object::to_plain_string)
@@ -176,7 +176,7 @@ fn complete(call: &mut Call<'_>) -> Result<Ret, HostError> {
         let completion = crate::facade(&factory)
             .complete(&facade, &ask)
             .map_err(HostError::Lib)?;
-        let mut out = indexmap::IndexMap::new();
+        let mut out = indexmap::IndexMap::default();
         let count = |value: u64| moqui_lib::object::Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
         out.insert("text".to_string(), moqui_lib::object::Value::String(completion.text));
         out.insert(

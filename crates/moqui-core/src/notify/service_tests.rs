@@ -225,7 +225,7 @@ fn a_user_lists_decides_and_marks_only_their_own_notifications() {
     }
     login("bob");
     let approve_one = notify("Approve", "alice", "Approve PO1", |note| {
-        let mut message = IndexMap::new();
+        let mut message = IndexMap::default();
         message.insert("amount".to_string(), Value::I64(40));
         note.record("moqui.test.Order", "PO1")
             .message_map(message)
@@ -233,7 +233,7 @@ fn a_user_lists_decides_and_marks_only_their_own_notifications() {
             .app_name("Purchasing");
     });
     let approve_big = notify("Approve", "alice", "Approve PO2", |note| {
-        let mut message = IndexMap::new();
+        let mut message = IndexMap::default();
         message.insert("amount".to_string(), Value::I64(400));
         note.record("moqui.test.Order", "PO2")
             .message_map(message)

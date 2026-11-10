@@ -24,6 +24,7 @@ mod exponential;
 pub mod ingest;
 pub mod maintenance;
 pub mod operation;
+pub(crate) mod profile;
 #[cfg(feature = "http")]
 pub mod otlp;
 pub mod received;
@@ -83,6 +84,8 @@ const MAX_TRACES: usize = 1024;
 const MAX_TRACE_SPANS: usize = 512;
 const MAX_DECISIONS: usize = 4096;
 const MAX_SERIES: usize = 20_000;
+/// The shards of the artifacts' running statistics; each holds at most its share of [`MAX_SERIES`].
+const SLOW_SHARDS: usize = 16;
 
 /// A W3C context that can cross worker and async boundaries without an SDK or a thread guard.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -672,7 +675,9 @@ struct Shared {
     drained: AtomicBool,
     warned_legacy: AtomicBool,
     gauges_registered: AtomicBool,
-    slow: Mutex<HashMap<u64, RunningStats>>,
+    /// The running statistics of each artifact, in shards by its key so threads popping different artifacts do not
+    /// wait on one lock (plans/Profiling3.md W6).
+    slow: [Mutex<HashMap<u64, RunningStats>>; SLOW_SHARDS],
     /// Running totals of received metrics, for `/metrics`.
     received: Mutex<received::Received>,
     operations: operation::Registry,
@@ -701,7 +706,7 @@ impl Telemetry {
             drained: AtomicBool::new(false),
             warned_legacy: AtomicBool::new(false),
             gauges_registered: AtomicBool::new(false),
-            slow: Mutex::default(),
+            slow: Default::default(),
             received: Mutex::default(),
             operations: operation::Registry::default(),
         });
@@ -927,6 +932,17 @@ impl Telemetry {
 
     /// One run of an operation: `moqui.operation.runs`, and `moqui.operation.duration` for a run that ended.
     pub fn record_operation(&self, name: &str, outcome: operation::Outcome, seconds: Option<f64>) {
+        #[cfg(feature = "telemetry")]
+        if self.shared.config.enabled && !is_suppressed() {
+            if let Some(sdk) = &self.sdk {
+                let key = {
+                    use std::hash::BuildHasher;
+                    foldhash::fast::FixedState::default().hash_one((name, outcome.as_str()))
+                };
+                sdk.record_operation(key, seconds, || operation::attributes(name, outcome));
+                return;
+            }
+        }
         if let Some(seconds) = seconds {
             self.record_duration(
                 "moqui.operation.duration",
@@ -1072,15 +1088,16 @@ impl Telemetry {
             (false, false) => return false,
             enabled => enabled,
         };
-        // A fixed hash of the parts keys the running statistics, so a frame allocates no key.
+        // A fixed hash of the parts keys the running statistics, so a frame allocates no key; foldhash, as SipHash of
+        // the parts twice a pop showed (plans/Profiling3.md W6).
         let key = {
             use std::hash::BuildHasher;
-            std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
-                .hash_one((kind, name, action))
+            foldhash::fast::FixedState::default().hash_one((kind, name, action))
         };
         let slow = {
-            let mut stats = lock(&self.shared.slow);
-            if stats.len() >= MAX_SERIES && !stats.contains_key(&key) {
+            let shard = usize::try_from(key % SLOW_SHARDS as u64).unwrap_or(0);
+            let mut stats = lock(&self.shared.slow[shard]);
+            if stats.len() >= MAX_SERIES / SLOW_SHARDS && !stats.contains_key(&key) {
                 false
             } else {
                 stats.entry(key).or_default().record(seconds)
@@ -1092,11 +1109,10 @@ impl Telemetry {
                 // The attribute set is made once per artifact and kept: the key covers the sub type too.
                 let attributes_key = {
                     use std::hash::BuildHasher;
-                    std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
-                        .hash_one((kind, name, action, sub_type))
+                    foldhash::fast::FixedState::default().hash_one((key, sub_type))
                 };
                 sdk.record_artifact(attributes_key, seconds, slow, || {
-                    let mut attributes = Document::new();
+                    let mut attributes = Document::default();
                     attributes.insert("moqui.artifact.type".into(), Value::string(kind));
                     attributes.insert("moqui.artifact.name".into(), Value::string(name));
                     attributes.insert("moqui.artifact.action".into(), Value::string(action));
@@ -1312,7 +1328,7 @@ impl Shared {
         let resource = lock(&self.resource);
         let mut attributes = match document.get("resource") {
             Some(Value::Map(attributes)) => attributes.clone(),
-            _ => Document::new(),
+            _ => Document::default(),
         };
         for (key, value) in [
             ("service.name", &resource.service_name),
@@ -1428,7 +1444,7 @@ impl LogRecord {
             severity_text: severity_text.into(),
             body: body.into(),
             scope_name: String::new(),
-            attributes: Document::new(),
+            attributes: Document::default(),
             context: capture(),
         }
     }
@@ -1946,7 +1962,7 @@ fn error_document(span: &Document) -> Document {
         text(span, "body")
     };
     let stack = text(span, "exception.stacktrace");
-    let mut document = Document::new();
+    let mut document = Document::default();
     use sha2::{Digest, Sha256};
     let fingerprint = error_fingerprint(&kind, &message, &stack);
     document.insert(

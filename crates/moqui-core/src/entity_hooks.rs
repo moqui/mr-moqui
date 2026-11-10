@@ -167,7 +167,7 @@ impl TransactionTrace for TxTrace {
     fn finish(mut self: Box<Self>, committed: bool, attributes: Vec<(&'static str, Value)>) {
         let outcome = if committed { "commit" } else { "rollback" };
         if self.metrics {
-            let mut metric = crate::entity::document::Document::new();
+            let mut metric = crate::entity::document::Document::default();
             metric.insert("outcome".into(), Value::string(outcome));
             if let Some((_, mode)) = attributes.iter().find(|(name, _)| *name == "moqui.transaction.cache") {
                 metric.insert("moqui.transaction.cache".into(), mode.clone());
@@ -223,7 +223,7 @@ fn trace_statement(sql: &str) -> Option<Box<dyn StatementTrace>> {
 
 impl StatementTrace for SqlTrace {
     fn finish(mut self: Box<Self>, error: Option<&str>) {
-        let mut attributes = crate::entity::document::Document::new();
+        let mut attributes = crate::entity::document::Document::default();
         if let Some(system) = &self.system {
             attributes.insert("db.system.name".into(), Value::string(&**system));
         }

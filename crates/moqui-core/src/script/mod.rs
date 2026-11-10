@@ -32,7 +32,9 @@ pub use run::ReleaseScope;
 
 pub(crate) use actions::run_actions_at;
 pub(crate) use actions::{is_empty_value, is_groovy_false};
-pub use actions::{check_actions, eval_condition_element, eval_condition_group, generated_source, run_actions};
+pub use actions::{
+    check_actions, eval_condition_element, eval_condition_group, generated_source, run_actions, PreparedActions,
+};
 pub(crate) use bounded::BoundedMap;
 pub(crate) use parse::check_program;
 pub use parse::parse_js;
@@ -40,7 +42,7 @@ pub use runtime::{forget_scripts, oxide_heap_line};
 #[cfg(test)]
 pub(crate) use runtime::script_time_remaining;
 pub use runtime::{
-    clear_context_stack, context_value, engine_memory, eval_field_value, eval_map, eval_value, expand,
+    clear_context_stack, context_value, engine_counters, engine_memory, eval_field_value, eval_map, eval_value, expand,
     push_context_frame, release_idle_runtime, run_script, run_script_location, script_list_values, set_context_name,
     set_widget_wrap,
     take_context_value, top_context_entries,

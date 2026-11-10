@@ -44,7 +44,7 @@ const DOCUMENT_REL_ALIAS: &str = "moqui.entity.document.DataDocumentRelAlias";
 const DOCUMENT_CONDITION: &str = "moqui.entity.document.DataDocumentCondition";
 
 /// A document as a nested map, control fields first.
-pub type Document = IndexMap<String, Value>;
+pub type Document = moqui_lib::object::ValueMap;
 
 /// One `DataDocument` definition, resolved against the entity model.
 #[derive(Clone, Debug)]
@@ -1005,7 +1005,7 @@ impl<'a> DocMerger<'a> {
         self.rows += 1;
         let stamp_text = &self.stamp_text;
         let (doc, index) = self.docs.entry(key).or_insert_with(|| {
-            let mut doc = Document::new();
+            let mut doc = Document::default();
             doc.insert("_type".to_string(), Value::string(&info.data_document_id));
             if !id.is_empty() {
                 doc.insert("_id".to_string(), Value::string(&id));
@@ -1141,7 +1141,7 @@ fn populate_related(node: &FieldNode, row: &BTreeMap<String, Value>, target: &mu
                 continue;
             }
         }
-        let mut child = Document::new();
+        let mut child = Document::default();
         let mut child_index = ChildIndex::default();
         set_fields(&rel.node, row, &mut child);
         populate_related(&rel.node, row, &mut child, &mut child_index);

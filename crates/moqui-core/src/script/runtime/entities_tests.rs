@@ -601,7 +601,7 @@ fn the_entity_members_keep_their_names_and_lengths() {
     let got = crate::script::eval_value(probe).unwrap();
     let expected = [
         "checkTables/1 clearEntityDefinitionFromCache/0 clearQueryStats/0 \
-         createAllAutoReverseManyRelationships/0 find/1 formatFieldString/3 getAllEntitiesInfo/0 \
+         createAllAutoReverseManyRelationships/0 find/1 findOneXml/5 formatFieldString/3 getAllEntitiesInfo/0 \
          getAllEntityInfo/0 getAllEntityNames/0 getAllEntityNamesWithMaster/0 getAllEntityRelatedFields/3 \
          getDataDocuments/1 getDatabaseConfName/1 getDatasourceGroupNames/0 getEecaRuleCount/0 \
          getEntityDataDocument/0 getEntityDefinition/1 getQueryStatsList/0 getValueListFromPlainMap/2 \

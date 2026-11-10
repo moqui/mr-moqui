@@ -382,6 +382,7 @@ impl TransactionManager {
             let fired = Arc::new(AtomicBool::new(false));
             let deadline_token = NEXT_DEADLINE.fetch_add(1, Ordering::Relaxed);
             register_deadline(deadline_token, deadline, Arc::clone(&fired));
+            super::shapes::begin(deadline_token);
             frames.push(Frame {
                 join_depth: 0,
                 deadline,
@@ -948,7 +949,15 @@ impl TransactionManager {
         // The census has one line for the transaction: its holding member's frame, else this manager's.
         let census = self.tx_cache_everywhere() || crate::entity::cache::census_measures();
         let mut census_line: Option<CensusLine> = None;
+        // the statement shapes of every member's frame (plans/Profiling3.md M2)
+        let mut shapes: Option<super::shapes::Log> = None;
         for (member, mut phase, committed) in ended {
+            if let Some(log) = super::shapes::end(phase.token) {
+                match &mut shapes {
+                    Some(kept) => kept.merge(log),
+                    None => shapes = Some(log),
+                }
+            }
             if let Some(line) = end_trace(&mut phase, committed, census) {
                 let kept_held = census_line.as_ref().is_some_and(|kept| kept.stats.is_some());
                 if census_line.is_none() || (!kept_held && (line.stats.is_some() || member.shares_stack(self))) {
@@ -968,6 +977,7 @@ impl TransactionManager {
                 line.committed,
                 line.round_trips,
                 line.micros,
+                &super::shapes::census_members(shapes.as_ref()),
             );
         }
         for member in resumes {

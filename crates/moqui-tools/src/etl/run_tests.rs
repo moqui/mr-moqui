@@ -19,7 +19,6 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use indexmap::IndexMap;
 use moqui_lib::etl::SharedHeaders;
 use moqui_lib::object::{to_plain_string, Value};
 
@@ -43,7 +42,7 @@ fn setup() -> (ExecutionContext, EntityFacade) {
     (ctx, facade)
 }
 
-fn map(pairs: &[(&str, Value)]) -> IndexMap<String, Value> {
+fn map(pairs: &[(&str, Value)]) -> moqui_lib::object::ValueMap {
     pairs.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()
 }
 

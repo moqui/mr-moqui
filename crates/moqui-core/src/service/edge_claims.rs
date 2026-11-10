@@ -153,7 +153,7 @@ fn get_replica_conflicts(parameters: &BTreeMap<String, Value>, facade: &EntityFa
         .into_iter()
         .map(|conflict| {
             let label = ClaimKind::from_id(&conflict.claim_kind).map_or("item", ClaimKind::label);
-            let mut row = indexmap::IndexMap::new();
+            let mut row = indexmap::IndexMap::default();
             row.insert("pairedNodeId".to_string(), Value::string(&conflict.paired_node_id));
             row.insert("setName".to_string(), Value::string(&conflict.set_name));
             row.insert("entityName".to_string(), Value::string(&conflict.entity_name));

@@ -108,7 +108,7 @@ pub struct PlanStatement {
 
 impl PlanStatement {
     pub(crate) fn to_value(&self) -> Value {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("statementSeqId".to_string(), Value::string(&self.statement_seq_id));
         map.insert("statementText".to_string(), Value::string(&self.statement_text));
         map.insert(

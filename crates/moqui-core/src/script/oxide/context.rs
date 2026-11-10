@@ -112,8 +112,8 @@ impl ExoticClass for ContextStack {
         let Some(name) = name_of(key) else {
             return Ok(Hook::Handled(true));
         };
-        guarded_hook(scope, |_| {
-            super::tracked::forget(&name)?;
+        guarded_hook(scope, |scope| {
+            super::tracked::forget(scope, &name)?;
             STACK.with(|stack| {
                 stack.borrow_mut().remove(&name);
             });

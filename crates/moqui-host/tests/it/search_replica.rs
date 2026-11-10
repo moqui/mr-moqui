@@ -173,7 +173,7 @@ fn note_mapping() -> DocumentMapping {
 }
 
 fn note(id: &str, text: &str) -> (String, moqui_core::entity::document::Document) {
-    let mut body = moqui_core::entity::document::Document::new();
+    let mut body = moqui_core::entity::document::Document::default();
     body.insert("noteId".into(), Value::string(id));
     body.insert("noteText".into(), Value::string(text));
     (id.to_string(), body)

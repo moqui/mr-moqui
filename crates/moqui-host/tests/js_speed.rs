@@ -169,6 +169,10 @@ fn script_speed() {
     if wanted("cold") {
         cold(&factory, &root, &sizes);
     }
+    // opt-in: only when JS_SPEED_ONLY names it (plans/Profiling3.md M4)
+    if only.split(',').any(|one| one.trim() == "threads") {
+        threads(&factory, &root, &sizes);
+    }
 
     drop(telemetry_measurement);
     drop(factory);
@@ -209,6 +213,11 @@ fn section(label: &str, sizes: &Sizes, calls: usize, body: impl Fn(&mut Rows, us
         body(&mut rows, calls);
     }
     rows.print();
+    // the collector's counts and, in an `ic-stats` build, the inline caches (plans/Profiling3.md M6)
+    let counters = script::engine_counters(8);
+    if !counters.is_empty() {
+        println!("\n{}", counters.trim_end().replace('\n', "\n  ").replace("gc:", "  gc:"));
+    }
 }
 
 /// The names the expressions, scripts and templates read.
@@ -516,6 +525,25 @@ fn services(rows: &mut Rows, calls: usize) {
         &[("textIn1", Value::string("foo"))],
     );
     run(rows, "find#Cached (10 cached finds)", &name("find#Cached"), &[]);
+    // rows the size of the work (plans/Profiling3.md M3)
+    run(
+        rows,
+        "body#Large (a 5 KB body, three sets run)",
+        &name("body#Large"),
+        &[("textIn1", Value::string("foo"))],
+    );
+    run(
+        rows,
+        "call#Context (30 names, a 50-map list, 10 calls in-map context)",
+        &name("call#Context"),
+        &[("textIn1", Value::string("foo"))],
+    );
+    run(
+        rows,
+        "loop#Calls (20 service-calls in an iterate)",
+        &name("loop#Calls"),
+        &[("textIn1", Value::string("foo"))],
+    );
 }
 
 fn templates(rows: &mut Rows, calls: usize, source: &str) {
@@ -560,6 +588,88 @@ fn screens(rows: &mut Rows, calls: usize, factory: &Arc<ExecutionContextFactory>
             }
         });
     }
+}
+
+/// The per-call paths on several threads at once (plans/Profiling3.md M4): `JS_SPEED_THREADS` (default
+/// `1,2,4,8,16`) thread counts, each thread with its own entered context and script runtime. The time is the slowest
+/// thread's, so a row that scales keeps its us/call falling as the count doubles.
+fn threads(factory: &Arc<ExecutionContextFactory>, root: &str, sizes: &Sizes) {
+    let counts: Vec<usize> = std::env::var("JS_SPEED_THREADS")
+        .unwrap_or_else(|_| "1,2,4,8,16".to_string())
+        .split(',')
+        .filter_map(|count| count.trim().parse().ok())
+        .collect();
+    println!(
+        "\n== threads ({} at once; us/call is the run's time over all their calls)",
+        counts.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+    );
+    let noop = format!("{SERVICES}.noop#Inline");
+    let noop_parameters: BTreeMap<String, Value> = [("textIn1".to_string(), Value::string("foo"))].into();
+    let cached_find = r#"<actions><entity-find-one entity-name="moqui.basic.Enumeration" value-field="found" cache="true">
+            <field-map field-name="enumId" value="_NA_"/></entity-find-one></actions>"#;
+    let db_find = r#"ec.entity.find("moqui.basic.Enumeration").condition("enumId", "_NA_").useCache(false).one()"#;
+    let list_parameters: BTreeMap<String, Value> = [("rowCount".to_string(), Value::string("20"))].into();
+    let entered = |body: &dyn Fn()| {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        body();
+    };
+    let mut rows = Rows {
+        js: true,
+        ..Rows::default()
+    };
+    for batch in 0..=sizes.batches {
+        rows.record = batch > 0;
+        if batch > 0 {
+            eprintln!("  threads: batch {batch}/{}", sizes.batches);
+        }
+        let services = if batch == 0 { WARMUP } else { sizes.services };
+        let screens = if batch == 0 { WARMUP.min(sizes.screens) } else { sizes.screens };
+        for &count in &counts {
+            let label = format!("{count} threads: noop#Inline");
+            if row_wanted(&label) {
+                rows.run_threads(&label, count, services, |_| {
+                    entered(&|| {
+                        for _ in 0..services {
+                            black_box(moqui_core::service::sync(&noop, &noop_parameters).expect("noop"));
+                        }
+                    });
+                });
+            }
+            let label = format!("{count} threads: entity-find-one from actions, cached");
+            if row_wanted(&label) {
+                rows.run_threads(&label, count, services, |_| {
+                    entered(&|| {
+                        for _ in 0..services {
+                            script::run_actions(cached_find).expect("cached find");
+                        }
+                    });
+                });
+            }
+            let label = format!("{count} threads: find from a script, database");
+            if row_wanted(&label) {
+                rows.run_threads(&label, count, services, |_| {
+                    entered(&|| {
+                        for _ in 0..services {
+                            black_box(script::eval_value(db_find).expect("database find"));
+                        }
+                    });
+                });
+            }
+            let label = format!("{count} threads: List, html, 20 rows");
+            if row_wanted(&label) {
+                rows.run_threads(&label, count, screens, |_| {
+                    entered(&|| {
+                        for _ in 0..screens {
+                            black_box(render(factory, root, "/List", "html", &list_parameters));
+                        }
+                    });
+                });
+            }
+        }
+    }
+    rows.print();
 }
 
 fn render(

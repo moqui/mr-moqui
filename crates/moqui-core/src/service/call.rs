@@ -486,6 +486,7 @@ fn sync_input(
     let Some(def) = def else {
         return Err(Error::new(format!("Service {name} not found")));
     };
+    let _profile = crate::telemetry::profile::operation(&def.name);
     super::coverage::record(&def.name);
     // Java's `currentParameters`: what a pre-validate rule sets is what is validated.
     // the credentials of the call as given, before a rule changes them (they log in after validation)
@@ -571,7 +572,7 @@ fn sync_input(
         ServiceDef::semaphore_entity().to_string()
     };
     let tx = facade.transactions_for(&entity_name)?;
-    let attribute = options.attribute(def.transaction);
+    let attribute = options.attribute(base_transaction(&def, options));
     // A call that begins its own transaction is a business operation: the frame's hooks tell its outcome.
     let mut operation = crate::telemetry::current().and_then(|telemetry| {
         let operation = telemetry.operation(&def.name, def.operation.as_deref(), def.operation_ref.as_deref())?;
@@ -668,6 +669,24 @@ fn sync_input(
     }
     post?;
     Ok(project(&def, produced))
+}
+
+/// The transaction a call of `def` begins, before the call's own options: the definition's, or, with the
+/// `service_tx_cache` property on, `cache` for a service whose definition and call say nothing of the transaction or
+/// its cache (plans/Profiling3.md S1, D3). A transaction a call joins keeps its own mode either way.
+fn base_transaction(def: &ServiceDef, options: &CallOptions) -> TransactionAttribute {
+    static DEFAULT_CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let default_cache =
+        *DEFAULT_CACHE.get_or_init(|| moqui_lib::env::get_prop_or_env("service_tx_cache") == "true");
+    if default_cache
+        && !def.transaction_declared
+        && !def.no_tx_cache
+        && options.use_transaction_cache.is_none()
+        && def.kind != ServiceKind::EntityAuto
+    {
+        return TransactionAttribute::Cache;
+    }
+    def.transaction
 }
 
 /// A business operation in progress (plans/Monitoring.md, Later: Business operations).
@@ -1137,6 +1156,32 @@ pub(crate) fn service_authenticate(name: &str) -> Option<super::define::Authenti
 
 /// The in-parameter names of a defined service, in definition order, with `auto-parameters` expanded. None when no
 /// service has that name.
+/// For a call whose in-map is the whole context (`parameters(ec.context)`): the declared in-parameters, when they are
+/// all the call can use, so only they are read from the stack instead of every name the caller sees
+/// (plans/Profiling3.md W2). That holds when the service validates its input (`clean` keeps only the declared names), has no pre-validate
+/// rule (which sees the input before), and is not entity-auto (which keeps a field's change reason). None otherwise:
+/// the whole context then. The credentials and the operation retry flag a call reads are read too.
+pub(crate) fn context_in_params(name: &str) -> Option<Arc<[super::define::ParamDef]>> {
+    let name = canonical(name);
+    let facade = current_facade();
+    if crate::edge::delegate::listed(&name).is_some() {
+        return None;
+    }
+    let def = resolve(&name, facade.as_ref()).ok()?;
+    if !def.validate_input || def.kind == ServiceKind::EntityAuto || super::seca::has_rules(&def.name, "pre-validate") {
+        return None;
+    }
+    validate::declared_in(&def, facade.as_ref()).ok()
+}
+
+/// What a call reads from its input besides its declared in-parameters ([`context_in_params`]).
+pub(crate) const CALL_INPUT_NAMES: [&str; 4] = [
+    "authUsername",
+    "authPassword",
+    "authUserAccount",
+    crate::telemetry::operation::RETRY_PARAMETER,
+];
+
 pub(crate) fn service_in_parameter_names(name: &str) -> Option<Vec<String>> {
     let form = service_form_info(name)?;
     Some(form.in_params.into_iter().map(|parameter| parameter.name).collect())
@@ -1382,7 +1427,9 @@ fn run_inline(def: &ServiceDef, parameters: &BTreeMap<String, Value>) -> Result<
         crate::script::set_context_name(name, value.clone()).map_err(script_err)?;
     }
     if !def.actions.trim().is_empty() {
-        crate::script::run_actions_at(&def.actions, def.action_source.as_ref()).map_err(|err| in_service(def, err))?;
+        def.actions_prepared
+            .run(&def.actions, def.action_source.as_ref())
+            .map_err(|err| in_service(def, err))?;
     }
     Ok(collect_outputs(def))
 }
@@ -1475,7 +1522,7 @@ fn run_entity(
     }
     // The audit row of a field reads `{field}_changeReason` from the context (`field_rw::insert_audit`, as Java), so the
     // reasons passed to the service are in a frame of their own while the record is written (Commerce F63).
-    let reasons: indexmap::IndexMap<String, Value> = parameters
+    let reasons: moqui_lib::object::ValueMap = parameters
         .iter()
         .filter(|(key, value)| key.ends_with(super::validate::CHANGE_REASON) && !is_empty(value))
         .map(|(key, value)| (key.clone(), value.clone()))

@@ -980,10 +980,10 @@ fn a_rendered_form_list_counts_its_rows_on_the_shared_map() {
     assert!(!crate::script::eval_condition("_formListRendered").unwrap());
     assert!(crate::script::eval_condition("ec.context.sharedMap._formListRendered").unwrap());
     let send = "attachmentInfo != null && (screenScheduled.noResultsAbort != 'Y' || !ec.context.sharedMap._formListRendered || ec.context.sharedMap._formListResultCount)";
-    let mut scheduled = IndexMap::new();
+    let mut scheduled = IndexMap::default();
     scheduled.insert("noResultsAbort".into(), Value::string("Y"));
     crate::script::set_context_name("screenScheduled", Value::Map(scheduled)).unwrap();
-    crate::script::set_context_name("attachmentInfo", Value::Map(IndexMap::new())).unwrap();
+    crate::script::set_context_name("attachmentInfo", Value::Map(IndexMap::default())).unwrap();
     assert!(crate::script::eval_condition(send).unwrap(), "a count of 6 still sends");
     ctx.shared_map().insert("_formListResultCount".into(), Value::I64(0));
     assert!(!crate::script::eval_condition(send).unwrap(), "a count of 0 aborts");
@@ -993,7 +993,7 @@ fn a_rendered_form_list_counts_its_rows_on_the_shared_map() {
         "no rendered flag does not abort"
     );
     ctx.shared_map().insert("_formListRendered".into(), Value::Bool(true));
-    let mut allow = IndexMap::new();
+    let mut allow = IndexMap::default();
     allow.insert("noResultsAbort".into(), Value::string("N"));
     crate::script::set_context_name("screenScheduled", Value::Map(allow)).unwrap();
     assert!(
@@ -1844,7 +1844,7 @@ fn a_form_list_reads_a_context_list_with_its_value_types() {
     </widgets></screen>"#,
     )
     .unwrap();
-    let mut row = IndexMap::new();
+    let mut row = IndexMap::default();
     let world = World::open("");
     let ctx = world.factory.new_context();
     let _entered = ctx.enter();
@@ -1857,7 +1857,7 @@ fn a_form_list_reads_a_context_list_with_its_value_types() {
     row.insert("count".to_string(), Value::I64(7));
     let rows = Value::List(vec![Value::Map(row)]);
     crate::script::set_context_name("typedRows", rows.clone()).unwrap();
-    let mut holder = IndexMap::new();
+    let mut holder = IndexMap::default();
     holder.insert("rows".to_string(), rows);
     crate::script::set_context_name("holder", Value::Map(holder)).unwrap();
     let page = crate::screen::make_render(&world.factory)

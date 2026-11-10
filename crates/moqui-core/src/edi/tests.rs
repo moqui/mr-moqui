@@ -303,9 +303,9 @@ fn edifact_separators_from_una_and_release_character() {
     let mut generator = EdiHandler::new();
     generator.set_edifact_default_chars();
     generator.segment_suffix = None;
-    let mut segment = EdiMap::new();
+    let mut segment = EdiMap::default();
     segment.insert("elements".to_string(), Value::List(vec![s("FTX"), s("a+b:c'd?")]));
-    let mut message = EdiMap::new();
+    let mut message = EdiMap::default();
     message.insert("FTX".to_string(), Value::List(vec![Value::Map(segment)]));
     assert_eq!(generator.generate_text(&message).unwrap(), "FTX+a?+b?:c?'d??'");
 }
@@ -322,7 +322,7 @@ fn parse_needs_an_envelope_and_segments() {
         .unwrap_err()
         .message()
         .contains("No segments found"));
-    assert!(EdiHandler::new().generate_text(&EdiMap::new()).is_err());
+    assert!(EdiHandler::default().generate_text(&EdiMap::default()).is_err());
     assert_eq!(java_split("a~b?~c~~", '~', '?'), vec!["a", "b?~c"]);
     assert_eq!(java_split("~a", '~', '?'), vec!["", "a"]);
     assert_eq!(java_split("", '~', '?'), vec![""]);

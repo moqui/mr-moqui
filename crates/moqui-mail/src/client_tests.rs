@@ -153,7 +153,7 @@ fn out_number(out: &BTreeMap<String, Value>, key: &str) -> i64 {
         .unwrap_or(-1)
 }
 
-fn maps(out: &BTreeMap<String, Value>, key: &str) -> Vec<IndexMap<String, Value>> {
+fn maps(out: &BTreeMap<String, Value>, key: &str) -> Vec<moqui_lib::object::ValueMap> {
     match out.get(key) {
         Some(Value::List(items)) => items
             .iter()
@@ -166,7 +166,7 @@ fn maps(out: &BTreeMap<String, Value>, key: &str) -> Vec<IndexMap<String, Value>
     }
 }
 
-fn field(map: &IndexMap<String, Value>, key: &str) -> String {
+fn field(map: &moqui_lib::object::ValueMap, key: &str) -> String {
     map.get(key).map(to_plain_string).unwrap_or_default()
 }
 
@@ -1052,7 +1052,7 @@ fn drafts_send_now_scheduled_held_and_failed() {
     // a file the caller names is the draft's own or one of this account's mail files; anything else is refused, the
     // test's own files here, another account's and a path out of the account's folder
     let file = |location: &str| {
-        Value::List(vec![Value::Map(IndexMap::from([(
+        Value::List(vec![Value::Map(IndexMap::from_iter([(
             "attachmentLocation".to_string(),
             text(location),
         )]))])
@@ -1101,12 +1101,12 @@ fn drafts_send_now_scheduled_held_and_failed() {
                 (
                     "attachmentList",
                     Value::List(vec![
-                        Value::Map(IndexMap::from([
+                        Value::Map(IndexMap::from_iter([
                             ("attachmentLocation".to_string(), text(&note)),
                             ("contentType".to_string(), text("text/plain")),
                             ("fileSize".to_string(), Value::I64(13)),
                         ])),
-                        Value::Map(IndexMap::from([
+                        Value::Map(IndexMap::from_iter([
                             ("attachmentLocation".to_string(), text(&logo)),
                             ("contentType".to_string(), text("image/png")),
                             ("contentId".to_string(), text("<logo@example.com>")),
@@ -2748,8 +2748,8 @@ impl moqui_core::search::SearchBackend for MailIndexBackend {
         _mapping: &moqui_core::search::DocumentMapping,
         _filter: &moqui_core::search::Query,
         _aggs: &IndexMap<String, moqui_core::search::Agg>,
-    ) -> Result<IndexMap<String, Value>, moqui_lib::error::Error> {
-        Ok(IndexMap::new())
+    ) -> Result<moqui_lib::object::ValueMap, moqui_lib::error::Error> {
+        Ok(IndexMap::default())
     }
     fn drop_index(&self, _mapping: &moqui_core::search::DocumentMapping) -> Result<(), moqui_lib::error::Error> {
         Ok(())

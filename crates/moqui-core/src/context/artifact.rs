@@ -114,6 +114,7 @@ impl ArtifactStack {
         info: AuthInfo,
         errors: ErrorsAtPush,
     ) {
+        crate::telemetry::profile::count_artifact(artifact_type, action);
         let artifact_type = known(artifact_type);
         let name = name.to_string();
         let action = known(action);

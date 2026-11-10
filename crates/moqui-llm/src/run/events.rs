@@ -403,9 +403,9 @@ fn write_events(
 pub(crate) fn send_signal(factory: &Weak<ExecutionContextFactory>, user_id: &str, payload: &Json) {
     let message = match moqui_lib::json::from_json(payload) {
         Value::Map(map) => map,
-        _ => indexmap::IndexMap::new(),
+        _ => indexmap::IndexMap::default(),
     };
-    let send = |message: indexmap::IndexMap<String, Value>| {
+    let send = |message: moqui_lib::object::ValueMap| {
         moqui_core::notify::NotificationMessage::new()
             .topic(SIGNAL_TOPIC)
             .user_id(user_id)

@@ -560,7 +560,7 @@ fn run(call: &Call, client: &Client, file: Option<UploadFile>) -> Result<Outcome
         "input".to_string(),
         match from_json(&call.input) {
             map @ Value::Map(_) => map,
-            _ => Value::Map(indexmap::IndexMap::new()),
+            _ => Value::Map(indexmap::IndexMap::default()),
         },
     );
     parameters.insert("delegation".to_string(), text(&call.delegation));

@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Agent evals: scorers, datasets, experiments and their scores. An experiment runs each item of a dataset through an
+    agent (as an AgentRun) or a service, then scores each output with the scorers attached to the dataset. Live scoring
+    scores a sample of an agent's finished runs. Services: org.moqui.agent.AgentEvalServices; screens: Monitor › Evals. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+    <entity entity-name="AgentScorer" package="moqui.agent" use="configuration" cache="never">
+        <description>A way to score an output from 0 to 1. A service scorer calls serviceName with input, output,
+            groundTruth, runId and config (configJson) and reads score and reason. A judge scorer asks a model (the
+            eval-judge feature) with rubric as its instructions. A human scorer is scored by a person on a run.
+            passThreshold is the lowest score that passes (0.5 when empty).</description>
+        <field name="scorerId" type="id" is-pk="true"/>
+        <field name="scorerName" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="scorerTypeEnumId" type="id"/>
+        <field name="serviceName" type="text-medium"/>
+        <field name="rubric" type="text-very-long"/>
+        <field name="configJson" type="text-long"/>
+        <field name="passThreshold" type="number-decimal"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" title="AgentScorerType" related="moqui.basic.Enumeration" short-alias="scorerType">
+            <key-map field-name="scorerTypeEnumId"/></relationship>
+    </entity>
+    <entity entity-name="AgentScorerAttach" package="moqui.agent" use="configuration" cache="never">
+        <description>A scorer attached to a dataset (it scores each experiment result) or to an agent (live scoring of a
+            samplingRate share, 0 to 1, of the agent's finished runs). lastScoredDate is the end date of the newest run live
+            scoring has looked at.</description>
+        <field name="attachId" type="id" is-pk="true"/>
+        <field name="scorerId" type="id"/>
+        <field name="datasetId" type="id"/>
+        <field name="agentId" type="id"/>
+        <field name="samplingRate" type="number-decimal"/>
+        <field name="lastScoredDate" type="date-time"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+        <relationship type="one" related="moqui.agent.AgentScorer" short-alias="scorer"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentDataset" short-alias="dataset"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentDefinition" short-alias="agent"/>
+        <index name="AGENT_SCATT_DS"><index-field name="datasetId"/></index>
+        <index name="AGENT_SCATT_AGENT"><index-field name="agentId"/></index>
+    </entity>
+    <entity entity-name="AgentDataset" package="moqui.agent" use="configuration" cache="never">
+        <description>Test cases for an agent. versionNum goes up with each change to its items; an experiment records the
+            version it ran, and the items of a version are those with fromVersion at or below it and thruVersion above it
+            or empty. agentId is the agent an experiment runs by default.</description>
+        <field name="datasetId" type="id" is-pk="true"/>
+        <field name="datasetName" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="agentId" type="id"/>
+        <field name="versionNum" type="number-integer"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentDefinition" short-alias="agent"/>
+    </entity>
+    <entity entity-name="AgentDatasetItem" package="moqui.agent" use="configuration" cache="never">
+        <description>One case: the input sent to the target, the expected output or facts a scorer compares with
+            (groundTruth), and metadata (JSON, such as tags). sourceRunId is the run it was saved from. A change ends the
+            item (thruVersion) and adds a new one, so older versions stay as they were.</description>
+        <field name="itemId" type="id" is-pk="true"/>
+        <field name="datasetId" type="id"/>
+        <field name="inputText" type="text-very-long"/>
+        <field name="groundTruth" type="text-very-long"/>
+        <field name="metadataJson" type="text-long"/>
+        <field name="sourceRunId" type="id"/>
+        <field name="fromVersion" type="number-integer"/>
+        <field name="thruVersion" type="number-integer"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.agent.AgentDataset" short-alias="dataset"/>
+        <index name="AGENT_DSITEM_DS"><index-field name="datasetId"/></index>
+    </entity>
+    <entity entity-name="AgentExperiment" package="moqui.agent" use="transactional" cache="never">
+        <description>One run of a dataset version through a target: an agent (each item and trial an AgentRun on the job
+            surface, as startedByUserId) or a service (called with input and metadata, its output parameter read).
+            statusId is EvRunning, EvCompleted, EvFailed or EvCanceled. The counts and meanScore (over all scores) and
+            passRate (the share of scores that passed) are set as results finish.</description>
+        <field name="experimentId" type="id" is-pk="true"/>
+        <field name="experimentName" type="text-medium"/>
+        <field name="datasetId" type="id"/>
+        <field name="datasetVersion" type="number-integer"/>
+        <field name="agentId" type="id"/>
+        <field name="serviceName" type="text-medium"/>
+        <field name="trials" type="number-integer"/>
+        <field name="statusId" type="id"/>
+        <field name="startedByUserId" type="id"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <field name="resultCount" type="number-integer"/>
+        <field name="doneCount" type="number-integer"/>
+        <field name="failedCount" type="number-integer"/>
+        <field name="meanScore" type="number-decimal"/>
+        <field name="passRate" type="number-decimal"/>
+        <field name="cost" type="number-decimal"/>
+        <field name="notes" type="text-long"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentDataset" short-alias="dataset"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <index name="AGENT_EXP_DS"><index-field name="datasetId"/><index-field name="startedDate"/></index>
+        <index name="AGENT_EXP_STATUS"><index-field name="statusId"/></index>
+    </entity>
+    <entity entity-name="AgentExperimentResult" package="moqui.agent" use="transactional" cache="never">
+        <description>One item and trial of an experiment: the run it started (agent targets), the output, and its state:
+            EvrPending, EvrRunning, EvrScored or EvrFailed.</description>
+        <field name="resultId" type="id" is-pk="true"/>
+        <field name="experimentId" type="id"/>
+        <field name="itemId" type="id"/>
+        <field name="trialNum" type="number-integer"/>
+        <field name="runId" type="id"/>
+        <field name="statusId" type="id"/>
+        <field name="outputText" type="text-very-long"/>
+        <field name="errorText" type="text-long"/>
+        <field name="cost" type="number-decimal"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <relationship type="one" related="moqui.agent.AgentExperiment" short-alias="experiment"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentDatasetItem" short-alias="item"/>
+        <relationship type="one-nofk" related="moqui.agent.AgentRun" short-alias="run"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <index name="AGENT_EXPRES_EXP"><index-field name="experimentId"/><index-field name="statusId"/></index>
+    </entity>
+    <entity entity-name="AgentScore" package="moqui.agent" use="transactional" cache="never">
+        <description>A score a scorer gave an output, 0 to 1, and why. sourceEnumId is where it came from: AgssExperiment
+            (an experiment result), AgssLive (a sampled run of an attached agent), AgssTrace (someone scored a run from
+            Monitor) or AgssReview (a person's score). judgeJson is the judge's raw answer.</description>
+        <field name="scoreId" type="id" is-pk="true"/>
+        <field name="scorerId" type="id"/>
+        <field name="sourceEnumId" type="id"/>
+        <field name="runId" type="id"/>
+        <field name="experimentId" type="id"/>
+        <field name="resultId" type="id"/>
+        <field name="itemId" type="id"/>
+        <field name="score" type="number-decimal"/>
+        <field name="passed" type="text-indicator"/>
+        <field name="reason" type="text-long"/>
+        <field name="judgeJson" type="text-long"/>
+        <field name="errorText" type="text-long"/>
+        <field name="scoredByUserId" type="id"/>
+        <field name="scoredDate" type="date-time"/>
+        <relationship type="one" related="moqui.agent.AgentScorer" short-alias="scorer"/>
+        <relationship type="one" title="AgentScoreSource" related="moqui.basic.Enumeration" short-alias="source">
+            <key-map field-name="sourceEnumId"/></relationship>
+        <index name="AGENT_SCORE_EXP"><index-field name="experimentId"/></index>
+        <index name="AGENT_SCORE_RUN"><index-field name="runId"/></index>
+        <index name="AGENT_SCORE_SCORER"><index-field name="scorerId"/><index-field name="scoredDate"/></index>
+    </entity>
+</entities>

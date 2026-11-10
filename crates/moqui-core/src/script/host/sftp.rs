@@ -210,7 +210,7 @@ fn ls(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let list = entries
         .into_iter()
         .map(|(full, entry)| {
-            let mut map = indexmap::IndexMap::new();
+            let mut map = indexmap::IndexMap::default();
             let attributes = entry.attributes;
             map.insert("name".to_string(), Value::String(entry.name));
             map.insert("path".to_string(), Value::String(full));

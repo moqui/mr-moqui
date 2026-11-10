@@ -11,7 +11,8 @@ replaces four running logs, now in `archive/`:
 It keeps the latest numbers, what is still open and the ideas not yet built. Round 50 (2026-11-08, [below](#round-50-tiers-0-to-2))
 built §5's tiers 0 to 2, Round 51 ([below](#round-51-shared-atoms)) the shared atoms, Round 52
 ([below](#round-52-the-boundary-rows-and-native-sets)) the boundary rows and native sets, and Round 53 (2026-11-09,
-[below](#round-53-full-screen-renders)) full renders of real screens over HTTP. Each one cites where it was measured or proposed: "R*n*" is a Profiling round, "TX §*name*" or "TX D*n*" a section or decision of TX-Cache, "Oxide §*n*" a
+[below](#round-53-full-screen-renders)) full renders of real screens over HTTP. Rounds 54 and 55 (2026-11-10) are
+Profiling3's instruments and weeding. Each one cites where it was measured or proposed: "R*n*" is a Profiling round, "TX §*name*" or "TX D*n*" a section or decision of TX-Cache, "Oxide §*n*" a
 section of Script-Engine-Oxide, and "Zipp *n*" an item of Script-Engine-Zipp-Ideas §3.
 
 Most of the database and service work is done:
@@ -61,7 +62,7 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
 | `service_speed` | `Tools/Database/SpeedTest.xml`'s calls; `echo#Data` is the held script call | |
 | `data_load_speed` | XML, CSV, JSON, nested records, the seed data | |
 | `xml_speed`, `definition_speed` | MNode over the 784 runtime XML files; entity, service and screen definitions (no database) | |
-| `js_speed` | expressions, scripts, actions, services, templates, screens, a new thread's first script | `JS_SPEED_ONLY`, `JS_SPEED_ROW`, `JS_SPEED_CALLS`, `JS_SPEED_BATCHES`, `JS_SPEED_DUMP`, `JS_SPEED_PEEK` (`--features embedded-postgres`) |
+| `js_speed` | expressions, scripts, actions, services (with Profiling3 M3's `body#Large`, `call#Context`, `loop#Calls`), templates, screens, a new thread's first script; `JS_SPEED_ONLY=threads` the M4 thread rows | `JS_SPEED_ONLY`, `JS_SPEED_ROW`, `JS_SPEED_CALLS`, `JS_SPEED_BATCHES`, `JS_SPEED_DUMP`, `JS_SPEED_PEEK`, `JS_SPEED_THREADS` (`--features embedded-postgres`; `ic-stats` adds the inline-cache report after each section) |
 | `startup_speed` | a start and a restart | `STARTUP_SPEED_COMPONENTS`, `STARTUP_SPEED_LOAD`, `STARTUP_SPEED_LOG` |
 | `tx_cache_speed` | rows S1 to S5, F1 and F3 to F5, N1 to N4, cache off against on; an `rt` column of waited round trips | `TX_CACHE_SPEED_ROW` |
 
@@ -85,7 +86,9 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
 - **The transaction cache:**
   - `MOQUI_TX_CACHE_STRICT=true` makes an early flush in a holding frame an error (TX D1).
   - `MOQUI_TX_CACHE_EVERYWHERE=true` makes every frame hold, for a census run.
-  - `MOQUI_TX_CACHE_CENSUS_FILE` writes a line per transaction, with `micros` since R26.
+  - `MOQUI_TX_CACHE_CENSUS_FILE` writes a line per transaction, with `micros` since R26, and since R54 its statements
+    by shape (`transaction/shapes.rs`): each shape's head, kind, count, waited round trips and rows, the waited
+    statements by kind, and `repeats`, `repeats_other_params` (a find in a loop) and `read_after_read`.
   - The Mantle operations are timed with `-Dentity_tx_cache=false` and `--db existing` against a template database
     (R26).
 - **The script engine:**
@@ -95,7 +98,10 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
 - **Screen renders** (R53):
   - `MOQUI_RENDER_PROFILE=<file>` on a server appends a JSON line per screen render: the total, and per phase (the
     URL, actions, units, each host method, their argument and result conversions, the flushes, the output) its count
-    and inclusive and exclusive time (`screen/profile.rs`). A unit's exclusive time is the interpreter between host
+    and inclusive and exclusive time (`telemetry/profile.rs`). `MOQUI_OP_PROFILE=<file>` does the same for each
+    outermost service call outside a render (R54, Profiling3 M1). Both lines also have the thread's CPU time
+    (`cpu_us`), its waited round trips, counts of bare-name and entity-field reads and writes, and the artifacts
+    pushed by type and action. A unit's exclusive time is the interpreter between host
     calls. Its clock reads add 5 to 15% to a render with many host calls; off, it is one static read a call.
   - The bench repository's `rounds/r53/`: `screen_bench.py` times screens over HTTP as john.doe (3 × 100, single
     threaded, `perf stat` of the server's instructions), `table.py` compares runs, `compare_bodies.py` diffs the
@@ -122,6 +128,9 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
   - No upstream issues or pull requests without asking.
   - **What goes in the fork** (the user, 2026-11-10): anything of high value to mr-moqui. Upstream taking a change
     is a plus and does not decide it ([Profiling3](Profiling3.md) §9 D4).
+  - **`tools/mantle-ops/`** (R54, Profiling3 M3) runs the eight mr-mantle specs with the operation profile and the
+    census shapes on, on the embedded Postgres or on `moqui-pg18`, and `table.py` gives each of the nine operations'
+    wall and CPU time, round trips by statement kind, and the shapes most waited for.
   - **`tools/mantle-pg/`** times the nine Mantle operations against `moqui-pg18` 200 µs away: `setup.sh`, `run.sh`,
     `table.py`, `teardown.sh`. It ran two engines in turn; it now runs one.
 - **Rules learned:**
@@ -530,6 +539,89 @@ on a render. `sri.renderText` was 0.6 ms of Cache Elements (four templates) and 
 - **A row is still about 840 thousand instructions and 65 host calls** (Entities html). Profiling3 S4 proposes rows
   as templates the host fills.
 
+### Round 54: the instruments, and the round trips named
+
+Profiling3 M1 to M4 and M6 (2026-11-10; the commits name them). The operation profile (`MOQUI_OP_PROFILE`), the census's
+statement shapes, the M3 service rows, the thread rows and the engine counters are in §2. M5 (a `perf` profile)
+waited: `perf_event_paranoid` was back at 4 after a reboot. M7 and M8 are later. Results are in the bench repository's
+`rounds/r54/`.
+
+- **The nine Mantle operations, in process** (`tools/mantle-ops/`, embedded Postgres, medians): an operation's CPU is
+  55 to 60% of its wall time on a local socket (place#Order 9.5 ms, 5.5 ms CPU, 66 waited round trips, 413 bare-name
+  reads, 25 service calls, 73 entity operations; apply#Settlement 32 ms, 17 ms CPU, 860 bare-name reads, 386 entity
+  operations).
+- **Where the round trips go.** The largest single item was `SAVEPOINT moqui_feed`: 20.5 of place#Order's 66, and
+  2,781 in the run. Each read of the data feed at commit went in a savepoint probe whose `SAVEPOINT` waited for the
+  previous probe's `RELEASE`. They now go behind it (`probe_behind`): place#Order 66 to 46 round trips, approve#Order
+  54 to 38, add#OrderProductQuantity 51 to 36, change#InvoiceState 80 to 57.5, create#Payment 77 to 50,
+  apply#Settlement 120 to 100.5, pack#Shipment 117 to 84.5, approve#Payable 84 to 66.5. What is left is reads (32 of
+  place#Order's 46: `order_header`, `order_part`, `entity_audit_log`, `order_item` the most), locking reads (8) and
+  repeats of a shape (46 statements, 10 with other parameters, 20 reads right after a read): S1's material.
+- **The pool's wrapper passed two calls on as the trait's defaults.** `Tracked` did not forward
+  `execute_deferred_update` or `savepoint_behind`, so R18's update the server checks was never used through the pool:
+  `tx_cache_speed`'s rt drops by one a call wherever a held update commits (S3 11 to 10, S4 14 to 13, N3 3 to 2).
+- **First thread rows** (`JS_SPEED_ONLY=threads`, on a busy machine): noop#Inline 27 us a call on one thread and 5.7
+  on 16, List html 1,667 to 418 us. Each thread starts its own runtime inside the row. To read again in a quiet window.
+
+### Round 55: weeding
+
+Profiling3 W1, W2, W4 to W10 and W12 to W17, and the operation metrics (2026-11-10), each in its own commit with its
+rows. W3 is not built: a call's cleaned parameters are read again after the body (the post rules, the callbacks, the
+tx rules), so they cannot be moved into its frame without changing those. W11 goes with S4a. `rounds/r55/table.md`
+has the base (before W1) against the end of the round, best of two alternating runs:
+
+| Row | Before | After | Allocations |
+|---|---:|---:|---|
+| noop#Inline | 7.98 us | 7.02 | 84 to 61 |
+| call#Nested | 17.1 us | 16.0 | 169 to 143 |
+| call#Context (30 names, 10 calls in-map context) | 482 us | 230 | 6,872 to 2,165 |
+| entity-find-one cached, from actions | 4.56 us | 3.83 | 44 to 31 |
+| 1000 adds to a bare name | 370 us | 312 | |
+| four sets | 0.48 us | 0.36 | |
+| loop#Actions | 301 us | 284 | 2,474 to 2,452 |
+| body#Large (5 KB) | 13.1 us | 11.5 | 111 to 88 |
+| fancy, trusted / locked down | 47.9 / 40.2 us | 32.2 / 25.8 | 244 / 228 to 121 / 106 |
+| Plain.qvt | 30.7 us | 25.0 | |
+
+- The targets of Profiling3 §5 are missed for now: noop#Inline is 7.0 us and 61 allocations (target under 4 and 40),
+  call#Nested 16 (under 9), a cached find from actions 3.8 (under 2.5). The rest of a service call is its telemetry
+  span (about 20 allocations, recorded whole and kept or dropped at its end, a design to decide) and the crossings of
+  the generated chain (S3a); of a cached find, its crossings (S3b).
+- `empty actions` reads 0.65 us in a run of every section and 0.28 alone, in this build only: a collection of the
+  script heap lands in the row (it frees what the sections before made). It is not the row's own cost.
+
+### Round 57: round trips (Profiling3 S1, first part)
+
+- **`service_tx_cache`** (MoquiDefaultConf, false for now): a service with no `transaction` attribute, called with no
+  cache setting, begins its transaction holding; entity-auto services do not. Over the eight mr-mantle specs: 4,777
+  frames held against 1,475, no early flush, all 111 features, waited round trips ×0.89. The nine operations already
+  held. It stays off until the final gate's suites run with it on (Profiling3 D3).
+- **dbresource paths through the entity cache**, as Java's `findDirectoryId` reads them: `db_resource` reads 5,891 to
+  4,208 in the run, get#PaymentFinanceDetail's 532 to 48, the data feed's 836 to 129.
+- **Sized, not built** (from the census's shapes, `rounds/r57/`): place#Order's 46 round trips are 32 reads, 8 locking
+  reads, a count and the commit; 46 statements repeat a shape, 10 with other parameters (what `= ANY` batching of a
+  find in a loop could take), and 20 waited reads follow another read (what reads sent together could take). Reads of
+  reference-like tables are 12% of the operations' round trips, most already through the entity cache; the largest
+  shapes are Mantle's own (`order_header`, `order_part`, `entity_audit_log` for status history).
+
+### Round 58: context names bound on the global object (Profiling3 S2)
+
+Built in mr-moqui with no fork change: at a bare name's fourth access since the bindings were emptied, it becomes an
+own data property of the global object, which the engine's global sites already cache; flushes write changed values
+back, and a flush that may change the stack (and a nested run, around it) takes the bindings off. 1000 adds to a bare
+name 310 to 13.9 us, iterate 100 context maps with if and set 210 to 79, loop#Actions 282 to 125: Profiling3's three
+targets met. In Mantle bodies, which call the host often, reads through the hooks fall 8 to 30%.
+
+### Round 59: the coarse crossings (Profiling3 S3a, S3b; S4 sized)
+
+- **S3a:** a sync `service-call` is one `ec.service.callXml`; call#Nested 15.4 to 14.6 us, loop#Calls ×0.92.
+- **S3b:** an `entity-find-one` with literal options is one `ec.entity.findOneXml`, and an auto-field-map of the
+  context reads only the entity's fields; cached from actions 3.82 to 3.12 us (R55's base 4.56; target 1.5 missed).
+- **The screen runtimes' escapes** with their patterns made once and no `String()` of a string: screens ×0.97.
+- **Sized, not built:** a Links html render (6.8 ms) is 63% interpreter between host calls (17 a row), so S4a's one
+  crossing a row cannot reach its target; S4b (row templates) is the lever. S5a (the host call floor) is about 0.5% of
+  a list render, S5b's writes 311 a render.
+
 ### Startup and threads
 
 A first start takes 5.63 s and a restart 268 ms. The table check is 2.1 s of a first start, and initdb 1.8 s (R9). A
@@ -817,6 +909,17 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
   `set-if-empty="false"` skips what `ObjectUtilities.isEmpty` calls empty (null, "", an empty list or map) (R52).
 - A chained `EntityFind` call returns the same find, which can run again; "entity find was already used" is gone, and a
   find is refused only while it runs (R52).
+
+- **`<set value>` and the other GString texts are not localized (R55, Profiling3 W14, D1).** As Java's template writes
+  them as GStrings, a `set`'s value and default-value, a field-map value, a compare value and a name are expanded with
+  `ec.resource.expandNoL10n`, or are a literal when there is nothing to expand; before, they went through
+  `ec.resource.expand`, which localizes, so a value equal to a localized message's original came out translated in a
+  larger body but not in a body of only sets (the native plan). Messages, asserts and log text are still localized.
+- **An in-map of the context passes only the declared in-parameters (R55, W2)** when the service validates its input,
+  has no pre-validate rule, is not entity-auto, and the call is not multi: what the service sees is as before, since
+  validation dropped the rest.
+- **A data feed probe whose savepoint rollback fails is reported as a failure before the feed (R54).** Its savepoint
+  goes out behind what is unanswered, so the two cannot be told apart; the transaction does not commit either way.
 
 ## 8. Known flaky tests
 

@@ -158,7 +158,7 @@ fn basic_to_host(scope: &mut Scope<'_>, value: &JsValue, depth: usize) -> JsResu
             Value::List(items)
         }
         JsValue::Object(object) => {
-            let mut map = indexmap::IndexMap::new();
+            let mut map = indexmap::IndexMap::default();
             for key in scope.own_property_keys(object)? {
                 let Some(name) = key.to_js_string() else {
                     continue;

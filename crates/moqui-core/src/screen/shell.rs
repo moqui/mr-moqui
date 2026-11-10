@@ -26,7 +26,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use indexmap::IndexMap;
 use moqui_lib::node::MNode;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 use moqui_lib::string::url_encode_if_needed;
@@ -39,7 +38,7 @@ use super::url::ScreenUrlInfo;
 use crate::context::{Authz, Error, ExecutionContext, Tarpit};
 use crate::{l10n, user, web};
 
-type Item = IndexMap<String, Value>;
+type Item = moqui_lib::object::ValueMap;
 
 /// The apps root under the root screen, and the link base of the `/qapps` page.
 const APPS_PATH: &str = "apps";
@@ -709,7 +708,7 @@ impl<'a> Shell<'a> {
 
     /// The `shell` theme values: links for the screen paths, the subscreen names as written, null when not set.
     fn shell_values(&self, theme: &str) -> Value {
-        let mut out = Item::new();
+        let mut out = Item::default();
         for (key, resource_type, is_path) in SHELL_VALUES {
             let value = match Self::theme_value(theme, resource_type) {
                 None => Value::Null,
@@ -728,7 +727,7 @@ impl<'a> Shell<'a> {
     /// panel is asked for as one); null otherwise. An app without the subscreen is not an error (the tools have no
     /// Chatter); one whose screen does not load is logged and gets null.
     fn record_screens(&self, app: &App, names: &[(&str, Option<String>)]) -> Value {
-        let mut out = Item::new();
+        let mut out = Item::default();
         for (key, name) in names {
             let entry = name.as_deref().and_then(|name| self.record_screen(app, name));
             out.insert((*key).to_string(), entry.unwrap_or(Value::Null));
@@ -759,7 +758,7 @@ impl<'a> Shell<'a> {
         }
         let mut segments = app.names[self.apps_names.len()..].to_vec();
         segments.push(name.to_string());
-        let mut entry = Item::new();
+        let mut entry = Item::default();
         entry.insert(
             "url".to_string(),
             Value::String(format!("{}/{}", self.link_base, encoded_path(&segments))),
@@ -812,7 +811,7 @@ impl<'a> Shell<'a> {
         if entry.get("disableLink") == Some(&Value::Bool(true)) {
             return Ok(None);
         }
-        let mut out = Item::new();
+        let mut out = Item::default();
         for key in ["name", "title", "image", "imageType", "path"] {
             out.insert(key.to_string(), entry.get(key).cloned().unwrap_or(Value::Null));
         }
@@ -841,7 +840,7 @@ impl<'a> Shell<'a> {
                 continue;
             }
             let item_path = entry.get("path").map(to_plain_string).unwrap_or_default();
-            let mut row = Item::new();
+            let mut row = Item::default();
             for key in ["title", "path", "image", "imageType"] {
                 row.insert(key.to_string(), entry.get(key).cloned().unwrap_or(Value::Null));
             }
@@ -889,7 +888,7 @@ impl<'a> Shell<'a> {
         let Some(url) = url else {
             return Ok(None);
         };
-        let mut out = Item::new();
+        let mut out = Item::default();
         if what == "quick-create" {
             out.insert("kind".to_string(), text_or_null(&link.kind));
         }
@@ -924,7 +923,7 @@ impl<'a> Shell<'a> {
         let empty = ShellProviders::default();
         let providers = app.def.shell_providers.as_ref().unwrap_or(&empty);
         let owner = format!("app {}", app.item.name);
-        let mut out = Item::new();
+        let mut out = Item::default();
         out.insert(
             "quickCreate".to_string(),
             self.link_list(app, "quick-create", &providers.quick_create, quick_create)?,
@@ -935,7 +934,7 @@ impl<'a> Shell<'a> {
             .iter()
             .filter(|source| !source.service.is_empty())
         {
-            let mut entry = Item::new();
+            let mut entry = Item::default();
             entry.insert("service".to_string(), Value::string(&source.service));
             entry.insert("label".to_string(), Value::string(l10n::localize(&source.label)?));
             today.push(Value::Map(entry));
@@ -951,7 +950,7 @@ impl<'a> Shell<'a> {
         );
         let mut sources = Vec::new();
         for source in &providers.palette_sources {
-            let mut entry = Item::new();
+            let mut entry = Item::default();
             entry.insert("group".to_string(), Value::string(&source.group));
             entry.insert("label".to_string(), Value::string(source_label(source)?));
             entry.insert("icon".to_string(), text_or_null(&source.icon));
@@ -978,14 +977,14 @@ impl<'a> Shell<'a> {
                         None => continue,
                     }
                 };
-                let mut entry = Item::new();
+                let mut entry = Item::default();
                 entry.insert("keys".to_string(), Value::string(&key.keys));
                 entry.insert("label".to_string(), Value::string(l10n::localize(&key.label)?));
                 entry.insert("url".to_string(), url.map_or(Value::Null, Value::String));
                 entry.insert("action".to_string(), text_or_null(&key.action));
                 keys.push(Value::Map(entry));
             }
-            let mut entry = Item::new();
+            let mut entry = Item::default();
             entry.insert("scope".to_string(), Value::string(&keymap.scope));
             entry.insert("keys".to_string(), Value::List(keys));
             keymaps.push(Value::Map(entry));
@@ -1011,7 +1010,7 @@ impl<'a> Shell<'a> {
                     None => continue,
                 }
             };
-            let mut entry = Item::new();
+            let mut entry = Item::default();
             entry.insert("label".to_string(), Value::string(l10n::localize(&prompt.label)?));
             entry.insert("text".to_string(), Value::string(l10n::localize(&prompt.text)?));
             entry.insert("send".to_string(), Value::Bool(prompt.send));
@@ -1026,7 +1025,7 @@ impl<'a> Shell<'a> {
             let Some(url) = self.link(&owner, "response-action", &action.screen, &[]) else {
                 continue;
             };
-            let mut entry = Item::new();
+            let mut entry = Item::default();
             entry.insert("label".to_string(), Value::string(l10n::localize(&action.label)?));
             entry.insert("icon".to_string(), text_or_null(&action.icon));
             entry.insert("url".to_string(), Value::String(url));
@@ -1038,7 +1037,7 @@ impl<'a> Shell<'a> {
         out.insert("responseActions".to_string(), Value::List(actions));
         let mut page_actions = Vec::new();
         for action in &providers.page_actions {
-            let mut entry = Item::new();
+            let mut entry = Item::default();
             entry.insert("label".to_string(), Value::string(l10n::localize(&action.label)?));
             entry.insert("icon".to_string(), text_or_null(&action.icon));
             entry.insert("agent".to_string(), text_or_null(&action.agent));
@@ -1091,7 +1090,7 @@ pub fn shell_data(state: &RenderState) -> Result<Option<Value>, Error> {
             Err(err) => leave_app_out(&app.item.name, &app.item.location, &err),
         }
     }
-    let mut out = Item::new();
+    let mut out = Item::default();
     out.insert("apps".to_string(), Value::List(apps));
     out.insert("shell".to_string(), shell.shell_values(&theme));
     out.insert("tui".to_string(), tui_values(&theme));
@@ -1127,7 +1126,7 @@ fn tui_values(theme: &str) -> Value {
             })
             .collect::<Vec<_>>()
     };
-    let mut breakpoints = Item::new();
+    let mut breakpoints = Item::default();
     for (name, value) in pairs("STRT_TUI_BREAKPOINTS") {
         match value.parse::<i64>() {
             Ok(columns) if columns > 0 => {
@@ -1146,7 +1145,7 @@ fn tui_values(theme: &str) -> Value {
     };
     // The browser's brand colors (STRT_QUASAR_CONFIG `brand`, as qapps.xml merges it) are the roles' colors too,
     // under the theme's own STRT_TUI_COLORS, which win.
-    let mut colors = Item::new();
+    let mut colors = Item::default();
     for text in rows("STRT_QUASAR_CONFIG") {
         match serde_json::from_str::<serde_json::Value>(&text) {
             Ok(config) => {
@@ -1165,7 +1164,7 @@ fn tui_values(theme: &str) -> Value {
     for (name, value) in pairs("STRT_TUI_COLORS") {
         colors.insert(name, Value::string(value));
     }
-    let mut out = Item::new();
+    let mut out = Item::default();
     out.insert("breakpoints".to_string(), Value::Map(breakpoints));
     out.insert("colors".to_string(), Value::Map(colors));
     out.insert("keys".to_string(), map("STRT_TUI_KEYS"));
@@ -1231,7 +1230,7 @@ pub fn shell_providers(state: &RenderState, kind: Option<&str>) -> Result<Value,
         }
     }
     let empty = || {
-        let mut out = Item::new();
+        let mut out = Item::default();
         out.insert("apps".to_string(), Value::List(Vec::new()));
         Value::Map(out)
     };
@@ -1272,7 +1271,7 @@ pub fn shell_providers(state: &RenderState, kind: Option<&str>) -> Result<Value,
                     Err(err) => leave_app_out(&app.item.name, &app.item.location, &err),
                 }
             }
-            let mut out = Item::new();
+            let mut out = Item::default();
             out.insert("apps".to_string(), Value::List(apps));
             let value = Value::Map(out);
             state.facade.put_shell_providers(key, value.clone(), defs);
@@ -1315,7 +1314,7 @@ fn row_of(row: &Value) -> Option<Value> {
     let Value::Map(row) = row else {
         return None;
     };
-    let mut out = Item::new();
+    let mut out = Item::default();
     for key in ["title", "subtitle", "icon", "url"] {
         let value = row
             .get(key)
@@ -1401,7 +1400,7 @@ fn run_source(
     if rows.is_empty() {
         return Ok(None);
     }
-    let mut out = Item::new();
+    let mut out = Item::default();
     out.insert("group".to_string(), Value::string(&source.group));
     out.insert("label".to_string(), Value::string(source_label(source)?));
     out.insert("icon".to_string(), text_or_null(&source.icon));
@@ -1501,7 +1500,7 @@ pub fn shell_search(state: &RenderState, text: &str, groups: &str, limit: &str) 
             }
         }
     }
-    let mut out = Item::new();
+    let mut out = Item::default();
     out.insert("groups".to_string(), Value::List(out_groups));
     Ok(Some(Value::Map(out)))
 }

@@ -231,10 +231,15 @@ pub struct ServiceDef {
     /// `<actions>` XML, or empty when the service has none.
     pub actions: String,
     pub action_source: Option<moqui_lib::error::SourceLocation>,
+    /// `actions` prepared at its first run (plans/Profiling3.md W1). It belongs to `actions` as it was made.
+    pub actions_prepared: crate::script::PreparedActions,
     pub authenticate: Authenticate,
     pub authz_action: Option<String>,
     pub validate_input: bool,
     pub transaction: TransactionAttribute,
+    /// Whether the definition has a `transaction` attribute: one with none begins its transaction with the cache when
+    /// `service_tx_cache` is on (plans/Profiling3.md S1, D3).
+    pub transaction_declared: bool,
     /// `no-tx-cache`: flush and stop the transaction cache in place before the service runs.
     pub no_tx_cache: bool,
     /// `read-only`: the service only reads (and may set the user's context), so a server-static screen's always-actions
@@ -257,6 +262,8 @@ pub struct ServiceDef {
     pub implements: Vec<ImplementRef>,
     /// The in-parameters with `auto-parameters` expanded, made at the first call (see `validate::declared_in`).
     pub expanded_in: super::validate::ExpandedParams,
+    /// The out-parameters expanded, as `expanded_in` (plans/Profiling3.md W4).
+    pub expanded_out: super::validate::ExpandedParams,
 }
 
 impl ServiceDef {
@@ -274,6 +281,7 @@ impl ServiceDef {
             method: String::new(),
             actions: String::new(),
             action_source: None,
+            actions_prepared: crate::script::PreparedActions::default(),
             // As Java's `runImplicitEntityAuto`: no login is needed and the service itself is not authorized; each
             // entity operation it makes is.
             authenticate: Authenticate::Off,
@@ -282,6 +290,7 @@ impl ServiceDef {
             // entity's fields and the records nested under a relationship name, and nothing else.
             validate_input: false,
             transaction: TransactionAttribute::UseOrBegin,
+            transaction_declared: false,
             no_tx_cache: false,
             read_only: false,
             timeout: None,
@@ -297,6 +306,7 @@ impl ServiceDef {
             out_params: Vec::new(),
             implements: Vec::new(),
             expanded_in: super::validate::ExpandedParams::default(),
+            expanded_out: super::validate::ExpandedParams::default(),
         }
     }
 
@@ -1363,10 +1373,12 @@ fn load_service(prefix: &str, node: &MNode, failures: &mut Vec<String>) -> Optio
                 line: actions.line(),
                 column: actions.column(),
             }),
+        actions_prepared: crate::script::PreparedActions::default(),
         authenticate: authenticate_of(node),
         authz_action: node.attribute("authz-action"),
         validate_input: bool_attr(node, "validate", true),
         transaction: transaction_of(node),
+        transaction_declared: node.attribute("transaction").is_some_and(|value| !value.is_empty()),
         no_tx_cache: bool_attr(node, "no-tx-cache", false),
         read_only: bool_attr(node, "read-only", false),
         timeout,
@@ -1400,6 +1412,7 @@ fn load_service(prefix: &str, node: &MNode, failures: &mut Vec<String>) -> Optio
             })
             .collect(),
         expanded_in: super::validate::ExpandedParams::default(),
+        expanded_out: super::validate::ExpandedParams::default(),
     };
     Some(def)
 }

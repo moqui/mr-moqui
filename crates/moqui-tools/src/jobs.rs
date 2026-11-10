@@ -741,7 +741,7 @@ fn notify(job: &EntityValue, job_id: &str, status: &str, done: i64, failed: i64,
     if user_id.is_empty() {
         return;
     }
-    let mut message = IndexMap::new();
+    let mut message = IndexMap::default();
     message.insert("jobId".to_string(), Value::string(job_id));
     message.insert("description".to_string(), Value::string(field(job, "description")));
     message.insert("statusId".to_string(), Value::string(status));
@@ -1097,7 +1097,7 @@ pub(crate) fn get_database_job_status(
     let statements = job_statements(facade, &job_id)?;
     let mut progress = Vec::new();
     let mut blocking = Vec::new();
-    let mut reasons = IndexMap::new();
+    let mut reasons = IndexMap::default();
     let mut db_parameters = BTreeMap::new();
     db_parameters.insert("db".to_string(), Value::string(field(&job, "db")));
     let running_pids: Vec<i64> = statements

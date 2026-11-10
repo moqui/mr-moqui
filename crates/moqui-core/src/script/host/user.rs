@@ -143,7 +143,7 @@ fn text_or_null(found: Result<Option<String>, Error>) -> Result<Ret, HostError> 
 /// The password policy of `user-facade/password`: `{minLength, minDigits, minOthers}`.
 fn password_rules(_: &mut Call<'_>) -> Result<Ret, HostError> {
     let rules = crate::user::policy_password_rules();
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("minLength".to_string(), Value::I64(rules.min_length));
     map.insert("minDigits".to_string(), Value::I64(rules.min_digits));
     map.insert("minOthers".to_string(), Value::I64(rules.min_others));
@@ -387,7 +387,7 @@ fn login_rules(_: &mut Call<'_>) -> Result<Ret, HostError> {
         email_expire_hours,
         email_require_change,
     } = crate::user::policy_login_rules();
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("maxFailures".to_string(), Value::I64(max_failures));
     map.insert("disableMinutes".to_string(), Value::I64(disable_minutes));
     map.insert("historyLimit".to_string(), Value::I64(history_limit));
@@ -526,7 +526,7 @@ const USER_ACCOUNT_PRIVATE: [&str; 8] = [
     "requirePasswordChange",
 ];
 
-fn user_account_snapshot() -> Result<Option<indexmap::IndexMap<String, Value>>, Error> {
+fn user_account_snapshot() -> Result<Option<moqui_lib::object::ValueMap>, Error> {
     let Some(user_id) = crate::user::current_user_id()? else {
         return Ok(None);
     };

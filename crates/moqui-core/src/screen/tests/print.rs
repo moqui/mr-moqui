@@ -564,7 +564,7 @@ fn logged_in(world: &super::World) -> crate::context::ExecutionContext {
 }
 
 fn email_parameters() -> BTreeMap<String, Value> {
-    let mut body = IndexMap::new();
+    let mut body = IndexMap::default();
     body.insert("zeta".to_string(), Value::string("<b>bold</b> & more"));
     body.insert("alpha".to_string(), Value::string("first"));
     body.insert("empty".to_string(), Value::string(""));

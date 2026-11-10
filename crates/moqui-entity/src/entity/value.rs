@@ -1292,7 +1292,7 @@ impl EntityFacade {
         entity_name: &str,
         operation: &str,
         plain: FieldMap,
-        rules: Option<Vec<EcaRule>>,
+        rules: Option<Vec<std::sync::Arc<EcaRule>>>,
         stored: Option<FieldMap>,
         modified: Option<&BTreeSet<Arc<str>>>,
     ) -> Result<u64, Error> {

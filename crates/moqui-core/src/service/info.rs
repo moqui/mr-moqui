@@ -134,10 +134,10 @@ pub fn next_cron_execution(cron: &str, after_millis: i64) -> Result<Option<i64>,
 
 /// The definition of `name` as the service detail screen reads a `ServiceDefinition`: the names, type, location,
 /// authentication, transaction settings, and the service XML. `None` when there is no such service.
-pub fn service_definition_info(name: &str) -> Option<IndexMap<String, Value>> {
+pub fn service_definition_info(name: &str) -> Option<moqui_lib::object::ValueMap> {
     // an entity-auto service has the definition a call makes for it
     let def = super::call::resolve(name, super::validate::current_facade().as_ref()).ok()?;
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     let text = |value: &str| Value::string(value);
     map.insert("serviceName".to_string(), text(&def.name));
     map.insert("serviceNameNoHash".to_string(), text(&def.name.replace('#', "")));
@@ -189,12 +189,12 @@ pub fn service_definition_info(name: &str) -> Option<IndexMap<String, Value>> {
                 .map(|param| {
                     (
                         param.name.clone(),
-                        Value::Map(indexmap::indexmap! {
-                            "name".to_string() => text(&param.name),
-                            "type".to_string() => text(&param.java_type),
-                            "required".to_string() => Value::Bool(param.required == Required::True),
-                            "parameterXml".to_string() => text(&param_node(param).write_string()),
-                        }),
+                        Value::Map(moqui_lib::object::ValueMap::from_iter([ 
+                            ("name".to_string(), text(&param.name)),
+                            ("type".to_string(), text(&param.java_type)),
+                            ("required".to_string(), Value::Bool(param.required == Required::True)),
+                            ("parameterXml".to_string(), text(&param_node(param).write_string())),
+                        ])),
                     )
                 })
                 .collect(),
@@ -217,7 +217,7 @@ pub fn service_definition_info(name: &str) -> Option<IndexMap<String, Value>> {
 /// its settings, the file and line of its actions, what it implements, and its in- and out-parameters, nested, each
 /// with its type, required, default, allow-html, checks and description; an in-parameter that `auto-parameters`
 /// implies is marked `implied`. `None` when there is no such service.
-pub fn service_detail(name: &str) -> Option<IndexMap<String, Value>> {
+pub fn service_detail(name: &str) -> Option<moqui_lib::object::ValueMap> {
     // an entity-auto service has the definition a call makes for it
     let def = super::call::resolve(name, super::validate::current_facade().as_ref()).ok()?;
     let mut map = service_definition_info(name)?;
@@ -254,7 +254,7 @@ pub fn service_detail(name: &str) -> Option<IndexMap<String, Value>> {
         Value::List(def.implements.iter().map(|item| text(&item.service)).collect()),
     );
     fn param_detail(param: &define::ParamDef, implied: bool) -> Value {
-        let mut row = IndexMap::new();
+        let mut row = IndexMap::default();
         row.insert("name".to_string(), Value::string(&param.name));
         row.insert("type".to_string(), Value::string(&param.java_type));
         row.insert(
@@ -334,7 +334,7 @@ pub fn service_detail(name: &str) -> Option<IndexMap<String, Value>> {
                                     .unwrap_or_default()
                             };
                             let pk = matches!(field.get("isPk"), Some(Value::Bool(true)));
-                            let mut row = IndexMap::new();
+                            let mut row = IndexMap::default();
                             row.insert("name".to_string(), Value::string(text("name")));
                             row.insert("type".to_string(), Value::string(text("javaType")));
                             row.insert(

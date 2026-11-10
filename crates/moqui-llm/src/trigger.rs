@@ -985,7 +985,7 @@ pub fn inbox(_factory: &ExecutionContextFactory, user_ids: &[String], title: &st
     }
     let map = match moqui_lib::json::from_json(message) {
         Value::Map(map) => map,
-        _ => indexmap::IndexMap::new(),
+        _ => indexmap::IndexMap::default(),
     };
     let sent = moqui_core::notify::NotificationMessage::new()
         .topic(INBOX_TOPIC)

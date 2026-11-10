@@ -2,7 +2,7 @@
     if (ready) {
         statusId = orderStatus;
     } else {
-        statusId = ec.resource.expand("N");
+        statusId = "N";
     }
     while (ready) {
         n = n + 1;

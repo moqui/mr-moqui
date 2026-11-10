@@ -18,7 +18,6 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 
-use indexmap::IndexMap;
 use moqui_lib::error::Error;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 use moqui_lib::sync::lock;
@@ -161,7 +160,7 @@ impl GroupDb {
 
     /// Run one query with `params` (`?` placeholders) in a transaction of its own, the caller's suspended, so a failed
     /// query cannot abort the caller's transaction, within [`crate::catalog::QUERY_TIMEOUT`].
-    pub fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<IndexMap<String, Value>>, Error> {
+    pub fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<moqui_lib::object::ValueMap>, Error> {
         let rows = self.tx.run(
             TransactionAttribute::ForceNew,
             Some(crate::catalog::QUERY_TIMEOUT),
@@ -202,8 +201,8 @@ impl GroupDb {
         sql: &str,
         params: &[Value],
         what: &str,
-        reasons: &mut IndexMap<String, Value>,
-    ) -> Vec<IndexMap<String, Value>> {
+        reasons: &mut moqui_lib::object::ValueMap,
+    ) -> Vec<moqui_lib::object::ValueMap> {
         match self.query(sql, params) {
             Ok(rows) => rows,
             Err(err) => {
@@ -250,7 +249,7 @@ fn is_mariadb(group: &str, tx: &TransactionManager) -> bool {
 }
 
 /// The rows as the services give them: a list of maps.
-pub(crate) fn rows_value(rows: Vec<IndexMap<String, Value>>) -> Value {
+pub(crate) fn rows_value(rows: Vec<moqui_lib::object::ValueMap>) -> Value {
     Value::List(rows.into_iter().map(Value::Map).collect())
 }
 

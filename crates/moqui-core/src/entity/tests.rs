@@ -1525,7 +1525,7 @@ fn response_json_serializes_shared_entity_values_and_entity_lists_as_records() {
     cell.lock()
         .unwrap()
         .set("periodName", Value::string("Updated fiscal year"));
-    let nested = Value::Map(indexmap::IndexMap::from([(
+    let nested = Value::Map(indexmap::IndexMap::from_iter([(
         "options".to_string(),
         Value::List(vec![shared]),
     )]));

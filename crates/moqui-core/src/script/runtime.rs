@@ -162,7 +162,7 @@ impl ContextFrame {
 
     /// Push a frame holding `entries`, without copying them in one by one. A `context` entry is left out, as a put of it
     /// is refused.
-    pub fn push_entries(mut entries: indexmap::IndexMap<String, Value>) -> Self {
+    pub fn push_entries(mut entries: moqui_lib::object::ValueMap) -> Self {
         entries.shift_remove("context");
         STACK.with(|stack| {
             let mut stack = stack.borrow_mut();
@@ -174,7 +174,7 @@ impl ContextFrame {
     }
 
     /// Pop the frame and return what it holds.
-    pub fn take(self) -> indexmap::IndexMap<String, Value> {
+    pub fn take(self) -> moqui_lib::object::ValueMap {
         std::mem::forget(self);
         pop_context_frame()
     }
@@ -244,7 +244,7 @@ impl Drop for IsolatedContext {
 }
 
 /// The names set in the top context frame, as an entity ECA rule's `set-results` reads them.
-pub fn top_context_entries() -> indexmap::IndexMap<String, Value> {
+pub fn top_context_entries() -> moqui_lib::object::ValueMap {
     STACK.with(|stack| stack.borrow().top_entries())
 }
 
@@ -290,6 +290,12 @@ pub fn engine_memory(collect: bool) -> EngineMemory {
         oxide_compiled_scripts: oxide.compiled_scripts,
         oxide_compiled_script_bytes: oxide.compiled_script_bytes,
     }
+}
+
+/// This thread's script runtime's collector counters and, in an `ic-stats` build, its inline-cache report with the
+/// `worst` sites (plans/Profiling3.md M6).
+pub fn engine_counters(worst: usize) -> String {
+    crate::script::oxide::engine_counters(worst)
 }
 
 /// What the process's script engines have done since it started.
@@ -407,7 +413,7 @@ pub fn expand(template: &str) -> Result<String, Error> {
 /// The script is not strict. A strict function would reject bare assignment, and
 /// that assignment is how a plain value reaches the context stack.
 pub(super) fn eval_script_text(script: &ScriptText) -> Result<(), Error> {
-    crate::script::engine::run(EntryKind::Actions, script.text(), |source, hash, _| {
+    crate::script::engine::run_hashed(EntryKind::Actions, script.text(), script.hash(), |source, hash, _| {
         crate::script::oxide::run_actions(source, hash, script.file_name())
     })
 }

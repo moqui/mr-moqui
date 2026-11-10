@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- One dataset: its current items, the scorers that score its experiments, and its experiments. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dataset" default-menu-include="false">
+    <parameter name="datasetId" required="true"/>
+    <transition name="addItem" method="post">
+        <service-call name="org.moqui.agent.AgentEvalServices.add#DatasetItem" in-map="{datasetId, inputText, groundTruth, metadataJson}"/>
+        <default-response url="."><parameter name="datasetId"/></default-response>
+    </transition>
+    <transition name="updateItem" method="post">
+        <service-call name="org.moqui.agent.AgentEvalServices.update#DatasetItem" in-map="{itemId, inputText, groundTruth, metadataJson}"/>
+        <default-response url="."><parameter name="datasetId"/></default-response>
+    </transition>
+    <transition name="removeItem" method="post">
+        <service-call name="org.moqui.agent.AgentEvalServices.remove#DatasetItem" in-map="{itemId}"/>
+        <default-response url="."><parameter name="datasetId"/></default-response>
+    </transition>
+    <transition name="attachScorer" method="post">
+        <actions><script><![CDATA[
+            if (!ec.user.hasPermission('MONITOR_EVAL')) { ec.message.addError(ec.l10n.localize('This needs the MONITOR_EVAL permission')); return }
+            ec.service.sync().name('create#moqui.agent.AgentScorerAttach').parameters({scorerId, datasetId, fromDate: ec.user.nowTimestamp}).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."><parameter name="datasetId"/></default-response>
+    </transition>
+    <transition name="detachScorer" method="post">
+        <actions><script><![CDATA[
+            if (!ec.user.hasPermission('MONITOR_EVAL')) { ec.message.addError(ec.l10n.localize('This needs the MONITOR_EVAL permission')); return }
+            ec.service.sync().name('update#moqui.agent.AgentScorerAttach').parameters({attachId, thruDate: ec.user.nowTimestamp}).disableAuthz().call()
+        ]]></script></actions>
+        <default-response url="."><parameter name="datasetId"/></default-response>
+    </transition>
+    <transition name="experiments"><default-response url="../Experiments"/></transition>
+    <transition name="experimentDetail"><default-response url="../ExperimentDetail"/></transition>
+    <transition name="runs"><default-response url="../Runs"/></transition>
+    <actions>
+        <entity-find-one entity-name="moqui.agent.AgentDataset" value-field="dataset"/>
+        <script><![CDATA[
+            canEdit = ec.user.hasPermission('MONITOR_EVAL')
+            const find = (n, c) => Array.from(ec.entity.find(n).condition(c).disableAuthz().list())
+            itemList = find('moqui.agent.AgentDatasetItem', {datasetId}).filter(i => i.thruVersion == null).sort((a, b) => String(a.createdDate).localeCompare(String(b.createdDate))).map(i => i.getMap())
+            const scorers = {}; for (const s of find('moqui.agent.AgentScorer', {})) scorers[s.scorerId] = s
+            const now = Date.now(), live = a => a.thruDate == null || Date.parse(String(a.thruDate)) > now
+            attachList = find('moqui.agent.AgentScorerAttach', {datasetId}).filter(live).map(a => Object.assign(a.getMap(), {scorerName: scorers[a.scorerId]?.scorerName || a.scorerId, scorerType: scorers[a.scorerId]?.scorerTypeEnumId}))
+            const attached = new Set(attachList.map(a => a.scorerId))
+            scorerOptions = Object.values(scorers).filter(s => !attached.has(s.scorerId)).map(s => ({value: s.scorerId, label: s.scorerName || s.scorerId}))
+            experimentList = find('moqui.agent.AgentExperiment', {datasetId}).sort((a, b) => String(b.startedDate).localeCompare(String(a.startedDate))).slice(0, 20).map(e => e.getMap())
+            title = dataset ? (dataset.datasetName || datasetId) + ' · version ' + (dataset.versionNum || 0) + ' · ' + itemList.length + ' items' + (dataset.agentId ? ' · agent ' + dataset.agentId : '') : ec.l10n.localize('Dataset not found')
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="${title}" type="h5"/>
+        <label condition="dataset?.description" text="${dataset.description}" type="p"/>
+        <link url="experiments" text="Start an experiment" link-type="anchor"><parameter name="datasetId"/></link>
+
+        <label text="Scorers" type="h6"/>
+        <label text="Each experiment of this dataset scores every output with these." type="p"/>
+        <form-list name="Attached" list="attachList" skip-form="true">
+            <field name="scorerName"><default-field title="Scorer"><display/></default-field></field>
+            <field name="scorerType"><default-field title="Type"><display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+            <field name="detach"><default-field title=""><link condition="canEdit" url="detachScorer" text="Remove" link-type="hidden-form"><parameter name="attachId"/><parameter name="datasetId"/></link></default-field></field>
+        </form-list>
+        <form-single name="AttachScorer" transition="attachScorer">
+            <field name="datasetId"><default-field><hidden/></default-field></field>
+            <field name="scorerId"><default-field title="Add scorer"><drop-down><list-options list="scorerOptions" key="${value}" text="${label}"/></drop-down></default-field></field>
+            <field name="submitButton"><default-field title=""><submit text="Add"/></default-field></field>
+        </form-single>
+
+        <label text="Items" type="h6"/>
+        <label text="Saving an item makes a new version; experiments that ran an older version keep it. For Contains and Called tool, put one phrase or tool name per line in Expected." type="p"/>
+        <form-list name="Items" list="itemList" transition="updateItem">
+            <field name="itemId"><default-field title="Item"><hidden/><display/></default-field></field>
+            <field name="datasetId"><default-field><hidden/></default-field></field>
+            <field name="inputText"><default-field title="Input"><text-area rows="3" cols="50"/></default-field></field>
+            <field name="groundTruth"><default-field title="Expected"><text-area rows="3" cols="50"/></default-field></field>
+            <field name="metadataJson"><default-field title="Metadata (JSON)"><text-line size="20"/></default-field></field>
+            <field name="sourceRunId"><default-field title="From run"><link condition="sourceRunId" url="runs" text="${sourceRunId}" link-type="anchor"><parameter name="runId" from="sourceRunId"/></link></default-field></field>
+            <field name="update"><default-field title=""><submit text="Save"/></default-field></field>
+            <field name="remove"><default-field title=""><link url="removeItem" text="Remove" link-type="hidden-form" confirmation="Remove this item from the next version?"><parameter name="itemId"/><parameter name="datasetId"/></link></default-field></field>
+        </form-list>
+        <section name="AddSection" condition="canEdit"><widgets>
+            <form-single name="AddItem" transition="addItem">
+                <field name="datasetId"><default-field><hidden/></default-field></field>
+                <field name="inputText"><default-field title="Input"><text-area rows="3" cols="70"/></default-field></field>
+                <field name="groundTruth"><default-field title="Expected"><text-area rows="3" cols="70"/></default-field></field>
+                <field name="metadataJson"><default-field title="Metadata (JSON)"><text-line size="40"/></default-field></field>
+                <field name="submitButton"><default-field title=""><submit text="Add item"/></default-field></field>
+            </form-single>
+        </widgets></section>
+
+        <label text="Experiments" type="h6"/>
+        <form-list name="DatasetExperiments" list="experimentList" skip-form="true">
+            <field name="experimentId"><default-field title="Experiment"><link url="experimentDetail" text="${experimentName || experimentId}" link-type="anchor"><parameter name="experimentId"/></link></default-field></field>
+            <field name="datasetVersion"><default-field title="Version"><display/></default-field></field>
+            <field name="agentId"><default-field title="Agent"><display/></default-field></field>
+            <field name="statusId"><default-field title="Status"><display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+            <field name="meanScore"><default-field title="Mean"><display format="0.00"/></default-field></field>
+            <field name="passRate"><default-field title="Passed"><display format="0%"/></default-field></field>
+            <field name="startedDate"><default-field title="Started"><display format="yyyy-MM-dd HH:mm"/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

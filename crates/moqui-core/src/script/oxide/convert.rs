@@ -365,7 +365,7 @@ fn to_host_in<J: Js>(
         path.pop();
         return Ok(HostValue::List(list));
     }
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     let mut deferred = Vec::new();
     // an object with a symbol key is read by the walk below
     let visited = js.visit_plain_own_text(object, Some(&engine.protos.object_prototype), &mut |property| {
@@ -448,7 +448,7 @@ fn to_host_in<J: Js>(
             Value::Undefined,
             &[Value::Object(object.clone())],
         )?;
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert(SET_KEY.to_string(), to_host_in(js, engine, &items, path)?);
         path.pop();
         return Ok(HostValue::Map(map));
@@ -456,7 +456,7 @@ fn to_host_in<J: Js>(
     // A method of the object is not data, so it is left out, as the QuickJS conversion leaves it out; the own
     // enumerable string keys in their order, as QuickJS lists them.
     let keys = js.own_property_keys(object)?;
-    let mut map = indexmap::IndexMap::with_capacity(keys.len());
+    let mut map = indexmap::IndexMap::with_capacity_and_hasher(keys.len(), Default::default());
     for property in keys {
         if property.as_symbol().is_some() {
             continue;

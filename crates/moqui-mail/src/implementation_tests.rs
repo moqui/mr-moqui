@@ -14,8 +14,6 @@
 
 use std::collections::BTreeMap;
 
-use indexmap::IndexMap;
-
 use super::{field_text, host_in, smtp_delivery_outcome, stored_headers, SinkGuard, LIST_HEADERS, MESSAGE};
 #[cfg(feature = "imap")]
 #[cfg(feature = "imap")]
@@ -67,7 +65,7 @@ fn map(pairs: Vec<(&str, Value)>) -> Value {
         pairs
             .into_iter()
             .map(|(key, value)| (key.to_string(), value))
-            .collect::<IndexMap<_, _>>(),
+            .collect::<moqui_lib::object::ValueMap>(),
     )
 }
 
@@ -154,7 +152,7 @@ fn sink_receives_a_template_send_and_expands_the_subject() {
         ],
     );
     let sink = SinkGuard::install();
-    let mut body_parameters = indexmap::IndexMap::new();
+    let mut body_parameters = indexmap::IndexMap::default();
     body_parameters.insert("title".into(), Value::string("there"));
     let mut params = std::collections::BTreeMap::new();
     params.insert("emailTemplateId".into(), Value::string("HELLO"));
@@ -197,7 +195,7 @@ fn a_template_send_adds_the_list_headers_and_keeps_them() {
         ],
     );
     let sink = SinkGuard::install();
-    let mut extra = indexmap::IndexMap::new();
+    let mut extra = indexmap::IndexMap::default();
     extra.insert(
         "List-Unsubscribe".into(),
         Value::string("<https://example.com/u/TOKEN/oneClick>, <mailto:leave@example.com?subject=unsubscribe>"),

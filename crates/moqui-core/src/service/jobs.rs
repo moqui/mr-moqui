@@ -757,7 +757,7 @@ pub fn run_job_now(job_name: &str, extra: &BTreeMap<String, Value>) -> Result<St
 /// Send the ServiceJobError notification. A failure is logged and does not change the job row.
 #[cfg(test)]
 pub(crate) fn send_job_error_notification(job_name: &str, job_run_id: &str, errors: &str) {
-    send_job_error_to(job_name, job_run_id, errors, &[], indexmap::IndexMap::new());
+    send_job_error_to(job_name, job_run_id, errors, &[], indexmap::IndexMap::default());
 }
 
 fn send_job_error_to(
@@ -765,7 +765,7 @@ fn send_job_error_to(
     job_run_id: &str,
     errors: &str,
     user_ids: &[String],
-    extra: indexmap::IndexMap<String, Value>,
+    extra: moqui_lib::object::ValueMap,
 ) {
     if let Err(err) = crate::notify::service_job_error(job_name, job_run_id, errors, user_ids, extra) {
         tracing::warn!(
@@ -891,7 +891,7 @@ pub(crate) fn run_job(job: JobRun) {
             messages.errors().first().cloned(),
         )
     };
-    let result_values: indexmap::IndexMap<String, Value> = results.into_iter().collect();
+    let result_values: moqui_lib::object::ValueMap = results.into_iter().collect();
     let results = serde_json::to_string(&moqui_lib::json::to_json(&Value::Map(result_values.clone()))).ok();
     end.finish(&RunOutcome {
         has_error,
@@ -910,7 +910,7 @@ pub(crate) fn run_job(job: JobRun) {
 
 /// `moqui.job.runs` by outcome: success, error, or panic.
 fn count_job_run(telemetry: &crate::telemetry::Telemetry, outcome: &str) {
-    let mut attributes = crate::entity::document::Document::new();
+    let mut attributes = crate::entity::document::Document::default();
     attributes.insert("outcome".into(), Value::string(outcome));
     telemetry.add_counter("moqui.job.runs", 1, attributes);
 }
@@ -921,7 +921,7 @@ struct RunOutcome {
     /// The results as JSON.
     results: Option<String>,
     /// The results, for the notifications.
-    result_values: indexmap::IndexMap<String, Value>,
+    result_values: moqui_lib::object::ValueMap,
     messages: String,
     errors: String,
 }
@@ -952,7 +952,7 @@ impl Drop for RunEnd<'_> {
         let outcome = RunOutcome {
             has_error: true,
             results: None,
-            result_values: indexmap::IndexMap::new(),
+            result_values: indexmap::IndexMap::default(),
             messages: String::new(),
             errors: "The service job panicked".to_string(),
         };
@@ -1048,7 +1048,7 @@ fn send_job_notifications(facade: &EntityFacade, job: &JobRun, outcome: &RunOutc
         }
         Err(err) => tracing::warn!(job = %job.job_name, error = %err, "could not read the job's notification users"),
     }
-    let mut run = indexmap::IndexMap::new();
+    let mut run = indexmap::IndexMap::default();
     run.insert("jobName".to_string(), Value::string(&job.job_name));
     run.insert(
         "description".to_string(),
@@ -1059,7 +1059,7 @@ fn send_job_notifications(facade: &EntityFacade, job: &JobRun, outcome: &RunOutc
     run.insert("messages".to_string(), Value::string(&outcome.messages));
     run.insert("hasError".to_string(), Value::Bool(outcome.has_error));
     run.insert("errors".to_string(), Value::string(&outcome.errors));
-    let mut message = indexmap::IndexMap::new();
+    let mut message = indexmap::IndexMap::default();
     message.insert("serviceCallRun".to_string(), Value::Map(run));
     message.insert(
         "parameters".to_string(),

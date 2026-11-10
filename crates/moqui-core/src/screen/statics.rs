@@ -553,7 +553,7 @@ fn unwrap_context() -> serde_json::Map<String, serde_json::Value> {
     out
 }
 
-fn unwrap_map(map: &IndexMap<String, Value>) -> serde_json::Value {
+fn unwrap_map(map: &moqui_lib::object::ValueMap) -> serde_json::Value {
     let mut out = serde_json::Map::new();
     for (key, value) in map {
         if matches!(value, Value::Object(_))
@@ -943,7 +943,7 @@ fn form_package(state: &RenderState, def: &ScreenDef, name: &str) -> Result<(), 
     }
     let node = instance.shared_node()?;
     let (handle, _) = sri::open_form_list(state, name, false)?;
-    let mut rows: Vec<IndexMap<String, Value>> = state
+    let mut rows: Vec<moqui_lib::object::ValueMap> = state
         .form_lists
         .borrow()
         .get(handle)
@@ -1021,7 +1021,7 @@ fn form_package(state: &RenderState, def: &ScreenDef, name: &str) -> Result<(), 
         }
         let expression = node.attribute(&format!("map-{kind}-row")).unwrap_or_default();
         let map = if expression.trim().is_empty() {
-            Value::Map(IndexMap::new())
+            Value::Map(IndexMap::default())
         } else {
             script::eval_value(&expression)?
         };
@@ -1244,7 +1244,7 @@ fn row_extras(
     node: &MNode,
     form_name: &str,
     include: &dyn Fn(&MNode) -> bool,
-) -> Result<IndexMap<String, Value>, Error> {
+) -> Result<moqui_lib::object::ValueMap, Error> {
     row_extras_of(state, node, form_name, include, &["default-field", "conditional-field"])
 }
 
@@ -1255,8 +1255,8 @@ fn row_extras_of(
     form_name: &str,
     include: &dyn Fn(&MNode) -> bool,
     subs: &[&str],
-) -> Result<IndexMap<String, Value>, Error> {
-    let mut extras = IndexMap::new();
+) -> Result<moqui_lib::object::ValueMap, Error> {
+    let mut extras = IndexMap::default();
     extras.insert(disable_key(&lit_of(node, true)), Value::Bool(disabled(state, node)));
     for field in node.children_named("field").into_iter().filter(|field| include(field)) {
         let field_name = field.attribute("name").unwrap_or_default();
@@ -1292,7 +1292,7 @@ fn row_widget_extras(
     widget: &MNode,
     form_name: &str,
     field_name: &str,
-    extras: &mut IndexMap<String, Value>,
+    extras: &mut moqui_lib::object::ValueMap,
     depth: usize,
 ) -> Result<(), Error> {
     if depth > MAX_WALK_DEPTH {
@@ -1385,7 +1385,7 @@ pub(crate) fn run_actions_transition(state: &RenderState) -> Result<(), Error> {
         if index >= first_pre {
             state.screen_path_index.set(index);
             if let Some(actions) = &def.pre_actions {
-                script::run_actions(&actions.xml)?;
+                actions.run()?;
             }
         }
     }

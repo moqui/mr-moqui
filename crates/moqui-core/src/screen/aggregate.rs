@@ -140,14 +140,14 @@ impl Aggregation {
     /// `group-by` field that is not shown is left out of the group key; when none is shown, every row is one group.
     pub(crate) fn apply(
         &self,
-        rows: Vec<IndexMap<String, Value>>,
+        rows: Vec<moqui_lib::object::ValueMap>,
         include: Option<&HashSet<String>>,
-        value_of: impl Fn(&IndexMap<String, Value>, &str) -> Value,
-    ) -> Vec<IndexMap<String, Value>> {
+        value_of: impl Fn(&moqui_lib::object::ValueMap, &str) -> Value,
+    ) -> Vec<moqui_lib::object::ValueMap> {
         let make_sub_list = !self.group_fields.is_empty();
-        let mut result: Vec<IndexMap<String, Value>> = Vec::new();
+        let mut result: Vec<moqui_lib::object::ValueMap> = Vec::new();
         let mut groups: Vec<(Vec<Value>, usize)> = Vec::new();
-        let mut totals: IndexMap<String, Value> = IndexMap::new();
+        let mut totals: moqui_lib::object::ValueMap = IndexMap::default();
         let has_sub_totals = self
             .fields
             .iter()
@@ -173,15 +173,15 @@ impl Aggregation {
             match existing {
                 None => {
                     let mut out = row.clone();
-                    let mut sub: Option<IndexMap<String, Value>> = None;
-                    let mut sub_totals: Option<IndexMap<String, Value>> = None;
+                    let mut sub: Option<moqui_lib::object::ValueMap> = None;
+                    let mut sub_totals: Option<moqui_lib::object::ValueMap> = None;
                     for field in &self.fields {
                         let value = value_of(&row, &field.name);
                         if value.is_null() {
                             continue;
                         }
                         if make_sub_list && field.sub_list {
-                            sub.get_or_insert_with(IndexMap::new)
+                            sub.get_or_insert_with(Default::default)
                                 .insert(field.name.clone(), value.clone());
                             out.shift_remove(&field.name);
                         } else if field.function == Some(Function::Count) {
@@ -197,7 +197,7 @@ impl Aggregation {
                             if field.sub_list {
                                 apply_function(
                                     total,
-                                    sub_totals.get_or_insert_with(IndexMap::new),
+                                    sub_totals.get_or_insert_with(Default::default),
                                     &field.name,
                                     &value,
                                 );
@@ -219,14 +219,14 @@ impl Aggregation {
                 }
                 Some(index) => {
                     let out = &mut result[index];
-                    let mut sub: Option<IndexMap<String, Value>> = None;
+                    let mut sub: Option<moqui_lib::object::ValueMap> = None;
                     for field in &self.fields {
                         let value = value_of(&row, &field.name);
                         if value.is_null() {
                             continue;
                         }
                         if field.sub_list {
-                            sub.get_or_insert_with(IndexMap::new)
+                            sub.get_or_insert_with(Default::default)
                                 .insert(field.name.clone(), value.clone());
                         } else if let Some(function) = field.function {
                             apply_function(function, out, &field.name, &value);
@@ -235,7 +235,7 @@ impl Aggregation {
                             if field.sub_list {
                                 let mut sub_totals = match out.shift_remove("aggregateSubListTotals") {
                                     Some(Value::Map(map)) => map,
-                                    _ => IndexMap::new(),
+                                    _ => IndexMap::default(),
                                 };
                                 apply_function(total, &mut sub_totals, &field.name, &value);
                                 out.insert("aggregateSubListTotals".to_string(), Value::Map(sub_totals));
@@ -284,7 +284,7 @@ fn decimal_of(value: &Value) -> Option<Decimal> {
 }
 
 /// `AggregationUtil.doFunction`.
-fn apply_function(function: Function, map: &mut IndexMap<String, Value>, name: &str, value: &Value) {
+fn apply_function(function: Function, map: &mut moqui_lib::object::ValueMap, name: &str, value: &Value) {
     match function {
         Function::Min | Function::Max => match map.get(name) {
             None => {

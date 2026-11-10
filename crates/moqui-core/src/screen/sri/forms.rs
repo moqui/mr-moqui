@@ -16,7 +16,6 @@
 
 use std::sync::Arc;
 
-use indexmap::IndexMap;
 use moqui_lib::object::Value;
 
 use super::sections::guarded;
@@ -209,7 +208,7 @@ pub(in crate::screen) fn single_form_map_frame(map: &Value) -> ContextFrame {
     form_map_frame(script::value_map(map).unwrap_or_default())
 }
 
-fn form_map_frame(fields: IndexMap<String, Value>) -> ContextFrame {
+fn form_map_frame(fields: moqui_lib::object::ValueMap) -> ContextFrame {
     // the fields and `_formMap`, one copy of them made, as a put of each and then of `_formMap` leaves the frame
     let mut entries = fields.clone();
     entries.insert("_formMap".to_string(), Value::Map(fields));
@@ -252,7 +251,7 @@ fn list_value(form: &FormInstance, cursor: bool) -> Result<Value, Error> {
     };
     Ok(match find {
         Some(find) => {
-            script::run_actions(&find.xml)?;
+            find.run()?;
             script::context_value(&form.list_name).unwrap_or(Value::Null)
         }
         // A plain name held in the context is that value, as Java's `expression(list)` gives the object itself: through
@@ -301,7 +300,7 @@ fn form_row(
     item: Value,
     index: usize,
     has_next: bool,
-) -> Result<IndexMap<String, Value>, Error> {
+) -> Result<moqui_lib::object::ValueMap, Error> {
     // the item's fields, the entry, its index and whether one follows, in the order a put of each leaves them
     let mut entries = script::value_map(&item).unwrap_or_default();
     entries.insert(names.entry.clone(), item);
@@ -310,7 +309,7 @@ fn form_row(
     let frame = ContextFrame::push_entries(entries);
     let ran = (|| -> Result<(), Error> {
         if let Some(actions) = &form.row_actions {
-            script::run_actions(&actions.xml)?;
+            actions.run()?;
         }
         for (field, from) in &form.field_from {
             let value = script::eval_value(from)?;
@@ -324,7 +323,7 @@ fn form_row(
 }
 
 /// The rows of a form-list, each made by [`form_row`], aggregated when the form says so.
-fn form_rows(form: &FormInstance) -> Result<Vec<IndexMap<String, Value>>, Error> {
+fn form_rows(form: &FormInstance) -> Result<Vec<moqui_lib::object::ValueMap>, Error> {
     let list_value = list_value(form, false)?;
     let items = script::value_items(&list_value).unwrap_or_default();
     let count = items.len();
@@ -501,7 +500,7 @@ impl RowStream {
     }
 
     /// Row `index`, which must be the next; `None` after the last.
-    fn row(&mut self, index: usize) -> Result<Option<IndexMap<String, Value>>, Error> {
+    fn row(&mut self, index: usize) -> Result<Option<moqui_lib::object::ValueMap>, Error> {
         if self.ended {
             return Ok(None);
         }

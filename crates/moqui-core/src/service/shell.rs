@@ -121,7 +121,7 @@ fn get_providers(
     let list = declared
         .iter()
         .map(|declared| {
-            let mut row = IndexMap::new();
+            let mut row = IndexMap::default();
             row.insert("sourceId".to_string(), Value::string(&declared.provider.name));
             row.insert("app".to_string(), Value::string(&declared.app));
             row.insert("service".to_string(), Value::string(&declared.provider.service));
@@ -175,7 +175,7 @@ fn call_providers(
             });
         match answer {
             Ok(out) => {
-                let mut row: IndexMap<String, Value> = out.into_iter().collect();
+                let mut row: moqui_lib::object::ValueMap = out.into_iter().collect();
                 row.insert("sourceId".to_string(), Value::string(name));
                 results.push(Value::Map(row));
             }
@@ -189,7 +189,7 @@ fn call_providers(
                     "{hook} provider {name} ({}) failed; left out: {err}",
                     declared.provider.service
                 );
-                let mut part = IndexMap::new();
+                let mut part = IndexMap::default();
                 part.insert("sourceId".to_string(), Value::string(name));
                 part.insert("error".to_string(), Value::string(err.to_string()));
                 failed.push(Value::Map(part));
@@ -225,7 +225,7 @@ fn first_failure(service: &str) -> bool {
 /// rows, and no app's authorization covers it (the webroot transitions are not under an app root). So this is only for
 /// the current user's counts, or for internal work; `get#ShellCounts` refuses another user's to a caller with
 /// authorization on.
-pub(crate) fn shell_counts(user_id: &str) -> Option<IndexMap<String, Value>> {
+pub(crate) fn shell_counts(user_id: &str) -> Option<moqui_lib::object::ValueMap> {
     let theme = user_theme_id(Some(user_id), QUASAR_THEME_TYPE, DEFAULT_QUASAR_THEME);
     let service = match theme_resource_values(&theme, COUNTS_SERVICE) {
         Ok(values) => values.into_iter().next()?,

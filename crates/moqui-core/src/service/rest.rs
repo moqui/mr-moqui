@@ -125,17 +125,17 @@ pub fn resolve_service(path: &str, method: &str) -> Result<Value, Error> {
     let Operation::Service { name, .. } = operation else {
         return Err(Error::new("REST method is not backed by a service"));
     };
-    Ok(Value::Map(indexmap::indexmap! {
-        "serviceName".to_string() => Value::string(name),
-        "path".to_string() => Value::string(format!("/rest/s1/{}", parts.join("/"))),
-        "pathParameters".to_string() => Value::List(path_parameters),
-        "method".to_string() => Value::string(method.to_ascii_lowercase()),
-    }))
+    Ok(Value::Map(moqui_lib::object::ValueMap::from_iter([ 
+        ("serviceName".to_string(), Value::string(name)),
+        ("path".to_string(), Value::string(format!("/rest/s1/{}", parts.join("/")))),
+        ("pathParameters".to_string(), Value::List(path_parameters)),
+        ("method".to_string(), Value::string(method.to_ascii_lowercase())),
+    ])))
 }
 
 fn resource_info(node: &Node, with_children: bool) -> Value {
     let text = |value: &Option<String>| value.as_deref().map_or(Value::Null, Value::string);
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     map.insert("name".to_string(), Value::string(&node.name));
     map.insert("displayName".to_string(), text(&node.display_name));
     map.insert("description".to_string(), text(&node.description));
@@ -831,14 +831,14 @@ pub(crate) fn openapi_document(segments: &[String]) -> Result<Value, Error> {
         facade: facade.as_ref(),
         enums: facade.as_ref().map(crate::entity::FieldEnums::new),
     };
-    let mut paths = IndexMap::new();
+    let mut paths = IndexMap::default();
     collect_paths(root, "", below, &[], &mut schemas, &mut paths);
-    let mut info = IndexMap::new();
+    let mut info = IndexMap::default();
     info.insert("title".to_string(), Value::string(root_name));
     info.insert("version".to_string(), Value::string("1.0"));
-    let mut server = IndexMap::new();
+    let mut server = IndexMap::default();
     server.insert("url".to_string(), Value::string("/rest/s1"));
-    let mut doc = IndexMap::new();
+    let mut doc = IndexMap::default();
     doc.insert("openapi".to_string(), Value::string("3.1.0"));
     doc.insert("info".to_string(), Value::Map(info));
     doc.insert("servers".to_string(), Value::List(vec![Value::Map(server)]));
@@ -868,7 +868,7 @@ fn collect_paths(
     descend: &[String],
     path_params: &[String],
     schemas: &mut Schemas<'_>,
-    paths: &mut IndexMap<String, Value>,
+    paths: &mut moqui_lib::object::ValueMap,
 ) {
     let here = join_path(prefix, node);
     let mut path_params = path_params.to_vec();
@@ -910,7 +910,7 @@ fn join_path(prefix: &str, node: &Node) -> String {
 }
 
 fn method_object(methods: &BTreeMap<String, Operation>, path_params: &[String], schemas: &mut Schemas<'_>) -> Value {
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     for (verb, operation) in methods {
         map.insert(verb.clone(), operation_object(verb, operation, path_params, schemas));
     }
@@ -922,16 +922,16 @@ fn operation_object(verb: &str, operation: &Operation, path_params: &[String], s
         Operation::Service { name, .. } => name.clone(),
         Operation::Entity { name, operation, .. } => format!("{operation} {name}"),
     };
-    let mut success = IndexMap::new();
+    let mut success = IndexMap::default();
     success.insert("description".to_string(), Value::string("Success"));
-    let mut denied = IndexMap::new();
+    let mut denied = IndexMap::default();
     denied.insert("description".to_string(), Value::string("Authentication required"));
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     map.insert("summary".to_string(), Value::string(summary));
     if let Operation::Service { name, .. } = operation {
         service_parameters(name, verb, path_params, schemas, &mut map, &mut success);
     }
-    let mut responses = IndexMap::new();
+    let mut responses = IndexMap::default();
     responses.insert("200".to_string(), Value::Map(success));
     responses.insert("401".to_string(), Value::Map(denied));
     map.insert("responses".to_string(), Value::Map(responses));
@@ -945,8 +945,8 @@ fn service_parameters(
     verb: &str,
     path_params: &[String],
     schemas: &mut Schemas<'_>,
-    operation: &mut IndexMap<String, Value>,
-    success: &mut IndexMap<String, Value>,
+    operation: &mut moqui_lib::object::ValueMap,
+    success: &mut moqui_lib::object::ValueMap,
 ) {
     let Some(def) = super::define::find(name) else {
         tracing::error!(
@@ -969,7 +969,7 @@ fn service_parameters(
     let mut parameters = Vec::new();
     for path_param in path_params {
         let found = in_params.iter().find(|param| &param.name == path_param);
-        let mut schema = IndexMap::new();
+        let mut schema = IndexMap::default();
         schema.insert(
             "type".to_string(),
             Value::string(json_type(found.map_or("", |param| param.java_type.as_str()))),
@@ -986,11 +986,11 @@ fn service_parameters(
         .collect();
     if !remaining.is_empty() {
         if matches!(verb, "post" | "put" | "patch") {
-            let mut json = IndexMap::new();
+            let mut json = IndexMap::default();
             json.insert("schema".to_string(), params_schema(&in_params, schemas));
-            let mut content = IndexMap::new();
+            let mut content = IndexMap::default();
             content.insert("application/json".to_string(), Value::Map(json));
-            let mut body = IndexMap::new();
+            let mut body = IndexMap::default();
             body.insert("required".to_string(), Value::Bool(true));
             body.insert("content".to_string(), Value::Map(content));
             operation.insert("requestBody".to_string(), Value::Map(body));
@@ -1014,16 +1014,16 @@ fn service_parameters(
         .filter(|param| !param.name.is_empty() && param.required != Required::Disabled)
         .collect();
     if !out_params.is_empty() {
-        let mut json = IndexMap::new();
+        let mut json = IndexMap::default();
         json.insert("schema".to_string(), params_schema(&out_params, schemas));
-        let mut content = IndexMap::new();
+        let mut content = IndexMap::default();
         content.insert("application/json".to_string(), Value::Map(json));
         success.insert("content".to_string(), Value::Map(content));
     }
 }
 
-fn parameter_object(name: &str, location: &str, required: bool, schema: IndexMap<String, Value>) -> Value {
-    let mut map = IndexMap::new();
+fn parameter_object(name: &str, location: &str, required: bool, schema: moqui_lib::object::ValueMap) -> Value {
+    let mut map = IndexMap::default();
     map.insert("name".to_string(), Value::string(name));
     map.insert("in".to_string(), Value::string(location));
     map.insert("required".to_string(), Value::Bool(required));
@@ -1033,7 +1033,7 @@ fn parameter_object(name: &str, location: &str, required: bool, schema: IndexMap
 
 /// Java's `getJsonSchemaMapIn` and `getJsonSchemaMapOut`.
 pub(crate) fn params_schema(params: &[&ParamDef], schemas: &mut Schemas<'_>) -> Value {
-    let mut properties = IndexMap::new();
+    let mut properties = IndexMap::default();
     let mut required = Vec::new();
     for param in params {
         if param.required == Required::True {
@@ -1041,7 +1041,7 @@ pub(crate) fn params_schema(params: &[&ParamDef], schemas: &mut Schemas<'_>) -> 
         }
         properties.insert(param.name.clone(), Value::Map(param_schema(param, schemas)));
     }
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     map.insert("type".to_string(), Value::string("object"));
     map.insert("properties".to_string(), Value::Map(properties));
     if !required.is_empty() {
@@ -1052,9 +1052,9 @@ pub(crate) fn params_schema(params: &[&ParamDef], schemas: &mut Schemas<'_>) -> 
 
 /// Java's `getJsonSchemaPropMap`: the type and format, the description, the default, the first nested parameter as an
 /// array's items or the nested parameters as an object's properties, and otherwise the enumeration ids.
-pub(crate) fn param_schema(param: &ParamDef, schemas: &mut Schemas<'_>) -> IndexMap<String, Value> {
+pub(crate) fn param_schema(param: &ParamDef, schemas: &mut Schemas<'_>) -> moqui_lib::object::ValueMap {
     let json_type = json_type(&param.java_type);
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     map.insert("type".to_string(), Value::string(json_type));
     if let Some(format) = json_format(&param.java_type) {
         map.insert("format".to_string(), Value::string(format));
@@ -1125,13 +1125,13 @@ pub fn entity_auto_schema(facade: &EntityFacade, verb: &str, entity: &str) -> Op
         .with_entity(entity, |definition, _, _| {
             let pk = definition.pk_field_names();
             let key_required = verb != "create" || pk.len() > 1;
-            let mut properties = IndexMap::new();
+            let mut properties = IndexMap::default();
             let mut required = Vec::new();
             for field in &definition.fields {
                 if field.name == "lastUpdatedStamp" || (verb == "delete" && !field.is_pk) {
                     continue;
                 }
-                let mut schema = IndexMap::new();
+                let mut schema = IndexMap::default();
                 schema.insert("type".to_string(), Value::string(json_type(&field.java_type)));
                 if let Some(format) = json_format(&field.java_type) {
                     schema.insert("format".to_string(), Value::string(format));
@@ -1141,7 +1141,7 @@ pub fn entity_auto_schema(facade: &EntityFacade, verb: &str, entity: &str) -> Op
                     required.push(Value::string(&field.name));
                 }
             }
-            let mut map = IndexMap::new();
+            let mut map = IndexMap::default();
             map.insert("type".to_string(), Value::string("object"));
             map.insert("properties".to_string(), Value::Map(properties));
             if !required.is_empty() {

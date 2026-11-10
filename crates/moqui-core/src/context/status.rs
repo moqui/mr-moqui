@@ -41,7 +41,7 @@ fn decimal(number: f64, scale: u32) -> Value {
 /// The fields of `/proc/self/status` in KiB or counts. Empty off Linux.
 fn proc_status() -> IndexMap<String, i64> {
     let Ok(text) = std::fs::read_to_string("/proc/self/status") else {
-        return IndexMap::new();
+        return IndexMap::default();
     };
     text.lines()
         .filter_map(|line| {
@@ -63,7 +63,7 @@ fn load_average() -> Option<f64> {
 }
 
 /// The status map. `include_sensitive` adds the CPU and OS names, the version, and the data sources, as in Java.
-pub fn status_map(factory: &ExecutionContextFactory, include_sensitive: bool) -> IndexMap<String, Value> {
+pub fn status_map(factory: &ExecutionContextFactory, include_sensitive: bool) -> moqui_lib::object::ValueMap {
     let processors = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     let load = load_average().unwrap_or(0.0);
     #[allow(clippy::cast_precision_loss)] // A processor count fits a double.
@@ -79,7 +79,7 @@ pub fn status_map(factory: &ExecutionContextFactory, include_sensitive: bool) ->
     let started = factory.started_millis();
     #[allow(clippy::cast_precision_loss)] // Milliseconds of uptime fit a double.
     let uptime_hours = (now - started) as f64 / 3_600_000.0;
-    let mut out = IndexMap::new();
+    let mut out = IndexMap::default();
     out.insert(
         "Utilization".to_string(),
         map(vec![("LoadPercent", decimal(load_percent, 2))]),
@@ -158,12 +158,12 @@ fn data_sources(factory: &ExecutionContextFactory) -> Vec<Value> {
 }
 
 /// `getComponentInfoList`: name, location, and version of each component, in load order.
-pub fn component_info_list(factory: &ExecutionContextFactory) -> Vec<IndexMap<String, Value>> {
+pub fn component_info_list(factory: &ExecutionContextFactory) -> Vec<moqui_lib::object::ValueMap> {
     factory
         .components()
         .iter()
         .map(|info| {
-            let mut row = IndexMap::new();
+            let mut row = IndexMap::default();
             row.insert("name".to_string(), Value::string(&info.name));
             row.insert(
                 "location".to_string(),
@@ -182,7 +182,7 @@ pub fn component_info_list(factory: &ExecutionContextFactory) -> Vec<IndexMap<St
 /// The threads of this process for the thread list screen, from `/proc/self/task` on Linux (empty elsewhere): name,
 /// id, state (`RUNNABLE`, `WAITING`, ... from the kernel's state letter), and CPU and user time in nanoseconds. Java
 /// reads a `ThreadMXBean`; there are no lock or stack details here.
-pub fn thread_list() -> Vec<IndexMap<String, Value>> {
+pub fn thread_list() -> Vec<moqui_lib::object::ValueMap> {
     // USER_HZ is 100 on Linux, so a tick is ten milliseconds.
     const TICK_NANOS: i64 = 10_000_000;
     let Ok(entries) = std::fs::read_dir("/proc/self/task") else {
@@ -212,7 +212,7 @@ pub fn thread_list() -> Vec<IndexMap<String, Value>> {
         let ticks = |index: usize| after.get(index).and_then(|text| text.parse::<i64>().ok()).unwrap_or(0);
         let user = ticks(11);
         let system = ticks(12);
-        let mut row = IndexMap::new();
+        let mut row = IndexMap::default();
         row.insert("threadName".to_string(), Value::string(name));
         row.insert("threadId".to_string(), Value::I64(id));
         row.insert("threadState".to_string(), Value::string(state));

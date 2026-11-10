@@ -170,20 +170,31 @@ pub fn localize_in(original: &str, locale: &str) -> Result<String, Error> {
         tracing::debug!(length, "text of more than {MAX_ORIGINAL} characters is not localized");
         return Ok(original.to_string());
     }
-    let key = format!("{original}::{locale}");
     let cache = ExecutionContext::with_current(|ec| ec.factory().cache().get("l10n.message"))
         .and_then(Result::ok)
         .flatten();
     if let Some(cache) = &cache {
         clear_after_message_write(cache)?;
-        if let Some(found) = cache.get(&key)? {
+        // the key is made in a buffer the thread keeps: a hit, the common case, allocates none
+        // (plans/Profiling3.md W15)
+        thread_local! {
+            static KEY: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+        }
+        let found = KEY.with_borrow_mut(|key| {
+            key.clear();
+            key.push_str(original);
+            key.push_str("::");
+            key.push_str(locale);
+            cache.get(key)
+        })?;
+        if let Some(found) = found {
             return Ok(moqui_lib::object::to_plain_string(&found));
         }
     }
     let (result, store) = lookup(original, locale);
     if store {
         if let Some(cache) = &cache {
-            cache.put(key, Value::string(&result))?;
+            cache.put(format!("{original}::{locale}"), Value::string(&result))?;
         }
     }
     Ok(result)

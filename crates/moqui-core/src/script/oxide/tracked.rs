@@ -27,7 +27,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use moqui_lib::object::Value as HostValue;
-use quickjs_oxide::engine::api::core::{DataRef, Js, PropertyKey, Value};
+use quickjs_oxide::engine::api::core::{
+    CompleteOrdinaryPropertyDescriptor, DataRef, Js, OrdinaryPropertyDescriptor, PropertyKey, Value,
+};
 
 use super::convert::{key, to_host, to_js, Conv};
 use super::decimal::OxDecimal;
@@ -48,7 +50,10 @@ pub(crate) enum Flush {
 
 /// What a screen unit sets aside of the run around it ([`RunValues::take_outer`]): its released values and the values
 /// it kept by name.
-pub(super) type OuterValues = (HashMap<String, (Value, u64)>, HashMap<String, Value>);
+pub(super) type OuterValues = (
+    HashMap<String, (Value, u64), foldhash::fast::RandomState>,
+    HashMap<String, Value, foldhash::fast::RandomState>,
+);
 
 /// Whether the stack still holds, for `name`, the host value whose [`fingerprint`] a [`Flush::Release`] noted.
 fn print_held(name: &str, print: u64) -> bool {
@@ -59,13 +64,31 @@ fn print_held(name: &str, print: u64) -> bool {
 #[derive(Default)]
 pub(super) struct RunValues {
     /// Lists, maps and decimals read or assigned by name, written back at a flush.
-    tracked: HashMap<String, Value>,
+    tracked: HashMap<String, Value, foldhash::fast::RandomState>,
     /// Values a [`Flush::Release`] took off `tracked`, with the [`fingerprint`] of the host value written for each.
-    released: HashMap<String, (Value, u64)>,
+    released: HashMap<String, (Value, u64), foldhash::fast::RandomState>,
     /// Entity values read by name, kept so a second read is the same object.
-    kept: HashMap<String, Value>,
+    kept: HashMap<String, Value, foldhash::fast::RandomState>,
     /// Whether a flush is writing back now: a conversion meanwhile does not flush again.
     flushing: bool,
+    /// Bare names read or written through the hooks since the bindings were last emptied, and how often: a name's
+    /// second access binds it ([`note_access`]).
+    accesses: HashMap<String, u8, foldhash::fast::RandomState>,
+    /// The names bound as own data properties of the global object, which the engine's global sites read and write
+    /// from their cache without the hooks (plans/Profiling3.md S2).
+    bindings: Vec<Binding>,
+    /// Whether this run binds names: one that writes them back at its end ([`super::engine::with_run`]).
+    pub(super) binds: bool,
+}
+
+/// A bare name kept as an own data property of the global object, a write-back cache of its stack value.
+pub(super) struct Binding {
+    name: String,
+    key: PropertyKey,
+    /// The value last written to or read from the stack: a flush writes the binding back when it differs.
+    synced: Value,
+    /// The binding's value while a nested run has it off the global object ([`set_aside_bindings`]).
+    parked: Option<Value>,
 }
 
 impl RunValues {
@@ -75,6 +98,9 @@ impl RunValues {
         self.released.clear();
         self.kept.clear();
         self.flushing = false;
+        self.accesses.clear();
+        self.bindings.clear();
+        self.binds = false;
     }
 
     /// Set aside what a screen unit must not see of the run around it (its released values, and the decimals and
@@ -109,6 +135,19 @@ pub(super) fn read_name<J: Js>(js: &mut J, name: &str) -> Result<Value, Conv> {
         return Err(Conv::Unsupported("a run that fell back"));
     }
     let engine = current().ok_or(Conv::Unsupported("no oxide engine"))?;
+    // a bound name read through `context`: the binding is the current value
+    let bound = values(&engine)
+        .borrow()
+        .bindings
+        .iter()
+        .find(|binding| binding.name == name)
+        .map(|binding| binding.key.clone());
+    if let Some(key) = bound {
+        let global = js.global_object()?;
+        if let Some(CompleteOrdinaryPropertyDescriptor::Data { value, .. }) = js.get_own_property(&global, &key)? {
+            return Ok(value);
+        }
+    }
     {
         let values = values(&engine).borrow();
         if let Some(found) = values.tracked.get(name).or_else(|| values.kept.get(name)) {
@@ -162,7 +201,7 @@ pub(super) fn read_name<J: Js>(js: &mut J, name: &str) -> Result<Value, Conv> {
 }
 
 /// Forget the run's object of `name`, for `delete context.name`.
-pub(super) fn forget(name: &str) -> Result<(), Conv> {
+pub(super) fn forget<J: Js>(js: &mut J, name: &str) -> Result<(), Conv> {
     if super::engine::fallback_pending() {
         return Err(Conv::Unsupported("a run that fell back"));
     }
@@ -171,6 +210,22 @@ pub(super) fn forget(name: &str) -> Result<(), Conv> {
     values.tracked.remove(name);
     values.released.remove(name);
     values.kept.remove(name);
+    // a bound name goes off the global object too, so a bare read of it asks the stack again
+    let unbound: Vec<PropertyKey> = values
+        .bindings
+        .iter()
+        .filter(|binding| binding.name == name && binding.parked.is_none())
+        .map(|binding| binding.key.clone())
+        .collect();
+    values.bindings.retain(|binding| binding.name != name);
+    values.accesses.remove(name);
+    drop(values);
+    if !unbound.is_empty() {
+        let global = js.global_object()?;
+        for key in &unbound {
+            js.delete_property(&global, key)?;
+        }
+    }
     Ok(())
 }
 
@@ -201,6 +256,153 @@ pub(super) fn write_name<J: Js>(js: &mut J, name: &str, value: &Value) -> Result
             .borrow_mut()
             .tracked
             .insert(name.to_string(), value.clone());
+    }
+    // a bound name written through `context`, or written back by a flush: the binding has the value, written
+    let bound = {
+        let mut values = values(&engine).borrow_mut();
+        values.bindings.iter_mut().find(|binding| binding.name == name).map(|binding| {
+            binding.synced = value.clone();
+            binding.key.clone()
+        })
+    };
+    if let Some(key) = bound {
+        let global = js.global_object()?;
+        js.set_property(&global, &key, value.clone())?;
+    }
+    Ok(())
+}
+
+/// A bare name the hooks read or wrote, `value` its value now: at its [`BIND_AT`] access since the bindings were
+/// emptied it is bound, an own data property of the global object holding `value`, so the engine's cached global sites
+/// read and write it without the hooks until a flush that may change the stack. A body that reads a name a few times
+/// pays a count.
+pub(super) fn note_access<J: Js>(js: &mut J, name: &str, value: &Value) -> Result<(), Conv> {
+    let Some(engine) = current() else {
+        return Ok(());
+    };
+    {
+        let mut values = values(&engine).borrow_mut();
+        if !values.binds || values.bindings.len() >= MAX_BINDINGS || values.flushing {
+            return Ok(());
+        }
+        let count = values.accesses.entry(name.to_string()).or_insert(0);
+        *count = count.saturating_add(1);
+        if *count != BIND_AT {
+            return Ok(());
+        }
+    }
+    let key = key(name)?;
+    let global = js.global_object()?;
+    let descriptor = OrdinaryPropertyDescriptor::data(value.clone(), true, false, true);
+    if !js.define_own_property(&global, &key, &descriptor)? {
+        return Ok(());
+    }
+    values(&engine).borrow_mut().bindings.push(Binding {
+        name: name.to_string(),
+        key,
+        synced: value.clone(),
+        parked: None,
+    });
+    Ok(())
+}
+
+/// The access of a name, since the bindings were last emptied, that binds it. A binding costs about what a few reads
+/// through the hooks do (it is defined, later deleted, and the global sites fill again), so a name read fewer times
+/// between two flushes that empty the bindings (a body around a service call in a loop) stays with the hooks.
+const BIND_AT: u8 = 4;
+
+/// The bindings a run keeps at most; past them a name goes through the hooks as before.
+const MAX_BINDINGS: usize = 256;
+
+/// Write back each binding whose value is not the one last synced, then, unless `keep`, take every binding off the
+/// global object, so the next read of the name asks the stack again.
+fn flush_bindings<J: Js>(js: &mut J, engine: &OxideEngine, keep: bool) -> Result<(), Conv> {
+    let bound: Vec<(String, PropertyKey, Value)> = {
+        let values = values(engine).borrow();
+        if values.bindings.is_empty() {
+            if !keep {
+                drop(values);
+                values_mut_clear_accesses(engine);
+            }
+            return Ok(());
+        }
+        values
+            .bindings
+            .iter()
+            .filter(|binding| binding.parked.is_none())
+            .map(|binding| (binding.name.clone(), binding.key.clone(), binding.synced.clone()))
+            .collect()
+    };
+    let global = js.global_object()?;
+    for (name, key, synced) in &bound {
+        let Some(CompleteOrdinaryPropertyDescriptor::Data { value, .. }) = js.get_own_property(&global, key)? else {
+            continue;
+        };
+        if !value.strict_equal(synced) {
+            write_name(js, name, &value)?;
+        }
+    }
+    if !keep {
+        let taken = std::mem::take(&mut values(engine).borrow_mut().bindings);
+        for binding in taken.iter().filter(|binding| binding.parked.is_none()) {
+            js.delete_property(&global, &binding.key)?;
+        }
+        values_mut_clear_accesses(engine);
+    }
+    Ok(())
+}
+
+fn values_mut_clear_accesses(engine: &OxideEngine) {
+    values(engine).borrow_mut().accesses.clear();
+}
+
+/// Before a nested run: the outer run's bindings come off the global object, their values kept, so the nested run's
+/// names are its own context's; [`restore_bindings`] puts them back when it returns. Nothing is written to the stack
+/// here, as the outer run's tracked values are not (the host call may have pushed another frame).
+pub(super) fn set_aside_bindings<J: Js>(js: &mut J, engine: &OxideEngine) -> Result<(), Conv> {
+    let keys: Vec<PropertyKey> = values(engine)
+        .borrow()
+        .bindings
+        .iter()
+        .filter(|binding| binding.parked.is_none())
+        .map(|binding| binding.key.clone())
+        .collect();
+    if keys.is_empty() {
+        return Ok(());
+    }
+    let global = js.global_object()?;
+    let mut current = Vec::with_capacity(keys.len());
+    for key in &keys {
+        let value = match js.get_own_property(&global, key)? {
+            Some(CompleteOrdinaryPropertyDescriptor::Data { value, .. }) => value,
+            _ => Value::Undefined,
+        };
+        js.delete_property(&global, key)?;
+        current.push(value);
+    }
+    let mut values = values(engine).borrow_mut();
+    let mut current = current.into_iter();
+    for binding in values.bindings.iter_mut().filter(|binding| binding.parked.is_none()) {
+        binding.parked = current.next();
+    }
+    Ok(())
+}
+
+/// After a nested run: the outer run's bindings back on the global object with the values they had.
+pub(super) fn restore_bindings<J: Js>(js: &mut J, engine: &OxideEngine) -> Result<(), Conv> {
+    let parked: Vec<(PropertyKey, Value)> = values(engine)
+        .borrow_mut()
+        .bindings
+        .iter_mut()
+        .filter_map(|binding| binding.parked.take().map(|value| (binding.key.clone(), value)))
+        .collect();
+    if parked.is_empty() {
+        return Ok(());
+    }
+    let global = js.global_object()?;
+    for (key, value) in parked {
+        let descriptor = OrdinaryPropertyDescriptor::data(value, true, false, true);
+        js.define_own_property(&global, &key, &descriptor)?;
     }
     Ok(())
 }
@@ -251,6 +453,8 @@ pub(super) fn flush<J: Js>(js: &mut J, mode: Flush) -> Result<(), Conv> {
 }
 
 fn flush_values<J: Js>(js: &mut J, engine: &OxideEngine, mode: Flush) -> Result<(), Conv> {
+    // the bound names first: one changed is written as any bare write is, which the tracked values below then see
+    flush_bindings(js, engine, mode == Flush::Keep)?;
     // a host call that may change the stack may put another value under a kept name (a form-list's next row, a row
     // action's find): the next read takes the stack's value again, as QuickJS reads an entity value from the stack
     // each time (a decimal is tracked, and released below)
@@ -355,7 +559,7 @@ pub(super) fn kept_matches<J: Js>(
         return Ok(false);
     }
     // a map whose `__wrap` is not a name passes through as itself, its members unread (`convert::to_js`)
-    let wrapped = |entries: &indexmap::IndexMap<String, HostValue>| {
+    let wrapped = |entries: &moqui_lib::object::ValueMap| {
         matches!(entries.get(WRAP_KEY), Some(HostValue::String(_))) && engine.tools_wrap().is_some()
     };
     let passes_through = matches!(held, HostValue::Map(entries) if entries.contains_key(WRAP_KEY) && !wrapped(entries));

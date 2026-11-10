@@ -79,10 +79,12 @@ impl XmlFragment {
     }
 }
 
-/// `<actions>` XML that passed `script::check_actions`. Run it with `script::run_actions`.
+/// `<actions>` XML that passed `script::check_actions`, with its prepared script (plans/Profiling3.md W1). Run it
+/// with [`Actions::run`].
 #[derive(Clone, Debug)]
 pub struct Actions {
     pub xml: Arc<str>,
+    prepared: crate::script::PreparedActions,
 }
 
 impl Actions {
@@ -95,7 +97,20 @@ impl Actions {
 
     pub(super) fn from_xml(xml: String, label: &str) -> Result<Self, Error> {
         crate::script::check_actions(&xml).map_err(|err| Error::new(format!("{label}: {}", err.message())))?;
-        Ok(Self { xml: Arc::from(xml) })
+        Ok(Self::of(xml))
+    }
+
+    /// Actions of `xml` as they are, checked or not.
+    pub(super) fn of(xml: impl Into<Arc<str>>) -> Self {
+        Self {
+            xml: xml.into(),
+            prepared: crate::script::PreparedActions::default(),
+        }
+    }
+
+    /// Run the actions in the thread's context.
+    pub fn run(&self) -> Result<(), Error> {
+        self.prepared.run(&self.xml, None)
     }
 }
 

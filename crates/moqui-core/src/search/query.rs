@@ -353,7 +353,7 @@ impl Query {
                     )));
                 }
                 let (key, body) = map.iter().next().ok_or_else(|| Error::new("empty query map"))?;
-                let body_map = || -> Result<&IndexMap<String, Value>, Error> {
+                let body_map = || -> Result<&moqui_lib::object::ValueMap, Error> {
                     match body {
                         Value::Map(inner) => Ok(inner),
                         _ => Err(Error::new(format!("query {key} needs a map"))),
@@ -501,15 +501,15 @@ impl Query {
 
     /// The map form [`Self::from_value`] reads.
     pub fn to_value(&self) -> Value {
-        let wrap = |key: &str, inner: IndexMap<String, Value>| {
-            let mut map = IndexMap::new();
+        let wrap = |key: &str, inner: moqui_lib::object::ValueMap| {
+            let mut map = IndexMap::default();
             map.insert(key.to_string(), Value::Map(inner));
             Value::Map(map)
         };
         match self {
             Self::MatchAll => Value::string("match_all"),
             Self::Lucene(text) => {
-                let mut map = IndexMap::new();
+                let mut map = IndexMap::default();
                 map.insert("lucene".to_string(), Value::string(text));
                 Value::Map(map)
             }
@@ -518,7 +518,7 @@ impl Query {
                 fields,
                 distance,
             } => {
-                let mut inner = IndexMap::new();
+                let mut inner = IndexMap::default();
                 inner.insert("terms".into(), Value::string(terms));
                 inner.insert(
                     "fields".into(),
@@ -531,12 +531,12 @@ impl Query {
                 wrap("near", inner)
             }
             Self::Fuzzy { terms } => {
-                let mut inner = IndexMap::new();
+                let mut inner = IndexMap::default();
                 inner.insert("terms".into(), Value::string(terms));
                 wrap("fuzzy", inner)
             }
             Self::FuzzyIn { terms, fields } => {
-                let mut inner = IndexMap::new();
+                let mut inner = IndexMap::default();
                 inner.insert("terms".into(), Value::string(terms));
                 inner.insert(
                     "fields".into(),
@@ -555,12 +555,12 @@ impl Query {
                 ]),
             ),
             Self::Suggest { text } => {
-                let mut inner = IndexMap::new();
+                let mut inner = IndexMap::default();
                 inner.insert("text".into(), Value::string(text));
                 wrap("suggest", inner)
             }
             Self::Text { terms, fields, kind } => {
-                let mut inner = IndexMap::new();
+                let mut inner = IndexMap::default();
                 inner.insert("terms".into(), Value::string(terms));
                 inner.insert(
                     "fields".into(),
@@ -580,7 +580,7 @@ impl Query {
                 wrap("text", inner)
             }
             Self::Field(field) => {
-                let mut inner = IndexMap::new();
+                let mut inner = IndexMap::default();
                 inner.insert("name".into(), Value::string(&field.name));
                 let op = match field.op {
                     FieldOp::Eq => "eq",
@@ -618,7 +618,7 @@ impl Query {
                 none,
                 min_any,
             } => {
-                let mut inner = IndexMap::new();
+                let mut inner = IndexMap::default();
                 for (key, list) in [("all", all), ("any", any), ("none", none)] {
                     if !list.is_empty() {
                         inner.insert(key.into(), Value::List(list.iter().map(Query::to_value).collect()));
@@ -630,7 +630,7 @@ impl Query {
                 wrap("bool", inner)
             }
             Self::Child { path, query } => {
-                let mut inner = IndexMap::new();
+                let mut inner = IndexMap::default();
                 inner.insert("path".into(), Value::string(path));
                 inner.insert("query".into(), query.to_value());
                 wrap("child", inner)
@@ -651,14 +651,14 @@ fn present(value: Option<&Value>) -> Option<Value> {
     }
 }
 
-fn string_at(map: &IndexMap<String, Value>, key: &str) -> Option<String> {
+fn string_at(map: &moqui_lib::object::ValueMap, key: &str) -> Option<String> {
     match map.get(key) {
         None | Some(Value::Null) => None,
         Some(value) => Some(to_plain_string(value)),
     }
 }
 
-fn list_at(map: &IndexMap<String, Value>, key: &str) -> Result<Vec<Query>, Error> {
+fn list_at(map: &moqui_lib::object::ValueMap, key: &str) -> Result<Vec<Query>, Error> {
     match map.get(key) {
         None | Some(Value::Null) => Ok(Vec::new()),
         Some(Value::List(items)) => items.iter().map(Query::from_value).collect(),

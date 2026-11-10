@@ -37,7 +37,7 @@ use moqui_lib::error::Error;
 use moqui_lib::object::{to_plain_string, Value};
 
 /// One segment map: `elements` and child segment lists.
-pub type EdiMap = IndexMap<String, Value>;
+pub type EdiMap = moqui_lib::object::ValueMap;
 
 const ELEMENTS: &str = "elements";
 const ORIGINAL_LIST: &str = "originalList";
@@ -235,7 +235,7 @@ impl ElementError {
             Some(composite) => Value::List(vec![position, Value::string(composite.to_string())]),
             None => position,
         };
-        let mut ak4 = EdiMap::new();
+        let mut ak4 = EdiMap::default();
         ak4.insert(
             ELEMENTS.to_string(),
             Value::List(vec![
@@ -266,7 +266,7 @@ impl SegmentError {
     /// The X12 AK3 segment for this error, with an AK4 for each element error. Mantle
     /// `produce#X12FunctionalAck` uses this.
     pub fn make_ak3(&self) -> EdiMap {
-        let mut ak3 = EdiMap::new();
+        let mut ak3 = EdiMap::default();
         ak3.insert(
             ELEMENTS.to_string(),
             Value::List(vec![
@@ -290,7 +290,7 @@ impl SegmentError {
 
     /// The fields by their Java property names, the type as its enum name.
     pub fn to_value(&self) -> Value {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("errorType".to_string(), Value::string(self.error_type.name()));
         map.insert("segmentIndex".to_string(), Value::I64(self.segment_index));
         map.insert("positionInTxSet".to_string(), Value::I64(self.position_in_tx_set));
@@ -300,7 +300,7 @@ impl SegmentError {
             .element_errors
             .iter()
             .map(|error| {
-                let mut entry = IndexMap::new();
+                let mut entry = IndexMap::default();
                 entry.insert("errorType".to_string(), Value::string(error.error_type.name()));
                 entry.insert("elementPosition".to_string(), Value::I64(error.element_position));
                 entry.insert(
@@ -526,7 +526,7 @@ impl EdiHandler {
                 "No segments found in EDI text, using segment terminator [{terminator}]"
             )));
         }
-        let mut root = EdiMap::new();
+        let mut root = EdiMap::default();
         let body = self.body.clone().unwrap_or_default();
         self.tx_start = None;
         let mut index = self.parse_segments(&segments, 0, &mut root, &envelope, &body, None)?;
@@ -794,7 +794,7 @@ impl EdiHandler {
     ) -> Result<usize, Error> {
         let elements = self.segment_elements(java_trim(&segments[index]))?;
         let segment_id = elements.first().map(to_plain_string).unwrap_or_default();
-        let mut new_segment = EdiMap::new();
+        let mut new_segment = EdiMap::default();
         new_segment.insert(ELEMENTS.to_string(), Value::List(elements));
         let mut next = index + 1;
         // A segment with children recurses. The body root switches from the envelope to the body.

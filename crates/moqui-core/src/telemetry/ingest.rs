@@ -257,7 +257,7 @@ impl Decoder {
                     }
                     state.points.insert(fingerprint.clone(), next);
                 }
-                let mut document = Document::new();
+                let mut document = Document::default();
                 document.insert("name".into(), Value::string(&name));
                 document.insert("unit".into(), Value::string(&unit));
                 document.insert("series_fingerprint".into(), Value::String(fingerprint));
@@ -489,7 +489,7 @@ impl Decoder {
                 }
                 cache.insert(fingerprint.clone(), previous);
             }
-            let mut document = Document::new();
+            let mut document = Document::default();
             document.insert("name".into(), Value::string(&name));
             document.insert("unit".into(), Value::string(&unit));
             document.insert("series_fingerprint".into(), Value::String(fingerprint));
@@ -589,7 +589,7 @@ fn span_document(span: &Json) -> Option<Document> {
     if start <= 0 || end < start {
         return None;
     }
-    let mut document = Document::new();
+    let mut document = Document::default();
     document.insert("trace_id".into(), Value::String(trace_id));
     document.insert("span_id".into(), Value::String(span_id));
     document.insert(
@@ -645,7 +645,7 @@ fn span_document(span: &Json) -> Option<Document> {
 }
 
 fn log_document(log: &Json) -> Option<Document> {
-    let mut document = Document::new();
+    let mut document = Document::default();
     let timestamp = if field(log, "timeUnixNano").is_null() {
         0
     } else {

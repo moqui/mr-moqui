@@ -130,7 +130,7 @@ fn a_store_that_persists_part_of_a_batch_counts_the_rest_failed_with_one_log_lin
             &shared,
             &Partial,
             "otel_logs",
-            vec![Document::new(); 3],
+            vec![Document::default(); 3],
             true,
             &mut Recent::default(),
         );
@@ -154,7 +154,7 @@ fn a_store_that_persists_part_of_a_batch_counts_the_rest_failed_with_one_log_lin
         &shared,
         &Down,
         "otel_logs",
-        vec![Document::new(); 4],
+        vec![Document::default(); 4],
         true,
         &mut Recent::default(),
     );
@@ -162,7 +162,7 @@ fn a_store_that_persists_part_of_a_batch_counts_the_rest_failed_with_one_log_lin
         &shared,
         &Panicking,
         "otel_spans",
-        vec![Document::new(); 2],
+        vec![Document::default(); 2],
         true,
         &mut Recent::default(),
     );
@@ -502,8 +502,8 @@ mod enabled {
             child.finish();
         }
         root.finish();
-        telemetry.record_duration("http.server.request.duration", 0.1, Document::new());
-        telemetry.record_duration("http.server.request.duration", 0.2, Document::new());
+        telemetry.record_duration("http.server.request.duration", 0.1, Document::default());
+        telemetry.record_duration("http.server.request.duration", 0.2, Document::default());
         telemetry.flush();
         let first = lock(&memory.0).clone();
         let spans: Vec<_> = first.iter().filter(|(index, _)| index == "otel_spans").collect();
@@ -584,7 +584,7 @@ mod enabled {
             telemetry
                 .start_span("child", SpanKind::Internal, artifact.context())
                 .finish();
-            telemetry.record_duration("moqui.artifact.duration", 0.1, Document::new());
+            telemetry.record_duration("moqui.artifact.duration", 0.1, Document::default());
             telemetry.record_log(LogRecord::new(9, "INFO", "suppressed"));
         }
         artifact.finish();
@@ -617,7 +617,7 @@ mod enabled {
         telemetry.set_instance_id("cluster-instance".to_string());
         telemetry.start_span("identified", SpanKind::Server, None).finish();
         telemetry.record_log(LogRecord::new(9, "INFO", "identified"));
-        telemetry.record_duration("http.server.request.duration", 0.1, Document::new());
+        telemetry.record_duration("http.server.request.duration", 0.1, Document::default());
         telemetry.flush();
         assert_eq!(telemetry.resource().instance_id, "cluster-instance");
         for (_, document) in lock(&memory.0).iter() {
@@ -630,7 +630,7 @@ mod enabled {
     fn oversized_ingest_batches_are_rejected_without_entering_the_queue() {
         let (telemetry, _) = telemetry(1.0);
         assert!(telemetry
-            .try_ingest("otel_logs", vec![Document::new(); MAX_QUEUE + 1])
+            .try_ingest("otel_logs", vec![Document::default(); MAX_QUEUE + 1])
             .is_err());
         assert_eq!(telemetry.counters().queued, 0);
         assert_eq!(telemetry.counters().dropped, (MAX_QUEUE + 1) as u64);
@@ -643,7 +643,7 @@ mod enabled {
         let (telemetry, memory) = telemetry(1.0);
         telemetry.start_span("last request", SpanKind::Server, None).finish();
         telemetry.record_log(LogRecord::new(9, "INFO", "last log"));
-        telemetry.record_duration("http.server.request.duration", 0.25, Document::new());
+        telemetry.record_duration("http.server.request.duration", 0.25, Document::default());
         telemetry.shutdown();
         let documents = lock(&memory.0);
         for index in ["otel_spans", "otel_logs", "otel_metrics"] {
@@ -1127,7 +1127,7 @@ fn admission_shared() -> (Shared, mpsc::Receiver<Command>) {
             drained: AtomicBool::new(false),
             warned_legacy: AtomicBool::new(false),
             gauges_registered: AtomicBool::new(false),
-            slow: Mutex::default(),
+            slow: Default::default(),
             received: Mutex::default(),
             operations: operation::Registry::default(),
         },
@@ -1149,11 +1149,11 @@ fn queue_reserves_capacity_for_local_roots_and_bounds_total_records_and_bytes() 
     shared
         .try_enqueue(
             "otel_logs",
-            vec![Document::new(); MAX_QUEUE - ROOT_RESERVED_RECORDS],
+            vec![Document::default(); MAX_QUEUE - ROOT_RESERVED_RECORDS],
             true,
         )
         .unwrap();
-    assert!(shared.try_enqueue("otel_logs", vec![Document::new()], true).is_err());
+    assert!(shared.try_enqueue("otel_logs", vec![Document::default()], true).is_err());
     assert!(
         shared
             .try_enqueue("otel_spans", vec![admission_root(false)], false)
@@ -1174,7 +1174,7 @@ fn queue_reserves_capacity_for_local_roots_and_bounds_total_records_and_bytes() 
     shared
         .queued_bytes
         .store(MAX_BUFFER_BYTES - ROOT_RESERVED_BYTES, Ordering::Relaxed);
-    assert!(shared.try_enqueue("otel_logs", vec![Document::new()], true).is_err());
+    assert!(shared.try_enqueue("otel_logs", vec![Document::default()], true).is_err());
     assert_eq!(
         shared.queued_records.load(Ordering::Relaxed),
         0,
@@ -1309,7 +1309,7 @@ fn raw_sdk_server_and_job_roots_use_reserve_without_reordering_error_evidence() 
     shared
         .try_enqueue(
             "otel_logs",
-            vec![Document::new(); MAX_QUEUE - ROOT_RESERVED_RECORDS],
+            vec![Document::default(); MAX_QUEUE - ROOT_RESERVED_RECORDS],
             true,
         )
         .unwrap();
@@ -1460,10 +1460,10 @@ fn a_configured_queue_bounds_admission_with_its_own_root_reserve() {
         ..shared
     };
     shared
-        .try_enqueue("otel_logs", vec![Document::new(); 60], true)
+        .try_enqueue("otel_logs", vec![Document::default(); 60], true)
         .unwrap();
     assert!(
-        shared.try_enqueue("otel_logs", vec![Document::new()], true).is_err(),
+        shared.try_enqueue("otel_logs", vec![Document::default()], true).is_err(),
         "60 of 64 are ordinary"
     );
     shared
@@ -1736,7 +1736,7 @@ mod live {
         let disk = telemetry.config().clone();
         let sdk = telemetry.sdk.as_ref().expect("telemetry is on");
         let kept = || {
-            let mut attributes = Document::new();
+            let mut attributes = Document::default();
             attributes.insert("http.request.method".into(), Value::string("GET"));
             attributes.insert("http.route".into(), Value::string("/x"));
             let mut keys: Vec<String> = sdk
@@ -1774,7 +1774,7 @@ mod live {
             let mut keys: Vec<String> = sdk
                 .artifact_attributes(0, 42, "moqui.artifact.duration", &|| {
                     made.set(made.get() + 1);
-                    let mut attributes = Document::new();
+                    let mut attributes = Document::default();
                     attributes.insert("moqui.artifact.type".into(), Value::string("AT_SERVICE"));
                     attributes.insert("moqui.artifact.name".into(), Value::string("a.b.c#D"));
                     attributes

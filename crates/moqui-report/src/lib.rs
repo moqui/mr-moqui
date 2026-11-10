@@ -1785,7 +1785,7 @@ struct ScopedPartial {
 
 fn bucket_predicate(
     agg: &search::Agg,
-    bucket: &IndexMap<String, Value>,
+    bucket: &moqui_lib::object::ValueMap,
     siblings: &[Value],
 ) -> Result<Option<Query>, Error> {
     let key = bucket.get("key").cloned().unwrap_or(Value::Null);
@@ -1873,7 +1873,7 @@ fn bucket_predicate(
 fn enrich_buckets(
     dataset: &str,
     aggs: &IndexMap<String, search::Agg>,
-    results: &mut IndexMap<String, Value>,
+    results: &mut moqui_lib::object::ValueMap,
     scope: &Query,
     root: bool,
     partials: &mut Vec<ScopedPartial>,

@@ -454,9 +454,8 @@ impl EntityFind {
         if authorization_filters() && (crate::hooks::get().entity_filters_apply)(&self.entity_name) {
             return Ok(None);
         }
-        // with no filter that applies, the combined condition is the find's own
-        let condition = self.unfiltered();
-        let lookup = self.lookup(condition.as_ref());
+        // with no filter that applies, the combined condition is the find's own, made once and moved into the lookup
+        let lookup = self.lookup_unfiltered();
         let Some(cached) = cache::shared_cache_hit(&self.facade, &lookup)? else {
             return Ok(None);
         };
@@ -815,6 +814,19 @@ impl EntityFind {
             entity_name: self.entity_name.clone(),
             use_cache: self.use_cache,
             condition: condition.cloned(),
+            order: self.order.clone(),
+            limit: self.limit,
+            offset: self.offset,
+        }
+    }
+
+    /// [`Self::lookup`] of [`Self::unfiltered`], which it makes and keeps instead of a second copy.
+    fn lookup_unfiltered(&self) -> FindLookup {
+        FindLookup {
+            filtered: false,
+            entity_name: self.entity_name.clone(),
+            use_cache: self.use_cache,
+            condition: self.unfiltered(),
             order: self.order.clone(),
             limit: self.limit,
             offset: self.offset,

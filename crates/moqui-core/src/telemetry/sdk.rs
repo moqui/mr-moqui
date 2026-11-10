@@ -17,6 +17,8 @@ use moqui_lib::object::Value;
 
 const ARTIFACT_DURATION: &str = "moqui.artifact.duration";
 const ARTIFACT_SLOW: &str = "moqui.artifact.slow";
+const OPERATION_DURATION: &str = "moqui.operation.duration";
+const OPERATION_RUNS: &str = "moqui.operation.runs";
 /// Artifact attribute sets a thread keeps; past this many they are dropped and made again as they come.
 const ARTIFACT_ATTRIBUTES_CAP: usize = 4096;
 
@@ -306,6 +308,50 @@ impl Runtime {
             }
         };
         instrument.record(seconds, &self.metric_attributes(name, attributes));
+    }
+
+    /// `moqui.operation.duration` (for a run that ended) and `moqui.operation.runs` of one run, with the attribute sets
+    /// made once per operation and outcome (`key` hashes both) and kept by the thread as an artifact's are: each call
+    /// that begins its transaction is a run (plans/Profiling3.md R55).
+    pub(super) fn record_operation(&self, key: u64, seconds: Option<f64>, attributes: impl Fn() -> Document) {
+        if let Some(seconds) = seconds.filter(|seconds| seconds.is_finite() && *seconds >= 0.0) {
+            let duration = self.artifact_attributes(2, key, OPERATION_DURATION, &attributes);
+            if let Some(instrument) = self.histogram(OPERATION_DURATION) {
+                instrument.record(seconds, &duration);
+            }
+        }
+        let runs = self.artifact_attributes(3, key, OPERATION_RUNS, &attributes);
+        if let Some(instrument) = self.counter(OPERATION_RUNS) {
+            instrument.add(1, &runs);
+        }
+    }
+
+    /// The duration histogram named `name`, made at its first use; None past the cap of 32.
+    fn histogram(&self, name: &str) -> Option<opentelemetry::metrics::Histogram<f64>> {
+        let mut histograms = lock(&self.histograms);
+        if let Some(instrument) = histograms.get(name) {
+            return Some(instrument.clone());
+        }
+        if histograms.len() >= 32 {
+            return None;
+        }
+        let instrument = duration_histogram(&self.meter, name);
+        histograms.insert(name.to_string(), instrument.clone());
+        Some(instrument)
+    }
+
+    /// The counter named `name`, made at its first use; None past the cap of 32.
+    fn counter(&self, name: &str) -> Option<opentelemetry::metrics::Counter<u64>> {
+        let mut counters = lock(&self.counters);
+        if let Some(instrument) = counters.get(name) {
+            return Some(instrument.clone());
+        }
+        if counters.len() >= 32 {
+            return None;
+        }
+        let instrument = self.meter.u64_counter(name.to_string()).build();
+        counters.insert(name.to_string(), instrument.clone());
+        Some(instrument)
     }
 
     pub(super) fn add_counter(&self, name: &str, value: u64, attributes: Document) {
@@ -882,7 +928,7 @@ impl SpanExporter for LocalSpanExporter {
 fn normalize_spans(batch: Vec<SpanData>, shared: &Shared) -> Vec<Document> {
     let mut documents = Vec::new();
     for span in batch {
-        let mut document = Document::new();
+        let mut document = Document::default();
         document.insert(
             "trace_id".into(),
             Value::String(span.span_context.trace_id().to_string()),
@@ -1096,7 +1142,7 @@ fn normalize_logs(
     let documents = batch
         .into_iter()
         .map(|(record, scope)| {
-            let mut document = Document::new();
+            let mut document = Document::default();
             document.insert(
                 "timestamp".into(),
                 Value::I64(millis(record.timestamp().unwrap_or_else(SystemTime::now))),

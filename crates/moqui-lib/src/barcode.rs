@@ -571,13 +571,13 @@ impl Gs1Data {
     /// `{applicationIdentifier, value}`, `applicationIdentifiers` by AI, `elementString` and `humanReadable`.
     pub fn to_value(&self) -> crate::object::Value {
         use crate::object::Value;
-        let mut identifiers = indexmap::IndexMap::new();
+        let mut identifiers = indexmap::IndexMap::default();
         let elements = self
             .elements
             .iter()
             .map(|e| {
                 identifiers.insert(e.application_identifier.clone(), Value::String(e.value.clone()));
-                Value::Map(indexmap::IndexMap::from([
+                Value::Map(indexmap::IndexMap::from_iter([
                     (
                         "applicationIdentifier".to_string(),
                         Value::String(e.application_identifier.clone()),
@@ -586,7 +586,7 @@ impl Gs1Data {
                 ]))
             })
             .collect();
-        Value::Map(indexmap::IndexMap::from([
+        Value::Map(indexmap::IndexMap::from_iter([
             ("elements".to_string(), Value::List(elements)),
             ("applicationIdentifiers".to_string(), Value::Map(identifiers)),
             ("elementString".to_string(), Value::String(self.element_string.clone())),

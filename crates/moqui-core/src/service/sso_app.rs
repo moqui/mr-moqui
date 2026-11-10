@@ -83,7 +83,7 @@ fn get_app_providers(
             !flag("inbound") && !flag("disabled")
         })
         .map(|flow| {
-            let mut map = indexmap::IndexMap::new();
+            let mut map = indexmap::IndexMap::default();
             for field in ["authFlowId", "description", "iconName"] {
                 map.insert(field.to_string(), flow.get(field).cloned().unwrap_or(Value::Null));
             }

@@ -27,11 +27,17 @@
     const { attr, has, attrOrNull, jsString, child, childrenNamed, sourcesOf, bodyOf, joinPresent, raw, unraw, js } = T;
     const { stmt, expr, chain, macro, noops } = T;
 
+    // Localized, then expanded: what Java's template passes to ec.resource.expand (messages, asserts, log text).
     const expandExpr = (text) => `ec.resource.expand(${jsString(text)})`;
 
+    // What Java's template writes as a GString (a set's value and default-value, a field-map value, a compare value,
+    // a name): expanded with no localization, and a literal when there is nothing to expand (plans/Profiling3.md W14,
+    // D1). A text with no `$`, or only a trailing one, is unchanged by an expand.
     const literalOrExpand = (text) => {
         const value = text == null ? "" : String(text);
-        if (value.indexOf("$") >= 0 && value.charAt(value.length - 1) !== "$") return expandExpr(value);
+        if (value.indexOf("$") >= 0 && value.charAt(value.length - 1) !== "$") {
+            return `ec.resource.expandNoL10n(${jsString(value)})`;
+        }
         return jsString(value);
     };
 
@@ -43,11 +49,11 @@
         if (type === "NewMap") return { before: "", value: "{}" };
         let base;
         if (has(node, "from")) base = attr(node, "from");
-        else if (has(node, "value")) base = expandExpr(attr(node, "value"));
+        else if (has(node, "value")) base = literalOrExpand(attr(node, "value"));
         else base = "null";
         let before = "";
         if (has(node, "default-value")) {
-            const fallback = expandExpr(attr(node, "default-value"));
+            const fallback = literalOrExpand(attr(node, "default-value"));
             before = `var _temp_default = ${base};`;
             base = `(__isGroovyFalse(_temp_default) ? ${fallback} : _temp_default)`;
         }
@@ -57,7 +63,7 @@
 
     const fieldExpr = (node) => {
         if (has(node, "from")) return attr(node, "from");
-        if (has(node, "value")) return expandExpr(attr(node, "value"));
+        if (has(node, "value")) return literalOrExpand(attr(node, "value"));
         return attr(node, "field-name");
     };
 
@@ -280,7 +286,36 @@
         `;
     };
 
+    // A sync call is one host call, ec.service.callXml(name, flags, timeout, inMap, fields), with the options as the
+    // bits of service.rs's call_xml (plans/Profiling3.md S3a); an async call keeps the builder.
+    const serviceCallXml = (node) => {
+        const inMap = attr(node, "in-map");
+        const tx = attr(node, "transaction");
+        let flags = 0;
+        if (attr(node, "disable-authz") === "true") flags |= 1;
+        if (attr(node, "multi") === "true") flags |= 2;
+        if (has(node, "transaction")) {
+            if (tx === "ignore") flags |= 4;
+            if (tx === "force-new" || tx === "force-cache") flags |= 8;
+            flags |= 16;
+            if (tx === "cache" || tx === "force-cache") flags |= 32;
+        }
+        const flagsExpr = attr(node, "multi") === "parameter"
+            ? `(${flags} | (ec.web && ec.web.parameters && ec.web.parameters._isMulti === 'true' ? 2 : 0))`
+            : String(flags);
+        const timeout = has(node, "transaction") && has(node, "transaction-timeout") ? attr(node, "transaction-timeout") : "null";
+        const inMapExpr = (inMap === "true" || inMap === "context")
+            ? "ec.context"
+            : has(node, "in-map") && inMap !== "false" && inMap !== "" ? inMap : "null";
+        const fieldMaps = childrenNamed(node, "field-map");
+        const fieldsExpr = fieldMaps.length
+            ? `{${fieldMaps.map((kid) => `${jsString(attr(kid, "field-name"))}: ${fieldExpr(kid)}`).join(", ")}}`
+            : "null";
+        return `ec.service.callXml(${literalOrExpand(attr(node, "name"))}, ${flagsExpr}, ${timeout}, ${inMapExpr}, ${fieldsExpr})`;
+    };
+
     const serviceCallChain = (node, isAsync) => {
+        if (!isAsync) return serviceCallXml(node);
         const inMap = attr(node, "in-map");
         const tx = attr(node, "transaction");
         const syncOnly = !isAsync;
@@ -453,6 +488,27 @@
                 if (auto === "true") autoCondition = "context";
                 else if (auto !== "false" && auto !== "") autoCondition = auto;
             } else if (!maps.length) autoCondition = "context";
+            // One host call, ec.entity.findOneXml(name, flags, autoMap, fields, selectFields), with the options as the
+            // bits of entities.rs's find_one_xml (plans/Profiling3.md S3b), when each option is written as true or
+            // false; an option that is an expression keeps the chain.
+            const literal = (name) => !has(node, name) || attr(node, name) === "true" || attr(node, name) === "false";
+            if (literal("cache") && literal("for-update") && literal("for-no-key-update") && literal("use-clone")) {
+                let flags = 0;
+                if (has(node, "cache")) flags |= 1 | (attr(node, "cache") === "true" ? 2 : 0);
+                if (has(node, "for-update")) flags |= 4 | (attr(node, "for-update") === "true" ? 8 : 0);
+                if (has(node, "for-no-key-update")) flags |= 128 | (attr(node, "for-no-key-update") === "true" ? 256 : 0);
+                if (has(node, "use-clone")) flags |= 16 | (attr(node, "use-clone") === "true" ? 32 : 0);
+                if (attr(node, "disable-authz") === "true") flags |= 64;
+                const autoExpr = autoCondition === "context" ? "ec.context" : autoCondition || "null";
+                const fieldsExpr = maps.length
+                    ? `{${maps.map((kid) => `${jsString(attr(kid, "field-name"))}: ${fieldExpr(kid)}`).join(", ")}}`
+                    : "null";
+                const selects = childrenNamed(node, "select-field");
+                const selectExpr = selects.length
+                    ? `[${selects.map((kid) => literalOrExpand(attr(kid, "field-name"))).join(", ")}]`
+                    : "null";
+                return `${attr(node, "value-field")} = ec.entity.findOneXml(${literalOrExpand(attr(node, "entity-name"))}, ${flags}, ${autoExpr}, ${fieldsExpr}, ${selectExpr});`;
+            }
             const find = joinPresent([
                 findHead(node, false),
                 autoCondition && `.condition(${autoCondition})`,
