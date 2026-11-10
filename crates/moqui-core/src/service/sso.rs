@@ -22,6 +22,20 @@
 //! the one whose `externalUserId` is the provider's id, and only then the one with the profile's username; an account
 //! linked to a different provider id is refused. The sync runs in its own transaction, so a failure part way changes
 //! nothing. The login replaces the session id. A failure is logged and the browser goes back to `/Login`, as in Java.
+//!
+//! Bounded delegation (mr-boss plan/design-admin.md §1.1, §6; impl-admin P10), which a sign-in obeys whoever wrote the
+//! flow's rows, since the sync writes with authorization off and the security EECAs skip such writes:
+//! - an existing account that no provider id is linked to is linked only by the flow's rule
+//!   (`AuthFlow.accountLinkEnumId`): `AflVerifiedEmail`, the provider's verified email address equal to the
+//!   account's; any other value, or none, links no existing account. An account in a privileged group, or in a group
+//!   that grants a sealed permission, is never linked by a sign-in: an administrator links it (`externalUserId`).
+//! - a role map or a default group never gives a membership in a privileged group or in a group that grants a sealed
+//!   permission ([`sso_may_give`]); such a row is logged and passed over.
+//! - the sync ends only memberships in the groups the flow's role maps name, and never one a sign-in may not give, so
+//!   an administrator's membership, and what an access administrator gave by hand, stay.
+//!
+//! `check#Flow` is the explicit test of a flow's configuration (`org.moqui.admin.ConfigurationServices
+//! test#IdentityProvider`): the same start a login makes, with nothing kept and nobody redirected.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -51,6 +65,7 @@ pub(in crate::service) fn register(
     rust_service!(map, login_user)?;
     rust_service!(map, handle_callback)?;
     rust_service!(map, logout_user)?;
+    rust_service!(map, check_flow)?;
     Ok(())
 }
 
@@ -141,9 +156,18 @@ fn find_one(facade: &EntityFacade, entity: &str, id: &str) -> Result<Option<Enti
 
 /// The flow and its protocol row. A disabled or inbound flow is not a login.
 fn load_flow(facade: &EntityFacade, auth_flow_id: &str) -> Result<(EntityValue, FlowConfig), LibError> {
+    load_flow_as(facade, auth_flow_id, false)
+}
+
+/// [`load_flow`]; with `for_check` a disabled flow is read too, for the test of its configuration (`check#Flow`).
+fn load_flow_as(
+    facade: &EntityFacade,
+    auth_flow_id: &str,
+    for_check: bool,
+) -> Result<(EntityValue, FlowConfig), LibError> {
     let flow = find_one(facade, "moqui.security.sso.AuthFlow", auth_flow_id)?
         .ok_or_else(|| LibError::new(format!("AuthFlow {auth_flow_id} not found")))?;
-    if field(&flow, "disabled") == "Y" || field(&flow, "inbound") == "Y" {
+    if (field(&flow, "disabled") == "Y" && !for_check) || field(&flow, "inbound") == "Y" {
         return Err(LibError::new(format!(
             "AuthFlow {auth_flow_id} is not available for login"
         )));
@@ -208,6 +232,53 @@ fn load_flow(facade: &EntityFacade, auth_flow_id: &str) -> Result<(EntityValue, 
             kind,
         },
     ))
+}
+
+/// The permissions one of which `check#Flow` needs: who configures connections, or who administers access.
+const CHECK_PERMISSIONS: [&str; 2] = ["ADMIN_CONNECTION_MANAGE", "ADMIN_ACCESS_MANAGE"];
+
+/// `check#Flow`: whether a login through the flow could start as it is configured now, enabled or not: its protocol row
+/// is complete, an OpenID provider's discovery document is read and is one, the endpoints are URLs and the client is
+/// built, exactly as `login#User` starts a login. Nothing is kept in the session, nobody is redirected, no account is
+/// made and no token is asked for, so the client secret is not proven: only a sign-in does that. Out: `passed`,
+/// `message` (why not; the host's own text, which names URLs and never the secret), `authorizeHost`, the host the
+/// browser would be sent to, and `callbackUrl`, the redirect URI to register at the provider. An error without one of
+/// [`CHECK_PERMISSIONS`].
+fn check_flow(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let permitted = CHECK_PERMISSIONS
+        .iter()
+        .any(|permission| crate::user::has_permission(permission).unwrap_or(false));
+    if !permitted {
+        return Err(LibError::new(format!(
+            "{} or {} is required",
+            CHECK_PERMISSIONS[0], CHECK_PERMISSIONS[1]
+        )));
+    }
+    let auth_flow_id = param_text(parameters, "authFlowId");
+    let redirect_uri = format!("{}/sso/callback", base());
+    let started = load_flow_as(facade, &auth_flow_id, true)
+        .and_then(|(_, flow)| crate::sso::client()?.start(&flow, &redirect_uri));
+    let mut out = BTreeMap::new();
+    out.insert("callbackUrl".to_string(), Value::string(&redirect_uri));
+    match started {
+        Ok(started) => {
+            let host = started
+                .authorize_url
+                .split_once("://")
+                .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or(""))
+                .unwrap_or("");
+            out.insert("passed".to_string(), Value::Bool(true));
+            out.insert("authorizeHost".to_string(), Value::string(host));
+        }
+        Err(err) => {
+            out.insert("passed".to_string(), Value::Bool(false));
+            out.insert("message".to_string(), Value::string(err.message()));
+        }
+    }
+    Ok(out)
 }
 
 /// `login#User`: keep a same-origin `returnTo`, start the flow, keep its state in the session, and redirect.
@@ -515,6 +586,13 @@ fn sync_account_rows(
         Some(account) => Some(account),
         None => find_by("username", username)?,
     };
+    // An account found by its name alone, with no provider id of its own, is linked only by the flow's rule.
+    if let Some(account) = existing
+        .as_ref()
+        .filter(|account| field(account, "externalUserId").is_empty())
+    {
+        link_allowed(facade, flow, profile, account)?;
+    }
     let mut parameters = mapped;
     parameters.insert("externalUserId".to_string(), Value::string(&profile.id));
     let (user_id, username) = match existing {
@@ -545,26 +623,56 @@ fn sync_account_rows(
 
     let now = now_value();
     let current = active_members(facade, &user_id)?;
-    let mut obsolete: BTreeSet<String> = current.iter().map(|member| field(member, "userGroupId")).collect();
+    let held: BTreeSet<String> = current.iter().map(|member| field(member, "userGroupId")).collect();
+    // The groups the flow's role maps name are the ones a sign-in gives and ends; every other membership is left as an
+    // administrator made it, and a group a sign-in may not give (privileged, or granting a sealed permission) is neither
+    // given nor ended whatever the rows say.
+    let role_maps = facade
+        .find("moqui.security.sso.AuthFlowRoleMap")?
+        .disable_authz()
+        .eq("authFlowId", Value::string(&auth_flow_id))
+        .list()?;
     let roles = profile_roles(profile);
-    for role in roles.iter().map(String::as_str) {
-        let mapped = facade
-            .find("moqui.security.sso.AuthFlowRoleMap")?
-            .disable_authz()
-            .eq("authFlowId", Value::string(&auth_flow_id))
-            .eq("roleName", Value::string(role))
-            .one()?;
-        let Some(group) = mapped.map(|row| field(&row, "userGroupId")).filter(|id| !id.is_empty()) else {
+    let mut managed = BTreeSet::new();
+    let mut wanted = BTreeSet::new();
+    for row in role_maps.values() {
+        let group = field(row, "userGroupId");
+        if group.is_empty() {
             continue;
-        };
-        if !obsolete.remove(&group) {
-            add_member(&group, &user_id, &now)?;
+        }
+        if !sso_may_give(facade, &group)? {
+            tracing::warn!(
+                "AuthFlow {auth_flow_id}: the role map of {} names {group}, a privileged group or one that grants a sealed \
+                 permission, which a sign-in never gives; passed over",
+                field(row, "roleName")
+            );
+            continue;
+        }
+        if roles.contains(&field(row, "roleName")) {
+            wanted.insert(group.clone());
+        }
+        managed.insert(group);
+    }
+    for group in &wanted {
+        if !held.contains(group) {
+            add_member(group, &user_id, &now)?;
         }
     }
-    let default_group = field(flow, "defaultUserGroupId");
+    let default_group = Some(field(flow, "defaultUserGroupId")).filter(|group| !group.is_empty());
+    let default_group = match default_group {
+        Some(group) if !sso_may_give(facade, &group)? => {
+            tracing::warn!(
+                "AuthFlow {auth_flow_id}: the default group {group} is privileged or grants a sealed permission, which a \
+                 sign-in never gives; passed over"
+            );
+            String::new()
+        }
+        Some(group) => group,
+        None => String::new(),
+    };
     for member in &current {
         let group = field(member, "userGroupId");
-        if obsolete.contains(&group) && group != default_group {
+        if managed.contains(&group) && !wanted.contains(&group) && group != default_group {
             let mut parameters = BTreeMap::new();
             parameters.insert("userGroupId".to_string(), Value::string(&group));
             parameters.insert("userId".to_string(), Value::string(&user_id));
@@ -588,6 +696,76 @@ fn add_member(group: &str, user_id: &str, now: &Value) -> Result<(), LibError> {
     parameters.insert("userId".to_string(), Value::string(user_id));
     parameters.insert("fromDate".to_string(), now.clone());
     call("create#moqui.security.UserGroupMember", parameters).map(|_| ())
+}
+
+/// Whether a sign-in may give a membership in the group: never a privileged group, and never one that grants a sealed
+/// permission now (the effective lists of `user-facade` `authz`), the two things only a member or a holder gives.
+fn sso_may_give(facade: &EntityFacade, group: &str) -> Result<bool, LibError> {
+    if super::security_checks::privileged_groups().contains(group) {
+        return Ok(false);
+    }
+    let sealed = super::security_checks::sealed_permissions();
+    let now = crate::user::now_millis();
+    let grants = facade
+        .find("moqui.security.UserGroupPermission")?
+        .disable_authz()
+        .eq("userGroupId", Value::string(group))
+        .use_cache(false)
+        .list()?;
+    Ok(!grants.values().iter().any(|row| {
+        let from = row.get("fromDate").and_then(crate::user::value_millis);
+        let thru = row.get("thruDate").and_then(crate::user::value_millis);
+        sealed.contains(&field(row, "userPermissionId"))
+            && from.is_none_or(|from| from <= now)
+            && thru.is_none_or(|thru| thru > now)
+    }))
+}
+
+/// `AuthFlow.accountLinkEnumId`: an existing account is linked by the provider's verified email address.
+const LINK_VERIFIED_EMAIL: &str = "AflVerifiedEmail";
+
+/// Whether this sign-in may link `account`, an existing account with no provider id: only under the flow's
+/// `AflVerifiedEmail` rule, with an `email_verified` claim that is true and an `email` equal to the account's address
+/// (ignoring case), and never an account in a group a sign-in may not give ([`sso_may_give`]). A provider's username
+/// alone links nothing: whoever configures or runs the provider would otherwise sign in as any account by its name.
+fn link_allowed(
+    facade: &EntityFacade,
+    flow: &EntityValue,
+    profile: &SsoProfile,
+    account: &EntityValue,
+) -> Result<(), LibError> {
+    let refuse = |why: &str| {
+        LibError::new(format!(
+            "AuthFlow {}: the account {} exists and is not linked to this provider: {why}",
+            field(flow, "authFlowId"),
+            field(account, "username")
+        ))
+    };
+    if field(flow, "accountLinkEnumId") != LINK_VERIFIED_EMAIL {
+        return Err(refuse(
+            "the provider links no existing account; an administrator links it",
+        ));
+    }
+    let claim = |name: &str| profile.attributes.get(name).map(to_plain_string).unwrap_or_default();
+    let email = claim("email");
+    let address = field(account, "emailAddress");
+    if claim("email_verified") != "true"
+        || email.trim().is_empty()
+        || !email.trim().eq_ignore_ascii_case(address.trim())
+    {
+        return Err(refuse(
+            "the provider gave no verified email address equal to the account's",
+        ));
+    }
+    for member in active_members(facade, &field(account, "userId"))? {
+        let group = field(&member, "userGroupId");
+        if !sso_may_give(facade, &group)? {
+            return Err(refuse(&format!(
+                "it is in {group}, privileged or granting a sealed permission; an administrator links it"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// The user's `UserGroupMember` rows in date now.

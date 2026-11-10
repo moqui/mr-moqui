@@ -364,4 +364,33 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/AccessCapabilities.js').execute('getGrantReview', context))</script></actions>
     </service>
+
+    <!-- Admin P10 (AccessSignIn.js): what a change of a group's sign-in rules would do, before store#Group makes it -->
+    <service verb="preview" noun="GroupSignInRules" allow-remote="false">
+        <description>The lockout preview of a group's sign-in rules (design-admin §6 GroupSignInRules), nothing written: for
+            the factor requirement and allowed addresses proposed, how many current members the group has, how many of them
+            have no confirmed factor (who could not finish a sign-in once a factor is required), whether the actor's own
+            address is admitted by the proposed addresses, and whether the change keeps an administration path (allowed,
+            else ADMINISTRATION_PATH with the reason, or the group refusal store#Group would give); counts only, no member
+            is named. Needs ADMIN_ACCESS_VIEW.</description>
+        <in-parameters>
+            <parameter name="userGroupId" required="true"/>
+            <parameter name="requireAuthcFactor"/>
+            <parameter name="ipAllowed"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="allowed" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="changed" type="Boolean"/>
+            <parameter name="memberCount" type="Integer"/>
+            <parameter name="membersWithoutFactor" type="Integer"/>
+            <parameter name="callerAdmitted" type="Boolean"/>
+            <parameter name="pathsBefore" type="Integer"/>
+            <parameter name="pathsAfter" type="Integer"/>
+            <parameter name="summary"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/AccessSignIn.js').execute('previewGroupSignInRules', context))</script></actions>
+    </service>
 </services>

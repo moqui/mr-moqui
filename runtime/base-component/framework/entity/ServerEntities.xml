@@ -409,6 +409,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="defaultValue" type="text-medium"><description>The value with no preference and no conf property</description></field>
         <field name="propertyName" type="text-medium"><description>The conf default-property (or environment variable) that
             holds the value of a configuration setting, or is a preference's value until one is set</description></field>
+        <field name="confAttribute" type="text-medium"><description>For a configuration setting no property holds: the conf
+            attribute it shows, one of those ConfigurationServices.get#SignInPolicyValues answers
+            (user-facade/password/@min-length, webapp/session-config/@timeout); the value is the one the server runs
+            with</description></field>
         <field name="editable" type="text-indicator"><description>Y: an instance preference, changed at runtime through
             store#InstancePreference; otherwise deployment configuration, read only</description></field>
         <field name="isSecret" type="text-indicator"><description>Y: the value is never returned, only whether it is set;

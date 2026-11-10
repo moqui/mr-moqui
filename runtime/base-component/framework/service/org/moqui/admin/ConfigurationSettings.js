@@ -9,7 +9,10 @@
 //   with who, when and why; the audit log keeps each value.
 // - deployment configuration (editable N): a default-property of the conf (or the environment variable of that name), shown
 //   read only with whether it is the shipped default, whether a change waits for a restart and how an operator changes it.
-//   The file and line a value comes from are System > Conf's, for an instance administrator.
+//   The file and line a value comes from are System > Conf's, for an instance administrator. A setting that names a
+//   confAttribute instead (impl-admin P10, F110: the sign-in policy, literal attributes of user-facade and of the web
+//   session that no property holds) takes the value the server runs with from get#SignInPolicyValues, which answers a
+//   fixed list of nonsecret attributes and nothing else.
 // A secret is never a preference and never returned: a setting marked secret, or whose property name reads as one (pass, pw,
 // key, secret, token, credential, as the conf masks them), answers only whether it is set, and a registration that makes a
 // secret editable is logged by name and left out.
@@ -23,6 +26,8 @@ const SETTING = "moqui.server.InstanceSetting"
 const PREFERENCE = "moqui.server.InstancePreference"
 const VIEW = "ADMIN_SETTINGS_VIEW"
 const MANAGE = "ADMIN_SETTINGS_MANAGE"
+const signInGroups = ["Sign-in", "Sign-in policy"]
+const signInGroupPermissions = ["ADMIN_ACCESS_VIEW", "ADMIN_ACCESS_MANAGE"]
 const valueTypes = {
     IsvText: "text",
     IsvInteger: "integer",
@@ -55,7 +60,9 @@ const property = name => (name ? text(System.getProperty(name)) : "")
 function registrationProblem(setting) {
     if (!valueTypes[setting.valueTypeEnumId]) return "has no known value type"
     if (setting.editable === "Y" && isSecret(setting)) return "is secret and may not be an instance preference"
-    if (setting.editable !== "Y" && !setting.propertyName) return "is configuration and names no property"
+    if (setting.editable !== "Y" && !setting.propertyName && !setting.confAttribute)
+        return "is configuration and names no property or conf attribute"
+    if (setting.editable === "Y" && setting.confAttribute) return "is a preference and names a conf attribute"
     if (setting.valueTypeEnumId === "IsvChoice" && !allowedList(setting).length) return "is a choice with no allowed values"
     return null
 }
@@ -128,9 +135,10 @@ function typed(setting, given) {
 let shipped = null
 function shippedConf() {
     if (shipped) return shipped
-    shipped = {values: new Map(), secrets: new Set()}
+    shipped = {values: new Map(), secrets: new Set(), text: ""}
     try {
         const conf = String(ec.resource.getLocationText("component://framework/conf/MoquiDefaultConf.xml", false) || "")
+        shipped.text = conf
         const unescape = value =>
             value
                 .replace(/&lt;/g, "<")
@@ -151,6 +159,37 @@ function shippedConf() {
     return shipped
 }
 const shippedDefaults = () => shippedConf().values
+// The sign-in policy the server runs with, by conf attribute (the Rust service's fixed list), read once a call; empty when
+// the caller may not read it or the build has no such service, and each such setting is then left out by name.
+let policyValues = null
+function confAttributeValues() {
+    if (policyValues) return policyValues
+    policyValues = {}
+    try {
+        ec.message.pushErrors()
+        const out = ec.service.sync().name("org.moqui.admin.ConfigurationServices.get#SignInPolicyValues").call() || {}
+        if (!ec.message.hasError()) policyValues = lib.map(out.valueMap)
+        else ec.logger.error("The sign-in policy could not be read: " + ec.message.getErrorsString())
+    } catch (error) {
+        ec.logger.error("The sign-in policy could not be read: " + error.message)
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+    return policyValues
+}
+// The shipped conf's value of a conf attribute (parent/element/@name): the attribute of the first such element after its
+// parent's opening tag, or null when the shipped conf leaves it out.
+function shippedAttribute(confAttribute) {
+    const found = /^([\w-]+)\/([\w-]+)\/@([\w-]+)$/.exec(String(confAttribute || ""))
+    if (!found) return null
+    const conf = shippedConf().text
+    const parent = conf.search(new RegExp("<" + found[1] + "[\\s>]"))
+    if (parent < 0) return null
+    const element = new RegExp("<" + found[2] + "\\s([^>]*)>").exec(conf.slice(parent))
+    const attribute = element ? new RegExp("(?:^|\\s)" + found[3] + '="([^"]*)"').exec(element[1]) : null
+    return attribute ? attribute[1].trim() : null
+}
 // A setting's effective value and where it comes from. A stored preference its registration no longer accepts is logged and
 // passed over, so a narrowed registration never serves a value outside it.
 function effective(setting, preference) {
@@ -167,6 +206,11 @@ function effective(setting, preference) {
             if (read.value != null) return {value: read.value, source: "configuration"}
         }
         return {value: text(setting.defaultValue), source: "default"}
+    }
+    if (setting.confAttribute) {
+        const running = text(confAttributeValues()[setting.confAttribute])
+        const shippedValue = shippedAttribute(setting.confAttribute)
+        return {value: running, source: running === (shippedValue ?? text(setting.defaultValue)) ? "default" : "configuration"}
     }
     const configured = property(setting.propertyName)
     const defaults = shippedDefaults()
@@ -197,6 +241,7 @@ function described(setting, preference, canManage) {
         source: found.source,
         sourceText: sourceTexts[found.source],
         propertyName: setting.propertyName || null,
+        confAttribute: setting.confAttribute || null,
         editable,
         canEdit: editable && canManage && (!setting.managePermission || ec.user.hasPermission(setting.managePermission)),
         managePermission: setting.managePermission || null,
@@ -215,13 +260,24 @@ function described(setting, preference, canManage) {
 // get#EffectiveSettings: the registered settings with their effective values, masked, each with its key, source and restart
 // effect; narrowed by group, by kind (preference or configuration) and to one key.
 function getEffectiveSettings(p) {
-    lib.requireView(VIEW, MANAGE)
+    lib.signedIn()
+    // the access administrator reads the sign-in settings beside the groups' sign-in rules (impl-admin P10), nothing else
+    const all = ec.user.hasPermission(VIEW) || ec.user.hasPermission(MANAGE)
+    if (!all && !signInGroupPermissions.some(permission => ec.user.hasPermission(permission)))
+        throw new Error(VIEW + " is required")
     const canManage = ec.user.hasPermission(MANAGE)
     const preferences = new Map(rows(PREFERENCE).map(row => [row.settingKey, map(row)]))
     const settingList = registered()
+        .filter(setting => all || signInGroups.includes(setting.settingGroup))
         .filter(setting => !p.settingKey || setting.settingKey === p.settingKey)
         .filter(setting => !p.settingGroup || setting.settingGroup === p.settingGroup)
         .filter(setting => !p.kind || (p.kind === "preference") === (setting.editable === "Y"))
+        // a conf attribute the server does not answer (not in its list) is logged by name and left out
+        .filter(setting => {
+            if (!setting.confAttribute || Object.hasOwn(confAttributeValues(), setting.confAttribute)) return true
+            ec.logger.error("Instance setting " + setting.settingKey + " names a conf attribute that is not answered; left out")
+            return false
+        })
         .map(setting => described(setting, preferences.get(setting.settingKey), canManage))
     return {settingList, canManage, groupList: Array.from(new Set(settingList.map(row => row.settingGroup).filter(Boolean)))}
 }

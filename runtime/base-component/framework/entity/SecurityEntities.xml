@@ -782,10 +782,21 @@ along with this software (see the LICENSE.md file). If not, see
         </field>
         <field name="description" type="text-medium"/>
         <field name="iconName" type="text-short"/>
-        <field name="defaultUserGroupId" type="id"/>
+        <field name="defaultUserGroupId" type="id" enable-audit-log="true"/>
         <field name="sequenceNum" type="number-integer"/>
         <field name="inbound" type="text-indicator"/>
         <field name="disabled" type="text-indicator" enable-audit-log="true"/>
+        <field name="accountLinkEnumId" type="id" enable-audit-log="true"><description>How a sign-in links an existing account
+            that no provider id (UserAccount.externalUserId) is linked to: AflVerifiedEmail by the provider's verified email
+            address equal to the account's; AflNever, or empty, never (the sign-in is refused and an administrator links the
+            account). A provider's username alone links nothing, and an account in a privileged group or in a group that
+            grants a sealed permission is never linked by a sign-in (crates/moqui-core/src/service/sso.rs).</description></field>
+        <field name="testedConfigHash" type="text-medium"><description>The fingerprint of the configuration (type, client,
+            endpoints, whether a secret is set) the last passing test ran against
+            (org.moqui.admin.ConfigurationServices.test#IdentityProvider): a provider is enabled there only while it equals
+            the current one. Never the secret.</description></field>
+        <field name="testedDate" type="date-time"/>
+        <field name="testedByUserId" type="id"/>
 
         <relationship type="one-nofk" related="moqui.security.sso.OauthFlow" short-alias="oauth" mutable="true">
             <key-map field-name="authFlowId"/>
@@ -805,6 +816,9 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.security.UserGroup" short-alias="defaultUserGroup">
             <key-map field-name="defaultUserGroupId"/>
         </relationship>
+        <relationship type="one" title="AuthFlowAccountLink" related="moqui.basic.Enumeration" short-alias="accountLink">
+            <key-map field-name="accountLinkEnumId"/>
+        </relationship>
         <relationship type="many" related="moqui.security.sso.AuthFlowFieldMap" short-alias="fieldMaps">
             <key-map field-name="authFlowId"/>
         </relationship>
@@ -817,6 +831,10 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration enumTypeId="AuthFlowType" enumId="AftOidc" description="OpenID Connect"/>
             <moqui.basic.Enumeration enumTypeId="AuthFlowType" enumId="AftOauth" description="OAuth"/>
             <moqui.basic.Enumeration enumTypeId="AuthFlowType" enumId="AftSaml" description="SAML"/>
+
+            <moqui.basic.EnumerationType enumTypeId="AuthFlowAccountLink" description="Auth Flow Account Link"/>
+            <moqui.basic.Enumeration enumTypeId="AuthFlowAccountLink" enumId="AflNever" sequenceNum="1" description="Never: an administrator links an existing account"/>
+            <moqui.basic.Enumeration enumTypeId="AuthFlowAccountLink" enumId="AflVerifiedEmail" sequenceNum="2" description="By the provider's verified email address"/>
         </seed-data>
     </entity>
     <entity entity-name="AuthFlowFieldMap" package="moqui.security.sso">
@@ -839,7 +857,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="roleName" type="text-medium" is-pk="true">
             <description>Role name in IdP server</description>
         </field>
-        <field name="userGroupId" type="id"/>
+        <field name="userGroupId" type="id" enable-audit-log="true"/>
 
         <relationship type="one" related="moqui.security.sso.AuthFlow">
             <key-map field-name="authFlowId"/>
@@ -851,12 +869,12 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="OauthFlow" package="moqui.security.sso">
         <field name="authFlowId" type="id" is-pk="true"/>
         <field name="clientTypeEnumId" type="id"/>
-        <field name="clientId" type="text-medium"/>
+        <field name="clientId" type="text-medium" enable-audit-log="true"/>
         <field name="secret" type="text-medium" encrypt="true"/>
-        <field name="authorizeUrl" type="text-medium"><description>The authorization endpoint. Empty takes the endpoint of
+        <field name="authorizeUrl" type="text-medium" enable-audit-log="true"><description>The authorization endpoint. Empty takes the endpoint of
             the named client type (GitHub, Google, ...); OctOauth20 needs it set.</description></field>
-        <field name="tokenUrl" type="text-medium"/>
-        <field name="userInfoUrl" type="text-medium"/>
+        <field name="tokenUrl" type="text-medium" enable-audit-log="true"/>
+        <field name="userInfoUrl" type="text-medium" enable-audit-log="true"/>
         <field name="scope" type="text-medium"><description>Space separated; empty takes the client type's default.</description></field>
 
         <relationship type="one" related="moqui.security.sso.AuthFlow" short-alias="authFlow">
@@ -886,15 +904,15 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="OidcFlow" package="moqui.security.sso">
         <field name="authFlowId" type="id" is-pk="true"/>
         <field name="clientTypeEnumId" type="id"/>
-        <field name="clientId" type="text-medium"/>
+        <field name="clientId" type="text-medium" enable-audit-log="true"/>
         <field name="secret" type="text-medium" encrypt="true"/>
-        <field name="realm" type="text-medium">
+        <field name="realm" type="text-medium" enable-audit-log="true">
             <description>Specific to Keycloak.</description>
         </field>
-        <field name="baseUri" type="text-medium">
+        <field name="baseUri" type="text-medium" enable-audit-log="true">
             <description>Specific to Keycloak.</description>
         </field>
-        <field name="discoveryUri" type="text-medium"/>
+        <field name="discoveryUri" type="text-medium" enable-audit-log="true"/>
         <field name="preferredJwsAlgorithmEnumId" type="id"/>
         <field name="useNonce" type="text-indicator">
             <description>
@@ -945,8 +963,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="keystoreLocation" type="text-medium"/>
         <field name="keystorePassword" type="text-medium" encrypt="true"/>
         <field name="privateKeyPassword" type="text-medium" encrypt="true"/>
-        <field name="serviceProviderEntityId" type="text-medium"/>
-        <field name="identityProviderMetadataLocation" type="text-medium"/>
+        <field name="serviceProviderEntityId" type="text-medium" enable-audit-log="true"/>
+        <field name="identityProviderMetadataLocation" type="text-medium" enable-audit-log="true"/>
         <field name="forceAuth" type="text-indicator"/>
         <field name="passive" type="text-indicator"/>
 

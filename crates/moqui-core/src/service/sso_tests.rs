@@ -61,6 +61,9 @@ fn roles_fall_back_to_the_roles_claim() {
 fn profile(id: &str, username: &str, roles: &[&str]) -> SsoProfile {
     let mut attributes = BTreeMap::new();
     attributes.insert("name".to_string(), Value::string("New Name"));
+    // the provider's verified address, which the flow's rule links an existing account by
+    attributes.insert("email".to_string(), Value::string(format!("{username}@example.com")));
+    attributes.insert("email_verified".to_string(), Value::Bool(true));
     SsoProfile {
         id: id.to_string(),
         username: Some(username.to_string()),
@@ -82,12 +85,16 @@ fn account(facade: &EntityFacade, user_id: &str) -> EntityValue {
         .unwrap()
 }
 
-/// A flow mapping `name` to `userFullName`, and roles `a` and `b` to the groups `NEW_GROUP` and `BROKEN`.
+/// A flow mapping `name` to `userFullName`, and roles `a` and `b` to the groups `NEW_GROUP` and `BROKEN`, that links an
+/// existing account by the provider's verified email address.
 fn flow(facade: &EntityFacade) -> EntityValue {
     let flow = seed(
         facade,
         "moqui.security.sso.AuthFlow",
-        &[("authFlowId", Value::string("TEST_FLOW"))],
+        &[
+            ("authFlowId", Value::string("TEST_FLOW")),
+            ("accountLinkEnumId", Value::string("AflVerifiedEmail")),
+        ],
     );
     seed(
         facade,
@@ -139,6 +146,7 @@ fn a_failure_part_way_leaves_the_account_and_its_groups_as_they_were() {
             ("userId", Value::string("SSO_ANN")),
             ("username", Value::string("sso.ann")),
             ("userFullName", Value::string("Old Name")),
+            ("emailAddress", Value::string("SSO.Ann@example.com")),
         ],
     );
     seed(
@@ -331,4 +339,152 @@ fn an_sso_sign_in_counts_from_its_auth_time() {
     // OAuth cannot prove it: only a re-authentication the user asked for counts
     assert_eq!(sign_in_time(&oauth, &none, true, started, now), Some(now));
     assert_eq!(sign_in_time(&oauth, &none, false, started, now), None);
+}
+
+fn groups_of(facade: &EntityFacade, user_id: &str) -> Vec<String> {
+    let mut groups: Vec<String> = active_members(facade, user_id)
+        .unwrap()
+        .iter()
+        .map(|member| field(member, "userGroupId"))
+        .collect();
+    groups.sort();
+    groups
+}
+
+#[test]
+fn an_existing_account_is_linked_only_by_a_verified_email_and_never_a_privileged_one() {
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    crate::service::load_definitions().unwrap();
+    let flow = flow(&facade);
+    let person = |user_id: &str, username: &str, email: &str| {
+        seed(
+            &facade,
+            ACCOUNT,
+            &[
+                ("userId", Value::string(user_id)),
+                ("username", Value::string(username)),
+                ("emailAddress", Value::string(email)),
+            ],
+        );
+    };
+    let member = |group: &str, user_id: &str| {
+        seed(
+            &facade,
+            "moqui.security.UserGroupMember",
+            &[
+                ("userGroupId", Value::string(group)),
+                ("userId", Value::string(user_id)),
+                ("fromDate", crate::user::now_value()),
+            ],
+        );
+    };
+    // The provider's username alone links nothing: another address, an unverified one, and a flow with no rule.
+    person("SSO_BEA", "sso.bea", "bea@elsewhere.example");
+    let err = sync_account(&facade, &flow, &profile("sub-bea", "sso.bea", &[]), "sso.bea").unwrap_err();
+    assert!(err.message().contains("no verified email"), "{}", err.message());
+    person("SSO_CAL", "sso.cal", "sso.cal@example.com");
+    let mut unverified = profile("sub-cal", "sso.cal", &[]);
+    unverified
+        .attributes
+        .insert("email_verified".to_string(), Value::Bool(false));
+    let err = sync_account(&facade, &flow, &unverified, "sso.cal").unwrap_err();
+    assert!(err.message().contains("no verified email"), "{}", err.message());
+    let no_rule = seed(
+        &facade,
+        "moqui.security.sso.AuthFlow",
+        &[("authFlowId", Value::string("NO_RULE_FLOW"))],
+    );
+    let err = sync_account(&facade, &no_rule, &profile("sub-cal", "sso.cal", &[]), "sso.cal").unwrap_err();
+    assert!(err.message().contains("links no existing account"), "{}", err.message());
+    assert_eq!(field(&account(&facade, "SSO_CAL"), "externalUserId"), "");
+    // The verified address links it; an instance administrator's account is linked by an administrator only.
+    sync_account(&facade, &flow, &profile("sub-cal", "sso.cal", &[]), "sso.cal").unwrap();
+    assert_eq!(field(&account(&facade, "SSO_CAL"), "externalUserId"), "sub-cal");
+    person("SSO_ROOT", "sso.root", "sso.root@example.com");
+    member("ADMIN", "SSO_ROOT");
+    let err = sync_account(&facade, &flow, &profile("sub-root", "sso.root", &[]), "sso.root").unwrap_err();
+    assert!(err.message().contains("an administrator links it"), "{}", err.message());
+    assert_eq!(field(&account(&facade, "SSO_ROOT"), "externalUserId"), "");
+}
+
+#[test]
+fn a_sign_in_gives_and_ends_only_the_groups_its_role_maps_may() {
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    crate::service::load_definitions().unwrap();
+    let flow = seed(
+        &facade,
+        "moqui.security.sso.AuthFlow",
+        &[
+            ("authFlowId", Value::string("BOUND_FLOW")),
+            ("defaultUserGroupId", Value::string("ADMIN")),
+        ],
+    );
+    // staff maps an ordinary group, root a privileged one and sealed a group that grants a sealed permission
+    seed(
+        &facade,
+        "moqui.security.UserGroupPermission",
+        &[
+            ("userGroupId", Value::string("SSO_SEALED")),
+            ("userPermissionId", Value::string("ADMIN_PASSWORD")),
+            ("fromDate", crate::user::now_value()),
+        ],
+    );
+    for (role, group) in [("staff", "SSO_STAFF"), ("root", "ADMIN"), ("sealed", "SSO_SEALED")] {
+        seed(
+            &facade,
+            "moqui.security.sso.AuthFlowRoleMap",
+            &[
+                ("authFlowId", Value::string("BOUND_FLOW")),
+                ("roleName", Value::string(role)),
+                ("userGroupId", Value::string(group)),
+            ],
+        );
+    }
+    seed(
+        &facade,
+        ACCOUNT,
+        &[
+            ("userId", Value::string("SSO_DEE")),
+            ("username", Value::string("sso.dee")),
+            ("externalUserId", Value::string("sub-dee")),
+        ],
+    );
+    for group in ["ADMIN", "BY_HAND"] {
+        seed(
+            &facade,
+            "moqui.security.UserGroupMember",
+            &[
+                ("userGroupId", Value::string(group)),
+                ("userId", Value::string("SSO_DEE")),
+                ("fromDate", crate::user::now_value()),
+            ],
+        );
+    }
+    // Every role: only the ordinary group is given; the privileged and the sealed ones are passed over.
+    sync_account(
+        &facade,
+        &flow,
+        &profile("sub-dee", "sso.dee", &["staff", "root", "sealed"]),
+        "sso.dee",
+    )
+    .unwrap();
+    assert_eq!(groups_of(&facade, "SSO_DEE"), ["ADMIN", "BY_HAND", "SSO_STAFF"]);
+    // No role: the mapped group ends; the administrator's own membership and the one given by hand stay.
+    sync_account(&facade, &flow, &profile("sub-dee", "sso.dee", &[]), "sso.dee").unwrap();
+    assert_eq!(groups_of(&facade, "SSO_DEE"), ["ADMIN", "BY_HAND"]);
+    // A new account with no role gets no privileged default group.
+    sync_account(&facade, &flow, &profile("sub-eve", "sso.eve", &["root"]), "sso.eve").unwrap();
+    let eve = facade
+        .find(ACCOUNT)
+        .unwrap()
+        .disable_authz()
+        .eq("username", Value::string("sso.eve"))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert!(groups_of(&facade, &field(&eve, "userId")).is_empty());
 }

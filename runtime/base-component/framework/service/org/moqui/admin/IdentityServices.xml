@@ -33,7 +33,8 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="proposed" type="Map"><description>memberships: a List of {userGroupId, userId, fromDate, thruDate} rows replacing the stored row of the
                 same key or added; groups: {userGroupId: {requireAuthcFactor, ipAllowed}}; accounts: {userId: {disabled,
-                disabledDateTime, terminateDate, ipAllowed}}; endedFactorIds: the factors a reset ends</description></parameter>
+                disabledDateTime, terminateDate, ipAllowed}}; endedFactorIds: the factors a reset ends; disabledFlowIds: the
+                sign-in providers (AuthFlow) the change disables</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="allowed" type="Boolean"/>
@@ -180,5 +181,30 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.addError(`${serviceName} does not carry the owned-resource ${contract} contract`); return }
             result = ec.service.sync().name(serviceName).parameters(stepParameters || {}).call() || {}
         ]]></script></actions>
+    </service>
+    <!-- The new-device sign-in notice (mr-boss plan/design-admin.md §4 Sessions; impl-admin P10, F15; IdentityNewDevice.js).
+        Called by the EECA UserLoginHistoryNewDevice once a successful sign-in's history row is written, with authorization
+        off; no group is authorized to call it, so a signed-in user cannot ask for a notice to another account. -->
+    <service verb="notify" noun="NewDeviceSignIn" allow-remote="false">
+        <description>Tells an account's owner of a successful sign-in from a client the account was not seen from within
+            the window (the instance preference signin.newDeviceWindowDays, 90 days): a client is the browser and system of
+            the visit's user agent with the network of its address (an IPv4 /24, an IPv6 /48), compared with the visits the
+            account's login history names and the account's other visits. One notice on the private topic AccountSignIn (in
+            the notification list and by email), with the time, the client summary, the network and the session's key,
+            never the user agent or the whole address; none (reasonCode) for a known client (KNOWN_CLIENT), an account's
+            first sign-in (FIRST_SIGN_IN), or a sign-in with no visit of the account or no client (NO_VISIT,
+            NO_CLIENT).</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="visitId"/>
+            <parameter name="fromDate" type="Timestamp"><description>When the sign-in was; now when empty</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="notified" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="clientSummary"/>
+            <parameter name="network"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/IdentityNewDevice.js').execute('notifyNewDeviceSignIn', context))</script></actions>
     </service>
 </services>
