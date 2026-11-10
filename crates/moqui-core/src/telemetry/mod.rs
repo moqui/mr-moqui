@@ -932,6 +932,17 @@ impl Telemetry {
 
     /// One run of an operation: `moqui.operation.runs`, and `moqui.operation.duration` for a run that ended.
     pub fn record_operation(&self, name: &str, outcome: operation::Outcome, seconds: Option<f64>) {
+        #[cfg(feature = "telemetry")]
+        if self.shared.config.enabled && !is_suppressed() {
+            if let Some(sdk) = &self.sdk {
+                let key = {
+                    use std::hash::BuildHasher;
+                    foldhash::fast::FixedState::default().hash_one((name, outcome.as_str()))
+                };
+                sdk.record_operation(key, seconds, || operation::attributes(name, outcome));
+                return;
+            }
+        }
         if let Some(seconds) = seconds {
             self.record_duration(
                 "moqui.operation.duration",
