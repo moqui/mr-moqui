@@ -1492,7 +1492,10 @@ $closeRender();
         "field-col-row": pass,
         "field-col": pass,
         "fields-not-referenced": pass,
-        "subscreens-menu": pass,
+        // The separate active widget owns its content; the menu still provides the nearest terminal tabs.
+        "subscreens-menu": stmt((node) => `{
+            ${menuItems}$emit({t:"subscreens",id:$uid(${jsString(attr(node, "id") || "subscreens")}),kind:${jsString(attr(node, "type") || "tab")},items:$items,c:[]});
+        }\n`),
         "container": group("container"),
         "container-box": stmt((node) => {
             const header = child(node, "box-header");

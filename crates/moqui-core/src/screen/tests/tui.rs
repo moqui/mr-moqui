@@ -1641,6 +1641,73 @@ fn a_parent_level_alone_has_an_empty_active_node() {
     assert!(child.contains("Leaf") && !child.contains("Above"), "{child}");
 }
 
+/// A menu paired with a separate active widget keeps the nearest tabs without duplicating its content.
+#[test]
+fn a_separate_subscreen_menu_keeps_nested_navigation_and_renders_content_once() {
+    let dir = std::env::temp_dir().join(format!("moqui-tui-paired-menu-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        format!(
+            r#"<screen require-authentication="false"><subscreens>
+            <subscreens-item name="Stock" location="{}" menu-index="1"/>
+            <subscreens-item name="Other" location="{}" menu-index="2"/>
+        </subscreens><widgets><subscreens-panel id="Outer" type="tab"/></widgets></screen>"#,
+            dir.join("Stock.xml").display(),
+            dir.join("Other.xml").display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Stock.xml"),
+        format!(
+            r#"<screen require-authentication="false"><subscreens>
+            <subscreens-item name="Summary" location="{}" menu-index="1"/>
+            <subscreens-item name="Projection" location="{}" menu-index="2"/>
+            <subscreens-item name="Policy" location="{}" menu-index="3"/>
+        </subscreens><widgets><subscreens-menu id="InventoryTabs" type="tab"/>
+            <subscreens-active/></widgets></screen>"#,
+            dir.join("Summary.xml").display(),
+            dir.join("Projection.xml").display(),
+            dir.join("Policy.xml").display()
+        ),
+    )
+    .unwrap();
+    for name in ["Other", "Summary", "Projection", "Policy"] {
+        std::fs::write(
+            dir.join(format!("{name}.xml")),
+            format!(
+                r#"<screen require-authentication="false"><widgets><label text="Content {name}"/></widgets></screen>"#
+            ),
+        )
+        .unwrap();
+    }
+    let context = ExecutionContextFactory::test_context();
+    let output = make_render(context.factory())
+        .root_screen(dir.join("Root.xml").to_string_lossy().into_owned())
+        .screen_path("Stock/Projection")
+        .render_mode("tui")
+        .parameters(BTreeMap::from([("lastStandalone".to_string(), Value::I64(3))]))
+        .render()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let doc = document(&output);
+    let menu = nodes(&doc)
+        .into_iter()
+        .find(|node| node.get("id") == Some(&json!("InventoryTabs")))
+        .unwrap_or_else(|| panic!("nested menu missing: {doc}"));
+    assert_eq!(menu["t"], json!("subscreens"));
+    assert_eq!(menu["kind"], json!("tab"));
+    let items = menu["items"].as_array().unwrap();
+    let titles: Vec<_> = items.iter().map(|item| item["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, ["Summary", "Projection", "Policy"]);
+    assert_eq!(items[1]["active"], json!(true));
+    assert!(items[2]["url"].as_str().unwrap().contains("/Stock/Policy"));
+    assert_eq!(menu["c"], json!([]), "the separate active widget owns the content");
+    assert_eq!(output.body_text().matches("Content Projection").count(), 1);
+    client_model(&output.body_text());
+}
+
 /// A wizard or stack panel is a subscreens node like the tabs: the steps, the active one, a wizard's finish text, and the
 /// active level inside.
 #[test]
