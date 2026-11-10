@@ -784,14 +784,34 @@ pub fn interpolation_end(source: &str, from: usize) -> Option<usize> {
 /// literals, comments and regular expression literals. An arrow `=>` does not end a tag. The expression is
 /// JavaScript, so a `//` comment runs to the end of its line and a `/* */` comment to its `*/`. A `/` starts a
 /// regular expression where an operand may come (at the start, after a punctuator other than `)` and `]`, or after a
-/// keyword such as `return`), and divides everywhere else.
+/// keyword such as `return`; a word after `.` or `?.` is a property name, not a keyword), and divides everywhere else,
+/// as after a postfix `++` or `--`.
 pub(crate) fn scan_expression(source: &str, from: usize, terminator: u8) -> Option<usize> {
+    scan(source, from, terminator).ok()
+}
+
+/// Why [`scan`] found no end.
+#[derive(Debug, PartialEq, Eq)]
+enum Unclosed {
+    /// The source ended first.
+    End,
+    /// A `//` comment in a tag, which would run past the tag's `>`.
+    LineCommentInTag,
+}
+
+/// [`scan_expression`], saying why it found no end.
+fn scan(source: &str, from: usize, terminator: u8) -> Result<usize, Unclosed> {
     let bytes = source.as_bytes();
     let mut depth = 0usize;
     let mut index = from;
     let mut operand_next = true;
+    let mut property_next = false;
     while index < bytes.len() {
         let byte = bytes[index];
+        let property = property_next;
+        if !byte.is_ascii_whitespace() {
+            property_next = byte == b'.';
+        }
         match byte {
             b'\'' | b'"' => {
                 index += 1;
@@ -809,18 +829,21 @@ pub(crate) fn scan_expression(source: &str, from: usize, terminator: u8) -> Opti
                     if bytes[index] == b'\\' {
                         index += 1;
                     } else if bytes[index] == b'$' && bytes.get(index + 1) == Some(&b'{') {
-                        index = scan_expression(source, index + 2, b'}')?;
+                        index = scan(source, index + 2, b'}')?;
                     }
                     index += 1;
                 }
                 operand_next = false;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'/') && terminator == b'>' => {
+                return Err(Unclosed::LineCommentInTag);
             }
             b'/' if bytes.get(index + 1) == Some(&b'/') => {
                 index = source[index..].find('\n').map_or(bytes.len(), |at| index + at);
                 continue;
             }
             b'/' if bytes.get(index + 1) == Some(&b'*') => {
-                index += 2 + source[index + 2..].find("*/")? + 2;
+                index += 2 + source[index + 2..].find("*/").ok_or(Unclosed::End)? + 2;
                 continue;
             }
             b'/' if operand_next => {
@@ -835,10 +858,15 @@ pub(crate) fn scan_expression(source: &str, from: usize, terminator: u8) -> Opti
                 while index < bytes.len() && is_word_byte(bytes[index]) {
                     index += 1;
                 }
-                operand_next = OPERAND_KEYWORDS.contains(&&source[start..index]);
+                operand_next = !property && OPERAND_KEYWORDS.contains(&&source[start..index]);
                 continue;
             }
             _ if byte.is_ascii_whitespace() => {}
+            // a postfix `++` or `--` leaves an operand, a prefix one an operator: what may come next is as it was
+            b'+' | b'-' if bytes.get(index + 1) == Some(&byte) => {
+                index += 2;
+                continue;
+            }
             b'(' | b'[' | b'{' => {
                 depth += 1;
                 operand_next = true;
@@ -847,19 +875,19 @@ pub(crate) fn scan_expression(source: &str, from: usize, terminator: u8) -> Opti
                 depth = depth.saturating_sub(1);
                 operand_next = false;
             }
-            b'}' if terminator == b'}' && depth == 0 => return Some(index),
+            b'}' if terminator == b'}' && depth == 0 => return Ok(index),
             b'}' => {
                 depth = depth.saturating_sub(1);
                 operand_next = true;
             }
             b'>' if terminator == b'>' && depth == 0 && (index == 0 || bytes[index - 1] != b'=') => {
-                return Some(index);
+                return Ok(index);
             }
             _ => operand_next = true,
         }
         index += 1;
     }
-    None
+    Err(Unclosed::End)
 }
 
 /// The keywords after which an operand, and so a regular expression, may come.
@@ -1011,8 +1039,10 @@ fn tag(source: &str, start: usize) -> Result<(Token, usize), Error> {
             &format!("unknown tag <#{name}>; the dialect has if, elseif, else, list and assign"),
         ));
     }
-    let end = scan_expression(source, name_end, b'>')
-        .ok_or_else(|| fail(source, start, &format!("<#{name} has no closing >")))?;
+    let end = scan(source, name_end, b'>').map_err(|why| match why {
+        Unclosed::LineCommentInTag => fail(source, start, &format!("a // comment in a tag (<#{name}>): use /* */")),
+        Unclosed::End => fail(source, start, &format!("<#{name} has no closing >")),
+    })?;
     let argument = source[name_end..end].trim().to_string();
     if argument.is_empty() {
         return Err(fail(source, start, &format!("<#{name}> needs an expression")));

@@ -186,37 +186,58 @@ fn text_types_name_html_print_or_its_older_name() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A print-only screen (as SimpleScreens' Facility/PrintBoxTypes) shows its html-print text in an html render, rather
-/// than a blank page; an html text or a fallback still wins there, and other modes do not take the print text.
+/// A print-only screen (its widgets are render-mode elements alone, as SimpleScreens' Facility/PrintBoxTypes) shows its
+/// html-print HTML text in an html render, rather than a blank page. An html text or a fallback still wins, an xsl-fo
+/// text or a FO location is never shown, other modes do not take the print text, and a screen with other widgets keeps
+/// its html-print blocks (a print header, a page style, as mr-boss Shared/PriceListDetail) out of html.
 #[test]
-fn an_html_render_falls_back_to_the_print_text() {
+fn an_html_render_of_a_print_only_screen_falls_back_to_the_print_text() {
     let context = ExecutionContextFactory::test_context();
     let dir = std::env::temp_dir().join(format!("moqui-print-fallback-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("PrintOnly.xml");
-    std::fs::write(
-        &path,
-        r#"<screen require-authentication="false" standalone="true"><widgets>
-        <render-mode><text type="html-print">print only;</text></render-mode>
+    let template = dir.join("Page.print.html.fancy");
+    std::fs::write(&template, "from the print template;").unwrap();
+    let screen = |name: &str, widgets: &str| {
+        let path = dir.join(format!("{name}.xml"));
+        std::fs::write(
+            &path,
+            format!(
+                r#"<screen require-authentication="false" standalone="true"><widgets>{widgets}</widgets></screen>"#
+            ),
+        )
+        .unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    let print_only = screen(
+        "PrintOnly",
+        &format!(
+            r#"<render-mode><text type="html-print">print only;</text></render-mode>
+        <render-mode><text type="html-print" location="{}"/></render-mode>
+        <render-mode><text type="html-print" location="component://none/Order.xsl-fo.ftl"/></render-mode>
         <render-mode><text type="xsl-fo">old print name;</text></render-mode>
         <render-mode><text type="html-print">not this print;</text><text type="html">html text;</text></render-mode>
-        <render-mode><text type="html-print">nor this print;</text><text>fallback;</text></render-mode>
-        </widgets></screen>"#,
-    )
-    .unwrap();
-    let location = path.to_string_lossy().into_owned();
-    let output = |mode: &str| {
+        <render-mode><text type="html-print">nor this print;</text><text>fallback;</text></render-mode>"#,
+            template.display()
+        ),
+    );
+    let mixed = screen(
+        "Mixed",
+        r#"<label text="interactive part;"/>
+        <render-mode><text type="html-print">&lt;style&gt;@page{size:A4}&lt;/style&gt;print header;</text></render-mode>"#,
+    );
+    let output = |location: &str, mode: &str| {
         make_render(context.factory())
-            .root_screen(location.clone())
+            .root_screen(location.to_string())
             .render_mode(mode)
             .render()
-            .unwrap()
+            .unwrap_or_else(|err| panic!("{location} {mode}: {err}"))
             .body_text()
     };
-    let html = output("html");
+    let html = output(&print_only, "html");
     for (text, shown) in [
         ("print only;", true),
-        ("old print name;", true),
+        ("from the print template;", true),
+        ("old print name;", false),
         ("html text;", true),
         ("fallback;", true),
         ("not this print;", false),
@@ -224,8 +245,11 @@ fn an_html_render_falls_back_to_the_print_text() {
     ] {
         assert_eq!(html.contains(text), shown, "{text} in {html}");
     }
-    let text = output("text");
+    let text = output(&print_only, "text");
     assert!(!text.contains("print only") && text.contains("fallback;"), "{text}");
+    let html = output(&mixed, "html");
+    assert!(html.contains("interactive part;"), "{html}");
+    assert!(!html.contains("print header;") && !html.contains("@page"), "{html}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

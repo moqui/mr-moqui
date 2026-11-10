@@ -83,7 +83,8 @@ template reads it as JavaScript to find its end. Brackets, strings (with their e
 literals, `//` comments (to the end of the line) and `/* */` comments, and regular expressions are skipped, so an
 apostrophe in a comment or a `}` in a regular expression does not end it. A `/` is a regular expression where an
 operand may start: at the start, after a punctuator other than `)` and `]`, or after a keyword such as `return` or
-`typeof`; elsewhere it divides. A tag ends at the first `>` outside brackets, so a comparison in a tag goes in
-parentheses (`<#if (a > b)>`). The same reading applies to `ec.resource.expand` and the `${}` in a screen or service
+`typeof`; elsewhere it divides, as after a postfix `++` or `--` and after a property named as a keyword (`dims.in / 12`).
+A tag ends at the first `>` outside brackets, so a comparison in a tag goes in parentheses (`<#if (a > b)>`), and a
+`//` comment in a tag is refused, since it would run past the tag's `>`: use `/* */` there. The same reading applies to `ec.resource.expand` and the `${}` in a screen or service
 XML attribute: the code of a `${}` is kept as written, as Java's Groovy string kept it, and only the text around it
 has its backslashes and backticks escaped.

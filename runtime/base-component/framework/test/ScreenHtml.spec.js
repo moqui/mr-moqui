@@ -325,3 +325,23 @@ feature('HTML report fallback formats typed times and units while data exports r
     }
     assert.equal(JSON.stringify({frame,panel}),before);
 } });
+
+feature('the ${} scanner of server-static qvt reads its code as JavaScript, as the host template scanner does', { expect() {
+    const { exprEnd } = readModule('ScreenSupport.js')({}).renderModeHelpers();
+    // the expression of the first ${ of a text
+    const first = (text) => {
+        const from = text.indexOf('${') + 2;
+        const end = exprEnd(text, from);
+        return end < 0 ? null : text.slice(from, end);
+    };
+    assert.equal(first("${'a' // don't\n} x"), "'a' // don't\n");
+    assert.equal(first("${1 /* } ' */ + 1} x"), "1 /* } ' */ + 1");
+    assert.equal(first("${'a}b'.replace(/}/g, '-')} x"), "'a}b'.replace(/}/g, '-')");
+    assert.equal(first("${'it\\'s'} x"), "'it\\'s'");
+    assert.equal(first("${`a${'}'}b`} x"), "`a${'}'}b`");
+    // after a postfix ++ or --, and after a property named as a keyword, a / divides
+    assert.equal(first("${a++ / 2} x\\y ${b / 2}"), "a++ / 2");
+    assert.equal(first("${dims.in / 12} ${c / 2}"), "dims.in / 12");
+    assert.equal(first("${dims?.in / 12} ${c / 2}"), "dims?.in / 12");
+    assert.equal(first("${a /* }"), null);
+} });

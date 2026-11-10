@@ -650,13 +650,28 @@ fn expressions_skip_comments_regular_expressions_and_escaped_quotes_on() {
         ("${\"say \\\"}\\\"\"}", "say \"}\""),
         ("${`a${'}'}b`}", "a}b"),
         ("<#if (4 / 2 > 1)>yes</#if>", "yes"),
-        ("<#if /[>]/.test('>') // isn't >\n>yes</#if>", "yes"),
+        ("<#if /[>]/.test('>') /* isn't > */>yes</#if>", "yes"),
+        // after a postfix ++ or --, and after a property named as a keyword, a / divides
+        ("<#assign a = 3><#assign b = 4>${a++ / 2} x\\y ${b / 2}", "1.5 x\\y 2"),
+        (
+            "<#assign dims = {in: 24}><#assign c = 4>${dims.in / 12} ${c / 2} ${dims?.in / 12}",
+            "2 2 2",
+        ),
+        ("<#assign d = 8>${d-- / 2}|${d / 7}", "4|1"),
         ("<#if /* > */ true>yes</#if>", "yes"),
     ] {
         assert_eq!(render_trusted(source, Escape::None).unwrap(), expected, "{source}");
     }
     let err = check_template("${a /* }").expect_err("an open comment");
     assert!(err.message().contains("no closing"), "{}", err.message());
+    // a line comment in a tag would run past its `>`
+    let err = check_template("<#if a // isn't\n>yes</#if>").expect_err("a line comment in a tag");
+    assert!(
+        err.message().contains("a // comment in a tag (<#if>): use /* */"),
+        "{}",
+        err.message()
+    );
+    assert!(check_template("<#if a == 'http://x'>yes</#if>").is_ok());
 }
 
 #[test]

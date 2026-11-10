@@ -138,82 +138,6 @@
         // false when it fails to evaluate, so the part is left out.
         const held = (expr, n, attrName) => "(() => { try { return !!" + X(expr, n, attrName) + "; } catch { return false; } })()";
 
-        // Where the ${...} expression that starts at `from` ends: the index of its closing } outside brackets, strings, template literals,
-        // comments and regular expressions, or -1. A / starts a regular expression where an operand may come (at the start, after a
-        // punctuator other than ) and ], or after a keyword such as return) and divides everywhere else. As the host's scan_expression.
-        const OPERAND_KEYWORDS = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"]);
-        const WORD = /[A-Za-z0-9_$\u0080-￿]/;
-        const regexEnd = (text, start) => {
-            let j = start + 1;
-            let inClass = false;
-            for (; j < text.length; j++) {
-                const ch = text.charAt(j);
-                if (ch === "\n" || ch === "\r") return -1;
-                if (ch === "\\") j++;
-                else if (ch === "[") inClass = true;
-                else if (ch === "]") inClass = false;
-                else if (ch === "/" && !inClass) break;
-            }
-            if (j >= text.length) return -1;
-            j++;
-            while (j < text.length && /[A-Za-z]/.test(text.charAt(j))) j++;
-            return j;
-        };
-        const exprEnd = (text, from) => {
-            let depth = 0;
-            let operandNext = true;
-            let j = from;
-            while (j < text.length) {
-                const ch = text.charAt(j);
-                const next = text.charAt(j + 1);
-                if (ch === "'" || ch === '"') {
-                    for (j++; j < text.length && text.charAt(j) !== ch; j++) if (text.charAt(j) === "\\") j++;
-                    operandNext = false;
-                } else if (ch === "`") {
-                    for (j++; j < text.length && text.charAt(j) !== "`"; j++) {
-                        if (text.charAt(j) === "\\") j++;
-                        else if (text.charAt(j) === "$" && text.charAt(j + 1) === "{") {
-                            j = exprEnd(text, j + 2);
-                            if (j < 0) return -1;
-                        }
-                    }
-                    operandNext = false;
-                } else if (ch === "/" && next === "/") {
-                    const nl = text.indexOf("\n", j);
-                    j = nl < 0 ? text.length : nl;
-                    continue;
-                } else if (ch === "/" && next === "*") {
-                    const close = text.indexOf("*/", j + 2);
-                    if (close < 0) return -1;
-                    j = close + 2;
-                    continue;
-                } else if (ch === "/" && operandNext && regexEnd(text, j) >= 0) {
-                    j = regexEnd(text, j);
-                    operandNext = false;
-                    continue;
-                } else if (WORD.test(ch)) {
-                    const start = j;
-                    while (j < text.length && WORD.test(text.charAt(j))) j++;
-                    operandNext = OPERAND_KEYWORDS.has(text.slice(start, j));
-                    continue;
-                } else if (/\s/.test(ch)) {
-                    // whitespace leaves what may come next as it was
-                } else if (ch === "(" || ch === "[" || ch === "{") {
-                    depth++;
-                    operandNext = true;
-                } else if (ch === ")" || ch === "]") {
-                    depth = Math.max(0, depth - 1);
-                    operandNext = false;
-                } else if (ch === "}") {
-                    if (depth === 0) return j;
-                    depth--;
-                    operandNext = true;
-                } else operandNext = true;
-                j++;
-            }
-            return -1;
-        };
-
         // The ${...} parts of a text: [{text}, {expr}].
         const split = (text) => {
             const out = [];
@@ -221,7 +145,7 @@
             let i = 0;
             while (i < text.length) {
                 if (text.charAt(i) === "$" && text.charAt(i + 1) === "{") {
-                    const end = exprEnd(text, i + 2);
+                    const end = renderModes.exprEnd(text, i + 2);
                     if (end >= 0) {
                         if (literal) out.push({ text: literal });
                         literal = "";
