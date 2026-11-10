@@ -59,7 +59,7 @@ pub fn run_matched_eca(
     entity_name: &str,
     operation: &str,
     before: bool,
-    rules: &[EcaRule],
+    rules: &[std::sync::Arc<EcaRule>],
     values: &mut crate::entity::FieldMap,
     pre_row: Option<&crate::entity::EntityValue>,
 ) -> Result<(), Error> {

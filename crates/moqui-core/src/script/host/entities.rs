@@ -506,13 +506,15 @@ fn condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
     // of an entity defined at run time may be read from rows, so it is read with the engine lent (`find`).
     let facade = entity_facade()?;
     let (state, mut find) = take_find(call)?;
+    // which of the entries are fields, in their order: no set of every field name made per call
+    // (plans/Profiling3.md W8)
     let mut fields = None;
     let lent = call.ops.lend(&mut || {
         fields = Some(facade.with_entity(find.entity_name(), |entity, _, _| {
-            Ok(entity.field_names().into_iter().map(str::to_string).collect())
+            Ok(entries.keys().map(|key| entity.has_field(key)).collect())
         }));
     });
-    let known: Result<std::collections::BTreeSet<String>, HostError> = lent.and_then(|()| {
+    let known: Result<Vec<bool>, HostError> = lent.and_then(|()| {
         fields
             .ok_or_else(|| HostError::message("entity fields were not read"))?
             .map_err(lib)
@@ -525,8 +527,8 @@ fn condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
         }
     };
     let mut failed = None;
-    for (key, value) in entries {
-        if !known.contains(&key) {
+    for ((key, value), is_field) in entries.into_iter().zip(known) {
+        if !is_field {
             continue;
         }
         match comparison(&key, "equals", value) {

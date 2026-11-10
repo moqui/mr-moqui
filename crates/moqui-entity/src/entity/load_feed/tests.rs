@@ -1066,7 +1066,7 @@ fn eca_rule_entities_are_full_names_and_rules_with_no_id_come_first() {
     .unwrap();
     let ids: Vec<String> = eca_rules(&facade, "moqui.test.TestEntity")
         .into_iter()
-        .map(|rule| rule.id)
+        .map(|rule| rule.id.clone())
         .collect();
     assert_eq!(ids, ["", "ShortName"]);
     assert!(eca_rules(&facade, "no.such.Entity").is_empty());

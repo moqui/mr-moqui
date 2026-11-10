@@ -53,7 +53,7 @@ pub struct EcaRule {
 pub fn match_rules(facade: &EntityFacade, entity_name: &str, operation: &str) -> Vec<String> {
     let ids = match_rules_with(facade, entity_name, operation)
         .into_iter()
-        .map(|rule| rule.id)
+        .map(|rule| rule.id.clone())
         .collect();
     note_touch(facade, entity_name, operation, None, None);
     ids
@@ -61,7 +61,7 @@ pub fn match_rules(facade: &EntityFacade, entity_name: &str, operation: &str) ->
 
 /// The ECA rules for a write, which the write hands to `service::run_matched_eca`: nothing is kept on the
 /// facade, so a nested or concurrent write cannot change the rules of this one.
-pub(crate) fn match_rules_with(facade: &EntityFacade, entity_name: &str, operation: &str) -> Vec<EcaRule> {
+pub(crate) fn match_rules_with(facade: &EntityFacade, entity_name: &str, operation: &str) -> Vec<Arc<EcaRule>> {
     if facade.flags().disable_entity_eca || (crate::hooks::get().entity_eca_disabled)() {
         return Vec::new();
     }
@@ -73,7 +73,7 @@ pub(crate) fn match_rules_with(facade: &EntityFacade, entity_name: &str, operati
 }
 
 /// Rules stored for `entity_name`. This lookup does not run them; `service::run_matched_eca` does.
-pub fn eca_rules(facade: &EntityFacade, entity_name: &str) -> Vec<EcaRule> {
+pub fn eca_rules(facade: &EntityFacade, entity_name: &str) -> Vec<Arc<EcaRule>> {
     eca_index(facade).of_entity(entity_name).cloned().collect()
 }
 
@@ -109,13 +109,14 @@ fn rule_matches(rule: &EcaRule, entity_name: &str, operation: &str) -> bool {
 /// lookup. Built once per facade; a reader holds the `Arc` and takes no lock while matching.
 #[derive(Clone, Default)]
 pub(crate) struct EcaIndex {
-    rules: Vec<EcaRule>,
+    /// Shared, so a write that matches a rule holds it without copying its texts (plans/Profiling3.md W9).
+    rules: Vec<Arc<EcaRule>>,
     by_entity: HashMap<String, Vec<usize>>,
 }
 
 impl EcaIndex {
     /// The rules of `entity_name`: those with no id, then those with one, each in file order.
-    fn of_entity<'a>(&'a self, entity_name: &str) -> impl Iterator<Item = &'a EcaRule> + 'a {
+    fn of_entity<'a>(&'a self, entity_name: &str) -> impl Iterator<Item = &'a Arc<EcaRule>> + 'a {
         self.by_entity
             .get(entity_name)
             .map(Vec::as_slice)
@@ -205,9 +206,9 @@ impl EcaIndex {
                 .iter()
                 .position(|existing| existing.id == rule.id && !rule.id.is_empty())
             {
-                self.rules[pos] = rule;
+                self.rules[pos] = Arc::new(rule);
             } else {
-                self.rules.push(rule);
+                self.rules.push(Arc::new(rule));
             }
         }
         // As Java, an entity's rules with no id come first, then those with an id; each in file order (Java's id'd

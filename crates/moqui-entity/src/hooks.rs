@@ -135,7 +135,15 @@ pub struct EntityHooks {
     pub store_entity: fn(&EntityFacade, &str, &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, LibError>,
     /// Run the matched entity ECA rules of one phase.
     pub run_eca:
-        fn(&EntityFacade, &str, &str, bool, &[EcaRule], &mut FieldMap, Option<&EntityValue>) -> Result<(), LibError>,
+        fn(
+            &EntityFacade,
+            &str,
+            &str,
+            bool,
+            &[std::sync::Arc<EcaRule>],
+            &mut FieldMap,
+            Option<&EntityValue>,
+        ) -> Result<(), LibError>,
     pub run_data_file_service: fn(&EntityFacade, &DataFileService) -> Result<(), LibError>,
     pub schedule_feed_receive: fn(&EntityFacade, Vec<String>) -> Result<(), LibError>,
     /// The service a data file names, as Java's `isServiceDefined` takes it.
