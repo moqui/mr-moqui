@@ -211,8 +211,9 @@ pub fn hash_of(text: &str) -> String {
     // 3 the transition anchors of a screen-extend, 4 relationships, indexes, view members, form fields, subscreens items,
     // ext items, widget templates, data records, service includes, a screen-extend's own transitions and forms, and ECA
     // keys by rule name or target, 5 the references' operations and origins, the bindings and the primary key mark of a
-    // field.
-    let digest = Sha256::digest(format!("5\n{text}").as_bytes());
+    // field, 6 screen paths (links, responses, forms' transitions, default items), directory subscreens, a subscreens
+    // item's no-sub-path mark, the services a transition passes the request to, and the bindings of a form's fields.
+    let digest = Sha256::digest(format!("6\n{text}").as_bytes());
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -408,21 +409,31 @@ impl MemoryIndex {
     /// Read every component file of `factory`.
     #[must_use]
     pub fn build(factory: &ExecutionContextFactory) -> Self {
-        Self::of_files(factory, &component_files(factory))
+        let mut index = Self::default();
+        // the conf's screen mounts, so a path through `/apps/...` walks them
+        let mounts = rows::conf_mounts(&moqui_core::screen::ScreenFacade::of(factory).conf().screens);
+        index.take(mounts.path.clone(), mounts.path, mounts.hash, mounts.index);
+        index.read_files(factory, &component_files(factory));
+        index
     }
 
     /// Read `files`.
     #[must_use]
     pub fn of_files(factory: &ExecutionContextFactory, files: &[Located]) -> Self {
         let mut index = Self::default();
+        index.read_files(factory, files);
+        index
+    }
+
+    /// Read `files` into the index, and resolve everything.
+    fn read_files(&mut self, factory: &ExecutionContextFactory, files: &[Located]) {
         for file in files {
             match file.extract(factory) {
-                Ok((hash, read)) => index.take(file.path.display().to_string(), file.location.clone(), hash, read),
-                Err(problem) => index.problem(file, problem),
+                Ok((hash, read)) => self.take(file.path.display().to_string(), file.location.clone(), hash, read),
+                Err(problem) => self.problem(file, problem),
             }
         }
-        index.resolve_all(&|location: &str| location_exists(factory, location));
-        index
+        self.resolve_all(&|location: &str| location_exists(factory, location));
     }
 
     /// The stamp of the files read.
@@ -1124,8 +1135,16 @@ pub fn build_files(
         }
         changes.push(change_of(factory, file, &text));
     }
-    // the artifacts that are rows: service jobs, data documents, email templates, DbForm forms
-    for source in if rows { rows::read(&facade) } else { Vec::new() } {
+    // the artifacts that are rows: service jobs, data documents, email templates, DbForm forms, subscreens items; and
+    // the conf's screen mounts
+    let mut sources = Vec::new();
+    if rows {
+        sources = rows::read(&facade);
+        let mounts = rows::conf_mounts(&moqui_core::screen::ScreenFacade::of(factory).conf().screens);
+        on_disk.insert(mounts.path.clone());
+        sources.push(mounts);
+    }
+    for source in sources {
         if hashes.get(&source.path).is_some_and(|hash| *hash == source.hash) {
             report.unchanged += 1;
             continue;
@@ -1143,7 +1162,7 @@ pub fn build_files(
     }
     for path in hashes
         .keys()
-        .filter(|path| !path.starts_with("db:") && !on_disk.contains(*path))
+        .filter(|path| !path.starts_with("db:") && *path != extract::CONF_PATH && !on_disk.contains(*path))
     {
         changes.push(Change::Removed(path.clone()));
     }
@@ -1296,7 +1315,8 @@ fn apply(
     // the entities whose fields changed, by id: their derived entity-auto services are derived again
     let mut changed_entities: HashSet<String> = HashSet::new();
     let derived: Derived;
-    let fresh_screens: bool;
+    // whether a screen, subscreens item or transition was added, changed or removed: every screen path is walked again
+    let screens_changed: bool;
     // ids another file defines too (an entity defined again): their row is replaced, the later definition winning
     let shared: HashSet<String>;
     // the files that have rows: only theirs are read and removed first
@@ -1324,6 +1344,14 @@ fn apply(
         }
     }
     {
+        // the screens, items and transitions before and after, by id and summary (an item's location, a transition's
+        // services): a path goes elsewhere only when they differ
+        let walked = |artifact: &ArtifactRow| {
+            matches!(artifact.kind.as_str(), "screen" | "subscreen" | "transition")
+                .then(|| (artifact.id.clone(), artifact.summary.clone()))
+        };
+        let mut walked_before: HashSet<(String, String)> = HashSet::new();
+        let mut walked_after: HashSet<(String, String)> = HashSet::new();
         let mut resolver = lock(&state.resolver);
         for change in &changes {
             let path = match change {
@@ -1339,6 +1367,7 @@ fn apply(
             match old_artifacts(facade, &path) {
                 Ok(old_rows) => {
                     for old in old_rows {
+                        walked_before.extend(walked(&old));
                         resolver.remove(&old);
                         if old.kind == "field" {
                             changed_entities.extend(old.parent.clone());
@@ -1349,12 +1378,11 @@ fn apply(
                 Err(err) => tracing::error!("Artifact index: the old rows of {path} were not read: {err}"),
             }
         }
-        // the ids the files had: an added screen, subscreens item or transition not among them may answer a screen path
-        let old_ids = gone.clone();
         for change in &changes {
             if let Change::Read { index, .. } = change {
                 for artifact in &index.artifacts {
                     resolver.add(artifact);
+                    walked_after.extend(walked(artifact));
                     if artifact.kind == "field" {
                         changed_entities.extend(artifact.parent.clone());
                     }
@@ -1363,9 +1391,7 @@ fn apply(
                 }
             }
         }
-        fresh_screens = added.iter().any(|artifact| {
-            matches!(artifact.kind.as_str(), "screen" | "subscreen" | "transition") && !old_ids.contains(&artifact.id)
-        });
+        screens_changed = walked_before != walked_after;
         let waiting = waiting_refs(facade, &added, &changed_paths);
         derived = derive_in(&mut resolver, &changes, &waiting, &changed_entities, &added, &mut gone);
         added.extend(derived.rows.iter().cloned());
@@ -1464,7 +1490,15 @@ fn apply(
         left -= batch.len();
     }
     unresolve(facade, &tx, &gone, &changed_paths)?;
-    resolve_added(factory, facade, state, &tx, &added, fresh_screens, &changed_paths)?;
+    resolve_added(factory, facade, state, &tx, &added, &changed_paths)?;
+    // nothing to walk again when every file with rows was read now (a full build): each path was walked as it was read
+    let read_now = changes
+        .iter()
+        .filter(|change| matches!(change, Change::Read { .. }))
+        .count();
+    if screens_changed && usize::try_from(facade.find(FILE)?.count()?).unwrap_or(0) > read_now {
+        walk_again(factory, facade, state, &tx, &changed_paths)?;
+    }
     report.write_millis = writing.elapsed().as_millis();
     Ok(())
 }
@@ -1719,6 +1753,7 @@ fn fill_binding(row: &mut EntityValue, binding: &BindingRow) {
         "sourceId",
         binding.source_id.as_deref().map_or(Value::Null, Value::string),
     );
+    row.set("toPath", binding.to_path.as_deref().map_or(Value::Null, Value::string));
     row.set("origin", Value::string(&binding.origin));
     row.set("originHash", Value::string(&binding.origin_hash));
     row.set("lineNumber", Value::I64(i64::from(binding.line)));
@@ -1765,8 +1800,7 @@ fn remove_file(facade: &EntityFacade, path: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// The references elsewhere to artifacts no file defines any more, and the default subscreen references from a screen
-/// no file defines any more ([`extract::ORIGIN_DIRECTORY`]): unresolved now.
+/// The references elsewhere to artifacts no file defines any more: unresolved now.
 fn unresolve(
     facade: &EntityFacade,
     tx: &moqui_core::transaction::TransactionManager,
@@ -1776,45 +1810,32 @@ fn unresolve(
     let ids: Vec<&String> = gone.iter().collect();
     for chunk in ids.chunks(500) {
         let values: Vec<Value> = chunk.iter().map(|id| Value::string(id.as_str())).collect();
-        let mut rows = facade
+        let rows = facade
             .find(REF)?
-            .condition(Condition::is_in("toArtifactId", values.clone()))
+            .condition(Condition::is_in("toArtifactId", values))
             .list()?
             .into_values();
-        rows.extend(
-            facade
-                .find(REF)?
-                .condition(Condition::is_in("fromArtifactId", values))
-                .eq("origin", Value::string(extract::ORIGIN_DIRECTORY))
-                .eq("resolved", Value::string("Y"))
-                .list()?
-                .into_values(),
-        );
-        tx.run(TransactionAttribute::ForceNew, None, || {
-            for mut row in rows {
-                if changed.contains(&text(&row, "filePath")) {
-                    continue;
-                }
+        let rows: Vec<EntityValue> = rows
+            .into_iter()
+            .filter(|row| !changed.contains(&text(row, "filePath")))
+            .map(|mut row| {
                 row.set("toArtifactId", Value::Null);
                 row.set("resolved", Value::string("N"));
-                row.update(facade)?;
-            }
-            Ok(())
-        })?;
+                row
+            })
+            .collect();
+        update_rows(facade, tx, rows, "reference");
     }
     Ok(())
 }
 
-/// The unresolved references elsewhere that an added artifact may answer: resolved again. With `fresh_screens` (a
-/// screen, subscreens item or transition is new) the unresolved screen paths and screen references too, whose names
-/// are not the added artifacts' (a path walks through them, a default subscreen waits for its parent).
+/// The unresolved references elsewhere that an added artifact may answer: resolved again.
 fn resolve_added(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
     state: &IndexState,
     tx: &moqui_core::transaction::TransactionManager,
     added: &[ArtifactRow],
-    fresh_screens: bool,
     changed: &HashSet<String>,
 ) -> Result<(), Error> {
     if added.is_empty() {
@@ -1841,27 +1862,14 @@ fn resolve_added(
                     .into_values(),
             );
         }
-        if fresh_screens {
-            let kinds = [ToKind::ScreenPath, ToKind::Screen].map(|kind| Value::string(kind.as_str()));
-            lists.push(
-                facade
-                    .find(REF)?
-                    .eq("resolved", Value::string("N"))
-                    .condition(Condition::is_in("toKind", kinds.to_vec()))
-                    .list()?
-                    .into_values(),
-            );
-        }
         lists
     };
     let exists = |location: &str| location_exists(factory, location);
     let mut now_resolved = Vec::new();
-    let mut seen: HashSet<(String, String)> = HashSet::new();
     {
         let resolver = lock(&state.resolver);
         for row in lists.into_iter().flatten() {
-            let path = text(&row, "filePath");
-            if changed.contains(&path) || !seen.insert((path, text(&row, "refSeqId"))) {
+            if changed.contains(&text(&row, "filePath")) {
                 continue;
             }
             let mut reference = ref_of(&row);
@@ -1871,20 +1879,139 @@ fn resolve_added(
             }
         }
     }
-    if now_resolved.is_empty() {
-        return Ok(());
-    }
-    tx.run(TransactionAttribute::ForceNew, None, || {
-        for (mut row, reference) in now_resolved {
+    let rows = now_resolved
+        .into_iter()
+        .map(|(mut row, reference)| {
             row.set(
                 "toArtifactId",
                 reference.to_id.as_deref().map_or(Value::Null, Value::string),
             );
             row.set("resolved", Value::string("Y"));
-            row.update(facade)?;
+            row
+        })
+        .collect();
+    update_rows(facade, tx, rows, "reference");
+    Ok(())
+}
+
+/// Update `rows` (each changed already) in one transaction; when that fails, each in a transaction of its own, so a
+/// row that fails is logged and the others are written.
+fn update_rows(
+    facade: &EntityFacade,
+    tx: &moqui_core::transaction::TransactionManager,
+    rows: Vec<EntityValue>,
+    what: &str,
+) {
+    if rows.is_empty() {
+        return;
+    }
+    let all = tx.run(TransactionAttribute::ForceNew, None, || {
+        for row in &rows {
+            row.clone().update(facade)?;
         }
         Ok(())
-    })
+    });
+    match all {
+        Ok(()) => return,
+        Err(err) if rows.len() == 1 => {
+            tracing::error!(
+                "Artifact index: a {what} row of {} was not updated: {err}",
+                text(&rows[0], "filePath")
+            );
+            return;
+        }
+        // written again row by row
+        Err(_) => {}
+    }
+    for row in rows {
+        if let Err(err) = tx.run(TransactionAttribute::ForceNew, None, || row.clone().update(facade)) {
+            tracing::error!(
+                "Artifact index: a {what} row of {} was not updated: {err}",
+                text(&row, "filePath")
+            );
+        }
+    }
+}
+
+/// Every screen path and directory subscreen reference of the files not read now walked again against the screens,
+/// items and transitions known now, resolved or not, and every form field's binding into a transition by its path: a
+/// renamed or removed item, an item's new location, an item over a directory subscreen or a transition's new service
+/// changes where a path goes, though no name it is written with changed. One read of the references (the columns a
+/// walk needs) and one of the bindings; each walk is lookups in memory, and only the rows whose target changed are
+/// written.
+fn walk_again(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    state: &IndexState,
+    tx: &moqui_core::transaction::TransactionManager,
+    changed: &HashSet<String>,
+) -> Result<(), Error> {
+    // by the kind's index: the directory subscreens are among the screen references
+    let kinds = [ToKind::ScreenPath, ToKind::Screen].map(|kind| Value::string(kind.as_str()));
+    let mut find = facade.find(REF)?.condition(Condition::is_in("toKind", kinds.to_vec()));
+    for field in [
+        "filePath",
+        "refSeqId",
+        "fromArtifactId",
+        "toArtifactId",
+        "toKind",
+        "toName",
+        "toScope",
+        "resolved",
+        "origin",
+    ] {
+        find = find.select_field(field);
+    }
+    let rows = find.list()?.into_values();
+    let bindings = facade
+        .find(BINDING)?
+        .condition(Condition::is_not_null("toPath"))
+        .select_field("filePath")
+        .select_field("bindingSeqId")
+        .select_field("toId")
+        .select_field("toPath")
+        .list()?
+        .into_values();
+    let exists = |location: &str| location_exists(factory, location);
+    let mut moved = Vec::new();
+    let mut rebound = Vec::new();
+    {
+        let resolver = lock(&state.resolver);
+        for mut row in rows {
+            if changed.contains(&text(&row, "filePath")) {
+                continue;
+            }
+            let mut reference = ref_of(&row);
+            if reference.to_kind == ToKind::Screen && reference.origin != extract::ORIGIN_DIRECTORY {
+                continue;
+            }
+            let before = (reference.to_id.clone(), reference.resolved);
+            resolver.resolve(&mut reference, &exists);
+            if (reference.to_id.clone(), reference.resolved) != before {
+                row.set(
+                    "toArtifactId",
+                    reference.to_id.as_deref().map_or(Value::Null, Value::string),
+                );
+                row.set("resolved", Value::string(if reference.resolved { "Y" } else { "N" }));
+                moved.push(row);
+            }
+        }
+        for mut row in bindings {
+            if changed.contains(&text(&row, "filePath")) {
+                continue;
+            }
+            let mut binding = binding_of(&row).binding;
+            let before = binding.to_id.clone();
+            resolver.resolve_binding(&mut binding);
+            if binding.to_id != before {
+                row.set("toId", Value::string(&binding.to_id));
+                rebound.push(row);
+            }
+        }
+    }
+    update_rows(facade, tx, moved, "reference");
+    update_rows(facade, tx, rebound, "binding");
+    Ok(())
 }
 
 fn text(row: &EntityValue, field: &str) -> String {
@@ -1946,6 +2073,7 @@ fn binding_of(row: &EntityValue) -> BindingEntry {
             source_kind: text(row, "sourceKind"),
             source_text: text(row, "sourceText"),
             source_id: (!source_id.is_empty()).then_some(source_id),
+            to_path: Some(text(row, "toPath")).filter(|path| !path.is_empty()),
             origin: text(row, "origin"),
             origin_hash: text(row, "originHash"),
             line: u32::try_from(number(row, "lineNumber")).unwrap_or(0),

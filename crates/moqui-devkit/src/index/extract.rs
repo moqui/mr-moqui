@@ -63,9 +63,39 @@ pub struct ArtifactRow {
 /// parameters, [`super::resolve::Resolver::derive`]).
 pub const ORIGIN_DERIVED: &str = "derived";
 
-/// The origin of a default subscreen's reference, made from the directory a screen is in rather than read from an
+/// The origin of a directory subscreen's reference, made from the directory a screen is in rather than read from an
 /// element ([`RefRow::ref_type`]).
 pub const ORIGIN_DIRECTORY: &str = "directory";
+
+/// The end of the id of a subscreens item a conf mounts (`screen-facade/screen/subscreens-item` of a `MoquiConf.xml`):
+/// `subscreen:<screen location>#<name>@conf`, in the pseudo file [`CONF_PATH`].
+pub const CONF_ITEM: &str = "@conf";
+
+/// The end of the id of a subscreens item a `moqui.screen.SubscreensItem` row mounts: `subscreen:<screen>#<name>@row`,
+/// or `...@row:<userGroupId>` for a row of a user group.
+pub const ROW_ITEM: &str = "@row";
+
+/// The pseudo file of the conf's screen mounts.
+pub const CONF_PATH: &str = "conf:screen-facade";
+
+/// The mark a `no-sub-path` subscreens item's summary (its location) ends with.
+pub const NO_SUB_PATH_MARK: &str = ", no-sub-path";
+
+/// How a transition's summary starts when it calls a service: `calls <service>` (its `service-call`).
+pub const CALLS_MARK: &str = "calls ";
+
+/// A part of a transition's summary: its `service-call` has an `in-map` of its own, so it takes none of the request's
+/// parameters.
+pub const OWN_IN_MAP_MARK: &str = "own in-map";
+
+/// A part of a transition's summary: `request to <service>`, a service of its actions it passes the request's
+/// parameters to (`in-map="true"` or `in-map="context"`).
+pub const REQUEST_MARK: &str = "request to ";
+
+/// The owner of the parameter id of a form field's binding into a transition named by a path
+/// (`parameter:screen-path:<screen location>#<path>@in.<field>`): the resolver names the service it reaches
+/// ([`super::resolve::Resolver::resolve_binding`]).
+pub const SCREEN_PATH_OWNER: &str = "screen-path:";
 
 /// The pseudo file of the derived artifacts.
 pub const DERIVED_PATH: &str = "derived:entity-auto";
@@ -91,9 +121,10 @@ pub enum ToKind {
     TransitionAnchor,
     /// An in-parameter of the service in `scope` (a `field-map`'s `field-name`).
     Parameter,
-    /// A screen path written in the screen at `scope` (a `link`'s or a response's `url`, a form's `transition`):
-    /// `../Assignments`, `EditTask`, `Sub/Screen/trans`, `/apps/a/B`. It resolves to the screen or transition it
-    /// reaches ([`super::resolve::Resolver::screen_path`]).
+    /// A screen path written in the screen at `scope` (a `link`'s or a response's `url`, a form's `transition`, a
+    /// `subscreens` `default-item` or `conditional-default` `item`): `../Assignments`, `EditTask`, `Sub/Screen/trans`,
+    /// `/apps/a/B`, `//Commons/Party`. It resolves to the screen or transition it reaches
+    /// ([`super::resolve::Resolver::screen_path`]).
     ScreenPath,
 }
 
@@ -143,10 +174,12 @@ pub struct RefRow {
     pub to_scope: String,
     /// How it refers: the element that makes it (`entity-find`, `service-call`, `relationship`, `member-entity`,
     /// `subscreens-item`), `extend` for an extension's target, `anchor` for a named anchor of a base screen,
-    /// `implements`, `link`, `script` for a string in a script, `data` for a data file's records. A screen in a
-    /// directory beside a screen of the directory's name (`Foo/Bar.xml` and `Foo.xml`) is that screen's default
-    /// subscreen: a `subscreens-item` reference from the parent screen (`screen:<Foo.xml>`, its location in `to_scope`)
-    /// to the screen, read from the subscreen's file, with origin [`ORIGIN_DIRECTORY`].
+    /// `implements`, `link`, `script` for a string in a script, `data` for a data file's records, `default-item` and
+    /// `conditional-default` for a screen's default subscreen (its `subscreens@default-item`, a conf's
+    /// `default-subscreen`, a `SubscreensItem` row's `makeDefault`) and the conditional ones. A screen in a directory
+    /// beside a screen of the directory's name (`Foo/Bar.xml` and `Foo.xml`) is that screen's directory subscreen: a
+    /// `subscreens-item` reference from the parent screen (`screen:<Foo.xml>`, its location in `to_scope`) to the
+    /// screen, read from the subscreen's file, with origin [`ORIGIN_DIRECTORY`].
     pub ref_type: String,
     pub line: u32,
     pub column: u32,
@@ -184,6 +217,11 @@ pub struct BindingRow {
     /// The parameter id the value comes from, for a `parameter` source.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
+    /// A form field's binding into a transition by its path: the id it is written with
+    /// (`parameter:screen-path:<screen>#<path>@in.<field>`, [`SCREEN_PATH_OWNER`]), which `to_id` is resolved from again
+    /// when the screens change ([`super::resolve::Resolver::resolve_binding`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_path: Option<String>,
     pub origin: String,
     pub origin_hash: String,
     pub line: u32,
@@ -392,6 +430,7 @@ impl Reader<'_> {
                     .unwrap_or_default();
                 let id = format!("screen:{location}");
                 self.artifact(id.clone(), "screen", &location, Some(root), title, None);
+                // a directory subscreen of the screen of its directory's name
                 if let Some(parent) = super::resolve::directory_parent(&location) {
                     let from = format!("screen:{parent}");
                     // no line: the file's own lines are its definitions
@@ -893,11 +932,7 @@ impl Reader<'_> {
                     .unwrap_or_else(|| "any".to_string())
                     .to_ascii_lowercase();
                 let id = format!("transition:{location}#{name}:{method}");
-                let summary = node
-                    .first_named("service-call")
-                    .and_then(|call| call.attribute("name"))
-                    .map(|service| format!("calls {service}"))
-                    .unwrap_or_default();
+                let summary = transition_summary(node);
                 self.artifact(
                     id.clone(),
                     "transition",
@@ -914,8 +949,8 @@ impl Reader<'_> {
                 // a screen-extend's form may post to a transition of the base screen: not read as one of its own
                 if self.info.kind == ArtifactKind::Screen {
                     if let Some(transition) = node.attribute("transition") {
-                        self.url_refs(node, &id, &transition, "form");
-                        self.form_bindings(node, &id, &transition);
+                        let same_screen = self.url_refs(node, &id, &transition, "form");
+                        self.form_bindings(node, &id, &transition, same_screen);
                     }
                 }
                 self.artifact(
@@ -948,7 +983,10 @@ impl Reader<'_> {
             (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "subscreens-item") => {
                 let name = node.attribute("name").filter(|name| !name.is_empty())?;
                 let id = format!("subscreen:{location}#{name}");
-                let summary = node.attribute("location").unwrap_or_default();
+                let mut summary = node.attribute("location").unwrap_or_default();
+                if node.attribute_is("no-sub-path", "true") {
+                    summary.push_str(NO_SUB_PATH_MARK);
+                }
                 self.artifact(
                     id.clone(),
                     "subscreen",
@@ -980,6 +1018,30 @@ impl Reader<'_> {
                 let summary = node.child_iter().next().map(|child| child.name()).unwrap_or_default();
                 self.artifact(id.clone(), "widget-template", &name, Some(node), summary, None);
                 Some(id)
+            }
+            // the default subscreen, and the conditional ones: edges from the screen to the item each names
+            (ArtifactKind::Screen, "subscreens" | "conditional-default") => {
+                let (attribute, ref_type) = if element == "subscreens" {
+                    ("default-item", "default-item")
+                } else {
+                    ("item", "conditional-default")
+                };
+                if let Some(item) = node
+                    .attribute(attribute)
+                    .filter(|item| !item.is_empty() && refs::is_literal(item))
+                {
+                    let from = format!("screen:{location}");
+                    self.reference(
+                        &from,
+                        ToKind::ScreenPath,
+                        &item,
+                        location,
+                        ref_type,
+                        node.line(),
+                        node.column(),
+                    );
+                }
+                None
             }
             (
                 ArtifactKind::Screen,
@@ -1083,13 +1145,17 @@ impl Reader<'_> {
     }
 
     /// The reference a screen URL written in this screen makes: a transition of this file by its name
-    /// ([`Self::transition_refs`]), else a screen path ([`ToKind::ScreenPath`]). None for an expression, a URL with a
-    /// scheme, or `.` (this screen).
-    fn url_refs(&mut self, node: &MNode, from: &str, url: &str, ref_type: &str) {
+    /// ([`Self::transition_refs`]) when no subscreens item of the file has that name (a subscreen comes first, as Moqui
+    /// walks a path), else a screen path ([`ToKind::ScreenPath`]). None for an expression, a URL with a scheme, or `.`
+    /// (this screen). Answers whether it is a transition of this file. A directory subscreen of the transition's name
+    /// is not seen here: the file alone does not say it is there.
+    fn url_refs(&mut self, node: &MNode, from: &str, url: &str, ref_type: &str) -> bool {
         let url = url.trim();
-        if is_plain_name(url) && !self.transitions_named(node, url).is_empty() {
+        if is_plain_name(url) && !self.has_item(node, url) && !self.transitions_named(node, url).is_empty() {
             self.transition_refs(node, from, url, ref_type);
-        } else if is_screen_path(url) {
+            return true;
+        }
+        if is_screen_path(url) {
             self.reference(
                 from,
                 ToKind::ScreenPath,
@@ -1100,36 +1166,64 @@ impl Reader<'_> {
                 node.column(),
             );
         }
+        false
     }
 
-    /// The `transition` and `transition-include` elements of this file named `name`.
-    fn transitions_named(&self, node: &MNode, name: &str) -> Vec<MNode> {
+    /// The root element of the file `node` is in.
+    fn root_of(node: &MNode) -> MNode {
         let mut root = node.clone();
         while let Some(parent) = root.parent() {
             root = parent;
         }
-        root.child_iter()
+        root
+    }
+
+    /// Whether this file's `subscreens` has an item named `name`.
+    fn has_item(&self, node: &MNode, name: &str) -> bool {
+        Self::root_of(node).named_iter("subscreens").any(|subscreens| {
+            subscreens
+                .named_iter("subscreens-item")
+                .any(|item| item.attribute_is("name", name))
+        })
+    }
+
+    /// The `transition` and `transition-include` elements of this file named `name`.
+    fn transitions_named(&self, node: &MNode, name: &str) -> Vec<MNode> {
+        Self::root_of(node)
+            .child_iter()
             .filter(|child| {
                 matches!(child.name().as_str(), "transition" | "transition-include") && child.attribute_is("name", name)
             })
             .collect()
     }
 
-    /// The bindings of a form that submits to the transition `transition` of this file: each field of the form flows
-    /// into the in-parameter of its name of each service the transition calls with the request's parameters (a
-    /// `service-call` with no `in-map`, or `in-map="true"`). A field the service does not take still has its binding,
-    /// to a parameter id no artifact has.
-    fn form_bindings(&mut self, form: &MNode, form_id: &str, transition: &str) {
-        let mut services: Vec<String> = Vec::new();
-        for node in self.transitions_named(form, transition) {
-            for call in node.child_iter().filter(|child| child.name() == "service-call") {
-                let passes = call.attribute("in-map").is_none_or(|map| map.trim() == "true");
-                if let Some(name) = call.attribute("name").filter(|name| passes && refs::is_literal(name)) {
-                    if !services.contains(&name) {
-                        services.push(name);
+    /// The bindings of a form that submits to the transition `transition`: each field the user fills (not one whose
+    /// only widgets are a `header-field` or a `submit`) flows into an in-parameter of each service the transition
+    /// passes the request's parameters to ([`request_calls`]): the parameter of its name, or the one a `field-map`
+    /// maps it to (`field-name` from the field's name). A field-map renames a field into a call with an `in-map` of its
+    /// own too. A field the service does not take still has its binding, to a parameter id no artifact has.
+    ///
+    /// A transition of this file (`same_screen`) is read here; one a path names (`../Order/save`) is another file's, so
+    /// each field gets one binding to `parameter:screen-path:<this screen>#<path>@in.<field>`, which the resolver names
+    /// the first service of ([`super::resolve::Resolver::resolve_binding`]); a `field-map` there is not seen.
+    fn form_bindings(&mut self, form: &MNode, form_id: &str, transition: &str, same_screen: bool) {
+        let transition = transition.trim();
+        let path_owner = (!same_screen && is_screen_path(transition)).then(|| {
+            let path = transition.split(['?', '#']).next().unwrap_or_default();
+            format!("{SCREEN_PATH_OWNER}{}#{path}", self.info.location)
+        });
+        let mut calls: Vec<RequestCall> = Vec::new();
+        if same_screen {
+            for node in self.transitions_named(form, transition) {
+                for call in request_calls(&node) {
+                    if !calls.iter().any(|known| known.service == call.service) {
+                        calls.push(call);
                     }
                 }
             }
+        }
+        if calls.is_empty() && path_owner.is_none() {
+            return;
         }
         let Some(form_key) = form_id.strip_prefix("form:") else {
             return;
@@ -1138,14 +1232,38 @@ impl Reader<'_> {
             let Some(name) = field.attribute("name").filter(|name| !name.is_empty()) else {
                 continue;
             };
-            for service in &services {
+            if !is_filled(&field) {
+                continue;
+            }
+            let mut targets: Vec<String> = Vec::new();
+            if let Some(owner) = &path_owner {
+                targets.push(parameter_id(owner, "in", &name));
+            }
+            for call in &calls {
+                let mapped = call
+                    .maps
+                    .iter()
+                    .find(|(from, _)| *from == name)
+                    .map(|(_, parameter)| parameter.as_str());
+                let parameter = match mapped {
+                    Some(parameter) => parameter,
+                    None if call.passes => name.as_str(),
+                    None => continue,
+                };
+                let id = parameter_id(&format!("service:{}", call.service), "in", parameter);
+                if !targets.contains(&id) {
+                    targets.push(id);
+                }
+            }
+            for to_id in targets {
                 self.index.bindings.push(BindingRow {
                     from: form_id.to_string(),
-                    to_id: parameter_id(&format!("service:{service}"), "in", &name),
+                    to_id,
                     direction: "in".to_string(),
                     source_kind: "form-field".to_string(),
                     source_text: name.clone(),
                     source_id: Some(format!("form-field:{form_key}@{name}")),
+                    to_path: None,
                     origin: self.origin.to_string(),
                     origin_hash: self.hash.clone(),
                     line: field.line(),
@@ -1379,6 +1497,7 @@ impl Reader<'_> {
             source_kind: source_kind.to_string(),
             source_text: source_text.trim().to_string(),
             source_id,
+            to_path: None,
             origin: self.origin.to_string(),
             origin_hash: self.hash.clone(),
             line: node.line(),
@@ -1725,13 +1844,100 @@ fn is_plain_name(url: &str) -> bool {
 }
 
 /// A URL that is a screen path ([`ToKind::ScreenPath`]): no expression, no scheme (`https:`, `mailto:`), not `.`
-/// alone (the screen it is written in).
+/// alone (the screen it is written in), not only a query or fragment (`?a=1`, `#top`). A sparse path (`//Commons/X`)
+/// is one.
 fn is_screen_path(url: &str) -> bool {
     !url.is_empty()
         && url != "."
+        && !url.starts_with(['#', '?'])
         && refs::is_literal(url)
-        && !url.starts_with("//")
         && !url.split(['/', '?', '#']).next().unwrap_or_default().contains(':')
+}
+
+/// A service a transition calls, with whether it is passed the request's parameters and the `field-map`s that map a
+/// request parameter by its name (`from`) to one of the service's (`field-name`).
+struct RequestCall {
+    service: String,
+    passes: bool,
+    maps: Vec<(String, String)>,
+}
+
+/// The services a transition calls that the request's parameters can reach: its `service-call` (passed them with no
+/// `in-map`, `in-map="true"` or `in-map="context"`), and each `service-call` of its `actions` with `in-map="true"` or
+/// `in-map="context"`; each with its `field-map`s from a plain name. A call with an `in-map` of its own is kept for its
+/// field-maps.
+fn request_calls(transition: &MNode) -> Vec<RequestCall> {
+    let call_of = |call: &MNode, direct: bool| -> Option<RequestCall> {
+        let service = call
+            .attribute("name")
+            .filter(|name| refs::is_literal(name) && !name.is_empty())?;
+        let passes = match call.attribute("in-map").as_deref().map(str::trim) {
+            None => direct,
+            Some("true" | "context") => true,
+            Some(_) => false,
+        };
+        let maps = call
+            .named_iter("field-map")
+            .filter_map(|map| {
+                let parameter = map.attribute("field-name").filter(|name| !name.is_empty())?;
+                let from = map.attribute("from").unwrap_or_else(|| parameter.clone());
+                let from = from.trim().to_string();
+                is_identifier(&from).then_some((from, parameter))
+            })
+            .collect();
+        Some(RequestCall { service, passes, maps })
+    };
+    let mut calls: Vec<RequestCall> = transition
+        .named_iter("service-call")
+        .filter_map(|call| call_of(&call, true))
+        .collect();
+    for actions in transition.named_iter("actions") {
+        let mut stack: Vec<MNode> = actions.child_iter().collect();
+        while let Some(node) = stack.pop() {
+            if node.name() == "service-call" {
+                calls.extend(call_of(&node, false).filter(|call| call.passes));
+            } else {
+                stack.extend(node.child_iter());
+            }
+        }
+    }
+    calls
+}
+
+/// A transition's summary: `calls <service>` for its `service-call`, `own in-map` when that call takes none of the
+/// request's parameters, and `request to <service>` for each service of its actions the request reaches
+/// ([`request_calls`], read back by [`super::resolve::request_services`]).
+fn transition_summary(transition: &MNode) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let direct = transition
+        .first_named("service-call")
+        .and_then(|call| call.attribute("name"));
+    let calls = request_calls(transition);
+    let mut direct_passes = false;
+    // a service named by an expression is none the summary can name
+    if let Some(service) = direct.filter(|service| refs::is_literal(service) && !service.is_empty()) {
+        parts.push(format!("{CALLS_MARK}{service}"));
+        direct_passes = calls.first().is_some_and(|call| call.service == service && call.passes);
+        if !direct_passes {
+            parts.push(OWN_IN_MAP_MARK.to_string());
+        }
+    }
+    for (at, call) in calls.iter().enumerate() {
+        if call.passes && !(at == 0 && direct_passes) {
+            parts.push(format!("{REQUEST_MARK}{}", call.service));
+        }
+    }
+    parts.join(", ")
+}
+
+/// Whether a form field is one the user fills: a widget in its `default-field` or a `conditional-field` that is not
+/// a `submit`. One with only a `header-field`, or only submit buttons, is not.
+fn is_filled(field: &MNode) -> bool {
+    field
+        .child_iter()
+        .filter(|child| matches!(child.name().as_str(), "default-field" | "conditional-field"))
+        .flat_map(|child| child.child_iter().collect::<Vec<_>>())
+        .any(|widget| widget.name() != "submit")
 }
 
 /// The first sentence of a `description` child, at most 160 characters.

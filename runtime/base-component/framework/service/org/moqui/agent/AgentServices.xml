@@ -51,6 +51,32 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="statusId"/></out-parameters>
     </service>
 
+    <service verb="record" noun="AgentRunUsage" type="rust" location="moqui_llm::services::record_agent_run_usage"
+            transaction="ignore" allow-remote="false">
+        <description>The provider turns of a run an external harness works (one with an externalHarnessId), as its
+            adapter reports them: each turn is an AgentRunStep, keyed by stepSeq, so a turn reported again replaces its
+            step. A step is priced at the prices of its model in the llm-facade conf or an LlmModel row, found by id
+            or by the provider's model name. The run's tokens, cost and stepCount become the sum of its steps, and a
+            run that reached its maxTokens (input and output) or maxCost gets cancelRequested with the reason in
+            statusReason: the adapter reads it and stops its thread. Not allowed remotely.</description>
+        <in-parameters>
+            <parameter name="runId" required="true"/>
+            <parameter name="stepList" type="List" required="true"><description>Maps of stepSeq (from 1), modelId,
+                inputTokens (the whole prompt), cachedInputTokens, cacheWriteTokens, outputTokens, reasoningTokens,
+                finishReason, startedDate and endedDate</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="stepCount" type="Integer"/>
+            <parameter name="inputTokens" type="Long"/>
+            <parameter name="outputTokens" type="Long"/>
+            <parameter name="cost" type="BigDecimal"/>
+            <parameter name="exhausted"><description>tokens or cost, when the run reached that cap</description></parameter>
+            <parameter name="cancelRequested" type="Boolean"/>
+            <parameter name="unpricedModelList" type="List"><description>Models with no price: their steps count no
+                cost</description></parameter>
+        </out-parameters>
+    </service>
+
     <service verb="submit" noun="AgentInput" type="rust" location="moqui_llm::services::submit_agent_input"
             transaction="ignore">
         <description>Input for a run of the current user: a message (steering, folded in at the next step), an answer
