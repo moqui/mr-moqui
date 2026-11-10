@@ -122,6 +122,10 @@ along with this software (see the LICENSE.md file). If not, see
             artifactName="org\.moqui\.admin\.(AccessServices\.(find#Groups|get#Group|create#Group|store#Group|store#Membership|end#Membership|preview#Grants|apply#Grants|store#GroupPreference|check#GrantProposal|apply#GrantProposal)|IdentityServices\.(check#AdministrationPath|find#Sessions|revoke#Sessions|get#AccountCredentials|revoke#AccountAccess))"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="AdminAccessServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminAccessServices"
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- Admin P9: AccessServices' read projections (the capability matrix, the row rules and the access review), each checking
+        ADMIN_ACCESS_VIEW itself; a member row of its own, so an installed database gets it beside the row above -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminAccessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.AccessServices\.(get#Capabilities|get#ScopeRules|get#GrantReview)"/>
     <!-- Admin P6 (mr-boss plan/impl-admin.md P6, F31): the owner change of a shared drive and of a shared mail account, which an
         account's lifecycle uses when the owner leaves (the owned-resource contract of org.moqui.admin.IdentityServices). Their
         owner may hand them over; another user's need these permissions, granted to ADMIN (an app grants them to its identity
