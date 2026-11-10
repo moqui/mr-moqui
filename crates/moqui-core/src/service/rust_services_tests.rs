@@ -177,4 +177,9 @@ fn an_unlinked_framework_crate_service_reports_its_feature() {
     assert_eq!(super::missing_feature("moqui_mail::push_remote_changes"), Some("smtp"));
     assert_eq!(super::missing_feature("moqui_mail::sync_account"), Some("imap"));
     assert!(!crate::build_info::core_features().contains(&"smtp"));
+    // the host's load runs, its test-client feature
+    assert_eq!(
+        super::missing_feature("moqui_host::load_runner::find_load_runs"),
+        Some("test-client")
+    );
 }

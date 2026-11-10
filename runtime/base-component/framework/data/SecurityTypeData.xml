@@ -182,6 +182,6 @@ along with this software (see the LICENSE.md file). If not, see
             artifactTypeEnumId="AT_GIT_REPOSITORY" inheritAuthz="N"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="GitRepositoriesADMIN" userGroupId="ADMIN"
             artifactGroupId="GitRepositories" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
-    <moqui.security.UserPermission userPermissionId="SERVICE_LOAD_RUNNER" description="Tools: Service LoadRunner"/>
-    <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="SERVICE_LOAD_RUNNER" fromDate="0"/>
+    <moqui.security.UserPermission userPermissionId="LOAD_RUNNER" description="Tools: Load testing (run load scripts against this or an allowed server)"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="LOAD_RUNNER" fromDate="0"/>
 </entity-facade-xml>

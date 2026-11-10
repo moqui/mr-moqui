@@ -246,6 +246,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `webapp_status_ips` | `127.0.0.1` | Addresses, besides loopback, that `/health` answers |
 | `scheduled_job_check_time` | `60` | Seconds between job checks; `0` runs no scheduled jobs |
 | `moqui_chromium_path` | empty | The Chromium for PDF and the browser tests; empty looks in `runtime/chromium`, then for an installed Chromium, Google Chrome or Microsoft Edge (the PATH and the OS's install locations) |
+| `load_runner_targets`, `load_runner_max_runs`, `load_runner_max_users` | empty, `1`, `1000` | Load runs from Tools: the URL prefixes a run may reach besides this server and loopback (any URL on a dev instance; plain http to another machine only when listed), the loads at once, and the users a run |
 | `ssh_port`, `ssh_host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh_port` is empty (`2222` in the dev conf) |
 | `rtc_media_port`, `rtc_media_host`, `rtc_public_address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `rtc_media_port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
 | `call_ring_seconds` | `45` | How long a call rings before it is missed |

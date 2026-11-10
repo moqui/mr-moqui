@@ -103,6 +103,18 @@
     <default-property name="moqui_chromium_path" value=""/>
 
     <!--
+        Load runs from Tools (org.moqui.dev.LoadServices, plans/LoadRunner.md §10). A run may reach this server (its https
+        URL; its http one only on a loopback host), loopback (localhost and the loopback addresses),
+        and the URL prefixes in load_runner_targets (comma-separated, each with its scheme: https://staging.example.com
+        allows that origin, https://example.com/app/ only under that path); a dev instance may reach any URL. Plain
+        http to another machine needs its prefix here, since a login crosses in the clear. load_runner_max_runs is how
+        many loads may run at once on this instance, load_runner_max_users the most users a run may have.
+    -->
+    <default-property name="load_runner_targets" value=""/>
+    <default-property name="load_runner_max_runs" value="1"/>
+    <default-property name="load_runner_max_users" value="1000"/>
+
+    <!--
         The built-in SSH server (ssh-server below). Off while ssh_port is empty or ssh-server enabled is false; 0 binds an
         ephemeral port.
         ssh_host_key is the base64 of a 32-byte Ed25519 seed (generated into runtime/.env) or an OpenSSH private key.
@@ -834,7 +846,7 @@
             to either list with authz child elements, privileged-group and sealed-permission, never by repeating the
             attribute, which would replace these defaults. -->
         <authz privileged-groups="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"
-                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD"/>
+                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD"/>
     </user-facade>
 
     <transaction-facade use-transaction-cache="${entity_tx_cache}" use-connection-stash="true" use-lock-track="${entity_lock_track}" use-statement-timeout="${entity_statement_timeout}">
