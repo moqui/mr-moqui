@@ -721,6 +721,56 @@ fn a_no_key_lock_does_not_block_a_child_insert_and_a_for_update_lock_does_on_pos
     drop(cluster);
 }
 
+/// A quiet create held in a cache frame (`create_if_missing`, as a create-or-update of a new row makes) goes out at the
+/// commit as one that writes nothing when another transaction made the row first, as it would have at once; a plain
+/// insert there failed the commit on the key (the racing first chat actor of plans/Profiling3.md R60).
+#[test]
+fn a_held_quiet_create_of_a_row_made_meanwhile_commits_on_postgres() {
+    use moqui_core::transaction::TransactionAttribute;
+
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let driver: Arc<dyn DbDriver> = Arc::new(driver);
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let facade = open_entity_facade(
+        &framework,
+        driver,
+        PoolConfig {
+            min: 0,
+            max: 4,
+            reserve: 1,
+            acquire_timeout: Duration::from_secs(30),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    facade.check_tables(&["moqui.test.TestEntity"]).unwrap();
+    let tx = facade.transactions_for("moqui.test.TestEntity").unwrap();
+    let row = |medium: &str| {
+        let mut row = facade.make_value("moqui.test.TestEntity").unwrap();
+        row.set("testId", Value::string("Q"));
+        row.set("testMedium", Value::string(medium));
+        row
+    };
+    tx.run(TransactionAttribute::Cache, None, || {
+        assert!(row("held").create_if_missing(&facade)?, "the row is not there yet");
+        tx.run(TransactionAttribute::ForceNew, None, || row("first").create(&facade))
+    })
+    .unwrap();
+    let found = facade
+        .find("moqui.test.TestEntity")
+        .unwrap()
+        .eq("testId", Value::string("Q"))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.get("testMedium").and_then(Value::as_str), Some("first"));
+
+    drop(facade);
+    drop(cluster);
+}
+
 /// A data file's writes go without waiting for their results. A failed one fails its file as before: the file
 /// rolls back and the error is the failed statement's, wherever in the file it was.
 #[test]

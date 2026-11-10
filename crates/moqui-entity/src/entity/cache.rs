@@ -1340,6 +1340,7 @@ pub fn gate_write(
             sealed: prepared.sealed,
             pk: prepared.pk,
             service,
+            if_missing: op == Op::Create && quiet,
         },
     )?;
     Ok(WriteGate::Handled)

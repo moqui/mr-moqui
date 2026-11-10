@@ -17,6 +17,12 @@
 //! its entity, a service or the entity of an entity-auto name, a screen by its location or its path under a `screen`
 //! directory, a transition or anchor of a screen.
 //!
+//! A screen path (a `link`'s or a response's `url`, [`ToKind::ScreenPath`]) is walked as Moqui walks a screen URL,
+//! from the screen the path is written in: `..` goes up to the screen's parent, `.` stays, and each other segment is a
+//! subscreen of the screen reached (a `subscreens-item`, else the default subscreen of the screen's directory:
+//! `Foo/Bar.xml` of `Foo.xml`) or, the last one, a transition of it. A path starting with `/` is walked from the webroot
+//! screen. A path that cannot be walked stays unresolved.
+//!
 //! An entity-auto name (`create#moqui.example.Example`) that no file defines a service for gets a derived service
 //! ([`Resolver::derive`], origin `derived`), with the in and out parameters the entity-auto runner takes and gives
 //! (`moqui_core::service::call::run_entity`), so a call's `field-map`s resolve to its parameters as to a defined
@@ -51,7 +57,14 @@ pub struct Resolver {
     fields: HashMap<String, Vec<AutoField>>,
     /// The derived services known ([`Self::derive`]): each id with its rows (the service, then its parameters).
     derived: HashMap<String, Vec<ArtifactRow>>,
+    /// A screen's location to its `subscreens-item`s: each item's name and the location it names.
+    items: HashMap<String, Vec<(String, String)>>,
+    /// A screen's location to the screens whose `subscreens-item`s name it.
+    item_parents: HashMap<String, Vec<String>>,
 }
+
+/// The root screen an absolute screen path (`/apps/...`) is walked from.
+const WEBROOT_SCREEN: &str = "component://webroot/screen/webroot.xml";
 
 impl Resolver {
     /// Know `artifact`.
@@ -84,6 +97,18 @@ impl Resolver {
             "screen" => {
                 if let Some(tail) = screen_tail(&artifact.name) {
                     self.screens.insert(tail.to_string(), artifact.name.clone());
+                }
+            }
+            "subscreen" => {
+                if let Some((parent, location)) = item_of(artifact) {
+                    self.items
+                        .entry(parent.to_string())
+                        .or_default()
+                        .push((artifact.name.clone(), location.to_string()));
+                    self.item_parents
+                        .entry(location.to_string())
+                        .or_default()
+                        .push(parent.to_string());
                 }
             }
             "field" => {
@@ -159,6 +184,26 @@ impl Resolver {
             "screen" => {
                 if let Some(tail) = screen_tail(&artifact.name) {
                     self.screens.remove(tail);
+                }
+            }
+            "subscreen" => {
+                if let Some((parent, location)) = item_of(artifact) {
+                    if let Some(items) = self.items.get_mut(parent) {
+                        if let Some(at) = items.iter().position(|(name, _)| *name == artifact.name) {
+                            items.remove(at);
+                        }
+                        if items.is_empty() {
+                            self.items.remove(parent);
+                        }
+                    }
+                    if let Some(parents) = self.item_parents.get_mut(location) {
+                        if let Some(at) = parents.iter().position(|known| known == parent) {
+                            parents.remove(at);
+                        }
+                        if parents.is_empty() {
+                            self.item_parents.remove(location);
+                        }
+                    }
                 }
             }
             "field" => {
@@ -251,9 +296,12 @@ impl Resolver {
                         })
                 }
             }
+            // a default subscreen of a directory names its parent screen in the scope: an edge while both are there
             ToKind::Screen => self
                 .screen(&reference.to_name)
+                .filter(|_| reference.to_scope.is_empty() || self.screen(&reference.to_scope).is_some())
                 .map(|location| format!("screen:{location}")),
+            ToKind::ScreenPath => self.screen_path(&reference.to_scope, &reference.to_name),
             ToKind::Location => {
                 // a widget-template-include names `<file>#<template>`
                 let found = ["screen", "script", "data", "skill", "widget-template"]
@@ -445,6 +493,59 @@ impl Resolver {
         rows
     }
 
+    /// The screen or transition the screen path `path` names, written in the screen at `from` (see the module doc):
+    /// `screen:<location>` or `transition:<location>#<name>:<method>`. The query and fragment are not part of it.
+    #[must_use]
+    pub fn screen_path(&self, from: &str, path: &str) -> Option<String> {
+        let path = path.split(['?', '#']).next().unwrap_or_default();
+        let (mut at, rest) = match path.strip_prefix('/') {
+            Some(rest) => (self.screen(WEBROOT_SCREEN)?, rest),
+            None => (self.screen(from)?, path),
+        };
+        let segments: Vec<&str> = rest.split('/').filter(|segment| !segment.is_empty()).collect();
+        for (index, segment) in segments.iter().enumerate() {
+            match *segment {
+                "." => {}
+                ".." => at = self.parent_screen(&at)?,
+                name => match self.subscreen(&at, name) {
+                    Some(child) => at = child,
+                    None if index + 1 == segments.len() => return self.base_transition(&at, name),
+                    None => return None,
+                },
+            }
+        }
+        Some(format!("screen:{at}"))
+    }
+
+    /// The location of the subscreen `name` of the screen at `screen`: its `subscreens-item` of that name, else the
+    /// default subscreen of its directory (`Foo/<name>.xml` of `Foo.xml`).
+    #[must_use]
+    pub fn subscreen(&self, screen: &str, name: &str) -> Option<String> {
+        let item = self
+            .items
+            .get(screen)
+            .and_then(|items| items.iter().find(|(item, _)| item == name))
+            .and_then(|(_, location)| self.screen(location));
+        item.or_else(|| {
+            let location = format!("{}/{name}.xml", screen.strip_suffix(".xml")?);
+            self.has(&format!("screen:{location}")).then_some(location)
+        })
+    }
+
+    /// The parent of the screen at `screen`, which a path's `..` goes up to: the screen of its directory (`Foo.xml` of
+    /// `Foo/Bar.xml`), else the first (by location) of the screens whose `subscreens-item` names it.
+    #[must_use]
+    pub fn parent_screen(&self, screen: &str) -> Option<String> {
+        directory_parent(screen)
+            .filter(|parent| self.has(&format!("screen:{parent}")))
+            .or_else(|| {
+                self.item_parents
+                    .get(screen)
+                    .and_then(|parents| parents.iter().min())
+                    .cloned()
+            })
+    }
+
     /// The transition `name` of the screen at `base`, by its plain id or its method-qualified one.
     fn base_transition(&self, base: &str, name: &str) -> Option<String> {
         let plain = format!("transition:{base}#{name}");
@@ -527,6 +628,24 @@ impl Resolver {
 fn entity_auto(name: &str) -> Option<(&str, &str)> {
     let (verb, noun) = name.split_once('#')?;
     (matches!(verb, "create" | "update" | "store" | "delete") && !noun.is_empty()).then_some((verb, noun))
+}
+
+/// The parent screen and the named location of a `subscreens-item` artifact of a screen, when it names one.
+fn item_of(artifact: &ArtifactRow) -> Option<(&str, &str)> {
+    let parent = artifact.parent.as_deref()?.strip_prefix("screen:")?;
+    let location = artifact.summary.as_str();
+    location.contains("://").then_some((parent, location))
+}
+
+/// The screen whose default subscreen the screen at `location` is, by Moqui's directory rule: `Foo.xml` beside the
+/// directory `Foo/` that holds it. None for a screen directly in its component's `screen` directory.
+#[must_use]
+pub fn directory_parent(location: &str) -> Option<String> {
+    let (directory, _) = location.rsplit_once('/')?;
+    if directory.ends_with("/screen") || !directory.contains("/screen/") {
+        return None;
+    }
+    Some(format!("{directory}.xml"))
 }
 
 /// A screen location's path under its component's `screen` directory.

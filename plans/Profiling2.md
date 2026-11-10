@@ -622,6 +622,30 @@ targets met. In Mantle bodies, which call the host often, reads through the hook
   crossing a row cannot reach its target; S4b (row templates) is the lever. S5a (the host call floor) is about 0.5% of
   a list render, S5b's writes 311 a render.
 
+### Round 60: load flows, the pools, the transaction cache by default, and spans that wait
+
+- **Order to cash over HTTP** (LoadRunner's OrderToCash on mr-marble, embedded Postgres, `MoquiLoadTestConf`, release
+  build; `rounds/r60/`). At L2's settings (10 users, 5 iterations) before mr-mantle's lock fix: order to cash p50
+  684 ms against L2's 725 at the batch's start, with L2's Postgres deadlocks (pack, record payment) as the errors and
+  the tail. After mr-mantle's organization locks went `FOR NO KEY UPDATE`: no errors at 10, 16 or 32 users; at 32
+  users 3,360 requests at 122 a second, order to cash p50 1,057 ms with 8 request workers and 1,044 with 16.
+- **The pools** (Profiling3 D6): 16 request workers and 22 service workers by default, in database pools of 90, so
+  an external Postgres sees about 90 connections; the embedded cluster makes room for its content database's pool too.
+- **`service_tx_cache` on by default** for XML-actions and script services with no transaction attribute, called with
+  no cache setting and no new transaction asked for (D3). The suites with it on for every unmarked service found the
+  exclusions: Rust and native services (their own statements), force-new calls (a row a racing caller may make), and
+  a cache fault that any holding frame had, a quiet create held as a plain create, now an insert that writes nothing
+  when the row is there. Both suites pass with it on.
+- **Telemetry spans that wait** (the user's suggestion: skip assembling what will be dropped): an unsampled span
+  under a root open on its thread is a record there, made an SDK span only when the root's end keeps its trace by the
+  tail rule. noop#Inline ×0.73, loop#Calls ×0.86, list renders ×0.95; the export worker no longer normalizes and
+  buffers the spans it would drop.
+- **The nine Mantle operations 200 us from Postgres** (`tools/mantle-ops/` on `moqui-pg18`, census medians, two runs;
+  `rounds/r60/mantle-200us.md`) against R48: place#Order 21.4 to 16.9 ms (66 to 46 round trips), approve#Order
+  16.1 to 13.0, add#OrderProductQuantity 16.4 to 13.4, change#InvoiceState 24.4 to 18.2, create#Payment 24.0 to
+  18.0, apply#Settlement 48.6 to 43.2, pack#Shipment 43.4 to 35.8, approve#Payable 28.7 to 25.1;
+  get#PaymentFinanceDetail level at 13.4. All 111 features pass.
+
 ### Startup and threads
 
 A first start takes 5.63 s and a restart 268 ms. The table check is 2.1 s of a first start, and initdb 1.8 s (R9). A
@@ -928,6 +952,8 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
 - moqui-core `tarpit_locks_and_check_views_are_read_once_until_a_lock_is_written`: a process-static authorization
   generation (R22, R25; adjusted in R25 and R28).
 - moqui-host's XMPP walk (`xmpp_clients_sign_in_…`): "not in time" under a full run's load, passes alone (R29, Phase 4).
+- moqui-host's `rtc::cascade::a_call_on_two_nodes_carries_media_both_ways_…`: "the leg node did not start" (a child
+  server past its start timeout) under a full run's load, passes alone (R60).
 - moqui-git `mirror_fetches_and_opted_in_writes_raise_events` and `the_tree_refs_compare_and_merge_methods_through_services`:
   timing under a full run, pass alone (R48, R49).
 - mr-boss `WorkCenters` load of a released operation: intermittent (R22, R27, R28, R49).
