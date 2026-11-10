@@ -1,0 +1,153 @@
+// Load runs in the server (framework/service/org/moqui/dev/LoadServices.xml, crates/moqui-host/src/load_runner;
+// plans/LoadRunner.md §7, §10, L3): a holder of LOAD_RUNNER starts the shipped ServiceCall.load.js, whose calls run in
+// process as that user with authorization required (D10); the refusals of the permission, of a file that is not a
+// load script, of a target the run may not reach and of a second run at once; a stop; errors counted per call.
+// Run: ./moq test tools --spec LoadRunner
+const S = "org.moqui.dev.LoadServices."
+const SCRIPT = "component://tools/test/load/ServiceCall.load.js"
+const holderId = "SPEC_LR_HOLDER"
+const otherId = "SPEC_LR_OTHER"
+const make = (entityName, fields) => {
+    const row = ec.entity.makeValue(entityName)
+    row.setFields(fields, true, null, null)
+    row.create()
+}
+// a service call's out-parameters and its errors, the errors cleared
+function invoke(name, parameters = {}) {
+    try {
+        const result = ec.service.sync().name(name).parameters(parameters).call() || {}
+        const error = ec.message.hasError() ? ec.message.getErrorsString() : ""
+        ec.message.clearErrors()
+        return Object.assign({}, result, { error })
+    } catch (e) {
+        ec.message.clearErrors()
+        return { error: String(e.message || e) }
+    }
+}
+// a quick run: no ramp and no think, the given users and iterations
+const quick = (users, iterations, more = {}) => ({ calls: Object.assign({ users, iterations, rampUp: 0, think: 0 }, more) })
+const start = (parameters) => invoke(S + "start#LoadRun", Object.assign({ scriptLocation: SCRIPT, targetKind: "service" }, parameters))
+const ended = (runId) => invoke(S + "get#LoadRunStatus", { runId, waitSeconds: 10 })
+const result = (runId) => invoke(S + "get#LoadRunResult", { runId }).result
+const runIds = []
+
+spec({
+    setupSpec() {
+        ec.artifactExecution.disableAuthz()
+        make("moqui.security.UserAccount", { userId: holderId, username: "spec.lr.holder", userFullName: "Spec Load Runner" })
+        make("moqui.security.UserAccount", { userId: otherId, username: "spec.lr.other", userFullName: "Spec Load Other" })
+        // both: the Tools app and the load services; the holder also LOAD_RUNNER and echo#Data, not find#Enumeration
+        make("moqui.security.UserGroup", { userGroupId: "SPEC_LR_TOOLS", description: "Spec load runner tools" })
+        make("moqui.security.UserGroup", { userGroupId: "SPEC_LR_HOLDERS", description: "Spec load runner holders" })
+        make("moqui.security.ArtifactAuthz", { artifactAuthzId: "SPEC_LR_TOOLS_APP", userGroupId: "SPEC_LR_TOOLS",
+            artifactGroupId: "TOOLS_APP", authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_ALL" })
+        make("moqui.security.ArtifactGroup", { artifactGroupId: "SPEC_LR_SERVICES", description: "Spec load services" })
+        make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_SERVICES", artifactName: "org\\.moqui\\.dev\\.LoadServices\\..*",
+            nameIsPattern: "Y", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
+        make("moqui.security.ArtifactAuthz", { artifactAuthzId: "SPEC_LR_SERVICES", userGroupId: "SPEC_LR_TOOLS",
+            artifactGroupId: "SPEC_LR_SERVICES", authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_ALL" })
+        make("moqui.security.ArtifactGroup", { artifactGroupId: "SPEC_LR_ECHO", description: "Spec load echo" })
+        make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "org.moqui.impl.BasicServices.echo#Data",
+            nameIsPattern: "N", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
+        make("moqui.security.ArtifactAuthz", { artifactAuthzId: "SPEC_LR_ECHO", userGroupId: "SPEC_LR_HOLDERS",
+            artifactGroupId: "SPEC_LR_ECHO", authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_ALL" })
+        make("moqui.security.UserGroupPermission", { userGroupId: "SPEC_LR_HOLDERS", userPermissionId: "LOAD_RUNNER", fromDate: 0 })
+        for (const userId of [holderId, otherId])
+            make("moqui.security.UserGroupMember", { userGroupId: "SPEC_LR_TOOLS", userId, fromDate: 0 })
+        make("moqui.security.UserGroupMember", { userGroupId: "SPEC_LR_HOLDERS", userId: holderId, fromDate: 0 })
+        ec.artifactExecution.enableAuthz()
+    },
+    setup() { ec.user.internalLoginUser("spec.lr.holder") },
+    cleanupSpec() {
+        ec.user.internalLoginUser("spec.lr.holder")
+        for (const runId of runIds) invoke(S + "delete#LoadRun", { runId })
+        ec.artifactExecution.disableAuthz()
+        ec.entity.find("moqui.security.UserGroupMember").condition("userId", "in", [holderId, otherId]).deleteAll()
+        ec.entity.find("moqui.security.UserGroupPermission").condition("userGroupId", "SPEC_LR_HOLDERS").deleteAll()
+        ec.entity.find("moqui.security.ArtifactAuthz").condition("artifactAuthzId", "in", ["SPEC_LR_TOOLS_APP", "SPEC_LR_SERVICES", "SPEC_LR_ECHO"]).deleteAll()
+        ec.entity.find("moqui.security.ArtifactGroupMember").condition("artifactGroupId", "in", ["SPEC_LR_SERVICES", "SPEC_LR_ECHO"]).deleteAll()
+        ec.entity.find("moqui.security.ArtifactGroup").condition("artifactGroupId", "in", ["SPEC_LR_SERVICES", "SPEC_LR_ECHO"]).deleteAll()
+        ec.entity.find("moqui.security.UserGroup").condition("userGroupId", "in", ["SPEC_LR_TOOLS", "SPEC_LR_HOLDERS"]).deleteAll()
+        ec.entity.find("moqui.security.UserAccount").condition("userId", "in", [holderId, otherId]).deleteAll()
+        ec.artifactExecution.enableAuthz()
+    },
+})
+
+feature("a holder runs ServiceCall for 2 users and 2 iterations: completed with 4 requests, and listed", {
+    expect() {
+        const started = start({ scenarios: quick(2, 2), label: "spec" })
+        started.error == ""
+        runIds.push(started.runId)
+        const status = ended(started.runId)
+        status.running == false
+        status.status == "completed"
+        status.summary.requests == 4
+        status.summary.errors == 0
+        status.summary.user == "spec.lr.holder"
+        const listed = invoke(S + "find#LoadRuns", { scriptLocation: SCRIPT }).runs
+        listed.some(run => run.runId == started.runId && run.status == "completed")
+        // the script list reads each plan
+        const script = invoke(S + "find#LoadScripts").scripts.find(s => s.location == SCRIPT)
+        script.title == "Service call"
+        script.uses.includes("service")
+        script.scenarios[0].users == 10
+        script.params.serviceName.default == "org.moqui.impl.BasicServices.echo#Data"
+    },
+})
+
+feature("a user without LOAD_RUNNER is refused", {
+    expect() {
+        ec.user.internalLoginUser("spec.lr.other")
+        const refused = start({ scenarios: quick(2, 2) })
+        refused.error.includes("LOAD_RUNNER")
+        refused.runId == null
+    },
+})
+
+feature("a call of a service the starting user is not authorized for is an error and does not run", {
+    expect() {
+        const started = start({ scenarios: quick(1, 1), parameters: { serviceName: "org.moqui.impl.BasicServices.find#Enumeration", parameters: '{"enumTypeId": "SpecLoad"}' } })
+        started.error == ""
+        runIds.push(started.runId)
+        ended(started.runId).summary.errors == 1
+        result(started.runId).errorSamples[0].message.toLowerCase().includes("authoriz")
+    },
+})
+
+feature("a service error is counted and the user's next call still runs", {
+    expect() {
+        const started = start({ scenarios: quick(1, 2), parameters: { parameters: '{"numberIn": "not a number"}' } })
+        started.error == ""
+        runIds.push(started.runId)
+        const summary = ended(started.runId).summary
+        summary.iterations == 2
+        summary.errors == 2
+    },
+})
+
+feature("a file that is not a load script and a target the run may not reach are refused", {
+    expect() {
+        start({ scriptLocation: "component://tools/test/LoadRunner.spec.js" }).error.includes("not a load script")
+        start({ scriptLocation: "component://tools/test/load/../LoadRunner.spec.js" }).error.includes("not a load script")
+        // a dev instance reaches any URL; a production one only this server, loopback and load_runner_targets
+        withProperty("instance_purpose", "production", () =>
+            start({ targetKind: "url", targetUrl: "https://example.org/" }).error).includes("load_runner_targets")
+        // ServiceCall calls services in process: over HTTP it is refused
+        start({ targetKind: "this" }).error.includes("service target")
+    },
+})
+
+feature("a second run while one runs is refused, and stop ends the run", {
+    expect() {
+        const long = start({ scenarios: { calls: { users: 1, duration: 30, rampUp: 0, think: 20 } } })
+        long.error == ""
+        runIds.push(long.runId)
+        invoke(S + "get#LoadRunStatus", { runId: long.runId }).running == true
+        start({ scenarios: quick(1, 1) }).error.includes("already running")
+        invoke(S + "delete#LoadRun", { runId: long.runId }).error.includes("running")
+        invoke(S + "stop#LoadRun", { runId: long.runId, now: true }).error == ""
+        const status = ended(long.runId)
+        status.status == "stopped"
+        result(long.runId).run.stopReason == "stop-now"
+    },
+})

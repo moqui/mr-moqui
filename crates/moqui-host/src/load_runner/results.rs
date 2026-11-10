@@ -168,7 +168,7 @@ pub(crate) struct Find<'a> {
 }
 
 impl Find<'_> {
-    fn keeps(&self, summary: &Value) -> bool {
+    pub(crate) fn keeps(&self, summary: &Value) -> bool {
         let field = |name: &str| summary.get(name).and_then(Value::as_str).unwrap_or_default();
         self.script.is_none_or(|script| field("script") == script)
             && self.status.is_none_or(|status| field("status") == status)

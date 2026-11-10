@@ -496,12 +496,15 @@ fn plain(value: &Value) -> String {
     }
 }
 
-/// Send `ask` on the session, following redirects when it says so, and take each answer's cookies and token.
+/// Send `ask` on the session, following redirects when it says so, and take each answer's cookies and token. `allow`
+/// is asked before each request is sent, the first and each redirect's: a load run in a server refuses a URL it may
+/// not reach (plans/LoadRunner.md §10 Targets).
 pub(crate) fn send(
     client: &reqwest::blocking::Client,
     session: &mut Session,
     ask: &Ask,
     default_timeout: Duration,
+    allow: &dyn Fn(&str) -> Result<(), String>,
 ) -> Result<Answer, String> {
     let mut url = ask.full_url()?;
     let mut method = ask.method.to_ascii_uppercase();
@@ -510,6 +513,7 @@ pub(crate) fn send(
     let started = Instant::now();
     let mut hops = 0;
     loop {
+        allow(&url)?;
         let answer = send_once(client, session, ask, &method, &url, with_body, timeout, started)?;
         let content_type = answer.header("content-type").unwrap_or("").to_string();
         session.absorb(&answer.url, &answer.headers, &content_type, &answer.body);

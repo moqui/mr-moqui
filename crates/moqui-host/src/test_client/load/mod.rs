@@ -60,7 +60,6 @@ pub(crate) enum Kind {
     /// `http.raw`.
     Raw,
     /// `service.call` in a server's process.
-    #[allow(dead_code)] // for `moqui test-load` and a run in a server (plans/LoadRunner.md L2, L3)
     Service,
     /// `step(name, fn)`: the whole of `fn`, whose requests are counted under their own names too.
     Step,
@@ -149,7 +148,6 @@ impl Load {
         self.id
     }
 
-    #[allow(dead_code)] // for `moqui test-load` and a run in a server (plans/LoadRunner.md L2, L3)
     pub(crate) fn users(&self) -> u64 {
         self.users
     }
@@ -218,7 +216,6 @@ impl Load {
 
     /// The load as it is now, from what its users have merged (each at most a second ago): the totals, the table by
     /// name, the bins thinned to at most 300 points, and the active users. Readable at any time.
-    #[allow(dead_code)] // for `moqui test-load` and a run in a server (plans/LoadRunner.md L2, L3)
     pub(crate) fn snapshot(&self) -> Value {
         self.tick();
         let shared = lock(&self.shared);
@@ -806,7 +803,6 @@ pub(crate) fn start(host: &Arc<dyn SpecHost>, start: Start) -> Result<Running, S
 }
 
 impl Running {
-    #[allow(dead_code)] // for `moqui test-load` and a run in a server (plans/LoadRunner.md L2, L3)
     pub(crate) fn load(&self) -> &Arc<Load> {
         &self.load
     }
