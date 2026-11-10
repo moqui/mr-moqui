@@ -818,9 +818,8 @@ fn failed_json_submits_do_not_save_stale_fields_for_the_next_page() {
         submit.body = b"moquiFormName=EditRecord&expectedVersion=old-version".to_vec();
         submit.set_header("accept", "application/json");
         let response = serve_at(&world.factory, submit, &fixture_root());
-        if path == "/failTx" {
-            assert!(response.body_text().contains("bad input"), "{}", response.body_text());
-        }
+        assert_eq!(response.status, 500, "{path}: {}", response.body_text());
+        assert!(response.body_text().contains("bad input"), "{}", response.body_text());
         let cookie = super::header_value(&response, "Set-Cookie").expect("session cookie");
         let value = cookie.split(';').next().unwrap().split_once('=').unwrap().1;
         let context = world.factory.new_context();
@@ -831,6 +830,11 @@ fn failed_json_submits_do_not_save_stale_fields_for_the_next_page() {
             "{path}: a JSON refusal must not override the next page's current fields"
         );
     }
+    let mut empty = request("GET", "/goNone");
+    empty.set_header("accept", "application/json");
+    let response = serve_at(&world.factory, empty, &fixture_root());
+    assert_eq!(response.status, 200);
+    assert!(response.body.is_empty(), "a successful no-response transition stays empty");
 }
 
 #[test]

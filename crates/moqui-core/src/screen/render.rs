@@ -2124,8 +2124,13 @@ fn respond(
         if response.save_parameters {
             save_parameters();
         }
-        if !json && screen_has_error() {
-            save_error_parameters();
+        if screen_has_error() {
+            if json {
+                // A failed AJAX action needs its errors even when it has no redirect or explicit response body.
+                web::send_json_response(Value::Map(Default::default()));
+            } else {
+                save_error_parameters();
+            }
         }
         return Ok(());
     }
