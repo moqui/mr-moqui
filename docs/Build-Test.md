@@ -4,7 +4,7 @@ How to build MR Moqui from source, the build packages and their features, the `.
 and the component specs that `moqui test` runs. Running and deploying are in [Run-Deploy](Run-Deploy.md), and the specs
 that test a running server from outside are in [Client-Testing](dev/Client-Testing.md).
 
-- [Build](#build)
+- [Build](#build): [Windows](#windows), [native code and C libraries](#native-code-and-c-libraries)
 - [Packages](#packages): [features](#features), [profiles](#profiles), the [embedded Postgres
   archive](#embedded-postgres-archive), the [instance archive](#instance-archive), [build cost](#build-cost), the [compile cache](#compile-cache), the
   [desktop app](#desktop-app), the [Android app](#android-app)
@@ -18,9 +18,9 @@ that test a running server from outside are in [Client-Testing](dev/Client-Testi
 ## Build
 
 Prerequisites: Rust 1.99 or newer (`rustc --version`; `rust-toolchain.toml` pins 1.99.0, which quickjs-oxide
-declares). A build with embedded Postgres embeds the 18.6.0 archive that `scripts/pg-payload.sh strip` downloads once
-and strips of psql (it links GPL readline); `./moq build` runs that when the archive is missing. Node is not needed to
-build or test.
+declares) and bash, on Linux, macOS, or Windows ([Windows](#windows) has what a Windows build needs). A build with
+embedded Postgres embeds the 18.6.0 archive that `scripts/pg-payload.sh strip` downloads once and strips of psql (it
+links GPL readline); `./moq build` runs that when the archive is missing. Node is not needed to build or test.
 
 ```sh
 ./moq build                            # Maximal with the dev tools, target/release/moqui; --lite, --debug or
@@ -34,6 +34,63 @@ scripts/pg-payload.sh check            # before a distribution: no psql or readl
 
 Tasks that run moqui build a missing binary themselves. `./moq build` also links the crates of native components
 ([Native-Components](dev/Native-Components.md)), which plain `cargo build` does not.
+
+### Windows
+
+- **Toolchain.** The host is `x86_64-pc-windows-msvc`. Visual Studio Build Tools supplies the C compiler (the
+  "Desktop development with C++" workload; aws-lc and QuickJS compile C, and the embedded Postgres binaries load that
+  workload's `VCRUNTIME140.dll`), and Git for Windows supplies bash. From PowerShell or cmd, `moq.cmd` runs `moq`; the
+  binary is `target\release\moqui.exe`.
+- **NASM.** The first build that needs it downloads NASM 3.02 to `%USERPROFILE%\.moqui\nasm` (aws-lc assembles with
+  it). Set `MOQUI_NASM` to a directory that contains `nasm.exe`, or to `nasm.exe` itself, to use that copy instead. A
+  `cargo build` that does not go through `moq` still needs NASM on `PATH`.
+- **NASM may no longer be needed (to check on Windows).** What needed it was the second copy of aws-lc-sys, the one
+  mail-auth built with its default features off. AWS-LC is now built once ([Native code and C
+  libraries](#native-code-and-c-libraries)), and that one aws-lc-sys has the `prebuilt-nasm` feature aws-lc-rs turns
+  on: on Windows x86-64 it links the objects it ships whenever `nasm` is not on `PATH`. To check, with no NASM on
+  `PATH`: `cargo clean --release -p aws-lc-sys`, then `MOQ_NASM_CHECKED=1 ./moq build` (the variable skips `moq`'s
+  NASM step). If that builds, `scripts/nasm.sh`, `ensure_nasm` in `moq` and these NASM notes can go.
+- **Debug info.** The dev profile keeps debug info unpacked in the object files ([Profiles](#profiles)), which is
+  not a Windows option, and cargo has no per-target profile, so `moq` sets `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=packed`
+  on Windows (a PDB beside the binary). A dev `cargo build` or `cargo test` that does not go through `moq` needs that
+  variable set too.
+
+### Native code and C libraries
+
+MR Moqui stays in memory-safe Rust as far as it can. That also keeps the build and the deployment the same on every
+platform.
+
+- **No JIT.** The script engine, quickjs-oxide, interprets its bytecode and forbids `unsafe` in every crate. Generated
+  machine code would make the code generator responsible for the engine's memory safety, and needs executable memory,
+  which iOS refuses and macOS allows only with an entitlement. Heavy work in scripts moves to framework APIs or native
+  services instead ([Practices-App-Dev](dev/Practices-App-Dev.md#heavy-work-scripts-or-rust)).
+- **`unsafe` only where nothing else works,** such as a foreign-function boundary (the browser build's exports), with
+  the reason beside it.
+- **No C libraries in new dependencies.** Choose a pure-Rust crate, or a crate's pure-Rust backend.
+  `cargo tree -e build -i cc` lists the crates that compile C. The exceptions:
+
+| Library | For | Why |
+|---|---|---|
+| AWS-LC (`aws-lc-sys`, through `aws-lc-rs`) | Crypto: rustls (every TLS connection), SSH (russh), certificates (rcgen), WebRTC (str0m), DNSSEC (hickory), DKIM and ARC (mail-auth), and the framework's own signatures | Vetted constant-time C and assembly, the provider rustls defaults to. It is the one crypto library, built once: `deny.toml` refuses ring and a second `aws-lc-sys`, and a dependency that brings either is forked ([Forks](#forks)), pinned or replaced |
+| jemalloc (`tikv-jemallocator`) | The binaries' global allocator, not on MSVC | 5 to 15% off script-heavy rows ([Profiling Round 37](../plans/archive/Profiling.md#round-37-the-allocator-measured-a-proposal-nothing-changed)); the alternatives are C too |
+| SQLite (`rusqlite`, bundled) | The local databases of moqui-client and moqui-browser; not the server | No pure-Rust database matches it yet. Public domain; the browser build compiles it to WebAssembly |
+| CEF, GTK 4, the system WebViews | The desktop and mobile app shells (Tauri) | A desktop or mobile UI runs on the platform's |
+
+Programs that run as their own processes are not linked and are outside this list: the embedded Postgres, Chromium
+for PDF, and the system `ssh` for git remotes.
+
+#### Forks
+
+Two dependencies are pinned by `rev` to a branch of moqui's fork, as quickjs-oxide is, because neither keeps ring out
+through a feature. Each branch is one commit on the release we use; its `pr/` branch is the same commit on upstream's
+own branch, for a pull request. Go back to the crates.io release once upstream publishes the change.
+
+| Crate | Fork and branch (`pr/` branch) | Change |
+|---|---|---|
+| rsipstack 0.7.12 | [moqui/rsipstack](https://github.com/moqui/rsipstack) `moqui/0.7.12-crypto-features` (`pr/rustls-provider-features`) | `rustls` has no crypto provider of its own; `rustls-ring` (the default) and `rustls-aws-lc-rs` choose one. Its TLS configs come from rustls's process default, here the aws-lc-rs provider |
+| mysql 28.0.4 | [moqui/rust-mysql-simple](https://github.com/moqui/rust-mysql-simple) `moqui/28.0.4-no-webpki` (`pr/no-webpki-0.22`) | `rustls` no longer pulls webpki 0.22 (unmaintained, links ring) for two error types: `TlsError::InvalidDnsName` holds rustls's own error, and the unused `TlsError::Pki` is gone |
+
+Moving a pin: push the fork's branch first, then change the `rev` in `Cargo.toml` and run `cargo update -p <crate>`.
 
 ## Packages
 
@@ -49,6 +106,8 @@ flag and uses that binary. `moqui version` prints a binary's package and feature
 | Maximal | (none) or `--release` | `release` | `target/release/moqui` | Every feature, Postgres embedded, and the dev tools (`devtools`) |
 | Enterprise | `--enterprise` | `enterprise` | `target/enterprise/moqui` | Every feature, with the databases external (Postgres and MySQL drivers, no embedded Postgres) |
 | Browser | `scripts/wasm-build.sh [--release]` | `dev` / `release` | `target/browser/wasm-pkg/<profile>` | The framework on SQLite in a Web Worker; none of the optional features |
+
+On Windows each of those binaries is `moqui.exe` (`target\release\moqui.exe` for Maximal).
 
 Plain `cargo build -p moqui`, `cargo test` and `cargo lint` use the Maximal feature set with `devtools`, so they cover
 everything.
@@ -144,7 +203,8 @@ has its own, so the artifacts of one never replace another's and switching packa
 - `dev` (Debug, and every `cargo test`): the workspace crates at opt-level 0 with debug info, the dependencies at
   opt-level 3 with line tables only (file and line in a backtrace). The debug info stays in the object files under
   `target/debug` (`split-debuginfo = "unpacked"`), where debuggers read it, instead of being copied into each binary:
-  a host test binary was 1.5 GB, 83% of it debug info.
+  a host test binary was 1.5 GB, 83% of it debug info. Windows has no `unpacked`: there `moq` sets
+  `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=packed`, a PDB beside the binary ([Windows](#windows)).
 - `lite` (Lite): `release` with `incremental = true` and 256 codegen units for the workspace and path crates
   (Cargo applies `incremental` only to those), so a rebuild after an edit to the framework is quick; the dependencies
   keep the release settings and are built once.
@@ -157,12 +217,13 @@ has its own, so the artifacts of one never replace another's and switching packa
 The `embedded-postgres` feature embeds the theseus Postgres archive (the version `.cargo/config.toml` forces through
 `POSTGRESQL_VERSION`) and unpacks it once into `install/postgres/<version>` in the runtime directory (or under
 `MOQUI_INSTALL`), shared by the entity, search and sim clusters. An install an earlier build unpacked in
-`runtime/db/install` is moved there on the first start. `crates/moqui-drivers/build.rs` stages it from `~/.theseus/postgresql/postgresql-<version>-<target>.tar.gz`, or
+`runtime/db/install` is moved there on the first start. `crates/moqui-drivers/build.rs` stages it from `~/.theseus/postgresql/postgresql-<version>-<target>.tar.gz` (`%USERPROFILE%\.theseus\postgresql` on Windows; the build reads `USERPROFILE`, not Git Bash's `HOME`), or
 the file `MOQUI_PG_ARCHIVE` names, and downloads nothing. It refuses an archive that still holds `bin/psql` or a
 readline library (GPL, plans/archive/License-Review.md).
 
 `scripts/pg-payload.sh strip` downloads the archive when it is missing (checking its sha256) and repacks it without
-psql; `./moq build` runs it the first time. A plain `cargo build` of a package with embedded Postgres asks for it.
+psql; `./moq build` runs it the first time. curl uses `https_proxy` when it is set, and otherwise git's `http.proxy`.
+A plain `cargo build` of a package with embedded Postgres asks for it.
 `scripts/pg-payload.sh check` checks an archive, and every one staged under `target/`, for psql and readline.
 
 ### Instance archive
@@ -412,7 +473,7 @@ In the Play Console, once:
 
 The `./moq` script runs the built binaries in place and replaces the Java Moqui Gradle tasks: run, load, save and reload
 of the database, clean, OpenSearch, Chromium for PDF, git across all repositories, and component get, create and zip.
-It needs only bash (3.2 or newer), so it works on a fresh checkout on Linux or macOS. `./moq` with no arguments lists
+It needs only bash (3.2 or newer), so it works on a fresh checkout on Linux, macOS, or Windows (Git Bash; `moq.cmd` from PowerShell or cmd). `./moq` with no arguments lists
 the tasks, and `./moq help <task>` describes one. Task names match by partial parts, ignoring case, so `./moq r-p` and
 `./moq runProduction` both mean `run-production`.
 

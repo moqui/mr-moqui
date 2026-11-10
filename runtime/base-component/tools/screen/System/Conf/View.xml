@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Conf › Settings (guide docs/tools/Component-Deploy.md, "Viewing and editing the conf"): the merged conf as a tree
+    (org.moqui.impl.ComponentServices.get#ConfView), each element and attribute with the file and line it came from, its
+    class (live, apply, restart), the default conf's comments, and the values the files hold that are not running yet.
+    The component is View.qvue, its data from the confView transition; a source links to Conf › Edit for a holder of
+    CONF_EDIT. The terminal shows the same tree. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Settings" default-menu-index="1" render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <transition name="confView" method="get" read-only="true">
+        <actions>
+            <service-call name="org.moqui.impl.ComponentServices.get#ConfView" out-map="viewOut"/>
+            <script><![CDATA[
+                const errors = ec.message.hasError() ? ec.message.errorsString : null
+                ec.message.clearErrors()
+                ec.web.sendJsonResponse(errors ? {errors} : {view: viewOut.view, canEdit: !!viewOut.canEdit})
+            ]]></script>
+        </actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode>
+            <text type="qvue" location="component://tools/screen/System/Conf/View.qvue" template="false"/>
+            <!-- the terminal: the merged conf as an outline, each element with its attributes, class and files -->
+            <text type="tui"><![CDATA[${JSON.stringify((() => {
+                const out = ec.service.sync().name('org.moqui.impl.ComponentServices.get#ConfView').call() || {}
+                const error = ec.message.hasError() ? ec.message.errorsString : null
+                ec.message.clearErrors()
+                if (error || !out.view) return [{t: 'text', id: 'ConfViewError', style: 'error', text: error || 'The conf could not be read'}]
+                const view = out.view
+                const files = view.files || []
+                const fileText = (at) => (files[at.file] ? files[at.file].label : '?') + ':' + at.line
+                const rows = []
+                const firstLine = (text) => String(text || '').split('\n')[0].slice(0, 120)
+                const walk = (node, parent, key) => {
+                    const attrs = (node.attrs || []).map(attr => attr.name + '=' + (attr.expanded != null ? attr.expanded : attr.value)
+                        + (attr.class ? ' [' + attr.class + ']' : '') + (attr.pending ? ' (not running yet)' : '')).join(' ')
+                    if (parent != null) {
+                        if ((node.comments || []).length) rows.push({key: key + '#', parent, label: '# ' + firstLine(node.comments[0]), tc: ['', '']})
+                        rows.push({key, parent, label: node.name + (node.key ? '[' + node.key + ']' : '') + (attrs ? ' ' + attrs : ''),
+                            tc: [node.class, (node.sources || []).map(fileText).join(', ')]})
+                    }
+                    ;(node.children || []).forEach((child, at) => walk(child, parent == null ? '' : key, key + '.' + at))
+                }
+                walk(view.root, null, 'c')
+                return [{t: 'text', id: 'ConfViewFiles', text: 'Merged from ' + files.map(file => file.label).join(', ')
+                        + ' · ' + view.wouldApply + ' change(s) a reload would apply, ' + view.pendingRestart + ' waiting for a restart'},
+                    {t: 'component', name: 'tree', props: {rows, columns: ['Setting', 'Class', 'From']}}]
+            })())}]]></text>
+        </render-mode>
+    </widgets>
+</screen>

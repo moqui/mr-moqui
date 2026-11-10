@@ -741,26 +741,57 @@ fn names_in_dir(root: &Path, dir: &Path, names: &mut BTreeSet<String>) {
     }
 }
 
-/// The names of the `service` and `service-include` elements of the file at `relative` in a `service` directory.
+/// The service names a file held when it was last read for [`names_in_file`], by path: its modification time and length,
+/// and the names. A screen that lists the known services reads every service file on each render otherwise (Artifact
+/// Stats asked twice a render, 36 ms each, plans/Profiling2.md R53).
+type FileNames = (std::time::SystemTime, u64, Arc<Vec<String>>);
+static FILE_NAMES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<PathBuf, FileNames>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The names of the `service` and `service-include` elements of the file at `relative` in a `service` directory, read
+/// again only when the file's modification time or length changed since the last read.
 fn names_in_file(path: &Path, relative: &Path, names: &mut BTreeSet<String>) {
+    let stamp = std::fs::metadata(path)
+        .ok()
+        .and_then(|meta| meta.modified().ok().map(|modified| (modified, meta.len())));
+    if let Some((modified, len)) = stamp {
+        let held = moqui_lib::sync::lock(&FILE_NAMES)
+            .get(path)
+            .filter(|(at, size, _)| *at == modified && *size == len)
+            .map(|(_, _, held)| Arc::clone(held));
+        if let Some(held) = held {
+            names.extend(held.iter().cloned());
+            return;
+        }
+    }
+    let read = read_names_in_file(path, relative);
+    names.extend(read.iter().cloned());
+    if let Some((modified, len)) = stamp {
+        moqui_lib::sync::lock(&FILE_NAMES).insert(path.to_path_buf(), (modified, len, Arc::new(read)));
+    }
+}
+
+fn read_names_in_file(path: &Path, relative: &Path) -> Vec<String> {
     let root = match MNode::parse_file(path) {
         Ok(root) => root,
         Err(err) => {
             tracing::error!(error = %err, "Could not read service file {} for the known service names", path.display());
-            return;
+            return Vec::new();
         }
     };
     if !root.has_name("services") {
-        return;
+        return Vec::new();
     }
     let prefix = relative.with_extension("").to_string_lossy().replace(['/', '\\'], ".");
+    let mut names = Vec::new();
     for child in root.child_iter() {
         if matches!(&*child.name_rc(), "service" | "service-include") {
             let verb = child.attribute("verb").unwrap_or_default();
             let noun = child.attribute("noun").unwrap_or_default();
-            names.insert(service_name(&prefix, &verb, &noun));
+            names.push(service_name(&prefix, &verb, &noun));
         }
     }
+    names
 }
 
 /// Every service registered with the entered context's factory, by name. Type generation reads these.

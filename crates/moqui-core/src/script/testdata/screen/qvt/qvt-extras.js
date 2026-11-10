@@ -35,12 +35,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Selectable] 
             "cell": ($m) => {
                 if ($m !== 2) {
                     $v.rowCellOpen("", "", $m === 2);
-                    sri.pushContext();
-                    try {
-                        $v.display({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}});
-                    } finally {
-                        sri.popContext();
-                    }
+                    $v.display({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}});
                     $v.rowCellClose($m === 2);
                 }
             }
@@ -103,18 +98,14 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Selectable] 
             "cell": ($m) => {
                 if ($m !== 2) {
                     $v.rowCellOpen("", "", $m === 2);
-                    sri.pushContext();
-                    try {
-                        $v.display({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"note"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}});
-                    } finally {
-                        sri.popContext();
-                    }
+                    $v.display({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"note"},"parent":{"name":"form-list","attrs":{"name":"Selectable"}}}}});
                     $v.rowCellClose($m === 2);
                 }
             }
         }]
     ], {
     "views": null,
+    "bufferRows": false,
     "hasFirst": true,
     "hasSecond": false,
     "hasLast": true,
@@ -240,6 +231,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Everyone] --
         }]
     ], {
     "views": null,
+    "bufferRows": false,
     "hasFirst": false,
     "hasSecond": false,
     "hasLast": false,

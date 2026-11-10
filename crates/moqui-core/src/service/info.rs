@@ -100,14 +100,14 @@ pub(crate) fn cron_is_due(
     let Ok(now) = jiff::Timestamp::from_millisecond(now_millis) else {
         return Ok(false);
     };
-    let Ok(last_schedule) = cron.find_previous_occurrence(&now.to_zoned(zone), true) else {
+    let Some(last_schedule) = cron.last_at_or_before(&now.to_zoned(zone)) else {
         return Ok(false);
     };
     Ok(last_run_millis.is_none_or(|last_run| last_run < last_schedule.timestamp().as_millisecond()))
 }
 
 /// An English description of a Quartz cron expression, Java's `ScheduledJobRunner.getCronDescription`. The locale and
-/// short format are not used: the text is the cron parser's own.
+/// short format are not used: the text is [`moqui_lib::cron::Cron::describe`]'s.
 ///
 /// # Errors
 ///
@@ -129,10 +129,7 @@ pub fn next_cron_execution(cron: &str, after_millis: i64) -> Result<Option<i64>,
         return Ok(None);
     };
     let zoned = after.to_zoned(super::jobs::job_time_zone());
-    Ok(cron
-        .find_next_occurrence(&zoned, false)
-        .ok()
-        .map(|next| next.timestamp().as_millisecond()))
+    Ok(cron.next_after(&zoned).map(|next| next.timestamp().as_millisecond()))
 }
 
 /// The definition of `name` as the service detail screen reads a `ServiceDefinition`: the names, type, location,

@@ -1,7 +1,7 @@
 // The conf reload and the components (plans/archive/Component-Deploy.md, Phases 1 and 2): on a server just booted, the conf
 // the files make is the running conf, so a preview finds no change (the merge done again gives the same conf, with the
 // components' test confs as moqui test merges them); the System Conf and Components screens render in qvt and tui
-// with no error; and the services need the ADMIN group (a user without it is refused even with the service's
+// with no error (Conf's Changes tab); and the services need the ADMIN group (a user without it is refused even with the service's
 // authorization off). Loading a component is checked in crates/moqui-host/tests/it/component_deploy.rs.
 // Run: ./moq test tools --spec ConfReload
 const systemRoot = "component://tools/screen/System.xml"
@@ -35,9 +35,9 @@ feature("a preview on a server just booted finds no change", {
     }
 })
 
-feature("the System Conf screen renders in qvt and tui", {
+feature("the System Conf Changes screen renders in qvt and tui", {
     when() {
-        return {qvt: render("Conf", "qvt"), tui: render("Conf", "tui")}
+        return {qvt: render("Conf/Changes", "qvt"), tui: render("Conf/Changes", "tui")}
     },
     then({qvt, tui}) {
         qvt.errors == ""

@@ -247,11 +247,11 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.19.0"
+version = "1.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "048006790404103c488e6c5616b3e7e702a71292aadda08e8f7698a9e0d2eb53"
+checksum = "faac5829c2b74c28f830747e7818ccfb684261b5f48a1118b1e2a13d36dfab13"
 dependencies = [
- "aws-lc-sys 0.47.0",
+ "aws-lc-sys",
  "untrusted 0.7.1",
  "zeroize",
 ]
@@ -261,19 +261,6 @@ name = "aws-lc-sys"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1622d8446a2d4b2ce0c7eefc73dd43a99779028d5ee5c2dd8073a658ba8a2bc"
-dependencies = [
- "cc",
- "cmake",
- "dunce",
- "fs_extra",
- "pkg-config",
-]
-
-[[package]]
-name = "aws-lc-sys"
-version = "0.47.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bfbe32ac36b3c428696ce315464181bc4029d689fd58e3f2a4e58c252242f52"
 dependencies = [
  "cc",
  "cmake",
@@ -990,17 +977,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
-name = "croner"
-version = "4.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26d09284075f5c87675790d1ad74212a7863eb8bdf228cdbd364f08a152fc62d"
-dependencies = [
- "derive_builder",
- "jiff",
- "strum",
-]
-
-[[package]]
 name = "crossbeam-channel"
 version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1214,16 +1190,6 @@ dependencies = [
 
 [[package]]
 name = "darling"
-version = "0.20.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc7f46116c46ff9ab3eb1597a45688b6715c6e628b5c133e288e709a29bcb4ee"
-dependencies = [
- "darling_core 0.20.11",
- "darling_macro 0.20.11",
-]
-
-[[package]]
-name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ae13da2f202d56bd7f91c25fba009e7717a1e4a1cc98a76d844b65ae912e9d"
@@ -1240,20 +1206,6 @@ checksum = "ed17f5901b6630b993ca003def43f2f8ef4014fc13b047b57aad617ff32bc2ec"
 dependencies = [
  "darling_core 0.24.1",
  "darling_macro 0.24.1",
-]
-
-[[package]]
-name = "darling_core"
-version = "0.20.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d00b9596d185e565c2207a0b01f8bd1a135483d02d9b7b0a54b11da8d53412e"
-dependencies = [
- "fnv",
- "ident_case",
- "proc-macro2",
- "quote",
- "strsim",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -1280,17 +1232,6 @@ dependencies = [
  "quote",
  "strsim",
  "syn 3.0.9",
-]
-
-[[package]]
-name = "darling_macro"
-version = "0.20.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
-dependencies = [
- "darling_core 0.20.11",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -1456,37 +1397,6 @@ name = "deranged"
 version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e9de72ce2ad1f90dc62fa25f0f430ef85eb4b0d8fa0be4f30373bc40a21d28e"
-
-[[package]]
-name = "derive_builder"
-version = "0.20.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "507dfb09ea8b7fa618fcf76e953f4f5e192547945816d5358edffe39f6f94947"
-dependencies = [
- "derive_builder_macro",
-]
-
-[[package]]
-name = "derive_builder_core"
-version = "0.20.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d5bcf7b024d6835cfb3d473887cd966994907effbe9227e8c8219824d06c4e8"
-dependencies = [
- "darling 0.20.11",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "derive_builder_macro"
-version = "0.20.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab63b0e2bf4d5928aff72e83a7dace85d7bba5fe12dcc3c5a572d78caffd3f3c"
-dependencies = [
- "derive_builder_core",
- "syn 2.0.119",
-]
 
 [[package]]
 name = "derive_more"
@@ -4347,7 +4257,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3a38e106bc724fb87601fce70bef65c12498b19cdb320994330eae1080d035f"
 dependencies = [
  "aws-lc-rs",
- "aws-lc-sys 0.46.0",
+ "aws-lc-sys",
  "encodify",
  "getrandom 0.2.17",
  "getrandom 0.4.3",
@@ -4674,7 +4584,6 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "calamine",
- "croner",
  "encoding_rs",
  "flate2",
  "foldhash 0.2.0",
@@ -5000,7 +4909,6 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "calamine",
- "croner",
  "flate2",
  "getrandom 0.4.3",
  "hmac 0.13.0",
@@ -5137,8 +5045,7 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 [[package]]
 name = "mysql"
 version = "28.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca3de8a73b7c70f76dbcdd4b6abc9b53bbb6c4f7bd6c79d8e8a7ea2157c02487"
+source = "git+https://github.com/moqui/rust-mysql-simple?rev=622ddf83a6ce648957725ebc4bb4c96ad8f4825a#622ddf83a6ce648957725ebc4bb4c96ad8f4825a"
 dependencies = [
  "arc-swap",
  "bufstream",
@@ -5158,7 +5065,6 @@ dependencies = [
  "socket2",
  "twox-hash",
  "url",
- "webpki",
  "webpki-roots",
 ]
 
@@ -6469,7 +6375,7 @@ dependencies = [
 [[package]]
 name = "quickjs-oxide"
 version = "0.4.1"
-source = "git+https://github.com/moqui/quickjs-oxide?rev=ddba97fe6295ca8a08335128fa9858ae320232a2#ddba97fe6295ca8a08335128fa9858ae320232a2"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=f873d7e7ce9b6fe211805fcf8ba63c56b73e0384#f873d7e7ce9b6fe211805fcf8ba63c56b73e0384"
 dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
@@ -6480,7 +6386,7 @@ dependencies = [
 [[package]]
 name = "quickjs-oxide-core"
 version = "0.4.1"
-source = "git+https://github.com/moqui/quickjs-oxide?rev=ddba97fe6295ca8a08335128fa9858ae320232a2#ddba97fe6295ca8a08335128fa9858ae320232a2"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=f873d7e7ce9b6fe211805fcf8ba63c56b73e0384#f873d7e7ce9b6fe211805fcf8ba63c56b73e0384"
 dependencies = [
  "quickjs-oxide-regexp",
 ]
@@ -6488,7 +6394,7 @@ dependencies = [
 [[package]]
 name = "quickjs-oxide-regexp"
 version = "0.4.1"
-source = "git+https://github.com/moqui/quickjs-oxide?rev=ddba97fe6295ca8a08335128fa9858ae320232a2#ddba97fe6295ca8a08335128fa9858ae320232a2"
+source = "git+https://github.com/moqui/quickjs-oxide?rev=f873d7e7ce9b6fe211805fcf8ba63c56b73e0384#f873d7e7ce9b6fe211805fcf8ba63c56b73e0384"
 
 [[package]]
 name = "quinn"
@@ -6917,8 +6823,7 @@ dependencies = [
 [[package]]
 name = "rsipstack"
 version = "0.7.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "530abaeadbf89efbe62f19fa6394c3fe03fc8b88c6235f9afa9222a51c8fd3d6"
+source = "git+https://github.com/moqui/rsipstack?rev=a64b33d561b6427a14bf2c937edd146a4f21a7b9#a64b33d561b6427a14bf2c937edd146a4f21a7b9"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -7153,7 +7058,6 @@ dependencies = [
  "aws-lc-rs",
  "log",
  "once_cell",
- "ring",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",
@@ -9069,16 +8973,6 @@ dependencies = [
  "phf_codegen",
  "string_cache",
  "string_cache_codegen",
-]
-
-[[package]]
-name = "webpki"
-version = "0.22.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed63aea5ce73d0ff405984102c42de94fc55a6b75765d621c65262469b3c9b53"
-dependencies = [
- "ring",
- "untrusted 0.9.0",
 ]
 
 [[package]]

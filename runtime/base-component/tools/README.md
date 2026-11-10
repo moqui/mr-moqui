@@ -31,7 +31,10 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
 
 ## System
 
-`screen/System.xml`: its screens are the files of `screen/System/`. **Constitution** (`System/Constitution/`) reads and
+`screen/System.xml`: its screens are the files of `screen/System/`. **Conf** (`System/Conf/`) shows the merged conf
+with the file each value came from (Settings), edits one conf file with `CONF_EDIT` (Edit, `Edit.qvue`, `EditTui.xml`
+in the terminal) and reloads it (Changes) ([docs/tools/Component-Deploy.md](../../../docs/tools/Component-Deploy.md)).
+**Constitution** (`System/Constitution/`) reads and
 edits the instance's Constitution, previews its agent prompt section and manages the trusted reference origins
 ([docs/ai/Constitution.md](../../../docs/ai/Constitution.md)); its shared parts are `template/ConstitutionParts.xml`.
 

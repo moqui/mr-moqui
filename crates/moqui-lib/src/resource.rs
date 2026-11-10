@@ -295,12 +295,47 @@ pub struct FileResource {
     path: PathBuf,
 }
 
+/// What ends a directory in a file location: `/`, and on Windows `\` too. Elsewhere `\` is a character of a file name.
+pub const PATH_SEPARATORS: &[char] = if cfg!(windows) { &['/', '\\'] } else { &['/'] };
+
 impl FileResource {
     pub fn new(location: impl Into<String>) -> Self {
-        let location = location.into();
-        let path = PathBuf::from(&location);
+        let raw = location.into();
+        // A location is a `/`-separated name, as `component://` and `runtime://` are. Windows
+        // canonicalize yields `\\?\` and `\`. A child is built by joining the location and parsing
+        // it back into a path, and that prefix does not accept `/`, so the subscreen directory
+        // beside a screen would not be listed. Drop the prefix when the path fits in MAX_PATH, and
+        // write Windows separators as `/`. Off Windows the location is the name as given.
+        let path = plain_fs_path(PathBuf::from(&raw));
+        let location = if cfg!(windows) {
+            path.to_string_lossy().replace('\\', "/")
+        } else {
+            raw
+        };
         Self { location, path }
     }
+}
+
+/// `\\?\` and `\\?\UNC\` are the Windows verbatim prefixes. Without one, both separators work.
+fn plain_fs_path(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let text = path.to_string_lossy();
+        let plain = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{rest}")
+        } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+            rest.to_string()
+        } else {
+            return path;
+        };
+        // MAX_PATH is 260 UTF-16 code units. A longer path keeps the prefix so it can still be opened.
+        if plain.encode_utf16().count() >= 260 {
+            return path;
+        }
+        return PathBuf::from(plain);
+    }
+    #[cfg(not(windows))]
+    path
 }
 
 impl FileResource {
@@ -672,7 +707,7 @@ fn parent_path(path: &str) -> &str {
 }
 
 fn file_tail(path: &str) -> &str {
-    path.rsplit_once('/').map_or(path, |(_, tail)| tail)
+    path.rsplit(PATH_SEPARATORS).next().unwrap_or(path)
 }
 
 fn now_millis() -> i64 {
@@ -686,100 +721,5 @@ fn system_millis(time: SystemTime) -> i64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn path_helpers_split_at_the_last_slash() {
-        assert_eq!(split_relative("a/b/c.xml"), ("a/b", "c.xml"));
-        assert_eq!(split_relative("c.xml"), ("", "c.xml"));
-        assert_eq!(parent_path("a/b"), "a");
-        assert_eq!(parent_path("a"), "");
-        assert_eq!(file_tail("a/b"), "b");
-        assert_eq!(file_tail("b"), "b");
-        assert_eq!(file_tail("a/"), "");
-        assert_eq!(strip_extension_after_slash("a/b.c/d.tar.gz"), "a/b.c/d");
-        assert_eq!(strip_extension_after_slash("d.xml"), "d");
-        assert_eq!(strip_extension_after_slash("a.b/"), "a.b/");
-        assert_eq!(strip_extension_after_slash("noext"), "noext");
-    }
-
-    #[test]
-    fn memory_tree_finds_children_under_a_matching_directory() {
-        let root = MemoryResource::new_root("memory");
-        let screen = root.make_directory("screen").unwrap();
-        screen.make_file("sub.xml").unwrap().write_text("<screen/>").unwrap();
-        let nested = screen.make_directory("nested").unwrap();
-        nested.make_file("deep.xml").unwrap().write_text("deep").unwrap();
-        let screen_file = root.make_file("screen.xml").unwrap();
-        screen_file.write_text("<file/>").unwrap();
-
-        let found = screen_file.find_child_file("sub.xml");
-        assert!(found.exists() && found.is_file());
-        assert_eq!(found.read_text().unwrap(), "<screen/>");
-        let deep = screen_file.find_child_file("deep.xml");
-        assert_eq!(deep.read_text().unwrap(), "deep");
-        let nested_dir = screen_file.find_child_directory("nested");
-        assert!(nested_dir.is_directory());
-        let missing = screen_file.find_child_file("nope.xml");
-        assert!(!missing.exists());
-        let children = screen_file.children().unwrap();
-        assert!(children.iter().any(|child| child.file_name() == "sub.xml"));
-        assert!(screen_file.is_text());
-        assert_eq!(content_type_for_name("page.xml"), Some("application/xml"));
-    }
-
-    #[test]
-    fn file_resource_round_trips_in_a_temp_directory() {
-        let dir = std::env::temp_dir().join(format!("moqui-lib-resource-{}-{}", std::process::id(), now_millis()));
-        fs::create_dir_all(&dir).unwrap();
-        let root = FileResource::new(dir.to_string_lossy());
-        let file = root.make_file("note.txt").unwrap();
-        file.write_text("hello").unwrap();
-        assert_eq!(file.read_text().unwrap(), "hello");
-        assert!(file.size().unwrap() >= 5);
-        assert!(file.last_modified().unwrap() > 0);
-        let listed = root.children().unwrap();
-        assert_eq!(listed.len(), 1);
-        assert!(file.delete().unwrap());
-        assert!(!file.exists());
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn file_write_replaces_whole_and_delete_reports_failures() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("moqui-lib-replace-{}-{}", std::process::id(), now_millis()));
-        fs::create_dir_all(&dir).unwrap();
-        let root = FileResource::new(dir.to_string_lossy());
-        let file = root.make_file("data.txt").unwrap();
-        file.write_text("the first and longer text").unwrap();
-        fs::set_permissions(dir.join("data.txt"), fs::Permissions::from_mode(0o640)).unwrap();
-        file.write_text("short").unwrap();
-        assert_eq!(file.read_text().unwrap(), "short");
-        let mode = fs::metadata(dir.join("data.txt")).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o640);
-        // No temp file is left beside it.
-        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
-
-        // Through a symlink the target is written and the link stays.
-        std::os::unix::fs::symlink(dir.join("data.txt"), dir.join("link.txt")).unwrap();
-        FileResource::new(dir.join("link.txt").to_string_lossy())
-            .write_text("by link")
-            .unwrap();
-        assert!(fs::symlink_metadata(dir.join("link.txt"))
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert_eq!(file.read_text().unwrap(), "by link");
-
-        // A directory that is not empty is an error, not a quiet false; a missing file is false.
-        let sub = root.make_directory("sub").unwrap();
-        sub.make_file("inner.txt").unwrap();
-        assert!(sub.delete().is_err());
-        assert!(!FileResource::new(dir.join("missing.txt").to_string_lossy())
-            .delete()
-            .unwrap());
-        let _ = fs::remove_dir_all(&dir);
-    }
-}
+#[path = "resource_tests.rs"]
+mod tests;

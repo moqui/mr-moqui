@@ -35,6 +35,7 @@ mod errors;
 mod host;
 mod names;
 mod resource;
+pub(crate) mod sampler;
 pub(crate) mod spec;
 pub(crate) mod templates;
 mod tracked;

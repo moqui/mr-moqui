@@ -367,6 +367,28 @@ fn a_later_component_overrides_a_service_of_the_same_file_path() {
     );
 }
 
+/// The known names are kept for each file until the file changes: an edited file's services are listed as they now are.
+#[test]
+fn the_known_service_names_follow_an_edited_file() {
+    let ctx = override_context(
+        "names-edit",
+        [
+            "<services/>",
+            "<services/>",
+            &format!("<services>{}</services>", service_with("other", "second")),
+        ],
+    );
+    let _entered = ctx.enter();
+    let known = |name: &str| crate::service::info::known_service_names().iter().any(|known| known == name);
+    assert!(known("test.ovr.Same.other#Thing"));
+    let file = std::env::temp_dir()
+        .join(format!("moqui-svc-override-names-edit-{}", std::process::id()))
+        .join("second/service/test/ovr/Same.xml");
+    std::fs::write(&file, format!("<services>{}</services>", service_with("renamed", "second"))).unwrap();
+    assert!(known("test.ovr.Same.renamed#Thing"));
+    assert!(!known("test.ovr.Same.other#Thing"));
+}
+
 /// As Java's `Integer.valueOf` and `Long.parseLong`, a numeric attribute that is not a number fails the service.
 #[test]
 fn a_timeout_that_is_not_a_number_fails_the_service() {

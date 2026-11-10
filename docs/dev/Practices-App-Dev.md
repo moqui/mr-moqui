@@ -183,6 +183,25 @@ Each component is its own git repository. Commit in each repository that a chang
 - Sequenced ids (`entity-sequenced-id-primary`, the `create#` services), not `ec.user.randomString`; status and kind
   fields are `StatusItem` or `Enumeration` ids with relationships, not free text.
 
+### Heavy work: scripts or Rust
+
+The script engine interprets its bytecode, with no JIT, by design ([Build-Test](../Build-Test.md#native-code-and-c-libraries)).
+A typical service or screen spends its time in entity finds, service calls, the conversions between script and
+framework values, and rendering, not in its own loops, so XML Actions and scripts stay the default. Heavy work goes
+to Rust:
+
+| Work | Where |
+| --- | --- |
+| Finds, service calls, conditions; screen and template logic; per-request work over tens to hundreds of records | XML Actions, or a script module where they do not express it well |
+| Work many apps repeat: serializing, sorting, filtering, grouping and totaling lists, escaping, formatting, parsing | The framework's helpers: `JSON.stringify` and `JSON.parse`, `orderMapList`, `filterMapList`, `CollectionUtilities`, `StringUtilities`. A missing one is a framework API to add, not a loop in each app |
+| Loops over thousands of rows or more; numeric work (MRP, costing, scheduling, allocation); reading or writing formats such as EDI, CSV or binary files; work that runs hot across many requests | A native service in Rust ([Native-Components](Native-Components.md)) |
+
+- **Keep the loop on one side.** Every call between a script and the framework converts its values. A helper that
+  takes the whole list and loops in Rust is fast; one called once per element can be slower than plain JavaScript.
+- **A timing decides.** A script is a file the server loads; a Rust service is compiled into the binary, so it needs
+  `./moq build`, a new binary for the set of components, and a license and advisory check of any crates it adds. Move
+  the part a timing shows is hot, not a whole service by default.
+
 ### Script modules
 
 - One module per area, with named functions and an explicit table of operations. An unknown operation throws:

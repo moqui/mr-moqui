@@ -36,6 +36,58 @@ along with this software (see the LICENSE.md file). If not, see
             server here (restart#Server).</description>
         <out-parameters><parameter name="changes" type="List"/><parameter name="restartAllowed" type="Boolean"/></out-parameters>
     </service>
+
+    <!-- System > Conf's Settings and Edit tabs (crates/moqui-devkit/src/deploy/conf_edit.rs; docs/tools/Component-Deploy.md,
+        "Viewing and editing the conf"). A file is named by fileIndex, its place in the merge (view.files), never by a
+        path. The file services also need the sealed CONF_EDIT permission. -->
+    <service verb="get" noun="ConfView" type="rust" location="moqui_devkit::deploy::conf_edit::get_conf_view"
+            allow-remote="false">
+        <description>The merged conf: the files in merge order, and each element and attribute with the file and line
+            it came from, its class (live, apply, restart), the default conf's comments, and the values the files hold
+            that are not running yet. Secrets are masked. canEdit says whether the user has CONF_EDIT.</description>
+        <out-parameters><parameter name="view" type="Map"/><parameter name="canEdit" type="Boolean"/></out-parameters>
+    </service>
+    <service verb="get" noun="ConfFile" type="rust" location="moqui_devkit::deploy::conf_edit::get_conf_file"
+            allow-remote="false">
+        <description>One conf file's text and the hash a save checks it against, whether it can be saved (not the
+            default conf, and writable), its elements by line with their classes and the default conf's comments, its
+            problems, and the schema digest for completion. With no fileIndex, the runtime conf. Needs CONF_EDIT.</description>
+        <in-parameters><parameter name="fileIndex" type="Integer"/></in-parameters>
+        <out-parameters>
+            <parameter name="file" type="Map"/><parameter name="files" type="List"/><parameter name="text"/>
+            <parameter name="textHash"/><parameter name="lines" type="List"/><parameter name="problems" type="List"/>
+            <parameter name="savable" type="Boolean"/><parameter name="schema" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="check" noun="ConfFile" type="rust" location="moqui_devkit::deploy::conf_edit::check_conf_file"
+            allow-remote="false">
+        <description>What saving a text as a conf file would do, changing nothing: its problems (parse and root errors
+            keep it from being saved; schema and reference problems do not), its elements by line, and the preview of
+            the reload, each change with its class and outcome. Needs CONF_EDIT.</description>
+        <in-parameters>
+            <parameter name="fileIndex" type="Integer" required="true"/>
+            <parameter name="text" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="problems" type="List"/><parameter name="lines" type="List"/>
+            <parameter name="report" type="Map"/><parameter name="savable" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="save" noun="ConfFile" type="rust" location="moqui_devkit::deploy::conf_edit::save_conf_file"
+            allow-remote="false">
+        <description>Write a conf file and reload the conf: what can be live is in effect at once, the rest waits for a
+            restart. Refused for the default conf, a file the server cannot write, a file changed since it was read
+            (expectedHash), and a text that does not parse, is not a moqui-conf, or does not merge. Needs CONF_EDIT.</description>
+        <in-parameters>
+            <parameter name="fileIndex" type="Integer" required="true"/>
+            <parameter name="text" required="true" allow-html="any"/>
+            <parameter name="expectedHash" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="report" type="Map"/><parameter name="textHash"/><parameter name="restartAllowed" type="Boolean"/>
+            <parameter name="problems" type="List"/>
+        </out-parameters>
+    </service>
     <service verb="scan" noun="Components" type="rust" location="moqui_devkit::deploy::services::scan_components"
             allow-remote="false">
         <description>The components found in the component directories, as boot finds them, that are not loaded: one

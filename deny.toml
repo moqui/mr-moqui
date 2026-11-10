@@ -9,8 +9,8 @@ all-features = false
 
 [advisories]
 yanked = "deny"
-# Transitive unmaintained crates (webpki 0.22, pulled by mysql) stay until
-# mysql moves to rustls-webpki. A vulnerability still fails the check.
+# An unmaintained crate fails the check only when the workspace names it
+# directly. A vulnerability always fails it.
 unmaintained = "workspace"
 ignore = [
     # rsa 0.10.0-rc.18 via russh and huskarl. No patched release as of this
@@ -49,16 +49,6 @@ exceptions = [
     { allow = ["MPL-2.0"], crate = "jid" },
 ]
 
-# webpki 0.22 publishes license-file and no SPDX expression.
-# LICENSE is ISC. third-party/chromium/LICENSE is BSD-3-Clause.
-[[licenses.clarify]]
-crate = "webpki@0.22.4"
-expression = "ISC AND BSD-3-Clause"
-license-files = [
-    { path = "LICENSE", hash = 0x001c7e6c },
-    { path = "third-party/chromium/LICENSE", hash = 0x9b209a1a },
-]
-
 [bans]
 # The lockfile has duplicate versions across russh, huskarl, mysql, and sqlx.
 # Unifying them is separate from the license gate.
@@ -73,6 +63,10 @@ deny = [
     { crate = "libssh2-sys", reason = "SSH is russh" },
     { crate = "ssh2", reason = "SSH is russh" },
     { crate = "servo", reason = "MPL-2.0. Not linked until a separate deny report" },
+    # AWS-LC is the one crypto library, built once (docs/Build-Test.md, Native code and C libraries). A crate that
+    # turns ring on is forked (docs/Build-Test.md, Forks) or replaced.
+    { crate = "ring", use-instead = "aws-lc-rs" },
+    { crate = "aws-lc-sys", deny-multiple-versions = true, reason = "AWS-LC is built once" },
 ]
 
 # oxc_parser is named in the workspace and linked in phase 6.
@@ -82,5 +76,10 @@ unused = "warn"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# quickjs-oxide, the moqui fork (plans/archive/Script-Engine-Oxide.md §6).
-allow-git = ["https://github.com/moqui/quickjs-oxide"]
+# quickjs-oxide, the moqui fork (plans/archive/Script-Engine-Oxide.md §6); rsipstack and mysql, forked to keep ring out
+# (docs/Build-Test.md, Forks).
+allow-git = [
+    "https://github.com/moqui/quickjs-oxide",
+    "https://github.com/moqui/rsipstack",
+    "https://github.com/moqui/rust-mysql-simple",
+]

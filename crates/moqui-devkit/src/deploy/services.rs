@@ -30,6 +30,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     rust_service!(map, preview_conf_reload)?;
     rust_service!(map, reload_conf)?;
     rust_service!(map, get_pending_restart)?;
+    super::conf_edit::register(map)?;
     rust_service!(map, scan_components)?;
     rust_service!(map, preview_component_load)?;
     rust_service!(map, load_component)?;
@@ -45,7 +46,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
 
 /// The factory of the entered context when its user is in the `ADMIN` group; otherwise the error is added and the
 /// answer is `None`.
-fn admin(what: &str) -> Option<Arc<ExecutionContextFactory>> {
+pub(super) fn admin(what: &str) -> Option<Arc<ExecutionContextFactory>> {
     if !moqui_core::user::is_in_group("ADMIN").unwrap_or(false) {
         ExecutionContext::with_current(|ec| ec.message().add_error(format!("{what} needs the ADMIN group")));
         return None;
@@ -53,12 +54,12 @@ fn admin(what: &str) -> Option<Arc<ExecutionContextFactory>> {
     ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
 }
 
-fn add_error(text: String) {
+pub(super) fn add_error(text: String) {
     ExecutionContext::with_current(|ec| ec.message().add_error(text)).unwrap_or_default();
 }
 
 /// The text of the parameter `name`.
-fn parameter(parameters: &BTreeMap<String, Value>, name: &str) -> String {
+pub(super) fn parameter(parameters: &BTreeMap<String, Value>, name: &str) -> String {
     parameters
         .get(name)
         .map(moqui_lib::object::to_plain_string)
@@ -81,7 +82,7 @@ fn list_parameter(parameters: &BTreeMap<String, Value>, name: &str) -> Vec<Strin
     }
 }
 
-fn json_value<T: serde::Serialize>(value: &T) -> Value {
+pub(super) fn json_value<T: serde::Serialize>(value: &T) -> Value {
     moqui_lib::json::from_json(&serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
 }
 

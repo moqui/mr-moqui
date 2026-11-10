@@ -453,21 +453,23 @@ if (showMenu) {
 }
 {
     const $l = (() => {
-            let $text = ec.resource.expand("A");
+            let $text = $xc("A");
             if ($text == null || $text === "null") $text = "";
             
             const $made = sri.makeUrlByType("/a", "plain", {"name":"link","attrs":{"url":"/a","url-type":"plain","text":"A"},"parent":{"name":"button-menu","attrs":{"text":"More","condition":"showMenu"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}, "true");
             const $link = {t:"link",id:$uid("widgets/button-menu/link"),text:String($text),url:$made ? ($made.getUrlWithParams() || "") : ""};
             
             if ($made && $made.getDisableLink()) $link.disabled = true;
-            if ($writes($made)) $link.writes = true;
+            // asked once: whether the URL is a transition decides writes and the method
+            const $isTransition = !!$made && $made.isTransition();
+            if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             
             
             
             
             
             
-            if ($made && !$link.method && $made.isTransition() && !sri.isAnchorLink({"name":"link","attrs":{"url":"/a","url-type":"plain","text":"A"},"parent":{"name":"button-menu","attrs":{"text":"More","condition":"showMenu"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}, $made)
+            if ($isTransition && !$link.method && !sri.isAnchorLink({"name":"link","attrs":{"url":"/a","url-type":"plain","text":"A"},"parent":{"name":"button-menu","attrs":{"text":"More","condition":"showMenu"},"parent":{"name":"widgets","attrs":{},"parent":{"name":"screen","attrs":{"require-authentication":"false"}}}}}, $made)
                 && $made.getTransitionMethod() !== "get") $link.method = "post";
             
             return $link;

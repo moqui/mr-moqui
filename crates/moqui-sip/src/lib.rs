@@ -53,8 +53,9 @@ pub mod ua;
 pub use async_trait::async_trait;
 
 /// Makes aws-lc-rs the process's default rustls provider, as the rest of the host uses it. rsipstack's TLS builds its
-/// configs from the process default, and its `ring` feature puts a second provider in rustls, so without this the
-/// first TLS connection would panic. Safe to call more than once.
+/// configs from the process default. With aws-lc-rs the only provider compiled in (moqui's fork of rsipstack,
+/// docs/Build-Test.md) rustls would pick it anyway; installing it keeps a later crate that turns on a second provider
+/// from making the first TLS connection panic. Safe to call more than once.
 pub fn install_crypto() {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }

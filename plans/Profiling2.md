@@ -1,6 +1,6 @@
 # Performance: where it stands, what remains, and the ideas
 
-Status 2026-11-08. This file replaces four running logs, now in `archive/`:
+Status 2026-11-09. This file replaces four running logs, now in `archive/`:
 - [Profiling](archive/Profiling.md): Rounds 1 to 49.
 - [TX-Cache](archive/TX-Cache.md): the transaction cache, Phases 0 to 6 and Censuses 1 to 9.
 - [Script-Engine-Oxide](archive/Script-Engine-Oxide.md): quickjs-oxide in and rquickjs out, Phases 0 to 4.
@@ -37,6 +37,7 @@ R52). It rises as the apps add code and data.
 | Script engine | js_speed's 59 rows ×0.913 of R51 (×0.90 of R49 in R50); a simple `<set>` ×0.16 to ×0.20, `echo#Data` ×0.71, the locked template ×0.63, walk itemList ×0.82, cached finds ×0.88 | R52 |
 | Runtime start | 1.42 ms, 6,182 allocations (R50: 1.57 ms, 9,277; R49: 8.96 ms, 47,436) | R51 |
 | Script heap | test-apps process peaks 15 to 62 MB, all under the gate of 73 MB (with a 0.5 s idle release; 77 MB at 1 s); mr-mantle 65 → 54 MB | R52 |
+| Screen renders | Tools Entities (1,482 rows) html 92 ms, qvt 153, tui 80 (from 196, 263, 287); Cache List html 9.0 ms; Moqui Java's Cache List 7.6 ms warm | R53 |
 | Startup | first start 5.63 s (the empty-database load about 1.15 s), restart 268 ms | R9 |
 | Definitions and XML | entity model 5.3 ms, service definitions 8.7 ms, 112 µs a screen definition; MNode parse 76 µs a file | R4, R8 |
 
@@ -94,6 +95,8 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
   - The bench repository's `rounds/r53/`: `screen_bench.py` times screens over HTTP as john.doe (3 × 100, single
     threaded, `perf stat` of the server's instructions), `table.py` compares runs, `compare_bodies.py` diffs the
     outputs, `profile_table.py` sums a render profile, and `inclusive.py` gives inclusive shares from `perf script`.
+  - `MOQUI_UNIT_DUMP=<dir>` writes each screen unit's generated source when it is made, named by screen and section, and
+    each mode runtime as `runtime-<id>.js`: what a render runs, to read beside the macros.
   - The screen tarpit (`AT_XML_SCREEN`, 120 hits a minute in the demo data) answers a loop with error pages: turn it
     off in the conf for a timing (`<artifact-execution type="AT_XML_SCREEN" tarpit-enabled="false"/>`).
   - A round's changes go behind a temporary `MOQUI_OXIDE_OFF` switch, so one release build measures each
@@ -161,8 +164,8 @@ ms, the mail store with two attachments 14.8 → 8.7 ms, all at 200 µs to the d
 
 ### The script engine
 
-quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` ddba97fe
-(R51; 1cdb77e2 in R50, 7cf1f530 before, Oxide §7, Phase 4 result).
+quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` f873d7e7
+(R53, the sampling profiler; ddba97fe in R51, 1cdb77e2 in R50, 7cf1f530 before, Oxide §7, Phase 4 result).
 
 The fork's changes:
 - **F1:** compiled code shared by the process. Code images (step 1) and shared unit bodies (step 2) are done; shared
@@ -399,15 +402,18 @@ over HTTP on the release server, splits each render by phase, and takes the larg
 parameters for long runs: Entities (`pageSize=3000`, 1,482 rows, three links a row), Cache List, Cache Elements of
 `l10n.message` (330 rows), Artifact Stats (`levels=3`) and the System dashboard, each in html, qvt and tui.
 
-Medians of the third round and `perf stat` instructions a request (bench `rounds/r53`, `work/r53/{base,c2}.log`):
+Medians of the third round and `perf stat` instructions a request, base against the end of the round (bench
+`rounds/r53`, `work/r53/{base,m3}.log`). Wall times of the small pages move up to 20% between builds with their
+instructions flat (the code placement of R52); read the instruction ratios. Artifact Stats lists every screen and
+service, so it grew with the System Conf screens while this round ran:
 
 | Screen | html ms | qvt ms | tui ms | html Mi ÷ | qvt Mi ÷ | tui Mi ÷ |
 |---|---:|---:|---:|---:|---:|---:|
-| Entities, 1,482 rows | 196 → 135 | 263 → 202 | 287 → 83 | 0.74 | 0.81 | 0.27 |
-| Cache List | 12.0 → 10.4 | 13.0 → 11.5 | 11.6 → 4.9 | 0.89 | 0.90 | 0.36 |
-| Cache Elements, 330 rows | 23.6 → 20.6 | 28.6 → 25.4 | 27.9 → 9.8 | 0.89 | 0.92 | 0.32 |
-| Artifact Stats | 160 → 156 | 179 → 173 | 176 → 143 | 0.98 | 0.98 | 0.80 |
-| Dashboard | 6.7 → 6.4 | 5.3 → 5.1 | 7.4 → 4.3 | 0.95 | 0.96 | 0.45 |
+| Entities, 1,482 rows | 196 → 92 | 263 → 153 | 287 → 80 | 0.51 | 0.61 | 0.26 |
+| Cache List | 12.0 → 9.0 | 13.0 → 9.7 | 11.6 → 4.9 | 0.73 | 0.75 | 0.36 |
+| Cache Elements, 330 rows | 23.6 → 17.5 | 28.6 → 20.9 | 27.9 → 11.0 | 0.75 | 0.78 | 0.32 |
+| Artifact Stats | 160 → 94 | 179 → 110 | 176 → 81 | 0.51 | 0.55 | 0.40 |
+| Dashboard | 6.7 → 6.5 | 5.3 → 5.0 | 7.4 → 4.4 | 0.92 | 0.89 | 0.45 |
 
 Outputs are the same as before, live values (memory, hit counts, times) aside.
 
@@ -440,22 +446,73 @@ script.
 
 js_speed runs with authorization off, so its links gain less than a signed-in user's.
 
+**The macro pass** (`MOQUI_UNIT_DUMP` to read the units). A list cell's unit code is thin (push a context, call the
+runtime's `display` or `link`, pop); the time is in the runtime functions. What came out, Entities instructions a
+request against the first changes (`work/r53/m1.log`): html 1831 → 1438 M (×0.79), qvt 2617 → 2203 M (×0.84); in all,
+against the base, html ×0.58, qvt ×0.68, tui ×0.27, outputs the same.
+- **A link's attributes once for each element** (`linkOf`, as R12's `displayOf`), its disabled check once a link (html
+  asked twice), and per render the texts with no `${` (link text, badge, tooltip, confirmation; `xc`) and the theme's
+  icon for a text, kept with the unit stack so a render inside a unit keeps its own (html and qvt).
+- **qvt's row values** (`fields-initial`): a widget's attributes once (`valueWidgetOf`), the link text per render, the
+  plain value split only for the kinds that read its parts, and `fieldValues`, `jsAttr` and the cell loop on indexed
+  loops. A probe with the row values left out put them at 312 M instructions of 2366 (13%) and their writing at 107 M.
+- **html's row forms:** the token and hidden inputs every row's form has, made once a list.
+- **In this engine** a `forEach` or `map` callback is a call, so indexed loops are cheaper in per-row code. A `for...of`
+  over a plain array is walked by index already (the fork's pristine-array path); over a string it makes an iterator
+  result for each character (the tui `$clean` loop).
+
+**The second batch** (`work/r53/m2.log`):
+- **A script sampling profiler** (quickjs-oxide `perf/js-sampler`, merged as 223a2047 and pinned, Sweep
+  `r53-sampler`: V8 ×1.0000, memory ×1.005): a poll that finds the embedder's flag set counts the running stack as
+  `name:line` frames (`Runtime::start_sampling`, `take_samples`). In mr-moqui `MOQUI_JS_SAMPLE=<file>` starts a 1 ms
+  ticker and writes folded stacks under each render's path (`script/oxide/sampler.rs`); `samples_table.py` sums a
+  file. The counts here were taken before the sampler was made honest (the third batch), so they lean to functions
+  entered often. A poll comes
+  at a call or a back-edge, so the counts lean to functions entered often; read the inclusive column. Entities html:
+  `link` 45%, `w` (the writes) 17%, `rowCellOpen` 12%, `fid` 9%; qvt: `displayWidget` 26%, `rowValues` 15%, `fid` and
+  `fname` 10% each; tui: `$addPart` 26%, `$writes` 13%, `$cellOf` 13%.
+- **A form-list row written once** (html and qvt `bufferRows`): when every field's widgets write through the mode's
+  own writer (display, display-entity, link, hidden, ignored, label, image; `ScreenSupport.bufferedListRows`), a row's
+  writes gather in script and go out once at its end, also when a cell throws. About 34 host writes a row become one:
+  −3.5 to −4.5% instructions on every list.
+- **The known service names once a file** (`service/define.rs` `names_in_file`): kept by path with the file's
+  modification time and length, so a listing reads only changed files. Artifact Stats asked twice a render, 36 ms
+  each: its renders ×0.49 to ×0.54 instructions.
+- **Looked at, not changed:** `makeUrlByType`'s URL build (a per-render memo of the resolved path would save about 1%:
+  the URL cache answers it already); Artifact Stats' `openFormList` (9 ms a list) is its seven `from` expressions a
+  row, three of them plain paths a native read could take, about 2%, but a native read keeps host types where the
+  script gives text and the narrowest number, which a display shows differently; a `for...of` fast path (arrays are
+  walked by index already).
+
+**The third batch** (`work/r53/m3.log`; quickjs-oxide pinned at 223a2047, then f873d7e7):
+- **The sampler made honest** (fork `perf/sampler-natives`, merged as f873d7e7, Sweep `r53-natives`: V8 ×1.0001,
+  memory ×0.994; pinned at f873d7e7): while a sampler runs the loop polls at every call and back-edge (the counts follow time, where every
+  thousandth event weighted them by calls), and a sample asked while a native runs is the native's (`name (native)`),
+  where it went to the script that ran next. Entities html then: script 38%, host calls 42%, builtins 20%
+  (`RegExp.test` 3.6%, `String` 2.4%, `Object.keys` 2.1%); qvt 46/30/25 (`test` 6.6%, `String` 4.3%); tui 31/50/19.
+  The sampler costs nothing measurable with its poll at every event (Entities html 100.0 against 100.5 ms).
+- **A link's field id and a qvt display's ids** from names read once an element (`linkFieldId`, `displayOf`), and
+  html's plain row cell `<div>` as text: Entities html ×0.957, qvt ×0.967.
+- **No context for a cell that sets nothing** (`ScreenSupport.cellNeedsContext`): Java pushes one for each list cell
+  so its `set` elements stay in it; a part with no `set` whose widgets put nothing in the context (the
+  `bufferedListRows` set) is written without the push and pop. With **`isAnchorLink` answered in script** for
+  `link-type` anchor and anchor-button: html ×0.938, qvt ×0.961.
+- **tui links:** a text with no `${` expanded once a unit (`$xc`), `isTransition` asked once, and no post check for an
+  anchor: Entities tui ×0.969.
+
 **Fancy templates** are compiled in Rust (`script/template.rs`: the tags, `${}` and the generated function, cached by
 text) and `${}` in an expand is a template literal compiled once by its hash; nothing parses template text in script
 on a render. `sri.renderText` was 0.6 ms of Cache Elements (four templates) and 0.2 ms of the dashboard.
 
 **What is left** (Entities html after the changes, 171 ms with the profile on):
-- **The macros' own code:** units are 50% in html, 61% in qvt and 49% in tui. qvt costs 1.4 to 1.8 times html for the
-  same rows. The interpreter has no function names in a profile, so the next step is to read the generated units of
-  Entities and time the macro functions a cell calls.
+- **By the honest sampler** (Entities): host calls are the largest part, `makeUrlByType` (5.5% html, 9% tui),
+  `startFormListRow` (5%), `getFieldValueTexts`, `getUrlWithParams`; then the builtins the escapes and conversions call
+  (`RegExp.test`, `String`); tui's stringify replacer (`$plain`, 8%, one call a value).
 - **`makeUrlByType` at 4 µs a link** (9% of html, 15% of tui): the `parameter-map` evaluated as a nested script (3.7%)
   and the URL's parameters built from the screen and transition definitions (3.2%). The macro could pass the map it
   already has in script.
-- **`sri.write`:** 50k calls a render (34 a row) at 0.2 µs, 16 ms with its conversions; writes could gather in script
-  and cross once a cell or row.
+- **`sri.write`** outside buffered rows: rows with other widgets, headers, and the hidden row forms of html.
 - **The host boundary:** argument and result conversions are 11% of html.
-- **Artifact Stats is framework work:** `getAllServiceInfo` 37.6 ms, `getKnownServiceNames` 36 ms and `openFormList`
-  8.9 ms a list, 100 of its 156 ms.
 
 ### Startup and threads
 
@@ -529,8 +586,11 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
 - **Not measured since F4:** a short compile (an expression from new text ×2.24, R31) (Oxide §6 F4, Zipp §2). HTML
   escape has a row since R50 (`$esc over 100 strings`).
 - **A runtime start:** 1.4 ms and 6.2k allocations since R51, from 8.4 ms; the idle release is a half second since R52.
-- **Screens:** adjacent constant `sri.write` calls are not merged; they come from literal code in many macros, at most
-  14 pairs a screen (R50).
+- **Screens** (R53, its "What is left"): a form-list row is written once when its widgets allow (`bufferRows`); other
+  rows, headers and html's hidden row forms still write piece by piece. By the sampler, host calls are the largest
+  part of a list render (`makeUrlByType`, `startFormListRow`, `getFieldValueTexts`), then the builtins of the escapes
+  (`RegExp.test`, `String`) and tui's stringify replacer. Measure with `rounds/r53/screen_bench.py` and the
+  sampler.
 - **In the fork:** `using` and `await using` are a SyntaxError (the parser).
 - **F1 step 3:** instructions are shared through the image bodies with unit-local key tables, and R51 shares the key
   tables themselves. Still open: the process store's byte cap and when a text counts as one-off (Oxide §10).
@@ -562,10 +622,6 @@ Each is to be fixed in the fork or listed in [Parity-Diffs](Parity-Diffs.md):
 - OpenTelemetry attribute-set hashing and `IndexMap`s of values (R29).
 - Span names copied, and the transaction span's attributes set per call (R21).
 - A data-feed touch keeps two `String`s; an entity with cached finds keeps the values written (Further work 9).
-
-**Dependencies**
-- `croner` brings derive_builder, darling 0.20 and strum, about eight crates. Replacing it means matching Quartz's `L`,
-  `W` and `#`. It is left for a decision: the audit after Phase 4, in the TOTP commit 5cba8100.
 
 **Tests**
 - Check day-keyed snapshots on a rebuilt binary, and why `test-apps` once kept a binary older than its sources (R30).
@@ -658,6 +714,8 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
 | `ROPE_MIN` 128 or 256 (from 64) | neutral to worse on every row: concatenations +0.7%/+2.1%, qvt rows +0.9%/+1.1% | R50 |
 | zipp's regex engine, WTF-8 strings, its object layout, a thread that frees large payloads, a `"prefix"+int` cache | listed as not taken | Zipp §4 |
 | Java's `knownLocked` shortcut; Java's stale view reads | not kept, by design | TX D4, TX §How it works today |
+| `UrlInstance` getters and `sri.isAnchorLink` as leaves (no lend) | instructions flat on every screen (×0.998 to ×1.011) | R53 |
+| A link's `parameter-map` evaluated in the unit and passed to `makeUrlByType` | flat (×0.993 to ×1.003): the nested script costs what the inline code does | R53 |
 
 ## 7. Behaviour changes to know
 
@@ -726,6 +784,8 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
 - moqui-git `mirror_fetches_and_opted_in_writes_raise_events` and `the_tree_refs_compare_and_merge_methods_through_services`:
   timing under a full run, pass alone (R48, R49).
 - mr-boss `WorkCenters` load of a released operation: intermittent (R22, R27, R28, R49).
+- moqui-host `devaide::the_index_follows_reloads_and_extensions`: a restart re-read 9 files in a full
+  `test-framework` run, passes alone (R53).
 - mr-mantle `SupportAssignment` round robin: fails under both engines and alone ("Customer Service is not set up for
   Assignment Spec Org"), from the Customer Service P5 work of 2026-11-05. Needs a look outside performance (R48).
 - Contacts, Consent and CustomerServiceAccess (state from earlier specs), ShopCart and SupportAccess

@@ -49,6 +49,16 @@ const $scrub = (value) => {
     return $jsonControl.test(json) ? json.replace($jsonEscapes, $keepEscape) : json;
 };
 const $emit = (value) => { $sep(); $w($scrub(value)); };
+// A text with no \${ expanded once a unit, as expandExpr does: a list's link text is the same on every row.
+const $texts = new Map();
+const $xc = (text) => {
+    let found = $texts.get(text);
+    if (found === undefined) {
+        found = ec.resource.expand(text);
+        $texts.set(text, found);
+    }
+    return found;
+};
 const $openRender = (fields) => {
     // A nested render writes to the output itself, so it cannot be captured.
     if ($sink) throw new Error("a section, include or subscreen in a list cell's dialog is not supported");
@@ -275,22 +285,24 @@ $w("]");
         const kind = attr(node, "link-type") || "";
         const confirm = attr(node, "confirmation") || "";
         return `(() => {
-            let $text = ${S.linkTextExpr(node)};
+            let $text = ${!attr(node, "entity-name") && !attr(node, "text-map") && (attr(node, "text") || "").indexOf("${") < 0 ? `$xc(${jsString(attr(node, "text") || "")})` : S.linkTextExpr(node)};
             if ($text == null || $text === "null") $text = "";
             ${attr(node, "icon") ? `if (!String($text).trim()) $text = $iconLabel(${jsString(attr(node, "icon"))}, ${attr(node, "tooltip") ? `String(${S.expandExpr(attr(node, "tooltip"))} || "")` : '""'});` : ""}
             const $made = sri.makeUrlByType(${jsString(attr(node, "url") || "")}, ${jsString(attr(node, "url-type") || "transition")}, ${S.nodeLit(node, true)}, ${jsString(attr(node, "expand-transition-url") || "true")});
             const $link = {t:"link",id:$uid(${linkIdExpr(node, inList)}),text:String($text),url:$made ? ($made.getUrlWithParams() || "") : ""};
             ${attr(node, "target-window") ? `if (String(${S.expandNoL10nExpr(attr(node, "target-window"))} || "") === "_blank") $link.browser = true;` : ""}
             if ($made && $made.getDisableLink()) $link.disabled = true;
-            if ($writes($made)) $link.writes = true;
+            // asked once: whether the URL is a transition decides writes and the method
+            const $isTransition = !!$made && $made.isTransition();
+            if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             ${kind ? `$link.kind = ${jsString(kind)};` : ""}
             ${attr(node, "btn-type") ? `$link.btnType = ${jsString(attr(node, "btn-type"))};` : ""}
             ${attr(node, "icon") ? `$link.icon = ${jsString(attr(node, "icon"))};` : ""}
             ${attr(node, "badge") ? `$link.badge = String(${S.expandNoL10nExpr(attr(node, "badge"))} || "");` : ""}
             ${attr(node, "tooltip") ? `$link.tooltip = String(${S.expandExpr(attr(node, "tooltip"))} || "");` : ""}
             ${kind === "hidden-form-link" ? `$link.method = "post";` : ""}
-            if ($made && !$link.method && $made.isTransition() && !sri.isAnchorLink(${S.nodeLit(node, true)}, $made)
-                && $made.getTransitionMethod() !== "get") $link.method = "post";
+            ${kind === "anchor" || kind === "anchor-button" ? "" : `if ($isTransition && !$link.method && !sri.isAnchorLink(${S.nodeLit(node, true)}, $made)
+                && $made.getTransitionMethod() !== "get") $link.method = "post";`}
             ${confirm ? `$link.confirm = String(${titleOf(confirm)} || "");` : ""}
             return $link;
         })()`;

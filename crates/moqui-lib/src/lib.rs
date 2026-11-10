@@ -21,6 +21,7 @@ pub mod cache;
 pub mod codec;
 pub mod collection;
 pub mod context_stack;
+pub mod cron;
 pub mod datefmt;
 pub mod env;
 pub mod error;

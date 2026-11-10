@@ -673,12 +673,22 @@ fn plain_request_parameters() -> BTreeMap<String, String> {
         .collect()
 }
 
+/// Appends the script samples of a render job when it ends ([`crate::script::oxide::sampler`]).
+struct SampleFlush<'a>(&'a str);
+
+impl Drop for SampleFlush<'_> {
+    fn drop(&mut self) {
+        crate::script::oxide::sampler::flush(self.0);
+    }
+}
+
 /// Resolve and run one job. Anything written is in the thread's web slot.
 ///
 /// A job with a `moquiPreview` token on a dev instance renders from the proposed text the token names (F14,
 /// plans/design-dev-aide.md 13.3): under the read fence, so nothing it runs writes, and framed by the page that asked.
 pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<(), Error> {
     let _profile = super::profile::request(job.path);
+    let _samples = SampleFlush(job.path);
     let mut token = text_of(job.parameters.get("moquiPreview"));
     if token.is_empty() {
         token = job.request.header("x-moqui-preview").unwrap_or_default().to_string();

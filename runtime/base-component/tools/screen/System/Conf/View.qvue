@@ -1,0 +1,188 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Conf › Settings, served by View.xml in the qvue render mode over its confView transition: the merged conf as an
+    outline, the top elements closed at first. Each element shows its key, its class chip (live, apply, restart, the
+    reason as its tooltip), the files and lines it came from, its attributes (with the file an attribute came from when
+    it is not the element's, its class when it is not the element's, and the running value when the files hold another),
+    and the default conf's comments above it, two lines until opened. Search keeps the elements whose name, key or an
+    attribute matches, with their parents, open. A source opens Conf › Edit at its line for a holder of CONF_EDIT. -->
+<template><div class="q-pa-sm" data-conf-view>
+    <div class="row items-center q-col-gutter-sm q-mb-sm">
+        <div class="col-12 col-md">
+            <div class="text-caption m-muted">Merged in this order; a later file's value wins.</div>
+            <div class="row q-gutter-xs items-center" data-conf-files>
+                <template v-for="file in files" :key="file.index">
+                    <q-chip dense square clickable class="q-ma-none m-tonal" :class="roleColor(file.role)" :title="file.path"
+                            @click="openFile(file.index, 0)">{{file.label}}</q-chip>
+                    <q-icon v-if="file.index < files.length - 1" name="sym_o_chevron_right" size="xs" class="m-muted"></q-icon>
+                </template>
+            </div>
+        </div>
+        <div class="col-12 col-md-auto row q-gutter-xs items-center">
+            <q-input dense outlined clearable v-model="search" placeholder="Search settings" style="min-width:14rem" data-conf-search>
+                <template v-slot:prepend><q-icon name="sym_o_search"></q-icon></template>
+            </q-input>
+            <q-btn flat dense no-caps icon="sym_o_unfold_more" label="Open all" @click="openAll(true)"></q-btn>
+            <q-btn flat dense no-caps icon="sym_o_unfold_less" label="Close all" @click="openAll(false)"></q-btn>
+        </div>
+    </div>
+    <p v-if="error" role="alert" class="text-negative">{{error}}</p>
+    <q-banner v-if="loaded && (wouldApply || pendingRestart)" dense rounded class="m-tonal text-warning q-mb-sm" data-conf-pending>
+        The files hold {{wouldApply}} change(s) a reload would apply and {{pendingRestart}} waiting for a restart; values marked
+        "not running yet" differ from the running conf.
+        <template v-slot:action><q-btn flat dense no-caps label="Review changes" @click="go('Changes')"></q-btn></template>
+    </q-banner>
+    <p v-if="!loaded && !error" class="m-muted">Merging the conf files…</p>
+    <p v-if="loaded && search && !rows.length" class="m-muted">No setting matches "{{search}}".</p>
+    <div class="m-conf-tree" data-conf-tree>
+        <div v-for="row in rows" :key="row.id" :style="{paddingLeft: (row.depth * 1.25) + 'rem'}" :data-path="row.node.path">
+            <div v-if="row.comments.length" class="m-conf-comment" :class="{'m-conf-comment-open': openComments[row.id]}"
+                    @click="toggleComment(row.id)" :title="openComments[row.id] ? 'Show less' : 'Show all'">{{row.comments.join('\n\n')}}</div>
+            <div class="row items-center no-wrap q-gutter-x-xs m-conf-line">
+                <q-btn v-if="row.node.children && row.node.children.length" flat dense round size="sm"
+                        :icon="row.open ? 'sym_o_expand_more' : 'sym_o_chevron_right'" @click="toggle(row.id)"
+                        :aria-label="row.open ? 'Close' : 'Open'"></q-btn>
+                <span v-else class="m-conf-spacer"></span>
+                <span class="text-mono text-weight-medium">{{row.node.name}}</span>
+                <span v-if="row.node.key" class="text-mono m-muted">[{{row.node.key}}]</span>
+                <q-chip dense square class="q-ma-none m-tonal" :class="classColor(row.node.class)">{{row.node.class}}
+                    <q-tooltip v-if="row.node.reason">{{row.node.reason}}</q-tooltip></q-chip>
+                <q-chip v-for="(at, index) in row.node.sources" :key="index" dense square clickable class="q-ma-none text-mono"
+                        :outline="index > 0" @click="openFile(at.file, at.line)">{{sourceText(at)}}
+                    <q-tooltip>{{index === 0 ? 'Defined in' : 'Merged from'}} {{fileOf(at).path}}, line {{at.line}}{{canEdit ? '' : ' (opening a file needs CONF_EDIT)'}}</q-tooltip></q-chip>
+                <q-chip v-if="row.node.pending" dense square class="q-ma-none m-tonal text-warning">not running yet
+                    <q-tooltip>{{pendingText(row.node.pending)}}</q-tooltip></q-chip>
+            </div>
+            <div v-if="shownAttrs(row.node).length || row.node.text || row.node.environment != null" class="m-conf-attrs">
+                <div v-for="attr in shownAttrs(row.node)" :key="attr.name" class="row items-center q-gutter-x-xs">
+                    <span class="text-mono m-muted">{{attr.name}}</span><span class="text-mono">=</span>
+                    <span class="text-mono m-conf-value">"{{attr.value}}"</span>
+                    <span v-if="attr.expanded != null" class="text-mono m-muted">→ "{{attr.expanded}}"</span>
+                    <q-chip v-if="attr.class" dense square class="q-ma-none m-tonal" :class="classColor(attr.class)">{{attr.class}}
+                        <q-tooltip v-if="attr.reason">{{attr.reason}}</q-tooltip></q-chip>
+                    <q-chip v-if="attr.source" dense square outline clickable class="q-ma-none text-mono" @click="openFile(attr.source.file, attr.source.line)">{{sourceText(attr.source)}}
+                        <q-tooltip>Set in {{fileOf(attr.source).path}}, line {{attr.source.line}}</q-tooltip></q-chip>
+                    <q-chip v-if="attr.pending" dense square class="q-ma-none m-tonal text-warning">not running yet
+                        <q-tooltip>{{pendingText(attr.pending)}}</q-tooltip></q-chip>
+                </div>
+                <div v-if="row.node.environment != null" class="row items-center q-gutter-x-xs">
+                    <q-chip dense square class="q-ma-none m-tonal text-info">environment</q-chip>
+                    <span class="text-mono">"{{row.node.environment}}"</span>
+                    <span class="text-caption m-muted">set by the environment, runtime/.env or -D, which wins over the conf</span>
+                </div>
+                <div v-if="row.node.text" class="text-mono m-conf-text">{{row.node.text}}</div>
+            </div>
+            <div v-if="row.trailing.length" class="m-conf-comment m-conf-trailing" :class="{'m-conf-comment-open': openComments[row.id + '/']}"
+                    :style="{marginLeft: '1.25rem'}" @click="toggleComment(row.id + '/')">{{row.trailing.join('\n\n')}}</div>
+        </div>
+    </div>
+</div></template>
+<script>
+module.exports = {
+    data() {
+        return {root: null, files: [], canEdit: false, wouldApply: 0, pendingRestart: 0, loaded: false, error: '', search: '',
+            open: {}, openComments: {}};
+    },
+    computed: {
+        screenPath() { return this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
+        // the elements that match the search, and their parents, by id; null when there is no search
+        matching() {
+            const term = String(this.search || '').trim().toLowerCase();
+            if (!term || !this.root) return null;
+            const found = {};
+            const matches = (node) => [node.name, node.key || '', node.path, node.text || ''].concat(
+                (node.attrs || []).map(attr => attr.name + '=' + attr.value + ' ' + (attr.expanded || ''))).join(' ').toLowerCase().includes(term);
+            const visit = (node) => {
+                let any = matches(node);
+                for (const child of node.children || []) if (visit(child)) any = true;
+                if (any) found[node.id] = true;
+                return any;
+            };
+            visit(this.root);
+            return found;
+        },
+        // the elements shown, depth first, with their depth: a closed element's children are left out
+        rows() {
+            const out = [];
+            if (!this.root) return out;
+            const matching = this.matching;
+            const walk = (node, depth) => {
+                if (matching && !matching[node.id]) return;
+                const open = matching ? true : !!this.open[node.id];
+                out.push({id: node.id, node, depth, open, comments: node.comments || [], trailing: open ? (node.trailing || []) : []});
+                if (open) for (const child of node.children || []) walk(child, depth + 1);
+            };
+            for (const child of this.root.children || []) walk(child, 0);
+            return out;
+        }
+    },
+    methods: {
+        async load() {
+            this.error = '';
+            try {
+                const r = await moqui.request(this.screenPath + '/confView', {method: 'GET'});
+                const out = r.json || {};
+                if (out.errors) throw new Error(typeof out.errors === 'string' ? out.errors : JSON.stringify(out.errors));
+                const view = out.view || {};
+                const number = (node, id) => { node.id = id; (node.children || []).forEach((child, at) => number(child, id + '.' + at)); };
+                if (view.root) number(view.root, 'c');
+                Object.assign(this, {root: view.root || null, files: view.files || [], canEdit: !!out.canEdit,
+                    wouldApply: view.wouldApply || 0, pendingRestart: view.pendingRestart || 0, loaded: true});
+            } catch (e) { this.error = String(e.message || e); }
+        },
+        toggle(id) { this.open[id] = !this.open[id]; },
+        toggleComment(id) { this.openComments[id] = !this.openComments[id]; },
+        openAll(open) {
+            const all = {};
+            if (open && this.root) {
+                const visit = (node) => { if ((node.children || []).length) { all[node.id] = true; node.children.forEach(visit); } };
+                this.root.children.forEach(visit);
+            }
+            this.open = all;
+        },
+        // the attributes but the key, which the element's line shows (an override sets it again, to the same value)
+        shownAttrs(node) {
+            return (node.attrs || []).filter(attr => !(node.key != null && attr.value === node.key && !attr.pending));
+        },
+        fileOf(at) { return this.files[at.file] || {label: '?', path: ''}; },
+        sourceText(at) { return this.fileOf(at).label + ':' + at.line; },
+        roleColor(role) { return role === 'default' ? 'text-grey-7' : role === 'runtime' ? 'text-primary' : 'text-secondary'; },
+        classColor(cls) { return cls === 'live' ? 'text-positive' : cls === 'apply' ? 'text-primary' : 'text-warning'; },
+        pendingText(pending) {
+            const what = pending.outcome === 'pending-restart' ? 'Waits for a restart' : pending.outcome === 'no-effect' ? 'Has no effect'
+                : 'A reload applies it';
+            return what + (pending.running != null ? '; running "' + pending.running + '"' : '') + (pending.reason ? ': ' + pending.reason : '');
+        },
+        go(name, query) {
+            this.$root.setUrl(this.$root.linkBasePath + '/' + this.$root.currentPathList.slice(0, -1).concat(name).join('/') + (query || ''));
+        },
+        openFile(index, line) {
+            if (!this.canEdit) { moqui.notifyMessages(null, 'Opening a conf file needs the CONF_EDIT permission.'); return; }
+            this.go('Edit', '?fileIndex=' + index + (line ? '&line=' + line : ''));
+        }
+    },
+    mounted() { this.load(); }
+};
+</script>
+<style>
+.m-conf-tree { font-size: 13px; }
+.m-conf-line { min-height: 28px; }
+.m-conf-spacer { display: inline-block; width: 28px; }
+.m-conf-attrs { margin-left: 2.1rem; padding: 0 0 4px 0; }
+.m-conf-value { word-break: break-all; }
+.m-conf-text { white-space: pre-wrap; margin-left: 0.5rem; }
+.m-conf-comment { margin: 6px 0 2px 2.1rem; padding: 2px 8px; border-left: 3px solid rgba(127,127,127,.35); white-space: pre-wrap;
+    font-size: 12px; opacity: .8; cursor: pointer; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.m-conf-comment-open { display: block; -webkit-line-clamp: unset; }
+</style>

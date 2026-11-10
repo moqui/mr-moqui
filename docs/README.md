@@ -6,7 +6,7 @@ area. Designs, status and reviews are in [`plans/`](../plans/README.md). The sec
 
 | Guide | What it covers |
 |---|---|
-| [Build-Test.md](Build-Test.md) | Building from source, the build packages and their features, the `./moq` tasks, the Rust tests and the component specs of `moqui test` |
+| [Build-Test.md](Build-Test.md) | Building from source, native code and C libraries, Windows, the build packages and their features, the `./moq` tasks, the Rust tests and the component specs of `moqui test` |
 | [Run-Deploy.md](Run-Deploy.md) | Running and deploying: the runtime and conf, data and databases, HTTPS, one server, containers, clusters, PASS servers with a BOSS server, and dev instances with a group server |
 
 ## data: Data and Resources
@@ -73,7 +73,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 | Guide | What it covers |
 |---|---|
 | [Comms.md](tools/Comms.md) | BasicComms: the Inbox, Compose, chat and the mail settings, and how an app adds to them |
-| [Component-Deploy.md](tools/Component-Deploy.md) | Reloading the conf on a running server (System › Conf, SIGHUP, the dev watcher), what changes live and what waits for a restart, and loading or deploying a component from git without a restart (System › Components) |
+| [Component-Deploy.md](tools/Component-Deploy.md) | Viewing the merged conf with each value's file and editing a conf file (System › Conf), reloading the conf on a running server (SIGHUP, the dev watcher), what changes live and what waits for a restart, and loading or deploying a component from git without a restart (System › Components) |
 | [Database.md](tools/Database.md) | The Tools app's Data, SQL, Schema, ETL and Database sections: the data grid, SQL runs, schema plans and jobs, ETL mappings, external databases, the conf settings and the permissions |
 | [Monitoring.md](tools/Monitoring.md) | Telemetry, OTLP in and out, the Monitor and Dashboards apps, and reports |
 

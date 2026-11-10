@@ -788,6 +788,7 @@ impl OxideEngine {
             ..RuntimeOptions::default()
         };
         let runtime = quickjs_oxide::engine::api::core::Runtime::with_host(MoquiHost, options);
+        super::sampler::start(&runtime);
         // the start's keys and code are the same in every runtime: shared atoms of the process, until
         // [`Self::finish_start`] ends the start (a key made from run-time data later stays this runtime's)
         runtime.set_share_atoms(true)?;

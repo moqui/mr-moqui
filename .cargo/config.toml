@@ -20,7 +20,9 @@ lint-min = "clippy -p moqui-host --no-default-features --all-targets -- -D warni
 
 # Phase 6 unwinds across the service boundary. This is already the compiler default. The debug info stays in the
 # object files under target/debug, where debuggers and backtraces read it, instead of being linked into every test
-# binary (docs/Build-Test.md, Profiles).
+# binary (docs/Build-Test.md, Profiles), for every cargo run, through moq or not. `unpacked` is not a Windows option
+# and cargo has no per-target profile: on Windows moq sets CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=packed (a PDB beside the
+# binary), and a cargo run there that does not go through moq needs it too (docs/Build-Test.md, Windows).
 [profile.dev]
 panic = "unwind"
 split-debuginfo = "unpacked"

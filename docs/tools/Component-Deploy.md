@@ -1,13 +1,14 @@
 # Conf reload and component deploy
 
 A running server can take changes to its conf files without a restart, where what reads the setting allows it, and
-names the rest as waiting for a restart. It can also load a component placed in a component directory, without a
+names the rest as waiting for a restart. System › Conf shows the merged conf with the file each value came from, and
+edits a conf file. A running server can also load a component placed in a component directory, without a
 restart. The design and status are in [plans/archive/Component-Deploy.md](../../plans/archive/Component-Deploy.md).
 
-The code: `crates/moqui-core/src/context/conf_reload/` (the catalog, the diff and the apply),
+The code: `crates/moqui-core/src/context/conf_reload/` (the catalog, the diff, the apply and the view),
 `crates/moqui-devkit/src/deploy/` (the component load and the services), and `crates/moqui-host/src/http.rs` (SIGHUP
-and the web protection hook). Services: `org.moqui.impl.ComponentServices`. Screens: System › Conf and System ›
-Components.
+and the web protection hook). Services: `org.moqui.impl.ComponentServices`. Screens: System › Conf (its Settings,
+Edit and Changes tabs) and System › Components.
 
 ## Reloading the conf
 
@@ -18,8 +19,8 @@ setting that a later component or the runtime conf overrides therefore shows no 
 
 There are four ways to reload:
 
-- **System › Conf.** The screen shows every change between the files and the running conf, with its class and what
-  applying it would do. **Apply Changes** reloads. Under **Waiting for a Restart**, **Restart Now** restarts the
+- **System › Conf › Changes.** The tab shows every change between the files and the running conf, with its class and
+  what applying it would do. **Apply Changes** reloads. Under **Waiting for a Restart**, **Restart Now** restarts the
   server (`restart#Server`) where it can: a dev instance, a user with `DEV_AIDE` or in `ADMIN`, and a server that can
   restart itself (`./moq run`, or `moqui` as a server).
 - **SIGHUP.** `systemctl reload moqui` sends it; the unit in `systemd/` has the `ExecReload` line. The report goes to
@@ -27,8 +28,60 @@ There are four ways to reload:
   a terminal it ends the server, as before.
 - **The dev file watcher.** On a dev instance, a saved `MoquiConf.xml` or runtime conf reloads by itself. The report is
   in the reload log. A `component.xml` change still takes a restart.
+- **System › Conf › Edit.** Saving a conf file reloads ([Viewing and editing the conf](#viewing-and-editing-the-conf)).
 - **The services.** `preview#ConfReload` changes nothing. `reload#Conf` applies. `get#PendingRestart` lists what the
   last reload left waiting. Each needs the `ADMIN` group.
+
+Reloads are applied one at a time, so a save, the file watcher and SIGHUP never replace the running conf at once.
+
+## Viewing and editing the conf
+
+**Settings** (System › Conf, the first tab) shows the merged conf as a tree. The conf is merged again from the files,
+as a reload does, with each value's file and line recorded (`moqui_lib::node::with_merge_sources`, which only this
+merge turns on). The files are listed in merge order at the top. Each element shows:
+
+- its key, such as `webapp[webroot]`;
+- its class chip: live, apply or restart, with the reason as the chip's tooltip;
+- the files and lines it came from: the element's own file first, then each file merged into it;
+- its attributes. An attribute set by a later file than the element's own shows that file. An attribute whose class
+  differs from the element's shows its class. A `${}` value also shows its expanded value.
+- "not running yet" on a value the files hold that the running conf does not: one waiting for a restart, or one not
+  reloaded yet;
+- for a `default-property` that the environment, `runtime/.env` or `-D` sets, the value that wins;
+- the default conf's comments above the element: two lines, and all of them when clicked.
+
+Secrets are masked as `••••••`: a secret `default-property` value, an attribute such as `password`, `crypt-pass` or
+`api-key`, and an expanded value that uses a secret property. Search keeps the elements whose name, key or an
+attribute matches. The terminal shows the same tree. Viewing needs the `ADMIN` group (`get#ConfView`).
+
+**Edit** changes one conf file at a time. Choose the file, or open it from a source on Settings, which goes to its
+line. Reading and saving need the sealed `CONF_EDIT` permission, which `ADMIN_ADV` has. The editor is the framework's
+XML code editor:
+
+- completion comes from `moqui-conf-3.xsd`;
+- the gutter marks each element's class: **L** live (in effect when saved), **A** apply (built again when saved) and
+  **R** restart (waits for a restart). Its tooltip names the attributes whose class differs, such as a `webapp`'s
+  `http-port`;
+- the default conf's comments show above the elements of the file that merge into an element they describe: two
+  lines, and all of them when clicked;
+- the lint (`check#ConfFile`) marks parse errors, schema warnings and, on its line, each change that would wait for a
+  restart.
+
+**Review and save** shows the diff, and every change the reload would make with its class. A change another file
+holds that is not running yet is listed too, because the reload applies it with this one. Saving (`save#ConfFile`)
+writes the file whole, through a file beside it renamed over it, and logs the user on `moqui.monitor.audit`. It then
+reloads: what can be live is in effect at once, and what waits for a restart is named, with a link to Changes and
+Restart Now.
+
+A save is refused when:
+
+- the file is the default conf: a framework update replaces it, so override its settings in the runtime conf;
+- the server cannot write the file;
+- the file changed on disk since it was read: read it again;
+- the text does not parse, its root is not `moqui-conf`, or the files do not merge with it.
+
+The services name a file by its place in the merge (`fileIndex`), never by a path. In the terminal, and as a form in
+the browser, Edit is `EditTui`: a text editor with Save and reload.
 
 ## What changes live
 

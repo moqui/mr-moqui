@@ -976,7 +976,6 @@ fn missing_url() -> UrlInstance {
     }
 }
 
-///
 /// A path is resolved once a render for each screen path and text: a form-list's links are the same on every row, and
 /// each resolve reads `ScreenPathAlias`. A failure is not kept.
 fn resolve_path(state: &RenderState, from: &[String], url: &str) -> Result<super::url::ScreenPath, Error> {

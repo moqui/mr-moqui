@@ -90,6 +90,8 @@ const MAX_STATIC_TEMPLATES: usize = 64;
 /// Units kept for dynamic and user-column forms of one definition, one for each different assembled form.
 const MAX_DYNAMIC_UNITS: usize = 128;
 const DEBUG_ENV: &str = "MOQUI_ACTIONS_DEBUG";
+/// A directory each generated unit's source is written to, for reading what a render runs (plans/Profiling2.md, R53).
+const DUMP_ENV: &str = "MOQUI_UNIT_DUMP";
 
 static NEXT_UNIT: AtomicU64 = AtomicU64::new(1);
 
@@ -311,7 +313,9 @@ pub fn unit_for(request: &UnitRequest<'_>) -> Result<Option<Arc<Unit>>, Error> {
                         err.message()
                     ))
                 })?;
-                Some(Arc::new(make_unit(&loaded, body)?))
+                let unit = make_unit(&loaded, body)?;
+                dump_unit(&key, &request.def.location, &unit);
+                Some(Arc::new(unit))
             }
             // A mode with no module yet renders nothing for widgets with nothing in them.
             Err(_) if is_empty_root(&root) => None,
@@ -328,6 +332,23 @@ pub fn unit_for(request: &UnitRequest<'_>) -> Result<Option<Arc<Unit>>, Error> {
     };
     request.def.generated.put_unit(key, made.clone());
     Ok(made)
+}
+
+/// Write `unit`'s source and its mode runtime to the `MOQUI_UNIT_DUMP` directory, when one is set, named for the screen and
+/// the unit's key. A failure is logged; the render goes on.
+fn dump_unit(key: &str, location: &str, unit: &Unit) {
+    let Some(dir) = std::env::var_os(DUMP_ENV) else { return };
+    let dir = std::path::PathBuf::from(dir);
+    let name: String = format!("{location}|{key}")
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' { ch } else { '_' })
+        .collect();
+    let written = std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::write(dir.join(format!("{name}.js")), &unit.source))
+        .and_then(|()| std::fs::write(dir.join(format!("runtime-{}.js", unit.runtime_id)), unit.runtime.as_bytes()));
+    if let Err(err) = written {
+        tracing::error!("Could not write the unit of {location} to {}: {err}", dir.display());
+    }
 }
 
 /// The unit for a dynamic form as it was just assembled. The code is kept under the text of the
