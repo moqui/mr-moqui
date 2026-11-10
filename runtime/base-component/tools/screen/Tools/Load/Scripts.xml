@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The load scripts of the loaded components (find#LoadScripts, plans/LoadRunner.md §8): each with its plan's title,
+    description and scenarios; a row opens New run. A script whose file does not evaluate is listed with its error. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Load scripts" default-menu-index="1">
+
+    <transition name="newRun"><default-response url="../NewRun"/></transition>
+
+    <actions>
+        <script><![CDATA[
+            const listed = ec.resource.script('component://tools/template/LoadRuns.js').call('find#LoadScripts')
+            scriptsError = listed.error
+            scriptList = (listed.out.scripts || []).map((script) => ({scriptLocation: String(script.location || ''),
+                title: String(script.title || script.name || ''), componentName: String(script.componentName || ''),
+                description: String(script.description || ''), error: script.error ? String(script.error) : '',
+                usesText: (script.uses || []).map((use) => use == 'service' ? 'Services in this server' : use == 'http' ? 'HTTP' : String(use)).join(', '),
+                scenariosText: (script.scenarios || []).map((scenario) => String(scenario.name) + ': ' + (scenario.users == null ? '' : scenario.users) + ' users').join('; ')}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Load scripts"/>
+            <box-toolbar>
+                <link url="../Runs" text="Runs" icon="history"/>
+            </box-toolbar>
+            <box-body>
+                <label text="${scriptsError}" type="p" style="text-negative" condition="scriptsError"/>
+                <label text="A load script is a file in a component's test/load directory (Name.load.js), with a plan and its scenarios. Open one to start a run." type="p" style="m-muted"/>
+                <section name="NoScripts" condition="!scriptsError &amp;&amp; !scriptList.length"><widgets>
+                    <label text="No load scripts. Add one as test/load/Name.load.js in a component, as the tools component's test/load/ServiceCall.load.js is." type="p"/>
+                </widgets></section>
+                <form-list name="ScriptList" list="scriptList" skip-form="true" paginate="false">
+                    <field name="title"><default-field title="Script">
+                        <link url="newRun" text="${title}" link-type="anchor" parameter-map="{scriptLocation: scriptLocation}" condition="!error"/>
+                        <label text="${title}" condition="error"/>
+                    </default-field></field>
+                    <field name="componentName"><default-field title="Component"><display/></default-field></field>
+                    <field name="description"><default-field><display/></default-field></field>
+                    <field name="usesText"><default-field title="Makes"><display/></default-field></field>
+                    <field name="scenariosText"><default-field title="Scenarios"><display/></default-field></field>
+                    <field name="error"><default-field title="Problem"><display style="text-negative"/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="title"/><field-ref name="componentName"/></column>
+                        <column><field-ref name="scenariosText"/><field-ref name="error"/></column>
+                    </columns>
+                </form-list>
+            </box-body>
+        </container-box>
+    </widgets>
+</screen>

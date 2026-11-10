@@ -21,6 +21,7 @@ the test mount of the ReportMounts spec.
 | `Schema/` | Entities and one Entity (with its table's differences), Check Tables, Indexes and keys (the model against the database, planned as jobs), Download DDL |
 | `Etl.xml`, `Etl/` | ETL: Mappings, a Mapping (`Mapping.qvue`: source, target, fields with sample values, test, run, schedule), Runs and a Run (errors, error file, rerun), Value Maps; `Etl.xml` holds the JSON transitions the mapping form and the grid's Load into… use |
 | `Database/` | Overview, Activity (sessions, blockers, index health), Queries, Tables (with maintenance), Jobs and a job's page, Settings, Speed Test, and Connections (external databases: `DATABASE_EXTERNAL`, never on production) |
+| `Load.xml`, `Load/` | Load testing ([plans/LoadRunner.md](../../../plans/LoadRunner.md)): Scripts (the components' `test/load/*.load.js`), New run (`NewRun.qvue`, with `NewRun.tui.json`), Runs (with Compare and Import result), a Run (`Run.qvue`: live numbers and charts while it runs, with `Run.tui.json`) and Compare, over `org.moqui.dev.LoadServices`; `Load.xml` holds the JSON transitions the two `.qvue` files use, and `template/LoadRuns.js` the reads they share. Needs `LOAD_RUNNER` |
 | `Service/`, `StatusFlows.xml`, `ArtifactStats.xml` | Services, status flows, artifact statistics |
 
 Data › Load and Snapshots can drop the foreign keys of the loaded tables first and make them again after: the load
@@ -44,3 +45,6 @@ edits the instance's Constitution, previews its agent prompt section and manages
 ./moq test tools                      # the regression specs in test/ (budget in test/budget)
 ./moq accept tools                    # the acceptance specs in acceptance/
 ```
+
+`test/load/` holds the shipped load scripts (`ServiceCall.load.js`: one service called again and again in this
+server, so only Tools › Load runs it, not `./moq test-load`); `moqui test` does not read them.

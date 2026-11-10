@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Load testing (plans/LoadRunner.md §8): the load scripts of the loaded components (Scripts), a run's form (NewRun),
+    the runs (Runs), one run (Run) and runs side by side (Compare), over org.moqui.dev.LoadServices, which check the
+    sealed LOAD_RUNNER permission and all actions on the Tools app whatever calls them. The JSON transitions here serve
+    NewRun.qvue and Run.qvue; each answers {..., errors} and every change is a POST. A run's script and target are
+    never taken from a result: start#LoadRun resolves the script among the loaded components and checks the target. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Load testing" default-menu-index="10" menu-image="sym_o_speed" menu-image-type="icon">
+
+    <!-- a run for its page: once with the script's title, then every 2 seconds while it runs (template/LoadRuns.js runView) -->
+    <transition name="runStatus" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const view = ec.resource.script('component://tools/template/LoadRuns.js').runView(context.runId, {withTitle: String(context.withTitle) == 'true'})
+            ec.web.sendJsonResponse(Object.assign({}, view, {errors: view.found ? null : view.error}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- what New run asks for a script, or for a run again (template/LoadRuns.js planForm) -->
+    <transition name="planForm" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const plan = ec.resource.script('component://tools/template/LoadRuns.js').planForm(context.scriptLocation, context.runId)
+            ec.web.sendJsonResponse(Object.assign({}, plan, {errors: plan.found ? null : plan.error}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- start a run from NewRun.qvue: the params and scenarios as JSON in the request body only, never the URL, since a
+        param may be a password -->
+    <transition name="startRun" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const body = ec.web.secureRequestParameters
+            const started = ec.resource.script('component://tools/template/LoadRuns.js').startRun({scriptLocation: context.scriptLocation,
+                targetKind: context.targetKind, targetUrl: context.targetUrl, label: context.label, insecure: context.insecure,
+                parametersJson: body.parametersJson || '{}', scenariosJson: body.scenariosJson || '{}'})
+            ec.web.sendJsonResponse({runId: started.runId || null, errors: started.error || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- stop a run: after each user's current iteration, or with now before each user's next request -->
+    <transition name="stopRun" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const stopped = ec.resource.script('component://tools/template/LoadRuns.js').call('stop#LoadRun',
+                {runId: String(context.runId || ''), now: String(context.now) == 'true'})
+            ec.web.sendJsonResponse({errors: stopped.error})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="deleteRun" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const deleted = ec.resource.script('component://tools/template/LoadRuns.js').call('delete#LoadRun', {runId: String(context.runId || '')})
+            ec.web.sendJsonResponse({deleted: deleted.out.deleted === true, errors: deleted.error})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a finished run's result.json, to keep or to import on another server -->
+    <transition name="downloadResult" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const runId = String(context.runId || '')
+            const read = ec.resource.script('component://tools/template/LoadRuns.js').call('get#LoadRunResult', {runId})
+            if (read.error) ec.message.addError(read.error)
+            else ec.web.sendTextResponse(JSON.stringify(read.out.result || {}, null, 2), 'application/json',
+                'load-' + runId.replace(/[^A-Za-z0-9_-]/g, '_') + '.json')
+        ]]></script></actions>
+        <default-response type="none"/>
+        <error-response url="Runs"/>
+    </transition>
+
+    <subscreens default-item="Scripts"/>
+    <widgets>
+        <subscreens-panel id="load-panel" type="popup"/>
+    </widgets>
+</screen>

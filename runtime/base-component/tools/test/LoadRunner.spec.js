@@ -2,6 +2,8 @@
 // plans/LoadRunner.md §7, §10, L3): a holder of LOAD_RUNNER starts the shipped ServiceCall.load.js, whose calls run in
 // process as that user with authorization required (D10); the refusals of the permission, of a file that is not a
 // load script, of a target the run may not reach and of a second run at once; a stop; errors counted per call.
+// The screens with their own templates (plans/LoadRunner.md §8, L4) render once in each mode: Run for a finished run
+// and NewRun for ServiceCall, in qvue (the server-static .qvue, with the JSON it asks for) and in tui.
 // Run: ./moq test tools --spec LoadRunner
 const S = "org.moqui.dev.LoadServices."
 const SCRIPT = "component://tools/test/load/ServiceCall.load.js"
@@ -34,6 +36,14 @@ const REACH = "component://example/test/load/ScriptReach.load.js"
 const REFUSED_ENUM = "SPEC_LR_REFUSED"
 // the message of a run's first error sample
 const firstError = (runId) => result(runId).errorSamples[0].message
+// a Tools › Load screen in a mode: its status, its errors and whether the output reports a render error
+function render(path, parameters, mode) {
+    const str = ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml").renderMode(mode)
+        .render(path, Object.assign({ lastStandalone: "-2" }, parameters), null)
+    const output = String(str.output || "")
+    ec.message.clearErrors()
+    return { status: str.status, errors: str.errorMessages.join(" | "), output, broken: /Error rendering|Exception in render/.test(output) }
+}
 
 spec({
     setupSpec() {
@@ -193,5 +203,48 @@ feature("a second run while one runs is refused, and stop ends the run", {
         const status = ended(long.runId)
         status.status == "stopped"
         result(long.runId).run.stopReason == "stop-now"
+    },
+})
+
+feature("a finished run's page and ServiceCall's run form render in qvue and in tui", {
+    when() {
+        const started = start({ scenarios: quick(1, 2), label: "spec render" })
+        runIds.push(started.runId)
+        ended(started.runId)
+        const json = (path, parameters) => JSON.parse(String(ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml")
+            .render(path, parameters, "get").output || "{}"))
+        return {
+            runId: started.runId,
+            run: render("Load/Run", { runId: started.runId }, "qvue"),
+            status: json("Load/runStatus", { runId: started.runId, withTitle: "true" }),
+            runTui: render("Load/Run", { runId: started.runId }, "tui"),
+            form: render("Load/NewRun", { scriptLocation: SCRIPT }, "qvue"),
+            plan: json("Load/planForm", { scriptLocation: SCRIPT }),
+            formTui: render("Load/NewRun", { scriptLocation: SCRIPT }, "tui"),
+        }
+    },
+    then({ runId, run, status, runTui, form, plan, formTui }) {
+        // the qvue is the same for every run (server-static): its own parts, and the header and a name's row from the
+        // runStatus it asks
+        run.status == 200 && run.errors == "" && !run.broken
+        run.output.includes("Requests and errors per second")
+        run.output.includes("Run again")
+        status.found == true && status.status == "completed" && status.scriptTitle == "Service call" && status.label == "spec render"
+        status.names[0].name == "org.moqui.impl.BasicServices.echo#Data" && status.names[0].count == 2
+        // the terminal page has the run in it
+        runTui.status == 200 && runTui.errors == "" && !runTui.broken
+        runTui.output.includes('"text":"Service call · spec render"')
+        runTui.output.includes("Completed · " + runId)
+        runTui.output.includes('"cells":["org.moqui.impl.BasicServices.echo#Data","service","2","0"')
+        runTui.output.includes('"LoadRunAgain"')
+        // the plan's title, its params and its scenario, and the one target a service script has
+        form.status == 200 && form.errors == "" && !form.broken
+        form.output.includes("Scenarios")
+        plan.title == "Service call" && plan.targets.join(",") == "service"
+        plan.params.some((param) => param.name == "serviceName" && param.kind == "text")
+        formTui.status == 200 && formTui.errors == "" && !formTui.broken
+        formTui.output.includes('"text":"Service call"')
+        formTui.output.includes('"name":"p_serviceName"')
+        formTui.output.includes('"name":"s_calls_users"')
     },
 })

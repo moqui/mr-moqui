@@ -149,7 +149,7 @@ This is the code as it stood when the plan was written. M1 and M2 replaced the l
     - `MantleSearch` (`mantle`): parties, products, facilities and more.
 - **UI.**
   - Chart.js 4.5.1 through `m-chart`, plus Mermaid, highlight.js through `m-code`, and `m-dynamic-container`.
-  - Live data arrives through `/notws` topics (the `publish#ShellCounts` pattern) or by polling JSON transitions (the `Tools/Service/ServiceLoadRunner.xml` pattern).
+  - Live data arrives through `/notws` topics (the `publish#ShellCounts` pattern) or by polling JSON transitions (the `Tools/Load/Run.qvue` pattern).
   - Every qvt block needs a `tui` twin. The TUI already has `chart`, `timeline` and `tree` components.
   - `m-chart` takes a raw Chart.js config, and there is no XML chart element. mr-boss builds configs in `ironstone.projects.ReportServices.get#ChartConfig`, colours included. The TUI `chart` ([`chart.rs`](../crates/moqui-tui/src/components/chart.rs)) draws a table with one bar column.
 - **Reports.**
