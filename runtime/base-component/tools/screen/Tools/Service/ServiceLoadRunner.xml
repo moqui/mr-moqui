@@ -102,7 +102,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
 
     <actions>
-        <if condition="!ec.user.hasPermission('SERVICE_LOAD_RUNNER')">
+        <if condition="!ec.user.hasPermission('LOAD_RUNNER')">
             <return error="true" message="User does not have permission to use Service LoadRunner"/></if>
         <if condition="!ec.artifactExecution.isPermitted(sri.getActiveScreenDef().getLocation(), 'AT_XML_SCREEN', 'all')">
             <return error="true" message="User must be authorized for all actions on this screen"/></if>

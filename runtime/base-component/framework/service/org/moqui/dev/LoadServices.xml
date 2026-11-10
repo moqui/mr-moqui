@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <!-- Load runs in a server (plans/LoadRunner.md §7, §10), in crates/moqui-host/src/load_runner under the host's
+        test-client feature; a build without it reports the feature missing. No entity: a running load is in the memory
+        of the process that runs it, and a finished run is its runtime/tmp/test-load/<runId>/result.json. A runId is
+        <yyyyMMdd-HHmmss>-<pid>, with -<n> when two start in the same second, and names nothing but that directory. Each
+        service refuses, with a message-facade error, a user without the sealed LOAD_RUNNER permission or without
+        authorization for all actions on the Tools app (component://tools/screen/Tools.xml), whatever calls it. No Java
+        counterpart: Java's Service LoadRunner screen ran in the screen. -->
+    <service verb="find" noun="LoadScripts" type="rust" location="moqui_host::load_runner::find_load_scripts"
+            allow-remote="false" transaction="ignore">
+        <description>The load scripts of the loaded components, the test/load/*.load.js files (D2, D12), by component and
+            name. Each has location (component://name/test/load/File.load.js), componentName, name (File) and
+            fileName.</description>
+        <out-parameters>
+            <parameter name="scripts" type="List"><parameter name="script" type="Map"/></parameter>
+        </out-parameters>
+    </service>
+    <service verb="start" noun="LoadRun" type="rust" location="moqui_host::load_runner::start_load_run"
+            allow-remote="false" transaction="ignore">
+        <description>Start a load script on threads of this server and answer its runId; the run goes on after this
+            returns. Refuses a location that is not a load script of a loaded component, a target that is not allowed
+            (this server, loopback, a prefix in load_runner_targets, or any URL on a dev instance; plain http to another
+            machine only when load_runner_targets names it), more runs at once than load_runner_max_runs (1) and more
+            users than load_runner_max_users (1,000). targetKind is this (this server, by its own URL) or url (targetUrl).
+            parameters fill the plan's parameters; a secret one is held in memory for the run only. scenarios overrides
+            each scenario's settings by name. insecure accepts an invalid certificate and is shown on the run.</description>
+        <in-parameters>
+            <parameter name="scriptLocation" required="true"/>
+            <parameter name="targetKind" default-value="this"/>
+            <parameter name="targetUrl"/>
+            <parameter name="parameters" type="Map"/>
+            <parameter name="scenarios" type="Map"/>
+            <parameter name="label"/>
+            <parameter name="insecure" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters><parameter name="runId"/></out-parameters>
+    </service>
+    <service verb="stop" noun="LoadRun" type="rust" location="moqui_host::load_runner::stop_load_run"
+            allow-remote="false" transaction="ignore">
+        <description>Stop a running load: after each user's current iteration, or with now before each user's next
+            request. Its result is written as stopped. A run that is not running on this server is refused with that
+            reason (another node, or already finished).</description>
+        <in-parameters>
+            <parameter name="runId" required="true"/>
+            <parameter name="now" type="Boolean" default-value="false"/>
+        </in-parameters>
+    </service>
+    <service verb="get" noun="LoadRunStatus" type="rust" location="moqui_host::load_runner::get_load_run_status"
+            allow-remote="false" transaction="ignore">
+        <description>For the run page's poll: a running load's snapshot from memory, or a finished run's summary. running
+            says which; status is running, completed, stopped or failed. A runId that is neither is refused as not on
+            this server.</description>
+        <in-parameters><parameter name="runId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="runId"/>
+            <parameter name="running" type="Boolean"/>
+            <parameter name="status"/>
+            <parameter name="snapshot" type="Map"/>
+            <parameter name="summary" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="LoadRuns" type="rust" location="moqui_host::load_runner::find_load_runs"
+            allow-remote="false" transaction="ignore">
+        <description>The running loads and then the finished runs, newest first. Each is a summary: runId, script,
+            label, user, status, target, start, end, users, iterations, requests, errors, errorRate, rps, p95 and passed.
+            scriptLocation and status narrow the list. A result file that does not read is logged and left out.</description>
+        <in-parameters>
+            <parameter name="scriptLocation"/>
+            <parameter name="status"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="runs" type="List"><parameter name="run" type="Map"/></parameter>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="LoadRunResult" type="rust" location="moqui_host::load_runner::get_load_run_result"
+            allow-remote="false" transaction="ignore">
+        <description>A finished run's whole result (plans/LoadRunner.md §5), as its result.json has it.</description>
+        <in-parameters><parameter name="runId" required="true"/></in-parameters>
+        <out-parameters><parameter name="result" type="Map"/></out-parameters>
+    </service>
+    <service verb="delete" noun="LoadRun" type="rust" location="moqui_host::load_runner::delete_load_run"
+            allow-remote="false" transaction="ignore">
+        <description>Delete a finished run's directory. A running load is refused; stop it first.</description>
+        <in-parameters><parameter name="runId" required="true"/></in-parameters>
+        <out-parameters><parameter name="deleted" type="Boolean"/></out-parameters>
+    </service>
+    <service verb="import" noun="LoadRunResult" type="rust" location="moqui_host::load_runner::import_load_run_result"
+            allow-remote="false" transaction="ignore">
+        <description>Keep a result from another machine (moqui test-load's result file) as a run of its own, in a new
+            directory, with label when given. A text that is not a load result is refused.</description>
+        <in-parameters>
+            <parameter name="result" type="Object" required="true" allow-html="any"><description>The result, as a Map or
+                as the JSON text of one.</description></parameter>
+            <parameter name="label"/>
+        </in-parameters>
+        <out-parameters><parameter name="runId"/></out-parameters>
+    </service>
+    <service verb="compare" noun="LoadRuns" type="rust" location="moqui_host::load_runner::compare_load_runs"
+            allow-remote="false" transaction="ignore">
+        <description>Two to four finished runs side by side: each run's summary, and per request name each run's count,
+            errors and latency percentiles with the percent change from the first run.</description>
+        <in-parameters>
+            <parameter name="runIds" type="List" required="true"><parameter name="runId"/></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="runs" type="List"><parameter name="run" type="Map"/></parameter>
+            <parameter name="names" type="List"><parameter name="name" type="Map"/></parameter>
+        </out-parameters>
+    </service>
+</services>

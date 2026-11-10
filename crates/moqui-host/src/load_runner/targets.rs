@@ -1,0 +1,177 @@
+/*
+ * This software is in the public domain under CC0 1.0 Universal plus a
+ * Grant of Patent License.
+ *
+ * To the extent possible under law, the author(s) have dedicated all
+ * copyright and related and neighboring rights to this software to the
+ * public domain worldwide. This software is distributed without any
+ * warranty.
+ *
+ * You should have received a copy of the CC0 Public Domain Dedication
+ * along with this software (see the LICENSE.md file). If not, see
+ * <http://creativecommons.org/publicdomain/zero/1.0/>.
+ */
+
+//! What a load run from Tools may reach and how big it may be (plans/LoadRunner.md §10 Targets and Limits, D6). A
+//! run reaches this server, loopback and the URL prefixes of `load_runner_targets`; a dev instance any URL. Without
+//! the rule a holder could aim the server at another site, a request forgery and a denial of service tool. Plain
+//! http to another machine is refused unless the list names it, since a login crosses in the clear: a prefix carries
+//! its scheme, so an https entry does not allow http.
+
+use std::net::IpAddr;
+
+use moqui_core::context::ExecutionContextFactory;
+use moqui_core::web::origin::{configured_origins, SiteOrigin};
+
+/// The loads that may run at once on an instance when `load_runner_max_runs` is not set (D6).
+pub(crate) const DEFAULT_MAX_RUNS: usize = 1;
+/// The most users a run may have when `load_runner_max_users` is not set (D6).
+pub(crate) const DEFAULT_MAX_USERS: usize = 1000;
+
+/// The targets a run may reach.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TargetPolicy {
+    /// This server's own origins (the conf webroot's http and https URLs).
+    pub(crate) own: Vec<SiteOrigin>,
+    /// The `load_runner_targets` prefixes.
+    pub(crate) prefixes: Vec<Prefix>,
+    /// A dev instance reaches any URL.
+    pub(crate) any: bool,
+}
+
+/// A `load_runner_targets` entry: an origin, and the path a target must be at or under (empty for any path).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Prefix {
+    origin: SiteOrigin,
+    path: String,
+}
+
+impl TargetPolicy {
+    /// The policy of this instance: its own origins, `load_runner_targets`, and whether it is a dev instance.
+    pub(crate) fn of_factory(factory: &ExecutionContextFactory) -> Self {
+        Self {
+            own: configured_origins(factory),
+            prefixes: parse_prefixes(&moqui_lib::env::get_prop_or_env("load_runner_targets")),
+            any: moqui_core::devtools::is_dev_instance(),
+        }
+    }
+
+    /// Whether a run may reach `url`; the error says why not.
+    pub(crate) fn allow(&self, url: &str) -> Result<(), String> {
+        let url = url.trim();
+        let Some((origin, path)) = parse_url(url) else {
+            return Err(format!("{url} is not an http or https URL"));
+        };
+        if self.any || is_loopback(&origin.host) || self.own.contains(&origin) {
+            return Ok(());
+        }
+        if self.prefixes.iter().any(|prefix| prefix.matches(&origin, &path)) {
+            return Ok(());
+        }
+        if origin.scheme == "http" {
+            return Err(format!(
+                "{url} is plain http to another machine, which a run reaches only when load_runner_targets names it: \
+                 a login would cross in the clear"
+            ));
+        }
+        Err(format!(
+            "{url} is not this server, loopback, or a prefix in load_runner_targets"
+        ))
+    }
+}
+
+impl Prefix {
+    fn matches(&self, origin: &SiteOrigin, path: &str) -> bool {
+        if self.origin != *origin {
+            return false;
+        }
+        let prefix = self.path.trim_end_matches('/');
+        // at the prefix or under it on a segment boundary: /app does not allow /application
+        match path.strip_prefix(prefix) {
+            Some(rest) => rest.is_empty() || rest.starts_with(['/', '?', '#']) || prefix.is_empty(),
+            None => false,
+        }
+    }
+}
+
+/// The comma- or space-separated prefixes of `load_runner_targets`; an entry that is not an http or https URL is
+/// logged and left out.
+pub(crate) fn parse_prefixes(text: &str) -> Vec<Prefix> {
+    let mut prefixes = Vec::new();
+    let entries = text
+        .split([',', ' ', '\n', '\t'])
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty());
+    for entry in entries {
+        match parse_url(entry) {
+            Some((origin, path)) => prefixes.push(Prefix { origin, path }),
+            None => tracing::error!(entry, "load_runner_targets: not an http or https URL; left out"),
+        }
+    }
+    prefixes
+}
+
+/// The origin and the path of an http or https URL. None for another scheme, a malformed authority, or userinfo in
+/// the authority (`http://127.0.0.1@example.com` reaches example.com, which a reader may not see).
+fn parse_url(url: &str) -> Option<(SiteOrigin, String)> {
+    let (_, rest) = url.split_once("://")?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, path) = rest.split_at(end);
+    if authority.contains(['@', '\\']) {
+        return None;
+    }
+    let origin = SiteOrigin::parse(url)?;
+    Some((origin, path.to_string()))
+}
+
+/// localhost, 127.0.0.0/8 or ::1.
+fn is_loopback(host: &str) -> bool {
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    let bare = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    bare.parse::<IpAddr>().is_ok_and(|address| address.is_loopback())
+}
+
+/// The loads that may run at once on this instance (`load_runner_max_runs`, D6).
+#[expect(
+    dead_code,
+    reason = "the run registry checks it when it starts a load, which comes with the load engine"
+)]
+pub(crate) fn max_runs() -> usize {
+    limit_of(
+        &moqui_lib::env::get_prop_or_env("load_runner_max_runs"),
+        DEFAULT_MAX_RUNS,
+    )
+}
+
+/// The most users a run may have (`load_runner_max_users`, D6).
+pub(crate) fn max_users() -> usize {
+    limit_of(
+        &moqui_lib::env::get_prop_or_env("load_runner_max_users"),
+        DEFAULT_MAX_USERS,
+    )
+}
+
+/// A limit property's value: a whole number of at least 1, else `default` (an unparseable value is logged).
+pub(crate) fn limit_of(text: &str, default: usize) -> usize {
+    let text = text.trim();
+    if text.is_empty() {
+        return default;
+    }
+    match text.parse::<usize>() {
+        Ok(limit) if limit >= 1 => limit,
+        _ => {
+            tracing::error!(
+                value = text,
+                default,
+                "a load runner limit is not a whole number of at least 1"
+            );
+            default
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "targets_tests.rs"]
+mod tests;
