@@ -2124,7 +2124,7 @@ fn respond(
         if response.save_parameters {
             save_parameters();
         }
-        if screen_has_error() {
+        if !json && screen_has_error() {
             save_error_parameters();
         }
         return Ok(());
@@ -2132,12 +2132,13 @@ fn respond(
     if response.save_parameters {
         save_parameters();
     }
-    // A JSON answer carries the messages itself, so they are not kept for the next page as well.
+    // JSON clients keep their failed form locally. Queuing its fields would overwrite fresh values
+    // (including concurrency tokens) on the next page; redirects still need both messages and inputs.
     if !json {
         save_messages();
-    }
-    if screen_has_error() {
-        save_error_parameters();
+        if screen_has_error() {
+            save_error_parameters();
+        }
     }
     let mut url = script::expand(&response.url)?;
     let mut url_type = response.url_type.clone();

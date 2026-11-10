@@ -195,6 +195,12 @@ Further patterns established during the review:
   parameters explicitly when returning to a whole page or switching records; omitted values can inherit stale state.
 - A screen's asynchronous work belongs to that screen instance. Capture its endpoint, ignore stale completions and
   remove registered dialogs when it unmounts so navigation cannot send requests against the destination screen.
+- Route ownership can change before unmount runs. Stop new work when the mounted endpoint no longer matches,
+  and bind a confirmation to the exact selection and operation that opened it.
+- After a refused AJAX edit, verify that the draft remains editable and one real reload obtains current revision
+  fields. JSON responses must not queue old submitted fields for a later page; ordinary redirects still recover input.
+- A cold cross-app navigation must return to its origin with one Back. Mounting the destination shell preserves
+  the browser's existing entry; applying a preferred initial route replaces that entry.
 - Drag interactions have a keyboard path using the same update operation, with focus restored after movement.
   Demonstrations clearly distinguish temporary visual changes from stored data.
 

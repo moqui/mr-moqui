@@ -807,6 +807,50 @@ fn the_error_response_is_used_when_the_actions_leave_errors() {
     assert_eq!(location_of(&fine), Some("/Sub"));
 }
 
+/// JSON clients retain their failed form locally; a later reload must get current concurrency fields.
+/// Ordinary redirects still carry the user's inputs to the page that follows the refusal.
+#[test]
+fn failed_json_submits_do_not_save_stale_fields_for_the_next_page() {
+    let world = World::open("");
+    for path in ["/failTx", "/failNone"] {
+        let mut submit = request("POST", path);
+        submit.set_header("content-type", "application/x-www-form-urlencoded");
+        submit.body = b"moquiFormName=EditRecord&expectedVersion=old-version".to_vec();
+        submit.set_header("accept", "application/json");
+        let response = serve_at(&world.factory, submit, &fixture_root());
+        if path == "/failTx" {
+            assert!(response.body_text().contains("bad input"), "{}", response.body_text());
+        }
+        let cookie = super::header_value(&response, "Set-Cookie").expect("session cookie");
+        let value = cookie.split(';').next().unwrap().split_once('=').unwrap().1;
+        let context = world.factory.new_context();
+        let _entered = context.enter();
+        let _session = crate::user::bind(&world.factory, Some(value), None, false).unwrap();
+        assert!(
+            crate::user::session::take_saved_for_page().error_parameters.is_empty(),
+            "{path}: a JSON refusal must not override the next page's current fields"
+        );
+    }
+}
+
+#[test]
+fn failed_redirect_submits_keep_form_inputs_for_the_following_page() {
+    let world = World::open("");
+    let mut submit = request("POST", "/failTx");
+    submit.set_header("content-type", "application/x-www-form-urlencoded");
+    submit.body = b"moquiFormName=EditRecord&description=retained+draft&password=private".to_vec();
+    let response = serve_at(&world.factory, submit, &fixture_root());
+    assert_eq!(response.status, 302);
+    let cookie = super::header_value(&response, "Set-Cookie").expect("session cookie");
+    let value = cookie.split(';').next().unwrap().split_once('=').unwrap().1;
+    let context = world.factory.new_context();
+    let _entered = context.enter();
+    let _session = crate::user::bind(&world.factory, Some(value), None, false).unwrap();
+    let errors = crate::user::session::take_saved_for_page().error_parameters;
+    assert_eq!(errors.get("description").map(String::as_str), Some("retained draft"));
+    assert!(!errors.contains_key("password"));
+}
+
 /// An error already on the list, or a validation error, skips the service-call and still runs `<actions>`.
 /// An error the service itself adds does not skip the actions. With neither, the service runs and then the actions.
 #[test]
