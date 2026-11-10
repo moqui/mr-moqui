@@ -73,14 +73,17 @@
     const typeOf = (value) => typeof value === "number" ? "number" : typeof value === "boolean" ? "boolean" : "text";
     // A value for an error message; a secret's is left out.
     const shownValue = (def, value) => def.secret ? "the value given" : JSON.stringify(value);
-    const resolveParams = (defs, raw) => {
+    // `env` (the command's MOQUI_TEST_<NAME> variables) fills a declared param the run does not give, and is not
+    // refused when the script has no such param.
+    const resolveParams = (defs, raw, env) => {
         const out = {};
         const declared = Object.entries(defs || {});
         for (const [name, given] of declared) {
             const def = paramDef(given);
             let value = raw[name];
+            if ((value == null || value === "") && env) value = env[name];
             if (value == null || value === "") {
-                if (def.required && def.default == null) throw new Error(`the load script's parameter ${name} is required`);
+                if (def.required && def.default == null && !loadState.lenient) throw new Error(`the load script's parameter ${name} is required`);
                 value = def.default ?? null;
             } else if (typeOf(def.default) === "number") {
                 const number = Number(value);
@@ -113,7 +116,7 @@
         if (!loadState.topLevel) throw new Error("plan() is called at the top level of a load script");
         if (loadState.plan) throw new Error("a load script has one plan()");
         loadState.plan = options(opts);
-        define("params", Object.freeze(resolveParams(loadState.plan.params, loadState.raw)));
+        define("params", Object.freeze(resolveParams(loadState.plan.params, loadState.raw, loadState.env)));
     });
     define("scenario", (name, opts) => {
         if (!loadState.topLevel) throw new Error("scenario() is called at the top level of a load script");
@@ -126,9 +129,12 @@
     });
     // What the host evaluates around a load script (the host's load/script.rs).
     define("__moquiLoad", Object.freeze({
-        begin(raw) {
+        // lenient: a script list's read, where a required param with no value is null
+        begin(raw, env, opts) {
             loadState.topLevel = true;
+            loadState.lenient = !!(opts && opts.lenient);
             loadState.raw = raw && typeof raw === "object" ? raw : {};
+            loadState.env = env && typeof env === "object" ? env : {};
             loadState.plan = null;
             loadState.scenarios = {};
             loadState.order = [];

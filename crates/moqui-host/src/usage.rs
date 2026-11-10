@@ -45,6 +45,7 @@ Check
 Test
   test             [component ...] [options]                Run component JavaScript specs
   test-client      [component | path ...] [options]         Run component client specs against a running server
+  test-load        [component | path] [--script Name]       Run a component's load script against a running server
 
 Help
   help             [command]                                This list, or the detail for one command
@@ -502,6 +503,53 @@ Options:
                                   warn; log.info in a spec shows at info.
 ";
 
+const TEST_LOAD: &str = "\
+moqui test-load [component | path] [--script Name] [options]
+moqui test-load --compare <result.json> <result.json> [...]
+    Run a load script of a component (test/load/<Name>.load.js) against a running server: its
+    scenarios' virtual users over HTTP from this process, as moqui test-client runs client specs.
+
+A path is a component directory, its test/load directory, or one .load.js file. With no --script it
+lists the component's scripts with their scenarios and params. This opens no database, binds no
+port and reads no conf. A script whose plan uses service is refused: its calls run in a server's
+process (Tools > Load). While it runs it prints a line every 5 seconds (35s  10 users  241.2/s  0
+errors  p95 38ms), then the table by name and the result's path. Ctrl-C stops the users before their
+next request, still writes the result, and exits 130; a second Ctrl-C ends at once, with no result.
+Otherwise it exits 1 when a threshold of the script is broken or no request succeeded. Percentiles are
+a histogram's, within about 1.6%.
+
+  moqui test-load mr-marble
+  moqui test-load mr-marble --script OrderToCash --server http://localhost:8080 --param pdf=false --label \"MR\"
+  moqui test-load mr-marble --script OrderToCash --users 50 --duration 300 --ramp-up 30 --out /tmp/otc
+  moqui test-load runtime/component/mr-marble/test/load/OrderToCash.load.js --server https://test.example.com
+  moqui test-load --compare /tmp/otc/java/result.json /tmp/otc/mr/result.json
+
+Options:
+  --script Name                   The script test/load/Name.load.js of the component.
+  --server URL                    The server, http://localhost:8080 by default, or MOQUI_TEST_SERVER.
+                                  Plain http is only for this machine unless --allow-http.
+  --param name=value              Repeatable; a param of the script's plan. MOQUI_TEST_<NAME>
+                                  variables fill the params --param leaves out (MOQUI_TEST_PASSWORD
+                                  is password), for a password that should not show in ps.
+  --users N, --ramp-up seconds, --duration seconds, --iterations N
+                                  Every scenario's settings over the script's defaults. --duration
+                                  alone replaces the script's iterations, and --iterations alone its
+                                  duration; with both, a user stops at whichever comes first.
+  --scenario name                 Run only this scenario; the settings above are its.
+  --label text                    Kept in the result's run block, and shown in Tools > Load.
+  --timeout seconds               What a request waits for its answer, unless the script's request
+                                  sets its own, and a WebSocket receive (60).
+  --out dir                       Write <dir>/result.json. The default is
+                                  runtime/tmp/test-load/<yyyyMMdd-HHmmss>-<pid>/result.json (UTC), where
+                                  Tools > Load > Runs lists it, or test-load-out/<run> without a runtime.
+  --compare a.json b.json ...     Print two or more result files side by side, with each value's change
+                                  from the first in percent; the files run up to the next option. No
+                                  target or run with it.
+  --insecure                      Accept an invalid server certificate (a WARN says so).
+  --allow-http                    Allow plain http to another machine.
+  --log-level level               Console level: trace, debug, info, warn, or error (warn).
+";
+
 const HELP: &str = "\
 moqui help [command]
     This list, or the detail for one command.
@@ -547,6 +595,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "lsp" => Some(LSP),
         "test" => Some(TEST),
         "test-client" => Some(TEST_CLIENT),
+        "test-load" => Some(TEST_LOAD),
         "help" => Some(HELP),
         "version" => Some(VERSION),
         _ => None,
@@ -610,6 +659,7 @@ fn is_known_command(name: &str) -> bool {
             | "lsp"
             | "test"
             | "test-client"
+            | "test-load"
             | "serve"
             | "tui"
     )
@@ -792,6 +842,7 @@ pub fn command_usage(command: &str) -> Error {
         "serve" => "moqui serve [options]",
         "test" => "moqui test [component ...] [options]",
         "test-client" => "moqui test-client [component | path ...] [options]",
+        "test-load" => "moqui test-load [component | path] [--script Name] [options]",
         "tui" => {
             "moqui tui [--path PATH] [--user NAME] [--serve] [--ascii] [--no-color] [--snapshot PATH [--size WxH]] [--agent] [--server URL [--forget]]"
         }

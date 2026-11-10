@@ -133,6 +133,7 @@ load|Run|[types] [name=value] [opts]|Load data, all types by default, with the d
 load-production|Run|[types] [name=value] [opts]|Load data with the production conf
 test|Run|[component...] [test opts]|Run component tests (moqui test) with the dev conf
 test-client|Run|[component...] [-p N] [opts]|Run component client tests (moqui test-client) against a running server
+test-load|Run|[component] [--script Name] [-p N] [opts]|Run a component load script (moqui test-load) against a running server
 test-apps|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the application tests: moqui test and test-client --serve over runtime/component
 test-framework|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the framework tests: cargo, moq, and the specs of base-component and dev-component
 test-all|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the whole regression suite: test-framework, then test-apps
@@ -705,6 +706,26 @@ and any other option is passed on:
 Options: --lite, --debug, --release, --enterprise, --nobuild, and
   -p, --port N  The server at http://localhost:N (--server); the default is http://localhost:8080
   --            End of moq options; everything after it goes to moqui test-client
+EOF
+}
+
+help_test_load() {
+    cat <<EOF
+Runs moqui test-load, a load script of a component (test/load/<Name>.load.js), against a server that
+is already running (./moq run in another terminal, on conf/MoquiLoadTestConf.xml for the demo data's
+tarpits). With no --script it lists the component's scripts. The result goes to
+runtime/tmp/test-load/<run>/result.json, where Tools > Load > Runs lists it; Ctrl-C stops the users,
+writes the result and exits 130. --out, the --compare files and a path target are read from the
+directory moq runs in. Arguments go to moqui
+test-load; the moq options below are read first and any other option is passed on:
+  ./moq test-load mr-marble                                  list the scripts and their params
+  ./moq test-load mr-marble --script OrderToCash -p 8081     against http://localhost:8081
+  ./moq test-load mr-marble --script OrderToCash --param pdf=false --users 20 --label "MR"
+  ./moq test-load --compare a/result.json b/result.json
+
+Options: --lite, --debug, --release, --enterprise, --nobuild, and
+  -p, --port N  The server at http://localhost:N (--server); the default is http://localhost:8080
+  --            End of moq options; everything after it goes to moqui test-load
 EOF
 }
 
@@ -2235,6 +2256,57 @@ task_test_client() {
     done
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     exec_moqui "$bin" test-client "${server[@]}" "${OPT_REST[@]}"
+}
+
+# As test-client: the client reads no conf, so -p N is the server at http://localhost:N.
+task_test_load() {
+    parse_run_opts test "$@"
+    local bin prop
+    local -a server
+    server=()
+    for prop in "${OPT_PROPS[@]}"; do
+        case $prop in
+            webapp_http_port=*) server=(--server "http://localhost:${prop#webapp_http_port=}") ;;
+        esac
+    done
+    # moq runs from the repo root: --out, the --compare files and a path target are the caller's, made absolute
+    local -a args
+    local arg comparing=''
+    args=()
+    while [ ${#OPT_REST[@]} -gt 0 ]; do
+        arg=${OPT_REST[0]}
+        OPT_REST=("${OPT_REST[@]:1}")
+        case $arg in
+            --out)
+                args+=("$arg")
+                if [ ${#OPT_REST[@]} -gt 0 ]; then
+                    args+=("$(abs_path "${OPT_REST[0]}")")
+                    OPT_REST=("${OPT_REST[@]:1}")
+                fi
+                comparing=''
+                ;;
+            --compare) args+=("$arg"); comparing=1 ;;
+            --script | --server | --param | --users | --ramp-up | --duration | --iterations | --scenario | --label | \
+                --log-level | --timeout)
+                args+=("$arg")
+                if [ ${#OPT_REST[@]} -gt 0 ]; then
+                    args+=("${OPT_REST[0]}")
+                    OPT_REST=("${OPT_REST[@]:1}")
+                fi
+                comparing=''
+                ;;
+            -*) args+=("$arg"); comparing='' ;;
+            *)
+                if [ -n "$comparing" ] || [ -e "$MOQ_CWD/$arg" ] || is_abs_path "$arg"; then
+                    args+=("$(abs_path "$arg")")
+                else
+                    args+=("$arg")
+                fi
+                ;;
+        esac
+    done
+    bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
+    exec_moqui "$bin" test-load "${server[@]}" "${args[@]}"
 }
 
 # moqui autodoc with the caller's directory as the base: --out defaults to ./autodoc there, and the path options are
@@ -4925,6 +4997,25 @@ complete_task() {
                 -*)
                     filter_prefix "$cur" --server --serve --spec --feature --acceptance --param --junit --out --wait \
                         --timeout --chromium --headed --video --offline --insecure --allow-http --fail-on-skip --log-level
+                    ;;
+            esac
+            ;;
+        test-load)
+            case $prev in
+                --server | --script | --param | --users | --ramp-up | --duration | --iterations | --scenario | --label | \
+                    --log-level) return ;;
+                --out | --compare) echo @files; return ;;
+            esac
+            local out
+            out=$(complete_run_like "$cur" "$prev" @binary)
+            case $out in
+                @binary) filter_prefix "$cur" $(test_components) ;;
+                ?*) printf '%s\n' "$out" ;;
+            esac
+            case $cur in
+                -*)
+                    filter_prefix "$cur" --script --server --param --users --ramp-up --duration --iterations --scenario \
+                        --label --out --compare --insecure --allow-http --log-level
                     ;;
             esac
             ;;

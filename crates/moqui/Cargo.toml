@@ -49,3 +49,7 @@ tikv-jemallocator = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# Reading the result files of moqui test-load in the CLI tests (tests/cli/test_load.rs); already in the graph.
+serde_json = { workspace = true }

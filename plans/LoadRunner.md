@@ -415,9 +415,56 @@ at once behaves (Mantle's `AssetReservationMultipleThreads` spec covers the serv
 migration status lists these screens as migrated and none as validated in a browser, so the first runs are also a
 test of them; a defect found goes to mr-marble, not into the script.
 
-**The runs to record here** (L2): the same script and settings against a Java MarbleERP and against mr-marble, each on
-its load test conf with the demo data, on the same machine, with the generator as the command in its own process:
-the two result files, the Compare table, and what differed in the setup.
+**What L2 found.** Building and running the script corrected this section in a few places:
+
+- Every transition is followed and the page it lands on is checked for an error alert. A transition that fails
+  answers the same redirect as one that succeeds, and the error shows only on the next page. The alert markup differs:
+  Java writes `alert alert-danger`, MR `class="alert" data-type="danger"`.
+- `add shipping charge` also sends `orderId` and `orderPartSeqId` 01, which `create#OrderItem` requires.
+  `add product item` sends a unit amount of 18.99, as the JMeter script did.
+- `record payment` sends `effectiveDate` (epoch milliseconds, which both servers read without a time zone). Without
+  it Mantle's `PaymentCheckEffectiveDate` refuses the payment on both servers.
+- `finalize invoice` never runs with the demo data. Packing leaves the invoice Finalized on both servers, through
+  `create#SalesShipmentInvoices`. MR leaves it In Process only for a shipper with `salesInvoiceFinalizedAtShip`.
+- The login is the script's own `POST /Login/login`, named `login`. The harness's `http.login` posts `/rest/login`.
+- The link hrefs are as read from the source on mr-marble and on Java. `/fop/apps/marble/Order/OrderDetail` answers a
+  PDF on MR (Chromium). Ten sessions of one account at once meet no limit on either server.
+- Java refuses every transition over plain http when `webapp_https_enabled` is true, so a Java run over http needs
+  it off. That is the default.
+
+**The runs** (2026-11-10). One machine, an AMD Ryzen 9 9900X with 12 cores and 24 threads. The generator was
+`moqui test-load` in its own process. Defaults: 10 users, ramp 1 s, 5 iterations, a Gaussian pause of 200 ± 50 ms,
+and a new session each iteration. The generator's CPU share was 0.2%.
+
+| Run | Server | Requests | Per second | Errors | p50 | p95 | p99 | Order to cash p50 / p95 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Java, pdf, cold | Java MarbleERP, `moqui.war` of 2026-11-09, H2, `MoquiLoadTestConf` | 1,040 | 28.4 | 1 | 26 ms | 930 ms | 1,319 ms | 506 / 12,386 ms |
+| Java, pdf, warm | the same, a second run | 1,050 | 42.9 | 0 | 22 ms | 36 ms | 45 ms | 449 / 494 ms |
+| Java, no pdf | the same | 950 | 42.3 | 0 | 20 ms | 36 ms | 49 ms | 387 / 436 ms |
+| MR, pdf | mr-marble, release build, embedded Postgres 18.6, `MoquiLoadTestConf` | 1,047 | 39.5 | 1 | 35 ms | 59 ms | 111 ms | 725 / 1,729 ms |
+| MR, pdf, again | the same | 1,047 | 39.0 | 1 | 36 ms | 65 ms | 91 ms | 741 / 1,647 ms |
+| MR, no pdf | the same | 929 | 34.1 | 9 | 32 ms | 71 ms | 1,483 ms | 1,122 / 2,474 ms |
+
+- **Per step**, warm Java against MR (pdf): MR's p50 is 30 to 110% higher on almost every step. For example, create
+  order is 22 vs 32 ms, add product item 27 vs 42 ms, and find invoices 9 vs 20 ms.
+- **MR's errors and tail are lock waits and deadlocks in Postgres**, not slow requests. Two transactions deadlock:
+  one holds the organization's `party` row `FOR UPDATE` and waits on `gl_account_organization ... FOR UPDATE`, while
+  the other inserts an `invoice`, whose foreign key check needs `FOR KEY SHARE` on that party row. Pack shipment answers
+  500, and record payment and create order sometimes do too. Their p95 and p99 near 1 s are Postgres's deadlock
+  timeout.
+  - Java on H2 has none of this.
+  - Two possible fixes are in mr-mantle and the entity layer: lock the organization's rows in one order, or emit
+    `FOR NO KEY UPDATE` for a for-update find, which does not conflict with a foreign key check. Neither is done here.
+- **The cold Java run** spent its first 15 seconds compiling. Its one error is FOP failing to transform the first
+  OrderDetail PDF.
+- **What differed in the setup:**
+  - the database (H2 in process against Postgres over a socket), which is the largest difference;
+  - the PDF renderer (FOP against Chromium);
+  - the pages themselves (§16.7).
+- **A fair comparison of the two frameworks** needs both servers on Postgres, and the MR deadlock fixed first.
+- **The result files** are under `runtime/tmp/test-load/` of this checkout:
+  - Java: `20261110-154200-2060829` (cold), `-154243-2061599`, `-154308-2062112`;
+  - MR: `20261110-153128-2034648`, `-153237-2037672`, `-153304-2040024`.
 
 ## 12. Code layout
 

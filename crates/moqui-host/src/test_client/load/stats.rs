@@ -171,6 +171,8 @@ pub(crate) fn result(shared: &Shared, parts: &Parts<'_>) -> (Value, Vec<String>)
         out.insert("thresholds".into(), Value::Array(checked));
         out.insert("passed".into(), json!(passed));
         out.insert("run".into(), parts.run.clone());
+        // the names in the order first seen, which a JSON object does not keep
+        out.insert("nameOrder".into(), json!(shared.order));
     }
     (value, shared.order.clone())
 }
@@ -296,7 +298,7 @@ pub(crate) fn grouped(count: u64) -> String {
 }
 
 /// Milliseconds for the table: one decimal under 10 ms, whole above.
-fn table_ms(value: &Value) -> String {
+pub(crate) fn table_ms(value: &Value) -> String {
     let ms = value.as_f64().unwrap_or(0.0);
     if ms < 10.0 {
         format!("{ms:.1}ms")

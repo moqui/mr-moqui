@@ -338,7 +338,27 @@ fn scenario_settings_take_the_runs_overrides() {
     assert_eq!(all.len(), 2);
     assert_eq!(all[0].users, 3);
     assert_eq!(all[0].iterations, Some(2));
-    assert_eq!(all[0].duration, Some(60.0));
+    // iterations alone replace the script's duration, and a duration alone its iterations
+    assert_eq!(all[0].duration, None);
+    let timed = script::settings(&plan, &json!({ "users": 50, "duration": 300 })).unwrap();
+    assert_eq!(
+        (timed[1].duration, timed[1].iterations, timed[1].users),
+        (Some(300.0), None, 50)
+    );
+    let both = script::settings(&plan, &json!({ "duration": 30, "iterations": 1 })).unwrap();
+    assert_eq!((both[0].duration, both[0].iterations), (Some(30.0), Some(1)));
+    let own = script::settings(&plan, &json!({ "scenarios": { "buy": { "duration": 10 } } })).unwrap();
+    assert_eq!((own[0].duration, own[0].iterations), (Some(10.0), None));
+    // null in a scenario's own settings unsets the script's default
+    let unset = script::settings(
+        &plan,
+        &json!({ "scenarios": { "browse": { "pause": null, "iterations": 1 } } }),
+    )
+    .unwrap();
+    assert_eq!(
+        (unset[0].pause.clone(), unset[0].duration, unset[0].iterations),
+        (None, None, Some(1))
+    );
     assert_eq!(all[0].pause, Some(Pause::Uniform(10.0, 20.0)));
     let one = script::settings(&plan, &json!({ "users": 9, "scenarios": { "buy": { "users": 2 } } })).unwrap();
     assert_eq!(one.len(), 1);
@@ -355,7 +375,7 @@ fn scenario_settings_take_the_runs_overrides() {
     let none = ScenarioSettings::from_json("load", &json!({ "users": 1 }), "load").unwrap_err();
     assert_eq!(none, "load needs a duration (seconds) or iterations (per user)");
     assert_eq!(all[1].timeout(), 600.0);
-    assert_eq!(all[0].timeout(), 180.0);
+    assert_eq!(timed[1].timeout(), 420.0);
 }
 
 #[test]

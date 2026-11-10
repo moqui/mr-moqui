@@ -209,22 +209,57 @@ const PLAN_DEADLINE: Duration = Duration::from_secs(30);
 /// prelude opened, which `thread.end` does not when the file threw.
 pub(crate) const CLOSE_CODE: &str = "__moquiLoad.close()";
 
-/// What a user's and the plan's engine evaluate before the file: the run's params, and the top level begun.
-pub(crate) fn begin_code(params: &Value) -> String {
-    let params = if params.is_object() { params.clone() } else { json!({}) };
-    format!("__moquiLoad.begin({params})")
+/// What a user's and the plan's engine evaluate before the file: the run's params (and `env`, values for declared
+/// params the run does not give), and the top level begun.
+pub(crate) fn begin_code(params: &Value, env: &Value) -> String {
+    begin_code_with(params, env, false)
 }
 
-/// Evaluate `script` on a thread of its own with the run's `params`, and read what its top level declared.
+/// [`begin_code`], `lenient` for a listing: a required param with no value is null rather than an error.
+fn begin_code_with(params: &Value, env: &Value, lenient: bool) -> String {
+    let object = |value: &Value| if value.is_object() { value.clone() } else { json!({}) };
+    format!(
+        "__moquiLoad.begin({}, {}, {{ lenient: {lenient} }})",
+        object(params),
+        object(env)
+    )
+}
+
+/// Evaluate `script` on a thread of its own with the run's `params`, and `env` for the declared params they leave out
+/// (`moqui test-load`'s MOQUI_TEST_<NAME> variables), and read what its top level declared.
 ///
 /// # Errors
 ///
 /// When the file does not evaluate (the error names its line), a param is missing or of the wrong type, or the
 /// thread does not start.
-pub(crate) fn read_plan(host: &Arc<dyn SpecHost>, script: &LoadScript, params: &Value) -> Result<Plan, String> {
+pub(crate) fn read_plan(
+    host: &Arc<dyn SpecHost>,
+    script: &LoadScript,
+    params: &Value,
+    env: &Value,
+) -> Result<Plan, String> {
+    read_plan_with(host, script, params, env, false)
+}
+
+/// [`read_plan`] for a list of scripts, with no params given: a required param is null, not an error.
+///
+/// # Errors
+///
+/// As [`read_plan`], but for a missing required param.
+pub(crate) fn read_plan_listed(host: &Arc<dyn SpecHost>, script: &LoadScript, env: &Value) -> Result<Plan, String> {
+    read_plan_with(host, script, &json!({}), env, true)
+}
+
+fn read_plan_with(
+    host: &Arc<dyn SpecHost>,
+    script: &LoadScript,
+    params: &Value,
+    env: &Value,
+    lenient: bool,
+) -> Result<Plan, String> {
     let thread = ScriptThread {
         name: "moqui-load-plan".to_string(),
-        before: begin_code(params),
+        before: begin_code_with(params, env, lenient),
         file: Some(ScriptFile {
             display: script.display.clone(),
             source: script.source.clone(),
@@ -270,6 +305,17 @@ pub(crate) fn read_plan(host: &Arc<dyn SpecHost>, script: &LoadScript, params: &
         scenarios,
     })
 }
+
+/// The settings a run overrides.
+const SETTINGS: [&str; 7] = [
+    "users",
+    "rampUp",
+    "duration",
+    "iterations",
+    "think",
+    "pause",
+    "newSession",
+];
 
 /// The settings a run of `plan` uses: each scenario's defaults, with the run's `users`, `rampUp`, `duration`,
 /// `iterations`, `think` and `pause` over them, and `scenarios.<name>` over those. With `scenarios`, only the
@@ -323,19 +369,29 @@ pub(crate) fn settings(plan: &Plan, run: &Value) -> Result<Vec<ScenarioSettings>
             None => &Value::Null,
         };
         let mut merged = defaults.as_object().cloned().unwrap_or_default();
-        for key in [
-            "users",
-            "rampUp",
-            "duration",
-            "iterations",
-            "think",
-            "pause",
-            "newSession",
-        ] {
-            for over in [run, own] {
-                if let Some(value) = over.get(key).filter(|value| !value.is_null()) {
-                    merged.insert(key.to_string(), value.clone());
+        for over in [run, own] {
+            // a run's duration replaces the script's iterations, and its iterations the script's duration, unless it
+            // gives both: `--users 50 --duration 300` runs for 300 seconds, not the script's 5 iterations
+            let given = |key: &str| over.get(key).is_some_and(|value| !value.is_null());
+            if given("duration") && !given("iterations") {
+                merged.remove("iterations");
+            }
+            if given("iterations") && !given("duration") {
+                merged.remove("duration");
+            }
+            for key in SETTINGS {
+                match over.get(key) {
+                    Some(Value::Null) | None => {}
+                    Some(value) => {
+                        merged.insert(key.to_string(), value.clone());
+                    }
                 }
+            }
+        }
+        // in a scenario's own settings, null unsets the script's default
+        for key in SETTINGS {
+            if own.get(key).is_some_and(Value::is_null) {
+                merged.remove(key);
             }
         }
         out.push(ScenarioSettings::from_json(

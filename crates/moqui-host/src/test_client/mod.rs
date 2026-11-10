@@ -26,11 +26,14 @@ mod browser;
 pub mod cdp;
 mod http;
 mod load;
+mod load_cmd;
 mod offline;
 mod raw;
 mod serve;
 mod video;
 mod ws;
+
+pub use load_cmd::{dispatch_test_load, parse_load_args, LoadArgs};
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Write as _;
@@ -97,6 +100,9 @@ pub struct ClientArgs {
     pub offline: bool,
     /// `--video`: record each spec's pages into `<out>/video/<Spec>.webm`, with `<Spec>.timeline.json`.
     pub video: bool,
+    /// A request's limit when its own `timeout` does not set one, in seconds: 60 when not given (`moqui test-load
+    /// --timeout`).
+    pub request_timeout: Option<f64>,
 }
 
 fn seconds_option(name: &str, text: &str) -> Result<f64, Error> {
@@ -263,6 +269,47 @@ pub fn run(args: &ClientArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> 
     Ok(())
 }
 
+/// The HTTP client of a run: redirects are the session's to follow, and `insecure` accepts any certificate.
+fn http_client(insecure: bool) -> Result<reqwest::blocking::Client, Error> {
+    reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .danger_accept_invalid_certs(insecure)
+        .user_agent(concat!("moqui-test-client/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|err| Error::new(format!("HTTP client: {err}")))
+}
+
+/// The client host of a run of `args` against `server`, writing under `out_dir`.
+fn new_host(args: &ClientArgs, server: Server, client: reqwest::blocking::Client, out_dir: &Path) -> Arc<ClientHost> {
+    Arc::new_cyclic(|me| ClientHost {
+        me: me.clone(),
+        server,
+        params: params(args),
+        client,
+        insecure: args.insecure,
+        timeout: load::seconds(args.timeout),
+        request_timeout: args.request_timeout.map_or(REQUEST_TIMEOUT, load::seconds),
+        out_dir: out_dir.to_path_buf(),
+        component_dir: Mutex::new(PathBuf::new()),
+        next_id: AtomicU64::new(1),
+        sessions: Mutex::new(HashMap::new()),
+        sockets: Mutex::new(HashMap::new()),
+        bodies: Mutex::new(VecDeque::new()),
+        current: Mutex::new((String::new(), String::new())),
+        output: Mutex::new(Vec::new()),
+        browser_config: browser::BrowserConfig {
+            chromium: args.chromium.clone(),
+            headed: args.headed,
+            insecure: args.insecure,
+            runtime: Some(crate::runtime_framework_dirs().0),
+        },
+        browser: Mutex::new(None),
+        offline: Mutex::new(false),
+        video: args.video,
+        recording: Arc::new(Mutex::new(None)),
+    })
+}
+
 /// Run the specs of `components` against `server`, once it answers (within `wait` seconds when given), each line of
 /// the report to `print`. The specs run in the order of `moqui test` ([`run_order`]): the components' order and each
 /// one's own, except that a spec runs after the specs its `dependsOn` names, in any of the components.
@@ -277,46 +324,15 @@ fn run_against(
     if args.insecure {
         tracing::warn!("--insecure: the certificate of {} is not checked", server.url);
     }
-    let client = reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .danger_accept_invalid_certs(args.insecure)
-        .user_agent(concat!("moqui-test-client/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|err| Error::new(format!("HTTP client: {err}")))?;
+    let client = http_client(args.insecure)?;
     let all_offline = components
         .iter()
         .all(|component| component.specs.iter().all(|spec| spec_offline(&spec.source)));
     if !all_offline {
         check_server(&client, &server, wait)?;
     }
-    let chromium = args.chromium.clone();
-    let encode_video = args.video && video_tools(chromium.as_deref());
-    let host = Arc::new_cyclic(|me| ClientHost {
-        me: me.clone(),
-        server,
-        params: params(args),
-        client,
-        insecure: args.insecure,
-        timeout: Duration::from_secs_f64(args.timeout),
-        out_dir: out_dir.to_path_buf(),
-        component_dir: Mutex::new(PathBuf::new()),
-        next_id: AtomicU64::new(1),
-        sessions: Mutex::new(HashMap::new()),
-        sockets: Mutex::new(HashMap::new()),
-        bodies: Mutex::new(VecDeque::new()),
-        current: Mutex::new((String::new(), String::new())),
-        output: Mutex::new(Vec::new()),
-        browser_config: browser::BrowserConfig {
-            chromium,
-            headed: args.headed,
-            insecure: args.insecure,
-            runtime: Some(crate::runtime_framework_dirs().0),
-        },
-        browser: Mutex::new(None),
-        offline: Mutex::new(false),
-        video: args.video,
-        recording: Arc::new(Mutex::new(None)),
-    });
+    let encode_video = args.video && video_tools(args.chromium.as_deref());
+    let host = new_host(args, server, client, out_dir);
     let host_dyn: Arc<dyn SpecHost> = host.clone();
     let options = RunOptions {
         feature_filter: args.feature.clone(),
@@ -685,6 +701,8 @@ pub(crate) struct ClientHost {
     insecure: bool,
     /// `--timeout`.
     timeout: Duration,
+    /// A request's limit when its own `timeout` does not set one.
+    request_timeout: Duration,
     out_dir: PathBuf,
     /// The component of the spec running, the root of `files`.
     component_dir: Mutex<PathBuf>,
@@ -920,7 +938,7 @@ impl ClientHost {
             agent_header(&mut ask, &lock(&session).headers);
         }
         let started = Instant::now();
-        let sent = http::send(&self.client, &mut lock(&session), &ask, REQUEST_TIMEOUT);
+        let sent = http::send(&self.client, &mut lock(&session), &ask, self.request_timeout);
         let opts = field(args, "opts");
         observe(opts, || load::default_name(&ask.method, &path), &sent, started)?;
         Ok(self.answer(sent?))
@@ -1033,7 +1051,7 @@ impl ClientHost {
             Some(relative) => {
                 let component = lock(&self.component_dir).clone();
                 let script = load::LoadScript::read(&component, relative)?;
-                let plan = load::script::read_plan(&host, &script, field(args, "params"))?;
+                let plan = load::script::read_plan(&host, &script, field(args, "params"), &Value::Null)?;
                 if !plan.uses().iter().any(|uses| uses == "http") {
                     return Err(format!(
                         "load: {} uses {}, which a client cannot make: it runs in a server (Tools › Load)",

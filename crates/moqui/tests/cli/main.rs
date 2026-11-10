@@ -23,6 +23,7 @@ mod serve;
 mod template;
 mod test;
 mod test_client;
+mod test_load;
 mod types;
 
 fn repo() -> PathBuf {

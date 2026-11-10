@@ -539,9 +539,13 @@ setup(user), run(user, iteration), teardown(user) })`; the functions get `this`,
 evaluated once to read the plan (the given `params` resolved over the defaults, of the defaults' types, into `params`),
 and once in each user's engine, so its constants and helpers work in every scenario. A request at its top level throws
 "a load script makes no request at its top level". Every scenario starts together, each with its own ramp and users
-numbered from 0; with `scenarios` (`{ name: settings }`, or `[names]`), only those named run, with their settings over the script's, and a name the script does not have is refused. `users`, `iterations`,
-`duration`, `rampUp`, `think` and `pause` beside `script` apply to every scenario. A secret param is left out of the
-result.
+numbered from 0. With `scenarios` (`{ name: settings }`, or `[names]`), only those named run, with their settings over
+the script's (null unsets one), and a name the script does not have is refused. `users`, `iterations`, `duration`,
+`rampUp`, `think` and `pause` beside `script` apply to every scenario; a `duration` given alone replaces the script's
+`iterations`, and `iterations` alone its `duration`. A secret param is left out of the result.
+
+`moqui test-load <component> --script Name` runs a load script from the command line, with a progress line, Ctrl-C,
+and the result in `runtime/tmp/test-load/<run>/result.json` (`moqui help test-load`).
 
 Globals for any spec or script: `step(name, fn)` times `fn` as one sample of kind `step` (its requests still count under
 their own names; a step is not a request in the totals); `pause(ms | [min, max] | { gaussian: [mean, deviation] })`

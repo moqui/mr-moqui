@@ -4509,6 +4509,7 @@ dependencies = [
  "dev-aide",
  "example",
  "moqui-host",
+ "serde_json",
  "tikv-jemallocator",
 ]
 

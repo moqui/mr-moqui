@@ -487,6 +487,7 @@ the tasks, and `./moq help <task>` describes one. Task names match by partial pa
 ./moq load                     # all data types; ./moq load seed seed-initial install
 ./moq test mr-mantle           # run a component's JavaScript specs; extra args go to moqui test (--spec, --db snapshot)
 ./moq test-client framework    # a component's test/client specs against the running server (docs/dev/Client-Testing.md)
+./moq test-load mr-marble --script OrderToCash   # a load script against the running server (plans/LoadRunner.md)
 ./moq test-apps                # the application tests: the specs of runtime/component, no cargo
 ./moq test-framework           # the framework tests: cargo, moq, the specs of base-component and dev-component
 ./moq test-all                 # the whole regression suite: test-framework, then test-apps

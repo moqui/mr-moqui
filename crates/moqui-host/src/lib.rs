@@ -731,6 +731,20 @@ where
                 ))
             }
         }
+        [command, rest @ ..] if command == "test-load" => {
+            #[cfg(feature = "test-client")]
+            {
+                test_client::dispatch_test_load(rest)?;
+                Ok(None)
+            }
+            #[cfg(not(feature = "test-client"))]
+            {
+                let _ = rest;
+                Err(moqui_lib::error::Error::new(
+                    "moqui test-load: this build has no load runner (the test-client feature, which every package has)",
+                ))
+            }
+        }
         [command, rest @ ..] if command == "load" => {
             let flags = parse_load_args(rest)?;
             dispatch_load(&flags)?;

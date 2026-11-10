@@ -42,7 +42,7 @@ use serde_json::{json, Map, Value};
 pub(crate) use pace::{seconds, Pause};
 use record::{Pending, Recorder, ScenarioCounts, Shared};
 pub(crate) use script::{LoadScript, ScenarioSettings};
-pub(crate) use stats::table;
+pub(crate) use stats::{grouped, table, table_ms};
 
 /// The errors a load result keeps whole, the first.
 pub(crate) const ERROR_SAMPLES: usize = 20;
@@ -218,7 +218,6 @@ impl Load {
 
     /// The load as it is now, from what its users have merged (each at most a second ago): the totals, the table by
     /// name, the bins thinned to at most 300 points, and the active users. Readable at any time.
-    #[allow(dead_code)] // for `moqui test-load` and a run in a server (plans/LoadRunner.md L2, L3)
     pub(crate) fn snapshot(&self) -> Value {
         self.tick();
         let shared = lock(&self.shared);
@@ -778,7 +777,7 @@ pub(crate) fn start(host: &Arc<dyn SpecHost>, start: Start) -> Result<Running, S
                     }
                 }
                 Source::Script { script, params } => ScriptThread {
-                    before: script::begin_code(params),
+                    before: script::begin_code(params, &Value::Null),
                     file: Some(ScriptFile {
                         display: script.display.clone(),
                         source: script.source.clone(),
@@ -806,7 +805,6 @@ pub(crate) fn start(host: &Arc<dyn SpecHost>, start: Start) -> Result<Running, S
 }
 
 impl Running {
-    #[allow(dead_code)] // for `moqui test-load` and a run in a server (plans/LoadRunner.md L2, L3)
     pub(crate) fn load(&self) -> &Arc<Load> {
         &self.load
     }
