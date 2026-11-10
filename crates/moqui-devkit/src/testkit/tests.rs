@@ -836,7 +836,7 @@ fn template_specs_run_with_no_entity_facade() {
     let context = factory.new_context();
     let _entered = context.enter();
     for (name, count) in [
-        ("ScreenHtml", 14),
+        ("ScreenHtml", 15),
         ("ScreenQvt", 18),
         ("DatePeriod", 6),
         ("FieldTitle", 6),

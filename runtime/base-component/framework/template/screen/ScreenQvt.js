@@ -2739,9 +2739,12 @@
             const actions = childrenNamed(selection, "action").map((action) => {
                 const dialog = child(action, "dialog");
                 const form = child(action, "form-single");
-                return `{"dialog": ${dialog ? bareLit(dialog) : "null"}, "render": () => {\n${form ? form.source : ""}}}`;
+                const rendered = `{"dialog": ${dialog ? bareLit(dialog) : "null"}, "render": () => {\n${form ? form.source : ""}}}`;
+                const condition = attr(action, "condition");
+                return condition ? `(${S.heldCode(condition, `action of form-list ${attr(node, "name")}`)} ? ${rendered} : null)` : rendered;
             });
-            rowSelection = `{"idField": ${lit(attr(selection, "id-field"))}, "parameter": ${lit(attr(selection, "parameter"))}, "listMode": ${lit(attr(selection, "list-mode"))}, "actions": [${actions.join(",\n")}]}`;
+            const filtered = childrenNamed(selection, "action").some((action) => attr(action, "condition")) ? ".filter(Boolean)" : "";
+            rowSelection = `{"idField": ${lit(attr(selection, "id-field"))}, "parameter": ${lit(attr(selection, "parameter"))}, "listMode": ${lit(attr(selection, "list-mode"))}, "actions": [${actions.join(",\n")}]${filtered}}`;
             // condition: checked each render; when it does not hold the list is written as one without row-selection
             if (attr(selection, "condition")) rowSelection = `(${S.heldCode(attr(selection, "condition"), `row-selection of form-list ${attr(node, "name")}`)} ? ${rowSelection} : null)`;
         }

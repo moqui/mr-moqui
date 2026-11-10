@@ -208,6 +208,8 @@ struct WebSlot {
     multipart: BTreeMap<String, Value>,
     /// What the last response saved for this page, taken from the session when first asked for.
     saved: Option<crate::user::session::SavedForPage>,
+    /// The failed-submit inputs the last response saved, taken from the session when the request started.
+    error_parameters: BTreeMap<String, String>,
     /// The `Host` header of the request.
     host: String,
     /// The full URL of the request and its `Referer`, for an artifact hit. Empty with no socket.
@@ -283,6 +285,7 @@ pub(crate) fn install_with(parameters: BTreeMap<String, Value>, base_url: String
             parameters,
             multipart: BTreeMap::new(),
             saved: None,
+            error_parameters: BTreeMap::new(),
             host: String::new(),
             request_url: String::new(),
             request_details: String::new(),
@@ -343,13 +346,26 @@ pub(crate) fn saved_for_page() -> crate::user::session::SavedForPage {
     if let Some(saved) = loaded {
         return saved;
     }
-    let taken = crate::user::session::take_saved_for_page();
+    let mut taken = crate::user::session::take_saved_for_page();
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
+            if taken.error_parameters.is_empty() {
+                taken.error_parameters = web.error_parameters.clone();
+            }
             web.saved = Some(taken.clone());
         }
     });
     taken
+}
+
+/// Keep the failed-submit inputs this request took from the session when it started
+/// ([`crate::user::session::take_error_parameters`]) for the form that asks for them.
+pub(crate) fn set_error_parameters(parameters: BTreeMap<String, String>) {
+    WEB.with(|slot| {
+        if let Some(web) = slot.borrow_mut().as_mut() {
+            web.error_parameters = parameters;
+        }
+    });
 }
 
 /// Lower-case hex of the time this process first asked, so every link made in one run shares it.

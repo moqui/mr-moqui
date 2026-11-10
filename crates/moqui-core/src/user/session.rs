@@ -1246,6 +1246,19 @@ pub fn take_saved_parameters() -> BTreeMap<String, String> {
     })
 }
 
+/// The failed-submit inputs the last response saved, which the session forgets: Java's `WebFacadeImpl` takes
+/// `moqui.error.parameters` when the next request starts, whether or not that request renders the failed form. Messages
+/// stay until a page asks for them ([`take_saved_for_page`]).
+pub fn take_error_parameters() -> BTreeMap<String, String> {
+    with_session(|session| {
+        let taken = std::mem::take(&mut session.errors);
+        if session.attributes.remove(ERROR_PARAMETERS).is_some() && session.bound_id.is_some() {
+            session.dirty_json.insert(ERROR_PARAMETERS.to_string());
+        }
+        taken
+    })
+}
+
 /// `WebFacade.saveScreenLastInfo`: the path and parameters a `screen-last` response goes back to, such as the page a user
 /// asked for before signing in.
 pub fn save_screen_last(path: &str, parameters: &BTreeMap<String, String>) {

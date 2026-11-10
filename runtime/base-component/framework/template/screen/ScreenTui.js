@@ -1093,11 +1093,13 @@ try {
             if (!dialog || !form) return "";
             const button = attr(dialog, "button-text");
             const dialogId = attr(dialog, "id") || id + ".action" + index;
-            return `$openChildren({t:"dialog",id:$uid(${jsString(dialogId)}),title:String(${titleOf(attr(dialog, "title") || button)} || ""),button:String(${titleOf(button)} || ""),list:$list.id});
+            const rendered = `$openChildren({t:"dialog",id:$uid(${jsString(dialogId)}),title:String(${titleOf(attr(dialog, "title") || button)} || ""),button:String(${titleOf(button)} || ""),list:$list.id});
         {
         ${form.source || ""}}
         $closeChildren();
         `;
+            const condition = attr(action, "condition");
+            return condition ? `if (${S.heldCode(condition, `action of form-list ${formName}`)}) {\n${rendered}}\n` : rendered;
         }).join("") : "";
         const titles = (columns) => columns.map((column) => {
             const parts = column.map((field) => {
@@ -1490,7 +1492,10 @@ $closeRender();
         "field-col-row": pass,
         "field-col": pass,
         "fields-not-referenced": pass,
-        "subscreens-menu": pass,
+        // The separate active widget owns its content; the menu still provides the nearest terminal tabs.
+        "subscreens-menu": stmt((node) => `{
+            ${menuItems}$emit({t:"subscreens",id:$uid(${jsString(attr(node, "id") || "subscreens")}),kind:${jsString(attr(node, "type") || "tab")},items:$items,c:[]});
+        }\n`),
         "container": group("container"),
         "container-box": stmt((node) => {
             const header = child(node, "box-header");

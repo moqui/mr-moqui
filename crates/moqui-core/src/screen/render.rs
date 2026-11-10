@@ -2163,6 +2163,7 @@ fn respond(
     if !json {
         save_messages();
     }
+    // As Java: the failed inputs are kept for the next request, which takes them whether or not it renders a form.
     if screen_has_error() {
         save_error_parameters();
     }

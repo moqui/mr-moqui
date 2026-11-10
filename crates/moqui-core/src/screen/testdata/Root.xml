@@ -25,10 +25,14 @@
         </conditional-response>
         <default-response url="Sub"/>
     </transition>
-    <transition name="failTx">
+    <transition name="failTx" require-session-token="false">
         <actions><message error="true">bad input</message></actions>
         <error-response url="/Home"/>
         <default-response url="Sub"/>
+    </transition>
+    <transition name="failNone" require-session-token="false">
+        <actions><message error="true">bad input</message></actions>
+        <default-response type="none"/>
     </transition>
     <transition name="okTx">
         <actions><script>trace.push('okTx')</script></actions>

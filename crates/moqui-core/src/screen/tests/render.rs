@@ -807,6 +807,57 @@ fn the_error_response_is_used_when_the_actions_leave_errors() {
     assert_eq!(location_of(&fine), Some("/Sub"));
 }
 
+/// As Java: a refused JSON submit keeps its inputs for the next request, and that request takes them whatever it is (a
+/// menu, a notification poll), so a page loaded later shows current fields such as a concurrency token.
+#[test]
+fn failed_json_submits_keep_their_inputs_for_the_next_request_only() {
+    let world = World::open("");
+    let submit = |path: &str| {
+        let mut submit = request("POST", path);
+        submit.set_header("content-type", "application/x-www-form-urlencoded");
+        submit.body = b"moquiFormName=EditRecord&expectedVersion=old-version".to_vec();
+        submit.set_header("accept", "application/json");
+        let response = serve_at(&world.factory, submit, &fixture_root());
+        let cookie = super::header_value(&response, "Set-Cookie").expect("session cookie");
+        cookie.split(';').next().unwrap().to_string()
+    };
+    let saved_errors = |cookie: &str| {
+        let context = world.factory.new_context();
+        let _entered = context.enter();
+        let _session = crate::user::bind(&world.factory, Some(cookie.split_once('=').unwrap().1), None, false).unwrap();
+        crate::user::session::take_error_parameters()
+    };
+    for path in ["/failTx", "/failNone"] {
+        let cookie = submit(path);
+        assert_eq!(saved_errors(&cookie).get("expectedVersion").map(String::as_str), Some("old-version"), "{path}");
+
+        let cookie = submit(path);
+        let mut next = request("GET", "/goNone");
+        next.set_header("cookie", &cookie);
+        next.set_header("accept", "application/json");
+        assert_eq!(serve_at(&world.factory, next, &fixture_root()).status, 200);
+        assert!(saved_errors(&cookie).is_empty(), "{path}: the next request takes the refused inputs");
+    }
+}
+
+#[test]
+fn failed_redirect_submits_keep_form_inputs_for_the_following_page() {
+    let world = World::open("");
+    let mut submit = request("POST", "/failTx");
+    submit.set_header("content-type", "application/x-www-form-urlencoded");
+    submit.body = b"moquiFormName=EditRecord&description=retained+draft&password=private".to_vec();
+    let response = serve_at(&world.factory, submit, &fixture_root());
+    assert_eq!(response.status, 302);
+    let cookie = super::header_value(&response, "Set-Cookie").expect("session cookie");
+    let value = cookie.split(';').next().unwrap().split_once('=').unwrap().1;
+    let context = world.factory.new_context();
+    let _entered = context.enter();
+    let _session = crate::user::bind(&world.factory, Some(value), None, false).unwrap();
+    let errors = crate::user::session::take_saved_for_page().error_parameters;
+    assert_eq!(errors.get("description").map(String::as_str), Some("retained draft"));
+    assert!(!errors.contains_key("password"));
+}
+
 /// An error already on the list, or a validation error, skips the service-call and still runs `<actions>`.
 /// An error the service itself adds does not skip the actions. With neither, the service runs and then the actions.
 #[test]

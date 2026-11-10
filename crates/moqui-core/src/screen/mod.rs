@@ -266,6 +266,7 @@ fn handle(
     }
     // What the last response saved for this request sits under the request's own parameters.
     let saved = user::session::take_saved_parameters();
+    let error_parameters = user::session::take_error_parameters();
     let merged;
     let parameters = if saved.is_empty() {
         parameters
@@ -283,6 +284,7 @@ fn handle(
         web::stream::offer(sink);
     }
     web::set_multipart(multipart.clone());
+    web::set_error_parameters(error_parameters);
     web::set_host(request.header("host").unwrap_or(""));
     web::set_request_info(request);
     web::set_request_locale(request.header("accept-language"));

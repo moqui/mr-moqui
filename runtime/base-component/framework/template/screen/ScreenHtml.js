@@ -300,7 +300,8 @@
             }
             const align = at(fieldOf(n), "align");
             const attrs = Object.assign({
-                type, id, name, value, size: at(n, "size") || null, maxlength: at(n, "maxlength") || null,
+                type, id, name, value, step: type === "number" ? (check.digits ? "1" : "any") : null,
+                size: at(n, "size") || null, maxlength: at(n, "maxlength") || null,
                 disabled: disabled || null, required: check.required || null, "data-align": align && align !== "left" ? align : null,
                 "data-wide": at(n, "size") ? null : true, "data-mask": xn(at(n, "mask")) || null,
                 inputmode: check.number ? "decimal" : check.digits ? "numeric" : null, title: tip(n), form: owner()
