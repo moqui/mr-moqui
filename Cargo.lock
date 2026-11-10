@@ -4618,6 +4618,7 @@ dependencies = [
  "regex",
  "rsa",
  "rust_xlsxwriter",
+ "rustix",
  "serde",
  "serde_json",
  "sha1 0.11.0",

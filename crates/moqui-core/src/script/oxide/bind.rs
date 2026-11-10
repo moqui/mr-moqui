@@ -521,10 +521,10 @@ enum Outcome {
 }
 
 fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'_>) -> JsResult<JsValue> {
-    let _profile = crate::screen::profile::span("host", method.path);
+    let _profile = crate::telemetry::profile::span("host", method.path);
     let mut callbacks = Vec::new();
     let engine = EngineCall;
-    let args_span = crate::screen::profile::span("phase", "host.args");
+    let args_span = crate::telemetry::profile::span("phase", "host.args");
     let args = convert_args(binder, scope, method.args, &mut callbacks)?;
     drop(args_span);
     // the receiver's datum read from the call, with no handle; the receiver itself lifted only when returned
@@ -547,7 +547,7 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
         let flushed = match method.flush {
             FlushBefore::None => Ok(()),
             mode => {
-                let _flush = crate::screen::profile::span("phase", "flush.before");
+                let _flush = crate::telemetry::profile::span("phase", "flush.before");
                 ops.flush(mode)
             }
         };
@@ -587,7 +587,7 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
         }
     };
     let _engine = EngineCall;
-    let _ret = crate::screen::profile::span("phase", "host.ret");
+    let _ret = crate::telemetry::profile::span("phase", "host.ret");
     match outcome {
         Outcome::Done(Ret::Value(value)) => binder.hooks.to_js(scope, value),
         Outcome::Done(Ret::This) => Ok(scope.this()),

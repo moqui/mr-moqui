@@ -486,6 +486,7 @@ fn sync_input(
     let Some(def) = def else {
         return Err(Error::new(format!("Service {name} not found")));
     };
+    let _profile = crate::telemetry::profile::operation(&def.name);
     super::coverage::record(&def.name);
     // Java's `currentParameters`: what a pre-validate rule sets is what is validated.
     // the credentials of the call as given, before a rule changes them (they log in after validation)

@@ -393,6 +393,34 @@ pub(crate) fn engine_memory(collect: bool) -> OxideMemory {
     memory
 }
 
+/// This thread's runtime's collector and inline-cache counters (plans/Profiling3.md M6): collections and their pause,
+/// then, in a build with the `ic-stats` feature, the inline-cache report with its `worst` sites (its `unfilled` column
+/// counts the accesses past a function's 255th property site). Empty while a script runs on the thread.
+pub(crate) fn engine_counters(worst: usize) -> String {
+    use std::fmt::Write;
+    if run::is_running(EngineTag::Oxide) {
+        return String::new();
+    }
+    let Some(engine) = ENGINE.with(|engine| engine.borrow().clone()) else {
+        return String::new();
+    };
+    let mut out = String::new();
+    if let Ok(stats) = engine.runtime.gc_stats() {
+        let _ = writeln!(
+            out,
+            "gc: {} collections, {:.1} ms paused (max {:.3} ms), {} KiB live at the last",
+            stats.collections,
+            stats.total_pause.as_secs_f64() * 1e3,
+            stats.max_pause.as_secs_f64() * 1e3,
+            stats.live_bytes / 1024
+        );
+    }
+    if let Ok(Some(report)) = engine.runtime.ic_report(worst) {
+        out.push_str(&report);
+    }
+    out
+}
+
 /// One line of this thread's oxide runtimes' heaps (the main one and the spec runtime), after a collection, for a
 /// per-spec heap log (`MOQUI_SCRIPT_HEAP_LOG`). Empty while a script runs on the thread.
 pub(crate) fn heap_line() -> String {

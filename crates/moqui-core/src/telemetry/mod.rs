@@ -24,6 +24,7 @@ mod exponential;
 pub mod ingest;
 pub mod maintenance;
 pub mod operation;
+pub(crate) mod profile;
 #[cfg(feature = "http")]
 pub mod otlp;
 pub mod received;

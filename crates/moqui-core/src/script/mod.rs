@@ -40,7 +40,7 @@ pub use runtime::{forget_scripts, oxide_heap_line};
 #[cfg(test)]
 pub(crate) use runtime::script_time_remaining;
 pub use runtime::{
-    clear_context_stack, context_value, engine_memory, eval_field_value, eval_map, eval_value, expand,
+    clear_context_stack, context_value, engine_counters, engine_memory, eval_field_value, eval_map, eval_value, expand,
     push_context_frame, release_idle_runtime, run_script, run_script_location, script_list_values, set_context_name,
     set_widget_wrap,
     take_context_value, top_context_entries,

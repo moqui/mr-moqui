@@ -88,6 +88,7 @@ impl ExoticClass for GlobalNames {
             return Ok(Hook::Handled(Value::Undefined));
         };
         let name = super::convert::text_of(&name);
+        crate::telemetry::profile::count("name.read");
         guarded_hook(scope, |scope| super::tracked::read_name(scope, &name))
     }
 
@@ -96,6 +97,7 @@ impl ExoticClass for GlobalNames {
             return Ok(Hook::Handled(true));
         };
         let name = super::convert::text_of(&name);
+        crate::telemetry::profile::count("name.write");
         guarded_hook(scope, |scope| {
             super::tracked::write_name(scope, &name, &value)?;
             Ok(true)
@@ -148,6 +150,7 @@ impl ExoticClass for EntityValues {
         if super::bind::entities::is_value_method(&name) {
             return Ok(Hook::Ordinary);
         }
+        crate::telemetry::profile::count("field.read");
         let cell = Arc::clone(&data.0);
         match super::bind::entities::field(scope, &cell, &name)? {
             EntityField::Value(value) => guarded_hook(scope, |scope| {
@@ -178,6 +181,7 @@ impl ExoticClass for EntityValues {
             });
         };
         let name = name.to_utf8_lossy();
+        crate::telemetry::profile::count("field.write");
         let cell = Arc::clone(&data.0);
         guarded_hook(scope, |scope| {
             if super::engine::fallback_pending() {

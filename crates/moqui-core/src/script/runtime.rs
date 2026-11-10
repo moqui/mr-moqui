@@ -292,6 +292,12 @@ pub fn engine_memory(collect: bool) -> EngineMemory {
     }
 }
 
+/// This thread's script runtime's collector counters and, in an `ic-stats` build, its inline-cache report with the
+/// `worst` sites (plans/Profiling3.md M6).
+pub fn engine_counters(worst: usize) -> String {
+    crate::script::oxide::engine_counters(worst)
+}
+
 /// What the process's script engines have done since it started.
 #[derive(Clone, Debug, Default)]
 pub struct EngineStats {

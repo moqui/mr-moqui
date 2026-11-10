@@ -687,7 +687,7 @@ impl Drop for SampleFlush<'_> {
 /// A job with a `moquiPreview` token on a dev instance renders from the proposed text the token names (F14,
 /// plans/design-dev-aide.md 13.3): under the read fence, so nothing it runs writes, and framed by the page that asked.
 pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<(), Error> {
-    let _profile = super::profile::request(job.path);
+    let _profile = crate::telemetry::profile::request(job.path);
     let _samples = SampleFlush(job.path);
     let mut token = text_of(job.parameters.get("moquiPreview"));
     if token.is_empty() {
@@ -743,7 +743,7 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
     if last_standalone == 0 && standalone_json(requested_mode(job, None)) {
         last_standalone = 1;
     }
-    let url_span = super::profile::span("phase", "url");
+    let url_span = crate::telemetry::profile::span("phase", "url");
     let mut info = ScreenUrlInfo::parse(factory, job.root, job.path, last_standalone)?;
     if last_standalone == 0 && standalone_json(requested_mode(job, Some(&info))) {
         info = ScreenUrlInfo::parse(factory, job.root, job.path, 1)?;
@@ -790,7 +790,7 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
     let client = client_mode(job.request, &mode_screen(&info, &picked), &picked);
     let negotiated = client.is_some();
     let mode = client.unwrap_or(picked);
-    super::profile::set_mode(&mode);
+    crate::telemetry::profile::set_mode(&mode);
     let rendered = mode_screen(&info, &mode);
     if !rendered.allows_render_mode(&mode) {
         // A qvue-only screen still answers tui: one placeholder, so the screen list stays a document.
@@ -1132,7 +1132,7 @@ fn render_body(state: &RenderState) -> Result<(), Error> {
         }
         return Ok(());
     }
-    let _output = super::profile::span("phase", "output");
+    let _output = crate::telemetry::profile::span("phase", "output");
     super::sri::flush_end_text(state);
     if state.output_kind == OutputKind::Json && !state.dont_do_render.get() {
         wrap_json_envelope(state);
