@@ -104,6 +104,8 @@ impl Kind {
 struct Shape {
     kind: Option<Kind>,
     head: String,
+    /// The statement's text, cut at [`SQL_KEPT`] characters: on the entity paths it holds no literals.
+    sql: String,
     count: u64,
     waited: u64,
     rows: u64,
@@ -129,6 +131,9 @@ struct Logs {
 thread_local! {
     static LOGS: RefCell<Logs> = RefCell::new(Logs::default());
 }
+
+/// The characters of a statement's text a shape keeps.
+const SQL_KEPT: usize = 300;
 
 /// At most this many frames open on one thread are logged; a frame that never ended goes first.
 const MAX_OPEN: usize = 64;
@@ -168,6 +173,7 @@ pub(crate) fn note(sql: &str, params: &[Value], kind: Kind, waited: bool, rows: 
         let shape = log.shapes.entry(shape_hash).or_insert_with(|| Shape {
             kind: Some(kind),
             head: head_of(sql),
+            sql: sql.chars().take(SQL_KEPT).collect(),
             ..Shape::default()
         });
         if shape.count > 0 {
@@ -260,6 +266,7 @@ pub(crate) fn census_members(log: Option<&Log>) -> String {
         shapes.push(serde_json::json!({
             "shape": format!("{hash:016x}"),
             "head": shape.head,
+            "sql": shape.sql,
             "kind": kind,
             "n": shape.count,
             "waited": shape.waited,

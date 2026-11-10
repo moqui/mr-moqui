@@ -237,6 +237,9 @@ pub struct ServiceDef {
     pub authz_action: Option<String>,
     pub validate_input: bool,
     pub transaction: TransactionAttribute,
+    /// Whether the definition has a `transaction` attribute: one with none begins its transaction with the cache when
+    /// `service_tx_cache` is on (plans/Profiling3.md S1, D3).
+    pub transaction_declared: bool,
     /// `no-tx-cache`: flush and stop the transaction cache in place before the service runs.
     pub no_tx_cache: bool,
     /// `read-only`: the service only reads (and may set the user's context), so a server-static screen's always-actions
@@ -287,6 +290,7 @@ impl ServiceDef {
             // entity's fields and the records nested under a relationship name, and nothing else.
             validate_input: false,
             transaction: TransactionAttribute::UseOrBegin,
+            transaction_declared: false,
             no_tx_cache: false,
             read_only: false,
             timeout: None,
@@ -1374,6 +1378,7 @@ fn load_service(prefix: &str, node: &MNode, failures: &mut Vec<String>) -> Optio
         authz_action: node.attribute("authz-action"),
         validate_input: bool_attr(node, "validate", true),
         transaction: transaction_of(node),
+        transaction_declared: node.attribute("transaction").is_some_and(|value| !value.is_empty()),
         no_tx_cache: bool_attr(node, "no-tx-cache", false),
         read_only: bool_attr(node, "read-only", false),
         timeout,

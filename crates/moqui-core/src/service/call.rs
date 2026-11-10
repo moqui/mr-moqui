@@ -572,7 +572,7 @@ fn sync_input(
         ServiceDef::semaphore_entity().to_string()
     };
     let tx = facade.transactions_for(&entity_name)?;
-    let attribute = options.attribute(def.transaction);
+    let attribute = options.attribute(base_transaction(&def, options));
     // A call that begins its own transaction is a business operation: the frame's hooks tell its outcome.
     let mut operation = crate::telemetry::current().and_then(|telemetry| {
         let operation = telemetry.operation(&def.name, def.operation.as_deref(), def.operation_ref.as_deref())?;
@@ -669,6 +669,24 @@ fn sync_input(
     }
     post?;
     Ok(project(&def, produced))
+}
+
+/// The transaction a call of `def` begins, before the call's own options: the definition's, or, with the
+/// `service_tx_cache` property on, `cache` for a service whose definition and call say nothing of the transaction or
+/// its cache (plans/Profiling3.md S1, D3). A transaction a call joins keeps its own mode either way.
+fn base_transaction(def: &ServiceDef, options: &CallOptions) -> TransactionAttribute {
+    static DEFAULT_CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let default_cache =
+        *DEFAULT_CACHE.get_or_init(|| moqui_lib::env::get_prop_or_env("service_tx_cache") == "true");
+    if default_cache
+        && !def.transaction_declared
+        && !def.no_tx_cache
+        && options.use_transaction_cache.is_none()
+        && def.kind != ServiceKind::EntityAuto
+    {
+        return TransactionAttribute::Cache;
+    }
+    def.transaction
 }
 
 /// A business operation in progress (plans/Monitoring.md, Later: Business operations).
