@@ -1144,7 +1144,7 @@ impl ClientHost {
                 Err(err) => out.push((index, Err(format!("the thread did not start: {err}")))),
             }
         }
-        out.extend(load::join_all(running, timeout, &|| {}, &|| {}));
+        out.extend(load::join_all(running, timeout, &|| {}, &mut |_| false));
         out.sort_by_key(|(index, _)| *index);
         out
     }

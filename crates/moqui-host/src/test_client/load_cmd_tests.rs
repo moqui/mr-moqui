@@ -47,12 +47,15 @@ fn options_parse_and_refuse() {
         overrides(&parsed),
         json!({ "scenarios": { "sales": { "users": 50, "rampUp": 30.0, "duration": 300.0, "iterations": 2 } } })
     );
+    let rated = parse_load_args(&args(&["mr-marble", "--rate", "12.5", "--users", "20"])).unwrap();
+    assert_eq!(overrides(&rated), json!({ "users": 20, "rate": 12.5 }));
     let compare = parse_load_args(&args(&["--compare", "a.json", "b.json"])).unwrap();
     assert_eq!(compare.compare.len(), 2);
     let refused = |list: &[&str]| parse_load_args(&args(list)).unwrap_err().to_string();
     assert!(refused(&[]).starts_with("moqui test-load needs a component"));
     assert!(refused(&["x", "--users", "0"]).starts_with("--users is a whole number from 1"));
     assert!(refused(&["x", "--duration", "0"]).starts_with("--duration is more than 0"));
+    assert!(refused(&["x", "--rate", "0"]).starts_with("--rate is more than 0"));
     assert!(refused(&["x", "--param", "novalue"]).starts_with("--param needs name=value"));
     assert!(refused(&["x", "--bogus"]).starts_with("unknown option --bogus"));
     assert!(refused(&["x", "--compare", "a.json"]).starts_with("--compare needs two"));

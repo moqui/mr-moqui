@@ -70,6 +70,8 @@ pub struct LoadArgs {
     pub ramp_up: Option<f64>,
     pub duration: Option<f64>,
     pub iterations: Option<u64>,
+    /// `--rate N`: iterations started per second, with `users` the most at once (plans/LoadRunner.md L6).
+    pub rate: Option<f64>,
     /// `--scenario name`: run only this scenario, and the settings above are its.
     pub scenario: Option<String>,
     pub label: Option<String>,
@@ -145,6 +147,13 @@ pub fn parse_load_args(args: &[String]) -> Result<LoadArgs, Error> {
                 parsed.duration = Some(seconds);
             }
             "--iterations" => parsed.iterations = Some(whole_option("--iterations", &value("--iterations")?)?),
+            "--rate" => {
+                let rate = number_option("--rate", &value("--rate")?)?;
+                if rate <= 0.0 {
+                    return Err(Error::new("--rate is more than 0 iterations a second"));
+                }
+                parsed.rate = Some(rate);
+            }
             "--scenario" => parsed.scenario = Some(value("--scenario")?),
             "--label" => parsed.label = Some(value("--label")?),
             "--compare" => {
@@ -457,8 +466,8 @@ pub fn run(args: &LoadArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> {
     verdict(&stats)
 }
 
-/// The settings `--users`, `--ramp-up`, `--duration` and `--iterations` give: every scenario's, or with `--scenario`
-/// that one's alone, which then is the only one run.
+/// The settings `--users`, `--ramp-up`, `--duration`, `--iterations` and `--rate` give: every scenario's, or with
+/// `--scenario` that one's alone, which then is the only one run.
 fn overrides(args: &LoadArgs) -> Value {
     let mut settings = Map::new();
     if let Some(users) = args.users {
@@ -472,6 +481,9 @@ fn overrides(args: &LoadArgs) -> Value {
     }
     if let Some(count) = args.iterations {
         settings.insert("iterations".into(), json!(count));
+    }
+    if let Some(rate) = args.rate {
+        settings.insert("rate".into(), json!(rate));
     }
     match &args.scenario {
         Some(name) => json!({ "scenarios": { name.clone(): settings } }),
@@ -652,7 +664,12 @@ fn list(host: &Arc<dyn SpecHost>, target: &Target, print: &mut dyn FnMut(&str)) 
         print(&format!("    uses: {}", plan.uses().join(", ")));
         for (name, defaults) in &plan.scenarios {
             let mut line = format!("    scenario {name}:");
-            for (key, label) in [("users", "users"), ("iterations", "iterations"), ("duration", "s")] {
+            for (key, label) in [
+                ("users", "users"),
+                ("rate", "iterations/s"),
+                ("iterations", "iterations"),
+                ("duration", "s"),
+            ] {
                 if let Some(value) = defaults.get(key).filter(|value| !value.is_null()) {
                     let _ = write!(line, " {value} {label}");
                 }
