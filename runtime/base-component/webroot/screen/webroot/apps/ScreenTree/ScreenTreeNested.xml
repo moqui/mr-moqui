@@ -17,36 +17,45 @@ along with this software (see the LICENSE.md file). If not, see
         require-authentication="false" default-menu-include="false">
 
     <actions>
-        <set field="parentScreenDef" from="currentScreenDef"/>
-        <set field="parentScreenPath" from="currentScreenPath"/>
+        <script><![CDATA[
+            // Change 2: Walk iteratively so a deep site map does not consume nested script stacks.
+            // getMenuItems still authorizes every entry, including hidden entries in Show All.
+            const initialPath = typeof currentScreenPath === 'undefined' ? '' : currentScreenPath
+            const pending = [{kind: 'branch', path: initialPath, ancestors: []}]
+            siteMapEvents = []
+            while (pending.length) {
+                const event = pending.pop()
+                if (event.kind !== 'branch') { siteMapEvents.push(event); continue }
+                siteMapEvents.push({kind: 'open'})
+                pending.push({kind: 'close'})
+                const items = sri.getMenuItems(event.path || '/', showAll == 'true')
+                for (let i = items.length - 1; i >= 0; i--) {
+                    const item = items[i]
+                    if (event.ancestors.includes(item.location) || (showAll != 'true' && item.hasRequiredParameters)) continue
+                    const path = event.path + '/' + item.name
+                    pending.push({kind: 'branch', path, ancestors: event.ancestors.concat([item.location])})
+                    pending.push({kind: 'item', path, title: item.title, link: !item.hasRequiredParameters && !item.disabled})
+                }
+            }
+        ]]></script>
     </actions>
     <widgets>
-        <container style="ScreenTreeNested">
-            <section-iterate name="ScreenNestedSection" list="showAll == 'true' ? parentScreenDef.getSubscreensItemsSorted() : parentScreenDef.getMenuSubscreensItems()" entry="currentSubscreensItem">
-                <actions>
-                    <set field="currentScreenDef" from="sri.sfi.getScreenDefinition(currentSubscreensItem.location)"/>
-                    <set field="currentScreenPath" value="${parentScreenPath}/${currentSubscreensItem.name}"/>
-                    <set field="currentUrlInfo" from="sri.buildUrl(currentScreenPath)"/>
-                </actions>
-                <widgets>
-                    <section name="ScreenItemRender">
-                        <condition><expression>currentScreenDef != null &amp;&amp; currentUrlInfo?.isPermitted() &amp;&amp; (showAll == 'true' || !currentScreenDef?.hasRequiredParameters())</expression></condition>
-                        <widgets>
-                            <section name="LinkOrLabel" condition="!currentScreenDef?.hasRequiredParameters()">
-                                <widgets><link url="${currentUrlInfo.path}" link-type="anchor"
-                                        text="${currentSubscreensItem.menuTitle}"/></widgets>
-                                <fail-widgets><label text="${currentSubscreensItem.menuTitle}" style="text-muted"/></fail-widgets>
-                            </section>
-
-                            <include-screen location="component://webroot/screen/webroot/apps/ScreenTree/ScreenTreeNested.xml"
-                                    share-scope="false"/>
-                        </widgets>
-                        <fail-widgets>
-                            <render-mode><text type="html"><![CDATA[<!-- excluding screen at path ${currentScreenPath} -->]]></text></render-mode>
-                        </fail-widgets>
+        <!-- Change 2: Preserve nested site-map markup without recursive include-screen evaluation. -->
+        <section-iterate name="ScreenNestedSection" list="siteMapEvents" entry="siteMapEvent">
+            <widgets>
+                <section name="OpenBranch" condition="siteMapEvent.kind == 'open'"><widgets>
+                    <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[<div class="ScreenTreeNested">]]></text></render-mode>
+                </widgets></section>
+                <section name="CloseBranch" condition="siteMapEvent.kind == 'close'"><widgets>
+                    <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[</div>]]></text></render-mode>
+                </widgets></section>
+                <section name="SiteMapItem" condition="siteMapEvent.kind == 'item'"><widgets>
+                    <section name="LinkOrLabel" condition="siteMapEvent.link">
+                        <widgets><link url="${siteMapEvent.path}" link-type="anchor" text="${siteMapEvent.title}"/></widgets>
+                        <fail-widgets><label text="${siteMapEvent.title}" style="text-muted"/></fail-widgets>
                     </section>
-                </widgets>
-            </section-iterate>
-        </container>
+                </widgets></section>
+            </widgets>
+        </section-iterate>
     </widgets>
 </screen>

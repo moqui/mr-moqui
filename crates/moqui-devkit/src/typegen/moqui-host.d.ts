@@ -1008,6 +1008,7 @@ interface MoquiMenuItem {
     image: string | null;
     imageType: string | null;
     hasParameters: boolean;
+    hasRequiredParameters: boolean;
     /** The location of the item's screen. */
     location: string;
     menuIndex: number | null;
@@ -1068,7 +1069,8 @@ interface MoquiScreenRenderer {
     getCurrentThemeId(): string;
     getThemeIconClass(text: string): string | null;
     getThemeValues(resourceTypeEnumId: string): string[];
-    getMenuItems(path?: string): MoquiMenuItem[];
+    /** Hidden entries are opt-in; authorization still applies. */
+    getMenuItems(path?: string, includeHidden?: boolean): MoquiMenuItem[];
     getMenuData(pathNames: string[]): MoquiMap[] | null;
     /** The `<shell-providers>` of the apps the user may open, `{apps: [{name, title, image, imageType, path, providers}]}`, only `kind` in each `providers` when given; kept per session. */
     getShellProviders(kind?: "quickCreate" | "todaySources" | "paletteActions" | "paletteTypes" | "paletteSources" | "notificationTopics" | "keymaps" | "accountMenuItems" | null): MoquiMap;
