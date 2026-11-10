@@ -826,6 +826,17 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
 - A chained `EntityFind` call returns the same find, which can run again; "entity find was already used" is gone, and a
   find is refused only while it runs (R52).
 
+- **`<set value>` and the other GString texts are not localized (R55, Profiling3 W14, D1).** As Java's template writes
+  them as GStrings, a `set`'s value and default-value, a field-map value, a compare value and a name are expanded with
+  `ec.resource.expandNoL10n`, or are a literal when there is nothing to expand; before, they went through
+  `ec.resource.expand`, which localizes, so a value equal to a localized message's original came out translated in a
+  larger body but not in a body of only sets (the native plan). Messages, asserts and log text are still localized.
+- **An in-map of the context passes only the declared in-parameters (R55, W2)** when the service validates its input,
+  has no pre-validate rule, is not entity-auto, and the call is not multi: what the service sees is as before, since
+  validation dropped the rest.
+- **A data feed probe whose savepoint rollback fails is reported as a failure before the feed (R54).** Its savepoint
+  goes out behind what is unanswered, so the two cannot be told apart; the transaction does not commit either way.
+
 ## 8. Known flaky tests
 
 - `service::coverage::tests::calls_are_counted_only_between_enable_and_finish`: a process-wide recorder, races with

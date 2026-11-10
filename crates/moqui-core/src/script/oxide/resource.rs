@@ -239,10 +239,37 @@ fn condition(scope: &mut Scope<'_>) -> Result<Value, Conv> {
 /// The expression strict, as QuickJS's `resource_expression` compiles it (`eval_compiled(.., true)`): the directive
 /// on the same line, so its lines are the text's, and a strict text is kept apart from the same text run sloppy.
 fn evaluate(scope: &mut Scope<'_>, expression: &str) -> Result<Value, Conv> {
-    let source = format!("\"use strict\"; {}", crate::script::runtime::as_expression(expression));
-    let hash = crate::script::text::hash_text(&source);
+    let (source, hash) = strict_source(expression);
     run_here(scope, &source, hash, super::compiled::FILE_NAME, Some(expression)).map_err(|err| thrown_on(scope, err))
 }
+
+/// The strict source of `expression` and its hash, kept by the thread for the texts it evaluated, so a call of the
+/// same text formats and hashes no new source (plans/Profiling3.md W15). Up to [`STRICT_SOURCES`] texts; a full memo
+/// starts again.
+fn strict_source(expression: &str) -> (std::rc::Rc<str>, u64) {
+    thread_local! {
+        static SOURCES: std::cell::RefCell<StrictSources> = std::cell::RefCell::default();
+    }
+    SOURCES.with_borrow_mut(|sources| {
+        if let Some((source, hash)) = sources.get(expression) {
+            return (std::rc::Rc::clone(source), *hash);
+        }
+        let source: std::rc::Rc<str> =
+            format!("\"use strict\"; {}", crate::script::runtime::as_expression(expression)).into();
+        let hash = crate::script::text::hash_text(&source);
+        if sources.len() >= STRICT_SOURCES {
+            sources.clear();
+        }
+        sources.insert(expression.into(), (std::rc::Rc::clone(&source), hash));
+        (source, hash)
+    })
+}
+
+/// An expression's text to its strict source and that source's hash.
+type StrictSources = std::collections::HashMap<Box<str>, (std::rc::Rc<str>, u64), foldhash::fast::RandomState>;
+
+/// The expressions a thread keeps the strict source of.
+const STRICT_SOURCES: usize = 1024;
 
 fn text_value(text: &str) -> Value {
     match quickjs_oxide::engine::api::core::JsString::try_from_utf8(text) {

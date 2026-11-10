@@ -320,7 +320,7 @@ fn nested_blocks_indent_but_inline_script_text_is_unchanged() {
 #[test]
 fn debug_adds_a_comment_naming_each_element() {
     let source = generate_with("<actions><set field=\"a\" value=\"b\"/></actions>", true).unwrap();
-    assert!(source.contains("    // <set field=\"a\" value=\"b\">\n    a = ec.resource.expand(\"b\");\n"));
+    assert!(source.contains("    // <set field=\"a\" value=\"b\">\n    a = \"b\";\n"));
     let plain = generate_with("<actions><set field=\"a\" value=\"b\"/></actions>", false).unwrap();
     assert!(!plain.contains("//"));
 }

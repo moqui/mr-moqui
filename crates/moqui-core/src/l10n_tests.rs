@@ -632,3 +632,27 @@ fn chinese_catalog_files_match_the_message_keys() {
     assert!(choice_zh.contains("{0}") && choice_zh.contains("{1}") && choice_zh.contains("{3}"));
     assert_eq!(choice_zh.matches("{2,choice,0#|1#").count(), 2);
 }
+
+/// As Java's template, a `<set value>` (a GString there) is not localized, in a body of only sets (the native plan)
+/// or in a larger one, while a message is (plans/Profiling3.md W14, D1).
+#[test]
+fn a_set_value_is_not_localized_and_a_message_is() {
+    let context = entity_context();
+    let _entered = context.enter();
+    message(&context, "Open", "default", "Opened (localized)");
+    crate::script::run_actions(r#"<actions><set field="plain" value="Open"/></actions>"#).unwrap();
+    crate::script::run_actions(
+        r#"<actions>
+            <set field="inBody" value="Open"/>
+            <set field="expanded" value="${inBody} now"/>
+            <message>Open</message>
+        </actions>"#,
+    )
+    .unwrap();
+    for check in ["plain === 'Open'", "inBody === 'Open'", "expanded === 'Open now'"] {
+        assert!(crate::script::eval_condition(check).unwrap(), "{check}");
+    }
+    let messages: Vec<String> = context.message().messages().to_vec();
+    assert!(messages.iter().any(|text| text == "Opened (localized)"), "{messages:?}");
+    crate::script::clear_context_stack();
+}

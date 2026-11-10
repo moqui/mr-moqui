@@ -27,11 +27,17 @@
     const { attr, has, attrOrNull, jsString, child, childrenNamed, sourcesOf, bodyOf, joinPresent, raw, unraw, js } = T;
     const { stmt, expr, chain, macro, noops } = T;
 
+    // Localized, then expanded: what Java's template passes to ec.resource.expand (messages, asserts, log text).
     const expandExpr = (text) => `ec.resource.expand(${jsString(text)})`;
 
+    // What Java's template writes as a GString (a set's value and default-value, a field-map value, a compare value,
+    // a name): expanded with no localization, and a literal when there is nothing to expand (plans/Profiling3.md W14,
+    // D1). A text with no `$`, or only a trailing one, is unchanged by an expand.
     const literalOrExpand = (text) => {
         const value = text == null ? "" : String(text);
-        if (value.indexOf("$") >= 0 && value.charAt(value.length - 1) !== "$") return expandExpr(value);
+        if (value.indexOf("$") >= 0 && value.charAt(value.length - 1) !== "$") {
+            return `ec.resource.expandNoL10n(${jsString(value)})`;
+        }
         return jsString(value);
     };
 
@@ -43,11 +49,11 @@
         if (type === "NewMap") return { before: "", value: "{}" };
         let base;
         if (has(node, "from")) base = attr(node, "from");
-        else if (has(node, "value")) base = expandExpr(attr(node, "value"));
+        else if (has(node, "value")) base = literalOrExpand(attr(node, "value"));
         else base = "null";
         let before = "";
         if (has(node, "default-value")) {
-            const fallback = expandExpr(attr(node, "default-value"));
+            const fallback = literalOrExpand(attr(node, "default-value"));
             before = `var _temp_default = ${base};`;
             base = `(__isGroovyFalse(_temp_default) ? ${fallback} : _temp_default)`;
         }
@@ -57,7 +63,7 @@
 
     const fieldExpr = (node) => {
         if (has(node, "from")) return attr(node, "from");
-        if (has(node, "value")) return expandExpr(attr(node, "value"));
+        if (has(node, "value")) return literalOrExpand(attr(node, "value"));
         return attr(node, "field-name");
     };
 
