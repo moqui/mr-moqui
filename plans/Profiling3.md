@@ -1,6 +1,7 @@
 # Performance: a second reading, and where to work next
 
-Status 2026-11-10: analysis and plan; nothing here is built. It reads the numbers of [Profiling2](Profiling2.md), the
+Status 2026-11-10: M1 to M4 and M6 are built (Profiling2 Round 54), and W1, W2, W4 to W10 and W12 to W17 (Round 55);
+W3 is not built and W11 goes with S4a. The rest is the plan. It reads the numbers of [Profiling2](Profiling2.md), the
 archived rounds and the bench repository again with the code beside them, and proposes what to measure and what to
 change next. No benchmark was run for it. Two figures were computed from files already kept (the Mantle census and
 the action bodies under `runtime/`, both in [§10](#10-sources)); every other number cites its round. A `file:line` is

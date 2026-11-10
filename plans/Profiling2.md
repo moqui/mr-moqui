@@ -11,7 +11,8 @@ replaces four running logs, now in `archive/`:
 It keeps the latest numbers, what is still open and the ideas not yet built. Round 50 (2026-11-08, [below](#round-50-tiers-0-to-2))
 built §5's tiers 0 to 2, Round 51 ([below](#round-51-shared-atoms)) the shared atoms, Round 52
 ([below](#round-52-the-boundary-rows-and-native-sets)) the boundary rows and native sets, and Round 53 (2026-11-09,
-[below](#round-53-full-screen-renders)) full renders of real screens over HTTP. Each one cites where it was measured or proposed: "R*n*" is a Profiling round, "TX §*name*" or "TX D*n*" a section or decision of TX-Cache, "Oxide §*n*" a
+[below](#round-53-full-screen-renders)) full renders of real screens over HTTP. Rounds 54 and 55 (2026-11-10) are
+Profiling3's instruments and weeding. Each one cites where it was measured or proposed: "R*n*" is a Profiling round, "TX §*name*" or "TX D*n*" a section or decision of TX-Cache, "Oxide §*n*" a
 section of Script-Engine-Oxide, and "Zipp *n*" an item of Script-Engine-Zipp-Ideas §3.
 
 Most of the database and service work is done:
@@ -537,6 +538,57 @@ on a render. `sri.renderText` was 0.6 ms of Cache Elements (four templates) and 
   `perf` profile is the next base ([Profiling3](Profiling3.md) M5).
 - **A row is still about 840 thousand instructions and 65 host calls** (Entities html). Profiling3 S4 proposes rows
   as templates the host fills.
+
+### Round 54: the instruments, and the round trips named
+
+Profiling3 M1 to M4 and M6 (2026-11-10; the commits name them). The operation profile (`MOQUI_OP_PROFILE`), the census's
+statement shapes, the M3 service rows, the thread rows and the engine counters are in §2. M5 (a `perf` profile)
+waited: `perf_event_paranoid` was back at 4 after a reboot. M7 and M8 are later. Results are in the bench repository's
+`rounds/r54/`.
+
+- **The nine Mantle operations, in process** (`tools/mantle-ops/`, embedded Postgres, medians): an operation's CPU is
+  55 to 60% of its wall time on a local socket (place#Order 9.5 ms, 5.5 ms CPU, 66 waited round trips, 413 bare-name
+  reads, 25 service calls, 73 entity operations; apply#Settlement 32 ms, 17 ms CPU, 860 bare-name reads, 386 entity
+  operations).
+- **Where the round trips go.** The largest single item was `SAVEPOINT moqui_feed`: 20.5 of place#Order's 66, and
+  2,781 in the run. Each read of the data feed at commit went in a savepoint probe whose `SAVEPOINT` waited for the
+  previous probe's `RELEASE`. They now go behind it (`probe_behind`): place#Order 66 to 46 round trips, approve#Order
+  54 to 38, add#OrderProductQuantity 51 to 36, change#InvoiceState 80 to 57.5, create#Payment 77 to 50,
+  apply#Settlement 120 to 100.5, pack#Shipment 117 to 84.5, approve#Payable 84 to 66.5. What is left is reads (32 of
+  place#Order's 46: `order_header`, `order_part`, `entity_audit_log`, `order_item` the most), locking reads (8) and
+  repeats of a shape (46 statements, 10 with other parameters, 20 reads right after a read): S1's material.
+- **The pool's wrapper passed two calls on as the trait's defaults.** `Tracked` did not forward
+  `execute_deferred_update` or `savepoint_behind`, so R18's update the server checks was never used through the pool:
+  `tx_cache_speed`'s rt drops by one a call wherever a held update commits (S3 11 to 10, S4 14 to 13, N3 3 to 2).
+- **First thread rows** (`JS_SPEED_ONLY=threads`, on a busy machine): noop#Inline 27 us a call on one thread and 5.7
+  on 16, List html 1,667 to 418 us. Each thread starts its own runtime inside the row. To read again in a quiet window.
+
+### Round 55: weeding
+
+Profiling3 W1, W2, W4 to W10 and W12 to W17, and the operation metrics (2026-11-10), each in its own commit with its
+rows. W3 is not built: a call's cleaned parameters are read again after the body (the post rules, the callbacks, the
+tx rules), so they cannot be moved into its frame without changing those. W11 goes with S4a. `rounds/r55/table.md`
+has the base (before W1) against the end of the round, best of two alternating runs:
+
+| Row | Before | After | Allocations |
+|---|---:|---:|---|
+| noop#Inline | 7.98 us | 7.02 | 84 to 61 |
+| call#Nested | 17.1 us | 16.0 | 169 to 143 |
+| call#Context (30 names, 10 calls in-map context) | 482 us | 230 | 6,872 to 2,165 |
+| entity-find-one cached, from actions | 4.56 us | 3.83 | 44 to 31 |
+| 1000 adds to a bare name | 370 us | 312 | |
+| four sets | 0.48 us | 0.36 | |
+| loop#Actions | 301 us | 284 | 2,474 to 2,452 |
+| body#Large (5 KB) | 13.1 us | 11.5 | 111 to 88 |
+| fancy, trusted / locked down | 47.9 / 40.2 us | 32.2 / 25.8 | 244 / 228 to 121 / 106 |
+| Plain.qvt | 30.7 us | 25.0 | |
+
+- The targets of Profiling3 §5 are missed for now: noop#Inline is 7.0 us and 61 allocations (target under 4 and 40),
+  call#Nested 16 (under 9), a cached find from actions 3.8 (under 2.5). The rest of a service call is its telemetry
+  span (about 20 allocations, recorded whole and kept or dropped at its end, a design to decide) and the crossings of
+  the generated chain (S3a); of a cached find, its crossings (S3b).
+- `empty actions` reads 0.65 us in a run of every section and 0.28 alone, in this build only: a collection of the
+  script heap lands in the row (it frees what the sections before made). It is not the row's own cost.
 
 ### Startup and threads
 
