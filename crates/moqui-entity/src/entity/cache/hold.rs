@@ -35,6 +35,9 @@ pub(super) struct Held {
     /// The service on the artifact stack when the write was held, for the errors of a later find or of the flush
     /// (plans/archive/TX-Cache.md G5).
     pub(super) service: Option<Arc<str>>,
+    /// A quiet create (`create_if_missing`): it goes out as one that writes nothing when another transaction made the
+    /// row first, as it would have at once, not as a create that fails the commit on its key.
+    pub(super) if_missing: bool,
 }
 
 impl Held {

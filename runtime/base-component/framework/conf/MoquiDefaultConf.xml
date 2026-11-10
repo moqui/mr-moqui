@@ -490,9 +490,10 @@
         cache, as a service marked transaction="cache" does; false begins it as transaction="use". -->
     <default-property name="screen_tx_cache" value="true"/>
     <!-- A service whose definition has no transaction attribute begins its transaction (when it begins one) with the
-        transaction cache, as one marked transaction="cache" does; false, the default for now, begins it as
-        transaction="use". On test (plans/Profiling3.md S1, D3). -->
-    <default-property name="service_tx_cache" value="false"/>
+        transaction cache, as one marked transaction="cache" does: a service of XML actions or a script, called with no
+        new transaction asked for (a Rust, native or entity-auto service does not); false begins it as
+        transaction="use" (plans/Profiling3.md S1, D3). -->
+    <default-property name="service_tx_cache" value="true"/>
     <!-- A module ec.resource.script loads whose top level only declares (functions, constants, other modules) gives the
         same value for the rest of the outermost script run, made once; false makes it again at each load. -->
     <default-property name="script_module_cache" value="true"/>

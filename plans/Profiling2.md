@@ -928,6 +928,8 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
 - moqui-core `tarpit_locks_and_check_views_are_read_once_until_a_lock_is_written`: a process-static authorization
   generation (R22, R25; adjusted in R25 and R28).
 - moqui-host's XMPP walk (`xmpp_clients_sign_in_…`): "not in time" under a full run's load, passes alone (R29, Phase 4).
+- moqui-host's `rtc::cascade::a_call_on_two_nodes_carries_media_both_ways_…`: "the leg node did not start" (a child
+  server past its start timeout) under a full run's load, passes alone (R60).
 - moqui-git `mirror_fetches_and_opted_in_writes_raise_events` and `the_tree_refs_compare_and_merge_methods_through_services`:
   timing under a full run, pass alone (R48, R49).
 - mr-boss `WorkCenters` load of a released operation: intermittent (R22, R27, R28, R49).

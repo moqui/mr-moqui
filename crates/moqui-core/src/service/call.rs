@@ -673,7 +673,11 @@ fn sync_input(
 
 /// The transaction a call of `def` begins, before the call's own options: the definition's, or, with the
 /// `service_tx_cache` property on, `cache` for a service whose definition and call say nothing of the transaction or
-/// its cache (plans/Profiling3.md S1, D3). A transaction a call joins keeps its own mode either way.
+/// its cache (plans/Profiling3.md S1, D3). A transaction a call joins keeps its own mode either way. Only a service of
+/// XML actions or a script holds by default: a Rust or native service manages its own statements (the git server's
+/// pushes, the artifact index), and an entity-auto one is a single statement. A call that asks for a new transaction
+/// keeps the definition's too: that is how a body makes a row a racing caller may make first (ChatServices'
+/// `ensure#UserStates` under `record#UserChange`), whose write must meet the race at its statement, not at a commit.
 fn base_transaction(def: &ServiceDef, options: &CallOptions) -> TransactionAttribute {
     static DEFAULT_CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let default_cache =
@@ -682,7 +686,8 @@ fn base_transaction(def: &ServiceDef, options: &CallOptions) -> TransactionAttri
         && !def.transaction_declared
         && !def.no_tx_cache
         && options.use_transaction_cache.is_none()
-        && def.kind != ServiceKind::EntityAuto
+        && options.require_new_transaction != Some(true)
+        && matches!(def.kind, ServiceKind::Inline | ServiceKind::Script)
     {
         return TransactionAttribute::Cache;
     }
