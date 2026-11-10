@@ -31,6 +31,14 @@ pub(super) static SERVICE_FACADE: HostClass = HostClass {
         method!("ec.service", "sync", [], sync),
         method!("ec.service", "async", [], async_call),
         method!("ec.service", "job", [Text], job),
+        // a generated <service-call>, one crossing for the builder chain (plans/Profiling3.md S3a)
+        method!(
+            "ec.service",
+            "callXml",
+            [Text, Int, Value, Parameters, Value],
+            Release,
+            call_xml
+        ),
     ],
     getters: &[],
     hidden: &[],
@@ -241,18 +249,27 @@ fn parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// The in-parameters of the named service read from the context, when they are all the call can use
 /// ([`crate::service::call::context_in_params`]); None when the whole context is needed.
 fn declared_from_context(call: &mut Call<'_>) -> Result<Option<moqui_lib::object::ValueMap>, HostError> {
-    let name = {
+    let (name, multi) = {
         let builder = call.this::<Builder>()?;
         let state = builder
             .try_read()
             .map_err(|_| HostError::message("the service call is running"))?;
-        // a multi call reads each row's `name_N`, which only the whole context has
-        if state.options.multi {
-            return Ok(None);
-        }
-        state.name.clone()
+        (state.name.clone(), state.options.multi)
     };
-    let Some(params) = crate::service::call::context_in_params(&name) else {
+    declared_for(call, &name, multi)
+}
+
+/// [`declared_from_context`] of the service `name`: a multi call reads each row's `name_N`, which only the whole
+/// context has.
+fn declared_for(
+    call: &mut Call<'_>,
+    name: &str,
+    multi: bool,
+) -> Result<Option<moqui_lib::object::ValueMap>, HostError> {
+    if multi {
+        return Ok(None);
+    }
+    let Some(params) = crate::service::call::context_in_params(name) else {
         return Ok(None);
     };
     // the values the script holds are written back first, as the whole context's read does
@@ -345,6 +362,87 @@ fn call(call: &mut Call<'_>) -> Result<Ret, HostError> {
         Err(err) => {
             // the client sees the message; the server log has where it came from
             tracing::error!(target: "moqui_core::script::runtime::services", "Service {} failed: {}", state.name, err.diagnostic());
+            let message = crate::context::client_text(&err.to_string());
+            with_ec(|ec| ec.message().add_error(message))?;
+            Ok(Ret::Value(Value::Null))
+        }
+    }
+}
+
+/// The bits of [`call_xml`]'s options, as XmlActions.js's service-call macro sets them.
+const XML_DISABLE_AUTHZ: i32 = 1;
+const XML_MULTI: i32 = 2;
+const XML_IGNORE_TRANSACTION: i32 = 4;
+const XML_REQUIRE_NEW: i32 = 8;
+const XML_SETS_CACHE: i32 = 16;
+const XML_CACHE: i32 = 32;
+
+/// `ec.service.callXml(name, flags, timeout, inMap, fields)`: a generated `<service-call>` in one crossing, where the
+/// builder chain (`sync().name(..)`, an option each, `.parameters(..)`, a `.parameter(..)` each, `.call()`) was five or
+/// more (plans/Profiling3.md S3a). `flags` are the options' bits, `timeout` the transaction timeout in seconds or null,
+/// `inMap` the in-map (`ec.context` is the whole context, read as `parameters` reads it) or null, and `fields` the
+/// field-maps as an object or null, over the in-map. The result is `call()`'s.
+fn call_xml(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.text_or_empty(0);
+    let flags = call.int(1).unwrap_or(0);
+    let on = |bit: i32| flags & bit != 0;
+    let mut options = CallOptions {
+        disable_authz: on(XML_DISABLE_AUTHZ),
+        multi: on(XML_MULTI),
+        ..CallOptions::default()
+    };
+    if on(XML_IGNORE_TRANSACTION) {
+        options.ignore_transaction = Some(true);
+    }
+    if on(XML_REQUIRE_NEW) {
+        options.require_new_transaction = Some(true);
+    }
+    if on(XML_SETS_CACHE) {
+        options.use_transaction_cache = Some(on(XML_CACHE));
+    }
+    let seconds = match call.value(2) {
+        Some(Value::I32(seconds)) => Some(i64::from(*seconds)),
+        Some(Value::I64(seconds)) => Some(*seconds),
+        // a whole number of seconds, as transactionTimeout takes it
+        #[allow(clippy::cast_possible_truncation)]
+        Some(Value::F64(seconds)) if seconds.is_finite() => Some(*seconds as i64),
+        _ => None,
+    };
+    if let Some(seconds) = seconds {
+        options.timeout = u64::try_from(seconds).ok().map(std::time::Duration::from_secs);
+    }
+    let mut parameters: BTreeMap<String, Value> = BTreeMap::new();
+    match call.arg(3) {
+        Arg::WholeContext => {
+            let entries = match declared_for(call, &name, options.multi)? {
+                Some(entries) => entries,
+                None => {
+                    let mut visible = call.ops.whole_context()?;
+                    visible.retain(|_, value| !matches!(value, Value::Bytes(_)));
+                    visible
+                }
+            };
+            parameters.extend(entries);
+        }
+        _ => {
+            if let Some(entries) = crate::script::value_map(&call.value_or_null(3)) {
+                parameters.extend(entries);
+            }
+        }
+    }
+    if let Some(fields) = crate::script::value_map(&call.value_or_null(4)) {
+        parameters.extend(fields);
+    }
+    let called = if options.multi {
+        crate::service::call::sync_multi(&name, &parameters, &options)
+    } else {
+        crate::service::call::sync_with_owned(&name, parameters, &options)
+    };
+    match called {
+        Ok(results) => Ok(Ret::Value(Value::Map(results.into_iter().collect()))),
+        Err(err) if err.kind() == ErrorKind::Unauthorized => Err(HostError::Context(err)),
+        Err(err) => {
+            tracing::error!(target: "moqui_core::script::runtime::services", "Service {name} failed: {}", err.diagnostic());
             let message = crate::context::client_text(&err.to_string());
             with_ec(|ec| ec.message().add_error(message))?;
             Ok(Ret::Value(Value::Null))

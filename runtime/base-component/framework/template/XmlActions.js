@@ -272,7 +272,36 @@
         `;
     };
 
+    // A sync call is one host call, ec.service.callXml(name, flags, timeout, inMap, fields), with the options as the
+    // bits of service.rs's call_xml (plans/Profiling3.md S3a); an async call keeps the builder.
+    const serviceCallXml = (node) => {
+        const inMap = attr(node, "in-map");
+        const tx = attr(node, "transaction");
+        let flags = 0;
+        if (attr(node, "disable-authz") === "true") flags |= 1;
+        if (attr(node, "multi") === "true") flags |= 2;
+        if (has(node, "transaction")) {
+            if (tx === "ignore") flags |= 4;
+            if (tx === "force-new" || tx === "force-cache") flags |= 8;
+            flags |= 16;
+            if (tx === "cache" || tx === "force-cache") flags |= 32;
+        }
+        const flagsExpr = attr(node, "multi") === "parameter"
+            ? `(${flags} | (ec.web && ec.web.parameters && ec.web.parameters._isMulti === 'true' ? 2 : 0))`
+            : String(flags);
+        const timeout = has(node, "transaction") && has(node, "transaction-timeout") ? attr(node, "transaction-timeout") : "null";
+        const inMapExpr = (inMap === "true" || inMap === "context")
+            ? "ec.context"
+            : has(node, "in-map") && inMap !== "false" && inMap !== "" ? inMap : "null";
+        const fieldMaps = childrenNamed(node, "field-map");
+        const fieldsExpr = fieldMaps.length
+            ? `{${fieldMaps.map((kid) => `${jsString(attr(kid, "field-name"))}: ${fieldExpr(kid)}`).join(", ")}}`
+            : "null";
+        return `ec.service.callXml(${literalOrExpand(attr(node, "name"))}, ${flagsExpr}, ${timeout}, ${inMapExpr}, ${fieldsExpr})`;
+    };
+
     const serviceCallChain = (node, isAsync) => {
+        if (!isAsync) return serviceCallXml(node);
         const inMap = attr(node, "in-map");
         const tx = attr(node, "transaction");
         const syncOnly = !isAsync;
