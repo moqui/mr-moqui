@@ -45,14 +45,14 @@ const LOGIN_ELEMENTS: [(&str, &str); 4] = [
 ];
 
 /// The commands, for `help` and for an unknown command's answer.
-pub const AGENT_HELP: &str = "Commands (an element is its id, its number from `elements`, as #3, or text of its label):
+pub const AGENT_HELP: &str = "Commands (an element is its id, its number from `elements`, as #3, or whole words of its label):
   look                     the screen again
   key <chord>...           keys: F10 Enter Esc Tab Shift+Tab Up Down PgDn Space Ctrl+K Alt+M F4 ...
   type <text>              characters as typed; \\r is Enter, \\t is Tab
   go <path[?query]>        go to a screen
   focus <element>          move the focus to an element
   set <element> <value>    replace a field's value; a drop-down takes a choice's value or label
-  do <element>             focus an element and press Enter: a button, link, list row, menu
+  do <element>             focus an element and press Enter: a button, link, list row, menu (a check or radio is set)
   do Find [list]           open a list's find fields (set them, then do Find again to filter)
   find <text>              move to the text on the screen, a list row's included (as /)
   elements                 the focusable elements: number, kind, id, label, value
@@ -226,7 +226,8 @@ impl<L: ScreenLink> Agent<L> {
                 None => self.press_named(&rest),
             },
             "find" => {
-                self.press(KeyPress::plain(Key::Char('/')));
+                // As `/`, but `/` in a focused text field is a character of its value.
+                self.view.session_mut().open_text_search();
                 self.type_text(&rest);
                 self.press(KeyPress::plain(Key::Enter));
                 let message = self.session().message().to_string();
@@ -400,10 +401,8 @@ impl<L: ScreenLink> Agent<L> {
         let result = if self.login().is_some() {
             self.set_login(&format!("{element} {value}"))
         } else {
-            match self.resolve(element.trim()) {
-                Some(key) => self.set_key(&key, value.to_string()),
-                None => Err(self.not_here(element.trim())),
-            }
+            self.resolve_one(element.trim())
+                .and_then(|key| self.set_key(&key, value.to_string()))
         };
         self.settle();
         self.answer(result, self.json)
@@ -467,7 +466,19 @@ impl<L: ScreenLink> Agent<L> {
         if text.is_empty() {
             return Err("name an element: its id, #n from elements, or its label".to_string());
         }
-        self.resolve(text).ok_or_else(|| self.not_here(text))
+        self.resolve_one(text)
+    }
+
+    /// The element `text` names, or why none: not here (see [`Self::not_here`]), or more than one holds its words.
+    fn resolve_one(&self, text: &str) -> Result<String, String> {
+        match self.named(text) {
+            Named::One(key) => Ok(key),
+            Named::Many(labels) => Err(format!(
+                "{text:?} names more than one element: {}; write the whole label, the id or #n",
+                labels.join(", ")
+            )),
+            Named::None => Err(self.not_here(text)),
+        }
     }
 
     /// `do <element>`: focus it and press Enter. `do Find` (or `do Find <list>`) where no element is named so opens a
@@ -478,17 +489,26 @@ impl<L: ScreenLink> Agent<L> {
         if finding && lower == "find" {
             return self.submit_find();
         }
-        match self.resolve(text) {
-            Some(key) => {
+        match self.named(text) {
+            Named::One(key) => {
+                let kind = self.item(&key).map(|item| item.kind);
+                if let Some(kind @ (FocusKind::Check | FocusKind::Radio)) = kind {
+                    // Enter on a check or a radio submits its form: never what `do` on a choice means.
+                    let label = self.item(&key).map(|item| self.label(item)).unwrap_or_else(|| key.clone());
+                    return Err(format!(
+                        "{label} ({}) is a choice, not something to press; use set {key} <value>",
+                        Self::kind_name(kind)
+                    ));
+                }
                 self.view.session_mut().focus_key(&key);
                 self.press(KeyPress::plain(Key::Enter));
                 Ok(())
             }
-            None if lower == "find" || lower.starts_with("find ") => {
+            Named::None if lower == "find" || lower.starts_with("find ") => {
                 let list = text.trim().get("find".len()..).unwrap_or_default();
                 self.open_find(list.trim())
             }
-            None => Err(self.not_here(text)),
+            _ => self.resolve_one(text).map(|_| ()),
         }
     }
 
@@ -641,27 +661,64 @@ impl<L: ScreenLink> Agent<L> {
         scored.into_iter().take(3).map(|(_, shown)| shown).collect()
     }
 
-    /// An element by `#n`, by its key, or by its label: the same label first, then one that holds the text.
+    /// An element by `#n`, by its key, or by its label, when exactly one is meant.
     fn resolve(&self, text: &str) -> Option<String> {
+        match self.named(text) {
+            Named::One(key) => Some(key),
+            _ => None,
+        }
+    }
+
+    /// The element `text` names: by `#n`, by its key, by the same label (the first, as rows repeat their links), then
+    /// by a label that holds the text as whole words. A label holding it in part of a word (`No` in `Notify`) names
+    /// nothing, and the text held by more than one label is [`Named::Many`]: a guess there pressed the wrong control.
+    fn named(&self, text: &str) -> Named {
         let order = self.session().focus_order();
         if let Some(n) = text.strip_prefix('#').and_then(|n| n.parse::<usize>().ok()) {
-            return order.get(n.checked_sub(1)?).map(|item| item.key.clone());
+            return n
+                .checked_sub(1)
+                .and_then(|n| order.get(n))
+                .map_or(Named::None, |item| Named::One(item.key.clone()));
         }
         if let Some(item) = order.iter().find(|item| item.key == text) {
-            return Some(item.key.clone());
+            return Named::One(item.key.clone());
         }
-        let lower = text.to_lowercase();
-        let labelled: Vec<(String, String)> = order
+        let lower = text.trim().to_lowercase();
+        if lower.is_empty() {
+            return Named::None;
+        }
+        let labelled: Vec<(&FocusItem, String)> = order
             .iter()
-            .map(|item| (item.key.clone(), self.label(item).to_lowercase()))
+            .map(|item| (item, self.label(item).to_lowercase()))
             .collect();
         let tidy = |label: &str| label.trim_end_matches('…').trim().to_string();
-        labelled
+        if let Some((item, _)) = labelled
             .iter()
             .find(|(_, label)| tidy(label) == lower)
-            .or_else(|| labelled.iter().find(|(key, _)| key.to_lowercase() == lower))
-            .or_else(|| labelled.iter().find(|(_, label)| label.contains(&lower)))
-            .map(|(key, _)| key.clone())
+            .or_else(|| labelled.iter().find(|(item, _)| item.key.to_lowercase() == lower))
+        {
+            return Named::One(item.key.clone());
+        }
+        let holding: Vec<&(&FocusItem, String)> =
+            labelled.iter().filter(|(_, label)| holds_words(label, &lower)).collect();
+        match holding.as_slice() {
+            [] => Named::None,
+            [(item, _)] => Named::One(item.key.clone()),
+            many => {
+                let mut shown: Vec<String> = Vec::new();
+                for (item, _) in many {
+                    let one = format!("{} ({})", self.label(item), Self::kind_name(item.kind));
+                    if !shown.contains(&one) {
+                        shown.push(one);
+                    }
+                }
+                // The same link on every row is one name, not a choice to make: the first, as an exact label.
+                if shown.len() == 1 {
+                    return Named::One(many[0].0.key.clone());
+                }
+                Named::Many(shown)
+            }
+        }
     }
 
     /// What an element says: a field's title, a link's or button's text, a dialog's title, a menu's text, else the text
@@ -676,7 +733,13 @@ impl<L: ScreenLink> Agent<L> {
                     None => field.title.clone(),
                 })
             }
-            FocusKind::Link | FocusKind::Button => index.links.get(&item.key).map(|link| link.text.clone()),
+            FocusKind::Link | FocusKind::Button => index.links.get(&item.key).map(|link| link.text.clone()).or_else(|| {
+                // A submit or reset field says its button's text, as it is drawn, not its title (often its name).
+                index.fields.get(&item.node).and_then(|field| match &field.widget {
+                    Widget::Submit { text, .. } | Widget::Reset { text } => Some(text.clone()),
+                    _ => None,
+                })
+            }),
             FocusKind::Dialog => index.dialogs.get(&item.key).cloned(),
             FocusKind::Menu => index.menus.get(&item.key).map(|menu| menu.text.clone()),
             _ => None,
@@ -1251,16 +1314,18 @@ impl<L: ScreenLink> Agent<L> {
         }
         let mut lines: Vec<String> = (0..rows)
             .map(|y| {
+                let cells: Vec<_> = (0..columns)
+                    .filter_map(|x| buffer.get(x, y))
+                    .filter(|cell| !cell.is_continuation())
+                    .collect();
+                let reverse_at = |i: usize| cells[i].modifier.contains(Modifier::REVERSE);
                 let mut line = String::new();
                 let mut reversed = false;
-                for x in 0..columns {
-                    let Some(cell) = buffer.get(x, y) else {
-                        continue;
-                    };
-                    if cell.is_continuation() {
-                        continue;
-                    }
-                    let reverse = cell.modifier.contains(Modifier::REVERSE);
+                for (i, cell) in cells.iter().enumerate() {
+                    // A focused field draws its cursor cell un-reversed inside the reversed field: one field still,
+                    // not two boxes either side of a gap.
+                    let cursor = i > 0 && i + 1 < cells.len() && reverse_at(i - 1) && reverse_at(i + 1);
+                    let reverse = reverse_at(i) || cursor;
                     if reverse != reversed {
                         line.push_str(if reverse { "[[" } else { "]]" });
                         reversed = reverse;
@@ -1431,4 +1496,25 @@ fn unescape(text: &str) -> String {
         }
     }
     out
+}
+
+/// What a name in a command finds ([`Agent::named`]).
+enum Named {
+    One(String),
+    /// More than one element holds the words, as `Label (kind)`.
+    Many(Vec<String>),
+    None,
+}
+
+/// Whether `label` holds `words` starting and ending at word boundaries: `save` is in `save changes`, `no` is not in
+/// `notify`.
+fn holds_words(label: &str, words: &str) -> bool {
+    let is_word = |c: char| c.is_alphanumeric();
+    label.match_indices(words).any(|(at, found)| {
+        let before = label[..at].chars().next_back();
+        let after = label[at + found.len()..].chars().next();
+        let starts = before.is_none_or(|c| !is_word(c)) || !found.chars().next().is_some_and(is_word);
+        let ends = after.is_none_or(|c| !is_word(c)) || !found.chars().next_back().is_some_and(is_word);
+        starts && ends
+    })
 }

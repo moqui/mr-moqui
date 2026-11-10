@@ -381,11 +381,14 @@ impl Transport for InProcess {
             for (name, value) in &kept {
                 moqui_core::user::set_session_attribute_json(name, Some(value.clone()));
             }
+            // The render's request is the thread's, as a served one is: a transition that writes its own response
+            // (`ec.web.response`, a download) has one, as over HTTP.
             let mut render = moqui_core::screen::make_render(&factory)
                 .screen_path(ask.path)
                 .method(ask.method)
                 .parameters(values)
-                .options(options);
+                .options(options)
+                .as_request(true);
             if ask.json {
                 render = render.header("Accept", "application/json");
             }
@@ -560,29 +563,20 @@ impl<T: Transport> ScreenLink for Link<T> {
         method: &str,
         fields: &BTreeMap<String, String>,
     ) -> Result<TransitionOutcome, LinkError> {
-        let absolute = self.absolute(url);
         let output = self.transport.send(self.ask(url, method, "POST", fields, true))?;
-        let text = output.body_text();
-        let trimmed = text.trim_start();
-        if trimmed.starts_with('{') || trimmed.starts_with('[') {
-            return outcome_from(&output);
+        transition_outcome(&self.absolute(url), fields, &output)
+    }
+
+    /// A transition that writes its own attachment (`DocumentExport.json`) answers with the file.
+    fn transition_reply(&self, url: &str, method: &str, fields: &BTreeMap<String, String>) -> Reply {
+        let output = match self.transport.send(self.ask(url, method, "POST", fields, true)) {
+            Ok(output) => output,
+            Err(err) => return Reply::Transition(Err(err)),
+        };
+        if !(300..400).contains(&output.status) && is_attachment(&output) {
+            return Reply::Raw(check_status(&output).map(|()| raw_body(output)));
         }
-        // Not JSON: an error page, or a form whose transition is the screen itself, which answers the screen; then the
-        // posted fields are the parameters of that screen.
-        check_status(&output)?;
-        // A plain text answer (a click-to-edit text's transition sends the new text) did its work and has no screen: the
-        // current one loads again.
-        if output
-            .header("Content-Type")
-            .is_some_and(|kind| kind.trim_start().starts_with("text/plain"))
-        {
-            return Ok(TransitionOutcome {
-                screen_url: String::new(),
-                messages: Messages::default(),
-                parameters: BTreeMap::new(),
-            });
-        }
-        Ok(screen_repost(&absolute, fields))
+        Reply::Transition(transition_outcome(&self.absolute(url), fields, &output))
     }
 
     fn options(&self, url: &str, parameters: &BTreeMap<String, String>) -> Result<Vec<Choice>, LinkError> {
@@ -634,6 +628,34 @@ impl<T: Transport> ScreenLink for Link<T> {
     fn subscribe(&self, sink: PushSink) -> Option<Subscription> {
         self.transport.subscribe(sink)
     }
+}
+
+/// What a posted form's answer says: its JSON outcome; else (an error page, or a form whose transition is the screen
+/// itself, which answers the screen) the screen again with the posted fields as its parameters.
+fn transition_outcome(
+    absolute: &str,
+    fields: &BTreeMap<String, String>,
+    output: &RenderOutput,
+) -> Result<TransitionOutcome, LinkError> {
+    let text = output.body_text();
+    let trimmed = text.trim_start();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        return outcome_from(output);
+    }
+    check_status(output)?;
+    // A plain text answer (a click-to-edit text's transition sends the new text) did its work and has no screen: the
+    // current one loads again.
+    if output
+        .header("Content-Type")
+        .is_some_and(|kind| kind.trim_start().starts_with("text/plain"))
+    {
+        return Ok(TransitionOutcome {
+            screen_url: String::new(),
+            messages: Messages::default(),
+            parameters: BTreeMap::new(),
+        });
+    }
+    Ok(screen_repost(absolute, fields))
 }
 
 /// Whether the answer's `Content-Disposition` is `attachment`: a download, not a screen.

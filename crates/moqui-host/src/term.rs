@@ -33,7 +33,7 @@ use std::time::Duration;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_lib::sync::lock;
 use moqui_tui::{
-    Choice, LinkError, PushSink, RawBody, ScreenLink, ScreenModel, SessionEvent, SessionOptions, ShellInfo,
+    Choice, LinkError, PushSink, RawBody, Reply, ScreenLink, ScreenModel, SessionEvent, SessionOptions, ShellInfo,
     Subscription, Theme, TransitionOutcome,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -352,6 +352,14 @@ impl ScreenLink for GatedLink {
         fields: &BTreeMap<String, String>,
     ) -> Result<TransitionOutcome, LinkError> {
         self.link.transition(url, method, fields)
+    }
+
+    fn navigation(&self, path: &str, parameters: &BTreeMap<String, String>) -> Reply {
+        self.link.navigation(path, parameters)
+    }
+
+    fn transition_reply(&self, url: &str, method: &str, fields: &BTreeMap<String, String>) -> Reply {
+        self.link.transition_reply(url, method, fields)
     }
 
     fn options(&self, url: &str, parameters: &BTreeMap<String, String>) -> Result<Vec<Choice>, LinkError> {

@@ -235,13 +235,12 @@ impl Session {
             .cloned()
             .or_else(|| submitted.as_ref().map(|done| done.submit_message.clone()))
             .filter(|text| !text.is_empty())
-            // A form saved; a link that posts (Run Job) did something, and saved nothing the user typed.
-            .unwrap_or_else(|| {
-                if submitted.as_ref().is_some_and(|done| done.form.is_empty()) {
-                    "Done".to_string()
-                } else {
-                    "Saved".to_string()
-                }
+            // A form saved; a link that posts (Run Job) did something, and saved nothing the user typed; a form whose
+            // transition writes nothing (a find on the screen itself, a read-only transition) saved nothing to say.
+            .unwrap_or_else(|| match &submitted {
+                Some(done) if done.form.is_empty() => "Done".to_string(),
+                Some(done) if self.index.forms.get(&done.form).is_some_and(|form| !form.writes) => String::new(),
+                _ => "Saved".to_string(),
             });
         if let Some(done) = &submitted {
             self.edits.drop_keys(&done.keys);
@@ -296,8 +295,10 @@ impl Session {
             _ => self.reload(),
         }
         self.rebuild_focus();
-        self.set_message(text.clone(), false);
-        self.after_level = Some(text);
+        if !text.is_empty() {
+            self.set_message(text.clone(), false);
+            self.after_level = Some(text);
+        }
     }
 
     pub(super) fn reset_form(&mut self, key: &str) {

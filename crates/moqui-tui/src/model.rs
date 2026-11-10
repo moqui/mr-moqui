@@ -1027,9 +1027,10 @@ pub enum Widget {
         /// The options transition filters by a `term` parameter: an `ac-transition` text line is such a drop-down.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         server_search: bool,
-        /// With `server_search`, the fewest characters typed before a search.
-        #[serde(default, skip_serializing_if = "is_zero")]
-        min_length: u32,
+        /// With `server_search`, the fewest characters typed before a search: 1 when not given (the form XSD's
+        /// default), and 0 searches as the list opens, with no text.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_length: Option<u32>,
         /// Ask for the options even when a `depends_on` field is empty.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         depends_optional: bool,

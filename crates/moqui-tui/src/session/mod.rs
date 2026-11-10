@@ -375,6 +375,14 @@ impl Session {
                 }
             }
             (Purpose::Transition, Reply::Transition(result)) => self.transition_reply(result),
+            // A form whose transition sent a file: the loop saves it, and the screen and its edits stay.
+            (Purpose::Transition, Reply::Raw(result)) => {
+                self.submitted = None;
+                match result {
+                    Ok(body) => self.downloads.push(body),
+                    Err(err) => self.set_message(format!("The download failed: {err}"), true),
+                }
+            }
             (Purpose::Options(field), Reply::Options(result)) => match result {
                 Ok(choices) => self.apply_choices(&field, choices),
                 Err(err) => self.set_message(format!("Could not load the choices: {err}"), true),
@@ -726,6 +734,14 @@ impl Session {
 
     pub fn confirm_choice(&self) -> Option<&str> {
         self.confirm().map(Confirm::choice)
+    }
+
+    /// The open drop-down searches the server and has fewer characters typed than it needs to ask: an empty list there
+    /// is waiting for text, not without matches.
+    pub fn dropdown_waits_for_text(&self) -> bool {
+        self.dropdown().is_some_and(|drop| {
+            self.is_search(&drop.field) && drop.filter.chars().count() < self.search_min_length(&drop.field)
+        })
     }
 
     /// The choices of the open drop-down, narrowed by what was typed.
@@ -1256,6 +1272,12 @@ impl Session {
             mask,
             multiline: matches!(field.widget, Widget::TextArea { .. }),
         }
+    }
+
+    /// Open the screen's text search (`/`), whatever has the focus: the agent's `find`, which must not type into a
+    /// focused text field.
+    pub fn open_text_search(&mut self) {
+        self.overlays.push(Overlay::Search(String::new()));
     }
 
     fn act(&mut self, action: Action) {

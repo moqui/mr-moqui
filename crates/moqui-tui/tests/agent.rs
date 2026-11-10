@@ -513,3 +513,146 @@ fn a_field_out_of_reach_says_how_to_reach_it_and_a_find_filters_with_its_operato
         "{parameters:?}"
     );
 }
+
+/// The review's Cancel event form: a scope radio, a Notify check whose label is only its option, and the submit.
+const CANCEL_EVENT_JSON: &str = r#"{
+  "v": 1,
+  "screen": { "path": "/event", "title": "Event" },
+  "c": [ { "t": "form", "id": "EventCancel", "name": "EventCancel", "transitionUrl": "/event/cancel", "c": [
+    { "t": "field", "id": "EventCancel.scope", "name": "scope", "title": "It repeats: which events are cancelled?",
+      "w": { "kind": "radio", "value": "this", "options": [ { "value": "this", "label": "This event" },
+             { "value": "following", "label": "This and following" } ] } },
+    { "t": "field", "id": "EventCancel.notify", "name": "notify", "title": "",
+      "w": { "kind": "check", "value": "Y", "options": [ { "value": "Y", "label": "Tell the attendees it is cancelled" } ] } },
+    { "t": "field", "id": "EventCancel.submitButton", "name": "submitButton", "title": "Submit Button",
+      "w": { "kind": "submit", "text": "Cancel event" } },
+    { "t": "field", "id": "EventCancel.note", "name": "note", "title": "Note to the attendees",
+      "w": { "kind": "textLine", "value": "" } },
+    { "t": "field", "id": "EventCancel.reason", "name": "reason", "title": "Reason for the note",
+      "w": { "kind": "textLine", "value": "" } }
+  ] } ]
+}"#;
+
+#[test]
+fn a_name_is_whole_words_of_one_label_and_a_choice_is_never_pressed() {
+    let link = FakeLink::from_json(&[CANCEL_EVENT_JSON]).unwrap();
+    let mut agent = Agent::open(link.clone(), "/event", 100, 30);
+    let posted = |link: &FakeLink| {
+        link.calls()
+            .iter()
+            .any(|call| matches!(call, LinkCall::Transition { url, .. } if url == "/event/cancel"))
+    };
+    // `No` is part of the word Notify, not a word of any label: it names nothing, and nothing is sent.
+    let no = agent.run("do No");
+    assert!(!no.ok, "{}", no.text);
+    assert!(no.text.contains("no element named \"No\""), "{}", no.text);
+    assert!(!posted(&link));
+    // A check or radio named whole is a choice to set, not a control to press.
+    let notify = agent.run("do notify");
+    assert!(!notify.ok, "{}", notify.text);
+    assert!(notify.text.contains("is a choice"), "{}", notify.text);
+    assert!(!posted(&link));
+    // Words held by two labels name neither.
+    let note = agent.run("focus note");
+    assert!(!note.ok, "{}", note.text);
+    assert!(note.text.contains("names more than one element"), "{}", note.text);
+    assert!(agent.run("focus Reason").ok);
+    // The submit button goes by its text, not its title.
+    let listed = agent.run("elements");
+    assert!(
+        listed.text.lines().any(|line| line.contains("EventCancel.submitButton") && line.contains("Cancel event")),
+        "{}",
+        listed.text
+    );
+    assert!(!posted(&link));
+    assert!(agent.run("do Cancel event").ok);
+    assert!(posted(&link));
+}
+
+#[test]
+fn find_searches_the_screen_even_from_a_focused_text_field() {
+    let link = FakeLink::from_json(&[CANCEL_EVENT_JSON]).unwrap();
+    let mut agent = Agent::open(link, "/event", 100, 30);
+    let focused = agent.run("focus Note to the attendees");
+    // The cursor cell is part of the reversed field, not a gap that splits it in two.
+    assert!(focused.text.contains(": [[[ _____"), "{}", focused.text);
+    assert!(!focused.text.contains("]] [["), "{}", focused.text);
+    let found = agent.run("find Reason");
+    assert!(found.ok, "{}", found.text);
+    assert_eq!(agent.session().buffer("EventCancel.note"), "");
+}
+
+/// A find form posted to the screen itself (`transition="."`: a url, not a writing transition) and a form that saves.
+const FIND_AND_SAVE_JSON: &str = r#"{
+  "v": 1,
+  "screen": { "path": "/things", "title": "Things" },
+  "c": [
+    { "t": "form", "id": "FindThings", "name": "FindThings", "transitionUrl": "/things", "writes": false, "c": [
+      { "t": "field", "id": "FindThings.text", "name": "text", "title": "Search", "w": { "kind": "textLine", "value": "" } },
+      { "t": "field", "id": "FindThings.go", "name": "go", "title": "Go", "w": { "kind": "submit", "text": "Find things" } }
+    ] },
+    { "t": "form", "id": "NewThing", "name": "NewThing", "transitionUrl": "/things/create", "writes": true, "c": [
+      { "t": "field", "id": "NewThing.name", "name": "name", "title": "Name", "w": { "kind": "textLine", "value": "" } },
+      { "t": "field", "id": "NewThing.go", "name": "go", "title": "Go", "w": { "kind": "submit", "text": "Create thing" } }
+    ] }
+  ]
+}"#;
+
+#[test]
+fn a_find_form_that_writes_nothing_does_not_say_saved() {
+    let link = FakeLink::from_json(&[FIND_AND_SAVE_JSON]).unwrap();
+    let empty = || moqui_tui::TransitionOutcome {
+        screen_url: String::new(),
+        messages: Default::default(),
+        parameters: BTreeMap::new(),
+    };
+    link.answer_transition("/things", empty());
+    link.answer_transition("/things/create", empty());
+    let mut agent = Agent::open(link, "/things", 100, 30);
+    assert!(agent.run("set Search acme").ok);
+    let found = agent.run("do Find things");
+    assert!(found.ok, "{}", found.text);
+    assert_ne!(agent.session().message(), "Saved");
+    assert!(agent.run("set Name Widget").ok);
+    assert!(agent.run("do Create thing").ok);
+    assert_eq!(agent.session().message(), "Saved");
+}
+
+#[test]
+fn the_key_line_offers_find_only_on_a_list_with_find_fields() {
+    let plain = r#"{"v":1,"screen":{"path":"/plain"},"c":[{"t":"formList","id":"Rows","name":"Rows",
+        "columns":[{"title":"Name"}],"rows":[{"id":"R1","cells":["One"]}]}]}"#;
+    let mut agent = Agent::open(FakeLink::from_json(&[plain]).unwrap(), "/plain", 100, 30);
+    let look = agent.run("focus Rows");
+    assert!(look.text.contains("focus list Rows"), "{}", look.text);
+    assert!(!look.text.contains("f=Find"), "{}", look.text);
+    let mut agent = Agent::open(FakeLink::from_json(&[DIALOG_FIND_JSON]).unwrap(), "/groups", 100, 30);
+    let look = agent.run("focus Groups");
+    assert!(look.text.contains("f=Find"), "{}", look.text);
+}
+
+#[test]
+fn a_form_whose_transition_sends_a_file_is_a_download_and_the_screen_stays() {
+    let model = r#"{"v":1,"screen":{"path":"/report","title":"Report"},"c":[
+        {"t":"form","id":"Export","name":"Export","transitionUrl":"/report/DocumentExport.json","writes":false,"c":[
+          {"t":"field","id":"Export.go","name":"go","title":"Submit Button","w":{"kind":"submit","text":"Download"}}]}]}"#;
+    let link = FakeLink::from_json(&[model]).unwrap();
+    link.answer_raw(
+        "/report/DocumentExport.json",
+        moqui_tui::RawBody {
+            content_type: "application/json".into(),
+            file_name: "Report.json".into(),
+            bytes: b"[\n]\n".to_vec(),
+        },
+    );
+    let mut agent = Agent::open(link, "/report", 100, 30);
+    let done = agent.run("do Download");
+    assert!(done.ok, "{}", done.text);
+    assert_eq!(agent.session().path(), "/report");
+    let mut names = Vec::new();
+    assert!(agent.finish_downloads(|body| {
+        names.push(body.file_name.clone());
+        Ok(format!("/downloads/{}", body.file_name))
+    }));
+    assert_eq!(names, ["Report.json"]);
+}

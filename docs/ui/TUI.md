@@ -134,7 +134,7 @@ session is found only by its own user. It ends on `close`, or after 10 minutes w
 | `go <path[?query]>` | go to a screen |
 | `focus <element>` | move the focus |
 | `set <element> <value>` | replace a field's value; a drop-down takes a choice's value or label and chooses it as a person does, so its dependent fields follow |
-| `do <element>` | focus and press Enter: a button, link, dialog button, menu; with a confirm open, `do Yes` answers it |
+| `do <element>` | focus and press Enter: a button, link, dialog button, menu (a submit button by its text); with a confirm open, `do Yes` answers it |
 | `do Find [list]` | open a list's find fields (as `f` on the list), and with the find open, find: the list again with the fields set, each with its own operator, and none of an empty field's flags |
 | `find <text>` | move to the text on the screen, a list row's included; then `key Right` follows the row's link |
 | `elements` | the focusable elements: number, kind, id, label, value, and required, changed or error marks |
@@ -142,8 +142,9 @@ session is found only by its own user. It ends on `close`, or after 10 minutes w
 | `format text\|json` | the answers' form; `--json` on one command for that one |
 | `help`, `close` | the commands and the screen's keys; end the session |
 
-An element is its id, its number from `elements` (`#3`), or its label: the same label first, then one that holds the
-text, ignoring case. `set` takes the longest run of leading words that names an element, so `set Thru Date 2026-10-21
+An element is its id, its number from `elements` (`#3`), or its label: the same label first, then the one label that
+holds the text as whole words, ignoring case (`No` does not name `Notify`; words held by two labels name neither, and
+the answer lists them). `do` on a check or radio is refused: set it. `set` takes the longest run of leading words that names an element, so `set Thru Date 2026-10-21
 00:53` needs no quotes. An answer is:
 
 ```

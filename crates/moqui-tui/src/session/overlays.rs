@@ -329,12 +329,18 @@ impl Session {
 
     pub(super) fn open_dropdown(&mut self, key: &str) {
         let current = self.buffer(key).to_string();
-        // A search asks as the user types; other remote options load as the list opens.
+        // A search asks as the user types (one of min-length 0 at once, with no text); other remote options load as
+        // the list opens.
+        let search = self.is_search(key);
         let query = self
             .index
             .option_query(key, &|k| self.edits.get(k).to_string())
-            .filter(|_| !self.is_search(key));
-        if let Some((url, params)) = query {
+            .filter(|_| !search || self.search_min_length(key) == 0);
+        if let Some((url, mut params)) = query {
+            if search {
+                params.insert("term".to_string(), String::new());
+                params.insert("pageIndex".to_string(), "0".to_string());
+            }
             self.lanes.push(
                 Purpose::Options(key.to_string()),
                 LinkCall::Options {

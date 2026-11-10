@@ -116,6 +116,16 @@ impl Session {
         self.set_timer(Timer::Suggest(field.to_string()), Instant::now() + delay);
     }
 
+    /// The fewest characters a server-search drop-down needs before it asks for options: its `min-length`, else 1.
+    pub(super) fn search_min_length(&self, field: &str) -> usize {
+        match self.field_widget(field) {
+            Some(Widget::DropDown {
+                min_length: Some(min), ..
+            }) => usize::try_from(*min).unwrap_or(1),
+            _ => 1,
+        }
+    }
+
     /// The options of a server-search drop-down for the text typed in its list, sent as `term`.
     pub(super) fn request_suggestions(&mut self, field: &str) {
         let Some(Overlay::DropDown(drop)) = self.overlays.last() else {
@@ -125,11 +135,7 @@ impl Session {
             return;
         }
         let term = drop.filter.clone();
-        let min = match self.field_widget(field) {
-            Some(Widget::DropDown { min_length, .. }) => usize::try_from(*min_length).unwrap_or(1),
-            _ => 1,
-        };
-        if term.chars().count() < min.max(1) {
+        if term.chars().count() < self.search_min_length(field) {
             return;
         }
         if let Some((url, mut parameters)) = self.index.option_query(field, &|k| self.edits.get(k).to_string()) {

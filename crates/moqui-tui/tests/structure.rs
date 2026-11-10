@@ -437,3 +437,28 @@ fn report_playlist_timer_loads_next_authorized_dashboard_and_pauses() {
     press(&mut session, &link, Key::Char('p'));
     assert!(session.timer(&Timer::Component("Playlist".into())).is_none());
 }
+
+#[test]
+fn a_card_opens_a_relative_url_under_its_screen() {
+    let board = r#"{ "v": 1, "screen": { "path": "/apps/M/ShopFloor/Station", "title": "Station" }, "c": [
+        { "t": "component", "id": "Queue", "name": "board", "base": "/apps/M/ShopFloor/Station",
+          "props": { "source": "queueRows", "groups": "stages", "groupOf": "stage",
+                     "open": "../OperationExecution?operationWorkEffortId={id}" } } ] }"#;
+    let link = FakeLink::from_json(&[board]).unwrap();
+    link.answer_json(
+        "/apps/M/ShopFloor/Station/queueRows",
+        BTreeMap::new(),
+        serde_json::json!({ "stages": [{ "id": "q", "name": "Queued" }], "rows": [{ "id": "OP1", "title": "Cut", "stage": "q" }] }),
+    );
+    let mut session = Session::start("/apps/M/ShopFloor/Station");
+    session.run_now(&link);
+    focus(&mut session, &link, "Queue");
+    press(&mut session, &link, Key::Enter);
+    assert!(
+        link.calls().iter().any(|call| matches!(call, LinkCall::Level { path, parameters }
+            if path == "/apps/M/ShopFloor/OperationExecution"
+                && parameters.get("operationWorkEffortId").map(String::as_str) == Some("OP1"))),
+        "{:?}",
+        link.calls()
+    );
+}

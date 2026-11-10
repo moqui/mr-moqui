@@ -442,12 +442,24 @@ impl Session {
     // ---- components ----
 
     /// The url of a component's transition: a name or a relative path goes under the screen's path (its `base`).
+    /// A url a component names, under its screen: `../Other?x=1` from `/apps/A/Board` is `/apps/A/Other?x=1`, as the
+    /// browser's screen links resolve it. An absolute url is itself.
     fn component_url(base: &str, url: &str) -> String {
-        if url.starts_with('/') || url.contains("://") || base.is_empty() {
-            url.to_string()
-        } else {
-            format!("{}/{url}", base.trim_end_matches('/'))
+        if url.starts_with('/') || url.contains("://") || url.starts_with("mailto:") || base.is_empty() {
+            return url.to_string();
         }
+        let (path, rest) = url.find(['?', '#']).map_or((url, ""), |at| url.split_at(at));
+        let mut names: Vec<&str> = base.split('/').filter(|name| !name.is_empty()).collect();
+        for name in path.split('/') {
+            match name {
+                "" | "." => {}
+                ".." => {
+                    names.pop();
+                }
+                _ => names.push(name),
+            }
+        }
+        format!("/{}{rest}", names.join("/"))
     }
 
     pub(super) fn component_poll_enabled(&self, id: &str) -> bool {
@@ -683,7 +695,7 @@ impl Session {
                     }
                 }
                 Act::Post { url, fields } => self.post_simple(&Self::component_url(&base, &url), fields),
-                Act::Follow(url) => self.follow_url(&url),
+                Act::Follow(url) => self.follow_url(&Self::component_url(&base, &url)),
                 Act::Message(text) => self.set_message(text, false),
             }
         }

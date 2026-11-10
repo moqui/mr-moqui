@@ -431,3 +431,48 @@ fn a_row_action_posts_the_selected_rows_and_waits_for_a_selection() {
     );
     assert!(session.selected("Sel").is_none_or(|set| set.is_empty()));
 }
+
+#[test]
+fn a_search_of_min_length_zero_asks_as_it_opens_and_one_without_waits_for_a_letter() {
+    let options = |link: &FakeLink| {
+        calls(link)
+            .into_iter()
+            .filter_map(|call| match call {
+                LinkCall::Options { parameters, .. } => Some(parameters),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let zero = DYN_JSON.replace(r#""minLength": 2"#, r#""minLength": 0"#);
+    let (mut session, link) = started("/dyn", &[&zero, PART_JSON, VIEW_JSON]);
+    link.answer_options(
+        "/dyn/parties",
+        map(&[("term", ""), ("pageIndex", "0")]),
+        vec![Choice {
+            value: "P2".to_string(),
+            label: "Beta".to_string(),
+        }],
+    );
+    focus(&mut session, &link, "F.party");
+    press(&mut session, &link, Key::Enter);
+    session.run_now(&link);
+    let asked = options(&link);
+    assert_eq!(asked.len(), 1, "min-length 0 searches as the list opens");
+    assert_eq!(asked[0].get("term").map(String::as_str), Some(""));
+    assert!(!session.dropdown_waits_for_text());
+    assert!(session.dropdown_choices().iter().any(|choice| choice.label == "Beta"));
+
+    // No min-length is the XSD's 1: nothing until a letter, and the empty list says so.
+    let one = DYN_JSON.replace(r#", "minLength": 2"#, "");
+    let (mut session, link) = started("/dyn", &[&one, PART_JSON, VIEW_JSON]);
+    focus(&mut session, &link, "F.party");
+    press(&mut session, &link, Key::Enter);
+    session.run_now(&link);
+    assert!(options(&link).is_empty());
+    assert!(session.dropdown_waits_for_text());
+    typed(&mut session, &link, "b");
+    assert!(!session.dropdown_waits_for_text());
+    assert!(session.on_time(Instant::now() + Duration::from_secs(1)));
+    session.run_now(&link);
+    assert_eq!(options(&link).len(), 1);
+}

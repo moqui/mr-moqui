@@ -372,7 +372,11 @@ fn dropdown(paint: &mut Painter, session: &Session, canvas: Rect) {
         paint.fixed(
             x + 1,
             row,
-            "no matches",
+            if session.dropdown_waits_for_text() {
+                "type to search"
+            } else {
+                "no matches"
+            },
             Look::role(Role::Muted).italic(),
             usize::from(width - 2),
         );

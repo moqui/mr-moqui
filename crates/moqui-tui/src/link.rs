@@ -276,6 +276,13 @@ pub trait ScreenLink: Send + Sync {
         fields: &BTreeMap<String, String>,
     ) -> Result<TransitionOutcome, LinkError>;
 
+    /// Post a form. A transition may answer with an attachment (a download that writes the response itself, as
+    /// `DocumentExport.json`); then the answer is [`Reply::Raw`] and the caller saves the file, as for
+    /// [`Self::navigation`].
+    fn transition_reply(&self, url: &str, method: &str, fields: &BTreeMap<String, String>) -> Reply {
+        Reply::Transition(self.transition(url, method, fields))
+    }
+
     fn options(&self, url: &str, parameters: &BTreeMap<String, String>) -> Result<Vec<Choice>, LinkError>;
 
     /// The drawer for `path` and the theme values.
@@ -323,7 +330,7 @@ pub trait ScreenLink: Send + Sync {
     fn call(&self, call: &LinkCall) -> Reply {
         match call {
             LinkCall::Level { path, parameters } => self.navigation(path, parameters),
-            LinkCall::Transition { url, method, fields } => Reply::Transition(self.transition(url, method, fields)),
+            LinkCall::Transition { url, method, fields } => self.transition_reply(url, method, fields),
             LinkCall::Options { url, parameters } => Reply::Options(self.options(url, parameters)),
             LinkCall::Shell { path } => Reply::Shell(self.shell(path)),
             LinkCall::Login {
@@ -363,6 +370,10 @@ impl<L: ScreenLink + ?Sized> ScreenLink for Arc<L> {
         fields: &BTreeMap<String, String>,
     ) -> Result<TransitionOutcome, LinkError> {
         (**self).transition(url, method, fields)
+    }
+
+    fn transition_reply(&self, url: &str, method: &str, fields: &BTreeMap<String, String>) -> Reply {
+        (**self).transition_reply(url, method, fields)
     }
 
     fn options(&self, url: &str, parameters: &BTreeMap<String, String>) -> Result<Vec<Choice>, LinkError> {
@@ -546,6 +557,27 @@ impl ScreenLink for FakeLink {
             .get(url)
             .cloned()
             .unwrap_or_else(|| TransitionOutcome::saved("Saved")))
+    }
+
+    /// A transition with a raw answer ([`FakeLink::answer_raw`]) and no transition answer sends that file.
+    fn transition_reply(&self, url: &str, method: &str, fields: &BTreeMap<String, String>) -> Reply {
+        let file = {
+            let answers = self.answers();
+            (!answers.transitions.contains_key(url))
+                .then(|| answers.raw.get(url).cloned())
+                .flatten()
+        };
+        match file {
+            Some(body) => match self.record(LinkCall::Transition {
+                url: url.to_string(),
+                method: method.to_string(),
+                fields: fields.clone(),
+            }) {
+                Ok(()) => Reply::Raw(Ok(body)),
+                Err(err) => Reply::Transition(Err(err)),
+            },
+            None => Reply::Transition(self.transition(url, method, fields)),
+        }
     }
 
     fn options(&self, url: &str, parameters: &BTreeMap<String, String>) -> Result<Vec<Choice>, LinkError> {

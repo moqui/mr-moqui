@@ -463,7 +463,11 @@ fn key_line(paint: &mut Painter, session: &Session, row: u16, width: u16) {
             {
                 actions.push(Action::EditRow);
             }
-            actions.extend([Action::PageNext, Action::Sort, Action::Find]);
+            actions.extend([Action::PageNext, Action::Sort]);
+            // `f` opens the list's find fields: offered only where there are some.
+            if session.index().lists.get(list).is_some_and(|list| !list.header_fields.is_empty()) {
+                actions.push(Action::Find);
+            }
             if session.list(list).is_some_and(|list| list.views.is_some()) {
                 actions.push(Action::View);
             }
