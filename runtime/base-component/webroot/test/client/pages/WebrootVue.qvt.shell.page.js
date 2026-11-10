@@ -258,6 +258,43 @@ const makeRoot = (config, extra) => {
     return vm;
 };
 
+test("mounting a cold shell keeps one history entry and replaces the start-app root", () => {
+    const originalUrl = location.href;
+    const fixture = document.createElement("div");
+    fixture.id = "apps-root";
+    document.body.appendChild(fixture);
+    try {
+        for (const [path, expected] of [
+            ["/qapps/Products/Settings/Index?owner=example#policy", "/qapps/Products/Settings/Index?owner=example#policy"],
+            ["/qapps?owner=example", "/qapps/Hub?owner=example"]
+        ]) {
+            history.replaceState({fixture: true}, "", path);
+            const before = history.length, visits = [];
+            const config = {basePath: "/apps", linkBasePath: "/qapps", appRootPath: "", startApp: "Hub"};
+            const options = qvt.rootOptions(config), vm = makeRoot(config);
+            vm.setUrl = (url, body, done, push = true) => {
+                visits.push({url, push});
+                if (push) history.pushState(null, "", url);
+            };
+            vm.loadShellData = () => {};
+            vm.shellKeyBindings = () => [];
+            Object.defineProperty(vm, "pushOn", {value: false});
+            try {
+                options.mounted.call(vm);
+                assert.equal(history.length, before, "the document navigation already created this entry");
+                assert.equal(location.pathname + location.search + location.hash, expected);
+                assert.deepEqual(history.state, {fixture: true}, "startup preserves the existing history state");
+                assert.deepEqual(visits, [{url: expected.split("#")[0], push: false}]);
+            } finally {
+                options.unmounted.call(vm);
+            }
+        }
+    } finally {
+        history.replaceState(null, "", originalUrl);
+        fixture.remove();
+    }
+});
+
 test("the root's shell: the current app and its title, the + menu, the account menu, the tray tabs and the header counters", () => {
     const vm = makeRoot({ shell: { title: "Theme title" } }, { currentPathList: ["gallery", "Detail"] });
     assert.equal(vm.headerTitle, "Theme title", "no shell data yet");

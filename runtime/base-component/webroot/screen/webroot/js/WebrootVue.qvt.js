@@ -10195,7 +10195,12 @@
         mounted() {
             // the shell is hidden until Vue has compiled it
             root.document.getElementById("apps-root").style.display = "";
-            this.setUrl(moqui.startPath(root.location.pathname, this.linkBasePath, config.startApp) + root.location.search);
+            // The browser already made this document's history entry. Keep it when mounting; a preferred start app
+            // replaces the bare shell URL, so Back returns to the previous page after a plain-link navigation.
+            const startUrl = moqui.startPath(root.location.pathname, this.linkBasePath, config.startApp) + root.location.search;
+            if (startUrl !== root.location.pathname + root.location.search)
+                root.history.replaceState(root.history.state, "", startUrl + root.location.hash);
+            this.setUrl(startUrl, null, null, false);
             if (this.notificationClient) {
                 this.notificationClient.registerListener("ALL");
                 this.notificationClient.registerListener("ALL", this.onShellNotification);
