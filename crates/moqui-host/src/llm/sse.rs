@@ -21,20 +21,17 @@
 //!
 //! Both authenticate as `/notws` does (the session cookie, else a `login_key` header, with the origin check), and only
 //! the run's owner sees a run: for anyone else it is not found. The stream is written by a thread of its own into the
-//! response body (the `ChannelBody` of `git_http.rs`), so it holds no request worker; at most 256 are open on a node,
+//! response body ([`crate::channel_body::ChannelBody`]), so it holds no request worker; at most 256 are open on a node,
 //! and one more is answered 503 with `Retry-After`. A client that takes nothing for a minute ends its stream. The stream follows the hub with a `Follower`, which fills a gap
 //! in the stored sequence from the database.
 
 use std::collections::HashMap;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use bytes::Bytes;
-use hyper::body::Frame;
 use moqui_core::context::{ErrorKind, ExecutionContextFactory};
 use moqui_core::entity::EntityFacade;
 use moqui_core::user::verify_session_cookie;
@@ -42,10 +39,9 @@ use moqui_llm::run::{self, events};
 use serde_json::{json, Value as Json};
 use tokio::sync::mpsc;
 
+use crate::channel_body::{ChannelBody, Chunk};
 use crate::http::{plain, HttpState};
 use crate::notws::{key_user, origin_allowed, session_cookie, session_user, RequestSite};
-
-type Chunk = std::io::Result<Bytes>;
 
 /// Event streams open at once on this node; one more is answered 503, and the client tries again.
 const MAX_STREAMS: usize = 256;
@@ -71,20 +67,6 @@ impl Open {
 impl Drop for Open {
     fn drop(&mut self) {
         STREAMS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
-/// The response body: chunks from the stream's thread until it drops its sender.
-struct ChannelBody(mpsc::Receiver<Chunk>);
-
-impl hyper::body::Body for ChannelBody {
-    type Data = Bytes;
-    type Error = std::io::Error;
-
-    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
-        self.0
-            .poll_recv(cx)
-            .map(|chunk| chunk.map(|chunk| chunk.map(Frame::data)))
     }
 }
 
@@ -209,7 +191,7 @@ pub(crate) async fn events(
         .header("content-type", "text/event-stream; charset=utf-8")
         .header("cache-control", "no-cache, no-store")
         .header("x-accel-buffering", "no")
-        .body(axum::body::Body::new(ChannelBody(rx)))
+        .body(axum::body::Body::new(ChannelBody::new(rx)))
         .unwrap_or_else(|_| plain(500, "the event stream header was not valid"))
 }
 

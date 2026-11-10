@@ -44,7 +44,8 @@ const $pad = (text, characters, leftPad, wrapLine) => {
     return out;
 };
 const $formList = (name, cols) => {
-    const info = sri.openFormList(name);
+    // the rows come one at a time, each made as it is written (docs/ui/Screen-Output.md)
+    const info = sri.openFormList(name, true);
     const visible = cols.map((col) => col.filter((f) => !f.hide || !f.hide())).filter((col) => col.length > 0);
     const widths = sri.formListColumnCharWidths(visible.map((col) => col.map((f) => [f.printWidth, f.printWidthType])), $lineChars);
     const rightAlign = (f) => f.align === "right" || f.align === "center";
@@ -74,8 +75,7 @@ const $formList = (name, cols) => {
     };
     $lineCount = 1;
     headerRows();
-    for (let index = 0; index < info.count; index++) {
-        sri.startFormListRow(info, index);
+    for (let index = 0; sri.startFormListRow(info, index); index++) {
         try {
             for (let fieldIndex = 0; fieldIndex < 6; fieldIndex++) {
                 let more = false;

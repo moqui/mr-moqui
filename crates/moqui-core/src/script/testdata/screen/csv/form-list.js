@@ -1,5 +1,6 @@
 {
-    const $info = sri.openFormList("Rows");
+    // the rows come one at a time, each made as it is written (docs/ui/Screen-Output.md)
+    const $info = sri.openFormList("Rows", true);
     $hasPrev = false;
     $sep();
     sri.write($csv(ec.l10n.localize("ID")));
@@ -16,8 +17,7 @@
     $sep();
     sri.write($csv(ec.l10n.localize(ec.resource.expand("Open"))));
     sri.write("\n");
-    for (let $index = 0; $index < $info.count; $index++) {
-        sri.startFormListRow($info, $index);
+    for (let $index = 0; sri.startFormListRow($info, $index); $index++) {
         try {
             $hasPrev = false;
             $sep();
@@ -50,7 +50,8 @@
     sri.safeCloseList($info);
 }
 {
-    const $info = sri.openFormList("Cols");
+    // the rows come one at a time, each made as it is written (docs/ui/Screen-Output.md)
+    const $info = sri.openFormList("Cols", true);
     $hasPrev = false;
     $sep();
     sri.write($csv(ec.l10n.localize("A")));
@@ -59,8 +60,7 @@
     $sep();
     sri.write($csv(ec.l10n.localize("C")));
     sri.write("\n");
-    for (let $index = 0; $index < $info.count; $index++) {
-        sri.startFormListRow($info, $index);
+    for (let $index = 0; sri.startFormListRow($info, $index); $index++) {
         try {
             $hasPrev = false;
             $sep();

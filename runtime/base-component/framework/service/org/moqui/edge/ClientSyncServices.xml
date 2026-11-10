@@ -311,12 +311,14 @@ along with this software (see the LICENSE.md file). If not, see
             const keep = Math.max(1, Number(hours || System.getProperty('client_upload_expire_hours') || 24))
             const before = Number(ec.user.nowTimestamp) - keep * 3600000
             const cf = ec.entity.conditionFactory
-            const rows = Array.from(ec.entity.find('moqui.basic.client.ClientUpload').condition(cf.makeCondition([
+            // read through the find's iterator, so a long backlog is not held whole; each removal runs in a
+            // transaction of its own beside the cursor
+            const rows = ec.entity.find('moqui.basic.client.ClientUpload').condition(cf.makeCondition([
                 cf.makeCondition('lastChunkDate', 'less', String(before)),
                 cf.makeCondition([cf.makeCondition('lastChunkDate', 'is-null', null), cf.makeCondition('createdDate', 'less', String(before))], 'and')], 'or'))
-                    .selectField('userId').selectField('uploadId').disableAuthz().list())
+                    .selectField('userId').selectField('uploadId').disableAuthz().iterator()
             const users = new Set()
-            for (const row of rows) {
+            try { for (const row of rows) {
                 ec.message.pushErrors()
                 try {
                     ec.service.sync().name('org.moqui.edge.ClientSyncServices.remove#ClientUpload').parameters({userId: row.userId, uploadId: row.uploadId})
@@ -326,7 +328,7 @@ along with this software (see the LICENSE.md file). If not, see
                 } catch (err) {
                     ec.logger.error(`Could not remove upload ${row.uploadId} of user ${row.userId}: ${err && err.message ? err.message : err}`)
                 } finally { ec.message.clearErrors(); ec.message.popErrors() }
-            }
+            } } finally { rows.close() }
             for (const userId of users) {
                 try {
                     const folder = ec.resource.getLocationReference(`dbresource://upload/${userId}`)

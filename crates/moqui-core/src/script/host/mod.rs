@@ -30,6 +30,7 @@ use moqui_lib::object::{HostObject, Value};
 mod archive;
 mod cache;
 pub(crate) mod conditions;
+pub(crate) mod list_iterator;
 mod ec_web;
 mod edi;
 pub(crate) mod error_info;
@@ -787,6 +788,7 @@ static RETURNED: &[&HostClass] = &[
     &sftp::SFTP_CLIENT,
     &entities::FIND,
     &entities::LIST,
+    &list_iterator::ITERATOR,
     &entities::ENTITY_VALUE,
     &upload::UPLOAD,
     &upload::STREAM,
@@ -797,15 +799,21 @@ static RETURNED: &[&HostClass] = &[
 
 /// The classes whose objects hold something the end of a script must let go: a spooled upload (its view of the spool
 /// file), a stream (a buffer of a whole file, a view of a spool file), an SFTP client (its connection; Java's
-/// `finalize` closes one the script forgot) and a service future (the results it received). QuickJS frees such an
-/// object by its count when the script lets it go; quickjs-oxide collects by tracing, so its binder lets the object's
-/// value go when the outermost script on the thread ends ([`crate::script::oxide::release_run_objects`]), and a later
-/// call of one of its methods throws. A copy the host holds (a value in the context, a service's parameter) is its
-/// own.
+/// `finalize` closes one the script forgot), a service future (the results it received) and an entity iterator (its
+/// database cursor). QuickJS frees such an object by its count when the script lets it go; quickjs-oxide collects by
+/// tracing, so its binder lets the object's value go when the outermost script on the thread ends
+/// ([`crate::script::oxide::release_run_objects`]), and a later call of one of its methods throws. A copy the host
+/// holds (a value in the context, a service's parameter) is its own.
 pub(crate) fn released_at_run_end(class: &HostClass) -> bool {
-    [&upload::UPLOAD, &upload::STREAM, &sftp::SFTP_CLIENT, &service::SERVICE_FUTURE]
-        .iter()
-        .any(|held| std::ptr::eq(*held, class))
+    [
+        &upload::UPLOAD,
+        &upload::STREAM,
+        &sftp::SFTP_CLIENT,
+        &service::SERVICE_FUTURE,
+        &list_iterator::ITERATOR,
+    ]
+    .iter()
+    .any(|held| std::ptr::eq(*held, class))
 }
 
 /// Paths other crates contribute (moqui-llm's `ec.llm`), through [`register`], before the table is frozen.

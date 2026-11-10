@@ -279,12 +279,18 @@ fn render_section_of(state: &RenderState, runner: &dyn Runner, def: &Arc<ScreenD
                 }
                 return Ok(());
             }
+            // a cursor (use-iterator) is read a row at a time, never held whole, unless the section pages it
+            if let Some(cursor) = script::host::list_iterator::iterator_of(&value).filter(|_| !*paginate) {
+                let entries = Entries::Cursor(cursor);
+                return iterate_section(state, runner, def, section, name, entry, key.as_deref(), entries);
+            }
             let mut items = iteration_entries(&value);
             let _frame = paginate.then(ContextFrame::push);
             if *paginate {
                 items = paginate_items(list, items)?;
             }
-            iterate_section(state, runner, def, section, name, entry, key.as_deref(), &items)
+            let entries = Entries::Listed(items.into_iter());
+            iterate_section(state, runner, def, section, name, entry, key.as_deref(), entries)
         }
         _ => render_single(state, runner, def, section, name),
     }
@@ -348,6 +354,28 @@ pub(in crate::screen) fn paginate_items(
     Ok(items[start..end].to_vec())
 }
 
+/// The entries a section-iterate renders: a list's (with a map's keys), or a cursor's rows as they are read.
+enum Entries {
+    Listed(std::vec::IntoIter<(Option<String>, Value)>),
+    Cursor(Arc<script::host::list_iterator::IteratorHandle>),
+}
+
+impl Entries {
+    fn next(&mut self) -> Result<Option<(Option<String>, Value)>, Error> {
+        Ok(match self {
+            Self::Listed(items) => items.next(),
+            Self::Cursor(cursor) => cursor.next()?.map(|row| (None, script::host::entities::value_of(row))),
+        })
+    }
+
+    fn has_next(&mut self) -> Result<bool, Error> {
+        Ok(match self {
+            Self::Listed(items) => items.len() > 0,
+            Self::Cursor(cursor) => cursor.has_next()?,
+        })
+    }
+}
+
 #[expect(clippy::too_many_arguments)]
 fn iterate_section(
     state: &RenderState,
@@ -357,22 +385,25 @@ fn iterate_section(
     name: &str,
     entry: &str,
     key: Option<&str>,
-    items: &[(Option<String>, Value)],
+    mut entries: Entries,
 ) -> Result<(), Error> {
     let json = state.output_kind == OutputKind::Json;
     if json {
         write(state, "[");
     }
     let mut have_item = false;
-    for (index, (item_key, item)) in items.iter().enumerate() {
+    let mut index = 0usize;
+    while let Some((item_key, item)) = entries.next()? {
+        let has_next = entries.has_next()?;
         let frame = ContextFrame::push();
-        let _ = script::set_context_name(entry, item.clone());
+        let _ = script::set_context_name(entry, item);
         if let (Some(key_name), Some(item_key)) = (key, item_key) {
             let _ = script::set_context_name(key_name, Value::string(item_key));
         }
         let _ = script::set_context_name("sectionEntryIndex", Value::I64(index as i64));
         let _ = script::set_context_name(&format!("{entry}_index"), Value::I64(index as i64));
-        let _ = script::set_context_name(&format!("{entry}_has_next"), Value::Bool(index + 1 < items.len()));
+        let _ = script::set_context_name(&format!("{entry}_has_next"), Value::Bool(has_next));
+        index += 1;
         let start = json.then(|| web::output_body_len().unwrap_or(0));
         let result = render_single(state, runner, def, section, name);
         drop(frame);
@@ -585,7 +616,8 @@ pub fn render_text(state: &RenderState, location: &str, template: &str) -> Resul
     if template == "false" {
         return render_text_value(state, location, template);
     }
-    let rendered = render_text_value(state, location, template)?;
+    // the template writes as it renders, so a screen it renders keeps its place in its text
+    let rendered = crate::script::template::writing(|| render_text_value(state, location, template))?;
     write(state, &rendered);
     Ok(String::new())
 }

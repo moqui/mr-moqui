@@ -17,7 +17,7 @@ annotations, the scheduled reports in `schedule.rs` and the ingest keys in `moni
 ## What is recorded
 
 - **Request spans.** Every HTTP request gets a SERVER root span, whatever the sampling: route, status, user, visitor,
-  visit, client address, redacted query, sizes and time to first byte. The Visit screens and the Monitor Traces screen
+  visit, client address, redacted query, sizes and time to first byte (for a screen sent as it renders, the moment its head went: [Screen output](../ui/Screen-Output.md)). The Visit screens and the Monitor Traces screen
   read these. Each request is its own trace; a qvt page sends its own trace id as `X-Moqui-Page-Trace` and the root
   records it as `moqui.page.trace_id`.
 - **Artifact spans.** A span per screen, transition, service, REST path, LLM call and (off by default) entity frame,

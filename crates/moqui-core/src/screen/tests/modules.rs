@@ -63,6 +63,8 @@ fn recorded_strings(source: &str) -> Vec<String> {
             for (var i = 0; i < arguments.length; i++) rec(arguments[i]);
             if (name === 'getFieldOptions') return new Map();
             if (name === 'openFormList') return {{id: 0, count: 1}};
+            // one row: true for it, then false, as a list sent a row at a time ends
+            if (name === 'startFormListRow') return arguments[1] < 1;
             if (name === 'formListColumnCharWidths') return arguments[0].map(function () {{ return 20; }});
             if (name === 'getActiveScreenDef') return {{getScreenName: function () {{ return 'S'; }}}};
             if (name === 'doBoundaryComments') return false;

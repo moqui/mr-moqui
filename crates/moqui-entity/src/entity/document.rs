@@ -35,7 +35,7 @@ use moqui_lib::node::MNode;
 use moqui_lib::object::{to_plain_string, Value};
 
 use super::facade::EntityFacade;
-use super::query_rest::{run_code_view, CodeView};
+use super::query_rest::{each_code_view_row, CodeView};
 
 const PRIMARY_ALIAS: &str = "PRIM";
 const DOCUMENT: &str = "moqui.entity.document.DataDocument";
@@ -220,8 +220,7 @@ pub fn data_documents(
 ) -> Result<Vec<Document>, Error> {
     let info = document_info(facade, data_document_id)?;
     let stamp = thru.unwrap_or_else(Timestamp::now);
-    let rows = query_rows(facade, &info, condition, from, thru, LimitOffset::default())?;
-    let docs = merge_rows(&info, &rows, stamp);
+    let docs = query_documents(facade, &info, condition, from, thru, stamp)?;
     post_process(facade, &info, docs)
 }
 
@@ -447,8 +446,8 @@ pub fn feed_documents(
             })
             .collect();
         let condition = ids_condition(&info, &ids)?;
-        let rows = query_rows(facade, &info, Some(condition), from, thru, LimitOffset::default())?;
-        let docs = post_process(facade, &info, merge_rows(&info, &rows, stamp))?;
+        let docs = query_documents(facade, &info, Some(condition), from, thru, stamp)?;
+        let docs = post_process(facade, &info, docs)?;
         count += docs.len();
         if !docs.is_empty() && !sink(docs)? {
             break;
@@ -851,14 +850,33 @@ fn append_relationship_member(
     Ok(())
 }
 
-fn query_rows(
+/// The documents of the view's rows, merged as the rows are read from a cursor ([`each_code_view_row`]), as Java's
+/// `getDataDocuments` iterates them: the documents are held, the rows are not.
+fn query_documents(
     facade: &EntityFacade,
     info: &DocumentInfo,
     condition: Option<Condition>,
     from: Option<Timestamp>,
     thru: Option<Timestamp>,
-    page: LimitOffset,
-) -> Result<Vec<BTreeMap<String, Value>>, Error> {
+    stamp: Timestamp,
+) -> Result<Vec<Document>, Error> {
+    let (view, condition, order) = document_query(info, condition, from, thru)?;
+    let _authz = (crate::hooks::get().disable_authz)();
+    let mut merger = DocMerger::new(info, stamp);
+    each_code_view_row(facade, &view, condition, order, LimitOffset::default(), &mut |row| {
+        merger.add(&row);
+        Ok(())
+    })?;
+    Ok(merger.finish())
+}
+
+/// The view of a document's query, its condition and its order (the primary entity's key).
+fn document_query(
+    info: &DocumentInfo,
+    condition: Option<Condition>,
+    from: Option<Timestamp>,
+    thru: Option<Timestamp>,
+) -> Result<(CodeView, Option<Condition>, Vec<OrderBy>), Error> {
     let view = code_view(info);
     let mut conditions = Vec::new();
     for cond in &info.conditions {
@@ -901,8 +919,7 @@ fn query_rows(
         .iter()
         .map(|name| OrderBy::asc(FieldRef::new(pk_alias(name))))
         .collect();
-    let _authz = (crate::hooks::get().disable_authz)();
-    run_code_view(facade, &view, condition, order, page)
+    Ok((view, condition, order))
 }
 
 pub(crate) fn document_condition(cond: &DocCondition) -> Result<Condition, Error> {
@@ -949,24 +966,51 @@ pub(crate) fn document_condition(cond: &DocCondition) -> Result<Condition, Error
     })
 }
 
+#[cfg(test)]
 fn merge_rows(info: &DocumentInfo, rows: &[BTreeMap<String, Value>], stamp: Timestamp) -> Vec<Document> {
-    let stamp_text = stamp.to_string();
-    let mut docs: IndexMap<String, (Document, ChildIndex)> = IndexMap::new();
-    for (at, row) in rows.iter().enumerate() {
+    let mut merger = DocMerger::new(info, stamp);
+    for row in rows {
+        merger.add(row);
+    }
+    merger.finish()
+}
+
+/// The documents of a view's rows, each row merged in as it comes.
+struct DocMerger<'a> {
+    info: &'a DocumentInfo,
+    stamp_text: String,
+    docs: IndexMap<String, (Document, ChildIndex)>,
+    rows: usize,
+}
+
+impl<'a> DocMerger<'a> {
+    fn new(info: &'a DocumentInfo, stamp: Timestamp) -> Self {
+        Self {
+            info,
+            stamp_text: stamp.to_string(),
+            docs: IndexMap::new(),
+            rows: 0,
+        }
+    }
+
+    fn add(&mut self, row: &BTreeMap<String, Value>) {
+        let info = self.info;
         let id = info.doc_id(row);
         // Without every primary key aliased, Java does not merge: each row is its own document.
         let key = if info.has_all_primary_pks {
             id.clone()
         } else {
-            at.to_string()
+            self.rows.to_string()
         };
-        let (doc, index) = docs.entry(key).or_insert_with(|| {
+        self.rows += 1;
+        let stamp_text = &self.stamp_text;
+        let (doc, index) = self.docs.entry(key).or_insert_with(|| {
             let mut doc = Document::new();
             doc.insert("_type".to_string(), Value::string(&info.data_document_id));
             if !id.is_empty() {
                 doc.insert("_id".to_string(), Value::string(&id));
             }
-            doc.insert("_timestamp".to_string(), Value::string(&stamp_text));
+            doc.insert("_timestamp".to_string(), Value::string(stamp_text));
             if let Some(index) = &info.index_name {
                 doc.insert("_index".to_string(), Value::string(index));
             }
@@ -976,7 +1020,10 @@ fn merge_rows(info: &DocumentInfo, rows: &[BTreeMap<String, Value>], stamp: Time
         });
         populate_related(&info.root, row, doc, index);
     }
-    docs.into_values().map(|(doc, _)| doc).collect()
+
+    fn finish(self) -> Vec<Document> {
+        self.docs.into_values().map(|(doc, _)| doc).collect()
+    }
 }
 
 /// The type-many children of one map, by the document alias of each list on it, so a row finds the child it joins

@@ -299,6 +299,36 @@ pub struct SessionGuard {
 
 impl SessionGuard {
     pub fn session_id(&self) -> String {
+        self.cookies().session_id()
+    }
+
+    pub fn visitor_id(&self) -> Option<String> {
+        self.cookies().visitor_id()
+    }
+
+    pub fn session_cookie_header(&self) -> Result<String, Error> {
+        self.cookies().session_cookie_header()
+    }
+
+    pub fn visitor_cookie_header(&self) -> Option<String> {
+        self.cookies().visitor_cookie_header()
+    }
+
+    /// The bound session's cookies, for a response head made while the guard is held (a response sent as it is
+    /// written, `web::stream`).
+    pub fn cookies(&self) -> SessionCookies {
+        SessionCookies { https: self.https }
+    }
+}
+
+/// The cookies of the session bound on this thread, while its [`SessionGuard`] is held.
+#[derive(Clone, Copy, Debug)]
+pub struct SessionCookies {
+    https: bool,
+}
+
+impl SessionCookies {
+    pub fn session_id(&self) -> String {
         with_session(|session| session.bound_id.clone().unwrap_or_default())
     }
 

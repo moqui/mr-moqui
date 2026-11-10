@@ -40,10 +40,10 @@ fn row(id: &str) -> Arc<EntityCell> {
 }
 
 /// An entity list on oxide answers as `HostList` does on QuickJS: `length` and its rows by index (the rows themselves),
-/// its cursor methods and the shim's iteration and array methods from the table's prototype, and it is read-only; it
-/// converts back to the same rows.
+/// its methods and the shim's iteration and array methods from the table's prototype, and it is read-only; it converts
+/// back to the same rows. It has no cursor: a find's `iterator()` is the cursor, as Java's `EntityList` is a list.
 #[test]
-fn an_entity_list_indexes_iterates_and_moves_its_cursor() -> Result<(), Error> {
+fn an_entity_list_indexes_and_iterates_and_has_no_cursor() -> Result<(), Error> {
     clear_context_stack();
     push_context_frame();
     let cells = vec![row("E1"), row("E2"), row("E3")];
@@ -58,14 +58,15 @@ fn an_entity_list_indexes_iterates_and_moves_its_cursor() -> Result<(), Error> {
         ("rows.map((row) => row.enumId).join('')", "E1E2E3"),
         ("Object.keys(rows).join()", "0,1,2"),
         (
-            "'length' in rows && 1 in rows && !(5 in rows) && 'next' in rows",
+            "'length' in rows && 1 in rows && !(5 in rows) && !('next' in rows) && !('hasNext' in rows)",
             "true",
         ),
+        // Groovy's first() and last(), which do not move anything
         (
-            "rows.next().enumId + rows.next().enumId + rows.currentIndex() + rows.hasNext()",
-            "E1E22true",
+            "rows.first().enumId + rows.last().enumId + rows.first().enumId",
+            "E1E3E1",
         ),
-        ("rows.getPartialList(1, 5).length + rows.getCompleteList().length", "5"),
+        ("rows.getPartialList(1, 5).length", "2"),
         ("rows.filter((row) => row.enumId > 'E1').length", "2"),
         (
             "(() => { 'use strict'; try { rows[0] = 1; return 'set'; } catch (e) { return e.name; } })()",

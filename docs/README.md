@@ -32,6 +32,7 @@ Screens, forms, templates and the clients.
 
 | Guide | What it covers |
 |---|---|
+| [Screen-Output.md](ui/Screen-Output.md) | A screen's response kept whole or sent as it renders: the `stream-threshold`, what streams, headers and failures after the head, list rows read from a cursor as they are written, templates that write as they render |
 | [Qvt-Client.md](ui/Qvt-Client.md) | The client of the `qvt` render mode and the `/qapps` shell: page shell, screen loading, the `m-*` widgets |
 | [Desktop-Client.md](ui/Desktop-Client.md) | The desktop app as a client of a server: accounts, device modes and `<client-conf>`, the offline store, the outbox, the bundled Comms screens, crypto and calls |
 | [TUI.md](ui/TUI.md) | The terminal UI: `moqui tui`, the `tui` render mode, the apps over SSH, and agents driving it |

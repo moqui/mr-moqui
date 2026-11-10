@@ -22,15 +22,12 @@
 //! bounds a call and answers 504 in the OpenAI shape.
 
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use axum::extract::{ConnectInfo, Request, State};
 use axum::response::Response;
 use bytes::Bytes;
-use hyper::body::Frame;
 use moqui_llm::a2a::{self, HttpRequest, Origin, Reply};
 use moqui_llm::gateway::{self, Answer, Respond};
 use moqui_llm::provider::CancelToken;
@@ -38,27 +35,12 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 
 use super::a2a::{response_of, Full, Open};
+use crate::channel_body::{ChannelBody, Chunk};
 use crate::guard::Event;
 use crate::http::{forwarded_https, read_body, ClientAddr, HttpState, TlsConnection};
 
 /// The largest request body (embeddings of many texts).
 const MAX_BODY: usize = 16 * 1024 * 1024;
-
-type Chunk = std::io::Result<Bytes>;
-
-/// The response body of a stream: chunks from its thread until it drops its sender.
-struct ChannelBody(mpsc::Receiver<Chunk>);
-
-impl hyper::body::Body for ChannelBody {
-    type Data = Bytes;
-    type Error = std::io::Error;
-
-    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
-        self.0
-            .poll_recv(cx)
-            .map(|chunk| chunk.map(|chunk| chunk.map(Frame::data)))
-    }
-}
 
 /// How a call's thread answers: a whole reply, or the start of a stream.
 enum Head {
@@ -254,7 +236,7 @@ pub(crate) async fn handle(
                 .header("content-type", "text/event-stream; charset=utf-8")
                 .header("cache-control", "no-cache, no-store")
                 .header("x-accel-buffering", "no")
-                .body(axum::body::Body::new(ChannelBody(rx)))
+                .body(axum::body::Body::new(ChannelBody::new(rx)))
                 .unwrap_or_else(|_| refused(500, "the gateway stream header was not valid"))
         }
         Err(_) => refused(500, "the gateway call ended without a response"),

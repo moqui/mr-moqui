@@ -24,16 +24,15 @@
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::extract::{ConnectInfo, Request, State};
 use axum::response::Response;
-use bytes::Bytes;
-use hyper::body::{Body as _, Frame};
+use hyper::body::Body as _;
 use moqui_git::server::{self, GitHttpRequest, GitService, HttpResponder};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::channel_body::ChannelBody;
 use crate::git_bridge::{ChannelReader, ChannelWriter, Chunk, QUEUED};
 use crate::guard::Event;
 use crate::http::{forwarded_https, plain, ClientAddr, HttpState, TlsConnection};
@@ -51,20 +50,6 @@ fn size_setting(state: &HttpState, name: &str, default: u64) -> u64 {
 /// The conf's `git-server` `idle-timeout`: for the request body, and for the response a client stops reading.
 fn idle_timeout(state: &HttpState) -> Duration {
     crate::git_bridge::idle_timeout(&state.factory)
-}
-
-/// The response body: chunks from the job until it drops its writer.
-struct ChannelBody(mpsc::Receiver<Chunk>);
-
-impl hyper::body::Body for ChannelBody {
-    type Data = Bytes;
-    type Error = std::io::Error;
-
-    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
-        self.0
-            .poll_recv(cx)
-            .map(|chunk| chunk.map(|chunk| chunk.map(Frame::data)))
-    }
 }
 
 /// A response's status and headers.
@@ -229,7 +214,7 @@ pub(crate) async fn handle(
         response = response.header(name, value);
     }
     response
-        .body(axum::body::Body::new(ChannelBody(out_rx)))
+        .body(axum::body::Body::new(ChannelBody::new(out_rx)))
         .unwrap_or_else(|_| plain(500, "a git response header was not valid"))
 }
 
@@ -320,6 +305,6 @@ async fn handle_lfs(
         response = response.header(name, value);
     }
     response
-        .body(axum::body::Body::new(ChannelBody(out_rx)))
+        .body(axum::body::Body::new(ChannelBody::new(out_rx)))
         .unwrap_or_else(|_| plain(500, "an LFS response header was not valid"))
 }

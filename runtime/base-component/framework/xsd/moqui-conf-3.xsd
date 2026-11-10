@@ -1085,6 +1085,12 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="boundary-comments" default="false" type="boolean"/>
             <xs:attribute name="default-paginate-rows" type="xs:string" default="20"/>
             <xs:attribute name="default-autocomplete-rows" type="xs:string" default="10"/>
+            <xs:attribute name="stream-threshold" type="xs:string" default="65536"><xs:annotation><xs:documentation>
+                The bytes of an html or text screen render (html, html-print, text, csv, xml) kept before its response
+                is sent to the client as it is written, as a servlet response commits when its buffer fills. A smaller
+                page is sent whole. 0 keeps every response whole. No Java counterpart (the servlet container's buffer
+                size).
+            </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="check-interval-ms" type="xs:string"><xs:annotation><xs:documentation>
                 How often a screen file is checked for changes, in milliseconds; empty is never when instance_purpose is
                 production and two seconds otherwise. No Java counterpart.

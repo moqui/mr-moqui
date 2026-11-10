@@ -120,6 +120,8 @@ mod cluster_notify;
 mod tls_pin;
 
 #[cfg(feature = "axum")]
+mod channel_body;
+#[cfg(feature = "axum")]
 mod channels;
 #[cfg(feature = "axum")]
 mod dav_http;
@@ -153,7 +155,7 @@ mod sip;
 mod source_body;
 #[cfg(feature = "rtc")]
 mod speech_local;
-#[cfg(any(all(feature = "git", any(feature = "axum", feature = "ssh")), all(feature = "axum", feature = "llm")))]
+#[cfg(any(feature = "axum", all(feature = "git", feature = "ssh")))]
 mod stall;
 #[cfg(feature = "axum")]
 mod systemd_notify;

@@ -104,12 +104,12 @@ const $sep = () => { if ($hasPrev) sri.write(","); else $hasPrev = true; };
         const cells = fields.map((field) => S.hideGuard(field, cellCode(field))).join("");
         return js`
             {
-                const $info = sri.openFormList(${jsString(attr(node, "name"))});
+                // the rows come one at a time, each made as it is written (docs/ui/Screen-Output.md)
+                const $info = sri.openFormList(${jsString(attr(node, "name"))}, true);
                 $hasPrev = false;
                 ${headers}
                 sri.write("\\n");
-                for (let $index = 0; $index < $info.count; $index++) {
-                    sri.startFormListRow($info, $index);
+                for (let $index = 0; sri.startFormListRow($info, $index); $index++) {
                     try {
                         $hasPrev = false;
                         ${cells}

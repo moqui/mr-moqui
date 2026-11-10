@@ -94,6 +94,18 @@ fn assert_golden(xml: &str, expected: &str) {
     assert_eq!(generate(xml).unwrap(), expected);
 }
 
+/// `testdata/{name}.xml` generates `testdata/{name}.js`; `UPDATE_GOLDEN=1` writes the file instead.
+fn assert_golden_named(name: &str) {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/script/testdata");
+    let xml = std::fs::read_to_string(dir.join(format!("{name}.xml"))).unwrap();
+    let path = dir.join(format!("{name}.js"));
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&path, generate(&xml).unwrap()).unwrap();
+        return;
+    }
+    assert_golden(&xml, &std::fs::read_to_string(&path).unwrap());
+}
+
 #[test]
 fn iterate_continue_advances_to_the_next_entry() {
     clear_context_stack();
@@ -214,10 +226,7 @@ fn condition_element_expression_may_span_lines() {
 
 #[test]
 fn golden_service_call() {
-    assert_golden(
-        include_str!("testdata/service-call.xml"),
-        include_str!("testdata/service-call.js"),
-    );
+    assert_golden_named("service-call");
 }
 
 #[test]
@@ -239,20 +248,17 @@ fn web_send_json_response_false_sends_nothing_and_a_name_sends_before_the_error_
 
 #[test]
 fn golden_script() {
-    assert_golden(include_str!("testdata/script.xml"), include_str!("testdata/script.js"));
+    assert_golden_named("script");
 }
 
 #[test]
 fn golden_set() {
-    assert_golden(include_str!("testdata/set.xml"), include_str!("testdata/set.js"));
+    assert_golden_named("set");
 }
 
 #[test]
 fn golden_entity_find() {
-    assert_golden(
-        include_str!("testdata/entity-find.xml"),
-        include_str!("testdata/entity-find.js"),
-    );
+    assert_golden_named("entity-find");
 }
 
 #[test]
@@ -284,34 +290,22 @@ fn a_limit_or_offset_with_an_expression_is_expanded_and_a_literal_is_as_written(
 
 #[test]
 fn golden_entity_value() {
-    assert_golden(
-        include_str!("testdata/entity-value.xml"),
-        include_str!("testdata/entity-value.js"),
-    );
+    assert_golden_named("entity-value");
 }
 
 #[test]
 fn golden_control() {
-    assert_golden(
-        include_str!("testdata/control.xml"),
-        include_str!("testdata/control.js"),
-    );
+    assert_golden_named("control");
 }
 
 #[test]
 fn golden_message() {
-    assert_golden(
-        include_str!("testdata/message.xml"),
-        include_str!("testdata/message.js"),
-    );
+    assert_golden_named("message");
 }
 
 #[test]
 fn golden_condition() {
-    assert_golden(
-        include_str!("testdata/condition.xml"),
-        include_str!("testdata/condition.js"),
-    );
+    assert_golden_named("condition");
 }
 
 #[test]

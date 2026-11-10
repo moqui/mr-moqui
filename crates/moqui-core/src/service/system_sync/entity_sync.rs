@@ -372,8 +372,9 @@ pub(super) fn include_list(
     Ok(BTreeMap::from([("entityIncludeList".to_string(), Value::List(list))]))
 }
 
-/// Append each record of `find` as its XML element. Without dependents the elements are written from the open cursor.
-/// With dependents the rows are read first, because a dependent query needs the connection the cursor holds.
+/// Append each record of `find` as its XML element, written from the open cursor as Java's sync iterates; a record's
+/// dependents are read beside it. On a database that runs no other query while a cursor is open (MySQL,
+/// [`EntityFacade::streams_beside_queries`]) records with dependents are read first.
 fn write_records(
     facade: &EntityFacade,
     entity_name: &str,
@@ -381,15 +382,16 @@ fn write_records(
     levels: i64,
     xml: &mut String,
 ) -> Result<(), LibError> {
+    let beside = levels == 0 || facade.streams_beside_queries(entity_name);
     let mut cursor = find.iterator()?;
     let mut held = Vec::new();
     while let Some(value) = cursor.next_value()? {
-        if levels == 0 {
+        if beside {
             xml.push_str(&crate::entity::query_rest::xml_element(
                 facade,
                 entity_name,
                 value.fields(),
-                0,
+                levels,
             )?);
         } else {
             held.push(value);

@@ -193,10 +193,12 @@ impl NodeLit {
     }
 }
 
-/// The rows of a form-list being rendered: the context frame contents of each row after the row actions.
+/// The rows of a form-list being rendered: the context frame contents of each row after the row actions; or, for a list
+/// sent a row at a time, the stream that makes them as they are asked for, and no rows.
 #[derive(Debug, Default)]
 pub struct FormRows {
     pub rows: Vec<IndexMap<String, Value>>,
+    pub(crate) stream: Option<forms::RowStream>,
 }
 
 /// `WebUtilities.encodeHtml`.
@@ -222,7 +224,8 @@ pub fn content_type_header(state: &RenderState) -> String {
 }
 
 /// Append text to the response. The first write opens it. Nothing is written once a redirect or
-/// another response has stopped the render.
+/// another response has stopped the render, or once a response sent as it is written lost its client: then the
+/// render stops, as Java's does when its writer fails.
 pub fn write(state: &RenderState, text: &str) {
     // A binary mode's document is the response; text such as an untyped `text` element has no place in it.
     if state.dont_do_render.get() || text.is_empty() || state.binary {
@@ -231,7 +234,9 @@ pub fn write(state: &RenderState, text: &str) {
     if !web::output_sent() {
         web::start_output(&content_type_header(state));
     }
-    web::write_output(&super::stamp::inject(text));
+    if !web::write_output(&super::stamp::inject(text)) {
+        state.dont_do_render.set(true);
+    }
 }
 
 /// Text added with `appendToAfterScreenWriter` and `appendToScriptWriter` that nothing else wrote.

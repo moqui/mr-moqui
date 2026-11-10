@@ -216,24 +216,41 @@ fn form_map_frame(fields: IndexMap<String, Value>) -> ContextFrame {
     ContextFrame::push_entries(entries)
 }
 
-/// `sri.openFormList(name)`: run the form's list and row actions. Returns the handle and the row count.
+/// `sri.openFormList(name, streamed)`: run the form's list and row actions. Returns the handle and the row count.
+///
+/// With `streamed` (the csv, text and xml macros, which read the rows once in order) a list with no aggregation is
+/// read a row at a time instead (docs/ui/Screen-Output.md): its find opens a cursor, each row's actions run when
+/// [`start_form_list_row`] asks for it, and the count is `None`. The rows are then never held together.
 ///
 /// # Errors
 ///
 /// Returns an error when the form, its find, its row actions or a field `from` fails.
-pub fn open_form_list(state: &RenderState, name: &str) -> Result<(usize, usize), Error> {
+pub fn open_form_list(state: &RenderState, name: &str, streamed: bool) -> Result<(usize, Option<usize>), Error> {
     let form = form_of(state, name)?;
+    if streamed && form.aggregation.is_none() {
+        let stream = RowStream::open(form)?;
+        let mut lists = state.form_lists.borrow_mut();
+        lists.push(Some(FormRows {
+            rows: Vec::new(),
+            stream: Some(stream),
+        }));
+        return Ok((lists.len() - 1, None));
+    }
     let rows = form_rows(&form)?;
     let count = rows.len();
     let mut lists = state.form_lists.borrow_mut();
-    lists.push(Some(FormRows { rows }));
-    Ok((lists.len() - 1, count))
+    lists.push(Some(FormRows { rows, stream: None }));
+    Ok((lists.len() - 1, Some(count)))
 }
 
-/// The rows of a form-list. Each row is the context frame after `row-actions` and the fields' `from`
-/// expressions have run on the entry, as `AggregationUtil.aggregateList` makes them.
-fn form_rows(form: &FormInstance) -> Result<Vec<IndexMap<String, Value>>, Error> {
-    let list_value = match &form.entity_find {
+/// The list a form-list shows: what its find gives (the cursor variant when `cursor`), else its `list`.
+fn list_value(form: &FormInstance, cursor: bool) -> Result<Value, Error> {
+    let find = if cursor {
+        form.entity_find_cursor.as_ref().or(form.entity_find.as_ref())
+    } else {
+        form.entity_find.as_ref()
+    };
+    Ok(match find {
         Some(find) => {
             script::run_actions(&find.xml)?;
             script::context_value(&form.list_name).unwrap_or(Value::Null)
@@ -245,42 +262,76 @@ fn form_rows(form: &FormInstance) -> Result<Vec<IndexMap<String, Value>>, Error>
             .then(|| script::context_value(&form.list_name))
             .flatten()
             .map_or_else(|| script::eval_value(&form.list_name), Ok)?,
-    };
+    })
+}
+
+/// The context names of a row: its entry, its index, and whether another follows.
+#[derive(Debug)]
+struct RowNames {
+    entry: String,
+    index: String,
+    has_next: String,
+}
+
+impl RowNames {
+    fn of(form: &FormInstance) -> Self {
+        let prefix = if form.list_entry.is_empty() {
+            &form.list_name
+        } else {
+            &form.list_entry
+        };
+        let entry = if form.list_entry.is_empty() {
+            format!("{prefix}_entry")
+        } else {
+            form.list_entry.clone()
+        };
+        Self {
+            entry,
+            index: format!("{prefix}_index"),
+            has_next: format!("{prefix}_has_next"),
+        }
+    }
+}
+
+/// One row: the context frame after `row-actions` and the fields' `from` expressions have run on the entry, as
+/// `AggregationUtil.aggregateList` makes it.
+fn form_row(
+    form: &FormInstance,
+    names: &RowNames,
+    item: Value,
+    index: usize,
+    has_next: bool,
+) -> Result<IndexMap<String, Value>, Error> {
+    // the item's fields, the entry, its index and whether one follows, in the order a put of each leaves them
+    let mut entries = script::value_map(&item).unwrap_or_default();
+    entries.insert(names.entry.clone(), item);
+    entries.insert(names.index.clone(), Value::I64(index as i64));
+    entries.insert(names.has_next.clone(), Value::Bool(has_next));
+    let frame = ContextFrame::push_entries(entries);
+    let ran = (|| -> Result<(), Error> {
+        if let Some(actions) = &form.row_actions {
+            script::run_actions(&actions.xml)?;
+        }
+        for (field, from) in &form.field_from {
+            let value = script::eval_value(from)?;
+            script::set_context_name(field, value)?;
+        }
+        Ok(())
+    })();
+    let row = frame.take();
+    ran?;
+    Ok(row)
+}
+
+/// The rows of a form-list, each made by [`form_row`], aggregated when the form says so.
+fn form_rows(form: &FormInstance) -> Result<Vec<IndexMap<String, Value>>, Error> {
+    let list_value = list_value(form, false)?;
     let items = script::value_items(&list_value).unwrap_or_default();
     let count = items.len();
+    let names = RowNames::of(form);
     let mut rows = Vec::with_capacity(count);
-    let prefix = if form.list_entry.is_empty() {
-        &form.list_name
-    } else {
-        &form.list_entry
-    };
-    let entry_name = if form.list_entry.is_empty() {
-        format!("{prefix}_entry")
-    } else {
-        form.list_entry.clone()
-    };
-    let index_name = format!("{prefix}_index");
-    let has_next_name = format!("{prefix}_has_next");
     for (index, item) in items.into_iter().enumerate() {
-        // the item's fields, the entry, its index and whether one follows, in the order a put of each leaves them
-        let mut entries = script::value_map(&item).unwrap_or_default();
-        entries.insert(entry_name.clone(), item);
-        entries.insert(index_name.clone(), Value::I64(index as i64));
-        entries.insert(has_next_name.clone(), Value::Bool(index + 1 < count));
-        let frame = ContextFrame::push_entries(entries);
-        let ran = (|| -> Result<(), Error> {
-            if let Some(actions) = &form.row_actions {
-                script::run_actions(&actions.xml)?;
-            }
-            for (field, from) in &form.field_from {
-                let value = script::eval_value(from)?;
-                script::set_context_name(field, value)?;
-            }
-            Ok(())
-        })();
-        let row = frame.take();
-        ran?;
-        rows.push(row);
+        rows.push(form_row(form, &names, item, index, index + 1 < count)?);
     }
     if let Some(aggregation) = &form.aggregation {
         let shown = if aggregation.group_fields.is_empty() {
@@ -407,13 +458,127 @@ pub(in crate::screen) fn form_list_sub_row_frame(
     Ok(form_map_frame(script::value_map(&entry).unwrap_or_default()))
 }
 
-/// `sri.startFormListRow`: a frame holding the row and `_formMap`.
+/// The rows of a form-list read one at a time ([`open_form_list`] streamed): from a cursor, or from a list whose rows
+/// are made as they are asked for.
+pub(crate) struct RowStream {
+    form: Arc<FormInstance>,
+    names: RowNames,
+    source: RowSource,
+    /// The index of the next row.
+    next: usize,
+    ended: bool,
+}
+
+enum RowSource {
+    Cursor(Arc<script::host::list_iterator::IteratorHandle>),
+    Items(std::vec::IntoIter<Value>),
+}
+
+impl std::fmt::Debug for RowStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RowStream")
+            .field("form", &self.form.name)
+            .field("next", &self.next)
+            .field("ended", &self.ended)
+            .finish()
+    }
+}
+
+impl RowStream {
+    fn open(form: Arc<FormInstance>) -> Result<Self, Error> {
+        let value = list_value(&form, true)?;
+        let source = match script::host::list_iterator::iterator_of(&value) {
+            Some(cursor) => RowSource::Cursor(cursor),
+            None => RowSource::Items(script::value_items(&value).unwrap_or_default().into_iter()),
+        };
+        Ok(Self {
+            names: RowNames::of(&form),
+            form,
+            source,
+            next: 0,
+            ended: false,
+        })
+    }
+
+    /// Row `index`, which must be the next; `None` after the last.
+    fn row(&mut self, index: usize) -> Result<Option<IndexMap<String, Value>>, Error> {
+        if self.ended {
+            return Ok(None);
+        }
+        if index != self.next {
+            return Err(Error::new(format!(
+                "form-list {}: a list sent a row at a time is read once, in order; row {index} asked for after {}",
+                self.form.name, self.next
+            )));
+        }
+        let item = match &mut self.source {
+            RowSource::Cursor(cursor) => cursor.next()?.map(script::host::entities::value_of),
+            RowSource::Items(items) => items.next(),
+        };
+        let Some(item) = item else {
+            self.end();
+            return Ok(None);
+        };
+        let has_next = match &mut self.source {
+            RowSource::Cursor(cursor) => cursor.has_next()?,
+            RowSource::Items(items) => items.len() > 0,
+        };
+        let row = form_row(&self.form, &self.names, item, index, has_next)?;
+        self.next += 1;
+        Ok(Some(row))
+    }
+
+    /// No more rows: the cursor closes, and the rows sent count as the form-list's.
+    fn end(&mut self) {
+        if self.ended {
+            return;
+        }
+        self.ended = true;
+        if let RowSource::Cursor(cursor) = &self.source {
+            cursor.close();
+        }
+        note_form_list_rows(self.next);
+    }
+}
+
+/// `sri.startFormListRow`: a frame holding the row and `_formMap`; false, with no frame, past the last row. A list sent
+/// a row at a time makes the row now.
 ///
 /// # Errors
 ///
-/// Returns an error for a list that was closed or a row past the end.
-pub fn start_form_list_row(state: &RenderState, handle: usize, index: usize) -> Result<(), Error> {
-    form_list_row_frame(state, handle, index).map(ContextFrame::keep)
+/// Returns an error for a list that was closed, a streamed row asked for out of order, or a row whose actions fail.
+pub fn start_form_list_row(state: &RenderState, handle: usize, index: usize) -> Result<bool, Error> {
+    // a streamed row runs actions and scripts, so the stream is out of the render's lists while it does
+    let streamed = state
+        .form_lists
+        .borrow_mut()
+        .get_mut(handle)
+        .and_then(Option::as_mut)
+        .and_then(|list| list.stream.take());
+    if let Some(mut stream) = streamed {
+        let row = stream.row(index);
+        if let Some(Some(list)) = state.form_lists.borrow_mut().get_mut(handle) {
+            list.stream = Some(stream);
+        }
+        return Ok(match row? {
+            Some(row) => {
+                form_map_frame(row).keep();
+                true
+            }
+            None => false,
+        });
+    }
+    let past_end = state
+        .form_lists
+        .borrow()
+        .get(handle)
+        .and_then(Option::as_ref)
+        .is_some_and(|list| index >= list.rows.len());
+    if past_end {
+        return Ok(false);
+    }
+    form_list_row_frame(state, handle, index).map(ContextFrame::keep)?;
+    Ok(true)
 }
 
 /// The frame of `sri.startFormListRow`, popped when dropped.
@@ -434,9 +599,10 @@ pub(in crate::screen) fn form_list_row_frame(
     Ok(form_map_frame(row))
 }
 
-/// `sri.safeCloseList`: drop a form-list's rows.
+/// `sri.safeCloseList`: drop a form-list's rows; a streamed one's cursor closes.
 pub fn close_form_list(state: &RenderState, handle: usize) {
-    if let Some(slot) = state.form_lists.borrow_mut().get_mut(handle) {
-        *slot = None;
+    let closed = state.form_lists.borrow_mut().get_mut(handle).and_then(Option::take);
+    if let Some(mut stream) = closed.and_then(|list| list.stream) {
+        stream.end();
     }
 }

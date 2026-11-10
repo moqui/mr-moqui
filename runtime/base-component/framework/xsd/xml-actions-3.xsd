@@ -614,11 +614,13 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:element>
     <xs:element name="use-iterator">
         <xs:annotation><xs:documentation>
-            Specifies whether or not to use the EntityListIterator when doing the query. This is much more efficient
-            for large data sets because the results are read incrementally instead of all at once. Note that when using
-            this the use-cache setting will be ignored. Also note that an EntityListIterator must be closed when you
-            are finished, but this is done automatically by the iterate operation. Must be true or false, defaults to
-            false.
+            Read the rows through the find's EntityListIterator (EntityFind.iterator()) instead of as a list, so a large
+            result is read a row at a time and never held whole: iterate, section-iterate and a csv, text or xml
+            form-list read it that way. As in Java it reads forward only unless the find scrolls (resultSetType 1004 or
+            1005). A cached find is a list anyway, and with search-form-inputs a page with a limit is a list; with no
+            limit (pageNoLimit) the count is a query of its own, run before the iterator opens. The iterator closes
+            after its last row, or when the render or script ends. On MySQL, whose open result takes no other query,
+            the rows are read into memory, so a lookup for each row still works.
         </xs:documentation></xs:annotation>
         <xs:complexType/>
     </xs:element>

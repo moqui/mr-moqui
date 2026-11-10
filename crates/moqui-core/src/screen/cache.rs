@@ -170,7 +170,13 @@ pub struct ScreenConf {
     pub boundary_comments: bool,
     pub default_paginate_rows: i64,
     pub default_autocomplete_rows: i64,
+    /// `stream-threshold`: the bytes of an html or text render kept before its response is sent as it is written
+    /// (docs/ui/Screen-Output.md); 0 keeps every response whole.
+    pub stream_threshold: usize,
 }
+
+/// The default `stream-threshold`, 64 KiB.
+const STREAM_THRESHOLD: usize = 64 * 1024;
 
 /// The render mode name the macros see: `xsl-fo` is `html-print`.
 pub fn canonical_render_mode(mode: &str) -> &str {
@@ -187,6 +193,7 @@ impl ScreenConf {
         let mut conf = Self {
             default_paginate_rows: 20,
             default_autocomplete_rows: 20,
+            stream_threshold: STREAM_THRESHOLD,
             ..Self::default()
         };
         let Ok(root) = MNode::parse_shared("moqui-conf", conf_text) else {
@@ -196,6 +203,15 @@ impl ScreenConf {
             return conf;
         };
         conf.boundary_comments = facade.attribute_is("boundary-comments", "true");
+        if let Some(text) = facade
+            .attribute("stream-threshold")
+            .filter(|text| !text.trim().is_empty())
+        {
+            match text.trim().parse() {
+                Ok(bytes) => conf.stream_threshold = bytes,
+                Err(_) => tracing::warn!("screen-facade stream-threshold {text} is not a number of bytes; using 65536"),
+            }
+        }
         if let Some(rows) = facade
             .attribute("default-paginate-rows")
             .and_then(|text| text.parse().ok())
