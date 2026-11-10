@@ -113,16 +113,20 @@
         // way: the template parser decodes it.
         // A test before each replace: most values have nothing to replace, and a replace makes a new string anyway. One regular
         // expression test is cheaper in QuickJS than an indexOf for each character, whose indexOf compares at every position.
+        // The patterns are made once: a regular expression literal in the function is a new object at each call. A string
+        // value is not converted again.
+        const ESC_ANY = /[&<>"]/, ESC_ALL = /[&<>"]/g, NL_ANY = /\n/, NL_ALL = /\n/g, BRACE_ANY = /\{/, BRACE_ALL = /\{/g;
+        const escChar = (ch) => ENT[ch];
         const e = (value) => {
             if (value === null || value === undefined) return "";
-            const text = String(value);
-            return /[&<>"]/.test(text) ? text.replace(/[&<>"]/g, (ch) => ENT[ch]) : text;
+            const text = typeof value === "string" ? value : String(value);
+            return ESC_ANY.test(text) ? text.replace(ESC_ALL, escChar) : text;
         };
-        const br = (text) => (/\n/.test(text) ? text.replace(/\n/g, "<br>") : text);
+        const br = (text) => (NL_ANY.test(text) ? text.replace(NL_ALL, "<br>") : text);
         // Text between tags: an opening brace is a character reference so that two of them are not an interpolation.
         const t = (value) => {
             const text = e(value);
-            return /\{/.test(text) ? text.replace(/\{/g, "&#123;") : text;
+            return BRACE_ANY.test(text) ? text.replace(BRACE_ALL, "&#123;") : text;
         };
         const A = (map) => {
             let out = "";

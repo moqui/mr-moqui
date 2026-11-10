@@ -79,10 +79,14 @@
         "use strict";
 
         const ENT = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
+        // The patterns are made once: a regular expression literal in the function is a new object at each call. A string
+        // value is not converted again.
+        const ESC_ANY = /[&<>"]/, ESC_ALL = /[&<>"]/g, NL_ANY = /\n/, NL_ALL = /\n/g;
+        const escChar = (ch) => ENT[ch];
         const e = (value) => {
             if (value === null || value === undefined) return "";
-            const text = String(value);
-            return /[&<>"]/.test(text) ? text.replace(/[&<>"]/g, (ch) => ENT[ch]) : text;
+            const text = typeof value === "string" ? value : String(value);
+            return ESC_ANY.test(text) ? text.replace(ESC_ALL, escChar) : text;
         };
         // Attributes: a key starting with ":" holds an expression, any other key holds text. null, undefined and false leave it out.
         const A = (map) => {
