@@ -48,6 +48,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     rust_service!(map, get_prompt_preview)?;
     rust_service!(map, start_agent_run)?;
     rust_service!(map, cancel_agent_run)?;
+    rust_service!(map, record_agent_run_usage)?;
     rust_service!(map, submit_agent_input)?;
     rust_service!(map, get_agent_run_events)?;
     rust_service!(map, decide_agent_approval)?;
@@ -1270,6 +1271,79 @@ fn cancel_agent_run(parameters: &Parameters, _facade: &EntityFacade) -> Out {
     let run_id = text(parameters, "runId").unwrap_or_default();
     match super::run::cancel_run(&factory, &run_id, Some(&user_id)) {
         Ok(state) => Ok(out([("statusId", Value::string(state.status_id()))])),
+        Err(error) => {
+            add_error(error.to_string());
+            Ok(BTreeMap::new())
+        }
+    }
+}
+
+/// `record#AgentRunUsage`: the provider turns of a run an external harness works (`stepList`), each written as its
+/// `AgentRunStep` and priced at its model's prices; the run's totals rolled up, and its cancel requested when it passed
+/// `maxTokens` or `maxCost`. Server-side callers only (the harness's adapter): it is not allowed remotely.
+fn record_agent_run_usage(parameters: &Parameters, _facade: &EntityFacade) -> Out {
+    let Some(factory) = factory() else {
+        return Ok(BTreeMap::new());
+    };
+    let run_id = text(parameters, "runId").unwrap_or_default();
+    let field = |step: &moqui_lib::object::ValueMap, key: &str| {
+        step.get(key)
+            .filter(|value| !is_empty(value))
+            .map(to_plain_string)
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+    };
+    let tokens = |step: &moqui_lib::object::ValueMap, key: &str| {
+        field(step, key)
+            .and_then(|text| text.parse::<f64>().ok())
+            .filter(|n| n.is_finite() && *n > 0.0)
+            .map_or(0, |n| n as u64)
+    };
+    let date = |step: &moqui_lib::object::ValueMap, key: &str| {
+        step.get(key).and_then(crate::millis_of).or_else(|| {
+            field(step, key).and_then(|text| {
+                text.parse::<i64>()
+                    .ok()
+                    .or_else(|| text.parse::<jiff::Timestamp>().ok().map(|at| at.as_millisecond()))
+            })
+        })
+    };
+    let mut steps = Vec::new();
+    if let Some(Value::List(list)) = parameters.get("stepList") {
+        for value in list {
+            let Value::Map(step) = value else {
+                add_error("each of stepList is a map of a turn");
+                return Ok(BTreeMap::new());
+            };
+            steps.push(super::run::external::ExternalStep {
+                seq: field(step, "stepSeq").and_then(|seq| seq.parse().ok()).unwrap_or(0),
+                model: field(step, "modelId"),
+                usage: usage::Usage {
+                    input: tokens(step, "inputTokens"),
+                    cached_input: tokens(step, "cachedInputTokens"),
+                    cache_write: tokens(step, "cacheWriteTokens"),
+                    output: tokens(step, "outputTokens"),
+                    reasoning: tokens(step, "reasoningTokens"),
+                },
+                finish_reason: field(step, "finishReason"),
+                started: date(step, "startedDate"),
+                ended: date(step, "endedDate"),
+            });
+        }
+    }
+    match super::run::external::record_usage(&factory, &run_id, &steps) {
+        Ok(recorded) => Ok(out([
+            ("stepCount", Value::I64(recorded.step_count)),
+            ("inputTokens", count(recorded.input_tokens)),
+            ("outputTokens", count(recorded.output_tokens)),
+            ("cost", Value::Decimal(recorded.cost)),
+            ("exhausted", opt(recorded.exhausted.map(|cap| cap.as_str()))),
+            ("cancelRequested", Value::Bool(recorded.cancel_requested)),
+            (
+                "unpricedModelList",
+                Value::List(recorded.unpriced.iter().map(Value::string).collect()),
+            ),
+        ])),
         Err(error) => {
             add_error(error.to_string());
             Ok(BTreeMap::new())
