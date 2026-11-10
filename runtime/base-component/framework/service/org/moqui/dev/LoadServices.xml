@@ -121,14 +121,19 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="compare" noun="LoadRuns" type="rust" location="moqui_host::load_runner::compare_load_runs"
             allow-remote="false" transaction="ignore">
-        <description>Two to four finished runs side by side: each run's summary, and per request name each run's count,
-            errors and latency percentiles with the percent change from the first run.</description>
+        <description>Two to four finished runs side by side, the first the base (moqui test-load --compare shows the same
+            rows). runs: each run's summary, as find#LoadRuns lists it. rows: the summary's requests, rps, errors,
+            errorRate, p50, p95 and p99 (section summary, name null), then for each request name, in the first run's
+            nameOrder and then the names only a later run has, its count, p50, p95, p99 and errors (section name);
+            each with values (a number or null per run) and changes (null for the first run, else the percent change
+            from the first to a tenth, null where either value is missing or the first is 0). A running load is refused:
+            it has no result yet. A runId that is not a finished run of this server is refused.</description>
         <in-parameters>
             <parameter name="runIds" type="List" required="true"><parameter name="runId"/></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="runs" type="List"><parameter name="run" type="Map"/></parameter>
-            <parameter name="names" type="List"><parameter name="name" type="Map"/></parameter>
+            <parameter name="rows" type="List"><parameter name="row" type="Map"/></parameter>
         </out-parameters>
     </service>
 </services>

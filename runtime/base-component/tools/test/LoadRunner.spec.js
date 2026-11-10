@@ -195,3 +195,61 @@ feature("a second run while one runs is refused, and stop ends the run", {
         result(long.runId).run.stopReason == "stop-now"
     },
 })
+
+// ========== L5: import and compare (plans/LoadRunner.md §7, L5) ==========
+// a result as moqui test-load writes it (runtime/tmp/test-load/<runId>/result.json), made up
+const madeUp = (requests, p95, label) => ({
+    users: 2, iterations: 4, requests, errors: 0, errorRate: 0, rps: requests / 2, duration: 2,
+    latency: { min: 1, mean: 2, p50: 2, p90: 3, p95, p99: p95 + 1, max: p95 + 2 },
+    names: { "GET /ping": { kind: "http", count: requests, errors: 0, p50: 2, p95, p99: p95 + 1, statuses: { "200": requests } } },
+    nameOrder: ["GET /ping"], errorSamples: [], generator: { where: "same-machine", cores: 4, cpu: 0.01 },
+    run: { script: "component://mr-marble/test/load/OrderToCash.load.js", label, status: "completed", stopReason: null,
+        target: "https://staging.example.com", start: "2026-11-10T15:42:43Z", end: "2026-11-10T15:42:45Z", user: "someone.else" },
+})
+
+feature("an import of a result file makes a completed run of the importer, and a file that is not a result is refused", {
+    expect() {
+        const imported = invoke(S + "import#LoadRunResult", { result: JSON.stringify(madeUp(40, 8, "from staging")) })
+        imported.error == ""
+        runIds.push(imported.runId)
+        const status = invoke(S + "get#LoadRunStatus", { runId: imported.runId })
+        status.status == "completed"
+        status.summary.user == "spec.lr.holder"
+        status.summary.label == "from staging"
+        result(imported.runId).run.importedUser == "someone.else"
+        invoke(S + "find#LoadRuns", { status: "completed" }).runs.some(run => run.runId == imported.runId)
+        invoke(S + "import#LoadRunResult", { result: '{"a": 1}' }).error.includes("not a load result")
+        invoke(S + "import#LoadRunResult", { result: "not json" }).error.includes("not JSON")
+    },
+})
+
+feature("compare#LoadRuns sets two runs side by side with the percent changes from the first", {
+    expect() {
+        const first = invoke(S + "import#LoadRunResult", { result: JSON.stringify(madeUp(40, 8, "base")) }).runId
+        const second = invoke(S + "import#LoadRunResult", { result: JSON.stringify(madeUp(30, 10, "after")) }).runId
+        runIds.push(first, second)
+        const compared = invoke(S + "compare#LoadRuns", { runIds: [first, second] })
+        compared.error == ""
+        compared.runs.map(run => run.label).join() == "base,after"
+        const row = (section, name, metric) => compared.rows.find(r => r.section == section && r.name == name && r.metric == metric)
+        row("summary", null, "requests").values.join() == "40,30"
+        row("summary", null, "requests").changes[1] == -25
+        row("summary", null, "p95").changes[1] == 25
+        row("name", "GET /ping", "count").changes[1] == -25
+        row("summary", null, "errors").changes[1] == null
+        invoke(S + "compare#LoadRuns", { runIds: [first] }).error.includes("2 to 4")
+    },
+})
+
+feature("a run on this server keeps the server's samples and notes that its generator CPU includes the server", {
+    expect() {
+        const started = start({ scenarios: quick(1, 1) })
+        runIds.push(started.runId)
+        ended(started.runId).status == "completed"
+        const done = result(started.runId)
+        done.server.samples.length >= 2
+        done.server.samples[0].memoryMb > 0
+        done.generator.where == "in-target"
+        done.generator.note.includes("server")
+    },
+})

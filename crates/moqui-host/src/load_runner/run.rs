@@ -36,16 +36,18 @@ use moqui_devkit::testkit::{SpecHost, ThreadBody};
 use moqui_lib::sync::{lock, wait_timeout};
 use serde_json::{json, Map, Value};
 
-use super::results;
 use super::scripts::LoadScript as ScriptFile;
 use super::targets::{TargetKind, TargetPolicy};
+use super::{results, server};
 use crate::test_client::load::{self, Load};
 use crate::test_client::{ClientHost, InServer};
 
 /// How long shutdown waits for the running loads to write their results.
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(10);
-/// How often a run checks that the user who started it may still run loads.
-const WATCH_EVERY: Duration = Duration::from_secs(10);
+/// How often a run on this server samples the server ([`server::Samples`]).
+const SAMPLE_EVERY: Duration = Duration::from_secs(5);
+/// Every how many samples a run checks that the user who started it may still run loads: every 10 seconds.
+const CHECK_EVERY_SAMPLES: u32 = 2;
 /// How often a run's thread logs that it still waits for user threads that have not exited.
 const LINGER_LOG_EVERY: Duration = Duration::from_secs(60);
 
@@ -62,6 +64,10 @@ pub(crate) struct Active {
     live: Arc<AtomicUsize>,
     /// Why the run was stopped by the server rather than by a user: the starting user lost the right to run loads.
     stopped_because: Mutex<Option<String>>,
+    /// The starting user's id, for the run's Monitor annotations.
+    user_id: String,
+    /// The server's samples, for a run on this server (`this` or `service`); none for another server's.
+    server: Option<Mutex<server::Samples>>,
 }
 
 impl Active {
@@ -77,6 +83,11 @@ impl Active {
             "p95": snapshot.get("latency").and_then(|latency| latency.get("p95")).cloned().unwrap_or(Value::Null),
             "stopping": field("stopping"),
         })
+    }
+
+    /// The server's samples so far, for a run on this server.
+    pub(crate) fn server_json(&self) -> Option<Value> {
+        self.server.as_ref().map(|samples| lock(samples).to_json())
     }
 }
 
@@ -149,6 +160,7 @@ pub(crate) struct Ask {
     pub(crate) insecure: bool,
     /// The user who starts the run, whom its users' threads are logged in as.
     pub(crate) user: String,
+    pub(crate) user_id: String,
 }
 
 /// The run's side of the client host: its target rule, what its plan declares it uses, and `service.call`.
@@ -378,6 +390,12 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
             return Err(err);
         }
     };
+    let on_this_server = ask.target_kind != TargetKind::Url;
+    let samples = on_this_server.then(|| {
+        let mut samples = server::Samples::new();
+        samples.sample(factory);
+        Mutex::new(samples)
+    });
     let active = Arc::new(Active {
         run_id: run_id.clone(),
         script: ask.script.location.clone(),
@@ -388,14 +406,21 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
         load: Arc::clone(running.load()),
         live,
         stopped_because: Mutex::new(None),
+        user_id: ask.user_id.clone(),
+        server: samples,
     });
     runs.insert(run_id.clone(), Arc::clone(&active));
     drop(runs);
+    if on_this_server {
+        let text = server::annotation_text(&ask.label, &ask.script.location, "started");
+        server::annotate(factory, &run_id, &text, &ask.user_id);
+    }
     let slot = Slot(run_id.clone());
     let thread_active = Arc::clone(&active);
+    let thread_factory = Arc::clone(factory);
     let spawned = std::thread::Builder::new()
         .name(format!("moqui-load-run-{run_id}"))
-        .spawn(move || finish(&root, slot, &thread_active, running, run, host));
+        .spawn(move || finish(&thread_factory, &root, slot, &thread_active, running, run, host));
     if let Err(err) = spawned {
         // the closure, with the Running (whose drop stops the users) and the slot, was dropped
         let _ = std::fs::remove_dir_all(&dir);
@@ -416,6 +441,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
 /// A run's thread: wait for its users and for every user thread to exit, write its result, and give up its slot
 /// (on any end, a panic's too, by the slot's drop). A panic in the wait is a `failed` run, whose result says so.
 fn finish(
+    factory: &ExecutionContextFactory,
     root: &Path,
     slot: Slot,
     active: &Active,
@@ -454,6 +480,23 @@ fn finish(
             run.insert("stoppedBecause".into(), json!(because));
         }
     }
+    if let Some(samples) = &active.server {
+        let mut samples = lock(samples);
+        samples.sample(factory);
+        result["server"] = samples.to_json();
+        if let Some(generator) = result.get_mut("generator").and_then(Value::as_object_mut) {
+            generator.insert("note".into(), json!(server::IN_TARGET_NOTE));
+        }
+        drop(samples);
+        let status = result
+            .get("run")
+            .and_then(|run| run.get("status"))
+            .and_then(Value::as_str)
+            .unwrap_or("ended")
+            .to_string();
+        let text = server::annotation_text(&active.label, &active.script, &status);
+        server::annotate(factory, &run_id, &text, &active.user_id);
+    }
     if let Err(err) = results::write_result(root, &run_id, &result) {
         tracing::error!(run_id, error = %err, "Could not write a load run's result");
     }
@@ -461,11 +504,13 @@ fn finish(
     drop(slot);
 }
 
-/// While the run is in the registry, check every [`WATCH_EVERY`] that the user who started it can still log in and
-/// holds `LOAD_RUNNER`; when not, stop the run now. A run lasts no longer than its starter's right to run it.
+/// While the run is in the registry: every [`SAMPLE_EVERY`] a sample of the server for a run on this server, and every
+/// [`CHECK_EVERY_SAMPLES`] of those a check that the user who started it can still log in and holds `LOAD_RUNNER`;
+/// when not, the run is stopped now. A run lasts no longer than its starter's right to run it.
 fn watch(factory: &Arc<ExecutionContextFactory>, active: &Active) {
+    let mut ticks: u32 = 0;
     loop {
-        let deadline = Instant::now() + WATCH_EVERY;
+        let deadline = Instant::now() + SAMPLE_EVERY;
         {
             let mut runs = lock(&REGISTRY.runs);
             loop {
@@ -478,6 +523,13 @@ fn watch(factory: &Arc<ExecutionContextFactory>, active: &Active) {
                 }
                 runs = wait_timeout(&REGISTRY.ended, runs, left).0;
             }
+        }
+        if let Some(samples) = &active.server {
+            lock(samples).sample(factory);
+        }
+        ticks += 1;
+        if ticks % CHECK_EVERY_SAMPLES != 0 {
+            continue;
         }
         if let Err(reason) = may_still_run(factory, &active.user) {
             tracing::warn!(

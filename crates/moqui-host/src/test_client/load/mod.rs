@@ -42,7 +42,7 @@ use serde_json::{json, Map, Value};
 pub(crate) use pace::{seconds, Pause};
 use record::{Pending, Recorder, ScenarioCounts, Shared};
 pub(crate) use script::{LoadScript, ScenarioSettings};
-pub(crate) use stats::{grouped, table, table_ms};
+pub(crate) use stats::{grouped, process_cpu, table, table_ms};
 
 /// The errors a load result keeps whole, the first.
 pub(crate) const ERROR_SAMPLES: usize = 20;
