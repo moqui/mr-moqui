@@ -33,6 +33,7 @@ moqui_entity::hooks::submit! {
         in_group: crate::user::is_in_group,
         locale: crate::l10n::locale,
         time_zone: crate::l10n::time_zone,
+        server_time_zone: crate::l10n::server_time_zone,
         entity_eca_disabled: || ExecutionContext::with_current(|ec| ec.entity_eca_disabled()) == Some(true),
         conf_setting: |path, name| {
             ExecutionContext::with_current(|ec| ec.factory().conf_setting(path, name)).unwrap_or_default()

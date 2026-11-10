@@ -30,6 +30,16 @@ use crate::error::Error;
 ///
 /// Returns an error when `offset` is not a whole number or `basis` is not a `yyyy-MM-dd` date or epoch millis.
 pub fn period_range(period: &str, offset: &str, basis: &str) -> Result<(Value, Value), Error> {
+    period_range_in_zones(period, offset, basis, &zone(), &crate::hooks::server_time_zone())
+}
+
+fn period_range_in_zones(
+    period: &str,
+    offset: &str,
+    basis: &str,
+    zone: &TimeZone,
+    server_zone: &TimeZone,
+) -> Result<(Value, Value), Error> {
     let offset = if offset.trim().is_empty() {
         0
     } else {
@@ -38,30 +48,32 @@ pub fn period_range(period: &str, offset: &str, basis: &str) -> Result<(Value, V
             .parse::<i32>()
             .map_err(|_| Error::new(format!("period offset {offset} is not a whole number")))?
     };
-    let zone = zone();
     let basis = if basis.trim().is_empty() {
         Timestamp::now().to_zoned(zone.clone()).date()
     } else if let Ok(millis) = basis.trim().parse::<i64>() {
-        millis_date(millis, &zone).ok_or_else(|| Error::new(format!("period date {basis} is out of range")))?
+        millis_date(millis, zone).ok_or_else(|| Error::new(format!("period date {basis} is out of range")))?
     } else {
-        basis
+        // Change 7: Java parses pdate at JVM-default midnight, then transfers that instant to the user's calendar.
+        // Keep this conversion local to period ranges; a general civil Date still has no time zone.
+        let parsed = basis
             .trim()
             .parse::<Date>()
-            .map_err(|_| Error::new(format!("period date {basis} is not yyyy-MM-dd or epoch millis")))?
+            .map_err(|_| Error::new(format!("period date {basis} is not yyyy-MM-dd or epoch millis")))?;
+        parsed
+            .at(0, 0, 0, 0)
+            .to_zoned(server_zone.clone())
+            .map_err(|err| Error::new(format!("period date {basis} has no server midnight: {err}")))?
+            .timestamp()
+            .to_zoned(zone.clone())
+            .date()
     };
     let (from, thru) = range_dates(period, offset, basis)?;
-    Ok((stamp(from, &zone)?, stamp(thru, &zone)?))
+    Ok((stamp(from, zone)?, stamp(thru, zone)?))
 }
 
-/// The date of epoch millis, as a Date or Timestamp parameter reaches a script. A Date is the millis of its midnight in
-/// UTC (`moqui_lib::object`), which in a zone west of UTC is the day before, so millis on a UTC midnight are taken as
-/// that date; any other instant is dated in `zone`.
+/// Java transfers a Date/Timestamp's epoch millis into the user's calendar even at UTC midnight.
 fn millis_date(millis: i64, zone: &TimeZone) -> Option<Date> {
-    let instant = Timestamp::from_millisecond(millis).ok()?;
-    if millis.rem_euclid(86_400_000) == 0 {
-        return Some(instant.to_zoned(TimeZone::UTC).date());
-    }
-    Some(instant.to_zoned(zone.clone()).date())
+    Some(Timestamp::from_millisecond(millis).ok()?.to_zoned(zone.clone()).date())
 }
 
 /// The session time zone, else the server's, as Java's `ec.user.getCalendarSafe()`.
@@ -183,117 +195,5 @@ fn days_of(period: &str, count: &str) -> Result<i32, Error> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn d(text: &str) -> Date {
-        text.parse().unwrap()
-    }
-
-    fn range(period: &str, offset: i32, basis: &str) -> (String, String) {
-        let (from, thru) = range_dates(period, offset, d(basis)).unwrap();
-        (from.to_string(), thru.to_string())
-    }
-
-    #[test]
-    fn an_extreme_offset_is_an_error_not_an_overflow() {
-        for period in ["7d", "7r", "day", "week", "weeks", "month", "months", "quarter", "year"] {
-            for offset in [i32::MAX, i32::MIN] {
-                assert!(
-                    range_dates(period, offset, d("2024-03-15")).is_err(),
-                    "{period} {offset}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn day_week_month_quarter_year_ranges_match_the_java_calendar() {
-        // 2026-10-14 is a Wednesday.
-        assert_eq!(
-            range("day", 0, "2026-10-14"),
-            ("2026-10-14".into(), "2026-10-15".into())
-        );
-        assert_eq!(
-            range("day", -1, "2026-10-14"),
-            ("2026-10-13".into(), "2026-10-14".into())
-        );
-        assert_eq!(
-            range("week", 0, "2026-10-14"),
-            ("2026-10-11".into(), "2026-10-18".into())
-        );
-        assert_eq!(
-            range("week", -1, "2026-10-14"),
-            ("2026-10-04".into(), "2026-10-11".into())
-        );
-        assert_eq!(
-            range("month", 0, "2026-10-14"),
-            ("2026-10-01".into(), "2026-11-01".into())
-        );
-        assert_eq!(
-            range("month", 1, "2026-12-31"),
-            ("2027-01-01".into(), "2027-02-01".into())
-        );
-        assert_eq!(
-            range("quarter", 0, "2026-11-20"),
-            ("2026-10-01".into(), "2027-01-01".into())
-        );
-        assert_eq!(
-            range("quarter", -1, "2026-02-10"),
-            ("2025-10-01".into(), "2026-01-01".into())
-        );
-        assert_eq!(
-            range("year", 0, "2026-10-14"),
-            ("2026-01-01".into(), "2027-01-01".into())
-        );
-        assert_eq!(
-            range("year", -1, "2026-10-14"),
-            ("2025-01-01".into(), "2026-01-01".into())
-        );
-    }
-
-    #[test]
-    fn an_epoch_millis_basis_is_the_date_it_falls_on() {
-        // noon UTC on 2026-10-14 is that date in every zone within eleven hours of UTC
-        assert_eq!(
-            super::period_range("month", "0", "1791979200000").unwrap(),
-            super::period_range("month", "0", "2026-10-14").unwrap()
-        );
-    }
-
-    #[test]
-    fn counted_ranges_look_back_forward_or_around() {
-        // Past 7 days including today, next 7 days from today, and plus or minus 7.
-        assert_eq!(
-            range("7d", -1, "2026-10-14"),
-            ("2026-10-07".into(), "2026-10-15".into())
-        );
-        assert_eq!(range("7d", 0, "2026-10-14"), ("2026-10-14".into(), "2026-10-21".into()));
-        assert_eq!(range("7r", 1, "2026-10-14"), ("2026-10-07".into(), "2026-10-21".into()));
-        assert_eq!(
-            range("months", -2, "2026-10-14"),
-            ("2026-09-01".into(), "2026-11-01".into())
-        );
-        assert_eq!(
-            range("weeks", 2, "2026-10-14"),
-            ("2026-10-11".into(), "2026-10-25".into())
-        );
-    }
-
-    #[test]
-    fn the_public_function_returns_timestamps_and_checks_its_input() {
-        let (from, thru) = period_range("day", "0", "2026-10-14").unwrap();
-        assert!(matches!(from, Value::Timestamp(_)) && matches!(thru, Value::Timestamp(_)));
-        assert!(period_range("day", "x", "").is_err());
-        assert!(period_range("day", "0", "14/10/2026").is_err());
-    }
-
-    #[test]
-    fn a_dates_millis_keep_its_day_west_of_utc() {
-        let chicago = TimeZone::get("America/Chicago").unwrap();
-        // 2026-11-01 as a Date parameter: its UTC midnight, which is Oct 31 in Chicago
-        assert_eq!(millis_date(1_793_491_200_000, &chicago), Some("2026-11-01".parse().unwrap()));
-        // a Timestamp at another instant is dated in the zone: 2026-11-01T03:00Z is Oct 31 at 22:00 in Chicago
-        assert_eq!(millis_date(1_793_502_000_000, &chicago), Some("2026-10-31".parse().unwrap()));
-    }
-}
+#[path = "period_tests.rs"]
+mod tests;

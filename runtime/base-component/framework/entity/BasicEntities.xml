@@ -287,7 +287,8 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <entity entity-name="LocalizedEntityField" package="moqui.basic" use="configuration" authorize-skip="view" cache="true">
         <field name="entityName" type="text-medium" is-pk="true"/>
-        <field name="fieldName" type="text-short" is-pk="true"/>
+        <!-- Change 6: Preserve Java's text-medium field-name keys, including names longer than 63 characters. -->
+        <field name="fieldName" type="text-medium" is-pk="true"/>
         <field name="pkValue" type="text-medium" is-pk="true"/>
         <field name="locale" type="text-short" is-pk="true"/>
         <field name="localized" type="text-long"/>
