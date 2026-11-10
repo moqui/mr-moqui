@@ -193,8 +193,9 @@ pub(crate) struct Ask {
 }
 
 /// The host calls a user thread makes only between its `thread.begin` and its `thread.end` (and `step.*`).
-const BEGUN_ONLY: [&str; 6] = [
+const BEGUN_ONLY: [&str; 7] = [
     "load.ramp",
+    "load.next",
     "load.pause",
     "load.timed",
     "load.iterated",

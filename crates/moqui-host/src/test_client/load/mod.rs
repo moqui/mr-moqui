@@ -571,7 +571,8 @@ pub(crate) fn next_iteration() -> bool {
         return true;
     };
     loop {
-        if load.stop_state() != RUNNING {
+        // a parked or waiting user ends on a stop, and when its thread's scripts are to end (a run's stop now)
+        if load.stop_state() != RUNNING || moqui_core::script::thread_interrupted() {
             return false;
         }
         let now = load.schedule_now();

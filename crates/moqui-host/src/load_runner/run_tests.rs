@@ -60,6 +60,7 @@ fn a_thread_is_bound_to_its_own_run_only() {
     // the waits and the recorder's calls only in a user's scenario: no wait with no recorder to see a stop
     for name in [
         "load.ramp",
+        "load.next",
         "load.pause",
         "load.timed",
         "load.iterated",
