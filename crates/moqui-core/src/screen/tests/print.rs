@@ -186,6 +186,49 @@ fn text_types_name_html_print_or_its_older_name() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A print-only screen (as SimpleScreens' Facility/PrintBoxTypes) shows its html-print text in an html render, rather
+/// than a blank page; an html text or a fallback still wins there, and other modes do not take the print text.
+#[test]
+fn an_html_render_falls_back_to_the_print_text() {
+    let context = ExecutionContextFactory::test_context();
+    let dir = std::env::temp_dir().join(format!("moqui-print-fallback-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("PrintOnly.xml");
+    std::fs::write(
+        &path,
+        r#"<screen require-authentication="false" standalone="true"><widgets>
+        <render-mode><text type="html-print">print only;</text></render-mode>
+        <render-mode><text type="xsl-fo">old print name;</text></render-mode>
+        <render-mode><text type="html-print">not this print;</text><text type="html">html text;</text></render-mode>
+        <render-mode><text type="html-print">nor this print;</text><text>fallback;</text></render-mode>
+        </widgets></screen>"#,
+    )
+    .unwrap();
+    let location = path.to_string_lossy().into_owned();
+    let output = |mode: &str| {
+        make_render(context.factory())
+            .root_screen(location.clone())
+            .render_mode(mode)
+            .render()
+            .unwrap()
+            .body_text()
+    };
+    let html = output("html");
+    for (text, shown) in [
+        ("print only;", true),
+        ("old print name;", true),
+        ("html text;", true),
+        ("fallback;", true),
+        ("not this print;", false),
+        ("nor this print;", false),
+    ] {
+        assert_eq!(html.contains(text), shown, "{text} in {html}");
+    }
+    let text = output("text");
+    assert!(!text.contains("print only") && text.contains("fallback;"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn labels_containers_and_sections_in_html_print() {
     let context = ExecutionContextFactory::test_context();

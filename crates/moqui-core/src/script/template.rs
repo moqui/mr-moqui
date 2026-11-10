@@ -773,12 +773,23 @@ fn fail(source: &str, offset: usize, message: &str) -> Error {
     Error::new(format!("template line {}: {message}", line_of(source, offset)))
 }
 
-/// Where the expression that starts at `from` ends: the first `>` (or `}`) outside brackets and
-/// strings. An arrow `=>` does not end a tag.
-fn scan_expression(source: &str, from: usize, terminator: u8) -> Option<usize> {
+/// Where the `${` expression that starts at `from` (just after the `${`) ends: the index of its closing `}`, read as
+/// the template reads it (strings, template literals, comments and regular expressions skipped), or `None` when it is
+/// not closed. For a lint or a tool that looks at the expressions of a template's text.
+pub fn interpolation_end(source: &str, from: usize) -> Option<usize> {
+    scan_expression(source, from, b'}')
+}
+
+/// Where the expression that starts at `from` ends: the first `>` (or `}`) outside brackets, strings, template
+/// literals, comments and regular expression literals. An arrow `=>` does not end a tag. The expression is
+/// JavaScript, so a `//` comment runs to the end of its line and a `/* */` comment to its `*/`. A `/` starts a
+/// regular expression where an operand may come (at the start, after a punctuator other than `)` and `]`, or after a
+/// keyword such as `return`), and divides everywhere else.
+pub(crate) fn scan_expression(source: &str, from: usize, terminator: u8) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut depth = 0usize;
     let mut index = from;
+    let mut operand_next = true;
     while index < bytes.len() {
         let byte = bytes[index];
         match byte {
@@ -790,6 +801,7 @@ fn scan_expression(source: &str, from: usize, terminator: u8) -> Option<usize> {
                     }
                     index += 1;
                 }
+                operand_next = false;
             }
             b'`' => {
                 index += 1;
@@ -801,19 +813,99 @@ fn scan_expression(source: &str, from: usize, terminator: u8) -> Option<usize> {
                     }
                     index += 1;
                 }
+                operand_next = false;
             }
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' => depth = depth.saturating_sub(1),
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index = source[index..].find('\n').map_or(bytes.len(), |at| index + at);
+                continue;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index += 2 + source[index + 2..].find("*/")? + 2;
+                continue;
+            }
+            b'/' if operand_next => {
+                if let Some(end) = regex_end(bytes, index) {
+                    index = end;
+                    operand_next = false;
+                    continue;
+                }
+            }
+            _ if is_word_byte(byte) => {
+                let start = index;
+                while index < bytes.len() && is_word_byte(bytes[index]) {
+                    index += 1;
+                }
+                operand_next = OPERAND_KEYWORDS.contains(&&source[start..index]);
+                continue;
+            }
+            _ if byte.is_ascii_whitespace() => {}
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                operand_next = true;
+            }
+            b')' | b']' => {
+                depth = depth.saturating_sub(1);
+                operand_next = false;
+            }
             b'}' if terminator == b'}' && depth == 0 => return Some(index),
-            b'}' => depth = depth.saturating_sub(1),
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                operand_next = true;
+            }
             b'>' if terminator == b'>' && depth == 0 && (index == 0 || bytes[index - 1] != b'=') => {
                 return Some(index);
             }
-            _ => {}
+            _ => operand_next = true,
         }
         index += 1;
     }
     None
+}
+
+/// The keywords after which an operand, and so a regular expression, may come.
+const OPERAND_KEYWORDS: [&str; 14] = [
+    "return",
+    "typeof",
+    "instanceof",
+    "in",
+    "of",
+    "new",
+    "delete",
+    "void",
+    "throw",
+    "case",
+    "do",
+    "else",
+    "yield",
+    "await",
+];
+
+/// A byte of an identifier, a keyword or a number (any byte of a non-ASCII character counts).
+fn is_word_byte(byte: u8) -> bool {
+    byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric() || byte >= 0x80
+}
+
+/// Where the regular expression literal that starts with the `/` at `start` ends: after its closing `/` and its
+/// flags. `None` when its line ends first, as no regular expression does; the `/` then divides.
+fn regex_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut index = start + 1;
+    let mut in_class = false;
+    loop {
+        match *bytes.get(index)? {
+            b'\n' | b'\r' => return None,
+            b'\\' => index += 1,
+            b'[' => in_class = true,
+            b']' => in_class = false,
+            b'/' if !in_class => break,
+            _ => {}
+        }
+        index += 1;
+    }
+    index += 1;
+    while bytes.get(index).is_some_and(u8::is_ascii_alphabetic) {
+        index += 1;
+    }
+    Some(index)
 }
 
 fn tokenize(source: &str) -> Result<Vec<Token>, Error> {
@@ -1088,7 +1180,7 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
                 if renders {
                     run.flush(&mut out);
                 }
-                run.expr(format!("{encode}({expr})"));
+                run.expr(format!("{encode}({})", line_closed(expr)));
                 if renders {
                     run.flush(&mut out);
                 }
@@ -1100,13 +1192,13 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
             Token::Text(_) | Token::Interp(_) | Token::Comment => {}
             Token::If(cond) => {
                 check_expression(cond, source)?;
-                out.push_str(&format!("if ({cond}) {{\n"));
+                out.push_str(&format!("if ({}) {{\n", line_closed(cond)));
                 stack.push((false, false));
             }
             Token::ElseIf(cond) => {
                 check_expression(cond, source)?;
                 match stack.last() {
-                    Some((false, false)) => out.push_str(&format!("}} else if ({cond}) {{\n")),
+                    Some((false, false)) => out.push_str(&format!("}} else if ({}) {{\n", line_closed(cond))),
                     _ => {
                         return Err(Error::new(
                             "template: <#elseif> without an open <#if>, or after <#else>",
@@ -1129,7 +1221,8 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
                 check_expression(items, source)?;
                 lists += 1;
                 out.push_str(&format!(
-                    "{{\nconst $l{lists} = $list({items});\nfor (let {name}_index = 0; {name}_index < $l{lists}.length; {name}_index++) {{\nconst {name} = $l{lists}[{name}_index];\nconst {name}_has_next = {name}_index < $l{lists}.length - 1;\n"
+                    "{{\nconst $l{lists} = $list({});\nfor (let {name}_index = 0; {name}_index < $l{lists}.length; {name}_index++) {{\nconst {name} = $l{lists}[{name}_index];\nconst {name}_has_next = {name}_index < $l{lists}.length - 1;\n",
+                    line_closed(items)
                 ));
                 stack.push((true, false));
             }
@@ -1139,7 +1232,7 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
             },
             Token::Assign(name, value) => {
                 check_expression(value, source)?;
-                out.push_str(&format!("var {name} = {value};\n"));
+                out.push_str(&format!("var {name} = {};\n", line_closed(value)));
             }
         }
     }
@@ -1149,6 +1242,16 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
         return Err(Error::new(format!("template: {open} is not closed")));
     }
     Ok(out)
+}
+
+/// `expr` with a newline after it when it may end in a `//` comment, so the code written after it is not part of the
+/// comment (a tag's expression is trimmed).
+fn line_closed(expr: &str) -> std::borrow::Cow<'_, str> {
+    if expr.contains("//") && !expr.ends_with('\n') {
+        std::borrow::Cow::Owned(format!("{expr}\n"))
+    } else {
+        std::borrow::Cow::Borrowed(expr)
+    }
 }
 
 fn check_expression(expr: &str, _source: &str) -> Result<(), Error> {

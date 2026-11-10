@@ -345,16 +345,21 @@
             const canonical = (name) => name === "xsl-fo" ? "html-print" : name;
             return String(type || "").split(",").map((name) => canonical(name.trim())).includes(canonical(mode));
         };
-        // Last explicit match wins over the last fallback, regardless of their document order.
+        // Last explicit match wins over the last fallback, regardless of their document order. An html render with neither
+        // takes the last html-print text, which is HTML for printing, so a print-only screen opened in a browser shows its
+        // content rather than a blank page (Java renders nothing there). Other modes do not: in qvt the print page's styles
+        // would reach the whole app, and the browser apps open a print screen through /fop or renderMode=html-print.
         const chooseRenderModeText = (node, mode) => {
             let fallback = null;
             let matching = null;
+            let print = null;
             (node.children || []).filter((text) => text.name === "text").forEach((text) => {
                 const type = (text.attrs || {}).type;
                 if (!type || type === "any") fallback = text;
                 else if (renderModeTypeMatches(type, mode)) matching = text;
+                else if (mode === "html" && renderModeTypeMatches(type, "html-print")) print = text;
             });
-            return matching || fallback;
+            return matching || fallback || print;
         };
         return { renderModeTypeMatches, chooseRenderModeText };
     };
