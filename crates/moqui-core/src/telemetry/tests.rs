@@ -1127,7 +1127,7 @@ fn admission_shared() -> (Shared, mpsc::Receiver<Command>) {
             drained: AtomicBool::new(false),
             warned_legacy: AtomicBool::new(false),
             gauges_registered: AtomicBool::new(false),
-            slow: Mutex::default(),
+            slow: Default::default(),
             received: Mutex::default(),
             operations: operation::Registry::default(),
         },

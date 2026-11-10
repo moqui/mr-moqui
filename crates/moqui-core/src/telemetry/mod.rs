@@ -84,6 +84,8 @@ const MAX_TRACES: usize = 1024;
 const MAX_TRACE_SPANS: usize = 512;
 const MAX_DECISIONS: usize = 4096;
 const MAX_SERIES: usize = 20_000;
+/// The shards of the artifacts' running statistics; each holds at most its share of [`MAX_SERIES`].
+const SLOW_SHARDS: usize = 16;
 
 /// A W3C context that can cross worker and async boundaries without an SDK or a thread guard.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -673,7 +675,9 @@ struct Shared {
     drained: AtomicBool,
     warned_legacy: AtomicBool,
     gauges_registered: AtomicBool,
-    slow: Mutex<HashMap<u64, RunningStats>>,
+    /// The running statistics of each artifact, in shards by its key so threads popping different artifacts do not
+    /// wait on one lock (plans/Profiling3.md W6).
+    slow: [Mutex<HashMap<u64, RunningStats>>; SLOW_SHARDS],
     /// Running totals of received metrics, for `/metrics`.
     received: Mutex<received::Received>,
     operations: operation::Registry,
@@ -702,7 +706,7 @@ impl Telemetry {
             drained: AtomicBool::new(false),
             warned_legacy: AtomicBool::new(false),
             gauges_registered: AtomicBool::new(false),
-            slow: Mutex::default(),
+            slow: Default::default(),
             received: Mutex::default(),
             operations: operation::Registry::default(),
         });
@@ -1073,15 +1077,16 @@ impl Telemetry {
             (false, false) => return false,
             enabled => enabled,
         };
-        // A fixed hash of the parts keys the running statistics, so a frame allocates no key.
+        // A fixed hash of the parts keys the running statistics, so a frame allocates no key; foldhash, as SipHash of
+        // the parts twice a pop showed (plans/Profiling3.md W6).
         let key = {
             use std::hash::BuildHasher;
-            std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
-                .hash_one((kind, name, action))
+            foldhash::fast::FixedState::default().hash_one((kind, name, action))
         };
         let slow = {
-            let mut stats = lock(&self.shared.slow);
-            if stats.len() >= MAX_SERIES && !stats.contains_key(&key) {
+            let shard = usize::try_from(key % SLOW_SHARDS as u64).unwrap_or(0);
+            let mut stats = lock(&self.shared.slow[shard]);
+            if stats.len() >= MAX_SERIES / SLOW_SHARDS && !stats.contains_key(&key) {
                 false
             } else {
                 stats.entry(key).or_default().record(seconds)
@@ -1093,8 +1098,7 @@ impl Telemetry {
                 // The attribute set is made once per artifact and kept: the key covers the sub type too.
                 let attributes_key = {
                     use std::hash::BuildHasher;
-                    std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
-                        .hash_one((kind, name, action, sub_type))
+                    foldhash::fast::FixedState::default().hash_one((key, sub_type))
                 };
                 sdk.record_artifact(attributes_key, seconds, slow, || {
                     let mut attributes = Document::default();
