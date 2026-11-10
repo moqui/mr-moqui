@@ -8,15 +8,21 @@
 //   running on this server, the server's numbers from the status map. A run that is not here is { found: false }.
 // - planForm(scriptLocation, runId): what New run asks for a script: the targets its plan's uses allow, each param by
 //   its kind, each scenario's settings. From a run (Run again) the script and target are the run's, resolved again
-//   against the scripts of the loaded components; start#LoadRun checks them again. A secret is never filled.
-// - startParameters(form): start#LoadRun's parameters from a posted form, as text (the qvue) or one field a param
-//   and setting (the terminal).
+//   against the scripts of the loaded components; start#LoadRun checks them again. A secret is never filled, and an
+//   imported run (a file from another machine) fills only the target kind: its URL, params and settings are not this
+//   server's to reuse.
+//   A scenario's settings come from the run's scenarioSettings (as it used them), else the plan's defaults.
+// - startParameters(form): start#LoadRun's parameters from a posted form, as JSON (the qvue) or one field a param
+//   and setting (the terminal; a secret param's field is password_<name>, so a refused form's parameters, which the
+//   session keeps for the form shown again, never hold it).
 //
 // Every text here comes from a script or a result file and is shown as text, never as HTML.
 
 const S = 'org.moqui.dev.LoadServices.'
 // the settings of a scenario a run may override, all whole numbers of seconds or counts
 const SETTINGS = ['users', 'rampUp', 'duration', 'iterations']
+// what else a scenario's settings may carry from a run (an arrival rate, stages of users over time), passed on as they are
+const CARRIED = ['rate', 'stages']
 // the first errors a run's page lists
 const FIRST_ERRORS = 20
 
@@ -182,12 +188,16 @@ function paramKind(param) {
 function planForm(scriptLocation, runId) {
     let location = text(scriptLocation)
     let from = null
-    let fromScenarios = {}
+    let fromSettings = {}
+    let imported = false
     if (runId) {
         const read = call('get#LoadRunResult', { runId: text(runId) })
         if (read.error || !read.out.result) return { found: false, error: read.error || 'Load run ' + runId + ' is not on this server' }
         from = read.out.result.run || {}
-        fromScenarios = read.out.result.scenarios || {}
+        imported = from.imported === true
+        // the settings the run used; an older result has only its scenarios' counts, of which users is a setting
+        const counts = read.out.result.scenarios || {}
+        fromSettings = imported ? {} : from.scenarioSettings || Object.fromEntries(Object.entries(counts).map(([name, ran]) => [name, { users: (ran || {}).users }]))
         location = text(from.script)
     }
     const listed = call('find#LoadScripts')
@@ -198,7 +208,7 @@ function planForm(scriptLocation, runId) {
     if (script.error) return { found: false, error: text(script.error), scriptLocation: location }
     const uses = Array.isArray(script.uses) && script.uses.length ? script.uses.map(String) : ['http']
     const targets = uses.includes('service') ? ['service'] : ['this', 'url']
-    const given = (from && from.params) || {}
+    const given = (from && !imported && from.params) || {}
     const params = Object.entries(script.params || {}).map(([name, param]) => {
         const kind = paramKind(param || {})
         const value = kind == 'password' ? '' : given[name] != null ? given[name] : param.default
@@ -209,16 +219,19 @@ function planForm(scriptLocation, runId) {
         }
     })
     const scenarios = (Array.isArray(script.scenarios) ? script.scenarios : []).map((scenario) => {
-        const ran = fromScenarios[scenario.name] || {}
-        return {
-            name: text(scenario.name), users: number(ran.users) || number(scenario.users), rampUp: null,
-            duration: number(scenario.duration), iterations: number(scenario.iterations),
-        }
+        const ran = fromSettings[scenario.name] || {}
+        const pick = (key) => (ran[key] !== undefined ? number(ran[key]) : number(scenario[key]))
+        const out = { name: text(scenario.name), users: pick('users'), rampUp: pick('rampUp'), duration: pick('duration'), iterations: pick('iterations') }
+        const carried = {}
+        for (const key of CARRIED) if (ran[key] != null) carried[key] = ran[key]
+        if (Object.keys(carried).length) out.carried = carried
+        return out
     })
     const targetKind = from && targets.includes(text(from.targetKind)) ? text(from.targetKind) : targets[0]
     return {
         found: true,
         fromRunId: runId ? text(runId) : '',
+        imported,
         scriptLocation: location,
         componentName: text(script.componentName),
         name: text(script.name),
@@ -227,8 +240,8 @@ function planForm(scriptLocation, runId) {
         uses,
         targets,
         targetKind,
-        targetUrl: targetKind == 'url' && from ? text(from.target) : '',
-        insecure: !!(from && from.insecure === true),
+        targetUrl: targetKind == 'url' && from && !imported ? text(from.target) : '',
+        insecure: !!(from && !imported && from.insecure === true),
         label: from ? text(from.label) : '',
         params,
         scenarios,
@@ -246,6 +259,7 @@ function scenarioSettings(scenarios) {
             const parsed = number(value)
             one[key] = parsed == null ? value : parsed
         }
+        for (const key of CARRIED) if (settings && settings[key] != null && settings[key] !== '') one[key] = settings[key]
         out[name] = one
     }
     return out
@@ -270,10 +284,20 @@ function startParameters(form) {
         scenarios = {}
         for (const key of Object.keys(form.fields || {})) {
             if (key.startsWith('p_')) parameters[key.slice(2)] = form.fields[key]
+            else if (key.startsWith('password_')) parameters[key.slice(9)] = form.fields[key]
         }
-        for (const name of text(form.scenarioNames).split(',').filter(Boolean)) {
+        let names = []
+        try {
+            names = JSON.parse(text(form.scenarioNames) || '[]')
+        } catch (e) {
+            throw new Error('Not JSON: scenarioNames')
+        }
+        for (const name of Array.isArray(names) ? names.map(String) : []) {
             scenarios[name] = {}
             for (const setting of SETTINGS) scenarios[name][setting] = form.fields['s_' + name + '_' + setting]
+            // a setting the form does not show, kept from the run (rate, stages), as JSON
+            const carried = form.fields['c_' + name]
+            if (carried) Object.assign(scenarios[name], json(carried))
         }
     }
     // an empty param is the script's default; a secret left empty is the script's to refuse

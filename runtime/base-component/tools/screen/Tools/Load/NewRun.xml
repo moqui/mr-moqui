@@ -24,8 +24,9 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="scriptLocation"/>
     <parameter name="runId"/>
 
-    <!-- the terminal's form: p_<param> and s_<scenario>_<setting> fields, from the request body only (a param may be a
-        password); the run's page on a start, the form again on a refusal -->
+    <!-- the terminal's form: p_<param>, password_<secret param> and s_<scenario>_<setting> fields, from the request body
+        only; the run's page on a start, the form again on a refusal, with the run it was filled from. A secret's field
+        name has "password" in it, so the session's copy of a refused form's parameters leaves it out. -->
     <transition name="start" method="post" begin-transaction="false" authz-action="all">
         <actions><script><![CDATA[
             const body = ec.web.secureRequestParameters
@@ -37,8 +38,8 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <conditional-response url="../Run"><condition><expression>startedRunId</expression></condition>
             <parameter name="runId" from="startedRunId"/></conditional-response>
-        <default-response url="."><parameter name="scriptLocation"/></default-response>
-        <error-response url="."><parameter name="scriptLocation"/></error-response>
+        <default-response url="."><parameter name="scriptLocation"/><parameter name="runId"/></default-response>
+        <error-response url="."><parameter name="scriptLocation"/><parameter name="runId"/></error-response>
     </transition>
 
     <widgets>

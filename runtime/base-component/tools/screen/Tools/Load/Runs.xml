@@ -57,7 +57,14 @@ along with this software (see the LICENSE.md file). If not, see
             scriptOptions = scripts.map((script) => ({key: String(script.location), text: String(script.title || script.name || '') + ' (' + String(script.componentName || '') + ')'}))
             const statuses = {running: ['Running', 'primary'], completed: ['Completed', 'positive'], stopped: ['Stopped', 'warning'], failed: ['Failed', 'negative']}
             const kinds = {service: "This server's services", this: 'This server'}
-            const time = (value) => value == null || value === '' ? '' : ec.l10n.format(basicConvert(String(value), 'Timestamp'), 'yyyy-MM-dd HH:mm:ss')
+            // a run's start, an RFC 3339 text or epoch milliseconds, as a timestamp
+            const stamp = (value) => {
+                if (value == null || value === '') return null
+                try { return basicConvert(/^[0-9]+$/.test(String(value)) ? Number(value) : String(value), 'Timestamp') } catch (e) { return null }
+            }
+            const time = (value) => { const at = stamp(value); return at == null ? '' : ec.l10n.format(at, 'yyyy-MM-dd HH:mm:ss') }
+            // the day a run started in the user's time zone, against the day asked for
+            const day = (value) => { const at = stamp(value); return at == null ? '' : String(ec.l10n.format(at, 'yyyy-MM-dd')) }
             const from = context.startedFrom ? String(context.startedFrom).slice(0, 10) : ''
             const all = (listed.out.runs || []).map((run) => {
                 const status = statuses[run.status] || [String(run.status || ''), 'grey-7']
@@ -66,7 +73,7 @@ along with this software (see the LICENSE.md file). If not, see
                     label: String(run.label || ''), targetText: kinds[run.targetKind] || String(run.target || ''), statusText: status[0], statusColor: status[1],
                     start: String(run.start || ''), startText: time(run.start), users: run.users, requests: run.requests, rps: run.rps, errors: run.errors,
                     p95: run.p95, user: String(run.user || ''), finished: run.status != 'running'}
-            }).filter((run) => !from || run.start.slice(0, 10) >= from)
+            }).filter((run) => !from || (day(run.start) && day(run.start) >= from))
             const pageSize = Math.min(100, Math.max(1, Number(context.pageSize) || 20))
             const pageMaxIndex = Math.max(0, Math.ceil(all.length / pageSize) - 1)
             const pageIndex = Math.min(pageMaxIndex, Math.max(0, Number(context.pageIndex) || 0))
@@ -122,7 +129,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="statusText"><default-field title="Status">
                         <render-mode>
                             <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${
-                                statusColor}">${WebUtilities.encodeHtml(statusText)}</q-chip>]]></text>
+                                statusColor}">${WebUtilities.encodeHtml(statusText).split(String.fromCharCode(123)).join('&#123;')}</q-chip>]]></text>
                             <text type="tui"><![CDATA[${JSON.stringify({t: "text", style: "strong", text: statusText})}]]></text>
                             <text type="html">${WebUtilities.encodeHtml(statusText)}</text>
                         </render-mode>

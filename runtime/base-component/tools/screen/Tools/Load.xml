@@ -78,7 +78,16 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
 
     <subscreens default-item="Scripts"/>
+    <actions><set field="canLoadRunner" from="ec.user.hasPermission('LOAD_RUNNER')"/></actions>
     <widgets>
-        <subscreens-panel id="load-panel" type="popup"/>
+        <!-- the services refuse without LOAD_RUNNER whatever calls them; the screen says so before any is asked -->
+        <section name="LoadPanel" condition="canLoadRunner"><widgets>
+            <subscreens-panel id="load-panel" type="popup"/>
+        </widgets><fail-widgets>
+            <container-box><box-header title="Load testing"/><box-body>
+                <label text="Not available: load testing needs the LOAD_RUNNER permission." type="p"/>
+                <link url="../dashboard" text="Tools"/>
+            </box-body></container-box>
+        </fail-widgets></section>
     </widgets>
 </screen>

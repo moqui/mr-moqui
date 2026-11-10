@@ -231,10 +231,11 @@ feature("a finished run's page and ServiceCall's run form render in qvue and in 
             runTui: render("Load/Run", { runId: started.runId }, "tui"),
             form: render("Load/NewRun", { scriptLocation: SCRIPT }, "qvue"),
             plan: json("Load/planForm", { scriptLocation: SCRIPT }),
+            again: json("Load/planForm", { runId: started.runId }),
             formTui: render("Load/NewRun", { scriptLocation: SCRIPT }, "tui"),
         }
     },
-    then({ runId, run, status, runTui, form, plan, formTui }) {
+    then({ runId, run, status, runTui, form, plan, again, formTui }) {
         // the qvue is the same for every run (server-static): its own parts, and the header and a name's row from the
         // runStatus it asks
         run.status == 200 && run.errors == "" && !run.broken
@@ -253,6 +254,9 @@ feature("a finished run's page and ServiceCall's run form render in qvue and in 
         form.output.includes("Scenarios")
         plan.title == "Service call" && plan.targets.join(",") == "service"
         plan.params.some((param) => param.name == "serviceName" && param.kind == "text")
+        // Run again: the run's script and label, and each scenario's settings as the run used them
+        again.found == true && again.fromRunId == runId && again.label == "spec render"
+        again.scenarios[0].users == 1 && again.scenarios[0].iterations == 2 && again.scenarios[0].rampUp == 0
         formTui.status == 200 && formTui.errors == "" && !formTui.broken
         formTui.output.includes('"text":"Service call"')
         formTui.output.includes('"name":"p_serviceName"')

@@ -59,6 +59,10 @@ along with this software (see the LICENSE.md file). If not, see
             </q-card-section>
         </q-card>
 
+        <q-banner v-if="stalled" dense rounded class="m-tonal text-warning q-mb-sm" id="LoadRunStalled">
+            Updates stopped: the server did not answer. The numbers are as they last were.
+            <template v-slot:action><q-btn flat no-caps color="primary" icon="refresh" label="Refresh" @click="refresh"></q-btn></template>
+        </q-banner>
         <div class="row q-col-gutter-sm q-mb-sm" id="LoadRunCards">
             <div v-for="card in cards" :key="card.title" class="col-6 col-sm-4 col-md">
                 <q-card flat bordered class="full-height"><q-card-section class="q-pa-sm">
@@ -152,7 +156,8 @@ along with this software (see the LICENSE.md file). If not, see
 module.exports = {
     inject: { mScreen: { default: null } },
     data() {
-        return { run: { found: false, series: { t: [] }, names: [], errorSamples: [], thresholds: [], totals: {} }, loaded: false, acting: false, timer: null };
+        return { run: { found: false, series: { t: [] }, names: [], errorSamples: [], thresholds: [], totals: {} }, loaded: false, acting: false, timer: null,
+            failures: 0, stalled: false };
     },
     computed: {
         runId() { return String(((this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}).runId || ''); },
@@ -217,14 +222,28 @@ module.exports = {
             const first = !this.loaded;
             return moqui.request(this.loadPath + '/runStatus', { params: { runId: this.runId, withTitle: first ? 'true' : 'false' } }).then((result) => {
                 const json = result.json || {};
+                // a run that was running and is not answered now: asked again, as for a failed request
+                if (!json.found && !first && this.run.running) { this.failed(); return; }
                 this.loaded = true;
+                this.failures = 0;
+                this.stalled = false;
                 if (!json.found) { this.run = Object.assign({}, this.run, { found: false, error: json.errors }); this.stopPolling(); return; }
                 // the title is read once, with the page
                 this.run = Object.assign({}, json, { scriptTitle: first ? json.scriptTitle : this.run.scriptTitle });
                 if (this.run.running) this.poll(); else this.stopPolling();
-            }, (err) => { this.loaded = true; this.stopPolling(); moqui.handleAjaxError(err); });
+            }, (err) => {
+                if (!this.loaded) { this.loaded = true; this.stopPolling(); moqui.handleAjaxError(err); return; }
+                this.failed();
+            });
         },
-        poll() { if (!this.timer && !this.unmounted) this.timer = setTimeout(() => { this.timer = null; this.load(); }, 2000); },
+        // a poll that failed while the run runs: again after 4, 8, 16 and 30 seconds, then "Updates stopped" with Refresh
+        failed() {
+            this.failures++;
+            if (this.failures > 4) { this.stalled = true; this.stopPolling(); return; }
+            this.poll(Math.min(30000, 2000 * Math.pow(2, this.failures)));
+        },
+        refresh() { this.failures = 0; this.stalled = false; this.stopPolling(); this.load(); },
+        poll(wait) { if (!this.timer && !this.unmounted) this.timer = setTimeout(() => { this.timer = null; this.load(); }, wait || 2000); },
         stopPolling() { if (this.timer) { clearTimeout(this.timer); this.timer = null; } },
         post(name, params) {
             this.acting = true;
@@ -244,7 +263,8 @@ module.exports = {
             this.$q.dialog({ title: 'Delete the run', message: 'Delete run ' + this.run.runId + (this.run.label ? ' (' + this.run.label + ')' : '')
                 + ' and its result file? This cannot be undone.', cancel: true, persistent: true,
                 ok: { label: 'Delete', color: 'negative', unelevated: true, noCaps: true } }).onOk(() => this.post('deleteRun').then((json) => {
-                if (json) { moqui.notifyMessages('Run ' + this.run.runId + ' deleted'); this.go('Runs'); }
+                if (json && json.deleted) { moqui.notifyMessages('Run ' + this.run.runId + ' deleted'); this.go('Runs'); }
+                else if (json) moqui.notifyMessages(null, 'Run ' + this.run.runId + ' was not found to delete');
             }));
         }
     },

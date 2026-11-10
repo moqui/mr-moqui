@@ -282,7 +282,7 @@ Tools' SQL, Service Run, Data Load, Data Snapshots, and `qzSign` are designed pr
 | `Tools/Database/*`, `Tools/Schema/*` (cancel or end a session, DDL and maintenance jobs, stats resets) | `DATABASE_ADMIN` (`ADMIN_ADV`). A job is only a plan the server made; no service takes job statement text |
 | `db=ext:…` on any database service, and the connection services | `DATABASE_EXTERNAL` (`ADMIN_ADV`), and not a production instance; the refusal is one vague "Not available" |
 | ETL (`org.moqui.dev.EtlServices`) | All actions on the Tools app, checked again as the user on the worker; `GROOVY_SHELL_WEB` for a mapping with an `expression`; `SQL_RUNNER_WEB` for a SQL source; files only from the user's uploads, `dbresource://moqui/etl/` and `runtime://import/` (any `dbresource://` with `DATABASE_ADMIN`) |
-| `Tools/Load.xml`, `Tools/Load/*` (load scripts, a run's form, runs, a run, compare; start, stop, delete, import, download) | `LOAD_RUNNER` (sealed, `ADMIN_ADV`) and all actions on the Tools app, checked by every `org.moqui.dev.LoadServices` service whatever calls it. A run names a script by location, only a `test/load/*.load.js` file of a loaded component; no screen takes script text. A run's script and target are never taken from a result file: Run again and an import resolve and check them anew. See [Load runs](#load-runs) |
+| `Tools/Load.xml`, `Tools/Load/*` (load scripts, a run's form, runs, a run, compare; start, stop, delete, import, download) | `LOAD_RUNNER` (sealed, `ADMIN_ADV`) and all actions on the Tools app, checked by every `org.moqui.dev.LoadServices` service whatever calls it. Without `LOAD_RUNNER` the Tools menu entry is disabled (`Tools.xml` `disable-when`) and `Load.xml` shows Not available. A run names a script by location, only a `test/load/*.load.js` file of a loaded component; no screen takes script text. A run's script and target are never taken from a result file: Run again and an import resolve and check them anew. See [Load runs](#load-runs) |
 | `Tools/dashboard.xml` | shows the SQL and Load testing boxes only with `SQL_RUNNER_WEB` and `LOAD_RUNNER` |
 | `System/Llm.xml` | `AgentAdmin`, or the screen returns an error. The comment says every screen under it needs `AgentAdmin`. |
 | `System/Security/UserAccount/UserAccountDetail.xml` | `ADMIN_LOGIN_AS` for login-as, and a different username |
@@ -320,7 +320,9 @@ Tools › Load runs a load script on threads of the server (`crates/moqui-host/s
   JSON-RPC), and this call runs in process as the user who started the run, with authorization required, the way the
   user's own screens call services. A script's user threads have no `ec` and none of the server's own functions.
 - **Secrets and files.** A `secret` param is held in memory for the run, never in the result, the snapshot or a log
-  line, and is asked again on Run again. A run is read, deleted and imported only by its `runId`, a directory name
+  line, and is asked again on Run again. The terminal form names its field `password_<name>`, so a refused form's
+  parameters, which the session keeps for the form shown again, leave it out. Run again of an imported run fills only
+  the target kind, not the file's URL, params or settings. A run is read, deleted and imported only by its `runId`, a directory name
   under `runtime/tmp/test-load/`; an import is checked to be a result (16 MiB at most) before it is kept.
 - **Limits.** One running load per instance (`load_runner_max_runs`) and 1,000 users a run (`load_runner_max_users`).
 - **Demo.** The demo lock-down replaces `Tools/Load` with its Disabled screen.
