@@ -264,6 +264,8 @@ pub(crate) struct State {
     pub(crate) active: usize,
     /// Workers waiting for work that may still hold a script runtime (they have not let it go in this wait).
     pub(crate) warm_idle: usize,
+    /// The workers waiting for work, woken one at a time, the one idle most recently first (plans/Profiling3.md W13).
+    pub(crate) idle: super::idle::Idle,
     /// Scheduled job runs waiting for a job worker, as Java's separate `jobWorkerPool`.
     pub(crate) jobs: VecDeque<Box<super::jobs::JobRun>>,
     /// Job workers running a job now.
@@ -592,8 +594,7 @@ impl ServicePools {
             let mut state = lock(&shared.state);
             if !state.stop && state.queue.len() < shared.queue_cap {
                 state.queue.push_back(Work::Rules(job));
-                drop(state);
-                shared.wake.notify_all();
+                state.idle.wake_one();
                 return;
             }
             job
@@ -667,8 +668,7 @@ impl ServicePools {
             // A stopping pool stores the call too: the database is still up while the queue drains (HL-025).
             if !state.stop && state.queue.len() < shared.queue_cap {
                 state.queue.push_back(Work::service(call, Arc::clone(factory)));
-                drop(state);
-                shared.wake.notify_all();
+                state.idle.wake_one();
                 return Ok(());
             }
             call
@@ -727,8 +727,8 @@ impl ServicePools {
                 return Err(Error::new("service worker queue is full"));
             }
             state.queue.push_back(Work::Task(Box::new(task)));
+            state.idle.wake_one();
         }
-        shared.wake.notify_all();
         Ok(())
     }
 
@@ -825,8 +825,8 @@ impl Shared {
             state
                 .queue
                 .push_back(Work::replied(name.to_string(), parameters.clone(), factory, tx));
+            state.idle.wake_one();
         }
-        self.wake.notify_all();
         Ok(rx)
     }
 }
@@ -1045,14 +1045,16 @@ fn spawn_scheduler(shared: &Arc<Shared>) -> Result<JoinHandle<()>, Error> {
 }
 
 fn worker_loop(shared: Arc<Shared>) {
-    while let Some(work) = next_work(&shared) {
+    let waiter = Arc::new(std::sync::Condvar::new());
+    while let Some(work) = next_work(&shared, &waiter) {
         run_work(&shared, work);
     }
 }
 
 /// The next work item, counted active under the lock that takes it off the queue, so the pool never looks empty
 /// (nothing queued, nothing active) between the two: `waitWorkerPoolEmpty` would return before the work ran.
-fn next_work(shared: &Shared) -> Option<Work> {
+/// Waiting for work is on `waiter`, the worker's own ([`super::idle`]); the pool's `wake` is the drain's.
+fn next_work(shared: &Shared, waiter: &Arc<std::sync::Condvar>) -> Option<Work> {
     let mut state = lock(&shared.state);
     // whether this wait already let the thread's script runtime go
     let mut released = false;
@@ -1072,12 +1074,16 @@ fn next_work(shared: &Shared) -> Option<Work> {
             return None;
         }
         if released {
-            state = wait(&shared.wake, state);
+            state.idle.enter(waiter);
+            state = wait(waiter, state);
+            state.idle.leave(waiter);
             continue;
         }
         state.warm_idle += 1;
-        let (guard, waited) = wait_timeout(&shared.wake, state, IDLE_RUNTIME);
+        state.idle.enter(waiter);
+        let (guard, waited) = wait_timeout(waiter, state, IDLE_RUNTIME);
         state = guard;
+        state.idle.leave(waiter);
         state.warm_idle -= 1;
         // a worker idle while [`KEEP_WARM`] others are too gives back its script runtime's heap; its next script
         // starts one again. A busy pool's workers are seldom idle that long, and a quiet one keeps a few runtimes warm.
@@ -1325,6 +1331,7 @@ fn drain(shared: &Shared, limit: Duration) {
     let deadline = std::time::Instant::now() + limit;
     let mut state = lock(&shared.state);
     state.stop = true;
+    state.idle.wake_all();
     shared.wake.notify_all();
     shared.job_wake.notify_all();
     while !state.queue.is_empty() {
@@ -1346,6 +1353,7 @@ fn fail_pending(shared: &Shared) {
         let mut state = lock(&shared.state);
         state.stop = true;
         state.halt = true;
+        state.idle.wake_all();
         (std::mem::take(&mut state.queue), std::mem::take(&mut state.jobs))
     };
     shared.wake.notify_all();
@@ -1404,8 +1412,8 @@ fn queue_closure(
             trace_context: crate::telemetry::capture(),
             what,
         }));
+        state.idle.wake_one();
     }
-    shared.wake.notify_all();
     Ok(rx)
 }
 
@@ -1665,6 +1673,28 @@ mod tests {
         );
     }
 
+    /// Light work that arrives one at a time stays on the worker idle most recently (plans/Profiling3.md W13): the
+    /// others are not woken, so they wait out their idle time and let their script runtimes go.
+    #[test]
+    fn work_one_at_a_time_runs_on_the_worker_idle_most_recently() {
+        let pools = ServicePools::bounded(4, 16);
+        // every worker started and waiting
+        std::thread::sleep(Duration::from_millis(100));
+        let mut threads = std::collections::BTreeSet::new();
+        for _ in 0..10 {
+            let (tx, rx) = std::sync::mpsc::channel();
+            pools
+                .submit_task(move || {
+                    let _ = tx.send(format!("{:?}", std::thread::current().id()));
+                })
+                .unwrap();
+            threads.insert(rx.recv_timeout(Duration::from_secs(5)).unwrap());
+            // the worker is waiting again before the next arrives
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(threads.len(), 1, "{threads:?}");
+    }
+
     /// Work taken off the queue is active at once: there is no moment with nothing queued and nothing active while it
     /// waits to run (`waitWorkerPoolEmpty` returned before an after-commit send ran).
     #[test]
@@ -1684,7 +1714,7 @@ mod tests {
         super::lock(&shared.state)
             .queue
             .push_back(super::Work::Task(Box::new(|| {})));
-        let work = super::next_work(&shared).expect("the queued task");
+        let work = super::next_work(&shared, &Arc::new(std::sync::Condvar::new())).expect("the queued task");
         let status = pools.status();
         assert_eq!((status.queued, status.active), (0, 2));
         super::run_work(&shared, work);
