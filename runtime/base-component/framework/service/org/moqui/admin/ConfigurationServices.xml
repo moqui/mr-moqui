@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Effective configuration and guarded configuration writes for delegated administration (mr-boss plan/design-admin.md §7,
+    §17.2; impl-admin P8 and later). The file grows by parts, each a section below with its bodies in a module of its own
+    beside ConfigurationLib.js, which they share: the instance settings (ConfigurationSettings.js) and the translations
+    (ConfigurationLocalization.js) here; identity providers, connections, protocols and message types append theirs at the end.
+    Each service checks its own permission with ec.user.hasPermission (ADMIN_SETTINGS_VIEW for reads, ADMIN_SETTINGS_MANAGE for
+    changes in the parts below) and names the revision it read on a change; a refusal a person can act on is answered (applied
+    false, reasonCode, reason), never written; a missing permission or a malformed request is an error. A secret is never
+    returned. ALL_USERS may call the services named in data/SecurityTypeData.xml AdminConfigurationServices: each refuses
+    without its permission. No dependency on Mantle or an app. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- ========== Instance settings (ConfigurationSettings.js; impl-admin P8) ========== -->
+
+    <service verb="get" noun="EffectiveSettings" allow-remote="false">
+        <description>The registered instance settings (moqui.server.InstanceSetting) with their effective values: each with its
+            key, title, group, type, allowed values or limits, value, source (preference: an instance preference; configuration:
+            the deployment's conf or environment; default), whether it is editable here and by the caller, whether a change of
+            its conf value waits for a restart, the operator's note, and for a preference its revision and who changed it,
+            when and why. A secret is masked: value null, valueSet whether it is set. Narrowed by settingGroup, kind
+            (preference or configuration) and settingKey. Needs ADMIN_SETTINGS_VIEW.</description>
+        <in-parameters>
+            <parameter name="settingKey"/>
+            <parameter name="settingGroup"/>
+            <parameter name="kind"><description>preference or configuration</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="settingList" type="List"/>
+            <parameter name="groupList" type="List"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationSettings.js').execute('getEffectiveSettings', context))</script></actions>
+    </service>
+    <service verb="get" noun="InstancePreference" allow-remote="false">
+        <description>The effective value of one registered instance preference, for the code that uses it (the report
+            engine's group recipient ceiling, the new-device sign-in window): the stored preference, else the conf property
+            its registration names, else its registered default; numberValue for a whole number. An error for a key that is
+            not a registered preference. A preference is nonsecret by registration, so no permission is
+            needed.</description>
+        <in-parameters><parameter name="settingKey" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="value"/>
+            <parameter name="numberValue" type="Integer"/>
+            <parameter name="source"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationSettings.js').execute('getInstancePreference', context))</script></actions>
+    </service>
+    <service verb="store" noun="InstancePreference" allow-remote="false">
+        <description>The value of one registered instance preference, as its registration types and limits it, at the
+            revision read (expectedRevision as get#EffectiveSettings gives it, empty when none is set); an empty value removes
+            the preference, so the conf property or the default applies again. Refused, with the reason, for a key that is
+            not a registered preference (NOT_REGISTERED), a value outside its type, allowed values or limits (VALUE_INVALID)
+            and a stale revision (STALE_REVISION). Who, when and why are kept on the row and each value in the audit log.
+            Needs ADMIN_SETTINGS_MANAGE and the setting's own manage permission, if it names one.</description>
+        <in-parameters>
+            <parameter name="settingKey" required="true"/>
+            <parameter name="value"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="revision"/>
+            <parameter name="value"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationSettings.js').execute('storeInstancePreference', context))</script></actions>
+    </service>
+
+    <!-- ========== Localization (ConfigurationLocalization.js; impl-admin P8) ========== -->
+
+    <service verb="find" noun="LocalizedMessages" allow-remote="false">
+        <description>The message translations (moqui.basic.LocalizedMessage), by locale and text (original or translation,
+            ignoring case), a page at a time, each with its revision; with missing and a locale, the originals translated in
+            another locale and not in this one (truncated when more were found than are read). Needs
+            ADMIN_SETTINGS_VIEW.</description>
+        <in-parameters>
+            <parameter name="locale"/>
+            <parameter name="text"/>
+            <parameter name="missing" type="Boolean" default="false"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="50"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="messageList" type="List"/>
+            <parameter name="messageListCount" type="Integer"/>
+            <parameter name="localeOptions" type="List"/>
+            <parameter name="truncated" type="Boolean"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('findLocalizedMessages', context))</script></actions>
+    </service>
+    <service verb="store" noun="LocalizedMessage" allow-remote="false">
+        <description>The translation of a message in a locale, at the revision read (empty for a new one); empty removes it.
+            Refused, with the reason, when the translation does not keep exactly the original's ${} placeholders
+            (PLACEHOLDER_MISMATCH), for a locale that is not one (LOCALE_INVALID) and for a stale revision
+            (STALE_REVISION); markup is not accepted. The audit log keeps the text before and after. Needs
+            ADMIN_SETTINGS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="original" required="true"/>
+            <parameter name="locale" required="true"/>
+            <parameter name="localized"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('storeLocalizedMessage', context))</script></actions>
+    </service>
+    <service verb="find" noun="LocalizedEntityFields" allow-remote="false">
+        <description>The label translations (moqui.basic.LocalizedEntityField) of the registered label targets
+            (moqui.basic.LocalizedLabelTarget, targetList), by target (targetKey, the entity and field), locale and text, a
+            page at a time, each with the label it translates and its revision; with missing, a target and a locale, that
+            target's labels with no translation in the locale. Needs ADMIN_SETTINGS_VIEW.</description>
+        <in-parameters>
+            <parameter name="targetKey"/>
+            <parameter name="locale"/>
+            <parameter name="text"/>
+            <parameter name="missing" type="Boolean" default="false"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="50"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="fieldList" type="List"/>
+            <parameter name="fieldListCount" type="Integer"/>
+            <parameter name="targetList" type="List"/>
+            <parameter name="localeOptions" type="List"/>
+            <parameter name="truncated" type="Boolean"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('findLocalizedEntityFields', context))</script></actions>
+    </service>
+    <service verb="store" noun="LocalizedEntityField" allow-remote="false">
+        <description>The translation of one label (pkValue) of a registered label target in a locale (or default, the
+            fallback of every locale), at the revision read; empty removes it. Refused, with the reason, for an entity field
+            that is not a registered label target (NOT_REGISTERED), a label that does not exist (LABEL_UNAVAILABLE), a
+            translation that does not keep the label's ${} placeholders (PLACEHOLDER_MISMATCH), a locale that is not one
+            (LOCALE_INVALID) and a stale revision (STALE_REVISION). The audit log keeps the text before and after. Needs
+            ADMIN_SETTINGS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="entityName" required="true"/>
+            <parameter name="fieldName" required="true"/>
+            <parameter name="pkValue" required="true"/>
+            <parameter name="locale" required="true"/>
+            <parameter name="localized"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('storeLocalizedEntityField', context))</script></actions>
+    </service>
+</services>
