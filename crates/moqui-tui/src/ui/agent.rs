@@ -166,6 +166,21 @@ impl<L: ScreenLink> Agent<L> {
         any
     }
 
+    /// [`Self::run`], then the downloads the command started are saved with `save`. With any saved, the answer is the
+    /// screen after them, in the command's format, so it carries the saved-file message.
+    pub fn run_saving(&mut self, line: &str, save: impl FnMut(&RawBody) -> Result<String, String>) -> AgentAnswer {
+        let answer = self.run(line);
+        if !self.finish_downloads(save) {
+            return answer;
+        }
+        self.answer(Ok(()), self.wants_json(line))
+    }
+
+    /// Whether a command line is answered as JSON: `--json` on the line, or `format json`.
+    fn wants_json(&self, line: &str) -> bool {
+        self.json || line.split_whitespace().any(|word| word == "--json")
+    }
+
     /// The answer for the screen as it is: `look`.
     pub fn look(&self) -> AgentAnswer {
         self.answer(Ok(()), self.json)
@@ -173,14 +188,9 @@ impl<L: ScreenLink> Agent<L> {
 
     /// Run one command line and answer it. A command that fails leaves the session as it was, as far as it got.
     pub fn run(&mut self, line: &str) -> AgentAnswer {
+        let json = self.wants_json(line);
         let mut words: Vec<&str> = line.split_whitespace().collect();
-        let json = match words.iter().position(|word| *word == "--json") {
-            Some(at) => {
-                words.remove(at);
-                true
-            }
-            None => self.json,
-        };
+        words.retain(|word| *word != "--json");
         let command = words.first().copied().unwrap_or("look");
         // The rest of the line after the command word, spaces kept: `type` and `set` values may hold them.
         let rest = line

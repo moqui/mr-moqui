@@ -796,41 +796,30 @@ fn peek_token() -> Option<String> {
 }
 
 /// The login error, if any, and whether this request logged a user in from its own credentials
-/// (Basic, `api_key`, `login_key`, or `authUsername`). Such a request carries no ambient cookie
+/// (`api_key`, `login_key`, Basic, or `authUsername`). Such a request carries no ambient cookie
 /// authority, so it skips the session-token check as it does in the Java `ScreenRenderImpl`.
 ///
 /// A login the database could not serve is the request's error (a 503), not a failed login answered with 401.
 fn authenticate(request: &WebRequest, parameters: &BTreeMap<String, Value>) -> Result<(Option<String>, bool), Error> {
-    // A key is this request's authority even when the client also keeps a session for attributes. Never let an
-    // expired key fall back to the cookie, or carry one user's session attributes into another user's key login.
-    if let Some(key) = request
-        .header("api_key")
-        .filter(|key| !key.is_empty())
-        .or_else(|| request.header("login_key").filter(|key| !key.is_empty()))
-    {
-        let signed_in = user::current_user_id()?;
-        let verified = user::login_key_user_by_hash(&user::hash_login_key(key)?)?;
-        if verified.is_none() || signed_in.as_ref().is_some_and(|user| Some(user) != verified.as_ref()) {
-            web::note_auth_failure();
-            const INVALID_KEY: &str = "Login key is not valid for this session";
-            web::record_login_error(INVALID_KEY);
-            return Err(Error::of_kind(
-                crate::context::ErrorKind::AuthenticationRequired,
-                INVALID_KEY,
-            ));
+    // A key is this request's authority even when the client also keeps a session for attributes: a rejected key
+    // never falls back to a signed-in session's user, and a key for another user never takes over its session.
+    // With nobody signed in, a rejected key leaves the request anonymous with the login error, as in Java Moqui.
+    let signed_in = user::current_user_id()?.is_some_and(|id| !id.is_empty());
+    match user::apply_header_keys(request.header("api_key"), request.header("login_key")) {
+        Ok(false) => {}
+        Ok(true) => {
+            user::note_header_login();
+            return Ok((None, true));
         }
-        if let Err(err) = user::login_user_key(key) {
-            if web::is_unavailable(&err) {
-                return Err(err);
+        Err(err) if web::is_unavailable(&err) => return Err(err),
+        Err(err) => {
+            let message = err.message().to_string();
+            web::record_login_error(&message);
+            if signed_in {
+                return Err(Error::of_kind(crate::context::ErrorKind::AuthenticationRequired, message));
             }
-            web::record_login_error(err.message());
-            return Err(Error::of_kind(
-                crate::context::ErrorKind::AuthenticationRequired,
-                err.message(),
-            ));
+            return Ok((Some(message), false));
         }
-        user::note_header_login();
-        return Ok((None, true));
     }
     let mut login_error = None;
     let mut by_header = false;

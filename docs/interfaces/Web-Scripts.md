@@ -110,9 +110,10 @@ so state there is not shared and not kept. Use `ec.cache` for state that outlive
 **Running servlets and filters.** These run on a request worker, inside a context frame of their own. By then the user
 of the request is signed in:
 
+- an `api_key` or `login_key` header, checked on every request, even with a session cookie; a key for another
+  user than the session's is refused;
 - the session cookie;
 - Basic auth;
-- `api_key` or `login_key`;
 - `authUsername` and `authPassword`.
 
 `ec.user` is that user. A servlet whose answer should carry no session (no cookie, no token, no Visit) calls

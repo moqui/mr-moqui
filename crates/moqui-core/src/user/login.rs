@@ -472,7 +472,7 @@ pub fn login_external_user(username: &str, authenticated_at: Option<i64>) -> Res
 ///
 /// Returns [`INVALID_LOGIN`](Error) when the key is empty, unknown, or expired, or the account cannot log in.
 pub fn login_user_key(key: &str) -> Result<(), Error> {
-    noting_invalid(check_login_key(key))
+    noting_invalid(check_login_key(key, None))
 }
 
 /// Recheck a socket's hashed login key without logging in, writing history, or changing its session.
@@ -501,7 +501,9 @@ pub fn login_key_user_by_hash(hashed: &str) -> Result<Option<String>, Error> {
     Ok((!user_id.is_empty() && !still_disabled(&account, now) && !terminated(&account, now)).then_some(user_id))
 }
 
-fn check_login_key(key: &str) -> Result<(), Error> {
+/// `session_user`, when the session is already signed in, is the only user the key may log in: a key for another
+/// user is refused before the login, so it never takes over that session or its attributes.
+fn check_login_key(key: &str, session_user: Option<&str>) -> Result<(), Error> {
     if key.is_empty() {
         return Err(Error::new(INVALID_LOGIN));
     }
@@ -516,6 +518,9 @@ fn check_login_key(key: &str) -> Result<(), Error> {
         return Err(Error::new(INVALID_LOGIN));
     };
     let user_id = text_field(&row, "userId");
+    if session_user.is_some_and(|signed_in| signed_in != user_id) {
+        return Err(Error::new(INVALID_LOGIN));
+    }
     if let Some(thru) = field_millis(&row, "thruDate") {
         if now_millis() > thru {
             save_history(&user_id, false);
@@ -839,21 +844,21 @@ fn make_login_key_for(user_id: &str, hours: f64, device: Option<&str>) -> Result
     Ok(login_key)
 }
 
-/// Header login. Uses `api_key` when it is present, otherwise `login_key`.
+/// Header login. Uses `api_key` when it is present, otherwise `login_key`, and returns whether either was there.
 ///
-/// Does not read a query string. An existing username returns without a lookup.
+/// Does not read a query string. A key is the request's authority even when the session is already signed in, so it
+/// is checked every time, and a key for a user other than the session's is refused.
 ///
 /// # Errors
 ///
 /// Returns the login error when the chosen key is rejected.
-pub fn apply_header_keys(api_key: Option<&str>, login_key: Option<&str>) -> Result<(), Error> {
-    if session::current_username()?.is_some() {
-        return Ok(());
-    }
+pub fn apply_header_keys(api_key: Option<&str>, login_key: Option<&str>) -> Result<bool, Error> {
     let Some(key) = present_key(api_key).or_else(|| present_key(login_key)) else {
-        return Ok(());
+        return Ok(false);
     };
-    login_user_key(key)
+    let signed_in = session::current_user_id()?.filter(|id| !id.is_empty());
+    noting_invalid(check_login_key(key, signed_in.as_deref()))?;
+    Ok(true)
 }
 
 fn present_key(value: Option<&str>) -> Option<&str> {

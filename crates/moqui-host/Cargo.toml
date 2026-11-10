@@ -114,8 +114,9 @@ devtools = ["moqui-devkit/watch", "dep:lsp-server", "dep:lsp-types"]
 # The terminal client (`moqui tui`, plans/archive/Screen-TUI-Impl.md 4.6): in every package, so it compiles Revue; lite has it
 # for a quick terminal loop while developing and testing.
 # Its remote client (`moqui tui --server`) takes pushed notifications from `/notws` over tungstenite, with the web's
-# root certificates for https.
-tui = ["dep:moqui-tui", "dep:tungstenite", "dep:webpki-roots"]
+# root certificates for https, and keeps the connection's session cookies in memory (reqwest's cookie jar: cookie_store
+# and publicsuffix are new to the graph) so one-time session values survive redirects.
+tui = ["dep:moqui-tui", "dep:tungstenite", "dep:webpki-roots", "reqwest/cookies"]
 # `moqui test-client` (plans/archive/ClientTestHarness.md): a component's test/client specs against a running server, over
 # HTTP (the host's reqwest), raw TCP or TLS and WebSocket (tungstenite, as tui has it), with no database or listener.
 # In every package, so a CI box with any binary can test any server.
@@ -197,7 +198,7 @@ http = { workspace = true }
 bytes = { workspace = true }
 form_urlencoded = { workspace = true, optional = true }
 p256 = { workspace = true, optional = true }
-reqwest = { workspace = true, features = ["cookies"] }
+reqwest = { workspace = true }
 # A page problem that allowProblems ignores, in moqui test-client: already in the graph through moqui-tui.
 regex = { workspace = true, optional = true }
 ipp = { workspace = true, optional = true }

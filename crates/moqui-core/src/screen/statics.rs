@@ -1300,7 +1300,8 @@ fn row_widget_extras(
             "cell wrappers of {field_name} in {form_name} are nested too deeply"
         )));
     }
-    if widget.has_name("container") {
+    // The same action-free wrappers the terminal template walks (ScreenTui.js).
+    if widget.has_name("container") || widget.has_name("container-row") || widget.has_name("row-col") {
         for child in widget.child_iter() {
             row_widget_extras(state, &child, form_name, field_name, extras, depth + 1)?;
         }
@@ -1308,7 +1309,8 @@ fn row_widget_extras(
     }
     if widget.has_name("section") {
         if widget.first_named("actions").is_some() {
-            tracing::warn!(
+            // Once per row, so not a warning: the section's controls stay unavailable, as designed.
+            tracing::debug!(
                 form = form_name,
                 field = field_name,
                 section = widget.attribute("name"),

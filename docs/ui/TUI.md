@@ -262,10 +262,10 @@ A list row with fields (a list with a `transition`) opens in the row editor with
 column titles; Enter or Ctrl+S saves the row, or every row of a `multi` list. A row action (`row-selection` `action`)
 is on F10, and its form posts the rows selected with Space. F10 also offers the current row's dialogs and write links,
 including those inside a cell container; each keeps its own row's values and confirmation. Ordinary navigation links
-remain on Enter, Right and numbered links. Nested cell labels and links retain their authored order and names.
-In the Columns dialog Space shows or hides a field,
-Alt+Up and Alt+Down move it, Enter saves and `r` puts back the list's own columns. An export saves a file to
-`XDG_DOWNLOAD_DIR` (else `~/Downloads`), with its path on the message line; the text export shows in a dialog.
+remain on Enter, Right and numbered links. Labels and links in a cell's containers show in the order the screen
+lists them, each under its own name. In the Columns dialog Space shows or hides a field, Alt+Up and Alt+Down move it,
+Enter saves and `r` puts back the list's own columns. An export saves a file to `XDG_DOWNLOAD_DIR` (else
+`~/Downloads`), with its path on the message line; the text export shows in a dialog.
 
 The title line shows the counters (`Today 3  Chat 1  Notif 2`) when the server has a count service. They change when a
 notification comes for the user (in process, and over `--server` through `/notws`), with its title on the message
@@ -293,9 +293,10 @@ Leaving a changed form (a link, F3, Ctrl+Q) asks: Stay, Discard or Save. A butto
 No or Yes, starting at No.
 
 A successful write and F5 refresh the current screen and its cached parent screens, so a record's header and actions
-reflect child-screen changes. Moving between child tabs reuses those parents. Internal screen links under `/qapps`
-use the terminal's `/apps` mount; explicitly opening a link in the browser preserves its browser address, as do external
-links. Form, JSON and download endpoints keep their authored routes.
+reflect child-screen changes. Moving between child tabs, or resizing the terminal, reuses those parents. Internal
+links under `/qapps` use the terminal's `/apps` mount, a download reached by following a link included; explicitly
+opening a link in the browser preserves its browser address, as do external links. A form's or transition's own
+JSON request keeps its authored route.
 An explicit `renderMode=html-print` link also opens its print view in the browser, keeping its filters and the current
 terminal screen.
 An authored `target-window="_blank"` GET link does the same, including an inline document in a list row. Download links

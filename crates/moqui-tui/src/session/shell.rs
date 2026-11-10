@@ -580,9 +580,8 @@ impl Session {
                 act: MenuAct::Dialog(dialog.clone()),
             });
         }
-        let page = self.list_page(list_id);
-        if let Some(row) = page.get(self.row_at(list_id)) {
-            let nodes = row.cells.iter().flat_map(crate::model::Cell::nodes);
+        if let Some(current) = list.rows.get(self.row_at(list_id)) {
+            let nodes = current.cells.iter().flat_map(crate::model::Cell::nodes);
             for node in nodes {
                 if let Some(link) = self.index.links.get(node.id()) {
                     if !link.disabled && (link.posts() || link.writes) {

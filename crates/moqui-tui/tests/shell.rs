@@ -536,6 +536,22 @@ fn a_record_header_refreshes_after_a_write_or_f5_and_stays_cached_between_tabs()
         "Complete",
         "a write refreshes the header after its redirect"
     );
+
+    // A save that stays on the screen asks for the header once, not again through the screen's own reload.
+    let header_calls = |link: &FakeLink| {
+        calls(link)
+            .iter()
+            .filter(|call| matches!(call, LinkCall::Level { path, .. } if path == "/apps/app/Project.tui"))
+            .count()
+    };
+    let closed = parent("Closed");
+    let stay = FakeLink::from_json(&[child, team, &closed]).unwrap();
+    stay.answer_transition("/apps/app/Project/change", TransitionOutcome::saved("Status changed"));
+    assert_eq!(session.focus_id(), "change");
+    press(&mut session, &stay, Key::Enter);
+    assert_eq!(session.path(), "/apps/app/Project/Team");
+    assert_eq!(header(&session), "Closed");
+    assert_eq!(header_calls(&stay), 1, "{:?}", calls(&stay));
 }
 
 #[test]

@@ -108,7 +108,7 @@ pub struct FormInfo {
     pub writes: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LinkInfo {
     pub id: String,
     pub text: String,
@@ -124,6 +124,46 @@ pub struct LinkInfo {
 }
 
 impl LinkInfo {
+    /// A plain link to follow: no kind, method, confirmation or browser target.
+    fn to(id: &str, text: &str, url: &str) -> Self {
+        LinkInfo {
+            id: id.to_string(),
+            text: text.to_string(),
+            url: url.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// The link a `Node::Link` is, as authored; `None` for any other node.
+    fn of_node(node: &Node) -> Option<Self> {
+        let Node::Link {
+            id,
+            text,
+            url,
+            browser,
+            kind,
+            method,
+            confirm,
+            disabled,
+            writes,
+            ..
+        } = node
+        else {
+            return None;
+        };
+        Some(LinkInfo {
+            id: id.clone(),
+            text: text.clone(),
+            url: url.clone(),
+            kind: kind.clone(),
+            method: method.clone(),
+            confirm: confirm.clone(),
+            disabled: *disabled,
+            writes: *writes,
+            browser: *browser,
+        })
+    }
+
     /// A link that runs a transition rather than opening a screen: a hidden-form link posts, as `m-form-link` does.
     pub fn posts(&self) -> bool {
         self.kind == "hidden-form" || self.kind == "hidden-form-link" || self.method.eq_ignore_ascii_case("post")
@@ -315,19 +355,10 @@ impl Index {
                     self.add(c, &inner);
                 }
                 Node::Field { .. } => self.add_field(node, at),
-                Node::Link {
-                    id,
-                    text,
-                    url,
-                    browser,
-                    kind,
-                    method,
-                    confirm,
-                    disabled,
-                    writes,
-                    ..
-                } => {
-                    self.add_link(id, text, url, kind, method, confirm, *disabled, *writes, *browser, true);
+                Node::Link { id, disabled, .. } => {
+                    if let Some(link) = LinkInfo::of_node(node) {
+                        self.add_link(link, true);
+                    }
                     if !disabled {
                         self.push(id, FocusKind::Link, at);
                     }
@@ -382,23 +413,9 @@ impl Index {
                 Node::ButtonMenu { id, text, c } => {
                     let mut links = Vec::new();
                     walk(c, &mut |inner| {
-                        if let Node::Link {
-                            id,
-                            text,
-                            url,
-                            browser,
-                            kind,
-                            method,
-                            confirm,
-                            disabled,
-                            writes,
-                            ..
-                        } = inner
-                        {
-                            self.add_link(
-                                id, text, url, kind, method, confirm, *disabled, *writes, *browser, false,
-                            );
-                            links.push(id.clone());
+                        if let Some(link) = LinkInfo::of_node(inner) {
+                            links.push(link.id.clone());
+                            self.add_link(link, false);
                         }
                     });
                     // A dialog among the menu's items opens from the menu: it is indexed (its fields, its body) as a dialog of
@@ -475,7 +492,7 @@ impl Index {
                             (crate::layout::wizard_next(id), Some(active + 1), "Next"),
                         ] {
                             if let Some(step) = step.and_then(|step| tabs.get(step)) {
-                                self.add_link(&link, text, &step.url, "", "", "", false, false, false, true);
+                                self.add_link(LinkInfo::to(&link, text, &step.url), true);
                                 self.push(&link, FocusKind::Link, at);
                             }
                         }
@@ -492,11 +509,17 @@ impl Index {
                     self.add(c, at);
                 }
                 Node::NumberCard { id, value, url, .. } if !url.is_empty() => {
-                    self.add_link(id, value, url, "", "", "", false, false, false, true);
+                    self.add_link(LinkInfo::to(id, value, url), true);
                     self.push(id, FocusKind::Link, at);
                 }
                 Node::Image { id, alt, url } if !url.is_empty() => {
-                    self.add_link(id, alt, url, "image", "", "", false, false, true, true);
+                    self.add_link(
+                        LinkInfo {
+                            kind: "image".to_string(),
+                            ..LinkInfo::to(id, alt, url)
+                        },
+                        true,
+                    );
                     self.push(id, FocusKind::Link, at);
                 }
                 Node::Html { id, links, .. } => self.add_references(id, links, at),
@@ -592,18 +615,11 @@ impl Index {
             for cell in &row.cells {
                 for inner in cell.nodes() {
                     match inner {
-                        Node::Link {
-                            id,
-                            text,
-                            url,
-                            browser,
-                            kind,
-                            method,
-                            confirm,
-                            disabled,
-                            writes,
-                            ..
-                        } => self.add_link(id, text, url, kind, method, confirm, *disabled, *writes, *browser, true),
+                        Node::Link { .. } => {
+                            if let Some(link) = LinkInfo::of_node(inner) {
+                                self.add_link(link, true);
+                            }
+                        }
                         Node::Field { id, .. } if posts => {
                             self.add_field(inner, &row_scope);
                             fields.push(id.clone());
@@ -707,43 +723,18 @@ impl Index {
     fn add_references(&mut self, id: &str, links: &[crate::model::HtmlLink], at: &At) {
         for (n, link) in links.iter().enumerate() {
             let key = crate::layout::ref_id(id, n + 1);
-            self.add_link(&key, &link.text, &link.url, "", "", "", false, false, false, true);
+            self.add_link(LinkInfo::to(&key, &link.text, &link.url), true);
             self.push(&key, FocusKind::Link, at);
         }
     }
 
     /// A link the screen has. One shown on the screen is numbered for `#`; a menu's item is not, as it is not shown.
     #[expect(clippy::too_many_arguments)]
-    fn add_link(
-        &mut self,
-        id: &str,
-        text: &str,
-        url: &str,
-        kind: &str,
-        method: &str,
-        confirm: &str,
-        disabled: bool,
-        writes: bool,
-        browser: bool,
-        numbered: bool,
-    ) {
-        if numbered && !disabled && !url.is_empty() && !self.links.contains_key(id) {
-            self.link_order.push(id.to_string());
+    fn add_link(&mut self, link: LinkInfo, numbered: bool) {
+        if numbered && !link.disabled && !link.url.is_empty() && !self.links.contains_key(&link.id) {
+            self.link_order.push(link.id.clone());
         }
-        self.links.insert(
-            id.to_string(),
-            LinkInfo {
-                id: id.to_string(),
-                text: text.to_string(),
-                url: url.to_string(),
-                kind: kind.to_string(),
-                method: method.to_string(),
-                confirm: confirm.to_string(),
-                disabled,
-                writes,
-                browser,
-            },
-        );
+        self.links.insert(link.id.clone(), link);
     }
 
     fn push(&mut self, id: &str, kind: FocusKind, at: &At) {

@@ -239,14 +239,7 @@ fn agent_lines<L: moqui_tui::ScreenLink>(link: L, path: &str, columns: u16, rows
         if line.trim().is_empty() {
             continue;
         }
-        let mut answer = agent.run(&line);
-        if agent.finish_downloads(moqui_tui::save_download) {
-            answer = if line.split_whitespace().any(|word| word == "--json") {
-                agent.run("look --json")
-            } else {
-                agent.look()
-            };
-        }
+        let answer = agent.run_saving(&line, moqui_tui::save_download);
         writeln!(out, "{}", answer.text)?;
         out.flush()?;
         if agent.closed() {

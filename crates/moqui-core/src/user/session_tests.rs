@@ -752,7 +752,13 @@ fn login_key_header_logs_in_and_an_expired_key_does_not() {
     assert_eq!(guard.session_id(), id);
     login::login_user("ada", "Secret1!").unwrap();
     let rotated = guard.session_id();
-    login::apply_header_keys(Some("not-a-key"), None).unwrap();
+    // A key is checked even when the session is signed in; neither an unknown key nor another user's takes it over.
+    create_user(&facade, "bob", "Secret1!");
+    create_login_key(&facade, "bob-key", "bob", None);
+    assert!(login::apply_header_keys(Some("not-a-key"), None).is_err());
+    assert!(login::apply_header_keys(None, Some("bob-key")).is_err());
+    assert_eq!(current_username().unwrap().as_deref(), Some("ada"));
+    assert!(login::apply_header_keys(Some("temp-key"), None).unwrap());
     assert_eq!(current_username().unwrap().as_deref(), Some("ada"));
     assert_eq!(guard.session_id(), rotated);
 }
@@ -766,7 +772,7 @@ fn a_query_string_api_key_is_not_consulted() {
     save_parameter("api_key", "temp-key");
     let mut other = BTreeMap::new();
     other.insert("api_key".to_string(), "temp-key".to_string());
-    login::apply_header_keys(None, None).unwrap();
+    assert!(!login::apply_header_keys(None, None).unwrap());
     assert!(current_username().unwrap().is_none());
     assert_eq!(other.get("api_key").map(String::as_str), Some("temp-key"));
 }

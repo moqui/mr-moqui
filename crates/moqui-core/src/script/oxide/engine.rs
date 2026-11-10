@@ -91,6 +91,7 @@ thread_local! {
 
 /// Isolate the cache-bound test from timed fragmentation drops, while retaining pressure and out-of-memory relief.
 #[cfg(test)]
+#[must_use = "the drops are suspended only while the guard is held"]
 pub(super) fn suspend_fragmentation_for_cache_test() -> impl Drop {
     struct Restore(bool);
     impl Drop for Restore {

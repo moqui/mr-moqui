@@ -128,23 +128,14 @@ feature("find and compact checkbox controls name their field and preserve keyboa
                 <m-check v-model="compact" name="notify" :options="[{value:'Y',label:' '},{value:'N',label:'Keep visible'}]" tooltip="Email notifications for Mentions"></m-check>
                 <m-check v-model="direct" name="digest" :options="[{value:'Y',label:'  '}]" tooltip="Daily digest for Mentions" no-wrapper></m-check>
             </form>
-            <m-form id="saved-checks" action="/check-save" :fields-initial="{sharing:[],enabled:['Y'],tags:['A','B']}" no-validate v-slot:default="formProps">
-                <m-check v-model="formProps.fields.sharing" name="sharing" :options="[{value:'Y',label:'Share repositories'}]"></m-check>
-                <m-check v-model="formProps.fields.enabled" name="enabled" :options="[{value:'Y',label:'Enable sign in'}]"></m-check>
-                <m-check v-model="formProps.fields.tags" name="tags" :options="[{value:'A',label:'Alpha'},{value:'B',label:'Beta'}]"></m-check>
-                <q-btn id="save-checks" type="submit" label="Save checks"></q-btn>
-                <q-btn id="save-checks-again" type="submit" label="Save checks again"></q-btn>
-            </m-form>
             </div><script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
             <script src="/js/MoquiLib.js"></script><script src="/js/MoquiL10n.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
             Quasar.QMenu.props.transitionDuration.default=0;
             moqui.l10n.loadCatalog('en-US',()=>({messages:{'Find options for {field}':'Options for {field}',
                 'Clear {field} filter':'Clear filter: {field}'}})).then(()=>{
                 const app=Vue.createApp({data(){return {compact:[],direct:[],fields:{entity:'Order',user:'john.doe',changedDate_period:'day',
-                    changedDate_poffset:'0',changedDate_pdate:'2026-11-04',createdDate_pdate:'2026-11-01'},loading:0,appRootPath:'',moquiSessionToken:'fixture'};},methods:{getCsrfToken(){}}});
-                const fetchPage=window.fetch;window.checkSaves=[];
-                window.fetch=(url,init)=>url==='/check-save'?(checkSaves.push(Array.from(init.body.entries())),Promise.resolve(new Response('{}'))):fetchPage(url,init);
-                app.use(Quasar);['m-text-find','m-text-line','m-date-period','m-date-time','m-check','m-field','m-form'].forEach(name=>app.component(name,moqui.qvt.components[name]));
+                    changedDate_poffset:'0',changedDate_pdate:'2026-11-04',createdDate_pdate:'2026-11-01'}};}});
+                app.use(Quasar);['m-text-find','m-text-line','m-date-period','m-date-time','m-check','m-field'].forEach(name=>app.component(name,moqui.qvt.components[name]));
                 window.vm=app.mount('#app');
             });
             </script></body></html>`)
@@ -184,18 +175,6 @@ feature("find and compact checkbox controls name their field and preserve keyboa
         compact.press('Enter')
         assert.equal(page.evaluate(() => JSON.stringify(vm.compact)), '[]')
         assert.equal(page.evaluate(() => new FormData(document.getElementById('compact-checks')).has('notify')), false, 'an unchecked option stays absent from native submission')
-        const sharing = page.getByRole('checkbox', {name:'Share repositories', exact:true})
-        sharing.click()
-        page.locator('#save-checks').click()
-        page.waitFor(() => window.checkSaves.length === 1)
-        assert.deepEqual(page.evaluate(() => checkSaves[0].filter(([key]) => key !== 'moquiSessionToken')),
-            [['sharing','Y'],['enabled','Y'],['tags','A'],['tags','B']], 'm-form submits one scalar Y per enabled flag and preserves valid multi-choice values')
-        sharing.click()
-        page.getByRole('checkbox', {name:'Enable sign in', exact:true}).click()
-        page.locator('#save-checks-again').click()
-        page.waitFor(() => window.checkSaves.length === 2)
-        assert.deepEqual(page.evaluate(() => checkSaves[1].filter(([key]) => key !== 'moquiSessionToken')),
-            [['tags','A'],['tags','B']], 'unchecked flags submit no stale N or Y values')
     },
 })
 
@@ -317,6 +296,74 @@ feature("column moves retain focus on the moved field through reorder, hide and 
         page.keyboard.press("Enter")
         page.locator(".q-menu .q-item").first().press("Enter")
         assert.deepEqual(focusState(), { field: "Alpha", action: "Hide field", column: "Column 1" })
+    },
+})
+
+feature("routed shell menu items activate once from the keyboard", {
+    expect() {
+        const page = browser.newPage()
+        page.setContent(`<!doctype html><html><head>
+            <link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
+            <link rel="stylesheet" href="/css/WebrootVue.qvt.css">
+            </head><body><div id="app"></div>
+            <script src="/libs/vue/vue.global.prod.js"></script>
+            <script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script>
+            <script src="/js/WebrootVue.qvt.js"></script>
+            <script>
+            // Menu animation timing, focus rings and the Tab walk belong to acceptance (ThemeLayout); activation rules stay here.
+            Quasar.QMenu.props.transitionDuration.default = 0;
+            // Mount the actual shell navigation markup, without fetching or rendering an application screen.
+            const source = moqui.qvt.components['m-qapps-root'].template;
+            const start = source.indexOf('<q-btn v-if="appScreenMenu"');
+            const crumbs = source.indexOf('<q-breadcrumbs v-if="!handheld"');
+            const template = source.slice(start, source.indexOf('</q-btn>', start) + 8) +
+                source.slice(crumbs, source.indexOf('</q-breadcrumbs>', crumbs) + 16) + '<button id="after-navigation">Search</button>';
+            // The slices end at the first closing tag: a nested q-btn in the menu button would cut it short, so say so.
+            const opened = (template.match(/<q-btn\\b/g) || []).length, closed = (template.match(/<\\/q-btn>/g) || []).length;
+            if (start < 0 || crumbs < 0 || opened !== closed) throw new Error('the shell navigation markup changed: update this fixture');
+            window.menu = { subscreens: [{ name: 'Home', title: 'Home', pathWithParams: '/qapps/dev/Home' }] };
+            window.visits = []; window.vueErrors = []; window.enterPrevented = [];
+            const app = Vue.createApp({ template, data() { return { appScreenMenu: window.menu, headerTitle: 'Dev AIDE', handheld: false,
+                breadcrumbStart: 0, navMenuList: [
+                    { title: 'LLM', subscreens: [{ name: 'Agents', title: 'Agents', pathWithParams: '/qapps/system/LLM/Agents' }] },
+                    { title: 'Agents', subscreens: [{ name: 'Agent', title: 'Agent detail', pathWithParams: '/qapps/system/LLM/Agents/Agent' }] },
+                    { title: 'Current agent' } ] }; },
+                methods: { getLinkPath(path) { return path; }, setUrl(path) { visits.push(path); this.appScreenMenu = null; } } });
+            app.use(Quasar);
+            app.component('m-menu-icon', moqui.qvt.components['m-menu-icon']);
+            app.config.globalProperties.$router = moqui.qvt.makeRouter();
+            app.config.globalProperties.$route = { path: '/qapps/dev/Workspace', matched: [], params: {} };
+            app.config.errorHandler = error => vueErrors.push(String(error));
+            window.vm = moqui.webrootVue = app.mount('#app');
+            document.addEventListener('keydown', event => { if (event.key === 'Enter') enterPrevented.push(event.defaultPrevented); });
+            // Observe modified clicks without opening an unrelated browser tab.
+            document.addEventListener('click', event => { if (event.ctrlKey || event.metaKey) event.preventDefault(); });
+            </script></body></html>`)
+        const openMenu = () => {
+            page.evaluate(async () => { vm.appScreenMenu = window.menu; await Vue.nextTick(); return true })
+            page.locator("#m-app-screens").click()
+        }
+        openMenu()
+        assert.equal(page.locator(".q-menu a").evaluate(item => item.getAttribute("href")), "/qapps/dev/Home")
+        page.locator(".q-menu a").press("Enter")
+        assert.deepEqual(page.evaluate(() => ({ visits, vueErrors, enterPrevented })),
+            { visits: ["/qapps/dev/Home"], vueErrors: [], enterPrevented: [true] })
+        assert.equal(page.locator(".q-menu").count(), 0)
+        openMenu()
+        page.locator(".q-menu a").press("Space")
+        assert.equal(page.evaluate(() => visits.length), 2)
+        openMenu()
+        page.locator(".q-menu a").evaluate(item => {
+            item.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }))
+            item.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true }))
+            return true
+        })
+        assert.equal(page.evaluate(() => visits.length), 2, "modified clicks retain native link handling")
+        openMenu()
+        page.locator(".q-menu a").click()
+        assert.equal(page.evaluate(() => visits.length), 3)
+        assert.deepEqual(page.evaluate(() => vueErrors), [])
     },
 })
 

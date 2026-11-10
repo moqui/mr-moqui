@@ -42,6 +42,7 @@ const GIT_WEBHOOK: &str = "moqui.resource.GitWebhook";
 const GIT_MERGE_REQUEST: &str = "moqui.resource.GitMergeRequest";
 const GIT_MERGE_REQUEST_REVIEWER: &str = "moqui.resource.GitMergeRequestReviewer";
 const SYSTEM_MESSAGE: &str = "moqui.service.message.SystemMessage";
+const SYSTEM_MESSAGE_ERROR: &str = "moqui.service.message.SystemMessageError";
 
 /// The states of a commit status, as GitHub's.
 const STATES: [&str; 4] = ["pending", "success", "failure", "error"];
@@ -1526,23 +1527,28 @@ fn test_webhook(parameters: &Parameters, facade: &EntityFacade) -> Out {
         let delivered = delivery
             .as_ref()
             .is_some_and(|row| field(row, "statusId").as_deref() == Some("SmsgSent"));
-        let status = delivery
-            .as_ref()
-            .and_then(|row| field(row, "remoteMessageId"))
-            .or(facade
+        let status = match delivery.as_ref().and_then(|row| field(row, "remoteMessageId")) {
+            Some(remote) => Some(remote),
+            None => facade
                 .find(GIT_WEBHOOK)?
                 .eq("webhookId", Value::string(&webhook_id))
                 .one()?
-                .and_then(|row| field(&row, "lastDeliveryStatus")));
-        let recorded_error = facade
-            .find("moqui.service.message.SystemMessageError")?
-            .eq("systemMessageId", Value::string(&message_id))
-            .order_by("errorDate", true)
-            .limit(1)
-            .list()?
-            .iter()
-            .next()
-            .and_then(|row| field(row, "errorText"));
+                .and_then(|row| field(&row, "lastDeliveryStatus")),
+        };
+        // The last error SystemMessage saved, only needed when the ping was not sent.
+        let recorded_error = if delivered {
+            None
+        } else {
+            facade
+                .find(SYSTEM_MESSAGE_ERROR)?
+                .eq("systemMessageId", Value::string(&message_id))
+                .order_by("errorDate", true)
+                .limit(1)
+                .list()?
+                .iter()
+                .next()
+                .and_then(|row| field(row, "errorText"))
+        };
         (status, delivered, recorded_error)
     };
     // SystemMessage records delivery errors and returns normally so its retry remains scheduled. Its saved outcome,

@@ -383,6 +383,12 @@ fn explicit_keys_revalidate_with_a_cookie_without_using_ambient_authority() {
     revoked_current.session_cookie = Some(cookie.clone());
     revoked_current.set_header("login_key", "current-key");
     statuses.push(serve_at(&world.factory, revoked_current, &root).status);
+    // With nobody signed in, a rejected key leaves the request anonymous: a public route answers as it would
+    // anonymously (GET /rest/login is a 405), not a 401.
+    let mut anonymous = request("GET", "/rest/login");
+    anonymous.set_header("login_key", "revoked-key");
+    let response = serve_at(&world.factory, anonymous, &root);
+    assert_eq!(response.status, 405, "{}", response.body_text());
     // With no explicit credential the existing cookie is still the browser's normal authority.
     let mut ambient = request("GET", path);
     ambient.session_cookie = Some(cookie);

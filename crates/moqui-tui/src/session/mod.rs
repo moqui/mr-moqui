@@ -1278,7 +1278,7 @@ impl Session {
             Action::EditRow => self.edit_row(),
             Action::Info => self.overlays.push(Overlay::Info),
             Action::Prompt => self.prompt(),
-            Action::Refresh => self.reload(),
+            Action::Refresh => self.refresh(),
             Action::PagePrev => self.turn_page(-1),
             Action::PageNext => {
                 // A wizard with no list to page: PgDn is Next.
@@ -1584,10 +1584,15 @@ impl Session {
         self.request_level(&location.path, location.parameters, Intent::Navigate { history });
     }
 
-    /// The current screen again, with its parameters.
+    /// The current screen again, with its parameters. Record headers keep their cache; see [`Self::refresh`].
     pub fn reload(&mut self) {
         let location = self.nav.location();
         self.request_level(&location.path, location.parameters, Intent::Reload);
+    }
+
+    /// The current screen and its record headers again: F5, or a component's answer that reloads the screen.
+    pub fn refresh(&mut self) {
+        self.reload();
         self.reload_parents();
     }
 

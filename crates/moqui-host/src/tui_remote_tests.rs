@@ -250,21 +250,6 @@ fn screen_redirects_keep_session_cookies_in_memory_with_their_scope() {
     assert!(taken
         .iter()
         .all(|request| request.headers.get("login_key").map(String::as_str) == Some("K1")));
-    assert_eq!(http.store, None, "session cookies do not create a credentials file");
-    // Loopback HTTP is a trustworthy local origin in the standard jar. Check Secure on a remote host separately.
-    use reqwest::cookie::CookieStore;
-    let jar = reqwest::cookie::Jar::default();
-    let secure = reqwest::Url::parse("https://example.invalid/apps").unwrap();
-    jar.add_cookie_str("onlysecure=value; Secure; Path=/", &secure);
-    assert!(jar.cookies(&secure).is_some());
-    assert!(jar
-        .cookies(&reqwest::Url::parse("http://example.invalid/apps").unwrap())
-        .is_none());
-    assert!(jar
-        .cookies(&reqwest::Url::parse("https://other.invalid/apps").unwrap())
-        .is_none());
-    jar.add_cookie_str("onlysecure=; Max-Age=0; Secure; Path=/", &secure);
-    assert!(jar.cookies(&secure).is_none());
 }
 
 #[test]

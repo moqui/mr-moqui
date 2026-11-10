@@ -650,7 +650,7 @@ impl Session {
         for act in acts {
             match act {
                 Act::Reload => self.request_component(id),
-                Act::ReloadScreen => self.reload(),
+                Act::ReloadScreen => self.refresh(),
                 Act::DownloadReport(url) => {
                     let location = Location::of_url(&Self::component_url(&base, &url));
                     self.lanes.push(

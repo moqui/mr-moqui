@@ -157,14 +157,7 @@ impl<T: Transport> Link<T> {
         let mut carried = Messages::default();
         for _ in 0..FRAGMENT_REDIRECTS {
             let output = self.render_tui(path.clone(), &parameters, true)?;
-            if !(300..400).contains(&output.status)
-                && output.header("Content-Disposition").is_some_and(|value| {
-                    value
-                        .split(';')
-                        .next()
-                        .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("attachment"))
-                })
-            {
+            if !(300..400).contains(&output.status) && is_attachment(&output) {
                 check_status(&output)?;
                 return Ok(NavigationReply::Attachment(raw_body(output)));
             }
@@ -641,6 +634,14 @@ impl<T: Transport> ScreenLink for Link<T> {
     fn subscribe(&self, sink: PushSink) -> Option<Subscription> {
         self.transport.subscribe(sink)
     }
+}
+
+/// Whether the answer's `Content-Disposition` is `attachment`: a download, not a screen.
+fn is_attachment(output: &RenderOutput) -> bool {
+    output
+        .header("Content-Disposition")
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("attachment"))
 }
 
 fn raw_body(output: RenderOutput) -> RawBody {
