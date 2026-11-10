@@ -56,6 +56,7 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     moqui_core::rust_service!(map, find_load_scripts)?;
     moqui_core::rust_service!(map, start_load_run)?;
     moqui_core::rust_service!(map, stop_load_run)?;
+    moqui_core::rust_service!(map, update_load_run_users)?;
     moqui_core::rust_service!(map, get_load_run_status)?;
     moqui_core::rust_service!(map, find_load_runs)?;
     moqui_core::rust_service!(map, get_load_run_result)?;
@@ -256,6 +257,55 @@ fn stop_load_run(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -
         Ok(Some(_)) => add_error(format!("Load run {id} has already finished")),
         Ok(None) => add_error(format!("Load run {id} is not running on this server")),
         Err(message) => add_error(message),
+    }
+    none()
+}
+
+/// `update#LoadRunUsers` (plans/LoadRunner.md L6): a running scenario's users or rate from now on, within
+/// `load_runner_max_users` for the run in all.
+fn update_load_run_users(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    if !may_run_loads() {
+        return none();
+    }
+    let Some(id) = run_id(parameters) else {
+        return none();
+    };
+    let given = |key: &str| {
+        parameters
+            .get(key)
+            .filter(|value| !is_empty(value))
+            .map(|value| to_plain_string(value).trim().parse::<f64>().ok())
+    };
+    let target = match (given("users"), given("rate")) {
+        (Some(Some(users)), None) if users >= 0.0 && users.fract() == 0.0 => {
+            crate::test_client::load::Target::Users(users as u64)
+        }
+        (None, Some(Some(rate))) if rate.is_finite() => crate::test_client::load::Target::Rate(rate),
+        (Some(_), None) => {
+            add_error("users must be a whole number from 0");
+            return none();
+        }
+        (None, Some(_)) => {
+            add_error("rate must be a number of iterations a second");
+            return none();
+        }
+        _ => {
+            add_error("Give users or rate, one of them");
+            return none();
+        }
+    };
+    let Some(active) = run::find(&id) else {
+        add_error(format!("Load run {id} is not running on this server"));
+        return none();
+    };
+    let scenario = text(parameters, "scenario");
+    let applied = active
+        .load
+        .total_users_with(&scenario, &target)
+        .and_then(|total| targets::check_users(usize::try_from(total).unwrap_or(usize::MAX)))
+        .and_then(|()| active.load.set_target(&scenario, target));
+    if let Err(message) = applied {
+        add_error(message);
     }
     none()
 }

@@ -146,6 +146,7 @@ together unless it names some.
 | `pause` | A wait before each request, not timed: milliseconds, `[min, max]`, or `{ gaussian: [mean, deviation] }` (JMeter's Gaussian Random Timer). `pause(...)` in the script waits once |
 | `setup(user)`, `run(user, iteration)`, `teardown(user)` | `setup` once per user before the timed part, `run` repeated, `teardown` after. `user` is the user's number from 0 across the scenario |
 | `newSession` | `true` starts each iteration with a fresh `http` session (JMeter's "clear cookies each iteration") |
+| `rate`, `stages` | An arrival rate (iterations started per second, `users` the most at once), and the target over time: `[{ duration, users }]` or `[{ duration, rate }]`, linear within each stage (§5, L6) |
 
 **Added to the harness's globals** (in a load script and in any client spec):
 
@@ -213,7 +214,11 @@ means the numbers are the generator's, not the server's.
 **An arrival rate** (L6). `rate` on a scenario (iterations started per second) with `users` as the most that may run
 at once. Each iteration has a scheduled start; a sample's time is measured from its request's send as now, and the
 iteration's `step` time from its scheduled start, so a server that stalls does not hide the wait (coordinated
-omission). Iterations that could not start for lack of a free user are counted as `dropped`.
+omission). Iterations that could not start for lack of a free user are counted as `dropped`: a start is dropped when
+no user has taken it by the time of the start after it (one interval late, and at least 25 ms), or when the scenario
+ends with it due. Each iteration of a rate scenario is also a `<scenario> iteration` step sample from its scheduled
+start. The semantics of stages and of a live change (`Load::set_target`, `update#LoadRunUsers`) are in
+`test_client/load/schedule.rs` and [Client-Testing](../docs/dev/Client-Testing.md#load-and-parallel).
 
 ## 6. Kinds of load
 

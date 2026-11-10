@@ -63,6 +63,20 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="now" type="Boolean" default-value="false"/>
         </in-parameters>
     </service>
+    <service verb="update" noun="LoadRunUsers" type="rust" location="moqui_host::load_runner::update_load_run_users"
+            allow-remote="false" transaction="ignore">
+        <description>Change a running scenario's target from now on, in place of the rest of its stages (plans/LoadRunner.md
+            L6): users, a closed scenario's users at once (those above it finish their iteration and wait; more start
+            for a higher one) or a rate scenario's most at once; or rate, a rate scenario's iterations started per
+            second. Give one of them. Refused past load_runner_max_users for the run in all, a rate for a closed
+            scenario, a scenario the run does not have, and a run that is not running on this server.</description>
+        <in-parameters>
+            <parameter name="runId" required="true"/>
+            <parameter name="scenario" required="true"/>
+            <parameter name="users" type="Integer"/>
+            <parameter name="rate" type="BigDecimal"/>
+        </in-parameters>
+    </service>
     <service verb="get" noun="LoadRunStatus" type="rust" location="moqui_host::load_runner::get_load_run_status"
             allow-remote="false" transaction="ignore">
         <description>For the run page's poll: a running load's snapshot from memory, or a finished run's summary. running

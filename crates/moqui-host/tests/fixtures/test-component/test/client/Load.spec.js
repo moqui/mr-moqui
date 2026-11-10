@@ -1,7 +1,8 @@
 // load and the client's parallel: a tiny load timed by name, with an expected 401 that is not an error, a response
 // that is (and ends its iteration), and a throw of the scenario; a load script (test/load/Fixture.load.js) with two
-// scenarios, a broken threshold, a stop, and a request at a script's top level refused; then threads that each log in
-// on a session of their own, one of them throwing.
+// scenarios, a broken threshold, a stop, and a request at a script's top level refused; an arrival rate against a slow
+// endpoint (params.slowServer, a stub the it test serves, answering after 130 ms); then threads that each log in on a
+// session of their own, one of them throwing.
 const ARGS = { user: params.user ?? "john.doe", password: params.password ?? "moqui" }
 
 feature("a tiny load times its requests by name", {
@@ -129,6 +130,30 @@ feature("a stop ends a long ramp at once", {
         // the second user, due at 300 s, never starts
         stats.iterations == 1
         stats.errors == 0
+    },
+})
+
+feature("under a rate, the wait for a free user is in the step's time, not the request's", {
+    when() {
+        if (params.slowServer == null) skip("no slowServer param: a server that answers /slow late")
+        // 10 starts a second with one user, each iteration 130 ms: the starts are taken late, and some dropped
+        return load({
+            users: 1, rate: 10, duration: 1, args: params.slowServer,
+            scenario(user, server) { step("slow step", () => http.get(server + "/slow", { name: "slow" })) },
+        })
+    },
+    then(stats) {
+        stats.errors == 0
+        stats.scenarios.load.dropped >= 1
+        stats.dropped == stats.scenarios.load.dropped
+        stats.bins.reduce((n, bin) => n + bin.dropped, 0) == stats.dropped
+        stats.iterations + stats.dropped == 10
+        stats.names["slow"].min >= 120
+        // timed from each start's schedule: the request's time and the wait before it
+        stats.names["slow step"].mean > stats.names["slow"].mean + 15
+        stats.names["load iteration"].count == stats.iterations
+        stats.names["load iteration"].mean > stats.names["slow"].mean + 15
+        stats.run.scenarios.load.rate == 10
     },
 })
 

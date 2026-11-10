@@ -517,7 +517,9 @@ It returns the statistics, prints a table after the feature's line, and writes t
 |---|---|
 | `users` | The number of users, 1 to 10,000; 1 by default |
 | `duration`, `iterations` | Seconds the scenario repeats for, and/or iterations per user; at least one. With both, a user stops at whichever comes first |
-| `rampUp` | Seconds over which the users start, evenly |
+| `rampUp` | Seconds over which the users start, evenly; with `rate` and no `stages`, the seconds over which the rate rises from 0 |
+| `rate` | Iterations started per second (an arrival rate, below), with `users` the most at once (by default the highest rate rounded up). `iterations` is then the scenario's starts in all |
+| `stages` | `[{ duration, users }]`, the users over time, or `[{ duration, rate }]`, the rate over time (below); with no `duration`, the scenario lasts as long as its stages |
 | `think` | Between a user's iterations, not timed: milliseconds, `[min, max]` (uniform) or `{ gaussian: [mean, deviation] }` (clamped at 0) |
 | `pause` | A wait of the same forms before each request of the scenario, not timed |
 | `newSession` | `true` starts each iteration on a fresh `http` session (no cookies, no token) |
@@ -534,15 +536,16 @@ in `args`, or put the load in a load script.
 **Load scripts** ([LoadRunner](../../plans/LoadRunner.md#4-load-scripts)). `load({ script: "test/load/Name.load.js",
 params, scenarios: { name: { users, iterations, ... } } })` runs a `.load.js` file of the spec's component. Its top
 level has `plan({ title, description, uses, params: { name: { default, description, options, secret, required } },
-thresholds })` and one or more `scenario(name, { users, rampUp, duration, iterations, think, pause, newSession,
-setup(user), run(user, iteration), teardown(user) })`; the functions get `this`, an object of the user's own. The file is
+thresholds })` and one or more `scenario(name, { users, rampUp, duration, iterations, think, pause, newSession, rate,
+stages, setup(user), run(user, iteration), teardown(user) })`; the functions get `this`, an object of the user's own. The file is
 evaluated once to read the plan (the given `params` resolved over the defaults, of the defaults' types, into `params`),
 and once in each user's engine, so its constants and helpers work in every scenario. A request at its top level throws
 "a load script makes no request at its top level". Every scenario starts together, each with its own ramp and users
 numbered from 0. With `scenarios` (`{ name: settings }`, or `[names]`), only those named run, with their settings over
 the script's (null unsets one), and a name the script does not have is refused. `users`, `iterations`, `duration`,
-`rampUp`, `think` and `pause` beside `script` apply to every scenario; a `duration` given alone replaces the script's
-`iterations`, and `iterations` alone its `duration`. A secret param is left out of the result.
+`rampUp`, `think`, `pause`, `rate` and `stages` beside `script` apply to every scenario; a `duration` given alone
+replaces the script's `iterations`, and `iterations` alone its `duration`; a `rate` replaces the script's stages of
+users, stages of users its `rate`, and `stages` alone its `duration` and `iterations`. A secret param is left out of the result.
 
 `moqui test-load <component> --script Name` runs a load script from the command line, with a progress line, Ctrl-C,
 and the result in `runtime/tmp/test-load/<run>/result.json` (`moqui help test-load`).
@@ -569,8 +572,9 @@ The result:
 | `errorRate`, `rps` | Errors per attempt (each request, and each error that was not a request's, such as a throw or `fail()`), so at most 1; and requests per second. `errors` is every error |
 | `latency` | `min`, `mean`, `p50`, `p90`, `p95`, `p99`, `max` in milliseconds, over every request |
 | `names` | For each name, the `latency` fields with `kind` (`http`, `raw`, `step`), `count`, `errors`, `outcomes` (`{ "200": 804 }`, `ok`, `error`), for HTTP `statuses` (`"0"` for a transport error), and `bins` of `count`, `errors` and `mean` every `binSeconds` (10 to start) |
-| `scenarios` | For each scenario, its `users`, `iterations` and `errors` |
-| `bins`, `binSeconds` | The time series: a bin a second from the start with `t`, `users` (active), `requests`, `errors`, `mean`, `p50`, `p95`, `p99`, `max`. Past 7,200 bins neighbours merge and the length doubles; a merged bin's percentiles are the mean of its two, weighted by requests |
+| `scenarios` | For each scenario, its `users` (those started), `iterations` and `errors`, and for a rate scenario `dropped` |
+| `dropped` | The scheduled starts dropped, over every rate scenario |
+| `bins`, `binSeconds` | The time series: a bin a second from the start with `t`, `users` (active), `requests`, `errors`, `dropped` (the starts scheduled in that second and dropped), `mean`, `p50`, `p95`, `p99`, `max`. Past 7,200 bins neighbours merge and the length doubles; a merged bin's percentiles are the mean of its two, weighted by requests |
 | `thresholds`, `passed` | Each limit with `name`, `metric`, `limit`, `value` and `passed`; `passed` is false when one is broken (a name with no samples breaks its limits) |
 | `generator` | `where` (`same-machine` for the client), `cores`, `cpu` (the process's CPU share over the run, on Linux) and `scriptShare` (the users' time not spent waiting on a request or a pause): high values mean the numbers are the generator's |
 | `run` | `script`, `scenarios` (the settings used), `params`, `target`, `label`, `start`, `end`, `status` (`completed`, `stopped`), `stopReason` (`stop`, `stop-now`, `timeout`, or null) |
@@ -611,8 +615,28 @@ in `results` and `"thread <i>: <message>"` in `errors`. `timeout` is 120 s by de
 simultaneous logins.
 
 A user's thread and engine start in about 7 ms and take about 1 MB, so a few hundred users per process is the scale;
-beyond that, run several client processes. It is a closed model: each user waits for its answer before the next
-request.
+beyond that, run several client processes. Without `rate` it is a closed model: each user waits for its answer before
+the next request.
+
+**Stages.** `stages: [{ duration, users }]` ramps the target users linearly within each stage, from the stage before's
+target (the first from 0), and holds the last stage's until `duration` when that is longer. User `u` (from 0) may start
+an iteration while `u < floor(target)`; a user above the target finishes its iteration and waits, untimed and not
+counted in the active users, and users start as the target reaches them, up to `users` (by default the largest
+stage's). `rampUp` is not used with stages: the first stage is the ramp.
+
+**An arrival rate.** With `rate` (or `stages: [{ duration, rate }]`, ramped the same way) iterations are started on a
+schedule rather than by users looping: the `k`-th start (from 0) is where the rate's integral from the start reaches
+`k`, `k / rate` for a constant rate. A free user takes the next start once it is due. A start is **dropped** when no
+user has taken it by the time of the start after it (one interval late), or 25 ms after its own time if that is later,
+and when the scenario ends (its duration or a stop) with it due and not taken; a dropped start is not run. A request's
+time is still from its send, but the first `step` an iteration begins is timed from the iteration's scheduled start, and
+each iteration is also a sample `<scenario> iteration` (kind `step`) timed from it (pauses left out of both), so the
+wait for a free user while a server stalls shows in those times rather than being hidden (coordinated omission).
+`think` still waits after an iteration before the user is free again.
+
+A running load's target can be changed: a server run's page calls `update#LoadRunUsers` (`runId`, `scenario`, and
+`users` or `rate`), which holds the new users (a closed scenario's target, or a rate scenario's most at once) or rate
+from then on in place of the rest of the stages, within `load_runner_max_users`.
 
 **Tarpits.** A load against a server with the demo data is answered 429 by its tarpits: the demo `ALL_SCREENS` tarpit
 (120 hits in 60 s) is on `ALL_USERS`, which every user is in, and every matching tarpit applies, so a row of the load

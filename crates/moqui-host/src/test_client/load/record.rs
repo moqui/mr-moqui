@@ -51,6 +51,10 @@ pub(crate) struct ScenarioCounts {
     pub(crate) users: u64,
     pub(crate) iterations: u64,
     pub(crate) errors: u64,
+    /// A rate scenario, whose result has `dropped`.
+    pub(crate) rate: bool,
+    /// Its scheduled starts that no user took in time ([`super::schedule`]).
+    pub(crate) dropped: u64,
 }
 
 /// What a load's users merged so far.
@@ -163,6 +167,14 @@ pub(crate) struct Recorder {
     pub(crate) steps: Vec<(Instant, Duration)>,
     /// Every pause this user waited, timed or not: a step's time leaves them out.
     pub(crate) paused: Duration,
+    /// The user waits for the schedule (above a closed scenario's target, or for a rate's next start): not active.
+    parked: bool,
+    /// In a rate scenario, the current iteration's scheduled start and [`Recorder::paused`] then: the first step it
+    /// begins is timed from there, and so is its `<scenario> iteration` sample.
+    pub(crate) scheduled: Option<(Instant, Duration)>,
+    pub(crate) iteration_start: Option<(Instant, Duration)>,
+    /// The current iteration had an error.
+    pub(crate) failed: bool,
     /// The second of the oldest sample not merged yet, `u64::MAX` for none: the load keeps that second open.
     hold: Arc<AtomicU64>,
     pending: Vec<Pending>,
@@ -189,6 +201,10 @@ impl Recorder {
             counted: None,
             steps: Vec::new(),
             paused: Duration::ZERO,
+            parked: false,
+            scheduled: None,
+            iteration_start: None,
+            failed: false,
             hold,
             pending: Vec::new(),
             iterations: 0,
@@ -211,8 +227,29 @@ impl Recorder {
             self.load.active.fetch_add(1, Ordering::Relaxed);
         } else {
             self.ended = Some(Instant::now());
+            if !std::mem::take(&mut self.parked) {
+                self.load.active.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// The user waits for its schedule, and is not counted active meanwhile.
+    pub(crate) fn park(&mut self) {
+        if self.timed && !self.parked {
+            self.parked = true;
             self.load.active.fetch_sub(1, Ordering::Relaxed);
         }
+    }
+
+    /// The user starts an iteration, scheduled at `scheduled` in a rate scenario.
+    pub(crate) fn begin_iteration(&mut self, scheduled: Option<Instant>) {
+        if std::mem::take(&mut self.parked) {
+            self.load.active.fetch_add(1, Ordering::Relaxed);
+        }
+        self.failed = false;
+        let started = scheduled.map(|at| (at.min(Instant::now()), self.paused));
+        self.scheduled = started;
+        self.iteration_start = started;
     }
 
     pub(crate) fn push(&mut self, pending: Pending) {
@@ -225,6 +262,7 @@ impl Recorder {
 
     pub(crate) fn count_error(&mut self) {
         self.errors += 1;
+        self.failed = true;
     }
 
     pub(crate) fn count_iteration(&mut self) {

@@ -20,7 +20,10 @@
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "test-client"))]
 
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use moqui_host::test_client::{parse_client_args, run};
 
@@ -39,6 +42,27 @@ fn run_client(args: &[&str]) -> (String, Result<(), String>) {
     (lines.join("\n"), result)
 }
 
+/// A server that answers every request with `ok` after 130 ms, on a thread for each connection, for Load.spec.js's
+/// arrival rate; its URL. It lives as long as the test's process.
+fn slow_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            std::thread::spawn(move || {
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).is_ok_and(|n| n == 1) {
+                    head.push(byte[0]);
+                }
+                std::thread::sleep(Duration::from_millis(130));
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+            });
+        }
+    });
+    url
+}
+
 #[test]
 fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
     if !crate::common::own_process() {
@@ -51,12 +75,15 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
     let junit = out.join("junit");
     let files = out.join("files");
     let specs = fixture_component().join("test/client");
+    let slow = format!("slowServer={}", slow_server());
     let (text, result) = run_client(&[
         specs.to_str().unwrap(),
         "--server",
         &server,
         "--param",
         "greeting=hello",
+        "--param",
+        &slow,
         "--junit",
         junit.to_str().unwrap(),
         "--out",
@@ -127,6 +154,12 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
         lines
             .iter()
             .any(|line| line.starts_with("Load > parallel threads log in on sessions of their own  PASSED")),
+        "{text}"
+    );
+    assert!(
+        lines.iter().any(|line| line.starts_with(
+            "Load > under a rate, the wait for a free user is in the step's time, not the request's  PASSED"
+        )),
         "{text}"
     );
     let json =

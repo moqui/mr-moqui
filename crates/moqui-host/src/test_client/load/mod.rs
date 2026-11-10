@@ -21,10 +21,16 @@
 //! for a load the [`record::Recorder`] its samples are kept in. The recorder merges into the load's shared state at
 //! most once a second and when it is dropped, at `thread.end` or when the thread exits, so a user whose engine is
 //! stopped still counts.
+//!
+//! Each scenario has a [`schedule::Schedule`] (L6): before each iteration a user asks it (`load.next`) whether it may
+//! start one. A plain closed scenario always may; a staged one only while the user is under the target, and a rate
+//! scenario's user takes the next scheduled start. The load's thread adds users as a schedule wants them
+//! ([`Running::wait`]), and [`Load::set_target`] changes a scenario's users or rate while it runs.
 
 mod bins;
 mod pace;
 mod record;
+mod schedule;
 pub(crate) mod script;
 mod stats;
 
@@ -41,6 +47,8 @@ use serde_json::{json, Map, Value};
 
 pub(crate) use pace::{seconds, Pause};
 use record::{Pending, Recorder, ScenarioCounts, Shared};
+pub(crate) use schedule::Target;
+use schedule::{Schedule, Take};
 pub(crate) use script::{LoadScript, ScenarioSettings};
 pub(crate) use stats::{grouped, table, table_ms};
 
@@ -96,9 +104,15 @@ pub(crate) struct Load {
     pub(crate) active: AtomicU64,
     /// The error samples taken, so that an error past the first few takes no lock for its sample.
     error_samples: AtomicUsize,
-    users: u64,
+    /// The users started so far.
+    users: AtomicU64,
     /// Each user's oldest second not merged yet ([`record::Recorder`]): a second stays open while one holds it.
     pub(crate) holds: Mutex<Vec<Arc<AtomicU64>>>,
+    /// Each scenario's name and schedule, by index.
+    names: Vec<String>,
+    schedules: Vec<Mutex<Schedule>>,
+    /// Microseconds from the start to the first stop, plus one; 0 before any stop.
+    stopped_at: AtomicU64,
 }
 
 /// The loads running in this process, by id, for their users' `thread.begin`.
@@ -113,7 +127,8 @@ impl Load {
                 .iter()
                 .map(|scenario| ScenarioCounts {
                     name: scenario.name.clone(),
-                    users: scenario.users,
+                    users: scenario.initial_users(),
+                    rate: scenario.is_rate(),
                     ..ScenarioCounts::default()
                 })
                 .collect(),
@@ -127,8 +142,14 @@ impl Load {
             stop: AtomicU8::new(RUNNING),
             active: AtomicU64::new(0),
             error_samples: AtomicUsize::new(0),
-            users: scenarios.iter().map(|scenario| scenario.users).sum(),
+            users: AtomicU64::new(scenarios.iter().map(ScenarioSettings::initial_users).sum()),
             holds: Mutex::new(Vec::new()),
+            names: scenarios.iter().map(|scenario| scenario.name.clone()).collect(),
+            schedules: scenarios
+                .iter()
+                .map(|scenario| Mutex::new(scenario.schedule()))
+                .collect(),
+            stopped_at: AtomicU64::new(0),
         });
         lock(&LOADS).insert(load.id, Arc::clone(&load));
         load
@@ -149,7 +170,116 @@ impl Load {
     }
 
     pub(crate) fn users(&self) -> u64 {
-        self.users
+        self.users.load(Ordering::Relaxed)
+    }
+
+    /// A user of scenario `index` started past those it began with.
+    fn add_user(&self, index: usize) {
+        self.users.fetch_add(1, Ordering::Relaxed);
+        if let Some(counts) = lock(&self.shared).scenarios.get_mut(index) {
+            counts.users += 1;
+        }
+    }
+
+    /// Seconds from the start, the schedules' clock: at most the time of the first stop, after which no start is due.
+    fn schedule_now(&self) -> f64 {
+        let now = self.started.elapsed().as_secs_f64();
+        match self.stopped_at.load(Ordering::Relaxed) {
+            0 => now,
+            at => now.min((at - 1) as f64 / 1_000_000.0),
+        }
+    }
+
+    fn note_stop(&self) {
+        let micros = u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX - 1);
+        let _ = self
+            .stopped_at
+            .compare_exchange(0, micros + 1, Ordering::Relaxed, Ordering::Relaxed);
+    }
+
+    /// The most users at once of every scenario, with scenario `scenario` set to `target`.
+    ///
+    /// # Errors
+    ///
+    /// When the load has no scenario of that name.
+    pub(crate) fn total_users_with(&self, scenario: &str, target: &Target) -> Result<u64, String> {
+        let index = self.scenario_index(scenario)?;
+        let total = self
+            .schedules
+            .iter()
+            .enumerate()
+            .map(|(at, schedule)| match target {
+                Target::Users(users) if at == index => *users,
+                _ => lock(schedule).cap(),
+            })
+            .sum();
+        Ok(total)
+    }
+
+    fn scenario_index(&self, scenario: &str) -> Result<usize, String> {
+        self.names
+            .iter()
+            .position(|name| name == scenario)
+            .ok_or_else(|| format!("the load has no scenario {scenario} (it has {})", self.names.join(", ")))
+    }
+
+    /// From now on scenario `scenario` runs `target`: users (a closed scenario's target, or a rate scenario's most at
+    /// once) or a rate, in place of the rest of its stages. Users above a lower target finish their iteration and
+    /// wait; the load's thread starts users for a higher one.
+    ///
+    /// # Errors
+    ///
+    /// When the load is stopping, has no such scenario, the target is out of range or more than [`MAX_USERS`] in all,
+    /// or a rate is given to a closed scenario.
+    pub(crate) fn set_target(&self, scenario: &str, target: Target) -> Result<(), String> {
+        if self.stop_state() != RUNNING {
+            return Err("the load is stopping".to_string());
+        }
+        let index = self.scenario_index(scenario)?;
+        match target {
+            Target::Users(users) if users > MAX_USERS => {
+                return Err(format!("users is at most {MAX_USERS}, not {users}"));
+            }
+            Target::Rate(rate) if !(0.0..=schedule::MAX_RATE).contains(&rate) => {
+                return Err(format!(
+                    "rate is iterations a second, from 0 to {}, not {rate}",
+                    schedule::MAX_RATE
+                ));
+            }
+            _ => {}
+        }
+        let total = self.total_users_with(scenario, &target)?;
+        if total > MAX_USERS {
+            return Err(format!("load: {total} users is more than {MAX_USERS}"));
+        }
+        let now = self.schedule_now();
+        let mut schedule = lock(&self.schedules[index]);
+        if schedule.is_rate() && target == Target::Users(0) {
+            return Err(format!("scenario {scenario} runs at a rate: its users are at least 1"));
+        }
+        schedule
+            .set_target(now, target)
+            .map_err(|err| format!("scenario {scenario}: {err}"))
+    }
+
+    /// Each scenario's target now: `{ users }` for a closed one, `{ users, rate }` for a rate one (users the most at
+    /// once).
+    fn targets(&self) -> Value {
+        let now = self.schedule_now();
+        let targets: Map<String, Value> = self
+            .names
+            .iter()
+            .zip(&self.schedules)
+            .map(|(name, schedule)| {
+                let schedule = lock(schedule);
+                let target = match schedule.target(now) {
+                    Target::Users(users) => json!({ "users": users }),
+                    Target::Rate(rate) => json!({ "users": schedule.cap(), "rate": (rate * 1000.0).round() / 1000.0 }),
+                };
+                (name.clone(), target)
+            })
+            .collect();
+        Value::Object(targets)
     }
 
     pub(crate) fn active_users(&self) -> u64 {
@@ -158,15 +288,18 @@ impl Load {
 
     /// Each user ends after its current iteration (and its teardown runs).
     pub(crate) fn stop_after_iteration(&self) {
+        self.note_stop();
         self.stop.fetch_max(AFTER_ITERATION, Ordering::Relaxed);
     }
 
     /// Each user ends before its next request: a request then throws, and is not counted as an error.
     pub(crate) fn stop_now(&self) {
+        self.note_stop();
         self.stop.fetch_max(NOW, Ordering::Relaxed);
     }
 
     fn stop_timed_out(&self) {
+        self.note_stop();
         self.stop.fetch_max(TIMED_OUT, Ordering::Relaxed);
     }
 
@@ -199,8 +332,30 @@ impl Load {
         self.tick_at(self.started.elapsed().as_secs());
     }
 
-    /// [`Load::tick`] at `second` from the start. A second a user still holds samples of stays open.
+    /// [`Load::tick`] at `second` from the start. A second a user still holds samples of stays open. The starts the
+    /// schedules dropped go into the bins of their scheduled seconds.
     pub(crate) fn tick_at(&self, second: u64) {
+        let now = self.schedule_now();
+        let mut drops = Vec::new();
+        for (index, schedule) in self.schedules.iter().enumerate() {
+            let mut schedule = lock(schedule);
+            schedule.drop_overdue(now);
+            let dropped = schedule.take_drops();
+            if !dropped.is_empty() {
+                drops.push((index, dropped));
+            }
+        }
+        if !drops.is_empty() {
+            let mut shared = lock(&self.shared);
+            for (index, times) in drops {
+                for at in &times {
+                    shared.bins.add_dropped(*at as u64);
+                }
+                if let Some(counts) = shared.scenarios.get_mut(index) {
+                    counts.dropped += times.len() as u64;
+                }
+            }
+        }
         let active = self.active_users();
         let held = lock(&self.holds)
             .iter()
@@ -218,8 +373,15 @@ impl Load {
     /// name, the bins thinned to at most 300 points, and the active users. Readable at any time.
     pub(crate) fn snapshot(&self) -> Value {
         self.tick();
+        let targets = self.targets();
         let shared = lock(&self.shared);
-        let mut out = stats::summary(&shared, self.users, self.started.elapsed(), Some(Instant::now()), false);
+        let mut out = stats::summary(
+            &shared,
+            self.users(),
+            self.started.elapsed(),
+            Some(Instant::now()),
+            false,
+        );
         let (bins, seconds) = shared.bins.to_json(Some(bins::SNAPSHOT_POINTS));
         out.insert("bins".into(), Value::Array(bins));
         out.insert("binSeconds".into(), json!(seconds));
@@ -227,7 +389,17 @@ impl Load {
         out.insert("elapsed".into(), json!(self.started.elapsed().as_secs_f64()));
         out.insert("stopping".into(), json!(self.stopping()));
         out.insert("start".into(), json!(self.started_at.to_string()));
+        out.insert("targets".into(), targets);
         Value::Object(out)
+    }
+
+    /// Every rate scenario's starts due before the end (now, or the first stop) that no user took are dropped.
+    fn settle(&self) {
+        let until = self.schedule_now();
+        for schedule in &self.schedules {
+            lock(schedule).settle(until);
+        }
+        self.tick();
     }
 }
 
@@ -319,15 +491,70 @@ pub(crate) fn scenario_error(message: &str, iteration: u64) -> bool {
     .unwrap_or(false)
 }
 
-/// `load.iterated`: an iteration ended. Answers whether the load asks its users to stop.
+/// `load.iterated`: an iteration ended. In a rate scenario its whole time from its scheduled start, without its
+/// pauses, is a sample `<scenario> iteration` of kind `step`. Answers whether the load asks its users to stop.
 pub(crate) fn iterated(iteration: u64) -> bool {
-    with_recorder(|recorder| {
+    let Some((stop, timed)) = with_recorder(|recorder| {
         recorder.iteration = iteration;
         recorder.counted = None;
+        let timed = recorder.iteration_start.take().map(|(started, paused)| {
+            let elapsed = started.elapsed().saturating_sub(recorder.paused.saturating_sub(paused));
+            let name = recorder.load.names.get(recorder.scenario).cloned().unwrap_or_default();
+            (format!("{name} iteration"), elapsed, recorder.failed)
+        });
         recorder.count_iteration();
-        recorder.load.stop_state() != RUNNING
-    })
-    .unwrap_or(false)
+        (recorder.load.stop_state() != RUNNING, timed)
+    }) else {
+        return false;
+    };
+    if let Some((name, elapsed, failed)) = timed {
+        let sample = Sample {
+            kind: Kind::Step,
+            outcome: if failed { "error" } else { "ok" },
+            status: None,
+            elapsed,
+            error: failed.then(|| "the iteration had an error".to_string()),
+        };
+        let _ = record(|| name, sample);
+    }
+    stop
+}
+
+/// `load.next`: may this user start its next iteration? Waits, untimed and not counted active, while its scenario's
+/// schedule holds it (above a closed scenario's target, or until a rate's next start is due); false when the load
+/// stops, or the schedule has no more for it.
+pub(crate) fn next_iteration() -> bool {
+    let Some((load, scenario, user)) =
+        with_recorder(|recorder| (Arc::clone(&recorder.load), recorder.scenario, recorder.user))
+    else {
+        return true;
+    };
+    let Some(schedule) = load.schedules.get(scenario) else {
+        return true;
+    };
+    loop {
+        if load.stop_state() != RUNNING {
+            return false;
+        }
+        let now = load.started.elapsed().as_secs_f64();
+        let take = lock(schedule).take(user, now);
+        match take {
+            Take::Go { scheduled } => {
+                let scheduled = scheduled.map(|at| load.started + pace::seconds(at));
+                with_recorder(|recorder| recorder.begin_iteration(scheduled));
+                return true;
+            }
+            Take::Done => return false,
+            Take::Wait(until) => {
+                let wait = pace::seconds((until - now).clamp(0.0, schedule::POLL));
+                with_recorder(|recorder| {
+                    recorder.park();
+                    recorder.merge_when_due(wait);
+                });
+                pace::sleep(wait, None, &|| load.stop_state() != RUNNING);
+            }
+        }
+    }
 }
 
 fn scenario_name(recorder: &Recorder) -> Option<String> {
@@ -419,9 +646,14 @@ pub(crate) fn ramp(until: Instant) -> bool {
     stopped()
 }
 
-/// `step.begin`: a step starts.
+/// `step.begin`: a step starts. The first step of a rate scenario's iteration starts at the iteration's scheduled
+/// start, so that the wait for a free user is in its time (coordinated omission).
 pub(crate) fn step_begin() {
-    with_recorder(|recorder| recorder.steps.push((Instant::now(), recorder.paused)));
+    with_recorder(|recorder| {
+        let scheduled = recorder.scheduled.take().filter(|_| recorder.steps.is_empty());
+        let begun = scheduled.unwrap_or_else(|| (Instant::now(), recorder.paused));
+        recorder.steps.push(begun);
+    });
 }
 
 /// `step.end`: the step that began last ends, an error with `error` when its function threw. Its sample is kind
@@ -574,6 +806,7 @@ pub(crate) fn host_call(name: &str, args: &Value) -> Option<Result<Value, String
             Ok(json!({ "stop": stop }))
         }
         "load.iterated" => Ok(json!({ "stop": iterated(field("iteration").as_u64().unwrap_or(0)) })),
+        "load.next" => Ok(json!({ "go": next_iteration() })),
         "load.pause" => Pause::parse(field("pause"), "pause").map(|parsed| {
             if let Some(parsed) = parsed {
                 pause(&parsed, field("until").as_f64().map(instant_of_epoch_ms));
@@ -615,28 +848,32 @@ pub(crate) fn file_part(name: &str) -> String {
 
 type Handle = JoinHandle<Result<String, String>>;
 
+/// What [`join_all`] calls every 10 ms: it may add threads, and answers whether more may come.
+type Poll<'a> = dyn FnMut(&mut Vec<(u64, Handle)>) -> bool + 'a;
+
 /// Wait for `running` threads until `timeout`, calling `poll` every 10 ms; then `on_timeout`, and 10 seconds more.
+/// `poll` may add threads to wait for, and answers whether more may come, so that the wait goes on with none running.
 /// Each thread's answer by its index, or why it has none.
 pub(crate) fn join_all(
     mut running: Vec<(u64, Handle)>,
     timeout: Duration,
     on_timeout: &dyn Fn(),
-    poll: &dyn Fn(),
+    poll: &mut Poll<'_>,
 ) -> Vec<(u64, Result<String, String>)> {
     let deadline = Instant::now() + timeout;
     let mut stopping = false;
     let mut out = Vec::new();
-    while !running.is_empty() {
+    loop {
         let (done, left): (Vec<_>, Vec<_>) = running.into_iter().partition(|(_, handle)| handle.is_finished());
         running = left;
         for (index, handle) in done {
             let answer = handle.join().unwrap_or_else(|_| Err("the thread panicked".to_string()));
             out.push((index, answer));
         }
-        if running.is_empty() {
+        let more = poll(&mut running);
+        if running.is_empty() && !more {
             break;
         }
-        poll();
         let now = Instant::now();
         if now >= deadline && !stopping {
             stopping = true;
@@ -707,10 +944,18 @@ pub(crate) struct Running {
     cpu: Option<Duration>,
     stop_after: Option<Duration>,
     stop_now_after: Option<Duration>,
+    /// What a user is started with, for those the schedules add while the load runs.
+    host: Arc<dyn SpecHost>,
+    source: Source,
+    around: Option<Around>,
+    /// The load's start, in milliseconds since the Unix epoch.
+    start_ms: f64,
+    /// The users started of each scenario.
+    threads: Vec<u64>,
 }
 
 /// Start the users of every scenario of `start` together, each scenario with its own ramp and its users numbered
-/// from 0, and answer at once.
+/// from 0, and answer at once. A staged scenario's users start as its stages reach them ([`Running::wait`]).
 ///
 /// # Errors
 ///
@@ -740,9 +985,6 @@ pub(crate) fn start(host: &Arc<dyn SpecHost>, start: Start) -> Result<Running, S
         .unwrap_or_else(|| scenarios.iter().map(ScenarioSettings::timeout).fold(0.0, f64::max));
     let load = Load::new(&scenarios);
     let cpu = stats::process_cpu();
-    let start_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |since| since.as_secs_f64() * 1000.0);
     let mut running = Running {
         load: Arc::clone(&load),
         handles: Vec::new(),
@@ -756,55 +998,114 @@ pub(crate) fn start(host: &Arc<dyn SpecHost>, start: Start) -> Result<Running, S
         cpu,
         stop_after,
         stop_now_after,
+        host: Arc::clone(host),
+        source,
+        around,
+        start_ms: epoch_ms(),
+        threads: vec![0; scenarios.len()],
     };
     for (index, scenario) in scenarios.iter().enumerate() {
-        for user in 0..scenario.users {
-            let start_at = start_ms + scenario.ramp_up * 1000.0 * user as f64 / scenario.users as f64;
-            let mut spec = json!({
-                "load": load.id, "scenario": index, "scenarioName": scenario.name, "user": user, "startAt": start_at,
-                "endAt": scenario.duration.map(|seconds| start_ms + seconds * 1000.0),
-                "iterations": scenario.iterations, "think": scenario.think.as_ref().map(Pause::to_json),
-                "pause": scenario.pause.as_ref().map(Pause::to_json), "newSession": scenario.new_session,
-            });
-            let thread = match &source {
-                Source::Functions { source, args } => {
-                    spec["args"] = args.clone();
-                    ScriptThread {
-                        call: source.clone(),
-                        ..ScriptThread::default()
-                    }
-                }
-                Source::Script { script, params } => ScriptThread {
-                    before: script::begin_code(params, &Value::Null),
-                    file: Some(ScriptFile {
-                        display: script.display.clone(),
-                        source: script.source.clone(),
-                    }),
-                    call: "(spec) => __moquiThread.script(spec)".to_string(),
-                    ..ScriptThread::default()
-                },
-            };
-            let thread = ScriptThread {
-                name: format!("moqui-load-{index}-{user}"),
-                args_json: json!([spec]).to_string(),
-                after: script::CLOSE_CODE.to_string(),
-                around: around.as_ref().map(|around| around()),
-                ..thread
-            };
-            let at = running.users.len() as u64;
-            running.users.push((index, user));
-            match run_script_on_thread(Arc::clone(host), thread) {
-                Ok(handle) => running.handles.push((at, handle)),
-                Err(err) => running.failed.push((at, format!("the thread did not start: {err}"))),
+        for _ in 0..scenario.initial_users() {
+            if let Some(handle) = running.spawn(index) {
+                running.handles.push(handle);
             }
         }
     }
     Ok(running)
 }
 
+/// Now, in milliseconds since the Unix epoch.
+fn epoch_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64() * 1000.0)
+}
+
 impl Running {
     pub(crate) fn load(&self) -> &Arc<Load> {
         &self.load
+    }
+
+    /// Start the next user of scenario `index`: a plain scenario's along its ramp, any other at once. Its handle, or
+    /// none when its thread did not start (counted in `failed`).
+    fn spawn(&mut self, index: usize) -> Option<(u64, Handle)> {
+        let scenario = &self.scenarios[index];
+        let user = self.threads[index];
+        self.threads[index] += 1;
+        let start_at = if scenario.is_plain() {
+            self.start_ms + scenario.ramp_up * 1000.0 * user as f64 / scenario.users as f64
+        } else {
+            epoch_ms()
+        };
+        // a rate scenario's iterations are its starts in all, which its schedule counts, not each user
+        let iterations = if scenario.is_rate() { None } else { scenario.iterations };
+        let mut spec = json!({
+            "load": self.load.id, "scenario": index, "scenarioName": scenario.name, "user": user, "startAt": start_at,
+            "endAt": scenario.duration.map(|seconds| self.start_ms + seconds * 1000.0),
+            "iterations": iterations, "think": scenario.think.as_ref().map(Pause::to_json),
+            "pause": scenario.pause.as_ref().map(Pause::to_json), "newSession": scenario.new_session,
+        });
+        let thread = match &self.source {
+            Source::Functions { source, args } => {
+                spec["args"] = args.clone();
+                ScriptThread {
+                    call: source.clone(),
+                    ..ScriptThread::default()
+                }
+            }
+            Source::Script { script, params } => ScriptThread {
+                before: script::begin_code(params, &Value::Null),
+                file: Some(ScriptFile {
+                    display: script.display.clone(),
+                    source: script.source.clone(),
+                }),
+                call: "(spec) => __moquiThread.script(spec)".to_string(),
+                ..ScriptThread::default()
+            },
+        };
+        let thread = ScriptThread {
+            name: format!("moqui-load-{index}-{user}"),
+            args_json: json!([spec]).to_string(),
+            after: script::CLOSE_CODE.to_string(),
+            around: self.around.as_ref().map(|around| around()),
+            ..thread
+        };
+        let at = self.users.len() as u64;
+        self.users.push((index, user));
+        match run_script_on_thread(Arc::clone(&self.host), thread) {
+            Ok(handle) => Some((at, handle)),
+            Err(err) => {
+                self.failed.push((at, format!("the thread did not start: {err}")));
+                None
+            }
+        }
+    }
+
+    /// Start the users the schedules want now, up to [`MAX_USERS`] in all, into `running`. Answers whether a
+    /// schedule may want more later, so that the load goes on with no user running.
+    fn grow(&mut self, running: &mut Vec<(u64, Handle)>) -> bool {
+        if self.load.stop_state() != RUNNING {
+            return false;
+        }
+        let now = self.load.schedule_now();
+        let mut more = false;
+        for index in 0..self.scenarios.len() {
+            let (wanted, may) = {
+                let schedule = lock(&self.load.schedules[index]);
+                (
+                    schedule.threads_wanted(now),
+                    schedule.may_want_more(now, self.threads[index]),
+                )
+            };
+            while self.threads[index] < wanted && self.load.users() < MAX_USERS {
+                self.load.add_user(index);
+                if let Some(handle) = self.spawn(index) {
+                    running.push(handle);
+                }
+            }
+            more |= may;
+        }
+        more
     }
 
     /// Wait for the users, telling them to stop at the timeout, and answer the result (section 5) with the names in
@@ -813,7 +1114,8 @@ impl Running {
         let handles = std::mem::take(&mut self.handles);
         let load = Arc::clone(&self.load);
         let (stop_after, stop_now_after) = (self.stop_after, self.stop_now_after);
-        let poll = || {
+        let timeout = self.timeout;
+        let mut poll = |running: &mut Vec<(u64, Handle)>| {
             let elapsed = load.started.elapsed();
             if stop_after.is_some_and(|after| elapsed >= after) {
                 load.stop_after_iteration();
@@ -822,8 +1124,10 @@ impl Running {
                 load.stop_now();
             }
             load.tick();
+            self.grow(running)
         };
-        let answers = join_all(handles, self.timeout, &|| load.stop_timed_out(), &poll);
+        let answers = join_all(handles, timeout, &|| load.stop_timed_out(), &mut poll);
+        load.settle();
         let elapsed = load.started.elapsed();
         let mut shared = lock(&load.shared);
         let failed = std::mem::take(&mut self.failed);
@@ -859,7 +1163,7 @@ impl Running {
         );
         run.insert("stopReason".into(), json!(reason));
         let parts = stats::Parts {
-            users: load.users,
+            users: load.users(),
             wall: elapsed,
             thresholds: &self.thresholds,
             generator: self.generator,
