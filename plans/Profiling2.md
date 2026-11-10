@@ -61,7 +61,7 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
 | `service_speed` | `Tools/Database/SpeedTest.xml`'s calls; `echo#Data` is the held script call | |
 | `data_load_speed` | XML, CSV, JSON, nested records, the seed data | |
 | `xml_speed`, `definition_speed` | MNode over the 784 runtime XML files; entity, service and screen definitions (no database) | |
-| `js_speed` | expressions, scripts, actions, services, templates, screens, a new thread's first script | `JS_SPEED_ONLY`, `JS_SPEED_ROW`, `JS_SPEED_CALLS`, `JS_SPEED_BATCHES`, `JS_SPEED_DUMP`, `JS_SPEED_PEEK` (`--features embedded-postgres`) |
+| `js_speed` | expressions, scripts, actions, services (with Profiling3 M3's `body#Large`, `call#Context`, `loop#Calls`), templates, screens, a new thread's first script; `JS_SPEED_ONLY=threads` the M4 thread rows | `JS_SPEED_ONLY`, `JS_SPEED_ROW`, `JS_SPEED_CALLS`, `JS_SPEED_BATCHES`, `JS_SPEED_DUMP`, `JS_SPEED_PEEK`, `JS_SPEED_THREADS` (`--features embedded-postgres`; `ic-stats` adds the inline-cache report after each section) |
 | `startup_speed` | a start and a restart | `STARTUP_SPEED_COMPONENTS`, `STARTUP_SPEED_LOAD`, `STARTUP_SPEED_LOG` |
 | `tx_cache_speed` | rows S1 to S5, F1 and F3 to F5, N1 to N4, cache off against on; an `rt` column of waited round trips | `TX_CACHE_SPEED_ROW` |
 
@@ -85,7 +85,9 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
 - **The transaction cache:**
   - `MOQUI_TX_CACHE_STRICT=true` makes an early flush in a holding frame an error (TX D1).
   - `MOQUI_TX_CACHE_EVERYWHERE=true` makes every frame hold, for a census run.
-  - `MOQUI_TX_CACHE_CENSUS_FILE` writes a line per transaction, with `micros` since R26.
+  - `MOQUI_TX_CACHE_CENSUS_FILE` writes a line per transaction, with `micros` since R26, and since R54 its statements
+    by shape (`transaction/shapes.rs`): each shape's head, kind, count, waited round trips and rows, the waited
+    statements by kind, and `repeats`, `repeats_other_params` (a find in a loop) and `read_after_read`.
   - The Mantle operations are timed with `-Dentity_tx_cache=false` and `--db existing` against a template database
     (R26).
 - **The script engine:**
@@ -95,7 +97,10 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
 - **Screen renders** (R53):
   - `MOQUI_RENDER_PROFILE=<file>` on a server appends a JSON line per screen render: the total, and per phase (the
     URL, actions, units, each host method, their argument and result conversions, the flushes, the output) its count
-    and inclusive and exclusive time (`screen/profile.rs`). A unit's exclusive time is the interpreter between host
+    and inclusive and exclusive time (`telemetry/profile.rs`). `MOQUI_OP_PROFILE=<file>` does the same for each
+    outermost service call outside a render (R54, Profiling3 M1). Both lines also have the thread's CPU time
+    (`cpu_us`), its waited round trips, counts of bare-name and entity-field reads and writes, and the artifacts
+    pushed by type and action. A unit's exclusive time is the interpreter between host
     calls. Its clock reads add 5 to 15% to a render with many host calls; off, it is one static read a call.
   - The bench repository's `rounds/r53/`: `screen_bench.py` times screens over HTTP as john.doe (3 × 100, single
     threaded, `perf stat` of the server's instructions), `table.py` compares runs, `compare_bodies.py` diffs the
@@ -122,6 +127,9 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
   - No upstream issues or pull requests without asking.
   - **What goes in the fork** (the user, 2026-11-10): anything of high value to mr-moqui. Upstream taking a change
     is a plus and does not decide it ([Profiling3](Profiling3.md) §9 D4).
+  - **`tools/mantle-ops/`** (R54, Profiling3 M3) runs the eight mr-mantle specs with the operation profile and the
+    census shapes on, on the embedded Postgres or on `moqui-pg18`, and `table.py` gives each of the nine operations'
+    wall and CPU time, round trips by statement kind, and the shapes most waited for.
   - **`tools/mantle-pg/`** times the nine Mantle operations against `moqui-pg18` 200 µs away: `setup.sh`, `run.sh`,
     `table.py`, `teardown.sh`. It ran two engines in turn; it now runs one.
 - **Rules learned:**

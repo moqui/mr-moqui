@@ -86,4 +86,148 @@
             found = count
         ]]></script></actions>
     </service>
+    <!-- A body the size of a service at the 90th percentile (about 5 KB, plans/Profiling3.md M3): three sets run, the
+         rest is a branch not taken. -->
+    <service verb="body" noun="Large">
+        <in-parameters><parameter name="textIn1"/></in-parameters>
+        <out-parameters><parameter name="textOut1"/><parameter name="textOut2"/></out-parameters>
+        <actions>
+            <set field="textOut1" from="textIn1"/>
+            <set field="flag" from="textIn1 == 'never'"/>
+            <if condition="flag">
+                <set field="unused00" from="textIn1 + '-00'"/>
+                <set field="unused01" from="textIn1 + '-01'"/>
+                <set field="unused02" from="textIn1 + '-02'"/>
+                <set field="unused03" from="textIn1 + '-03'"/>
+                <set field="unused04" from="textIn1 + '-04'"/>
+                <set field="unused05" from="textIn1 + '-05'"/>
+                <if condition="unused05 == null"><return error="true" message="Unused value 05 is not set"/></if>
+                <set field="unused06" from="textIn1 + '-06'"/>
+                <set field="unused07" from="textIn1 + '-07'"/>
+                <set field="unused08" from="textIn1 + '-08'"/>
+                <set field="unused09" from="textIn1 + '-09'"/>
+                <set field="unused10" from="textIn1 + '-10'"/>
+                <set field="unused11" from="textIn1 + '-11'"/>
+                <if condition="unused11 == null"><return error="true" message="Unused value 11 is not set"/></if>
+                <set field="unused12" from="textIn1 + '-12'"/>
+                <set field="unused13" from="textIn1 + '-13'"/>
+                <set field="unused14" from="textIn1 + '-14'"/>
+                <set field="unused15" from="textIn1 + '-15'"/>
+                <set field="unused16" from="textIn1 + '-16'"/>
+                <set field="unused17" from="textIn1 + '-17'"/>
+                <if condition="unused17 == null"><return error="true" message="Unused value 17 is not set"/></if>
+                <set field="unused18" from="textIn1 + '-18'"/>
+                <set field="unused19" from="textIn1 + '-19'"/>
+                <set field="unused20" from="textIn1 + '-20'"/>
+                <set field="unused21" from="textIn1 + '-21'"/>
+                <set field="unused22" from="textIn1 + '-22'"/>
+                <set field="unused23" from="textIn1 + '-23'"/>
+                <if condition="unused23 == null"><return error="true" message="Unused value 23 is not set"/></if>
+                <set field="unused24" from="textIn1 + '-24'"/>
+                <set field="unused25" from="textIn1 + '-25'"/>
+                <set field="unused26" from="textIn1 + '-26'"/>
+                <set field="unused27" from="textIn1 + '-27'"/>
+                <set field="unused28" from="textIn1 + '-28'"/>
+                <set field="unused29" from="textIn1 + '-29'"/>
+                <if condition="unused29 == null"><return error="true" message="Unused value 29 is not set"/></if>
+                <set field="unused30" from="textIn1 + '-30'"/>
+                <set field="unused31" from="textIn1 + '-31'"/>
+                <set field="unused32" from="textIn1 + '-32'"/>
+                <set field="unused33" from="textIn1 + '-33'"/>
+                <set field="unused34" from="textIn1 + '-34'"/>
+                <set field="unused35" from="textIn1 + '-35'"/>
+                <if condition="unused35 == null"><return error="true" message="Unused value 35 is not set"/></if>
+                <set field="unused36" from="textIn1 + '-36'"/>
+                <set field="unused37" from="textIn1 + '-37'"/>
+                <set field="unused38" from="textIn1 + '-38'"/>
+                <set field="unused39" from="textIn1 + '-39'"/>
+                <set field="unused40" from="textIn1 + '-40'"/>
+                <set field="unused41" from="textIn1 + '-41'"/>
+                <if condition="unused41 == null"><return error="true" message="Unused value 41 is not set"/></if>
+                <set field="unused42" from="textIn1 + '-42'"/>
+                <set field="unused43" from="textIn1 + '-43'"/>
+                <set field="unused44" from="textIn1 + '-44'"/>
+                <set field="unused45" from="textIn1 + '-45'"/>
+                <set field="unused46" from="textIn1 + '-46'"/>
+                <set field="unused47" from="textIn1 + '-47'"/>
+                <if condition="unused47 == null"><return error="true" message="Unused value 47 is not set"/></if>
+                <set field="unused48" from="textIn1 + '-48'"/>
+                <set field="unused49" from="textIn1 + '-49'"/>
+                <set field="unused50" from="textIn1 + '-50'"/>
+                <set field="unused51" from="textIn1 + '-51'"/>
+                <set field="unused52" from="textIn1 + '-52'"/>
+                <set field="unused53" from="textIn1 + '-53'"/>
+                <if condition="unused53 == null"><return error="true" message="Unused value 53 is not set"/></if>
+                <set field="unused54" from="textIn1 + '-54'"/>
+                <set field="unused55" from="textIn1 + '-55'"/>
+                <set field="unused56" from="textIn1 + '-56'"/>
+                <set field="unused57" from="textIn1 + '-57'"/>
+                <set field="unused58" from="textIn1 + '-58'"/>
+                <set field="unused59" from="textIn1 + '-59'"/>
+                <if condition="unused59 == null"><return error="true" message="Unused value 59 is not set"/></if>
+            </if>
+            <set field="textOut2" from="textIn1 + '2'"/>
+        </actions>
+    </service>
+    <!-- A caller holding what a real one does (30 names and a 50-map list), calling with the context as the in-map
+         (plans/Profiling3.md M3, W2 and S5d). -->
+    <service verb="call" noun="Context">
+        <in-parameters><parameter name="textIn1"/></in-parameters>
+        <out-parameters><parameter name="textOut1"/></out-parameters>
+        <actions>
+            <set field="name00" value="value 00"/>
+            <set field="name01" value="value 01"/>
+            <set field="name02" value="value 02"/>
+            <set field="name03" value="value 03"/>
+            <set field="name04" value="value 04"/>
+            <set field="name05" value="value 05"/>
+            <set field="name06" value="value 06"/>
+            <set field="name07" value="value 07"/>
+            <set field="name08" value="value 08"/>
+            <set field="name09" value="value 09"/>
+            <set field="name10" value="value 10"/>
+            <set field="name11" value="value 11"/>
+            <set field="name12" value="value 12"/>
+            <set field="name13" value="value 13"/>
+            <set field="name14" value="value 14"/>
+            <set field="name15" value="value 15"/>
+            <set field="name16" value="value 16"/>
+            <set field="name17" value="value 17"/>
+            <set field="name18" value="value 18"/>
+            <set field="name19" value="value 19"/>
+            <set field="name20" value="value 20"/>
+            <set field="name21" value="value 21"/>
+            <set field="name22" value="value 22"/>
+            <set field="name23" value="value 23"/>
+            <set field="name24" value="value 24"/>
+            <set field="name25" value="value 25"/>
+            <set field="name26" value="value 26"/>
+            <set field="name27" value="value 27"/>
+            <set field="name28" value="value 28"/>
+            <set field="name29" value="value 29"/>
+            <script><![CDATA[
+                heldList = []
+                for (let i = 0; i < 50; i++) heldList.push({id: 'H' + i, qty: i % 5, name: 'Held ' + i})
+            ]]></script>
+            <iterate list="heldList" entry="held">
+                <if condition="held.qty == 0">
+                    <service-call name="jsspeed.JsSpeedServices.set#One" in-map="context" out-map="context"/>
+                </if>
+            </iterate>
+        </actions>
+    </service>
+    <!-- A service call in a loop: 20 calls with an explicit in-map (plans/Profiling3.md M3). -->
+    <service verb="loop" noun="Calls">
+        <in-parameters><parameter name="textIn1"/></in-parameters>
+        <out-parameters><parameter name="count" type="Integer"/></out-parameters>
+        <actions>
+            <set field="count" from="0" type="Integer"/>
+            <set field="loopItems" from="[]"/>
+            <script>for (let i = 0; i &lt; 20; i++) loopItems.push({id: 'L' + i})</script>
+            <iterate list="loopItems" entry="loopItem">
+                <service-call name="jsspeed.JsSpeedServices.set#One" in-map="{textIn1: loopItem.id}" out-map="called"/>
+                <if condition="called.textOut1"><set field="count" from="count + 1"/></if>
+            </iterate>
+        </actions>
+    </service>
 </services>
