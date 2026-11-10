@@ -559,8 +559,12 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
                 // made before the lend: the flush above, and the whole context an argument passes.
                 let passes_context =
                     (0..method.args.len()).any(|index| matches!(args.get(index), Some(Arg::WholeContext)));
-                let whole = if passes_context { Some(ops.whole_context()?) } else { None };
-                let mut lent = LentOps { whole };
+                // The tracked values are written back now; the body reads the context from the stack itself, the whole
+                // of it or only what it needs (a service call's declared in-parameters, plans/Profiling3.md W2).
+                if passes_context {
+                    ops.flush(FlushBefore::Keep)?;
+                }
+                let mut lent = LentOps { flushed: passes_context };
                 // A panic in the body's own code is caught inside the lend and thrown as an error. One that unwinds
                 // out of the lend came through the engine's frames (a nested script, whose trampoline resumed it
                 // marked): the runtime is poisoned, so it goes on to the embedder ([`EngineCall`]).
@@ -859,10 +863,10 @@ fn marked_error(scope: &mut impl Js, marked: &host::Thrown<'_>) -> JsResult<Obje
     Ok(error)
 }
 
-/// [`EngineOps`] of a body the engine is lent to (a method that is not [`Method::leaf`]): only the whole context the
-/// binder read before the lend.
+/// [`EngineOps`] of a body the engine is lent to (a method that is not [`Method::leaf`]): only the context, whose
+/// tracked values the binder wrote back before the lend when an argument passes it.
 struct LentOps {
-    whole: Option<moqui_lib::object::ValueMap>,
+    flushed: bool,
 }
 
 impl LentOps {
@@ -880,12 +884,19 @@ impl EngineOps for LentOps {
         Err(Self::refused())
     }
 
-    fn flush(&mut self, _mode: FlushBefore) -> Result<(), HostError> {
+    /// A keeping flush is the one the binder made before the lend; any other is refused.
+    fn flush(&mut self, mode: FlushBefore) -> Result<(), HostError> {
+        if self.flushed && mode == FlushBefore::Keep {
+            return Ok(());
+        }
         Err(Self::refused())
     }
 
     fn whole_context(&mut self) -> Result<moqui_lib::object::ValueMap, HostError> {
-        self.whole.take().ok_or_else(Self::refused)
+        if !self.flushed {
+            return Err(Self::refused());
+        }
+        Ok(crate::script::context_combined())
     }
 
     /// The units a render runs from the lent body run on this runtime, in the script that made the call.

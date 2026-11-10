@@ -221,11 +221,14 @@ fn use_transaction_cache(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// Add the entries of a map. `ec.context` is the whole context, read from the stack as `context` reads it.
 fn parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let entries = match call.arg(0) {
-        Arg::WholeContext => {
-            let mut visible = call.ops.whole_context()?;
-            visible.retain(|_, value| !matches!(value, Value::Bytes(_)));
-            visible
-        }
+        Arg::WholeContext => match declared_from_context(call)? {
+            Some(entries) => entries,
+            None => {
+                let mut visible = call.ops.whole_context()?;
+                visible.retain(|_, value| !matches!(value, Value::Bytes(_)));
+                visible
+            }
+        },
         // a plain object, or an entity value whose fields are the parameters
         _ => match crate::script::value_map(&call.value_or_null(0)) {
             Some(entries) => entries,
@@ -233,6 +236,47 @@ fn parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
         },
     };
     changed(call, |state| state.parameters.extend(entries))
+}
+
+/// The in-parameters of the named service read from the context, when they are all the call can use
+/// ([`crate::service::call::context_in_params`]); None when the whole context is needed.
+fn declared_from_context(call: &mut Call<'_>) -> Result<Option<moqui_lib::object::ValueMap>, HostError> {
+    let name = {
+        let builder = call.this::<Builder>()?;
+        let state = builder
+            .try_read()
+            .map_err(|_| HostError::message("the service call is running"))?;
+        // a multi call reads each row's `name_N`, which only the whole context has
+        if state.options.multi {
+            return Ok(None);
+        }
+        state.name.clone()
+    };
+    let Some(params) = crate::service::call::context_in_params(&name) else {
+        return Ok(None);
+    };
+    // the values the script holds are written back first, as the whole context's read does
+    if call.ops.flush(super::FlushBefore::Keep).is_err() {
+        return Ok(None);
+    }
+    let names = params
+        .iter()
+        .map(|param| param.name.as_str())
+        .filter(|name| !name.is_empty())
+        .chain(crate::service::call::CALL_INPUT_NAMES);
+    let mut entries = moqui_lib::object::ValueMap::default();
+    for name in names {
+        if entries.contains_key(name) {
+            continue;
+        }
+        match crate::script::context_value(name) {
+            Some(Value::Bytes(_)) | None => {}
+            Some(value) => {
+                entries.insert(name.to_string(), value);
+            }
+        }
+    }
+    Ok(Some(entries))
 }
 
 fn parameter(call: &mut Call<'_>) -> Result<Ret, HostError> {

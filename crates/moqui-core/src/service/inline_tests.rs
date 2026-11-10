@@ -51,6 +51,21 @@ const SERVICES: &str = r#"<services>
     <service verb="inline" noun="IgnoreFail" authenticate="false" transaction="ignore">
         <actions><return error="true" message="ignore failed"/></actions>
     </service>
+    <service verb="inline" noun="Declared" authenticate="false">
+        <in-parameters>
+            <parameter name="items" type="List"/><parameter name="note" default-value="${defaultNote}"/>
+        </in-parameters>
+        <out-parameters><parameter name="count"/><parameter name="seen"/><parameter name="noteOut"/></out-parameters>
+        <actions>
+            <set field="count" from="items ? items.length : 0"/>
+            <set field="seen" from="extra"/>
+            <set field="noteOut" from="note"/>
+        </actions>
+    </service>
+    <service verb="inline" noun="Undeclared" authenticate="false" validate="false">
+        <out-parameters><parameter name="seen"/></out-parameters>
+        <actions><set field="seen" from="extra"/></actions>
+    </service>
     <service verb="inline" noun="NoCache" authenticate="false" no-tx-cache="true">
         <in-parameters><parameter name="id"/></in-parameters>
         <out-parameters><parameter name="found"/></out-parameters>
@@ -267,6 +282,35 @@ fn a_builder_changes_in_place_and_an_in_map_of_the_context_passes_it() {
         "sameBuilder === true",
         "chained === 'chained'",
         "fromObject === 'from object'",
+    ] {
+        assert!(crate::script::eval_condition(check).unwrap(), "{check}");
+    }
+    crate::script::clear_context_stack();
+}
+
+/// An in-map of the context reads only the declared in-parameters for a service that validates its input
+/// (plans/Profiling3.md W2): a list the script just built arrives, a default still sees the caller's names, and an
+/// undeclared name does not reach the body, while a service that does not validate still gets every name.
+#[test]
+fn an_in_map_of_the_context_passes_the_declared_names_or_all_without_validation() {
+    let (_facade, ctx) = inline_context();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    crate::script::run_actions(
+        r#"<actions>
+            <set field="extra" value="not declared"/>
+            <set field="defaultNote" value="from the caller"/>
+            <script>items = []; items.push('a'); items.push('b')</script>
+            <service-call name="inline#Declared" in-map="context" out-map="declared"/>
+            <service-call name="inline#Undeclared" in-map="context" out-map="undeclared"/>
+        </actions>"#,
+    )
+    .unwrap();
+    for check in [
+        "declared.count == 2",
+        "declared.seen == null",
+        "declared.noteOut === 'from the caller'",
+        "undeclared.seen === 'not declared'",
     ] {
         assert!(crate::script::eval_condition(check).unwrap(), "{check}");
     }

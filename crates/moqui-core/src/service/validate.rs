@@ -346,8 +346,17 @@ fn facade_key(facade: &EntityFacade) -> Weak<dyn Any + Send + Sync> {
 
 /// The in-parameters of `def` with `auto-parameters` expanded, made at the first call and kept on the definition.
 pub(crate) fn declared_in(def: &ServiceDef, facade: Option<&EntityFacade>) -> Result<Arc<[ParamDef]>, Error> {
-    let reads_entity = def
-        .in_params
+    declared(def, &def.in_params, &def.expanded_in, facade)
+}
+
+/// `params` of `def` with `auto-parameters` expanded, kept in `kept` for the facade's model it was made from.
+fn declared(
+    def: &ServiceDef,
+    params: &[ParamDef],
+    kept: &ExpandedParams,
+    facade: Option<&EntityFacade>,
+) -> Result<Arc<[ParamDef]>, Error> {
+    let reads_entity = params
         .iter()
         .any(|param| param.name.is_empty() && param.auto.is_some());
     let key = facade.filter(|_| reads_entity).map(facade_key);
@@ -355,7 +364,7 @@ pub(crate) fn declared_in(def: &ServiceDef, facade: Option<&EntityFacade>) -> Re
         .filter(|_| reads_entity)
         .map_or(0, crate::entity::derived::generation);
     {
-        let cached = lock(&def.expanded_in.0);
+        let cached = lock(&kept.0);
         if let Some(cached) = cached.as_ref() {
             let same = match (&cached.facade, &key) {
                 (None, None) => true,
@@ -367,8 +376,8 @@ pub(crate) fn declared_in(def: &ServiceDef, facade: Option<&EntityFacade>) -> Re
             }
         }
     }
-    let params: Arc<[ParamDef]> = expand_params(def, &def.in_params, facade)?.into();
-    *lock(&def.expanded_in.0) = Some(Expanded {
+    let params: Arc<[ParamDef]> = expand_params(def, params, facade)?.into();
+    *lock(&kept.0) = Some(Expanded {
         facade: key,
         generation,
         params: Arc::clone(&params),
@@ -376,18 +385,36 @@ pub(crate) fn declared_in(def: &ServiceDef, facade: Option<&EntityFacade>) -> Re
     Ok(params)
 }
 
-/// The out-parameters with `auto-parameters` expanded to the entity's fields; the declared list when it has none.
-pub(crate) fn expanded_out(def: &ServiceDef) -> std::borrow::Cow<'_, [ParamDef]> {
+/// The out-parameters with `auto-parameters` expanded to the entity's fields, made at the first call and kept on the
+/// definition as the in-parameters are (plans/Profiling3.md W4); the declared list when it has none.
+pub(crate) fn expanded_out(def: &ServiceDef) -> OutParams<'_> {
     let has_auto = def
         .out_params
         .iter()
         .any(|param| param.name.is_empty() && param.auto.is_some());
     if has_auto {
-        if let Ok(params) = expand_params(def, &def.out_params, current_facade().as_ref()) {
-            return std::borrow::Cow::Owned(params);
+        if let Ok(params) = declared(def, &def.out_params, &def.expanded_out, current_facade().as_ref()) {
+            return OutParams::Expanded(params);
         }
     }
-    std::borrow::Cow::Borrowed(&def.out_params)
+    OutParams::Declared(&def.out_params)
+}
+
+/// What [`expanded_out`] gives: the declared list, or the expanded one kept on the definition.
+pub(crate) enum OutParams<'a> {
+    Declared(&'a [ParamDef]),
+    Expanded(Arc<[ParamDef]>),
+}
+
+impl std::ops::Deref for OutParams<'_> {
+    type Target = [ParamDef];
+
+    fn deref(&self) -> &[ParamDef] {
+        match self {
+            Self::Declared(params) => params,
+            Self::Expanded(params) => params,
+        }
+    }
 }
 
 pub(crate) fn expand_params(

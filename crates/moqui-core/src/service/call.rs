@@ -1138,6 +1138,32 @@ pub(crate) fn service_authenticate(name: &str) -> Option<super::define::Authenti
 
 /// The in-parameter names of a defined service, in definition order, with `auto-parameters` expanded. None when no
 /// service has that name.
+/// For a call whose in-map is the whole context (`parameters(ec.context)`): the declared in-parameters, when they are
+/// all the call can use, so only they are read from the stack instead of every name the caller sees
+/// (plans/Profiling3.md W2). That holds when the service validates its input (`clean` keeps only the declared names), has no pre-validate
+/// rule (which sees the input before), and is not entity-auto (which keeps a field's change reason). None otherwise:
+/// the whole context then. The credentials and the operation retry flag a call reads are read too.
+pub(crate) fn context_in_params(name: &str) -> Option<Arc<[super::define::ParamDef]>> {
+    let name = canonical(name);
+    let facade = current_facade();
+    if crate::edge::delegate::listed(&name).is_some() {
+        return None;
+    }
+    let def = resolve(&name, facade.as_ref()).ok()?;
+    if !def.validate_input || def.kind == ServiceKind::EntityAuto || super::seca::has_rules(&def.name, "pre-validate") {
+        return None;
+    }
+    validate::declared_in(&def, facade.as_ref()).ok()
+}
+
+/// What a call reads from its input besides its declared in-parameters ([`context_in_params`]).
+pub(crate) const CALL_INPUT_NAMES: [&str; 4] = [
+    "authUsername",
+    "authPassword",
+    "authUserAccount",
+    crate::telemetry::operation::RETRY_PARAMETER,
+];
+
 pub(crate) fn service_in_parameter_names(name: &str) -> Option<Vec<String>> {
     let form = service_form_info(name)?;
     Some(form.in_params.into_iter().map(|parameter| parameter.name).collect())

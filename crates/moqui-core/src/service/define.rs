@@ -259,6 +259,8 @@ pub struct ServiceDef {
     pub implements: Vec<ImplementRef>,
     /// The in-parameters with `auto-parameters` expanded, made at the first call (see `validate::declared_in`).
     pub expanded_in: super::validate::ExpandedParams,
+    /// The out-parameters expanded, as `expanded_in` (plans/Profiling3.md W4).
+    pub expanded_out: super::validate::ExpandedParams,
 }
 
 impl ServiceDef {
@@ -300,6 +302,7 @@ impl ServiceDef {
             out_params: Vec::new(),
             implements: Vec::new(),
             expanded_in: super::validate::ExpandedParams::default(),
+            expanded_out: super::validate::ExpandedParams::default(),
         }
     }
 
@@ -1404,6 +1407,7 @@ fn load_service(prefix: &str, node: &MNode, failures: &mut Vec<String>) -> Optio
             })
             .collect(),
         expanded_in: super::validate::ExpandedParams::default(),
+        expanded_out: super::validate::ExpandedParams::default(),
     };
     Some(def)
 }
