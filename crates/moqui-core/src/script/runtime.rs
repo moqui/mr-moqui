@@ -470,6 +470,51 @@ pub fn install_spec_global(name: &str, class: &'static crate::script::host::Host
     crate::script::oxide::spec::install_global(name, class)
 }
 
+/// Whether a host function's path may be called ([`restrict_host_calls`]).
+type HostAllow = fn(&str) -> bool;
+
+thread_local! {
+    static HOST_ALLOWED: std::cell::Cell<Option<HostAllow>> = const { std::cell::Cell::new(None) };
+}
+
+/// From now on this thread's scripts may call only the host functions whose path (`System.getProperty`,
+/// `ec.service.sync`, `__moquiTestHost.call`) `allow` passes; any other throws. For a thread that runs code the host
+/// does not trust with the server's own functions: a load script's users in a server run (plans/LoadRunner.md §10),
+/// which get only the client harness's globals. A [`HostCallsLifted`] lets a host call that runs the server's own code
+/// (a service) call them again while it runs.
+pub fn restrict_host_calls(allow: fn(&str) -> bool) {
+    HOST_ALLOWED.with(|allowed| allowed.set(Some(allow)));
+}
+
+/// Whether a script on this thread may call the host function at `path` ([`restrict_host_calls`]).
+pub(crate) fn host_call_allowed(path: &str) -> bool {
+    HOST_ALLOWED.with(|allowed| allowed.get().is_none_or(|allow| allow(path)))
+}
+
+/// The restriction of [`restrict_host_calls`] lifted until this is dropped: what a restricted thread's host runs of
+/// the server's own (a service call) is not restricted.
+#[must_use]
+pub struct HostCallsLifted(Option<HostAllow>);
+
+impl HostCallsLifted {
+    pub fn new() -> Self {
+        Self(HOST_ALLOWED.with(std::cell::Cell::take))
+    }
+}
+
+impl Default for HostCallsLifted {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for HostCallsLifted {
+    fn drop(&mut self) {
+        let held = self.0.take();
+        HOST_ALLOWED.with(|allowed| allowed.set(held));
+    }
+}
+
 /// Run `body` with a [`crate::screen::sri::Runner`] for the render in progress, on the thread's runtime.
 pub(crate) fn with_screen_runner<R>(
     body: impl FnOnce(&dyn crate::screen::sri::Runner) -> Result<R, Error>,

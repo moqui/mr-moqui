@@ -874,12 +874,11 @@ impl Running {
 }
 
 impl Drop for Running {
-    /// A run dropped without [`Running::wait`] stops its users: those already begun see the stop, and one that has
-    /// not begun is refused, since the load is out of the registry.
+    /// A run dropped, with or without [`Running::wait`], stops its users: those already begun see the stop (a thread
+    /// [`join_all`] gave up on among them), and one that has not begun is refused, since the load is out of the registry.
     fn drop(&mut self) {
-        if !self.handles.is_empty() {
-            self.load.stop_now();
-        }
+        // whatever the handles hold: a thread past its time that wait() left still sees the stop
+        self.load.stop_now();
         self.load.unregister();
     }
 }

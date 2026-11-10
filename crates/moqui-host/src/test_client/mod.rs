@@ -719,6 +719,24 @@ pub(crate) struct ClientHost {
 }
 
 /// The calls a load run in a server refuses: a browser, nested loads and `parallel` threads have no place there.
+/// The longest a request, a socket connect or a socket wait of a load run in a server may take: a stop reaches a user
+/// between requests, so this bounds how long a stopped run's threads still send.
+const IN_SERVER_MAX_WAIT: Duration = Duration::from_secs(30);
+
+/// The host functions a script's thread of a load run in a server may call: the client host's calls and the pure
+/// helpers. Not `System`, `SftpClient`, `ResourceReference`, the `ec` facades, or the spec host's `setProperty`,
+/// `parallel` and the like: in the server those would be the server's own (plans/LoadRunner.md §10).
+fn in_server_host_call(path: &str) -> bool {
+    const PURE: [&str; 5] = [
+        "global.",
+        "StringUtilities.",
+        "CollectionUtilities.",
+        "WebUtilities.",
+        "ObjectUtilities.",
+    ];
+    path == "__moquiTestHost.call" || PURE.iter().any(|prefix| path.starts_with(prefix))
+}
+
 /// `response.save` would write into the server's files.
 const NOT_IN_SERVER: [&str; 6] = ["browser.", "page.", "locator.", "load.run", "parallel", "response.save"];
 
@@ -939,6 +957,15 @@ impl ClientHost {
         }
     }
 
+    /// A wait of a load run in a server, at most [`IN_SERVER_MAX_WAIT`]; any wait for `moqui test-client`.
+    fn capped(&self, wait: Duration) -> Duration {
+        if self.in_server.is_some() {
+            wait.min(IN_SERVER_MAX_WAIT)
+        } else {
+            wait
+        }
+    }
+
     fn id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
@@ -990,6 +1017,10 @@ impl ClientHost {
         if load::is_user() {
             agent_header(&mut ask, &lock(&session).headers);
         }
+        if self.in_server.is_some() {
+            let timeout = self.capped(ask.timeout(REQUEST_TIMEOUT));
+            ask.opts.insert("timeout".to_string(), json!(timeout.as_secs_f64()));
+        }
         let started = Instant::now();
         let allow = |url: &str| self.allow(url);
         let sent = http::send(&self.client, &mut lock(&session), &ask, REQUEST_TIMEOUT, &allow);
@@ -1002,13 +1033,15 @@ impl ClientHost {
         let session = self.session(args)?;
         let opts = field(args, "opts");
         let cookies = field(opts, "cookies").as_bool().unwrap_or(true);
-        let timeout = self.seconds(opts, "timeout", self.timeout);
+        let timeout = self.capped(self.seconds(opts, "timeout", self.timeout));
         let text = text_field(args, "text");
         let target = text
             .lines()
             .next()
             .and_then(|line| line.split_whitespace().nth(1))
             .unwrap_or("");
+        // the connection is to the server whatever the request line names: both are checked
+        self.allow(&self.server.url)?;
         self.allow(&self.server.join(target))?;
         let answer = {
             let held = lock(&session);
@@ -1225,6 +1258,8 @@ impl ClientHost {
     fn connect(&self, args: &Value) -> Result<Value, String> {
         let session = self.session(args)?;
         let origin = field(args, "origin").as_str().map(str::to_string);
+        // the socket connects to the server, its request names the path: both are checked
+        self.allow(&self.server.url)?;
         self.allow(&self.server.join(&text_field(args, "path")))?;
         let connected = {
             let held = lock(&session);
@@ -1235,7 +1270,7 @@ impl ClientHost {
                 &pairs(field(args, "headers")),
                 origin.as_deref(),
                 self.insecure,
-                self.seconds(args, "timeout", self.timeout),
+                self.capped(self.seconds(args, "timeout", self.timeout)),
             )?
         };
         let id = connected.socket.is_some().then(|| self.id());
@@ -1396,12 +1431,19 @@ impl ClientHost {
         match name {
             "browser.newPage" => self.new_page(args),
             "browser.runInPage" => self.run_in_page(args),
-            "config" => Ok(json!({
-                "server": self.server.to_json(),
-                "params": self.params,
-                "timeout": self.timeout.as_secs_f64(),
-                "inServer": self.in_server.is_some(),
-            })),
+            "config" => {
+                // the client prelude's first call, before any script of the thread: in a server run the thread's
+                // scripts reach only the client harness's host functions from here on
+                if self.in_server.is_some() {
+                    moqui_core::script::restrict_host_calls(in_server_host_call);
+                }
+                Ok(json!({
+                    "server": self.server.to_json(),
+                    "params": self.params,
+                    "timeout": self.timeout.as_secs_f64(),
+                    "inServer": self.in_server.is_some(),
+                }))
+            }
             "service.call" => match &self.in_server {
                 Some(in_server) => in_server.service_call(args),
                 None => Err("service.call runs in a server's own process (a load run from Tools › Load)".to_string()),
@@ -1467,7 +1509,7 @@ impl ClientHost {
                 Ok(Value::Null)
             }
             "ws.receive" => {
-                let timeout = self.seconds(args, "timeout", self.timeout);
+                let timeout = self.capped(self.seconds(args, "timeout", self.timeout));
                 let socket = self.socket(args)?;
                 let frame = lock(&socket).receive(timeout)?;
                 Ok(json!(frame))
@@ -1488,7 +1530,12 @@ impl ClientHost {
             }
             "sleep" => {
                 let ms = field(args, "ms").as_f64().unwrap_or(0.0).clamp(0.0, 3_600_000.0);
-                std::thread::sleep(Duration::from_secs_f64(ms / 1000.0));
+                if load::is_user() {
+                    // a load user's wait ends on a stop, as its pauses do
+                    load::pause(&load::Pause::Fixed(ms), None);
+                } else {
+                    std::thread::sleep(Duration::from_secs_f64(ms / 1000.0));
+                }
                 Ok(Value::Null)
             }
             "log" => {

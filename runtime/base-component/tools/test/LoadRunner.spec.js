@@ -30,6 +30,10 @@ const start = (parameters) => invoke(S + "start#LoadRun", Object.assign({ script
 const ended = (runId) => invoke(S + "get#LoadRunStatus", { runId, waitSeconds: 10 })
 const result = (runId) => invoke(S + "get#LoadRunResult", { runId }).result
 const runIds = []
+const REACH = "component://example/test/load/ScriptReach.load.js"
+const REFUSED_ENUM = "SPEC_LR_REFUSED"
+// the message of a run's first error sample
+const firstError = (runId) => result(runId).errorSamples[0].message
 
 spec({
     setupSpec() {
@@ -49,6 +53,9 @@ spec({
         make("moqui.security.ArtifactGroup", { artifactGroupId: "SPEC_LR_ECHO", description: "Spec load echo" })
         make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "org.moqui.impl.BasicServices.echo#Data",
             nameIsPattern: "N", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
+        // set#Preference writes a row keyed by the current user: what shows whom a call ran as
+        make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "org.moqui.impl.UserServices.set#Preference",
+            nameIsPattern: "N", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
         make("moqui.security.ArtifactAuthz", { artifactAuthzId: "SPEC_LR_ECHO", userGroupId: "SPEC_LR_HOLDERS",
             artifactGroupId: "SPEC_LR_ECHO", authzTypeEnumId: "AUTHZT_ALWAYS", authzActionEnumId: "AUTHZA_ALL" })
         make("moqui.security.UserGroupPermission", { userGroupId: "SPEC_LR_HOLDERS", userPermissionId: "LOAD_RUNNER", fromDate: 0 })
@@ -62,6 +69,8 @@ spec({
         ec.user.internalLoginUser("spec.lr.holder")
         for (const runId of runIds) invoke(S + "delete#LoadRun", { runId })
         ec.artifactExecution.disableAuthz()
+        ec.entity.find("moqui.security.UserPreference").condition("userId", "in", [holderId, otherId]).deleteAll()
+        ec.entity.find("moqui.basic.Enumeration").condition("enumId", REFUSED_ENUM).deleteAll()
         ec.entity.find("moqui.security.UserGroupMember").condition("userId", "in", [holderId, otherId]).deleteAll()
         ec.entity.find("moqui.security.UserGroupPermission").condition("userGroupId", "SPEC_LR_HOLDERS").deleteAll()
         ec.entity.find("moqui.security.ArtifactAuthz").condition("artifactAuthzId", "in", ["SPEC_LR_TOOLS_APP", "SPEC_LR_SERVICES", "SPEC_LR_ECHO"]).deleteAll()
@@ -95,6 +104,38 @@ feature("a holder runs ServiceCall for 2 users and 2 iterations: completed with 
     },
 })
 
+feature("a call runs as the user who started the run", {
+    expect() {
+        const started = start({ scenarios: quick(1, 1), parameters: { serviceName: "org.moqui.impl.UserServices.set#Preference",
+            parameters: '{"preferenceKey": "SpecLoadRunner", "preferenceValue": "ran"}' } })
+        started.error == ""
+        runIds.push(started.runId)
+        ended(started.runId).summary.errors == 0
+        ec.entity.find("moqui.security.UserPreference").condition("userId", holderId).condition("preferenceKey", "SpecLoadRunner")
+            .disableAuthz().one().preferenceValue == "ran"
+    },
+})
+
+feature("a load script reaches neither ec nor the server's own functions, and makes only the kinds of load it declares", {
+    expect() {
+        const reach = (mode) => {
+            const started = start({ scriptLocation: REACH, parameters: { mode } })
+            runIds.push(started.runId)
+            ended(started.runId)
+            return firstError(started.runId)
+        }
+        const ecSeen = reach("ec")
+        ecSeen.includes("typeof threw")
+        ecSeen.includes("disableAuthz threw")
+        ecSeen.includes("after threw")
+        const hostSeen = reach("host")
+        hostSeen.includes("getProperty threw System.getProperty is not available")
+        hostSeen.includes("setProperty threw __moquiTestHost.setProperty is not available")
+        hostSeen.includes("sealed threw")
+        reach("http").includes('uses: ["http"]')
+    },
+})
+
 feature("a user without LOAD_RUNNER is refused", {
     expect() {
         ec.user.internalLoginUser("spec.lr.other")
@@ -106,11 +147,14 @@ feature("a user without LOAD_RUNNER is refused", {
 
 feature("a call of a service the starting user is not authorized for is an error and does not run", {
     expect() {
-        const started = start({ scenarios: quick(1, 1), parameters: { serviceName: "org.moqui.impl.BasicServices.find#Enumeration", parameters: '{"enumTypeId": "SpecLoad"}' } })
+        // a create the holder is not granted: refused, and nothing written
+        const started = start({ scenarios: quick(1, 1), parameters: { serviceName: "create#moqui.basic.Enumeration",
+            parameters: JSON.stringify({ enumId: REFUSED_ENUM, enumTypeId: "SpecLoad", description: "never" }) } })
         started.error == ""
         runIds.push(started.runId)
         ended(started.runId).summary.errors == 1
-        result(started.runId).errorSamples[0].message.toLowerCase().includes("authoriz")
+        firstError(started.runId).toLowerCase().includes("authoriz")
+        ec.entity.find("moqui.basic.Enumeration").condition("enumId", REFUSED_ENUM).disableAuthz().count() == 0
     },
 })
 
@@ -143,7 +187,7 @@ feature("a second run while one runs is refused, and stop ends the run", {
         long.error == ""
         runIds.push(long.runId)
         invoke(S + "get#LoadRunStatus", { runId: long.runId }).running == true
-        start({ scenarios: quick(1, 1) }).error.includes("already running")
+        withProperty("load_runner_max_runs", "1", () => start({ scenarios: quick(1, 1) }).error).includes("already running")
         invoke(S + "delete#LoadRun", { runId: long.runId }).error.includes("running")
         invoke(S + "stop#LoadRun", { runId: long.runId, now: true }).error == ""
         const status = ended(long.runId)

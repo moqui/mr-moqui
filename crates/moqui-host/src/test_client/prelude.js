@@ -15,9 +15,11 @@
     const config = host("config");
     const OUTSIDE = "a client test (test/client) runs outside the server";
 
+    // In a load run in a server the thread's engine is used once, so `ec` is fixed there: not deletable, and the
+    // thread runs with no context entered and only the client harness's host functions (load_runner/run.rs).
     Object.defineProperty(g, "ec", {
         get() { throw new Error(`\`ec\` is the server's: ${OUTSIDE}; use http, ws or browser`); },
-        configurable: true
+        configurable: !config.inServer
     });
     for (const [name, instead] of [
         ["call", "http.post or http.get on the service's REST path (/rest/s1/...)"],

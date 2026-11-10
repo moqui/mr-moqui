@@ -327,9 +327,17 @@ fn find_load_runs(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) 
             runs.push(from_json(&summary));
         }
     }
-    // a run still running has its directory but no result yet, so it is not listed twice
+    // a run still in the registry is listed once, as running, even after its result is written and before it leaves
+    let ids = run::running_ids();
     let finished = results::list(&root, &find);
-    runs.extend(finished.iter().map(from_json));
+    let finished = finished.iter().filter(|summary| {
+        let id = summary
+            .get("runId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        !ids.contains(id)
+    });
+    runs.extend(finished.map(from_json));
     Ok(BTreeMap::from([("runs".to_string(), Value::List(runs))]))
 }
 
