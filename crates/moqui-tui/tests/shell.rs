@@ -80,7 +80,9 @@ fn shell() -> ShellInfo {
                 title: "Orders".to_string(),
                 url: "/apps/app/Orders".to_string(),
                 children: Vec::new(),
+                disabled: false,
             }],
+            disabled: false,
         }],
         user: "john.doe".to_string(),
         apps: vec![
@@ -88,21 +90,25 @@ fn shell() -> ShellInfo {
                 title: "Sales".to_string(),
                 url: "/qapps/sales?from=palette&note=A%20B".to_string(),
                 children: Vec::new(),
+                disabled: false,
             },
             MenuItem {
                 title: "Tools".to_string(),
                 url: "/apps/tools".to_string(),
                 children: Vec::new(),
+                disabled: false,
             },
             MenuItem {
                 title: "Archive".to_string(),
                 url: "/qapps-archive/tools".to_string(),
                 children: Vec::new(),
+                disabled: false,
             },
             MenuItem {
                 title: "Outside".to_string(),
                 url: "https://example.invalid/qapps/help".to_string(),
                 children: Vec::new(),
+                disabled: false,
             },
         ],
         quick_create: vec![ShellAction {
@@ -338,6 +344,43 @@ fn find_text_moves_to_a_link_or_a_list_row_and_n_goes_on() {
     session.press(&KeyPress::with_alt(Key::Char('m')), &link);
     assert_eq!(session.top_overlay(), Some(&Overlay::Messages));
     assert!(session.history().iter().any(|message| message.text.contains("zzz")));
+}
+
+/// A menu item whose link is disabled (`disableLink`) is a drawer row with no url: drawn dimmed, never followed, and not
+/// offered by the palette's Go to.
+#[test]
+fn a_disabled_menu_item_is_a_drawer_row_without_a_link() {
+    let menu = vec![MenuItem {
+        title: "App".to_string(),
+        url: "/apps/app".to_string(),
+        children: vec![
+            MenuItem {
+                title: "Orders".to_string(),
+                url: "/apps/app/Orders".to_string(),
+                ..MenuItem::default()
+            },
+            MenuItem {
+                title: "Locked".to_string(),
+                url: "/apps/app/Locked".to_string(),
+                disabled: true,
+                ..MenuItem::default()
+            },
+        ],
+        disabled: false,
+    }];
+    let rows = moqui_tui::drawer_rows(&menu);
+    let shown: Vec<(&str, &str, bool)> = rows
+        .iter()
+        .map(|row| (row.title.as_str(), row.url.as_str(), row.disabled))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("App", "/apps/app", false),
+            ("Orders", "/apps/app/Orders", false),
+            ("Locked", "", true)
+        ]
+    );
 }
 
 #[test]

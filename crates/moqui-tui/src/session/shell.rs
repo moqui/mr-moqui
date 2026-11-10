@@ -882,6 +882,7 @@ impl Session {
                     },
                     url: json_text(find, "pathWithParams"),
                     children: Vec::new(),
+                    disabled: false,
                 }
             })
             .collect();

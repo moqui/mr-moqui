@@ -43,10 +43,11 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:attribute>
         <xs:attribute name="default-menu-title" type="xs:string"/>
         <xs:attribute name="default-menu-index" type="xs:nonNegativeInteger"/>
-        <xs:attribute name="default-menu-include" type="boolean" default="true">
+        <xs:attribute name="default-menu-include" type="xs:string" default="true">
             <xs:annotation><xs:documentation>
                 Set this to false to not automatically appear in the parent's subscreens menu based on the directory
                 it is in. If true this screen will automatically be included in the parent's subscreens menu.
+                Like subscreens-item.menu-include it may also be an expression evaluated per request.
             </xs:documentation></xs:annotation>
         </xs:attribute>
         <xs:attribute name="menu-image" type="xs:string"/>
@@ -873,7 +874,13 @@ along with this software (see the LICENSE.md file). If not, see
             If empty this item will be added to the end of the list (after the directory load, before the
             entity load).
         </xs:documentation></xs:annotation></xs:attribute>
-        <xs:attribute name="menu-include" type="boolean" default="true"/>
+        <xs:attribute name="menu-include" type="xs:string" default="true"><xs:annotation><xs:documentation>
+            true, false, or an expression evaluated per request. An expression is JavaScript run when a menu is built,
+            in the context disable-when has (for example ec.user.hasPermission('LOAD_RUNNER')); when it is false the
+            item is left out of the menu, unless it is the item on the current path. An expression that fails leaves
+            the item out and is logged. It only hides the item: the screen's own authorization still decides who may
+            open it. (In Moqui Java this is a boolean.)
+        </xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="no-sub-path" type="boolean" default="false"><xs:annotation><xs:documentation>
             If true the sub-screens of the sub-screen may be referenced directly under this screen, skipping the screen path element
             for the sub-screen.

@@ -54,7 +54,7 @@ $closeRender();
             const $item = $menu[$mi];
             // as qvt's tabs (getMenuData): an item whose screen's required parameter has no value here is left out
             if ($item.parameterMissing && !$item.inPath) continue;
-            $items.push({title:$item.title || "",url:$item.url || "",active:!!$item.inPath});
+            $items.push({title:$item.title || "",url:$item.url || "",active:!!$item.inPath,disabled:!!$item.disabled});
         }
 $emit({t:"subscreens",id:$uid("subscreens"),kind:"tab",items:$items,c:[]});
         }
@@ -68,7 +68,7 @@ $closeRender();
             const $item = $menu[$mi];
             // as qvt's tabs (getMenuData): an item whose screen's required parameter has no value here is left out
             if ($item.parameterMissing && !$item.inPath) continue;
-            $items.push({title:$item.title || "",url:$item.url || "",active:!!$item.inPath});
+            $items.push({title:$item.title || "",url:$item.url || "",active:!!$item.inPath,disabled:!!$item.disabled});
         }
 $openRender({t:"subscreens",id:$uid("subscreens"),kind:"tab",items:$items});
                 sri.renderSubscreen();

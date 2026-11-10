@@ -263,11 +263,21 @@ impl Walk<'_> {
                     self.info.target_transition_name = Some(name);
                     break;
                 }
-                if let Some(file) =
-                    super::static_files::file_under(self.factory, self.facade, &last.location, &self.info.extra_path)
-                {
-                    self.info.file_resource = Some(file);
-                    break;
+                // `X.<mode>` names the screen X in that mode before any file of that name (`file_under` refuses it too)
+                let claimed = before_dot
+                    .as_deref()
+                    .zip(extension.as_deref())
+                    .is_some_and(|(before, mode)| self.claims_mode(&last, before, mode));
+                if !claimed {
+                    if let Some(file) = super::static_files::file_under(
+                        self.factory,
+                        self.facade,
+                        &last.location,
+                        &self.info.extra_path,
+                    ) {
+                        self.info.file_resource = Some(file);
+                        break;
+                    }
                 }
                 if let Some(before) = &before_dot {
                     item = self.screen_item(&last, before);
@@ -407,6 +417,19 @@ impl Walk<'_> {
             }
         }
         self.info.path_defs.push(Arc::clone(next));
+    }
+
+    /// Whether `<before>.<mode>` under `from` names a transition, or a subscreen that names `mode` in its `render-modes`
+    /// ([`ScreenDef::names_render_mode`]): then that screen or transition answers it, not a file of that name.
+    fn claims_mode(&self, from: &ScreenDef, before: &str, mode: &str) -> bool {
+        if from.has_transition(before) {
+            return true;
+        }
+        self.screen_item(from, before).is_some_and(|item| {
+            self.facade
+                .screen_def(self.factory, &item.location)
+                .is_ok_and(|def| def.names_render_mode(mode))
+        })
     }
 
     fn screen_item(&self, from: &ScreenDef, name: &str) -> Option<super::definition::SubscreensItem> {

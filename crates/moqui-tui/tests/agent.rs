@@ -159,6 +159,7 @@ fn a_palette_search_is_settled_before_the_answer() {
             title: "Gallery".to_string(),
             url: "/Gallery".to_string(),
             children: Vec::new(),
+            disabled: false,
         }],
         ..ShellInfo::default()
     });

@@ -480,7 +480,8 @@ impl Index {
                         .iter()
                         .map(|item| TabInfo {
                             title: item.title.clone(),
-                            url: item.url.clone(),
+                            // a disabled tab is not a link: Alt+N on it goes nowhere
+                            url: if item.disabled { String::new() } else { item.url.clone() },
                             active: item.active,
                         })
                         .collect();

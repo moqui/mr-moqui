@@ -15,9 +15,10 @@ along with this software (see the LICENSE.md file). If not, see
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         include-child-content="true" menu-image="sym_o_terminal" menu-image-type="icon">
     <subscreens default-item="dashboard">
-        <!-- Load testing needs the sealed LOAD_RUNNER permission: its menu entry is disabled without it -->
+        <!-- Load testing needs the sealed LOAD_RUNNER permission: its menu entry is left out without it (Load.xml then
+            says Not available, and the services refuse) -->
         <subscreens-item name="Load" location="component://tools/screen/Tools/Load.xml" menu-title="Load testing" menu-index="10"
-                disable-when="!ec.user.hasPermission('LOAD_RUNNER')"/>
+                menu-include="ec.user.hasPermission('LOAD_RUNNER')"/>
     </subscreens>
     <widgets>
         <subscreens-panel id="tools-app" type="popup"/>

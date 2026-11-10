@@ -1022,7 +1022,7 @@ pub fn active_in_current_menu(state: &RenderState) -> bool {
     def.subscreens
         .items
         .iter()
-        .filter(|item| item.menu_include)
+        .filter(|item| super::menu::included(&def.location, item))
         .any(|item| {
             let mut names = active_screen_path(state);
             names.push(item.name.clone());

@@ -342,7 +342,13 @@ fn drawer(paint: &mut Painter, session: &Session, framed: &Frame, top: u16, bott
         paint.fixed(width.saturating_sub(1), row, side, Look::role(Role::Border), 1);
     }
     let paths = session.paths();
-    for (at, DrawerRow { title, url, depth }) in rows.iter().enumerate() {
+    for (at, row) in rows.iter().enumerate() {
+        let DrawerRow {
+            title,
+            url,
+            depth,
+            disabled,
+        } = row;
         let Some(row) = top
             .checked_add(u16::try_from(at).unwrap_or(u16::MAX))
             .filter(|row| *row < bottom)
@@ -353,9 +359,10 @@ fn drawer(paint: &mut Painter, session: &Session, framed: &Frame, top: u16, bott
         let active = paths
             .iter()
             .any(|shown| *shown == path || shown.starts_with(&format!("{path}/")));
-        let heading = url.is_empty();
+        // a disabled item has no url either: dimmed, not bold, and no click target
+        let heading = url.is_empty() && !disabled;
         let mark = match (*depth, active) {
-            _ if heading => " ",
+            _ if heading || *disabled => " ",
             (0, _) => paint.theme.glyph(Glyph::Open),
             (_, true) => paint.theme.glyph(Glyph::Active),
             _ => " ",
@@ -363,6 +370,8 @@ fn drawer(paint: &mut Painter, session: &Session, framed: &Frame, top: u16, bott
         let text = format!(" {}{mark} {title}", "  ".repeat(*depth));
         let look = if heading {
             Look::role(Role::Muted).bold()
+        } else if *disabled {
+            Look::role(Role::Muted)
         } else if active {
             Look::role(Role::Primary).bold()
         } else {
@@ -375,7 +384,7 @@ fn drawer(paint: &mut Painter, session: &Session, framed: &Frame, top: u16, bott
             look.focused(focus == Some(at)),
             usize::from(width.saturating_sub(1)),
         );
-        if !heading {
+        if !heading && !disabled {
             paint.area(Rect::new(0, row, width.saturating_sub(1), 1), Target::Drawer(at));
         }
     }
@@ -663,15 +672,21 @@ pub fn draw_piece(paint: &mut Painter, session: &Session, piece: &Piece, x: u16,
             let mut col = x;
             for (at, (title, active)) in tabs.items.iter().enumerate() {
                 let text = format!("{}:{title}", at + 1);
+                let url = tabs.urls.get(at).cloned().unwrap_or_default();
                 let look = if *active {
                     Look::role(Role::Primary).bold().reverse()
+                } else if url.is_empty() {
+                    Look::role(Role::Muted)
                 } else {
                     Look::role(Role::Text)
                 };
-                let url = tabs.urls.get(at).cloned().unwrap_or_default();
-                let used = paint.target(Target::Tab(url), |paint| {
-                    paint.text(col, y, &text, look, usize::from(paint.right.saturating_sub(col)))
-                });
+                let room = usize::from(paint.right.saturating_sub(col));
+                // a disabled tab (no url) is no click target
+                let used = if url.is_empty() {
+                    paint.text(col, y, &text, look, room)
+                } else {
+                    paint.target(Target::Tab(url), |paint| paint.text(col, y, &text, look, room))
+                };
                 col = col.saturating_add(u16::try_from(used + 2).unwrap_or(u16::MAX));
             }
         }

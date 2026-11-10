@@ -1952,6 +1952,8 @@ pub struct DrawerRow {
     pub url: String,
     /// 0 for an app or a heading, 1 for an item under it.
     pub depth: usize,
+    /// A menu item whose link is disabled: drawn dimmed, with no `url`, so it is neither followed nor offered.
+    pub disabled: bool,
 }
 
 impl DrawerRow {
@@ -1960,6 +1962,18 @@ impl DrawerRow {
             title: title.to_string(),
             url: url.to_string(),
             depth,
+            disabled: false,
+        }
+    }
+
+    fn of_item(item: &MenuItem, depth: usize) -> Self {
+        if item.disabled {
+            Self {
+                disabled: true,
+                ..Self::new(&item.title, "", depth)
+            }
+        } else {
+            Self::new(&item.title, &item.url, depth)
         }
     }
 }
@@ -1968,9 +1982,9 @@ impl DrawerRow {
 pub fn drawer_rows(menu: &[MenuItem]) -> Vec<DrawerRow> {
     let mut rows = Vec::new();
     for item in menu {
-        rows.push(DrawerRow::new(&item.title, &item.url, 0));
+        rows.push(DrawerRow::of_item(item, 0));
         for child in &item.children {
-            rows.push(DrawerRow::new(&child.title, &child.url, 1));
+            rows.push(DrawerRow::of_item(child, 1));
         }
     }
     rows

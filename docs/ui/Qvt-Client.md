@@ -241,8 +241,8 @@ once per page load:
 - `apps` are the subscreens of the apps root (`/apps`, `webroot/apps.xml`) in menu order that are in the menu, take no parameters and that
   the user may view, each authorized as the menu data authorizes a subscreen (a grant on a screen reaches the screens below it). An app
   root that does not load, or whose providers fail, is logged by name and location and left out; the others are answered. `menu` lists
-  what the drawer would to depth two, with the menu data's checks (`menu-include`, authorization, a required parameter left out); a
-  disabled entry is left out. The menu entries are the palette's Screens group.
+  what the drawer would to depth two, with the menu data's checks (`menu-include`, which may be an expression run per request, authorization, a required
+  parameter left out); a disabled entry is left out. The menu entries are the palette's Screens group.
 - `providers` are the app root's `<shell-providers>` (`xml-screen-3.xsd`): labels localized, each list in `sequence` order (none counts as
   0), absent text as null. A quick-create kind with no `screen` opens the theme's `STRT_QUICK_CREATE` screen with `kind` added to its query;
   with neither it is left out. `parameter` children are added to a link's query. A provider whose screen the user may not view is left out,

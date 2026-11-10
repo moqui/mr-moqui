@@ -257,13 +257,16 @@ fn menu() -> Vec<MenuItem> {
                 title: "List".to_string(),
                 url: GALLERY_LIST_PATH.to_string(),
                 children: Vec::new(),
+                disabled: false,
             },
             MenuItem {
                 title: "Detail".to_string(),
                 url: GALLERY_DETAIL_PATH.to_string(),
                 children: Vec::new(),
+                disabled: false,
             },
         ],
+        disabled: false,
     }]
 }
 
@@ -409,6 +412,7 @@ fn phase3_view() -> AppView {
             title: "Sales".to_string(),
             url: "/apps/sales".to_string(),
             children: Vec::new(),
+            disabled: false,
         }],
         counts: BTreeMap::from([
             ("chat".to_string(), 1),

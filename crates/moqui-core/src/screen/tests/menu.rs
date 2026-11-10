@@ -652,3 +652,93 @@ fn menu_data_takes_the_image_of_a_default_subscreen_at_an_apps_root() {
     assert_eq!(menu[1]["image"], "sym_o_hub", "{menu}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `menu-include` as an expression, run per request: the item shows when it is true, is left out when it is false,
+/// and still shows when it is the item on the request's path. One that throws is left out and logged. The menu data
+/// and the html menu (`sri.getMenuItems`) follow it the same way; `false` stays a literal.
+#[test]
+fn a_menu_include_expression_shows_or_hides_the_item_per_request() {
+    let dir = std::env::temp_dir().join(format!("moqui-menu-include-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/App")).unwrap();
+    let base = dir.to_string_lossy().into_owned();
+    let write = |path: &str, text: &str| std::fs::write(dir.join(path), text.replace("{dir}", &base)).unwrap();
+    write("Root.xml", ROOT);
+    write(
+        "Root/App.xml",
+        r#"<screen require-authentication="true" default-menu-title="The App">
+            <subscreens default-item="Open">
+                <subscreens-item name="Open" menu-title="Open" location="{dir}/Root/App/Open.xml"/>
+                <subscreens-item name="Gated" menu-title="Gated" location="{dir}/Root/App/Gated.xml"
+                        menu-include="ec.user.username == 'admin'"/>
+                <subscreens-item name="Throws" menu-title="Throws" location="{dir}/Root/App/Throws.xml"
+                        menu-include="noSuchValue.nothing()"/>
+                <subscreens-item name="Hidden" menu-title="Hidden" location="{dir}/Root/App/Hidden.xml" menu-include="false"/>
+            </subscreens>
+            <widgets><subscreens-menu/><subscreens-active/></widgets>
+        </screen>"#,
+    );
+    for name in ["Open", "Gated", "Throws", "Hidden"] {
+        write(
+            &format!("Root/App/{name}.xml"),
+            &format!(
+                r#"<screen require-authentication="true"><widgets><label text="{name} page"/></widgets></screen>"#
+            ),
+        );
+    }
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    world.user("admin", None);
+    world.user("plain", None);
+    let names = |menu: &serde_json::Value| -> Vec<String> {
+        menu[0]["subscreens"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let html = |user: &str| {
+        let mut get = request("GET", "/App/Open");
+        get.set_header("authorization", basic(user));
+        serve_at(&world.factory, get, &root).body_text()
+    };
+
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let (plain, admin, on_path, plain_html, admin_html) =
+        tracing::subscriber::with_default(crate::testing::LogSubscriber(Arc::clone(&lines)), || {
+            (
+                get_menu(&world, &root, Some("plain"), "/menuData/App/Open"),
+                get_menu(&world, &root, Some("admin"), "/menuData/App/Open"),
+                get_menu(&world, &root, Some("plain"), "/menuData/App/Gated"),
+                html("plain"),
+                html("admin"),
+            )
+        });
+    assert_eq!(plain.0, 200, "{}", plain.1);
+    assert_eq!(names(&plain.1), ["Open"], "{}", plain.1);
+    assert_eq!(names(&admin.1), ["Gated", "Open"], "{}", admin.1);
+    let gated = &admin.1[0]["subscreens"][0];
+    assert_eq!(gated["menuInclude"], true, "{gated}");
+    // the item on the path shows, for a user whose expression is false, without the menuInclude flag
+    assert_eq!(names(&on_path.1), ["Gated", "Open"], "{}", on_path.1);
+    let gated = &on_path.1[0]["subscreens"][0];
+    assert_eq!(gated["active"], true, "{gated}");
+    assert!(gated.get("menuInclude").is_none(), "{gated}");
+    // the html menu
+    assert!(
+        plain_html.contains("/App/Open") && !plain_html.contains("/App/Gated"),
+        "{plain_html}"
+    );
+    assert!(admin_html.contains("/App/Gated"), "{admin_html}");
+    for body in [&plain_html, &admin_html] {
+        assert!(!body.contains("/App/Throws") && !body.contains("/App/Hidden"), "{body}");
+    }
+    let logged = lines.lock().unwrap().join("\n");
+    let throws = dir.join("Root/App/Throws.xml").to_string_lossy().into_owned();
+    assert!(
+        logged.contains(&format!("Leaving subscreen Throws [{throws}]")),
+        "{logged}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -376,6 +376,10 @@ pub fn screen_children(
             row.insert("menuIndex".to_string(), item.menu_index.map_or(Value::Null, Value::I64));
             row.insert("menuInclude".to_string(), Value::Bool(item.menu_include));
             row.insert(
+                "menuIncludeWhen".to_string(),
+                item.menu_include_when.as_deref().map_or(Value::Null, Value::string),
+            );
+            row.insert(
                 "isDefault".to_string(),
                 Value::Bool(def.subscreens.default_item.as_deref() == Some(item.name.as_str())),
             );

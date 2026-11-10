@@ -163,3 +163,21 @@ fn a_failed_transition_is_never_a_navigation_and_keeps_its_errors() {
     assert_eq!(repost.parameters.get("a").map(String::as_str), Some("é"));
     assert_eq!(repost.parameters.get("b").map(String::as_str), Some("100%"));
 }
+
+/// The menu data's `disableLink` reaches the drawer: the item is kept, marked disabled, so the terminal shows it dimmed
+/// and not as a link (it used to be a live link there).
+#[test]
+fn a_disabled_menu_entry_is_kept_and_marked() {
+    let menu = serde_json::json!([{ "name": "Tools", "title": "Tools", "path": "/Tools", "subscreens": [
+        { "name": "Open", "title": "Open", "path": "/Tools/Open" },
+        { "name": "Load", "title": "Load testing", "path": "/Tools/Load", "disableLink": true }
+    ]}]);
+    let item = menu_item(&menu[0]).unwrap();
+    assert!(!item.disabled);
+    let children: Vec<(&str, bool)> = item
+        .children
+        .iter()
+        .map(|child| (child.title.as_str(), child.disabled))
+        .collect();
+    assert_eq!(children, [("Open", false), ("Load testing", true)]);
+}

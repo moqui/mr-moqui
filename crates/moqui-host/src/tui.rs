@@ -1013,7 +1013,12 @@ fn menu_item(value: &serde_json::Value) -> Option<MenuItem> {
         .and_then(serde_json::Value::as_array)
         .map(|list| list.iter().filter_map(menu_child).collect())
         .unwrap_or_default();
-    Some(MenuItem { title, url, children })
+    Some(MenuItem {
+        title,
+        url,
+        children,
+        disabled: disable_link(value),
+    })
 }
 
 /// One child level. A grandchild menu is not walked.
@@ -1027,8 +1032,14 @@ fn menu_child(value: &serde_json::Value) -> Option<MenuItem> {
             title,
             url,
             children: Vec::new(),
+            disabled: disable_link(value),
         })
     }
+}
+
+/// The menu data's `disableLink`: the item is shown, dimmed, and is not a link.
+fn disable_link(value: &serde_json::Value) -> bool {
+    value.get("disableLink").and_then(serde_json::Value::as_bool) == Some(true)
 }
 
 fn menu_path(value: &serde_json::Value) -> String {
@@ -1083,6 +1094,7 @@ fn shell_values(data: &serde_json::Value, shell: &mut ShellInfo) {
                 },
                 url: path,
                 children: Vec::new(),
+                disabled: false,
             });
         }
         let providers = app.get("providers");

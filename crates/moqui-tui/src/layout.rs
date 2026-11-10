@@ -542,7 +542,7 @@ pub struct LaidCol {
 pub struct LaidTabs {
     pub id: String,
     pub items: Vec<(String, bool)>,
-    /// Each tab's url, for a click.
+    /// Each tab's url, for a click; empty for a disabled tab, which is drawn dimmed and is not a link.
     pub urls: Vec<String>,
 }
 
@@ -967,7 +967,10 @@ fn place_subscreens(
                 pieces.push(Piece::Tabs(LaidTabs {
                     id: id.to_string(),
                     items: items.iter().map(|item| (item.title.clone(), item.active)).collect(),
-                    urls: items.iter().map(|item| item.url.clone()).collect(),
+                    urls: items
+                        .iter()
+                        .map(|item| if item.disabled { String::new() } else { item.url.clone() })
+                        .collect(),
                 }));
             }
             pieces.extend(place_nodes(c, ctx, width));

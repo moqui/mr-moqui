@@ -463,7 +463,11 @@ pub struct SubscreensItem {
     pub location: String,
     pub menu_title: String,
     pub menu_index: Option<i64>,
+    /// False when `menu-include` is `false`. An expression leaves it true and is kept in `menu_include_when`.
     pub menu_include: bool,
+    /// A `menu-include` other than `true` or `false`: a JavaScript expression run when the menu is built, in the same
+    /// context as `disable_when`; false leaves the item out of the menu ([`Self::in_menu`]).
+    pub menu_include_when: Option<String>,
     pub no_sub_path: bool,
     /// A JavaScript expression run when the menu is built.
     pub disable_when: Option<String>,
@@ -482,6 +486,32 @@ impl SubscreensItem {
             None | Some("") | Some("ALL_USERS") => true,
             Some(group) => crate::user::current_user_groups().is_ok_and(|groups| groups.contains(group)),
         }
+    }
+
+    /// Whether the item shows in a menu: `menu-include="false"` leaves it out, and an expression is run in the current
+    /// context. This is not the user group ([`Self::is_valid_in_current_context`]) or the authorization.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of a `menu-include` expression that does not run.
+    pub fn in_menu(&self) -> Result<bool, Error> {
+        if !self.menu_include {
+            return Ok(false);
+        }
+        match &self.menu_include_when {
+            Some(expression) => crate::script::eval_condition(expression),
+            None => Ok(true),
+        }
+    }
+}
+
+/// A `menu-include` (or `default-menu-include`) value: `false` is left out, empty or `true` is in, and anything else is
+/// an expression run per request. The literals take no script.
+fn menu_include_of(value: Option<&str>) -> (bool, Option<String>) {
+    match value.map(str::trim) {
+        Some("false") => (false, None),
+        None | Some("" | "true") => (true, None),
+        Some(expression) => (true, Some(expression.to_string())),
     }
 }
 
@@ -793,6 +823,15 @@ impl ScreenDef {
         self.render_modes
             .iter()
             .any(|mode| mode == "all" || mode == render_mode || (mode == "xsl-fo" && render_mode == "html-print"))
+    }
+
+    /// Whether `render-modes` names `render_mode` itself, not through `all`: then a `<name>.<mode>` file beside the
+    /// screen is its source in that mode, which the screen renders, not a static file ([`super::static_files::file_under`]).
+    pub fn names_render_mode(&self, render_mode: &str) -> bool {
+        let mode = super::cache::canonical_render_mode(render_mode);
+        self.render_modes
+            .iter()
+            .any(|named| super::cache::canonical_render_mode(named) == mode)
     }
 
     pub fn macro_template_location(&self, render_mode: &str) -> Option<&str> {
@@ -1497,6 +1536,7 @@ fn load_subscreens(
             }
             let item_location = format!("{base}/{file}");
             sources.push(Source::of(factory, entry.location()));
+            let (menu_include, menu_include_when) = menu_include_of(root.attribute("default-menu-include").as_deref());
             subscreens.put(SubscreensItem {
                 name: name.to_string(),
                 menu_title: root
@@ -1506,7 +1546,8 @@ fn load_subscreens(
                 menu_index: root
                     .attribute("default-menu-index")
                     .and_then(|text| text.trim().parse().ok()),
-                menu_include: !root.attribute_is("default-menu-include", "false"),
+                menu_include,
+                menu_include_when,
                 location: item_location,
                 no_sub_path: false,
                 disable_when: None,
@@ -1583,6 +1624,7 @@ fn load_subscreens(
                     subscreens.put(SubscreensItem {
                         menu_index: text("menuIndex").and_then(|index| index.trim().parse().ok()),
                         menu_include: text("menuInclude").as_deref() == Some("Y"),
+                        menu_include_when: None,
                         no_sub_path: text("noSubPath").as_deref() == Some("Y"),
                         disable_when: None,
                         user_group_id: text("userGroupId"),
@@ -1643,15 +1685,17 @@ fn subscreens_item_of(
             sources.push(Source::of(factory, &location));
             target_menu_title(factory, &location)
         });
+    let (menu_include, menu_include_when) = menu_include_of(
+        item.attribute("menu-include")
+            .or_else(|| item.attribute("include-in-menu"))
+            .as_deref(),
+    );
     Some(SubscreensItem {
         name,
         menu_title,
         menu_index: item.attribute("menu-index").and_then(|text| text.trim().parse().ok()),
-        menu_include: item
-            .attribute("menu-include")
-            .or_else(|| item.attribute("include-in-menu"))
-            .as_deref()
-            != Some("false"),
+        menu_include,
+        menu_include_when,
         no_sub_path: item.attribute_is("no-sub-path", "true"),
         disable_when: item.attribute("disable-when").filter(|text| !text.is_empty()),
         user_group_id: None,

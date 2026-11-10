@@ -73,6 +73,10 @@ pub fn file_under(
     if !resource.exists() || !resource.is_file() || facade.is_screen(factory, &location) {
         return None;
     }
+    // `NewRun.qvue` beside `NewRun.xml`, which renders in qvue: the screen answers that name, not the file.
+    if is_render_mode_source(factory, facade, &location) {
+        return None;
+    }
     // A template is never a file to send. It is the child content of a screen that says include-child-content, which
     // renders it inside the screen; under any other screen it is refused, as a source.
     if is_blocked(&location)
@@ -102,6 +106,26 @@ pub fn file_under(
         }
     }
     Some(location)
+}
+
+/// Whether the file at `location` is `<stem>.<mode>` for a render mode of the conf, beside a screen `<stem>.xml` that names
+/// the mode in its `render-modes`. Such a file is that screen's source in the mode (a `.qvue` its `render-mode` text
+/// reads), so a request for the name renders the screen, with its authorization, actions and template, and the file is
+/// never sent raw. A file beside a screen that does not name the mode (an island's `.qvue` read as a file), or with no
+/// screen beside it, is a static file as before. Moqui Java serves the file.
+pub(crate) fn is_render_mode_source(factory: &ExecutionContextFactory, facade: &ScreenFacade, location: &str) -> bool {
+    let (dir, name) = location.rsplit_once('/').unwrap_or(("", location));
+    let Some((stem, mode)) = name.split_once('.').filter(|(stem, _)| !stem.is_empty()) else {
+        return false;
+    };
+    if !facade.is_render_mode_valid(mode) {
+        return false;
+    }
+    let screen = format!("{dir}/{stem}.xml");
+    facade.is_screen(factory, &screen)
+        && facade
+            .screen_def(factory, &screen)
+            .is_ok_and(|def| def.names_render_mode(mode))
 }
 
 /// Whether a file under a screen is a template a renderer of the conf renders (`.md`, `.html.fancy` and the like), as

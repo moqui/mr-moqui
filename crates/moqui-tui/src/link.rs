@@ -94,6 +94,8 @@ pub struct MenuItem {
     pub title: String,
     pub url: String,
     pub children: Vec<MenuItem>,
+    /// The menu data's `disableLink` (a `disable-when` that holds): shown dimmed, and not a link.
+    pub disabled: bool,
 }
 
 /// The shell data the client draws around the screens: the drawer of the current app, the user, and the theme's `tui`

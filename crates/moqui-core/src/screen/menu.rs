@@ -87,9 +87,20 @@ pub(crate) fn leave_out(parent: &str, item: &SubscreensItem, err: &Error) {
     }
 }
 
+/// Whether `item`, a subscreen of the screen at `parent`, shows in a menu ([`SubscreensItem::in_menu`]): a
+/// `menu-include` expression that fails leaves it out and is logged, as [`leave_out`] does. The user group is checked
+/// apart ([`SubscreensItem::is_valid_in_current_context`]), since an item on the request's path shows either way.
+pub(crate) fn included(parent: &str, item: &SubscreensItem) -> bool {
+    item.in_menu().unwrap_or_else(|err| {
+        leave_out(parent, item, &err);
+        false
+    })
+}
+
 /// The menu entry of `item`, a subscreen of the screen at `parent_names` and `parent_path`, or None when the user may not
 /// view it or a required parameter is missing. `parents` are the screens from the root down to its parent, for the
-/// authorization. `next_item` is the subscreen on the path. The shell data (`shell.rs`) makes its entries here too.
+/// authorization. `next_item` is the subscreen on the path, and `in_menu` whether the item shows in the menu
+/// ([`included`]) and not only for being on the path. The shell data (`shell.rs`) makes its entries here too.
 pub(super) fn subscreen_entry(
     state: &RenderState,
     parents: &[std::sync::Arc<super::definition::ScreenDef>],
@@ -97,6 +108,7 @@ pub(super) fn subscreen_entry(
     parent_path: &str,
     item: &SubscreensItem,
     next_item: &str,
+    in_menu: bool,
 ) -> Result<Option<Value>, Error> {
     let screen_path = format!("{parent_path}/{}", moqui_lib::string::url_encode_if_needed(&item.name));
     let mut names = parent_names.to_vec();
@@ -131,7 +143,7 @@ pub(super) fn subscreen_entry(
     entry.insert("pathWithParams".into(), text(&path_with_params(&url)));
     entry.insert("image".into(), image);
     entry.insert("imageType".into(), image_type);
-    if item.menu_include {
+    if in_menu {
         entry.insert("menuInclude".into(), Value::Bool(true));
     }
     if item.name == next_item {
@@ -222,11 +234,25 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
 
         let mut subscreens: Vec<Value> = Vec::new();
         for item in cur_screen.subscreens.sorted() {
-            if (!item.menu_include && &item.name != next_item) || !item.is_valid_in_current_context() {
+            if !item.is_valid_in_current_context() {
+                continue;
+            }
+            // the item on the path shows whatever its menu-include says; its menuInclude flag still says it
+            let on_path = &item.name == next_item;
+            let in_menu = included(&cur_screen.location, item);
+            if !in_menu && !on_path {
                 continue;
             }
             let parents = &info.path_defs[..(index + 2).min(info.path_defs.len())];
-            match subscreen_entry(state, parents, &full_path[..=index], &current_path, item, next_item) {
+            match subscreen_entry(
+                state,
+                parents,
+                &full_path[..=index],
+                &current_path,
+                item,
+                next_item,
+                in_menu,
+            ) {
                 Ok(Some(entry)) => subscreens.push(entry),
                 Ok(None) => {}
                 Err(err) => leave_out(&cur_screen.location, item, &err),

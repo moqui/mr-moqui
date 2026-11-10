@@ -81,7 +81,7 @@ pub fn menu_items(state: &RenderState, screen_path: Option<&str>) -> Result<Vec<
         .subscreens
         .sorted()
         .into_iter()
-        .filter(|item| item.menu_include && item.is_valid_in_current_context())
+        .filter(|item| item.is_valid_in_current_context() && crate::screen::menu::included(&def.location, item))
     {
         match menu_entry(state, prefix.as_deref(), &parents, item) {
             Ok(Some(entry)) => out.push(entry),

@@ -53,7 +53,7 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="menuTitle"><default-field title="Screen">
                 <link url="children" text="${menuTitle}" parameter-map="{location: location, path: path, parentRootId: rootId, parentPath: relativePath}" link-type="anchor"/></default-field></field>
             <field name="name"><default-field title="Name"><display/></default-field></field>
-            <field name="menuIndex"><default-field title="Menu"><display text="${menuIndex == null ? '' : menuIndex}${menuInclude ? '' : ' (hidden)'}${isDefault ? ' · default' : ''}"/></default-field></field>
+            <field name="menuIndex"><default-field title="Menu"><display text="${menuIndex == null ? '' : menuIndex}${menuInclude ? (menuIncludeWhen ? ' (when ' + menuIncludeWhen + ')' : '') : ' (hidden)'}${isDefault ? ' · default' : ''}"/></default-field></field>
             <field name="mountedBy"><default-field title="Mounted by"><display text="${(mountedBy || '').split('/').slice(-2).join('/')}"/></default-field></field>
             <field name="renderModes"><default-field title="Modes"><display text="${(renderModes || []).join(', ')}"/></default-field></field>
             <field name="subscreenCount"><default-field title="Subscreens"><display text="${subscreenCount || ''}"/></default-field></field>

@@ -49,6 +49,7 @@ pub(super) fn data(run: &mut Run<'_>, doc: &DocEntry) -> Result<Json, Error> {
                 "title": item.menu_title,
                 "index": item.menu_index,
                 "include": item.menu_include,
+                "includeWhen": item.menu_include_when,
                 "location": item.location,
                 "default": def.subscreens.default_item.as_deref() == Some(item.name.as_str()),
                 "href": run.link_id(doc, &format!("screen:{}", item.location)),

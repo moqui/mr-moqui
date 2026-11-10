@@ -259,6 +259,9 @@ pub struct SubscreenItem {
     pub url: String,
     #[serde(default)]
     pub active: bool,
+    /// Its `disable-when` holds: the tab is shown dimmed and is not a link.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
 }
 
 /// A stage of a status bar: `done`, `current` or `todo`.

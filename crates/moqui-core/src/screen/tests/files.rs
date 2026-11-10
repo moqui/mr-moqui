@@ -217,3 +217,77 @@ fn a_file_under_the_screen_starts_no_visit() {
     assert_eq!(response.status, 200, "{}", response.body_text());
     assert_eq!(visits(), (before.0 + 1, before.1 + 1), "the screen starts a visit");
 }
+
+/// `Panel.qvue` beside `Panel.xml`, which names qvue in its `render-modes`, is the screen in qvue mode (its actions and
+/// template run), not the raw file. A `.qvue` beside a screen that does not name the mode (a public island's file), and
+/// one with no screen beside it, are still static files.
+#[test]
+fn a_render_mode_file_beside_its_screen_renders_the_screen() {
+    let site = Site::new("mode-source");
+    let write = |path: &str, text: &str| std::fs::write(site.dir.join(path), text).unwrap();
+    let panel = site.dir.join("Site/Panel.qvue").to_string_lossy().into_owned();
+    write(
+        "Site/Panel.xml",
+        &format!(
+            r#"<screen require-authentication="false" render-modes="html,qvue">
+                <actions><set field="greeting" value="Hello from the screen"/></actions>
+                <widgets><render-mode><text type="qvue" template="fancy" location="{panel}"/></render-mode></widgets>
+            </screen>"#
+        ),
+    );
+    write("Site/Panel.qvue", "<template><p>${greeting}</p></template>");
+    let private = site.dir.join("Site/Private.qvue").to_string_lossy().into_owned();
+    write(
+        "Site/Private.xml",
+        &format!(
+            r#"<screen require-authentication="true" render-modes="qvue">
+                <widgets><render-mode><text type="qvue" template="false" location="{private}"/></render-mode></widgets>
+            </screen>"#
+        ),
+    );
+    write("Site/Private.qvue", "<template><p>private</p></template>");
+    write(
+        "Site/Island.xml",
+        r#"<screen require-authentication="false"><widgets><label text="island"/></widgets></screen>"#,
+    );
+    write("Site/Island.qvue", "<template><p>island ${raw}</p></template>");
+    write("Site/Loose.qvue", "<template><p>loose ${raw}</p></template>");
+    let world = World::open("");
+
+    let response = serve_at(&world.factory, request("GET", "/Panel.qvue"), &site.root);
+    assert_eq!(response.status, 200, "{}", response.body_text());
+    let body = response.body_text();
+    assert!(body.contains("Hello from the screen"), "{body}");
+    assert!(!body.contains("${greeting}"), "the raw file was sent: {body}");
+    // the screen's authentication holds: no user, no file
+    let response = serve_at(&world.factory, request("GET", "/Private.qvue"), &site.root);
+    assert!(
+        !response.body_text().contains("<p>private</p>"),
+        "{}: {}",
+        response.status,
+        response.body_text()
+    );
+
+    for (path, text) in [
+        ("/Island.qvue", "<template><p>island ${raw}</p></template>"),
+        ("/Loose.qvue", "<template><p>loose ${raw}</p></template>"),
+    ] {
+        let response = serve_at(&world.factory, request("GET", path), &site.root);
+        assert_eq!(response.status, 200, "{path}: {}", response.body_text());
+        assert_eq!(response.body_text(), text, "{path}");
+    }
+    // the file is refused as a file too, wherever a walk asks for one
+    let facade = crate::screen::ScreenFacade::of(&world.factory);
+    let location = |name: &str| site.dir.join("Site").join(name).to_string_lossy().into_owned();
+    assert!(crate::screen::static_files::is_render_mode_source(
+        &world.factory,
+        &facade,
+        &location("Panel.qvue")
+    ));
+    for name in ["Island.qvue", "Loose.qvue"] {
+        assert!(
+            !crate::screen::static_files::is_render_mode_source(&world.factory, &facade, &location(name)),
+            "{name}"
+        );
+    }
+}

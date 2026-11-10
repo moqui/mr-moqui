@@ -480,7 +480,7 @@ fn apps_under(
     let apps_def = Arc::clone(&parents[parents.len() - 1]);
     let mut out = Vec::new();
     for item in apps_def.subscreens.sorted() {
-        if !item.menu_include || !item.is_valid_in_current_context() {
+        if !item.is_valid_in_current_context() || !menu::included(&apps_def.location, item) {
             continue;
         }
         match facade.screen_def(factory, &item.location) {
@@ -797,8 +797,15 @@ impl<'a> Shell<'a> {
         let Some((_, parents)) = app.defs.split_last() else {
             return Ok(None);
         };
-        let Some(Value::Map(entry)) =
-            menu::subscreen_entry(self.state, parents, &self.apps_names, &self.link_base, &app.item, "")?
+        let Some(Value::Map(entry)) = menu::subscreen_entry(
+            self.state,
+            parents,
+            &self.apps_names,
+            &self.link_base,
+            &app.item,
+            "",
+            true,
+        )?
         else {
             return Ok(None);
         };
@@ -819,10 +826,10 @@ impl<'a> Shell<'a> {
             return;
         };
         for item in def.subscreens.sorted() {
-            if !item.menu_include || !item.is_valid_in_current_context() {
+            if !item.is_valid_in_current_context() || !menu::included(&def.location, item) {
                 continue;
             }
-            let entry = match menu::subscreen_entry(self.state, parents, names, path, item, "") {
+            let entry = match menu::subscreen_entry(self.state, parents, names, path, item, "", true) {
                 Ok(Some(Value::Map(entry))) => entry,
                 Ok(_) => continue,
                 Err(err) => {
