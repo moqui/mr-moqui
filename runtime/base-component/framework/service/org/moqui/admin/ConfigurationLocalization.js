@@ -4,8 +4,10 @@
 // an instance administrator; ADMIN keeps Tools System > Localization, which writes the rows directly.
 //
 // - A translation keeps its placeholders: the ${...} expressions of the translation must be exactly those of the original,
-//   so a translator neither loses a value nor adds an expression the server would evaluate. Markup is refused by the
-//   services' parameters (no HTML).
+//   so a translator neither loses a value nor adds an expression the server would evaluate; the values are read as the
+//   expander reads them, and an original with a value that is more than a name or a simple call (PLACEHOLDER_UNSUPPORTED)
+//   stays Tools'. A link, a path or a link type is not translated and a translation is never one (the framework localizes
+//   a link's url before it expands it). Markup is refused by the services' parameters (no HTML).
 // - A label is translated only for a registered target (moqui.basic.LocalizedLabelTarget, each component's seed data) that
 //   the entity definitions bear out: the field is enable-localization and not encrypted, on a configuration entity with one
 //   primary key field; another registration is logged by name and left out. So translation access reads and writes labels
@@ -34,20 +36,74 @@ function anyLike(fields, value) {
         "or"
     )
 }
-const placeholders = value => Array.from(new Set(String(value ?? "").match(/\$\{[^}]*\}/g) || [])).sort()
+// The ${...} values of a text as the server's expander finds them (script/runtime.rs template_literal and
+// template.rs scan_expression), for the plain ones only: names, property paths, calls and quoted text with balanced ( and [.
+// A value with a brace, a backtick, a backslash, a / or a line end in it (an object, a function, a template, a regular
+// expression, a comment) is not plain: the expander ends such a value at another } than a simple reading would, so a
+// translation could keep "the same" value and add an expression after it. {list} the values, or {problem} for a text with a
+// value that is not plain or not closed. An escaped \${ is text to the expander and here.
+function placeholders(value) {
+    const source = String(value ?? "")
+    const list = []
+    let index = 0
+    while (index < source.length) {
+        if (source[index] === "\\" && source.startsWith("${", index + 1)) {
+            index += 3
+            continue
+        }
+        if (!source.startsWith("${", index)) {
+            index += 1
+            continue
+        }
+        let at = index + 2
+        let depth = 0
+        for (;;) {
+            const character = source[at]
+            if (character === undefined) return {problem: "has an unclosed ${"}
+            if (character === "}") break
+            if ("{`\\/\n\r".includes(character)) return {problem: "has a ${...} value that is more than a name or a simple call"}
+            if (character === "'" || character === '"') {
+                const close = source.indexOf(character, at + 1)
+                const quoted = close < 0 ? null : source.slice(at + 1, close)
+                if (quoted == null || /[\\\n\r]/.test(quoted))
+                    return {problem: "has a ${...} value that is more than a name or a simple call"}
+                at = close + 1
+                continue
+            }
+            if (character === "(" || character === "[") depth += 1
+            if (character === ")" || character === "]") depth -= 1
+            if (depth < 0) return {problem: "has a ${...} value that is more than a name or a simple call"}
+            at += 1
+        }
+        if (depth !== 0) return {problem: "has a ${...} value that is more than a name or a simple call"}
+        list.push(source.slice(index, at + 1))
+        index = at + 1
+    }
+    return {list: Array.from(new Set(list)).sort()}
+}
+// A text the framework reads as a link or a path where it localizes one (a link's url and url-type are localized before
+// they are expanded, as Java's are): never translated here, and a translation never becomes one.
+const linkLike = value => /:\/\//.test(value) || /^\s*([/\\]|\.{1,2}\/|[a-z][a-z0-9+.-]*:\S)/i.test(value)
+const urlTypes = ["transition", "screen", "content", "plain"]
+// What is wrong with the original as something to translate here, or null.
+function originalProblem(original) {
+    if (urlTypes.includes(original.trim()) || linkLike(original)) return "A link, a path or a link type is not translated here"
+    const found = placeholders(original)
+    return found.problem ? "The original " + found.problem + "; an instance administrator translates it in Tools" : null
+}
 // What is wrong with a translation of original, or null: its placeholders are the original's, exactly.
 function translationProblem(original, localized) {
     if (localized.length > maxTranslation) return "The translation is longer than " + maxTranslation + " characters"
     if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(localized)) return "The translation has a control character"
-    const expected = placeholders(original)
-    const given = placeholders(localized)
+    if (linkLike(localized)) return "The translation may not be a link or a path"
+    const expected = placeholders(original).list || []
+    const found = placeholders(localized)
+    if (found.problem) return "The translation " + found.problem
+    const given = found.list
     const missing = expected.filter(item => !given.includes(item))
     const added = given.filter(item => !expected.includes(item))
     if (missing.length) return "The translation must keep " + missing.join(", ")
     if (added.length) return "The translation may not add " + added.join(", ")
-    // an unclosed ${ would swallow what follows it
-    if ((localized.match(/\$\{/g) || []).length !== (localized.match(/\$\{[^}]*\}/g) || []).length)
-        return "The translation has an unclosed ${"
     return null
 }
 // A locale as the framework looks translations up: a language (es), a language and country (pt_BR), or for a label the
@@ -174,6 +230,9 @@ function storeLocalizedMessage(p) {
     const reason = lib.reasonText(p)
     if (!original.trim() || original.length > 255) throw new Error("Give the original message, at most 255 characters")
     if (!localeOk(locale, false)) return refused("LOCALE_INVALID", "Give a locale such as es or pt_BR")
+    // a translation that is there may still be removed
+    const unsupported = localized ? originalProblem(original) : null
+    if (unsupported) return refused("PLACEHOLDER_UNSUPPORTED", unsupported)
     const key = {original, locale}
     const existing = one(MESSAGE, key)
     const revision = stamp(existing)
@@ -260,9 +319,18 @@ function findLocalizedEntityFields(p) {
     if (locale) found = found.condition("locale", locale)
     if (search) found = found.condition(anyLike(["localized", "pkValue"], search))
     // a field of a registered entity that is not itself a target is left out after the read
-    const list = Array.from(
-        found.orderBy("entityName").orderBy("fieldName").orderBy("pkValue").orderBy("locale").limit(scanLimit).list()
+    const read = Array.from(
+        found
+            .orderBy("entityName")
+            .orderBy("fieldName")
+            .orderBy("pkValue")
+            .orderBy("locale")
+            .limit(scanLimit + 1)
+            .list()
     )
+    out.truncated = read.length > scanLimit
+    const list = read
+        .slice(0, scanLimit)
         .map(row => ({row, target: targetOf(targetList, row.entityName, row.fieldName)}))
         .filter(item => item.target)
     const paged = lib.page(list, p)
@@ -301,6 +369,8 @@ function storeLocalizedEntityField(p) {
         }
         return {applied: true, revision: ""}
     }
+    const unsupported = localized ? originalProblem(label.value) : null
+    if (unsupported) return refused("PLACEHOLDER_UNSUPPORTED", unsupported, {revision})
     const problem = translationProblem(label.value, localized)
     if (problem) return refused("PLACEHOLDER_MISMATCH", problem, {revision})
     if (existing && existing.localized === localized) return {applied: true, revision}

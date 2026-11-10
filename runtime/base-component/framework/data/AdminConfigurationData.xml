@@ -46,7 +46,7 @@ along with this software (see the LICENSE.md file). If not, see
             description="A sign-in from a client not seen for this many days is reported to the account's owner as a new device"
             valueTypeEnumId="IsvInteger" minValue="1" maxValue="730" defaultValue="90" editable="Y" sequenceNum="110"/>
     <!-- design-insights §7.1: the most recipients a business schedule or alert rule may deliver to as a group; an app's own
-        cap (Insights' 50) may only be at or under it -->
+        cap may only be at or under it -->
     <moqui.server.InstanceSetting settingKey="report.groupRecipientCeiling" title="Group recipient ceiling" settingGroup="Reports"
             description="The most recipients one scheduled report or business alert rule may deliver to as a group; an organization's own cap is at most this"
             valueTypeEnumId="IsvInteger" minValue="1" maxValue="500" defaultValue="200" editable="Y" sequenceNum="210"/>

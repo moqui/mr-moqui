@@ -16,6 +16,10 @@ const numberKey = "spec.config.number"
 const secretKey = "spec.config.hidden"
 const secretPreferenceKey = "spec.config.secretPreference"
 const confKey = "spec.config.locale"
+// a property the shipped conf marks is-secret under a name that does not read as one
+const flaggedKey = "spec.config.account"
+// an original whose value the expander ends at another } than its first: a translation may not add to it
+const complexOriginal = "Spec config ${ok ? '}' : no} done"
 const original = "Spec config ${count} items for ${name}"
 const enumId = "SpecCfgLabel"
 const firstPreferences = [
@@ -111,6 +115,12 @@ spec({
                 editable: "Y"
             },
             {
+                settingKey: flaggedKey,
+                title: "Spec flagged",
+                valueTypeEnumId: "IsvText",
+                propertyName: "fcm_service_account"
+            },
+            {
                 settingKey: confKey,
                 title: "Spec locale",
                 valueTypeEnumId: "IsvText",
@@ -156,6 +166,11 @@ feature("a preference is a registered key, typed and within its allowed values, 
             const outside = invoke("store#InstancePreference", {settingKey: choiceKey, value: "huge"})
             const overLimit = invoke("store#InstancePreference", {settingKey: numberKey, value: "501"})
             const notNumber = invoke("store#InstancePreference", {settingKey: numberKey, value: "many"})
+            const expression = invoke("store#InstancePreference", {
+                settingKey: "instance.displayName",
+                value: "${ec.user.userId}",
+                expectedRevision: ""
+            })
             const before = setting(numberKey)
             const stored = invoke("store#InstancePreference", {
                 settingKey: numberKey,
@@ -177,6 +192,7 @@ feature("a preference is a registered key, typed and within its allowed values, 
                 outside,
                 overLimit,
                 notNumber,
+                expression,
                 before,
                 stored,
                 after,
@@ -195,6 +211,7 @@ feature("a preference is a registered key, typed and within its allowed values, 
         outside,
         overLimit,
         notNumber,
+        expression,
         before,
         stored,
         after,
@@ -209,6 +226,8 @@ feature("a preference is a registered key, typed and within its allowed values, 
         configuration.applied === false && configuration.reasonCode == "NOT_REGISTERED"
         outside.applied === false && outside.reasonCode == "VALUE_INVALID" && outside.reason.includes("comfortable")
         overLimit.reasonCode == "VALUE_INVALID" && notNumber.reasonCode == "VALUE_INVALID"
+        // a text preference holds no expression
+        expression.applied === false && expression.reasonCode == "VALUE_INVALID"
         stray == 0
         before.value == "200" && before.source == "default" && before.canEdit === true
         stored.applied === true && stored.value == "120" && !!stored.revision
@@ -229,6 +248,7 @@ feature("a secret-classified setting is never returned or made a preference; con
     when() {
         return as(adminUser, () => ({
             secret: setting(secretKey),
+            flagged: setting(flaggedKey),
             secretPreference: setting(secretPreferenceKey),
             storeSecret: invoke("store#InstancePreference", {settingKey: secretPreferenceKey, value: "hunter2"}),
             readSecret: invoke("get#InstancePreference", {settingKey: secretKey}),
@@ -239,8 +259,10 @@ feature("a secret-classified setting is never returned or made a preference; con
             all: JSON.stringify(invoke("get#EffectiveSettings").settingList || [])
         }))
     },
-    then({secret, secretPreference, storeSecret, readSecret, conf, seeded, all}) {
+    then({secret, flagged, secretPreference, storeSecret, readSecret, conf, seeded, all}) {
         secret.masked === true && secret.value === null && secret.valueSet === true && secret.defaultValue === null
+        // the conf's own is-secret mark masks a property whatever it is called
+        flagged.masked === true && flagged.value === null
         // a registration that makes a secret editable is left out, so it is neither listed nor stored
         secretPreference === undefined
         storeSecret.applied === false && storeSecret.reasonCode == "NOT_REGISTERED"
@@ -281,6 +303,23 @@ feature("a translation keeps its placeholders; a label is translated only for a 
                 original,
                 locale: "es",
                 localized: "Spec ${count} elementos de ${name} ${ec.user.userId}"
+            })
+            // the original's value kept as text and an expression after it, which the expander would run
+            const complex = invoke("store#LocalizedMessage", {
+                original: complexOriginal,
+                locale: "es",
+                localized: "Spec ${ok ? '}' + ec.user.userId : no} hecho"
+            })
+            // a value that is more than a name or a simple call stays Tools'
+            const unsupported = invoke("store#LocalizedMessage", {
+                original: "Spec config ${ {a: ok}.a } done",
+                locale: "es",
+                localized: "Spec ${ {a: ok}.a } hecho"
+            })
+            const link = invoke("store#LocalizedMessage", {
+                original,
+                locale: "es",
+                localized: "https://example.invalid/${count}/${name}"
             })
             const stored = invoke("store#LocalizedMessage", {
                 original,
@@ -330,6 +369,10 @@ feature("a translation keeps its placeholders; a label is translated only for a 
             return {
                 dropped,
                 added,
+                complex,
+                unsupported,
+                link,
+                complexRows: rows("moqui.basic.LocalizedMessage", {original: complexOriginal}).length,
                 stored,
                 stale,
                 found,
@@ -348,6 +391,10 @@ feature("a translation keeps its placeholders; a label is translated only for a 
     then({
         dropped,
         added,
+        complex,
+        unsupported,
+        link,
+        complexRows,
         stored,
         stale,
         found,
@@ -363,6 +410,9 @@ feature("a translation keeps its placeholders; a label is translated only for a 
     }) {
         dropped.applied === false && dropped.reasonCode == "PLACEHOLDER_MISMATCH" && dropped.reason.includes("${name}")
         added.applied === false && added.reasonCode == "PLACEHOLDER_MISMATCH" && added.reason.includes("may not add")
+        complex.applied === false && complex.reasonCode == "PLACEHOLDER_MISMATCH" && complexRows == 0
+        unsupported.applied === false && unsupported.reasonCode == "PLACEHOLDER_UNSUPPORTED"
+        link.applied === false && link.reasonCode == "PLACEHOLDER_MISMATCH" && link.reason.includes("link")
         stored.applied === true && !!stored.revision
         stale.applied === false && stale.reasonCode == "STALE_REVISION"
         found.messageList.length == 1 &&

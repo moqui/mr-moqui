@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     Each service checks its own permission with ec.user.hasPermission (ADMIN_SETTINGS_VIEW for reads, ADMIN_SETTINGS_MANAGE for
     changes in the parts below) and names the revision it read on a change; a refusal a person can act on is answered (applied
     false, reasonCode, reason), never written; a missing permission or a malformed request is an error. A secret is never
-    returned. ALL_USERS may call the services named in data/SecurityTypeData.xml AdminConfigurationServices: each refuses
+    returned. ALL_USERS may call the services named in data/AdminConfigurationData.xml AdminConfigurationServices: each refuses
     without its permission. No dependency on Mantle or an app. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
@@ -107,8 +107,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="store" noun="LocalizedMessage" allow-remote="false">
         <description>The translation of a message in a locale, at the revision read (empty for a new one); empty removes it.
             Refused, with the reason, when the translation does not keep exactly the original's ${} placeholders
-            (PLACEHOLDER_MISMATCH), for a locale that is not one (LOCALE_INVALID) and for a stale revision
-            (STALE_REVISION); markup is not accepted. The audit log keeps the text before and after. Needs
+            (PLACEHOLDER_MISMATCH), for an original that is a link, a path or a link type or whose ${} values are more than
+            names and simple calls (PLACEHOLDER_UNSUPPORTED: Tools', an instance administrator's), for a locale that is not
+            one (LOCALE_INVALID) and for a stale revision (STALE_REVISION); markup and a link are not accepted. The audit log keeps the text before and after. Needs
             ADMIN_SETTINGS_MANAGE.</description>
         <in-parameters>
             <parameter name="original" required="true"/>
@@ -152,7 +153,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The translation of one label (pkValue) of a registered label target in a locale (or default, the
             fallback of every locale), at the revision read; empty removes it. Refused, with the reason, for an entity field
             that is not a registered label target (NOT_REGISTERED), a label that does not exist (LABEL_UNAVAILABLE), a
-            translation that does not keep the label's ${} placeholders (PLACEHOLDER_MISMATCH), a locale that is not one
+            translation that does not keep the label's ${} placeholders (PLACEHOLDER_MISMATCH; PLACEHOLDER_UNSUPPORTED as
+            store#LocalizedMessage), a locale that is not one
             (LOCALE_INVALID) and a stale revision (STALE_REVISION). The audit log keeps the text before and after. Needs
             ADMIN_SETTINGS_MANAGE.</description>
         <in-parameters>

@@ -37,7 +37,12 @@ const sourceTexts = {
     default: "Default"
 }
 const secretName = name => /pass|pw|key|secret|token|credential/i.test(String(name || ""))
-const isSecret = setting => setting.isSecret === "Y" || secretName(setting.propertyName) || secretName(setting.settingKey)
+// also a property the shipped conf marks is-secret, whatever its name (shippedConf below)
+const isSecret = setting =>
+    setting.isSecret === "Y" ||
+    secretName(setting.propertyName) ||
+    secretName(setting.settingKey) ||
+    (!!setting.propertyName && shippedConf().secrets.has(setting.propertyName))
 const allowedList = setting =>
     text(setting.allowedValues)
         .split(",")
@@ -112,15 +117,18 @@ function typed(setting, given) {
         const zones = Array.from(ec.l10n.getAvailableTimeZones() || []).map(String)
         return zones.includes(raw) ? {value: raw} : {problem: "is not a time zone"}
     }
+    // text is shown, never run: no expression for a screen that shows it to expand
+    if (raw.includes("${")) return {problem: "may not hold ${"}
     const maxLength = Math.min(Number(setting.maxLength) || 255, 255)
     if (raw.length > maxLength) return {problem: "is longer than " + maxLength + " characters"}
     return {value: raw}
 }
-// The framework default conf's default-property values, to tell a shipped default from a deployment's own value.
+// The framework default conf's default-properties: their shipped values, to tell a shipped default from a deployment's own
+// value, and the names it marks is-secret, which are never returned whatever they are called.
 let shipped = null
-function shippedDefaults() {
+function shippedConf() {
     if (shipped) return shipped
-    shipped = new Map()
+    shipped = {values: new Map(), secrets: new Set()}
     try {
         const conf = String(ec.resource.getLocationText("component://framework/conf/MoquiDefaultConf.xml", false) || "")
         const unescape = value =>
@@ -130,13 +138,19 @@ function shippedDefaults() {
                 .replace(/&quot;/g, '"')
                 .replace(/&apos;/g, "'")
                 .replace(/&amp;/g, "&")
-        for (const found of conf.matchAll(/<default-property\s+name="([^"]+)"\s+value="([^"]*)"/g))
-            shipped.set(found[1], unescape(found[2]))
+        for (const found of conf.matchAll(/<default-property\s([^>]*)>/g)) {
+            const attribute = name => (found[1].match(new RegExp("(?:^|\\s)" + name + '="([^"]*)"')) || [])[1]
+            const name = attribute("name")
+            if (!name) continue
+            shipped.values.set(name, unescape(attribute("value") ?? ""))
+            if (attribute("is-secret") === "true") shipped.secrets.add(name)
+        }
     } catch (error) {
         ec.logger.error("The default conf could not be read for the instance settings: " + error.message)
     }
     return shipped
 }
+const shippedDefaults = () => shippedConf().values
 // A setting's effective value and where it comes from. A stored preference its registration no longer accepts is logged and
 // passed over, so a narrowed registration never serves a value outside it.
 function effective(setting, preference) {
