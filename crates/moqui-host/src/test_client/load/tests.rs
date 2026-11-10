@@ -579,7 +579,7 @@ fn rate_and_stages_settings_and_their_overrides() {
         ),
         (
             json!({ "rate": 1, "stages": [{ "duration": 1, "users": 1 }] }),
-            "load: a rate scenario's stages are",
+            "load: give rate or stages, not both",
         ),
     ] {
         let err = ScenarioSettings::from_json("load", &bad, "load").unwrap_err();
@@ -646,19 +646,21 @@ fn a_rate_users_wait_is_in_its_step_time_and_its_target_changes_live() {
     assert_eq!(snapshot["targets"]["paced"], json!({ "users": 1, "rate": 20.0 }));
 
     // a live target: a rate, users as the most at once, each checked
-    load.set_target("paced", Target::Rate(5.0)).unwrap();
+    load.set_target("paced", Target::Rate(5.0), MAX_USERS).unwrap();
     assert_eq!(load.snapshot()["targets"]["paced"]["rate"], json!(5.0));
     assert_eq!(load.total_users_with("paced", &Target::Users(7)), Ok(7));
-    load.set_target("paced", Target::Users(3)).unwrap();
+    load.set_target("paced", Target::Users(3), MAX_USERS).unwrap();
     assert_eq!(load.snapshot()["targets"]["paced"]["users"], json!(3));
-    let refused = load.set_target("paced", Target::Users(0)).unwrap_err();
+    let refused = load.set_target("paced", Target::Users(0), MAX_USERS).unwrap_err();
     assert_eq!(refused, "scenario paced runs at a rate: its users are at least 1");
-    let refused = load.set_target("other", Target::Users(1)).unwrap_err();
+    let refused = load.set_target("other", Target::Users(1), MAX_USERS).unwrap_err();
     assert_eq!(refused, "the load has no scenario other (it has paced)");
-    assert!(load.set_target("paced", Target::Users(MAX_USERS + 1)).is_err());
+    assert!(load
+        .set_target("paced", Target::Users(MAX_USERS + 1), MAX_USERS)
+        .is_err());
     load.stop_after_iteration();
     assert_eq!(
-        load.set_target("paced", Target::Users(2)).unwrap_err(),
+        load.set_target("paced", Target::Users(2), MAX_USERS).unwrap_err(),
         "the load is stopping"
     );
     load.unregister();
@@ -668,7 +670,7 @@ fn a_rate_users_wait_is_in_its_step_time_and_its_target_changes_live() {
 fn a_user_above_a_closed_target_waits_unactive_and_goes_on_when_it_rises() {
     let settings = ScenarioSettings::from_json("closed", &json!({ "users": 2, "duration": 30 }), "load").unwrap();
     let load = Load::new(&[settings]);
-    load.set_target("closed", Target::Users(1)).unwrap();
+    load.set_target("closed", Target::Users(1), MAX_USERS).unwrap();
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let user = {
         let load = Arc::clone(&load);
@@ -686,9 +688,98 @@ fn a_user_above_a_closed_target_waits_unactive_and_goes_on_when_it_rises() {
     started_rx.recv().unwrap();
     std::thread::sleep(Duration::from_millis(150));
     assert_eq!(load.active_users(), 0);
-    load.set_target("closed", Target::Users(2)).unwrap();
+    load.set_target("closed", Target::Users(2), MAX_USERS).unwrap();
     assert!(user.join().unwrap());
     assert_eq!(load.active_users(), 0);
-    assert!(load.set_target("closed", Target::Rate(1.0)).is_err());
+    assert!(load.set_target("closed", Target::Rate(1.0), MAX_USERS).is_err());
+    load.unregister();
+}
+
+#[test]
+fn a_runs_rate_replaces_rate_stages_and_a_closed_scenarios_iterations() {
+    let refused = ScenarioSettings::from_json(
+        "load",
+        &json!({ "rate": 5, "stages": [{ "duration": 1, "rate": 2 }] }),
+        "load",
+    )
+    .unwrap_err();
+    assert!(refused.starts_with("load: give rate or stages, not both"), "{refused}");
+    let plan = Plan {
+        scenarios: vec![
+            (
+                "staged".to_string(),
+                json!({ "stages": [{ "duration": 10, "rate": 2 }], "users": 4 }),
+            ),
+            (
+                "loop".to_string(),
+                json!({ "users": 2, "duration": 30, "iterations": 5 }),
+            ),
+        ],
+        ..Plan::default()
+    };
+    let run = script::settings(&plan, &json!({ "rate": 8 })).unwrap();
+    // the run's rate holds, in place of the script's rate stages (whose length stays the duration)
+    assert_eq!(
+        (run[0].rate, run[0].stages.len(), run[0].duration),
+        (Some(8.0), 0, Some(10.0))
+    );
+    assert!(run[0].schedule().take(0, 0.0) == Take::Go { scheduled: Some(0.0) });
+    // a closed scenario made a rate one keeps its duration, not its iterations of each user
+    assert_eq!(
+        (run[1].rate, run[1].iterations, run[1].duration),
+        (Some(8.0), None, Some(30.0))
+    );
+    let counted = script::settings(&plan, &json!({ "rate": 8, "iterations": 40 })).unwrap();
+    assert_eq!(counted[1].iterations, Some(40));
+    // a rate scenario with only iterations times out 120 s after its last start, at 4.875 s
+    let only = ScenarioSettings::from_json("load", &json!({ "rate": 8, "iterations": 40 }), "load").unwrap();
+    assert!((only.timeout() - 124.875).abs() < 1e-6, "{}", only.timeout());
+}
+
+#[test]
+fn the_first_step_takes_the_wait_but_not_the_work_before_it() {
+    // 10 a second, one user: the first iteration's 150 ms of work makes the second start 50 ms late
+    let settings =
+        ScenarioSettings::from_json("late", &json!({ "rate": 10, "users": 1, "duration": 5 }), "load").unwrap();
+    let load = Load::new(&[settings]);
+    let user = {
+        let load = Arc::clone(&load);
+        std::thread::spawn(move || {
+            begin(Some(load), 0, 0, None);
+            timed(true);
+            for iteration in 1..=2 {
+                assert!(next_iteration());
+                // a login before the step, not in it
+                std::thread::sleep(Duration::from_millis(150));
+                step_begin();
+                step_end("after login", None);
+                iterated(iteration);
+            }
+            timed(false);
+            end();
+        })
+    };
+    user.join().unwrap();
+    let shared = lock(&load.shared);
+    let step = shared.names["after login"].histogram.max();
+    let iteration = shared.names["late iteration"].histogram.max();
+    assert!(step < 120_000, "{step}");
+    assert!(step >= 30_000, "{step}");
+    assert!(iteration >= 190_000, "{iteration}");
+    drop(shared);
+    load.unregister();
+}
+
+#[test]
+fn a_live_users_limit_counts_the_users_already_started() {
+    let settings = ScenarioSettings::from_json("closed", &json!({ "users": 4, "duration": 30 }), "load").unwrap();
+    let load = Load::new(&[settings]);
+    load.set_target("closed", Target::Users(1), MAX_USERS).unwrap();
+    // its 4 threads stay, though it runs 1 now
+    assert_eq!(load.total_users_with("closed", &Target::Users(2)), Ok(4));
+    let refused = load.set_target("closed", Target::Users(2), 3).unwrap_err();
+    assert_eq!(refused, "the load may have at most 3 users; this change makes 4");
+    load.set_target("closed", Target::Users(6), 6).unwrap();
+    assert!(load.set_target("closed", Target::Users(7), 6).is_err());
     load.unregister();
 }

@@ -299,13 +299,15 @@ fn update_load_run_users(parameters: &BTreeMap<String, Value>, _facade: &EntityF
         return none();
     };
     let scenario = text(parameters, "scenario");
-    let applied = active
-        .load
-        .total_users_with(&scenario, &target)
-        .and_then(|total| targets::check_users(usize::try_from(total).unwrap_or(usize::MAX)))
-        .and_then(|()| active.load.set_target(&scenario, target));
-    if let Err(message) = applied {
-        add_error(message);
+    // checked and set under the load's lock, against the users already started too
+    let limit = u64::try_from(targets::max_users()).unwrap_or(u64::MAX);
+    if let Err(message) = active.load.set_target(&scenario, target, limit) {
+        let over = message.starts_with("the load may have at most");
+        add_error(if over {
+            format!("{message} (load_runner_max_users)")
+        } else {
+            message
+        });
     }
     none()
 }

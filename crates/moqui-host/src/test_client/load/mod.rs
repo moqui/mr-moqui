@@ -113,6 +113,8 @@ pub(crate) struct Load {
     schedules: Vec<Mutex<Schedule>>,
     /// Microseconds from the start to the first stop, plus one; 0 before any stop.
     stopped_at: AtomicU64,
+    /// Held while a target is checked against the limit and set, so that two changes cannot both pass the check.
+    retarget: Mutex<()>,
 }
 
 /// The loads running in this process, by id, for their users' `thread.begin`.
@@ -150,6 +152,7 @@ impl Load {
                 .map(|scenario| Mutex::new(scenario.schedule()))
                 .collect(),
             stopped_at: AtomicU64::new(0),
+            retarget: Mutex::new(()),
         });
         lock(&LOADS).insert(load.id, Arc::clone(&load));
         load
@@ -197,20 +200,25 @@ impl Load {
             .compare_exchange(0, micros + 1, Ordering::Relaxed, Ordering::Relaxed);
     }
 
-    /// The most users at once of every scenario, with scenario `scenario` set to `target`.
+    /// The users of every scenario with scenario `scenario` set to `target`: per scenario the more of its most at
+    /// once and the users already started, since a thread started stays until the load ends.
     ///
     /// # Errors
     ///
     /// When the load has no scenario of that name.
     pub(crate) fn total_users_with(&self, scenario: &str, target: &Target) -> Result<u64, String> {
         let index = self.scenario_index(scenario)?;
+        let started: Vec<u64> = lock(&self.shared).scenarios.iter().map(|counts| counts.users).collect();
         let total = self
             .schedules
             .iter()
             .enumerate()
-            .map(|(at, schedule)| match target {
-                Target::Users(users) if at == index => *users,
-                _ => lock(schedule).cap(),
+            .map(|(at, schedule)| {
+                let most = match target {
+                    Target::Users(users) if at == index => *users,
+                    _ => lock(schedule).cap(),
+                };
+                most.max(started.get(at).copied().unwrap_or(0))
             })
             .sum();
         Ok(total)
@@ -229,9 +237,10 @@ impl Load {
     ///
     /// # Errors
     ///
-    /// When the load is stopping, has no such scenario, the target is out of range or more than [`MAX_USERS`] in all,
-    /// or a rate is given to a closed scenario.
-    pub(crate) fn set_target(&self, scenario: &str, target: Target) -> Result<(), String> {
+    /// When the load is stopping, has no such scenario, the target is out of range or the users in all
+    /// ([`Load::total_users_with`]) more than `limit` (at most [`MAX_USERS`]), or a rate is given to a closed scenario.
+    pub(crate) fn set_target(&self, scenario: &str, target: Target, limit: u64) -> Result<(), String> {
+        let _held = lock(&self.retarget);
         if self.stop_state() != RUNNING {
             return Err("the load is stopping".to_string());
         }
@@ -248,9 +257,12 @@ impl Load {
             }
             _ => {}
         }
+        let limit = limit.min(MAX_USERS);
         let total = self.total_users_with(scenario, &target)?;
-        if total > MAX_USERS {
-            return Err(format!("load: {total} users is more than {MAX_USERS}"));
+        if total > limit {
+            return Err(format!(
+                "the load may have at most {limit} users; this change makes {total}"
+            ));
         }
         let now = self.schedule_now();
         let mut schedule = lock(&self.schedules[index]);
@@ -459,10 +471,30 @@ pub(crate) fn is_user() -> bool {
 }
 
 /// `load.timed`: the scenario's iterations start (`on`) or end. Answers whether the load asks its users to stop.
+/// The first user of a rate scenario to begin starts its schedule's clock.
 pub(crate) fn timed(on: bool) -> bool {
     with_recorder(|recorder| {
         recorder.set_timed(on);
+        if on {
+            if let Some(schedule) = recorder.load.schedules.get(recorder.scenario) {
+                let now = recorder.load.schedule_now();
+                lock(schedule).start_clock(now);
+            }
+        }
         recorder.load.stop_state() != RUNNING
+    })
+    .unwrap_or(false)
+}
+
+/// Whether this user's scenario must be asked before each iteration (`load.next`): a plain closed one need not be,
+/// until its target is set live.
+pub(crate) fn gated() -> bool {
+    with_recorder(|recorder| {
+        recorder
+            .load
+            .schedules
+            .get(recorder.scenario)
+            .is_some_and(|schedule| lock(schedule).gates())
     })
     .unwrap_or(false)
 }
@@ -492,16 +524,22 @@ pub(crate) fn scenario_error(message: &str, iteration: u64) -> bool {
 }
 
 /// `load.iterated`: an iteration ended. In a rate scenario its whole time from its scheduled start, without its
-/// pauses, is a sample `<scenario> iteration` of kind `step`. Answers whether the load asks its users to stop.
+/// pauses, is a sample `<scenario> iteration` of kind `step`, unless the load was stopped now (the iteration was cut
+/// short). Answers whether the load asks its users to stop.
 pub(crate) fn iterated(iteration: u64) -> bool {
     let Some((stop, timed)) = with_recorder(|recorder| {
         recorder.iteration = iteration;
         recorder.counted = None;
-        let timed = recorder.iteration_start.take().map(|(started, paused)| {
-            let elapsed = started.elapsed().saturating_sub(recorder.paused.saturating_sub(paused));
-            let name = recorder.load.names.get(recorder.scenario).cloned().unwrap_or_default();
-            (format!("{name} iteration"), elapsed, recorder.failed)
-        });
+        let cut = recorder.load.stop_state() >= NOW;
+        let timed = recorder
+            .iteration_start
+            .take()
+            .filter(|_| !cut)
+            .map(|(started, paused)| {
+                let elapsed = started.elapsed().saturating_sub(recorder.paused.saturating_sub(paused));
+                let name = recorder.load.names.get(recorder.scenario).cloned().unwrap_or_default();
+                (format!("{name} iteration"), elapsed, recorder.failed)
+            });
         recorder.count_iteration();
         (recorder.load.stop_state() != RUNNING, timed)
     }) else {
@@ -536,7 +574,7 @@ pub(crate) fn next_iteration() -> bool {
         if load.stop_state() != RUNNING {
             return false;
         }
-        let now = load.started.elapsed().as_secs_f64();
+        let now = load.schedule_now();
         let take = lock(schedule).take(user, now);
         match take {
             Take::Go { scheduled } => {
@@ -646,13 +684,14 @@ pub(crate) fn ramp(until: Instant) -> bool {
     stopped()
 }
 
-/// `step.begin`: a step starts. The first step of a rate scenario's iteration starts at the iteration's scheduled
-/// start, so that the wait for a free user is in its time (coordinated omission).
+/// `step.begin`: a step starts. The first step of a rate scenario's iteration starts as late before its begin as the
+/// iteration started after its schedule, so that the wait for a free user is in its time (coordinated omission).
 pub(crate) fn step_begin() {
     with_recorder(|recorder| {
-        let scheduled = recorder.scheduled.take().filter(|_| recorder.steps.is_empty());
-        let begun = scheduled.unwrap_or_else(|| (Instant::now(), recorder.paused));
-        recorder.steps.push(begun);
+        let now = Instant::now();
+        let late = recorder.late.take().filter(|_| recorder.steps.is_empty());
+        let begun = late.map_or(now, |late| now.checked_sub(late).unwrap_or(now));
+        recorder.steps.push((begun, recorder.paused));
     });
 }
 
@@ -805,7 +844,10 @@ pub(crate) fn host_call(name: &str, args: &Value) -> Option<Result<Value, String
             let stop = scenario_error(message, field("iteration").as_u64().unwrap_or(0));
             Ok(json!({ "stop": stop }))
         }
-        "load.iterated" => Ok(json!({ "stop": iterated(field("iteration").as_u64().unwrap_or(0)) })),
+        "load.iterated" => {
+            let stop = iterated(field("iteration").as_u64().unwrap_or(0));
+            Ok(json!({ "stop": stop, "gated": gated() }))
+        }
         "load.next" => Ok(json!({ "go": next_iteration() })),
         "load.pause" => Pause::parse(field("pause"), "pause").map(|parsed| {
             if let Some(parsed) = parsed {
@@ -1044,6 +1086,7 @@ impl Running {
             "endAt": scenario.duration.map(|seconds| self.start_ms + seconds * 1000.0),
             "iterations": iterations, "think": scenario.think.as_ref().map(Pause::to_json),
             "pause": scenario.pause.as_ref().map(Pause::to_json), "newSession": scenario.new_session,
+            "gated": lock(&self.load.schedules[index]).gates(),
         });
         let thread = match &self.source {
             Source::Functions { source, args } => {

@@ -23,14 +23,17 @@
 //! finishes its iteration and waits, untimed and not counted active, until the target is above it again; users are
 //! added as the target rises.
 //!
-//! **Rate** (`rate`, or stages of `[{ duration, rate }]`): iterations started per second, ramped the same way (and with
-//! no stages, over `rampUp` from 0 when it is given). The `k`-th start (from 0) is scheduled where the integral of the
-//! rate from the load's start reaches `k`, so with a constant rate `r` it is at `k / r`. `users` is the most that run at
+//! **Rate** (`rate`, or stages of `[{ duration, rate }]`, not both): iterations started per second, ramped the same way
+//! (and with no stages, over `rampUp` from 0 when it is given). A rate scenario's clock starts when its first user
+//! begins its timed part, so that the users' boot and setup are not counted as dropped starts. The `k`-th start (from
+//! 0) is scheduled where the integral of the rate from then reaches `k`, so with a constant rate `r` it is at `k / r`;
+//! the first is at the first time the rate is above 0. `users` is the most that run at
 //! once (by default the highest rate rounded up), and a free user takes the next scheduled start once it is due. A
 //! start is **dropped** when no user has taken it by the time of the start after it (one interval late), or 25 ms after
 //! its own time if that is later; a dropped start is not run, and is counted in `dropped`. `iterations` in a rate
 //! scenario is the scenario's starts in all, run or dropped. When the scenario ends (its duration, or a stop), the starts
-//! due before then that no user took are dropped too.
+//! due before then that no user took are dropped too. A user the load adds later (a higher `users` set live) takes
+//! starts on the schedule as it stands, so the starts due while its thread boots may be dropped.
 //!
 //! **Live target** ([`Schedule::set_target`]): a new number of users or rate holds from that moment on, in place of the
 //! rest of the stages.
@@ -157,11 +160,16 @@ impl Profile {
     }
 
     /// The time at which [`Profile::count`] reaches `k`, from `origin` on; none when it never does (a rate that ends
-    /// at 0).
+    /// at 0). A `k` already reached at `origin` (the first start) is at the first time the rate is above 0.
     pub(crate) fn time_of_count(&self, k: f64) -> Option<f64> {
         let mut reached = self.count_at_origin;
         if k <= reached {
-            return Some(self.origin);
+            let rising = self
+                .segments
+                .iter()
+                .find(|segment| segment.start > 0.0 || segment.end > 0.0)
+                .map(|segment| segment.from.max(self.origin));
+            return rising.or_else(|| (self.hold > 0.0).then(|| self.last_end()));
         }
         for segment in &self.segments {
             let area = (segment.start + segment.end) / 2.0 * (segment.to - segment.from);
@@ -206,45 +214,59 @@ pub(crate) enum Take {
     Done,
 }
 
-/// One scenario's schedule (see the module doc).
+/// One scenario's schedule (see the module doc). Its methods take `now` in seconds from the load's start; a rate
+/// scenario's starts are kept on its own clock, from `shift`.
 #[derive(Clone, Debug)]
 pub(crate) struct Schedule {
     rate: bool,
     profile: Profile,
     /// The most users at once.
     cap: u64,
-    /// When the scenario ends.
+    /// When the scenario ends, from the load's start.
     end: Option<f64>,
     /// A rate scenario's starts in all.
     total: Option<u64>,
-    /// The index of the next start not taken or dropped, and its time; infinite when none is coming.
+    /// When the scenario's clock started, from the load's start: at once for a closed one, at its first user's timed
+    /// part for a rate one.
+    shift: Option<f64>,
+    /// The index of the next start not taken or dropped, and its time on the scenario's clock; infinite when none is
+    /// coming (a rate of 0).
     next_index: u64,
     next_at: f64,
-    /// No start is left: the total is reached or the next is past the end.
-    exhausted: bool,
+    /// The total is reached: no start is left, whatever the rate.
+    counted_out: bool,
+    /// The next start falls at or past the end: none is left unless a new rate places one before it.
+    past_end: bool,
+    /// The schedule holds users back (stages, a rate, or a target set live): a plain closed one never does.
+    gates: bool,
     dropped: u64,
-    /// The times of the starts dropped and not yet taken by [`Schedule::take_drops`].
+    /// The times (from the load's start) of the starts dropped and not yet taken by [`Schedule::take_drops`].
     drops: Vec<f64>,
 }
 
 impl Schedule {
     /// A closed schedule: `profile` users, at most `cap`, until `end`.
     pub(crate) fn closed(profile: Profile, cap: u64, end: Option<f64>) -> Schedule {
+        let gates = profile != Profile::constant(profile.hold);
         Schedule {
             rate: false,
             profile,
             cap,
             end,
             total: None,
+            shift: Some(0.0),
             next_index: 0,
             next_at: f64::INFINITY,
-            exhausted: false,
+            counted_out: false,
+            past_end: false,
+            gates,
             dropped: 0,
             drops: Vec::new(),
         }
     }
 
-    /// A rate schedule: `profile` starts a second, at most `cap` users at once, until `end` or `total` starts.
+    /// A rate schedule: `profile` starts a second, at most `cap` users at once, until `end` or `total` starts. Its
+    /// clock starts at [`Schedule::start_clock`], or at the first [`Schedule::take`].
     pub(crate) fn rate(profile: Profile, cap: u64, end: Option<f64>, total: Option<u64>) -> Schedule {
         let mut schedule = Schedule {
             rate: true,
@@ -252,9 +274,12 @@ impl Schedule {
             cap,
             end,
             total,
+            shift: None,
             next_index: 0,
             next_at: f64::INFINITY,
-            exhausted: false,
+            counted_out: false,
+            past_end: false,
+            gates: true,
             dropped: 0,
             drops: Vec::new(),
         };
@@ -270,15 +295,43 @@ impl Schedule {
         self.cap
     }
 
+    /// Whether a user must ask before each iteration: false for a plain closed scenario whose target was not set.
+    pub(crate) fn gates(&self) -> bool {
+        self.gates
+    }
+
     #[cfg(test)]
     pub(crate) fn dropped(&self) -> u64 {
         self.dropped
     }
 
+    /// The scenario's clock starts at `now`, unless it has.
+    pub(crate) fn start_clock(&mut self, now: f64) {
+        if self.shift.is_none() {
+            self.shift = Some(now);
+            self.place_next();
+        }
+    }
+
+    /// `now` on the scenario's clock: 0 before it starts.
+    fn local(&self, now: f64) -> f64 {
+        (now - self.shift.unwrap_or(now)).max(0.0)
+    }
+
+    /// A time on the scenario's clock from the load's start.
+    fn global(&self, at: f64) -> f64 {
+        at + self.shift.unwrap_or(0.0)
+    }
+
+    /// When start `k` (from 0) is due, in seconds from the scenario's clock start; none at a rate that stays 0.
+    pub(crate) fn time_of_start(&self, k: u64) -> Option<f64> {
+        self.profile.time_of_count(k as f64)
+    }
+
     /// The target at `now`: a closed scenario's users, or a rate scenario's rate.
     pub(crate) fn target(&self, now: f64) -> Target {
         if self.rate {
-            Target::Rate(self.profile.value(now))
+            Target::Rate(self.profile.value(self.local(now)))
         } else {
             Target::Users(self.allowed(now))
         }
@@ -286,7 +339,7 @@ impl Schedule {
 
     /// The users a closed scenario allows at `now`.
     fn allowed(&self, now: f64) -> u64 {
-        let target = (self.profile.value(now) + 1e-9).floor().max(0.0);
+        let target = (self.profile.value(self.local(now)) + 1e-9).floor().max(0.0);
         (target as u64).min(self.cap)
     }
 
@@ -294,10 +347,14 @@ impl Schedule {
         self.end.is_some_and(|end| now >= end)
     }
 
+    fn exhausted(&self) -> bool {
+        self.counted_out || self.past_end
+    }
+
     /// Place the start at `next_index`, or mark that there is none.
     fn place_next(&mut self) {
         if self.total.is_some_and(|total| self.next_index >= total) {
-            self.exhausted = true;
+            self.counted_out = true;
             self.next_at = f64::INFINITY;
             return;
         }
@@ -305,9 +362,9 @@ impl Schedule {
             .profile
             .time_of_count(self.next_index as f64)
             .unwrap_or(f64::INFINITY);
-        // none coming at a rate of 0 is not the end: a new rate may place one
-        if self.next_at.is_finite() && self.end.is_some_and(|end| self.next_at >= end) {
-            self.exhausted = true;
+        // none coming at a rate of 0 is not past the end: a new rate may place one
+        self.past_end = self.next_at.is_finite() && self.end.is_some_and(|end| self.global(self.next_at) >= end);
+        if self.past_end {
             self.next_at = f64::INFINITY;
         }
     }
@@ -319,12 +376,12 @@ impl Schedule {
 
     fn drop_next(&mut self) {
         self.dropped += 1;
-        self.drops.push(self.next_at);
+        self.drops.push(self.global(self.next_at));
         self.advance();
     }
 
-    /// When the next start is dropped if no user takes it: the time of the start after it, and at least
-    /// [`MIN_LATE`] after its own.
+    /// When the next start is dropped if no user takes it, on the scenario's clock: the time of the start after it,
+    /// and at least [`MIN_LATE`] after its own.
     fn late_at(&self) -> f64 {
         let following = self
             .profile
@@ -333,7 +390,8 @@ impl Schedule {
         following.max(self.next_at + MIN_LATE)
     }
 
-    /// User `user`, free at `now`, asks for its next iteration.
+    /// User `user`, free at `now`, asks for its next iteration. A rate scenario's scheduled start is from the load's
+    /// start.
     pub(crate) fn take(&mut self, user: u64, now: f64) -> Take {
         if self.ended(now) {
             return Take::Done;
@@ -345,38 +403,49 @@ impl Schedule {
                 Take::Wait(now + POLL)
             };
         }
+        self.start_clock(now);
         self.drop_overdue(now);
-        if self.exhausted {
+        if self.counted_out {
             return Take::Done;
         }
-        if user >= self.cap {
-            return Take::Wait(now + POLL);
+        let poll = self.end.map_or(now + POLL, |end| end.min(now + POLL));
+        if self.past_end || user >= self.cap {
+            return Take::Wait(poll);
         }
-        if self.next_at <= now {
-            let scheduled = self.next_at;
+        let at = self.local(now);
+        if self.next_at <= at {
+            let scheduled = self.global(self.next_at);
             self.advance();
             return Take::Go {
                 scheduled: Some(scheduled),
             };
         }
-        Take::Wait(self.next_at)
+        Take::Wait(self.global(self.next_at).min(poll))
     }
 
     /// Drop the starts that no user took in time, as of `now`.
     pub(crate) fn drop_overdue(&mut self, now: f64) {
-        while self.rate && !self.exhausted && self.next_at.is_finite() && now > self.late_at() {
+        if self.shift.is_none() {
+            return;
+        }
+        let at = self.local(now);
+        while self.rate && !self.exhausted() && self.next_at.is_finite() && at > self.late_at() {
             self.drop_next();
         }
     }
 
     /// The scenario is over at `until`: every start due before it that no user took is dropped.
     pub(crate) fn settle(&mut self, until: f64) {
-        while self.rate && !self.exhausted && self.next_at < until {
+        if self.shift.is_none() {
+            return;
+        }
+        let at = self.local(until);
+        while self.rate && !self.exhausted() && self.next_at < at {
             self.drop_next();
         }
     }
 
-    /// The times of the starts dropped since the last call.
+    /// The times of the starts dropped since the last call, from the load's start.
     pub(crate) fn take_drops(&mut self) -> Vec<f64> {
         std::mem::take(&mut self.drops)
     }
@@ -392,13 +461,13 @@ impl Schedule {
 
     /// Whether the scenario may want more than `threads` users after `now`, so that the load waits for it.
     pub(crate) fn may_want_more(&self, now: f64, threads: u64) -> bool {
-        if self.ended(now) || self.exhausted {
+        if self.ended(now) || self.counted_out {
             return false;
         }
         let most = if self.rate {
             self.cap
         } else {
-            ((self.profile.max_from(now) + 1e-9).floor().max(0.0) as u64).min(self.cap)
+            ((self.profile.max_from(self.local(now)) + 1e-9).floor().max(0.0) as u64).min(self.cap)
         };
         most > threads
     }
@@ -410,9 +479,10 @@ impl Schedule {
     ///
     /// For a rate given to a closed scenario.
     pub(crate) fn set_target(&mut self, now: f64, target: Target) -> Result<(), String> {
+        let at = self.local(now);
         match (target, self.rate) {
             (Target::Users(users), false) => {
-                self.profile.hold_from(now, users as f64);
+                self.profile.hold_from(at, users as f64);
                 self.cap = users;
             }
             (Target::Users(users), true) => self.cap = users,
@@ -420,13 +490,16 @@ impl Schedule {
                 return Err("it has no rate: give it users".to_string());
             }
             (Target::Rate(rate), true) => {
-                self.profile.hold_from(now, rate);
-                // a start already due keeps its time; the next one is placed on the new rate
-                if !self.exhausted && self.next_at > now {
+                // the starts overdue on the old rate are dropped on it, so the new one does not start them at once
+                self.drop_overdue(now);
+                self.profile.hold_from(at, rate);
+                // a start already due keeps its time; the next one is placed on the new rate, before the end or not
+                if !self.counted_out && (self.past_end || self.next_at > at) {
                     self.place_next();
                 }
             }
         }
+        self.gates = true;
         Ok(())
     }
 }

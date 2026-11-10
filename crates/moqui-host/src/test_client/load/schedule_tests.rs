@@ -196,3 +196,55 @@ fn a_live_target_holds_from_its_change() {
     let refused = closed.set_target(2.0, Target::Rate(5.0)).unwrap_err();
     assert_eq!(refused, "it has no rate: give it users");
 }
+
+#[test]
+fn a_rate_past_the_end_recovers_when_a_new_rate_places_a_start() {
+    let mut rate = Schedule::rate(Profile::constant(10.0), 1, Some(2.0), None);
+    let mut busy = vec![0.0];
+    assert_eq!(drive(&mut rate, &mut busy, 0.01, 0.0, 0.55).taken.len(), 6);
+    // at 0.01 a second the next start is 50 s away, past the end: the user waits, not done
+    rate.set_target(0.55, Target::Rate(0.01)).unwrap();
+    assert_eq!(rate.take(0, 0.6), Take::Wait(0.6 + POLL));
+    rate.set_target(0.7, Target::Rate(10.0)).unwrap();
+    let again = drive(&mut rate, &mut busy, 0.01, 0.7, 1.0);
+    assert_eq!(again.taken.len(), 3, "{:?}", again.taken);
+    assert!(close(again.taken[0], 0.75), "{:?}", again.taken);
+    // near the end a waiting user asks again at the end
+    let mut slow = Schedule::rate(Profile::constant(10.0), 1, Some(2.0), None);
+    assert!(matches!(slow.take(0, 0.0), Take::Go { .. }));
+    slow.set_target(0.05, Target::Rate(0.01)).unwrap();
+    assert_eq!(slow.take(0, 1.98), Take::Wait(2.0));
+    assert_eq!(slow.take(0, 2.0), Take::Done);
+    // a total reached stays done
+    let mut counted = Schedule::rate(Profile::constant(10.0), 1, None, Some(1));
+    assert!(matches!(counted.take(0, 0.0), Take::Go { .. }));
+    counted.set_target(0.1, Target::Rate(100.0)).unwrap();
+    assert_eq!(counted.take(0, 0.2), Take::Done);
+}
+
+#[test]
+fn the_clock_starts_with_the_first_user_and_a_rate_of_0_starts_nothing() {
+    // the users boot for 2 s: nothing is dropped meanwhile, and the first start is when the clock starts
+    let mut rate = Schedule::rate(Profile::constant(10.0), 1, Some(10.0), None);
+    rate.drop_overdue(1.9);
+    rate.settle(1.9);
+    assert_eq!(rate.take_drops(), Vec::<f64>::new());
+    rate.start_clock(2.0);
+    assert_eq!(rate.take(0, 2.0), Take::Go { scheduled: Some(2.0) });
+    assert_eq!(rate.take(0, 2.1), Take::Go { scheduled: Some(2.1) });
+    // a first stage of rate 0: the first start is where the rate rises
+    let profile = Profile::stages(&[
+        Stage {
+            duration: 1.0,
+            target: 0.0,
+        },
+        Stage {
+            duration: 1.0,
+            target: 10.0,
+        },
+    ]);
+    assert!(close(profile.time_of_count(0.0).unwrap(), 1.0));
+    let mut staged = Schedule::rate(profile, 1, Some(2.0), None);
+    assert_eq!(staged.take(0, 0.0), Take::Wait(POLL));
+    assert_eq!(staged.take(0, 1.0), Take::Go { scheduled: Some(1.0) });
+}

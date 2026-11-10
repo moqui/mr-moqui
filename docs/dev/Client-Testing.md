@@ -518,7 +518,7 @@ It returns the statistics, prints a table after the feature's line, and writes t
 | `users` | The number of users, 1 to 10,000; 1 by default |
 | `duration`, `iterations` | Seconds the scenario repeats for, and/or iterations per user; at least one. With both, a user stops at whichever comes first |
 | `rampUp` | Seconds over which the users start, evenly; with `rate` and no `stages`, the seconds over which the rate rises from 0 |
-| `rate` | Iterations started per second (an arrival rate, below), with `users` the most at once (by default the highest rate rounded up). `iterations` is then the scenario's starts in all |
+| `rate` | Iterations started per second (an arrival rate, below), with `users` the most at once (by default the highest rate rounded up, which assumes an iteration takes a second or less: give more for longer ones). `iterations` is then the scenario's starts in all. Not with `stages` |
 | `stages` | `[{ duration, users }]`, the users over time, or `[{ duration, rate }]`, the rate over time (below); with no `duration`, the scenario lasts as long as its stages |
 | `think` | Between a user's iterations, not timed: milliseconds, `[min, max]` (uniform) or `{ gaussian: [mean, deviation] }` (clamped at 0) |
 | `pause` | A wait of the same forms before each request of the scenario, not timed |
@@ -544,8 +544,9 @@ and once in each user's engine, so its constants and helpers work in every scena
 numbered from 0. With `scenarios` (`{ name: settings }`, or `[names]`), only those named run, with their settings over
 the script's (null unsets one), and a name the script does not have is refused. `users`, `iterations`, `duration`,
 `rampUp`, `think`, `pause`, `rate` and `stages` beside `script` apply to every scenario; a `duration` given alone
-replaces the script's `iterations`, and `iterations` alone its `duration`; a `rate` replaces the script's stages of
-users, stages of users its `rate`, and `stages` alone its `duration` and `iterations`. A secret param is left out of the result.
+replaces the script's `iterations`, and `iterations` alone its `duration`; a `rate` replaces the script's stages
+(and, for a closed scenario, its `iterations`, which were each user's), `stages` its `rate`, and `stages` alone its
+`duration` and `iterations`. A secret param is left out of the result.
 
 `moqui test-load <component> --script Name` runs a load script from the command line, with a progress line, Ctrl-C,
 and the result in `runtime/tmp/test-load/<run>/result.json` (`moqui help test-load`).
@@ -624,19 +625,25 @@ an iteration while `u < floor(target)`; a user above the target finishes its ite
 counted in the active users, and users start as the target reaches them, up to `users` (by default the largest
 stage's). `rampUp` is not used with stages: the first stage is the ramp.
 
-**An arrival rate.** With `rate` (or `stages: [{ duration, rate }]`, ramped the same way) iterations are started on a
-schedule rather than by users looping: the `k`-th start (from 0) is where the rate's integral from the start reaches
-`k`, `k / rate` for a constant rate. A free user takes the next start once it is due. A start is **dropped** when no
+**An arrival rate.** With `rate` (or, not with it, `stages: [{ duration, rate }]`, ramped the same way) iterations are
+started on a schedule rather than by users looping. The scenario's clock starts when its first user begins its timed
+part (after its boot and setup); the `k`-th start (from 0) is where the rate's integral from then reaches `k`,
+`k / rate` for a constant rate, the first at the first time the rate is above 0. A free user takes the next start once it is due. A start is **dropped** when no
 user has taken it by the time of the start after it (one interval late), or 25 ms after its own time if that is later,
 and when the scenario ends (its duration or a stop) with it due and not taken; a dropped start is not run. A request's
-time is still from its send, but the first `step` an iteration begins is timed from the iteration's scheduled start, and
-each iteration is also a sample `<scenario> iteration` (kind `step`) timed from it (pauses left out of both), so the
-wait for a free user while a server stalls shows in those times rather than being hidden (coordinated omission).
+time is still from its send, but the first `step` an iteration begins is timed from as long before its begin as the
+iteration started late (so the wait is in it, and work before the step, such as a login, is not), and each iteration
+is also a sample `<scenario> iteration` (kind `step`) timed from its scheduled start (pauses left out of both, and none
+for an iteration cut short by a stop now), so the wait for a free user while a server stalls shows in those times
+rather than being hidden (coordinated omission). A user added while the load runs takes starts on the schedule as it
+stands, so starts due while its thread boots may be dropped. With only `iterations`, the timeout is the time of the
+last start and 120 s.
 `think` still waits after an iteration before the user is free again.
 
 A running load's target can be changed: a server run's page calls `update#LoadRunUsers` (`runId`, `scenario`, and
 `users` or `rate`), which holds the new users (a closed scenario's target, or a rate scenario's most at once) or rate
-from then on in place of the rest of the stages, within `load_runner_max_users`.
+from then on in place of the rest of the stages, within `load_runner_max_users` counting every user already started.
+A plain closed scenario's users are not held by its schedule until its target is set.
 
 **Tarpits.** A load against a server with the demo data is answered 429 by its tarpits: the demo `ALL_SCREENS` tarpit
 (120 hits in 60 s) is on `ALL_USERS`, which every user is in, and every matching tarpit applies, so a row of the load

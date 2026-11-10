@@ -169,9 +169,12 @@ pub(crate) struct Recorder {
     pub(crate) paused: Duration,
     /// The user waits for the schedule (above a closed scenario's target, or for a rate's next start): not active.
     parked: bool,
-    /// In a rate scenario, the current iteration's scheduled start and [`Recorder::paused`] then: the first step it
-    /// begins is timed from there, and so is its `<scenario> iteration` sample.
-    pub(crate) scheduled: Option<(Instant, Duration)>,
+    /// In a rate scenario, how late the current iteration started after its scheduled start: the first step it
+    /// begins is timed from that much before its own begin, so that the wait is in it but the work before the step
+    /// (a login, a new session) is not.
+    pub(crate) late: Option<Duration>,
+    /// In a rate scenario, the current iteration's scheduled start and [`Recorder::paused`] then: its
+    /// `<scenario> iteration` sample is timed from there.
     pub(crate) iteration_start: Option<(Instant, Duration)>,
     /// The current iteration had an error.
     pub(crate) failed: bool,
@@ -202,7 +205,7 @@ impl Recorder {
             steps: Vec::new(),
             paused: Duration::ZERO,
             parked: false,
-            scheduled: None,
+            late: None,
             iteration_start: None,
             failed: false,
             hold,
@@ -247,9 +250,9 @@ impl Recorder {
             self.load.active.fetch_add(1, Ordering::Relaxed);
         }
         self.failed = false;
-        let started = scheduled.map(|at| (at.min(Instant::now()), self.paused));
-        self.scheduled = started;
-        self.iteration_start = started;
+        let now = Instant::now();
+        self.late = scheduled.map(|at| now.saturating_duration_since(at));
+        self.iteration_start = scheduled.map(|at| (at.min(now), self.paused));
     }
 
     pub(crate) fn push(&mut self, pending: Pending) {

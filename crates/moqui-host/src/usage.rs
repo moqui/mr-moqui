@@ -538,7 +538,7 @@ Options:
   --rate N                        Start N iterations a second (an arrival rate) with --users the most
                                   at once; a start no user is free for within an interval is dropped,
                                   and the result counts it. With --rate, --iterations is the starts
-                                  in all, and it replaces the script's stages of users.
+                                  in all, and it replaces the script's stages.
   --scenario name                 Run only this scenario; the settings above are its.
   --label text                    Kept in the result's run block, and shown in Tools > Load.
   --timeout seconds               What a request waits for its answer, unless the script's request

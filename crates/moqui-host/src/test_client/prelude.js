@@ -226,8 +226,10 @@
             if (host("load.ramp", { until: spec.startAt }).stop) return iteration;
             if (setup) setup();
             let stop = host("load.timed", { on: true }).stop;
+            // a plain closed scenario is not asked before each iteration until its target is set live (load.iterated)
+            let gated = spec.gated !== false;
             const more = () => !stop && (spec.iterations == null || iteration < spec.iterations) && (spec.endAt == null || Date.now() < spec.endAt);
-            while (more() && host("load.next", { iteration }).go) {
+            while (more() && (!gated || host("load.next", { iteration }).go)) {
                 if (spec.newSession) {
                     const old = g.http;
                     define("http", newSession());
@@ -239,7 +241,7 @@
                     host("load.error", { message: messageOf(e), iteration });
                 }
                 iteration++;
-                stop = host("load.iterated", { iteration }).stop;
+                ({ stop, gated } = host("load.iterated", { iteration }));
                 if (spec.think && more()) host("load.pause", { pause: spec.think, until: spec.endAt });
             }
             host("load.timed", { on: false });

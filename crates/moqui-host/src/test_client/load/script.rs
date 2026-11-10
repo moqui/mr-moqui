@@ -119,9 +119,9 @@ impl ScenarioSettings {
             },
         };
         let (stages, rate_stages) = parse_stages(field("stages"), who)?;
-        if rate.is_some() && !stages.is_empty() && !rate_stages {
+        if rate.is_some() && !stages.is_empty() {
             return Err(format!(
-                "{who}: a rate scenario's stages are {{ duration, rate }}, not users"
+                "{who}: give rate or stages, not both (stages of {{ duration, rate }} make a rate scenario)"
             ));
         }
         // with stages or a rate, users is the most at once: by default the largest stage's, or the highest rate
@@ -233,9 +233,19 @@ impl ScenarioSettings {
         Value::Array(stages)
     }
 
-    /// Seconds before its users are told to stop: its duration and ramp and 120, or 600 with only iterations.
+    /// Seconds before its users are told to stop: its duration and ramp and 120; with only iterations, a rate
+    /// scenario's time of its last start and 120, else 600.
     pub(crate) fn timeout(&self) -> f64 {
-        self.duration.map_or(600.0, |seconds| seconds + self.ramp_up + 120.0)
+        if let Some(seconds) = self.duration {
+            return seconds + self.ramp_up + 120.0;
+        }
+        match self.iterations.filter(|_| self.is_rate()) {
+            Some(total) => self
+                .schedule()
+                .time_of_start(total.saturating_sub(1))
+                .map_or(600.0, |last| last.min(MAX_SECONDS) + 120.0),
+            None => 600.0,
+        }
     }
 }
 
@@ -460,12 +470,12 @@ const SETTINGS: [&str; 9] = [
     "stages",
 ];
 
-/// Whether `stages` are of users (`{ duration, users }`), not rates.
-fn user_stages(stages: Option<&Value>) -> bool {
+/// Whether `stages` are rates (`{ duration, rate }`), not users.
+fn rate_stages(stages: Option<&Value>) -> bool {
     stages
         .and_then(Value::as_array)
         .and_then(|stages| stages.first())
-        .is_some_and(|stage| stage.get("users").is_some())
+        .is_some_and(|stage| stage.get("rate").is_some())
 }
 
 /// The settings a run of `plan` uses: each scenario's defaults, with the run's `users`, `rampUp`, `duration`,
@@ -530,12 +540,28 @@ pub(crate) fn settings(plan: &Plan, run: &Value) -> Result<Vec<ScenarioSettings>
             if given("iterations") && !given("duration") {
                 merged.remove("duration");
             }
-            // a run's rate replaces the script's stages of users, and its stages of users the script's rate; its
+            // a run's rate replaces the script's stages (of users or rates), and its stages the script's rate; a rate
+            // that makes a closed scenario a rate one drops its iterations (each user's, not the starts in all); its
             // stages give the length, unless it gives a duration or iterations too
-            if given("rate") && !given("stages") && user_stages(merged.get("stages")) {
-                merged.remove("stages");
+            let closed = merged.get("rate").is_none_or(Value::is_null) && !rate_stages(merged.get("stages"));
+            if given("rate") && !given("iterations") && closed {
+                merged.remove("iterations");
             }
-            if given("stages") && !given("rate") && user_stages(over.get("stages")) {
+            if given("rate") && !given("stages") {
+                // the stages' length stays the scenario's, unless it has a duration
+                let length: f64 = merged
+                    .remove("stages")
+                    .as_ref()
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|stage| stage.get("duration").and_then(Value::as_f64))
+                    .sum();
+                if length > 0.0 && merged.get("duration").is_none_or(Value::is_null) {
+                    merged.insert("duration".to_string(), json!(length));
+                }
+            }
+            if given("stages") && !given("rate") {
                 merged.remove("rate");
             }
             if given("stages") && !given("duration") && !given("iterations") {
