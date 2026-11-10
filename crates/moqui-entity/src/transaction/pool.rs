@@ -373,8 +373,11 @@ impl DbConnection for Tracked {
     }
 
     fn savepoint(&mut self, name: &str) -> Result<(), Error> {
+        if !super::shapes::enabled() {
+            return self.conn.savepoint(name);
+        }
         noted(
-            "SAVEPOINT",
+            &format!("SAVEPOINT {name}"),
             &[],
             || super::shapes::Kind::Savepoint,
             |()| 0,
@@ -383,8 +386,11 @@ impl DbConnection for Tracked {
     }
 
     fn savepoint_behind(&mut self, name: &str) -> Result<(), Error> {
+        if !super::shapes::enabled() {
+            return self.conn.savepoint_behind(name);
+        }
         noted(
-            "SAVEPOINT",
+            &format!("SAVEPOINT {name}"),
             &[],
             || super::shapes::Kind::Savepoint,
             |()| 0,

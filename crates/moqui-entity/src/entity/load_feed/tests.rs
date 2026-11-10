@@ -832,9 +832,11 @@ fn a_missing_table_probe_fails_when_the_savepoint_rollback_fails() {
     let rows = probe_query(&mut conn, "SELECT * FROM data_feed", &[]).unwrap();
     assert!(rows.is_empty());
 
+    // the savepoint went out behind what was unanswered, so a rollback that fails is taken for an earlier failure:
+    // the transaction cannot commit either way
     script.broken_rollback.store(true, Ordering::SeqCst);
     let err = probe_query(&mut conn, "SELECT * FROM data_feed", &[]).unwrap_err();
-    assert!(err.to_string().contains("aborted"), "{err}");
+    assert!(err.to_string().contains("before the data feed failed"), "{err}");
 }
 
 fn enlist(tx: &TransactionManager) {

@@ -949,7 +949,15 @@ impl TransactionManager {
         // The census has one line for the transaction: its holding member's frame, else this manager's.
         let census = self.tx_cache_everywhere() || crate::entity::cache::census_measures();
         let mut census_line: Option<CensusLine> = None;
+        // the statement shapes of every member's frame (plans/Profiling3.md M2)
+        let mut shapes: Option<super::shapes::Log> = None;
         for (member, mut phase, committed) in ended {
+            if let Some(log) = super::shapes::end(phase.token) {
+                match &mut shapes {
+                    Some(kept) => kept.merge(log),
+                    None => shapes = Some(log),
+                }
+            }
             if let Some(line) = end_trace(&mut phase, committed, census) {
                 let kept_held = census_line.as_ref().is_some_and(|kept| kept.stats.is_some());
                 if census_line.is_none() || (!kept_held && (line.stats.is_some() || member.shares_stack(self))) {
@@ -969,7 +977,7 @@ impl TransactionManager {
                 line.committed,
                 line.round_trips,
                 line.micros,
-                &line.shapes,
+                &super::shapes::census_members(shapes.as_ref()),
             );
         }
         for member in resumes {
@@ -1611,9 +1619,7 @@ fn end_trace(phase: &mut Phase, committed: bool, census: bool) -> Option<CensusL
         CacheMode::Hold => "hold",
         CacheMode::ReadThrough => "read-through",
     };
-    let shapes = super::shapes::end(phase.token);
     let line = census.then(|| CensusLine {
-        shapes,
         mode,
         stats: stats.clone(),
         committed,
@@ -1649,8 +1655,6 @@ fn end_trace(phase: &mut Phase, committed: bool, census: bool) -> Option<CensusL
 
 /// A frame's census line (plans/archive/TX-Cache.md D1), written once for the transaction after its frames end.
 struct CensusLine {
-    /// The frame's statement shapes as JSON members (plans/Profiling3.md M2).
-    shapes: String,
     mode: &'static str,
     stats: Option<crate::entity::cache::TxCacheStats>,
     committed: bool,

@@ -16,11 +16,11 @@
 //!
 //! With `MOQUI_TX_CACHE_CENSUS_FILE` set, each statement a pooled connection runs inside a transaction frame is noted
 //! against the frame begun last on the thread: its shape (a hash of the SQL text, which holds no literals on the
-//! entity paths, and its first words), its kind, whether it waited for a round trip, and how many rows it returned. When
-//! the frame ends, its census line gets the shapes and three counts that say what batching or caching could save: the
-//! statements of a shape run again (`repeats`), those run again with other parameters (`repeats_other_params`, a find
-//! in a loop), and waited reads that came right after another waited read with no other statement between
-//! (`read_after_read`).
+//! entity paths, and its first words), its kind, whether it waited for a round trip, and how many rows it returned.
+//! When the transaction ends, its census line gets the shapes of all its frames and three counts that say what
+//! batching or caching could save: the statements of a shape run again (`repeats`), those run again with other
+//! parameters (`repeats_other_params`, a find in a loop), and waited reads that came right after another waited read
+//! with no other statement between (`read_after_read`).
 
 use std::cell::RefCell;
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -111,7 +111,7 @@ struct Shape {
 }
 
 #[derive(Default)]
-struct Log {
+pub(crate) struct Log {
     shapes: IndexMap<u64, Shape, foldhash::fast::FixedState>,
     repeats: u64,
     repeats_other_params: u64,
@@ -208,15 +208,47 @@ fn head_of(sql: &str) -> String {
     }
 }
 
-/// The frame `token` ended: its shapes as the census line's JSON members (with a leading comma), or empty.
-pub(crate) fn end(token: u64) -> String {
+/// The frame `token` ended: its log, when shapes are logged.
+pub(crate) fn end(token: u64) -> Option<Log> {
     if !enabled() {
-        return String::new();
+        return None;
     }
-    let log = LOGS.with_borrow_mut(|logs| {
+    LOGS.with_borrow_mut(|logs| {
         let at = logs.open.iter().rposition(|(open, _)| *open == token)?;
         Some(logs.open.remove(at).1)
-    });
+    })
+}
+
+impl Log {
+    /// Add the log of another frame of the same transaction (a linked database's), so the transaction's one census
+    /// line has all its statements: they go to the frame begun last, which need not be the line's.
+    pub(crate) fn merge(&mut self, other: Log) {
+        for (hash, shape) in other.shapes {
+            match self.shapes.get_mut(&hash) {
+                Some(kept) => {
+                    kept.count += shape.count;
+                    kept.waited += shape.waited;
+                    kept.rows += shape.rows;
+                    for params in shape.params {
+                        if kept.params.len() < 32 && !kept.params.contains(&params) {
+                            kept.params.push(params);
+                        }
+                    }
+                }
+                None => {
+                    self.shapes.insert(hash, shape);
+                }
+            }
+        }
+        self.repeats += other.repeats;
+        self.repeats_other_params += other.repeats_other_params;
+        self.read_after_read += other.read_after_read;
+        self.waited += other.waited;
+    }
+}
+
+/// A transaction's shapes as its census line's JSON members (with a leading comma), or empty.
+pub(crate) fn census_members(log: Option<&Log>) -> String {
     let Some(log) = log else { return String::new() };
     let mut by_kind: IndexMap<&'static str, (u64, u64)> = IndexMap::new();
     let mut shapes: Vec<serde_json::Value> = Vec::with_capacity(log.shapes.len());
@@ -240,7 +272,10 @@ pub(crate) fn end(token: u64) -> String {
         .map(|(kind, (n, waited))| (kind.to_string(), serde_json::json!({"n": n, "waited": waited})))
         .collect();
     format!(
-        ",\"statements_waited\":{},\"repeats\":{},\"repeats_other_params\":{},\"read_after_read\":{},\"kinds\":{},\"shapes\":{}",
+        concat!(
+            ",\"statements_waited\":{},\"repeats\":{},\"repeats_other_params\":{},\"read_after_read\":{},",
+            "\"kinds\":{},\"shapes\":{}"
+        ),
         log.waited,
         log.repeats,
         log.repeats_other_params,
