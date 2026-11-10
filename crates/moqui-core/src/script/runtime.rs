@@ -185,21 +185,21 @@ impl Drop for WidgetWrap {
 /// the real `ec` while the static report's full check is on: they are not the screen's widget expressions. An entity
 /// find in a render (a drop-down's options) evaluates its filters on this thread with the check on, and with the
 /// wrapper a filter's `ec.user.context` was recorded against the screen and closed the find. A script a widget
-/// expression calls into runs on an engine of its own, with the real `ec`, already.
+/// expression calls into temporarily restores the real `ec` in the shared engine, already.
 pub(crate) fn with_real_ec<T>(body: impl FnOnce() -> T) -> T {
     let _unchecked = WidgetWrap::set(false);
     body()
 }
 
-/// The real `ec` put back on `globalThis` when dropped, after a widget expression ran with the wrapper.
-struct RealEc<'js> {
+/// Put the caller's `ec` back after a widget wrapper or a nested framework script, including on errors.
+struct RestoreEc<'js> {
     ctx: Ctx<'js>,
-    real: JsValue<'js>,
+    previous: JsValue<'js>,
 }
 
-impl Drop for RealEc<'_> {
+impl Drop for RestoreEc<'_> {
     fn drop(&mut self) {
-        let _ = set_ec(&self.ctx, self.real.clone());
+        let _ = set_ec(&self.ctx, self.previous.clone());
     }
 }
 
@@ -265,7 +265,10 @@ fn with_widget_ec<'js, R>(
         .catch(ctx)
         .map_err(|caught| Error::new(caught.to_string()))?;
     set_ec(ctx, wrapper).map_err(js_error)?;
-    let _real = RealEc { ctx: ctx.clone(), real };
+    let _real = RestoreEc {
+        ctx: ctx.clone(),
+        previous: real,
+    };
     // The expression may call back into the host (expand inside an expression): that is not checked twice.
     let _unchecked = WidgetWrap::set(false);
     body()
@@ -460,6 +463,8 @@ struct Engine {
     unit_depth: Cell<u32>,
     /// The object the bare name `context` reads as: the stack itself, made once (see [`CONTEXT_PROXY`]).
     context_proxy: Persistent<JsValue<'static>>,
+    /// Change 3: Nested scripts restore this host object while their caller retains its widget wrapper.
+    real_ec: Persistent<JsValue<'static>>,
     /// Whether [`flush_tracked`] is writing this engine's tracked values back. A `context` converted meanwhile
     /// (a tracked map that holds it) reads the stack as it is, instead of flushing again inside the flush.
     flushing: Cell<bool>,
@@ -1051,6 +1056,19 @@ fn with_nested_context<R>(
     // `Context::with` holds the runtime's lock for as long as this call lasts, and the `Ctx` made here does not
     // outlive it.
     let ctx = unsafe { Ctx::from_raw(engine.context.as_raw()) };
+    // Change 3: Engine reuse must not carry a checked widget's restricted ec into framework code.
+    // Restore the outer wrapper after the nested call, including when that call fails.
+    let previous: JsValue = ctx.globals().get("ec").map_err(js_error)?;
+    let real = engine.real_ec.clone().restore(&ctx).map_err(js_error)?;
+    let _restore_ec = if previous != real {
+        set_ec(&ctx, real).map_err(js_error)?;
+        Some(RestoreEc {
+            ctx: ctx.clone(),
+            previous,
+        })
+    } else {
+        None
+    };
     // The caller's run state is set aside as it is, as a runtime of its own would leave it, and given back after: its
     // tracked values (written to its own context frame at its next host call or its end), its released ones, its
     // screen unit depth (a render this run makes starts afresh) and its flush in progress.
@@ -1324,6 +1342,7 @@ impl Engine {
             runtimes: RefCell::new(std::collections::HashSet::new()),
             unit_depth: Cell::new(0),
             context_proxy: helpers.context_proxy,
+            real_ec: helpers.real_ec,
             flushing: Cell::new(false),
             object_utilities: helpers.object_utilities,
             collection_utilities: helpers.collection_utilities,
@@ -1338,6 +1357,7 @@ impl Engine {
 
 struct Helpers {
     context_proxy: Persistent<JsValue<'static>>,
+    real_ec: Persistent<JsValue<'static>>,
     object_utilities: Persistent<Object<'static>>,
     collection_utilities: Persistent<Object<'static>>,
     string_utilities: Persistent<Object<'static>>,
@@ -1363,6 +1383,7 @@ fn install_context(ctx: &Ctx<'_>) -> Result<Helpers, Error> {
     let context_proxy = make_context_proxy(ctx)?;
     Ok(Helpers {
         context_proxy: Persistent::save(ctx, context_proxy),
+        real_ec: Persistent::save(ctx, ctx.globals().get::<_, JsValue>("ec").map_err(js_error)?),
         object_utilities: Persistent::save(ctx, object_utilities),
         collection_utilities: Persistent::save(ctx, collection_utilities),
         string_utilities: Persistent::save(ctx, string_utilities),

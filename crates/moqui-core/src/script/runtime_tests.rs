@@ -787,13 +787,18 @@ fn running_out_of_memory_frees_the_engine_caches() -> Result<(), Error> {
 /// The wrapped `ec` of the static report's full check (Commerce F172): a coercion, JSON and a promise's probe of an area
 /// read it as a plain object, not as violations; a member not on the list throws; an expression the framework evaluates
 /// for itself while the check is on (an entity filter's condition) reads the real `ec`; and a script a checked
-/// expression calls into runs on an engine of its own, with the real `ec`.
+/// expression calls into sees the real `ec` in the shared engine, then restores the outer wrapper.
 #[test]
 fn the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one() -> Result<(), Error> {
     clear_context_stack();
     with_ctx(|ctx| {
-        let read = rquickjs::Function::new(ctx.clone(), || -> rquickjs::Result<String> {
-            Ok(eval_value("typeof ec.entity")
+        let read = rquickjs::Function::new(ctx.clone(), |fail: bool| -> rquickjs::Result<String> {
+            let expression = if fail {
+                "(() => { throw new Error('nested sentinel') })()"
+            } else {
+                "typeof ec.entity"
+            };
+            Ok(eval_value(expression)
                 .map(|value| value.as_str().unwrap_or_default().to_string())
                 .unwrap_or_else(|err| err.to_string()))
         })
@@ -814,9 +819,13 @@ fn the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one() -> Result
     ))?);
     assert_eq!(
         eval_value(
-            "__nestedRead() + '|' + (() => { try { ec.entity; return 'real' } catch (e) { return 'wrapped' } })()"
+            "__nestedRead(false) + '|' + (() => { try { ec.entity; return 'real' } catch (e) { return 'wrapped' } })()"
         )?,
         Value::string("object|wrapped")
     );
+    // Change 3: A failed nested evaluation must not leave the outer widget with unrestricted ec.
+    assert!(eval_condition(
+        "__nestedRead(true).includes('nested sentinel') && (() => { try { ec.entity; return false } catch (e) { return true } })()"
+    )?);
     Ok(())
 }
