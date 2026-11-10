@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Delegated configuration administration, org.moqui.admin.ConfigurationServices (mr-boss plan/design-admin.md §7, §17.2;
+    impl-admin P8): the services' grant, the first registered instance settings and the registered label targets. A later
+    part of ConfigurationServices (identity providers, connections, protocols, message types) appends its rows at the end. -->
+<entity-facade-xml type="seed">
+    <!-- The settings and localization services for every signed-in user: each checks ADMIN_SETTINGS_VIEW or
+        ADMIN_SETTINGS_MANAGE itself (get#InstancePreference reads one nonsecret registered preference and checks none). An
+        ALLOW, so an app's deny of a package still applies; inheritable, so the service's own reads and writes are authorized
+        as it. A service a later part adds is named here by that part, never by a pattern over the whole file. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminConfigurationServices" description="Admin configuration services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminConfigurationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ConfigurationServices\.(get#EffectiveSettings|get#InstancePreference|store#InstancePreference|find#LocalizedMessages|store#LocalizedMessage|find#LocalizedEntityFields|store#LocalizedEntityField)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminConfigurationServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminConfigurationServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- The instance preferences (editable Y), each read by the code its description names through
+        ConfigurationServices.get#InstancePreference. Presentation: what the instance is called and the locale and time zone
+        shown for a person who has none of their own; the conf's default_locale and default_time_zone hold until one is set.
+        The server's own zone (how the server reads a timestamp with no zone) stays default_time_zone, deployment
+        configuration below. -->
+    <moqui.server.InstanceSetting settingKey="instance.displayName" title="Instance name" settingGroup="Presentation"
+            description="What this instance is called where people see it: the name of the company or of the installation"
+            valueTypeEnumId="IsvText" maxLength="80" defaultValue="" editable="Y" sequenceNum="10"/>
+    <moqui.server.InstanceSetting settingKey="instance.defaultLocale" title="Default locale" settingGroup="Presentation"
+            description="The language and formats shown for a person who has chosen none; a person's own locale wins"
+            valueTypeEnumId="IsvLocale" defaultValue="en_US" propertyName="default_locale" editable="Y" sequenceNum="20"/>
+    <moqui.server.InstanceSetting settingKey="instance.defaultTimeZone" title="Default time zone" settingGroup="Presentation"
+            description="The time zone times are shown in for a person who has chosen none; a person's own zone wins, and business dates keep their owners' meaning"
+            valueTypeEnumId="IsvTimeZone" defaultValue="UTC" propertyName="default_time_zone" editable="Y" sequenceNum="30"/>
+    <!-- design-admin §19 Q6: how long a client may go unseen before a sign-in from it counts as a new device
+        (IdentityServices.notify#NewDeviceSignIn, impl-admin P10) -->
+    <moqui.server.InstanceSetting settingKey="signin.newDeviceWindowDays" title="New-device sign-in window (days)" settingGroup="Sign-in"
+            description="A sign-in from a client not seen for this many days is reported to the account's owner as a new device"
+            valueTypeEnumId="IsvInteger" minValue="1" maxValue="730" defaultValue="90" editable="Y" sequenceNum="110"/>
+    <!-- design-insights §7.1: the most recipients a business schedule or alert rule may deliver to as a group; an app's own
+        cap may only be at or under it -->
+    <moqui.server.InstanceSetting settingKey="report.groupRecipientCeiling" title="Group recipient ceiling" settingGroup="Reports"
+            description="The most recipients one scheduled report or business alert rule may deliver to as a group; an organization's own cap is at most this"
+            valueTypeEnumId="IsvInteger" minValue="1" maxValue="500" defaultValue="200" editable="Y" sequenceNum="210"/>
+
+    <!-- Deployment configuration shown read only (editable N): nonsecret default-properties of the conf an administrator is
+        asked about. A property that holds a secret is not registered here. -->
+    <moqui.server.InstanceSetting settingKey="conf.instancePurpose" title="Instance purpose" settingGroup="Deployment"
+            description="Production, test or development: what the instance is run for" valueTypeEnumId="IsvText"
+            propertyName="instance_purpose" restartRequired="Y" sequenceNum="1010"
+            operatorNote="Set instance_purpose in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="conf.defaultLocale" title="Server default locale" settingGroup="Deployment"
+            description="The locale of a session with no user and no preference above" valueTypeEnumId="IsvText"
+            propertyName="default_locale" restartRequired="Y" sequenceNum="1020"
+            operatorNote="Set default_locale in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="conf.defaultTimeZone" title="Server time zone" settingGroup="Deployment"
+            description="The zone the server reads a time with no zone in" valueTypeEnumId="IsvText"
+            propertyName="default_time_zone" restartRequired="Y" sequenceNum="1030"
+            operatorNote="Set default_time_zone in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="conf.databaseTimeZone" title="Database time zone" settingGroup="Deployment"
+            description="The zone times are stored in" valueTypeEnumId="IsvText" propertyName="database_time_zone"
+            restartRequired="Y" sequenceNum="1040"
+            operatorNote="Set before the first start; changing it later changes the meaning of stored times"/>
+    <moqui.server.InstanceSetting settingKey="conf.publicHost" title="Public host name" settingGroup="Deployment"
+            description="The host name links in mail and redirects are made with" valueTypeEnumId="IsvText"
+            propertyName="webapp_http_host" restartRequired="Y" sequenceNum="1050"
+            operatorNote="Set webapp_http_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="conf.httpsEnabled" title="HTTPS links" settingGroup="Deployment"
+            description="Whether links are made with https" valueTypeEnumId="IsvText" propertyName="webapp_https_enabled"
+            restartRequired="Y" sequenceNum="1060"
+            operatorNote="Set webapp_https_enabled in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="conf.maxUpload" title="Largest upload (bytes)" settingGroup="Deployment"
+            description="The largest request body the web server accepts" valueTypeEnumId="IsvText"
+            propertyName="webapp_max_upload" restartRequired="Y" sequenceNum="1070"
+            operatorNote="Set webapp_max_upload in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="conf.telemetryEnabled" title="Telemetry" settingGroup="Deployment"
+            description="Whether traces, metrics and logs are kept for Monitor" valueTypeEnumId="IsvText"
+            propertyName="telemetry_enabled" restartRequired="Y" sequenceNum="1080"
+            operatorNote="Set telemetry_enabled in the environment or the runtime conf and restart"/>
+
+    <!-- The registered label targets of delegated translation (ConfigurationServices.store#LocalizedEntityField): the
+        framework's vocabularies. A component adds its own configuration labels. -->
+    <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.Enumeration" fieldName="description" title="Type and option names" sequenceNum="10"/>
+    <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.StatusItem" fieldName="description" title="Status names" sequenceNum="20"/>
+    <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.Uom" fieldName="description" title="Unit and currency names" sequenceNum="30"/>
+    <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.Geo" fieldName="geoName" title="Country and region names" sequenceNum="40"/>
+    <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.EnumerationType" fieldName="description" title="Type list names" sequenceNum="50"/>
+    <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.StatusType" fieldName="description" title="Status list names" sequenceNum="60"/>
+</entity-facade-xml>

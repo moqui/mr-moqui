@@ -1489,6 +1489,7 @@
         <load-data location="component://framework/data/EdgeSetupData.xml"/>
         <load-data location="component://framework/data/DatabaseSetupData.xml"/>
         <load-data location="component://framework/data/SftpDemoData.xml"/>
+        <load-data location="component://framework/data/AdminConfigurationData.xml"/>
     </entity-facade>
     <database-list>
         <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>
