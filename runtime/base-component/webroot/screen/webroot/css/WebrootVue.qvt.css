@@ -87,6 +87,9 @@ a { color:var(--m-link); text-decoration:none; }
 /* Quasar's helper bypasses text-negative. The automatic changed-field fill remains subtle enough for labels and errors;
    an explicitly supplied bg-color still has its own class and color. */
 .q-field--error .q-field__bottom { color:var(--m-negative-text); }
+/* The default focus stroke is a brand fill; its small dark-mode label needs the readable foreground instead.
+   Error and explicitly colored controls keep their authored ink. */
+.body--dark .q-field--highlighted:not(.q-field--error) .q-field__control:not([class*="text-"]):not([style*="color" i]) .q-field__label { color:var(--m-link); }
 .bg-m-field-changed { background:color-mix(in srgb, var(--m-link) 10%, var(--m-panel-bg)) !important; }
 /* Built-in notification pairs use panel tones so their message, caption and inherited action text stay readable.
    Authored color/text-color pairs (for example purple/white) retain Quasar's styling. */
@@ -108,6 +111,7 @@ a { color:var(--m-link); text-decoration:none; }
 .text-secondary { color:var(--m-secondary-text) !important; }
 .text-accent { color:var(--m-accent-text) !important; }
 .body--dark .text-grey-7 { color:var(--m-text-muted) !important; } /* the .m-muted dark step */
+:is(.q-chip,.q-badge).m-tonal.text-grey-7 { color:var(--m-text-muted) !important; }
 .body--dark .q-btn.m-btn-tonal { color:var(--m-link); } /* the tonal primary button; its text-* variants keep their own !important colors */
 
 /* ====== surfaces: the panels float on the page ======

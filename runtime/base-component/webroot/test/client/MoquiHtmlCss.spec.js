@@ -511,7 +511,14 @@ feature("semantic text stays readable on panels and tonal surfaces in both defau
         const roles = ["primary", "positive", "negative", "warning", "info", "secondary", "accent"]
         page.setContent(`<!doctype html><html><body><div class="q-card" id="surface">${roles.map(role =>
             `<span class="text-${role}" data-role="${role}">Status</span><span class="q-chip m-tonal text-${role}" data-role="${role} chip">Status</span><button class="q-btn m-btn-tonal text-${role}" data-role="${role} button">Action</button>`
-        ).join("")}<span class="m-muted" data-role="muted">Secondary text</span><span class="m-markdown-body"><a href="#doc" data-role="markdown link">Documentation</a></span></div></body></html>`)
+        ).join("")}<span class="m-muted" data-role="muted">Secondary text</span><span class="m-markdown-body"><a href="#doc" data-role="markdown link">Documentation</a></span>
+            <span class="q-chip m-tonal text-grey-7" data-role="muted chip">Ended</span>
+            <span class="q-badge m-tonal text-grey-7" data-role="muted badge">Ended</span>
+            <label class="q-field q-field--highlighted q-field--focused"><span class="q-field__control"><span class="q-field__control-container"><span class="q-field__label" data-role="default focused label">Amount</span></span></span></label>
+            <label class="q-field q-field--highlighted q-field--focused"><span class="q-field__control text-positive"><span class="q-field__label" data-role="colored focused label">Amount</span></span></label>
+            <label class="q-field q-field--highlighted q-field--error"><span class="q-field__control text-negative"><span class="q-field__label" data-role="error label">Amount</span></span></label>
+            <label class="q-field q-field--highlighted"><span class="q-field__control" style="color:rgb(10,20,30)"><span class="q-field__label" id="authored-focus-label">Authored color</span></span></label>
+            </div></body></html>`)
         page.addStyle("/libs/quasar/quasar.prod.css")
         page.addStyle("/css/WebrootVue.qvt.css")
         page.addStyle({ content: "body { --q-info:#1e7b8e; }" })
@@ -538,9 +545,16 @@ feature("semantic text stays readable on panels and tonal surfaces in both defau
                     const foreground = luminance(pixel())
                     results.push({ theme: dark ? "dark" : "light", role: el.dataset.role, ratio: (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05) })
                 }
+                if (getComputedStyle(document.getElementById("authored-focus-label")).color !== "rgb(10, 20, 30)")
+                    throw new Error("An explicit focused-control color must remain authored")
+                const colored = document.querySelector('[data-role="colored focused label"]'), error = document.querySelector('[data-role="error label"]')
+                if (getComputedStyle(colored).color !== getComputedStyle(colored.parentElement).color ||
+                    getComputedStyle(error).color !== getComputedStyle(error.parentElement).color)
+                    throw new Error("Colored and error field labels must retain their control's semantic color")
             }
             return results
         })
-        for (const result of results) assert.ok(result.ratio >= 4.5, JSON.stringify(result))
+        const failures = results.filter(result => result.ratio < 4.5)
+        assert.deepEqual(failures, [], JSON.stringify(failures))
     },
 })
