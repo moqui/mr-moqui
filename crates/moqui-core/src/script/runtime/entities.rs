@@ -1296,6 +1296,16 @@ impl HostEntity {
 
 #[rquickjs::methods(rename_all = "camelCase")]
 impl HostEntity {
+    /// `getBytes(name)`: a binary field as a Uint8Array, or null when it has no value.
+    fn get_bytes<'js>(&self, ctx: Ctx<'js>, field: String) -> rquickjs::Result<JsValue<'js>> {
+        host_guard(&ctx, || match self.held_value(&field) {
+            // Change 5: Download actions need the stored bytes, without text conversion or encoding.
+            Some(value @ Value::Bytes(_)) => value_to_js(&ctx, &value),
+            None | Some(Value::Null) => Null.into_js(&ctx),
+            Some(_) => Err(Exception::throw_type(&ctx, &format!("Field {field} is not binary"))),
+        })
+    }
+
     /// `get(name)`: a field, or as Java's `EntityValue.get` the related value or list for a relationship name.
     fn get<'js>(&self, ctx: Ctx<'js>, field: String) -> rquickjs::Result<JsValue<'js>> {
         host_guard(&ctx, || {
