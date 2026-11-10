@@ -590,6 +590,38 @@ has the base (before W1) against the end of the round, best of two alternating r
 - `empty actions` reads 0.65 us in a run of every section and 0.28 alone, in this build only: a collection of the
   script heap lands in the row (it frees what the sections before made). It is not the row's own cost.
 
+### Round 57: round trips (Profiling3 S1, first part)
+
+- **`service_tx_cache`** (MoquiDefaultConf, false for now): a service with no `transaction` attribute, called with no
+  cache setting, begins its transaction holding; entity-auto services do not. Over the eight mr-mantle specs: 4,777
+  frames held against 1,475, no early flush, all 111 features, waited round trips ×0.89. The nine operations already
+  held. It stays off until the final gate's suites run with it on (Profiling3 D3).
+- **dbresource paths through the entity cache**, as Java's `findDirectoryId` reads them: `db_resource` reads 5,891 to
+  4,208 in the run, get#PaymentFinanceDetail's 532 to 48, the data feed's 836 to 129.
+- **Sized, not built** (from the census's shapes, `rounds/r57/`): place#Order's 46 round trips are 32 reads, 8 locking
+  reads, a count and the commit; 46 statements repeat a shape, 10 with other parameters (what `= ANY` batching of a
+  find in a loop could take), and 20 waited reads follow another read (what reads sent together could take). Reads of
+  reference-like tables are 12% of the operations' round trips, most already through the entity cache; the largest
+  shapes are Mantle's own (`order_header`, `order_part`, `entity_audit_log` for status history).
+
+### Round 58: context names bound on the global object (Profiling3 S2)
+
+Built in mr-moqui with no fork change: at a bare name's fourth access since the bindings were emptied, it becomes an
+own data property of the global object, which the engine's global sites already cache; flushes write changed values
+back, and a flush that may change the stack (and a nested run, around it) takes the bindings off. 1000 adds to a bare
+name 310 to 13.9 us, iterate 100 context maps with if and set 210 to 79, loop#Actions 282 to 125: Profiling3's three
+targets met. In Mantle bodies, which call the host often, reads through the hooks fall 8 to 30%.
+
+### Round 59: the coarse crossings (Profiling3 S3a, S3b; S4 sized)
+
+- **S3a:** a sync `service-call` is one `ec.service.callXml`; call#Nested 15.4 to 14.6 us, loop#Calls ×0.92.
+- **S3b:** an `entity-find-one` with literal options is one `ec.entity.findOneXml`, and an auto-field-map of the
+  context reads only the entity's fields; cached from actions 3.82 to 3.12 us (R55's base 4.56; target 1.5 missed).
+- **The screen runtimes' escapes** with their patterns made once and no `String()` of a string: screens ×0.97.
+- **Sized, not built:** a Links html render (6.8 ms) is 63% interpreter between host calls (17 a row), so S4a's one
+  crossing a row cannot reach its target; S4b (row templates) is the lever. S5a (the host call floor) is about 0.5% of
+  a list render, S5b's writes 311 a render.
+
 ### Startup and threads
 
 A first start takes 5.63 s and a restart 268 ms. The table check is 2.1 s of a first start, and initdb 1.8 s (R9). A
