@@ -160,7 +160,8 @@ struct GeneratorHost;
 
 impl Host for GeneratorHost {
     fn interrupt(&mut self) -> bool {
-        DEADLINE
+        crate::script::run::interrupted()
+            || DEADLINE
             .with(std::cell::Cell::get)
             .is_some_and(|deadline| std::time::Instant::now() >= deadline)
     }

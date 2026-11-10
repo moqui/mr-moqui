@@ -3766,7 +3766,10 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
             linkPreviews = []
-            ec.artifactExecution.disableAuthz()
+            // as Java scripts do: authorization back on at the end, however the script ends, so a
+            // later call on the same context (a load run's user) is not left without it
+            const authzWasDisabled = ec.artifactExecution.disableAuthz()
+            try {
             const row = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).one()
             if (!row || row.eventTypeEnumId !== 'CetMessage' || row.redactedDate || parse(row.linkPreviewJson).removed) return
             let body = parse(row.contentJson).body
@@ -3794,6 +3797,9 @@ along with this software (see the LICENSE.md file). If not, see
             row.update()
             ec.service.sync().name('org.moqui.chat.ChatServices.push#Update').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq,
                 fields: {linkPreviews: linkPreviews}}).call()
+            } finally {
+                if (!authzWasDisabled) ec.artifactExecution.enableAuthz()
+            }
         ]]></script></actions>
     </service>
 

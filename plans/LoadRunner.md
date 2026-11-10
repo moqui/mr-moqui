@@ -554,6 +554,9 @@ either suite, since no suite starts a Java server.
 8. **An authorization override for in-process calls** (D10). Authorization is required to start with. If a load
    needs a service its starter is not granted, the choices are a grant in data for a load user, or an override on
    the run behind a sealed permission of its own. Decide on the first real case.
+9. **A stop now interrupts a service's script.** A load run's stop now ends whatever script runs on a user's thread,
+   a service's own included (`moqui_core::script::interrupt_thread_on`). A service with a transaction rolls back; one
+   with `transaction="ignore"` can be left half done, as a request's timeout leaves it.
 
 ## 17. Later
 

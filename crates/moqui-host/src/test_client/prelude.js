@@ -215,7 +215,8 @@
     // A load user: setup once, run(iteration) until the duration ends, its iterations are done or the load stops, then
     // teardown. With newSession each iteration starts on a fresh `http`.
     const runUser = (spec, setup, run, teardown) => {
-        host("thread.begin", { load: spec.load, scenario: spec.scenario, user: spec.user, pause: spec.pause ?? null });
+        host("thread.begin", { load: spec.load, scenario: spec.scenario, user: spec.user, pause: spec.pause ?? null,
+            token: config.threadToken ?? null });
         let iteration = 0;
         try {
             // the ramp ends on any stop, and a user stopped before its start runs neither setup nor teardown

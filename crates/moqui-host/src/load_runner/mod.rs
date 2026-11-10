@@ -30,9 +30,11 @@ use moqui_lib::json::{from_json, to_json};
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 use serde_json::json;
 
+pub(crate) mod compare;
 pub(crate) mod results;
 pub(crate) mod run;
 pub(crate) mod scripts;
+pub(crate) mod server;
 pub(crate) mod service_call;
 pub(crate) mod targets;
 
@@ -47,7 +49,8 @@ moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["test-client"],
         register_services,
-        before_shutdown: |_| run::stop_all(),
+        after_boot: run::booted,
+        before_shutdown: run::stop_all,
         ..moqui_core::extension::Extension::EMPTY
     }
 }
@@ -220,6 +223,7 @@ fn start_load_run(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) 
         .map(|(_, dir)| dir.clone())
         .unwrap_or_default();
     let user = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
+    let user_id = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     let ask = run::Ask {
         script,
         component_dir,
@@ -230,6 +234,7 @@ fn start_load_run(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) 
         label: text(parameters, "label"),
         insecure: matches!(parameters.get("insecure"), Some(Value::Bool(true))),
         user,
+        user_id,
     };
     match run::start(&factory, ask) {
         Ok(id) => Ok(BTreeMap::from([("runId".to_string(), Value::String(id))])),
@@ -273,7 +278,10 @@ fn get_load_run_status(parameters: &BTreeMap<String, Value>, _facade: &EntityFac
         run::wait_for_end(&id, Duration::from_secs_f64(wait.min(MAX_WAIT_SECONDS)));
     }
     if let Some(active) = run::find(&id) {
-        let snapshot = active.load.snapshot();
+        let mut snapshot = active.load.snapshot();
+        if let Some(server) = active.server_json() {
+            snapshot["server"] = server;
+        }
         let summary = active.summary(&snapshot);
         return Ok(BTreeMap::from([
             ("runId".to_string(), Value::String(id)),
@@ -414,11 +422,61 @@ fn import_load_run_result(parameters: &BTreeMap<String, Value>, _facade: &Entity
     }
 }
 
-fn compare_load_runs(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+/// The most runs `compare#LoadRuns` takes at once.
+const MAX_COMPARED: usize = 4;
+
+fn compare_load_runs(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     if !may_run_loads() {
         return none();
     }
-    // plans/LoadRunner.md L5
-    add_error("Comparing load runs in the server is not available yet in this build");
-    none()
+    let ids: Vec<String> = match parameters.get("runIds") {
+        Some(Value::List(ids)) => ids.iter().map(to_plain_string).collect(),
+        Some(Value::String(text)) => text.split(',').map(|id| id.trim().to_string()).collect(),
+        _ => Vec::new(),
+    };
+    if !(2..=MAX_COMPARED).contains(&ids.len()) {
+        add_error(format!(
+            "Compare takes 2 to {MAX_COMPARED} load runs, not {}",
+            ids.len()
+        ));
+        return none();
+    }
+    let root = results::root(&*factory()?);
+    let mut loaded = Vec::new();
+    for id in &ids {
+        if !results::valid_run_id(id) {
+            add_error(format!("{id} is not a load run id"));
+            return none();
+        }
+        if run::find(id).is_some() {
+            add_error(format!(
+                "Load run {id} is still running; compare it once it has finished"
+            ));
+            return none();
+        }
+        match results::read_result(&root, id) {
+            Ok(Some(result)) => loaded.push(result),
+            Ok(None) => {
+                add_error(format!("No finished load run {id} on this server"));
+                return none();
+            }
+            Err(message) => {
+                add_error(message);
+                return none();
+            }
+        }
+    }
+    let runs = ids
+        .iter()
+        .zip(&loaded)
+        .map(|(id, result)| from_json(&results::summary(id, result)))
+        .collect();
+    let rows = compare::rows(&loaded)
+        .iter()
+        .map(|row| from_json(&row.to_json()))
+        .collect();
+    Ok(BTreeMap::from([
+        ("runs".to_string(), Value::List(runs)),
+        ("rows".to_string(), Value::List(rows)),
+    ]))
 }
