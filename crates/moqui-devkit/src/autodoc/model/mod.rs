@@ -37,6 +37,7 @@ use super::plan::{relative_link, DocEntry, DocKind, DocPlan, Page};
 use super::source::DocIndex;
 use super::Options;
 use crate::eca::EcaRuleInfo;
+use crate::index::extract::ORIGIN_DIRECTORY;
 use crate::index::{ArtifactRow, Direction, RefEntry};
 
 /// What a run reads once and every doc of it shares.
@@ -161,7 +162,14 @@ impl<'a> Run<'a> {
             kept.observed &= entry.observed_only;
         }
         let mut groups: Vec<Group> = Vec::new();
-        for ((_, _), item) in items {
+        for ((_, _), mut item) in items {
+            // a kind said with where it is (`subscreens-item in subscreen Orders`) says the bare kind too
+            let specific: Vec<String> = item
+                .via
+                .iter()
+                .filter_map(|via| via.split_once(" in ").map(|(kind, _)| kind.to_string()))
+                .collect();
+            item.via.retain(|via| !specific.contains(via));
             match groups.last_mut() {
                 Some(group) if group.label == item.label => group.items.push(item),
                 _ => groups.push(Group {
@@ -183,6 +191,10 @@ impl<'a> Run<'a> {
     fn item_of(&self, doc: &DocEntry, entry: &RefEntry, direction: Direction) -> Option<Item> {
         let via_type = entry.ref_type.clone();
         let Some(other) = &entry.other else {
+            // a screen in a directory with no screen of its name is no default subscreen: nothing to show
+            if entry.origin == ORIGIN_DIRECTORY {
+                return None;
+            }
             let (name, kind) = match direction {
                 Direction::In => (
                     entry.from.clone(),

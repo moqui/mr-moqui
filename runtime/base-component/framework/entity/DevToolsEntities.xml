@@ -61,7 +61,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="refSeqId" type="id" is-pk="true"/>
         <field name="fromArtifactId" type="text-medium"/>
         <field name="toArtifactId" type="text-medium"><description>The artifact it resolves to, when it does</description></field>
-        <field name="toKind" type="text-short"><description>What it names: entity, service, field, location, anchor, transition</description></field>
+        <field name="toKind" type="text-short"><description>What it names: entity, service, field, location, screen, anchor, transition,
+            transition-anchor, parameter, screen-path</description></field>
         <field name="toName" type="text-medium"/>
         <field name="toScope" type="text-medium"><description>What the name is relative to: a field's entity, an anchor's base screen</description></field>
         <field name="refType" type="text-short"><description>How it refers: entity-find, service-call, relationship, extend,
@@ -85,7 +86,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="fromArtifactId" type="text-medium"><description>The artifact making the call</description></field>
         <field name="toId" type="text-medium"><description>The parameter: parameter:service:name@in.field</description></field>
         <field name="direction" type="text-short"><description>in or out</description></field>
-        <field name="sourceKind" type="text-short"><description>literal, parameter, context, expression or unknown</description></field>
+        <field name="sourceKind" type="text-short"><description>literal, parameter, context, expression, unknown, or form-field (a
+            form's field submitted to the transition calling the service)</description></field>
         <field name="sourceText" type="text-long"/>
         <field name="sourceId" type="text-medium"><description>The caller's parameter the value comes from, when known</description></field>
         <field name="origin" type="text-short"/>

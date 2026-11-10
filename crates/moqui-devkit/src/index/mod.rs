@@ -1296,6 +1296,7 @@ fn apply(
     // the entities whose fields changed, by id: their derived entity-auto services are derived again
     let mut changed_entities: HashSet<String> = HashSet::new();
     let derived: Derived;
+    let fresh_screens: bool;
     // ids another file defines too (an entity defined again): their row is replaced, the later definition winning
     let shared: HashSet<String>;
     // the files that have rows: only theirs are read and removed first
@@ -1348,6 +1349,8 @@ fn apply(
                 Err(err) => tracing::error!("Artifact index: the old rows of {path} were not read: {err}"),
             }
         }
+        // the ids the files had: an added screen, subscreens item or transition not among them may answer a screen path
+        let old_ids = gone.clone();
         for change in &changes {
             if let Change::Read { index, .. } = change {
                 for artifact in &index.artifacts {
@@ -1360,6 +1363,9 @@ fn apply(
                 }
             }
         }
+        fresh_screens = added.iter().any(|artifact| {
+            matches!(artifact.kind.as_str(), "screen" | "subscreen" | "transition") && !old_ids.contains(&artifact.id)
+        });
         let waiting = waiting_refs(facade, &added, &changed_paths);
         derived = derive_in(&mut resolver, &changes, &waiting, &changed_entities, &added, &mut gone);
         added.extend(derived.rows.iter().cloned());
@@ -1458,7 +1464,7 @@ fn apply(
         left -= batch.len();
     }
     unresolve(facade, &tx, &gone, &changed_paths)?;
-    resolve_added(factory, facade, state, &tx, &added, &changed_paths)?;
+    resolve_added(factory, facade, state, &tx, &added, fresh_screens, &changed_paths)?;
     report.write_millis = writing.elapsed().as_millis();
     Ok(())
 }
@@ -1759,7 +1765,8 @@ fn remove_file(facade: &EntityFacade, path: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// The references elsewhere to artifacts no file defines any more: unresolved now.
+/// The references elsewhere to artifacts no file defines any more, and the default subscreen references from a screen
+/// no file defines any more ([`extract::ORIGIN_DIRECTORY`]): unresolved now.
 fn unresolve(
     facade: &EntityFacade,
     tx: &moqui_core::transaction::TransactionManager,
@@ -1769,12 +1776,22 @@ fn unresolve(
     let ids: Vec<&String> = gone.iter().collect();
     for chunk in ids.chunks(500) {
         let values: Vec<Value> = chunk.iter().map(|id| Value::string(id.as_str())).collect();
-        let rows = facade
+        let mut rows = facade
             .find(REF)?
-            .condition(Condition::is_in("toArtifactId", values))
-            .list()?;
+            .condition(Condition::is_in("toArtifactId", values.clone()))
+            .list()?
+            .into_values();
+        rows.extend(
+            facade
+                .find(REF)?
+                .condition(Condition::is_in("fromArtifactId", values))
+                .eq("origin", Value::string(extract::ORIGIN_DIRECTORY))
+                .eq("resolved", Value::string("Y"))
+                .list()?
+                .into_values(),
+        );
         tx.run(TransactionAttribute::ForceNew, None, || {
-            for mut row in rows.into_values() {
+            for mut row in rows {
                 if changed.contains(&text(&row, "filePath")) {
                     continue;
                 }
@@ -1788,13 +1805,16 @@ fn unresolve(
     Ok(())
 }
 
-/// The unresolved references elsewhere that an added artifact may answer: resolved again.
+/// The unresolved references elsewhere that an added artifact may answer: resolved again. With `fresh_screens` (a
+/// screen, subscreens item or transition is new) the unresolved screen paths and screen references too, whose names
+/// are not the added artifacts' (a path walks through them, a default subscreen waits for its parent).
 fn resolve_added(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
     state: &IndexState,
     tx: &moqui_core::transaction::TransactionManager,
     added: &[ArtifactRow],
+    fresh_screens: bool,
     changed: &HashSet<String>,
 ) -> Result<(), Error> {
     if added.is_empty() {
@@ -1821,14 +1841,27 @@ fn resolve_added(
                     .into_values(),
             );
         }
+        if fresh_screens {
+            let kinds = [ToKind::ScreenPath, ToKind::Screen].map(|kind| Value::string(kind.as_str()));
+            lists.push(
+                facade
+                    .find(REF)?
+                    .eq("resolved", Value::string("N"))
+                    .condition(Condition::is_in("toKind", kinds.to_vec()))
+                    .list()?
+                    .into_values(),
+            );
+        }
         lists
     };
     let exists = |location: &str| location_exists(factory, location);
     let mut now_resolved = Vec::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
     {
         let resolver = lock(&state.resolver);
         for row in lists.into_iter().flatten() {
-            if changed.contains(&text(&row, "filePath")) {
+            let path = text(&row, "filePath");
+            if changed.contains(&path) || !seen.insert((path, text(&row, "refSeqId"))) {
                 continue;
             }
             let mut reference = ref_of(&row);

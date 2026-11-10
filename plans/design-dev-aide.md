@@ -721,6 +721,21 @@ the command until then.
   `extend-entity`'s entity, a SECA's service, so a pull can report what an upgrade broke, §5.6):
   from the XML by the reference rules (§5.3); from scripts and inline `<script>`s by oxc, the string literals of the
   calls the rules name; from rows (a job's service, a data document's entities, an artifact group's members).
+- **User paths.** So a reader can walk what a user clicks from an app root to a service (screen → subscreens → screen,
+  `link` or response → transition, form → transition, transition → service) and check what feeds the service:
+  - a `link`'s or response's `url` and a form's or ext item's `transition` that is no transition of its own screen is a
+    `screen-path` reference (`../Assignments`, `EditTask`, `Sub/Screen/trans`), walked as Moqui walks a screen URL from
+    the screen it is written in (`..` to the parent screen, each segment a subscreen, the last one a subscreen or a
+    transition) and resolved to `screen:<location>` or `transition:<screen>#<name>:<method>`; an expression, a URL with
+    a scheme and `.` make none, and a path that cannot be walked (an `/apps/...` path through subscreens mounted in a
+    `MoquiConf.xml`) stays unresolved;
+  - a screen `Foo/Bar.xml` beside `Foo.xml` is a default subscreen of it: a `subscreens-item` reference from
+    `screen:<Foo.xml>` to the screen, read from `Bar.xml`, with origin `directory` (resolved while `Foo.xml` is there;
+    an explicit `subscreens-item` of the same name is the one Moqui uses);
+  - each field of a form whose transition calls a service with the request's parameters (no `in-map`, or
+    `in-map="true"`) is a binding from the form to the service's in-parameter of its name, `sourceKind` `form-field`,
+    the field's `form-field:` id in `sourceId`. With the transition's parameters and `field-map` bindings and the
+    parameters' defaults, a reader checks that each required in-parameter is given.
 - **Observed calls.** On a dev instance the artifact stack (`core/context/artifact.rs`) counts each pair of a frame
   and the frame pushed on it (screen, transition, service, entity): what static reading cannot see (a name made at run
   time) and what really runs. The counts are kept per thread and merged each second, so a push costs one map update,

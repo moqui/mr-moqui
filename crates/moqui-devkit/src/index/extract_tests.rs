@@ -341,3 +341,231 @@ fn search_keys_and_matching() {
         "place#Order"
     );
 }
+
+/// Each file's references resolved against the artifacts of all of them, as a build resolves them.
+fn resolve_together(files: &mut [FileIndex]) -> Resolver {
+    let mut resolver = Resolver::default();
+    for artifact in files.iter().flat_map(|file| &file.artifacts) {
+        resolver.add(artifact);
+    }
+    for row in files.iter_mut().flat_map(|file| &mut file.refs) {
+        resolver.resolve(row, &|_| false);
+    }
+    resolver
+}
+
+/// The resolved target of each reference of `file` of `kind`, by the name it is written with.
+fn targets(file: &FileIndex, kind: ToKind) -> Vec<(&str, Option<&str>)> {
+    file.refs
+        .iter()
+        .filter(|row| row.to_kind == kind)
+        .map(|row| (row.to_name.as_str(), row.to_id.as_deref()))
+        .collect()
+}
+
+#[test]
+fn screen_paths_walk_subscreens_items_and_directories() {
+    let app = "component://c/screen/App.xml";
+    let order = "component://c/screen/App/Order.xml";
+    let detail = "component://c/screen/App/Order/Detail.xml";
+    let tasks = "component://c/screen/Tasks.xml";
+    let edit = "component://c/screen/Tasks/EditTask.xml";
+    let lone = "component://c/screen/Lone/X.xml";
+    let mut files = [
+        read(
+            ArtifactKind::Screen,
+            app,
+            r#"<screen><subscreens><subscreens-item name="Tasks" location="component://c/screen/Tasks.xml"/></subscreens>
+    <widgets><link url="Order" text="Orders"/></widgets></screen>"#,
+        ),
+        read(
+            ArtifactKind::Screen,
+            order,
+            r#"<screen>
+    <transition name="ship"><service-call name="a.OrderServices.ship#Order"/><default-response url="../Tasks/EditTask"/></transition>
+    <widgets>
+        <link url="../Tasks" text="Tasks"/>
+        <link url="Detail/save?x=1" text="Save"/>
+        <link url="${somewhere}" text="Expression"/>
+        <link url="https://example.com/a" text="Away"/>
+        <link url="mailto:a@example.com" text="Mail"/>
+        <link url="." text="Here"/>
+        <link url="/apps/x" text="Absolute"/>
+        <link url="Nope/x" text="Nowhere"/>
+        <link url="ship" text="Ship"/>
+    </widgets></screen>"#,
+        ),
+        read(
+            ArtifactKind::Screen,
+            detail,
+            r#"<screen><transition name="save" method="post"><default-response url="."/></transition></screen>"#,
+        ),
+        read(
+            ArtifactKind::Screen,
+            tasks,
+            r#"<screen><widgets><link url="../Order/ship" text="Ship"/><link url="EditTask" text="Edit"/></widgets></screen>"#,
+        ),
+        read(ArtifactKind::Screen, edit, r#"<screen/>"#),
+        read(ArtifactKind::Screen, lone, r#"<screen/>"#),
+    ];
+    resolve_together(&mut files);
+    let [app_file, order_file, detail_file, tasks_file, edit_file, lone_file] = &files;
+
+    // a plain name with no transition of its own screen is a path: here the default subscreen App/Order.xml
+    assert_eq!(
+        targets(app_file, ToKind::ScreenPath),
+        [("Order", Some("screen:component://c/screen/App/Order.xml"))]
+    );
+    // a plain name of a transition of the screen stays a transition reference, one per method
+    assert_eq!(
+        targets(order_file, ToKind::Transition),
+        [(
+            "ship:any",
+            Some("transition:component://c/screen/App/Order.xml#ship:any")
+        )]
+    );
+    // `..` goes up to the directory's screen; an item of it, the default subscreen of the item's directory, a
+    // transition of a default subscreen; expressions, schemes and `.` make no reference; the rest stay unresolved
+    assert_eq!(
+        targets(order_file, ToKind::ScreenPath),
+        [
+            (
+                "../Tasks/EditTask",
+                Some("screen:component://c/screen/Tasks/EditTask.xml")
+            ),
+            ("../Tasks", Some("screen:component://c/screen/Tasks.xml")),
+            (
+                "Detail/save?x=1",
+                Some("transition:component://c/screen/App/Order/Detail.xml#save:post")
+            ),
+            ("/apps/x", None),
+            ("Nope/x", None),
+        ]
+    );
+    let response = order_file
+        .refs
+        .iter()
+        .find(|row| row.to_name == "../Tasks/EditTask")
+        .unwrap();
+    assert_eq!(
+        (response.from.as_str(), response.ref_type.as_str()),
+        ("transition:component://c/screen/App/Order.xml#ship:any", "link")
+    );
+    // a screen named by an item has no directory parent: `..` goes up to the item's screen
+    assert_eq!(
+        targets(tasks_file, ToKind::ScreenPath),
+        [
+            (
+                "../Order/ship",
+                Some("transition:component://c/screen/App/Order.xml#ship:any")
+            ),
+            ("EditTask", Some("screen:component://c/screen/Tasks/EditTask.xml")),
+        ]
+    );
+
+    // a default subscreen: a subscreens-item reference from its directory's screen, read from its own file
+    let edge = |file: &FileIndex| {
+        file.refs
+            .iter()
+            .filter(|row| row.origin == ORIGIN_DIRECTORY)
+            .map(|row| (row.from.clone(), row.to_kind, row.ref_type.clone(), row.to_id.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        edge(edit_file),
+        [(
+            "screen:component://c/screen/Tasks.xml".to_string(),
+            ToKind::Screen,
+            "subscreens-item".to_string(),
+            Some("screen:component://c/screen/Tasks/EditTask.xml".to_string())
+        )]
+    );
+    assert_eq!(
+        edge(detail_file)[0].3.as_deref(),
+        Some("screen:component://c/screen/App/Order/Detail.xml")
+    );
+    // none for a screen directly in its component's screen directory; unresolved while its directory has no screen
+    assert!(edge(app_file).is_empty() && edge(tasks_file).is_empty());
+    assert_eq!(edge(lone_file)[0].3, None);
+    assert!(!lone_file.refs[0].resolved);
+}
+
+#[test]
+fn a_forms_fields_flow_into_its_transitions_service() {
+    let location = "component://c/screen/Order.xml";
+    let file = read(
+        ArtifactKind::Screen,
+        location,
+        r#"<screen>
+    <transition name="ship"><parameter name="orderId"/><service-call name="a.OrderServices.ship#Order"/>
+        <default-response url="."/></transition>
+    <transition name="note"><service-call name="a.OrderServices.note#Order" in-map="[orderId:orderId]"/>
+        <default-response url="."/></transition>
+    <widgets>
+        <form-single name="ShipForm" transition="ship">
+            <field name="orderId"><default-field><hidden/></default-field></field>
+            <field name="carrierPartyId"><default-field><drop-down/></default-field></field>
+            <field name="submitButton"><default-field><submit/></default-field></field>
+        </form-single>
+        <form-single name="NoteForm" transition="note"><field name="note"><default-field><text-area/></default-field></field></form-single>
+        <form-list name="Lines" list="lines" transition="ship"><field name="orderItemSeqId"><default-field><display/></default-field></field></form-list>
+    </widgets>
+</screen>"#,
+    );
+    let flows: Vec<(&str, &str, &str, &str, Option<&str>)> = file
+        .bindings
+        .iter()
+        .filter(|binding| binding.source_kind == "form-field")
+        .map(|binding| {
+            (
+                binding.from.as_str(),
+                binding.to_id.as_str(),
+                binding.direction.as_str(),
+                binding.source_text.as_str(),
+                binding.source_id.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        flows,
+        [
+            (
+                "form:component://c/screen/Order.xml#ShipForm",
+                "parameter:service:a.OrderServices.ship#Order@in.orderId",
+                "in",
+                "orderId",
+                Some("form-field:component://c/screen/Order.xml#ShipForm@orderId"),
+            ),
+            (
+                "form:component://c/screen/Order.xml#ShipForm",
+                "parameter:service:a.OrderServices.ship#Order@in.carrierPartyId",
+                "in",
+                "carrierPartyId",
+                Some("form-field:component://c/screen/Order.xml#ShipForm@carrierPartyId"),
+            ),
+            (
+                "form:component://c/screen/Order.xml#ShipForm",
+                "parameter:service:a.OrderServices.ship#Order@in.submitButton",
+                "in",
+                "submitButton",
+                Some("form-field:component://c/screen/Order.xml#ShipForm@submitButton"),
+            ),
+            // a service-call with an in-map of its own takes no request parameters: NoteForm makes none
+            (
+                "form:component://c/screen/Order.xml#Lines",
+                "parameter:service:a.OrderServices.ship#Order@in.orderItemSeqId",
+                "in",
+                "orderItemSeqId",
+                Some("form-field:component://c/screen/Order.xml#Lines@orderItemSeqId"),
+            ),
+        ]
+    );
+    // the form still submits to its transition, and the field ids the bindings name are artifacts
+    assert!(file
+        .refs
+        .iter()
+        .any(|row| row.from == "form:component://c/screen/Order.xml#ShipForm"
+            && row.to_kind == ToKind::Transition
+            && row.to_name == "ship:any"));
+    assert!(ids(&file).contains(&"form-field:component://c/screen/Order.xml#ShipForm@carrierPartyId"));
+}
