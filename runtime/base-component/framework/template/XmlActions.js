@@ -474,6 +474,26 @@
                 if (auto === "true") autoCondition = "context";
                 else if (auto !== "false" && auto !== "") autoCondition = auto;
             } else if (!maps.length) autoCondition = "context";
+            // One host call, ec.entity.findOneXml(name, flags, autoMap, fields, selectFields), with the options as the
+            // bits of entities.rs's find_one_xml (plans/Profiling3.md S3b), when each option is written as true or
+            // false; an option that is an expression keeps the chain.
+            const literal = (name) => !has(node, name) || attr(node, name) === "true" || attr(node, name) === "false";
+            if (literal("cache") && literal("for-update") && literal("use-clone")) {
+                let flags = 0;
+                if (has(node, "cache")) flags |= 1 | (attr(node, "cache") === "true" ? 2 : 0);
+                if (has(node, "for-update")) flags |= 4 | (attr(node, "for-update") === "true" ? 8 : 0);
+                if (has(node, "use-clone")) flags |= 16 | (attr(node, "use-clone") === "true" ? 32 : 0);
+                if (attr(node, "disable-authz") === "true") flags |= 64;
+                const autoExpr = autoCondition === "context" ? "ec.context" : autoCondition || "null";
+                const fieldsExpr = maps.length
+                    ? `{${maps.map((kid) => `${jsString(attr(kid, "field-name"))}: ${fieldExpr(kid)}`).join(", ")}}`
+                    : "null";
+                const selects = childrenNamed(node, "select-field");
+                const selectExpr = selects.length
+                    ? `[${selects.map((kid) => literalOrExpand(attr(kid, "field-name"))).join(", ")}]`
+                    : "null";
+                return `${attr(node, "value-field")} = ec.entity.findOneXml(${literalOrExpand(attr(node, "entity-name"))}, ${flags}, ${autoExpr}, ${fieldsExpr}, ${selectExpr});`;
+            }
             const find = joinPresent([
                 findHead(node, false),
                 autoCondition && `.condition(${autoCondition})`,
