@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Supplied data timestamps for isolated acceptance runs; never duration or security clocks.
+//! Supplied data timestamps for isolated acceptance runs; elapsed execution deadlines stay real.
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, Read};
