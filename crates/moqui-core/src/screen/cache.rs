@@ -147,6 +147,14 @@ pub struct ConfItem {
 }
 
 impl ConfItem {
+    /// The value of the item's attribute `name` (`name`, `location`, `no-sub-path`), when it has one.
+    pub fn attribute(&self, name: &str) -> Option<&str> {
+        self.attributes
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    }
+
     pub(super) fn node(&self) -> MNode {
         let node = MNode::new("subscreens-item");
         for (key, value) in &self.attributes {

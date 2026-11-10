@@ -723,19 +723,48 @@ the command until then.
   calls the rules name; from rows (a job's service, a data document's entities, an artifact group's members).
 - **User paths.** So a reader can walk what a user clicks from an app root to a service (screen → subscreens → screen,
   `link` or response → transition, form → transition, transition → service) and check what feeds the service:
-  - a `link`'s or response's `url` and a form's or ext item's `transition` that is no transition of its own screen is a
-    `screen-path` reference (`../Assignments`, `EditTask`, `Sub/Screen/trans`), walked as Moqui walks a screen URL from
-    the screen it is written in (`..` to the parent screen, each segment a subscreen, the last one a subscreen or a
-    transition) and resolved to `screen:<location>` or `transition:<screen>#<name>:<method>`; an expression, a URL with
-    a scheme and `.` make none, and a path that cannot be walked (an `/apps/...` path through subscreens mounted in a
-    `MoquiConf.xml`) stays unresolved;
-  - a screen `Foo/Bar.xml` beside `Foo.xml` is a default subscreen of it: a `subscreens-item` reference from
-    `screen:<Foo.xml>` to the screen, read from `Bar.xml`, with origin `directory` (resolved while `Foo.xml` is there;
-    an explicit `subscreens-item` of the same name is the one Moqui uses);
-  - each field of a form whose transition calls a service with the request's parameters (no `in-map`, or
-    `in-map="true"`) is a binding from the form to the service's in-parameter of its name, `sourceKind` `form-field`,
-    the field's `form-field:` id in `sourceId`. With the transition's parameters and `field-map` bindings and the
-    parameters' defaults, a reader checks that each required in-parameter is given.
+  - a `link`'s or response's `url` and a form's or ext item's `transition` that is no transition of its own screen (or
+    names a subscreens item of it too: the subscreen comes first, as Moqui walks a path) is a `screen-path` reference
+    (`../Assignments`, `EditTask`, `Sub/Screen/trans`, `/apps/a/B`, `//Commons/Party`), walked as Moqui walks a screen
+    URL from the screen it is written in and resolved to `screen:<location>` or `transition:<screen>#<name>:<method>`:
+    `.` and `~name=value` segments are dropped; `..` goes up to the parent screen, and when a screen has several
+    parents (its directory's screen, the screens whose items name it) the path resolves only when the walk from them
+    reaches one artifact; each segment is a subscreen (a `SubscreensItem` row, else a conf mount, else a
+    `subscreens-item` of the screen or of a `screen-extend` of it, else the directory subscreen), entered through a
+    `no-sub-path` item that holds it (the item's summary ends `, no-sub-path`), or a transition, which ends the path
+    (the rest is extra path); `Name.<mode>` is the screen or transition `Name`; `/...` is walked from the webroot
+    screen, and `//...` is searched for under it as Moqui's `findSubscreenPath` searches. An expression, a URL with a
+    scheme, `.`, and a URL that is only a query or a fragment make none; a path that cannot be walked stays unresolved;
+  - a screen `Foo/Bar.xml` beside `Foo.xml` is a directory subscreen of it: a `subscreens-item` reference from
+    `screen:<Foo.xml>` to the screen, read from `Bar.xml`, with origin `directory` (resolved while `Foo.xml` itself is
+    there; an explicit item of the same name is the one Moqui uses);
+  - the mounts of the merged conf (`screen-facade/screen/subscreens-item` of every `MoquiConf.xml`) are subscreen
+    artifacts `subscreen:<screen>#<name>@conf` of the pseudo file `conf:screen-facade`, and the
+    `moqui.screen.SubscreensItem` rows `subscreen:<screen>#<name>@row` of `db:moqui.screen.SubscreensItem`, each with
+    its `subscreens-item` reference to the screen it mounts (a row of a user group is `@row:<userGroupId>`, an item of
+    its own that a row of every user wins over); both are read at each build, so `/apps/...` and `..` from an app's
+    root walk them. A conf changed while the server runs is read at the next build. A project's index (a directory read
+    on its own, `MemoryIndex::of_files`) has no conf mounts: its `/apps/...` paths stay unresolved;
+  - a screen's default subscreen (its `subscreens@default-item`, the conf's `default-subscreen`, a row's `makeDefault`)
+    is a `screen-path` reference from the screen with `refType` `default-item`, and each `conditional-default` one
+    with `refType` `conditional-default`: a path that ends at the screen goes on through it;
+  - when an update changes the screens, subscreens items or transitions (their ids and summaries differ before and
+    after it), every `screen-path` and directory reference of the other files, and every form field's binding into a
+    transition by its path, is walked again (one read of each, lookups in memory), so a renamed or moved item, an item
+    over a directory subscreen, or a transition's new service moves what goes through it; a build that read every file
+    walked each as it read it;
+  - each field of a form the user fills (not one with only a `header-field` or a `submit`) is a binding from the form
+    to an in-parameter of each service the form's transition passes the request's parameters to: its `service-call`
+    with no `in-map`, `in-map="true"` or `in-map="context"`, and each `service-call` of its actions with
+    `in-map="true"` or `in-map="context"` (the transition's summary says them: `calls <service>`, `own in-map`,
+    `request to <service>`). The parameter is the field's name, or the `field-name` of a `field-map` whose `from` is
+    the field's name (a call with an `in-map` of its own too). `sourceKind` is `form-field`, the field's `form-field:`
+    id in `sourceId`. A form whose transition is a path (`../Tasks/save`) binds each field to the first service the
+    transition it reaches passes the request to; the binding keeps the path's id in `toPath` and is resolved again with
+    the screen paths, and that transition's `field-map`s are not seen. Not yet:
+    the fields of `auto-fields-service`, `auto-fields-entity` and a form's `extends`, which the index does not expand.
+    With the transition's parameters and `field-map` bindings and the parameters' defaults, a reader checks that each
+    required in-parameter is given.
 - **Observed calls.** On a dev instance the artifact stack (`core/context/artifact.rs`) counts each pair of a frame
   and the frame pushed on it (screen, transition, service, entity): what static reading cannot see (a name made at run
   time) and what really runs. The counts are kept per thread and merged each second, so a push costs one map update,
