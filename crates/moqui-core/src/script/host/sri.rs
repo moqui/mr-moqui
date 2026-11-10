@@ -1065,6 +1065,7 @@ fn get_menu_items(call: &mut Call<'_>) -> Result<Ret, HostError> {
                 ("title", Value::String(item.title)),
                 ("url", Value::String(item.url)),
                 ("disabled", Value::Bool(item.disabled)),
+                ("parameterMissing", Value::Bool(item.parameter_missing)),
                 ("inPath", Value::Bool(item.in_path)),
                 ("image", Value::String(item.image)),
                 ("imageType", Value::String(item.image_type)),

@@ -2,12 +2,12 @@
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ Examples
    ▶ Search              │ [ New example… ]  [ New address… ]
-     Landing             │ Any Field  : [ _______________________________________]                     Search . . :
-     List                │   ID Name Type Description
-     Detail              │ ───────────────────────────
-     360                 │   No rows match
-     Task                │   Rows 0 of 0
-     Board               │
+     Landing             │ Any Field  : [ _______________________________________]
+     List                │ < Search >
+     Detail              │   ID Name Type Description
+     360                 │ ───────────────────────────
+     Task                │   No rows match
+     Board               │   Rows 0 of 0
      Calendar            │
      Split               │
      Settings            │

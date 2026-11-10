@@ -32,6 +32,9 @@ pub struct MenuEntry {
     pub title: String,
     pub url: String,
     pub disabled: bool,
+    /// A required parameter of the item's screen path has no value here: Java's `getMenuData` (the browser apps' tabs)
+    /// leaves such an item out, as a tab that opens with its record id missing.
+    pub parameter_missing: bool,
     pub in_path: bool,
     pub image: String,
     pub image_type: String,
@@ -116,6 +119,11 @@ fn menu_entry(
         Some(expression) => script::eval_condition(expression)?,
         None => false,
     };
+    let parameter_missing = url.info.as_ref().is_some_and(|info| {
+        info.parameter_items
+            .values()
+            .any(|parameter| parameter.required && url.parameters.get(&parameter.name).is_none_or(String::is_empty))
+    });
     // The image of the walk the URL was built from: resolving the full path again would count its default
     // subscreens as explicit, so a default's image would replace the item's own.
     let image = url
@@ -129,6 +137,7 @@ fn menu_entry(
         title: item.menu_title.clone(),
         url: url.minimal_path_url_with_params(),
         disabled,
+        parameter_missing,
         in_path: state.url_info.full_path.starts_with(&url.minimal_names),
         image: image.0,
         image_type: image.1,

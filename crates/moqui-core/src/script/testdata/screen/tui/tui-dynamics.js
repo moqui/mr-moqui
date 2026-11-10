@@ -483,6 +483,8 @@ $closeChildren();
         const $items = [];
         for (let $mi = 0; $mi < $menu.length; $mi++) {
             const $item = $menu[$mi];
+            // as qvt's tabs (getMenuData): an item whose screen's required parameter has no value here is left out
+            if ($item.parameterMissing && !$item.inPath) continue;
             $items.push({title:$item.title || "",url:$item.url || "",active:!!$item.inPath});
         }
 $openRender({t:"subscreens",id:$uid("Steps"),kind:"wizard",items:$items,finishText:String(ec.resource.expand("Done") || "")});

@@ -1,46 +1,46 @@
  gallery ▸ List                                                                                                                                                 john.doe  Tue 14:32
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Archetype 3.2 List ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-     Landing             │ ┃ The find and list screen over one record type, here Enumeration with its type through display-entity: the identifier first as a text link to the     │
-   ▶ List                │ ┃ Detail, a chip for the state, Find Options for the rest of the filters, saved finds, the column picker, paging with a page size, exports, row        │
-     Detail              │ ┃ selection with one bulk action in the header menu, two row actions, and New as a dialog. Nothing posted here is written.                             │
-     360                 │ ┃ Fallbacks for §8: the state chip is a tonal anchor-button link (Enumeration has no status, so the state is derived per row) until the m-tonal status │
-     Task                │ ┃ chip exists; the two inline finds are a form-single above the table because header-dialog moves every header-field into Find Options; the view       │
-     Board               │ ┃ switch is a button-menu to the Views screen, where one form-list of example records has the board and calendar views of §8.2 (Enumeration has no     │
-     Calendar            │ ┃ status flow or times to show them on).                                                                                                               │
-     Split               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-     Settings            │ Enumerations
-     Wizard              │ [ View: list ▾ ]  [ New enumeration… ]
-     Dialog              │ Type . . . . : [Email Type                      ▾] Description  : [____________________]              Find . . . . :
-     Report              │       ID                           Description                       Type       State Code Seq Parent Changed          Row Actions
-     Panel               │ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-     Widgets             │   [ ] EMT_ACCOUNT_INVITE           Account Invitation                Email Type Plain                 <stamp>
-     Editor              │   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type   Email Type Child          System <stamp>
-     Message             │   [ ] EMT_EMAIL_VERIFY             Email Address Verification        Email Type Plain                 <stamp>
-     Views               │   [ ] EMT_EMAIL_AUTHC_FACTOR_SENT  Email Authentication Code Sent    Email Type Child          System <stamp>
-     Handheld            │   [ ] EMT_NOTIFICATION             Notification                      Email Type Child          System <stamp>
- ▾ Home                  │   [ ] EMT_NOTIFICATION_DIGEST      Notification Digest               Email Type Child          System <stamp>
-                         │   [ ] EMT_PWD_RESET                Password Reset                    Email Type Child          System <stamp>
-                         │   [ ] EMT_REG_CONFIRM              Registration Confirmation         Email Type Plain                 <stamp>
-                         │   [ ] EMT_SCREEN_RENDER            Screen Render                     Email Type Child          System <stamp>
-                         │   [ ] EMT_SINGLE_USE_CODE          Single Use Code                   Email Type Child          System <stamp>
-                         │   [ ] EMT_SYSTEM                   System                            Email Type Plain                 <stamp>
-                         │   [ ] EMT_UPD_INFO_CONFIRM         Update Personal Info Confirmation Email Type Plain                 <stamp>
+     Landing             │ ┃ Find and inspect enumerations, choose columns, save searches and export results. New, clone and bulk-tag actions are demonstrations; saved finds and │
+   ▶ List                │ ┃ column preferences are stored for your account.                                                                                                      │
+     Detail              │ ┃ Fallbacks for §8: the state chip is a tonal anchor-button link (Enumeration has no status, so the state is derived per row) until the m-tonal status │
+     360                 │ ┃ chip exists; the two inline finds are a form-single above the table because header-dialog moves every header-field into Find Options; the view       │
+     Task                │ ┃ switch is a button-menu to the Views screen, where one form-list of example records has the board and calendar views of §8.2 (Enumeration has no     │
+     Board               │ ┃ status flow or times to show them on).                                                                                                               │
+     Calendar            │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+     Split               │ Enumerations
+     Settings            │ [ View: list ▾ ]  [ New enumeration… ]
+     Wizard              │ Type . . . . : [Email Type                               ▾]
+     Dialog              │ Description  : [____________________]
+     Report              │ < Find >
+     Panel               │       ID                           Description                       Type       State Code Seq Parent Changed          Row Actions
+     Widgets             │ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     Editor              │   [ ] EMT_ACCOUNT_INVITE           Account Invitation                Email Type Plain                 <stamp> Open
+     Message             │                                                                                                                        Clone
+     Views               │   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type   Email Type Child          System <stamp> Open
+     Handheld            │                                                                                                                        Clone
+ ▾ Home                  │   [ ] EMT_EMAIL_VERIFY             Email Address Verification        Email Type Plain                 <stamp> Open
+                         │                                                                                                                        Clone
+                         │   [ ] EMT_EMAIL_AUTHC_FACTOR_SENT  Email Authentication Code Sent    Email Type Child          System <stamp> Open
+                         │                                                                                                                        Clone
+                         │   [ ] EMT_NOTIFICATION             Notification                      Email Type Child          System <stamp> Open
+                         │                                                                                                                        Clone
+                         │   [ ] EMT_NOTIFICATION_DIGEST      Notification Digest               Email Type Child          System <stamp> Open
+                         │                                                                                                                        Clone
+                         │   [ ] EMT_PWD_RESET                Password Reset                    Email Type Child          System <stamp> Open
+                         │                                                                                                                        Clone
+                         │   [ ] EMT_REG_CONFIRM              Registration Confirmation         Email Type Plain                 <stamp> Open
+                         │                                                                                                                        Clone
+                         │   [ ] EMT_SCREEN_RENDER            Screen Render                     Email Type Child          System <stamp> Open
+                         │                                                                                                                        Clone
+                         │   [ ] EMT_SINGLE_USE_CODE          Single Use Code                   Email Type Child          System <stamp> Open
+                         │                                                                                                                        Clone
+                         │   [ ] EMT_SYSTEM                   System                            Email Type Plain                 <stamp> Open
+                         │                                                                                                                        Clone
+                         │   [ ] EMT_UPD_INFO_CONFIRM         Update Personal Info Confirmation Email Type Plain                 <stamp> Open
+                         │                                                                                                                        Clone
                          │   Rows 1–12 of 12 · Page 1/1   Find: Type = EmailType
                          │ Back to the Landing
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
-                         │
                          │
                          │
                          │

@@ -4,13 +4,13 @@
    ▶ Chatter             │ │ On null null · opens on log. The gallery's stand-in for an app's shared Chatter screen, loaded by the chatter element.                               │
      Landing             │ │ No record                                                                                                                                            │
      List                │ │ Log note  : │                                                                                                                                        │
-     Detail              │ │ < Log >                                                                                                                                              │
-     360                 │ │ ● Today 09:12  John Doe logged a note                                                                                                                │
-     Task                │ │ │   Description reviewed with @John Doe and the Products team.                                                                                       │
-     Board               │ │ ● Yesterday 16:40  Ada Lovelace logged a call                                                                                                        │
-     Calendar            │ │ ● Last week  spec-sheet.pdf was attached                                                                                                             │
-     Split               │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-     Settings            │
+     Detail              │ │             HTML is read-only in the terminal. Use the browser form.                                                                                 │
+     360                 │ │ < Log >                                                                                                                                              │
+     Task                │ │ ● Today 09:12  John Doe logged a note                                                                                                                │
+     Board               │ │ │   Description reviewed with @John Doe and the Products team.                                                                                       │
+     Calendar            │ │ ● Yesterday 16:40  Ada Lovelace logged a call                                                                                                        │
+     Split               │ │ ● Last week  spec-sheet.pdf was attached                                                                                                             │
+     Settings            │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Wizard              │
      Dialog              │
      Report              │

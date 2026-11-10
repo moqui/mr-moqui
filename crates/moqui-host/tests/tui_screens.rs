@@ -263,7 +263,7 @@ fn drive_components(link: &HostLink) {
     view.on_key(&press(Key::Right));
     view.on_key(&press(Key::Enter));
     assert!(
-        view.session().message().contains("moved"),
+        view.session().message().starts_with("Demo move:"),
         "{}",
         view.session().message()
     );
@@ -396,6 +396,18 @@ fn drive_tools(link: &HostLink) {
     view.on_key(&press(Key::Enter));
     assert!(!view.session().message_is_error(), "{}", view.session().message());
     assert!(view.session().row_editing().is_none());
+    // A tab whose screen needs a parameter the list has no value for is left out, as the browser apps' tabs (Java's
+    // getMenuData) leave it: EntitySync's Detail and History need an entitySyncId (and its list is not a menu item).
+    let view = open_screen(link, "/apps/system/EntitySync/EntitySyncList");
+    let mut tabs = Vec::new();
+    for model in view.session().nav().models() {
+        moqui_tui::walk(&model.c, &mut |node| {
+            if let Node::Subscreen { items, .. } = node {
+                tabs.extend(items.iter().map(|item| item.url.clone()));
+            }
+        });
+    }
+    assert!(!tabs.iter().any(|url| url.contains("EntitySyncDetail") || url.contains("EntitySyncHistory")), "{tabs:?}");
     // Run a service job and read its run.
     let mut view = AppView::with_session(
         Session::start("/apps/system/ServiceJob/Jobs/ServiceJobDetail?jobName=clean_ServiceJobRun_daily"),

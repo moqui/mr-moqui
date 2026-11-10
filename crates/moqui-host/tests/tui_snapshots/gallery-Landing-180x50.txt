@@ -2,12 +2,12 @@
 ─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  ▾ Gallery               │ ┌─ Archetype 3.1 Landing ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
    ▶ Landing             │ ┃ The home of an app: a row of counters, the lists of my work, shortcuts and a chart, each a link into the List screen with its filter. Framework data │
-     List                │ ┃ stands in for the business: enumerations by type instead of orders by status. One column on a phone, counters two per row.                           │
+     List                │ ┃ stands in for the business: enumerations by type instead of orders by status. Counters wrap to fit the available width, with one per row on a phone. │
      Detail              │ ┃ The counters are number-card elements in a dashboard. Fallbacks for §8: the assigned-to-me list is an inline list because the framework has no       │
      360                 │ ┃ work-item entity; the status chips are tonal anchor-button links until the m-tonal chip exists.                                                      │
      Task                │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Board               │ ┌─ All enumerations ───┐ ┌─ Screen Theme Resour─┐
-     Calendar            │ │ 473                  │ │ 33                   │
+     Calendar            │ │ 501                  │ │ 33                   │
      Split               │ └──────────────────────┘ └──────────────────────┘
      Settings            │                          ┌─ DB Form Field Type ─┐
      Wizard              │                          │ 20                   │
