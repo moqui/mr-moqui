@@ -27,6 +27,9 @@ use serde_json::{json, Value};
 
 use crate::test_client::load;
 
+/// The shortest span a CPU share is computed over.
+const MIN_INTERVAL: Duration = Duration::from_secs(1);
+
 /// The samples a run keeps; past it every other one is dropped, so a long run keeps its whole span.
 const MAX_SAMPLES: usize = 720;
 
@@ -60,10 +63,12 @@ impl Samples {
         let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
         let now = Instant::now();
         let cpu = load::process_cpu();
+        // over less than MIN_INTERVAL the clock ticks of /proc/self/stat are too coarse to give a share
         let share = match (self.last, cpu) {
-            (Some((at, before)), Some(after)) => {
+            (Some((at, before)), Some(after)) if now.duration_since(at) >= MIN_INTERVAL => {
                 let wall = now.duration_since(at).as_secs_f64() * cores as f64;
-                (wall > 0.0).then(|| (after.saturating_sub(before).as_secs_f64() / wall * 1000.0).round() / 1000.0)
+                let share = after.saturating_sub(before).as_secs_f64() / wall;
+                Some((share.clamp(0.0, 1.0) * 1000.0).round() / 1000.0)
             }
             _ => None,
         };
@@ -92,10 +97,11 @@ impl Samples {
 }
 
 /// A Monitor annotation (`monitor_annotations`, source `user`) of a load run on this server, as the runtime settings
-/// write theirs (moqui-report `settings.rs`): without search, or when it cannot be written, the run goes on and the
-/// failure is logged.
+/// write theirs (moqui-report `settings.rs`): without search (logged at debug), or when it cannot be written (logged
+/// as an error), the run goes on.
 pub(crate) fn annotate(factory: &ExecutionContextFactory, run_id: &str, text: &str, created_by: &str) {
     let Some(search) = moqui_core::search::installed(factory) else {
+        tracing::debug!(run_id, "No search index: a load run's annotation is not written");
         return;
     };
     let resource = moqui_core::telemetry::for_factory(factory).resource();

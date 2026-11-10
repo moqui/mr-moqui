@@ -57,6 +57,24 @@ fn a_thread_is_bound_to_its_own_run_only() {
     let err = in_server.allow("http://localhost/").unwrap_err();
     assert!(err.contains("top level"), "{err}");
     assert!(in_server.check_call("session.new", &json!({})).is_ok());
+    // the waits and the recorder's calls only in a user's scenario: no wait with no recorder to see a stop
+    for name in [
+        "load.ramp",
+        "load.pause",
+        "load.timed",
+        "load.iterated",
+        "load.error",
+        "sleep",
+        "step.begin",
+    ] {
+        let err = in_server.check_call(name, &json!({ "until": 1e15 })).unwrap_err();
+        assert!(err.contains("only for a load user's scenario"), "{name}: {err}");
+    }
+    // a thread.begin needs the prelude's one-time token, which no thread but a user's has
+    assert!(take_token(Some("guessed")).is_err());
+    assert!(take_token(None).is_err());
+    assert_eq!(new_token().len(), 32);
+    assert_ne!(new_token(), new_token());
 }
 
 #[test]

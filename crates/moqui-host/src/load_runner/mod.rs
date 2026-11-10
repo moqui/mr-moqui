@@ -49,7 +49,8 @@ moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["test-client"],
         register_services,
-        before_shutdown: |_| run::stop_all(),
+        after_boot: run::booted,
+        before_shutdown: run::stop_all,
         ..moqui_core::extension::Extension::EMPTY
     }
 }

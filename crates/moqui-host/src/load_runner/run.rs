@@ -116,8 +116,23 @@ static REGISTRY: LazyLock<Registry> = LazyLock::new(|| Registry {
     ended: Condvar::new(),
 });
 
-/// Set at shutdown: no run starts after it.
-static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+/// The factories that have begun to shut down, by [`factory_key`]: no run starts on one of them after it. Per factory,
+/// since a process may shut one down and boot another (`moqui test --serve`), and cleared when a factory boots.
+static SHUTTING_DOWN: LazyLock<Mutex<HashSet<(usize, i64)>>> = LazyLock::new(Mutex::default);
+
+/// A factory's identity: its address and its start time, so a later factory at the same address is another.
+fn factory_key(factory: &ExecutionContextFactory) -> (usize, i64) {
+    (std::ptr::from_ref(factory) as usize, factory.started_millis())
+}
+
+fn shutting_down(factory: &ExecutionContextFactory) -> bool {
+    lock(&SHUTTING_DOWN).contains(&factory_key(factory))
+}
+
+/// At a factory's boot: it is not shutting down, whatever an earlier factory at its address did.
+pub(crate) fn booted(factory: &ExecutionContextFactory) {
+    lock(&SHUTTING_DOWN).remove(&factory_key(factory));
+}
 
 /// A run's place in the registry, given up when this is dropped, however its thread ends.
 struct Slot(String);
@@ -176,6 +191,16 @@ pub(crate) struct Ask {
     pub(crate) user: String,
     pub(crate) user_id: String,
 }
+
+/// The host calls a user thread makes only between its `thread.begin` and its `thread.end` (and `step.*`).
+const BEGUN_ONLY: [&str; 6] = [
+    "load.ramp",
+    "load.pause",
+    "load.timed",
+    "load.iterated",
+    "load.error",
+    "sleep",
+];
 
 /// What a run binds its threads to, in Rust and not through the script's own calls (plans/LoadRunner.md §10): its
 /// load, set once its users have started, and the flag that interrupts their scripts on a stop now.
@@ -242,12 +267,17 @@ impl InServer for RunInServer {
 
     /// A user thread's scripts end when the run is stopped now; a thread that only reads a plan (no user bound) has
     /// [`PLAN_LIMIT`] for its scripts, so a top level that spins does not stay behind.
-    fn thread_start(&self) {
-        let user_thread = USER.with(|cell| cell.borrow().is_some());
-        if user_thread {
-            moqui_core::script::interrupt_thread_on(Some(Arc::clone(&self.bound.interrupt)));
-        } else {
-            moqui_core::script::limit_thread_scripts(Instant::now() + PLAN_LIMIT);
+    fn thread_start(&self) -> Option<String> {
+        let token = USER.with(|cell| cell.borrow().as_ref().map(UserThread::issue_token));
+        match token {
+            Some(token) => {
+                moqui_core::script::interrupt_thread_on(Some(Arc::clone(&self.bound.interrupt)));
+                token
+            }
+            None => {
+                moqui_core::script::limit_thread_scripts(Instant::now() + PLAN_LIMIT);
+                None
+            }
         }
     }
 
@@ -261,9 +291,20 @@ impl InServer for RunInServer {
                 if asked != Some(load.id()) {
                     return Err("thread.begin names a load that is not this thread's".to_string());
                 }
+                take_token(args.get("token").and_then(Value::as_str))?;
                 move_phase(Phase::NotBegun, Phase::Begun)
             }
             "thread.end" => move_phase(Phase::Begun, Phase::Ended),
+            // the user's waits and its recorder's calls, only between its begin and its end: before (the script's
+            // top level) a wait would hold the run's slot with no recorder to see a stop
+            name if BEGUN_ONLY.contains(&name) || name.starts_with("step.") => {
+                // after an early end too: the recorder lives until the thread ends, and a wait still sees the stop
+                if matches!(phase(), Some(Phase::Begun | Phase::Ended)) {
+                    Ok(())
+                } else {
+                    Err(format!("{name} is only for a load user's scenario"))
+                }
+            }
             _ => Ok(()),
         }
     }
@@ -349,6 +390,59 @@ struct UserThread {
     user: String,
     bound: Arc<Bound>,
     phase: Cell<Phase>,
+    /// The one-time token of the prelude's `thread.begin`, given out by the thread's first `config` only, before
+    /// any script of the thread runs: a script's own `thread.begin` has none.
+    token: RefCell<Option<String>>,
+    issued: Cell<bool>,
+    /// A call left the context changed and a fresh one could not be logged in: the thread does nothing more.
+    broken: Cell<bool>,
+}
+
+impl UserThread {
+    /// The thread's token, at its first `config` only.
+    fn issue_token(&self) -> Option<String> {
+        if self.issued.replace(true) {
+            return None;
+        }
+        let token = new_token();
+        *self.token.borrow_mut() = Some(token.clone());
+        Some(token)
+    }
+}
+
+/// A token no script can guess: 128 bits from the process's random hasher keys, the time and the thread.
+fn new_token() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let part = |salt: u64| {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u64(salt);
+        hasher.write_u128(
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |at| at.as_nanos()),
+        );
+        hasher.write(format!("{:?}", std::thread::current().id()).as_bytes());
+        hasher.finish()
+    };
+    format!("{:016x}{:016x}", part(1), part(2))
+}
+
+/// Take this user thread's token, refused unless `given` is it: once only.
+fn take_token(given: Option<&str>) -> Result<(), String> {
+    USER.with(|cell| {
+        let held = cell.borrow();
+        let user = held.as_ref().ok_or("not a load user's thread")?;
+        let expected = user.token.borrow_mut().take();
+        match (expected, given) {
+            (Some(expected), Some(given)) if expected == given => Ok(()),
+            _ => Err("thread.begin is the load runner's own".to_string()),
+        }
+    })
+}
+
+/// This thread's phase; none when it is not a load user's thread.
+fn phase() -> Option<Phase> {
+    USER.with(|cell| cell.borrow().as_ref().map(|user| user.phase.get()))
 }
 
 thread_local! {
@@ -374,6 +468,9 @@ fn may_act() -> Result<(), String> {
     USER.with(|cell| {
         let held = cell.borrow();
         let user = held.as_ref().ok_or("a load script makes no request at its top level")?;
+        if user.broken.get() {
+            return Err("this load user's context could not be renewed; it makes no more calls".to_string());
+        }
         match user.phase.get() {
             Phase::Begun => {}
             Phase::NotBegun => return Err("a load script makes no request at its top level".to_string()),
@@ -390,6 +487,13 @@ fn may_act() -> Result<(), String> {
         }
         Ok(())
     })
+}
+
+/// The user out of a run's own context, and nothing more: not a logout, which would mark the account logged out
+/// (`hasLoggedOut`) and sign the starter's browser out with it.
+fn forget_user(context: &ExecutionContext) {
+    let _entered = context.enter();
+    moqui_core::user::session::clear_login();
 }
 
 /// A context of its own for `user`, logged in, the tarpit off.
@@ -433,6 +537,9 @@ pub(crate) fn in_user_context<T>(body: impl FnOnce() -> T) -> Result<(T, Option<
                 let _lifted = moqui_core::script::HostCallsLifted::new();
                 body()
             };
+            // what a call may leave for the next one and that is no one's error: the shared map, an effective time
+            context.shared_map().clear();
+            context.set_effective_time(None);
             (out, tainted(&context, &user.user))
         };
         if let Some(reason) = &taint {
@@ -441,11 +548,18 @@ pub(crate) fn in_user_context<T>(body: impl FnOnce() -> T) -> Result<(T, Option<
                 reason,
                 "A load run's service call changed its context; replacing it"
             );
-            let fresh = user_context(&user.factory, &user.user)?;
-            let old = user.context.replace(fresh);
-            let _entered = old.enter();
-            // the old context goes as it is; its user state is only in it
-            let _ = moqui_core::user::logout();
+            match user_context(&user.factory, &user.user) {
+                Ok(fresh) => {
+                    let old = user.context.replace(fresh);
+                    forget_user(&old);
+                }
+                Err(err) => {
+                    // the changed context loses its user and the thread refuses every later call
+                    tracing::error!(user = user.user, error = %err, "A load user's context could not be renewed");
+                    forget_user(&user.context.borrow());
+                    user.broken.set(true);
+                }
+            }
         }
         Ok((out, taint))
     })
@@ -491,6 +605,9 @@ fn around(
                     user,
                     bound,
                     phase: Cell::new(Phase::NotBegun),
+                    token: RefCell::new(None),
+                    issued: Cell::new(false),
+                    broken: Cell::new(false),
                 })
             });
             let out = body();
@@ -498,11 +615,7 @@ fn around(
             let _ = load::end();
             moqui_core::script::interrupt_thread_on(None);
             if let Some(ended) = USER.with(|cell| cell.borrow_mut().take()) {
-                let context = ended.context.into_inner();
-                let _entered = context.enter();
-                if let Err(err) = moqui_core::user::logout() {
-                    tracing::debug!("logout after a load user: {err}");
-                }
+                forget_user(&ended.context.into_inner());
             }
             out
         })
@@ -512,7 +625,7 @@ fn around(
 /// Start a load and answer its runId: the plan read, `uses` checked against the target, the scenarios' users and the
 /// runs at once checked against the limits (D6), the target checked (§10). The run goes on on a thread of its own.
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<String, String> {
-    if SHUTTING_DOWN.load(Ordering::SeqCst) {
+    if shutting_down(factory) {
         return Err("this server is shutting down".to_string());
     }
     let policy = TargetPolicy::of_factory(factory);
@@ -537,8 +650,11 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
     let total: u64 = scenarios.iter().map(|scenario| scenario.users).sum();
     super::targets::check_users(usize::try_from(total).unwrap_or(usize::MAX))?;
 
+    let on_this_server = ask.target_kind != TargetKind::Url;
+    // the CPU baseline of the server panel's first sample, a few seconds on ([`server::Samples`])
+    let samples = on_this_server.then(|| Mutex::new(server::Samples::new()));
     let mut runs = lock(&REGISTRY.runs);
-    if SHUTTING_DOWN.load(Ordering::SeqCst) {
+    if shutting_down(factory) {
         return Err("this server is shutting down".to_string());
     }
     let max = super::targets::max_runs();
@@ -560,6 +676,12 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
     run.insert("params".into(), plan.public_params());
     run.insert("insecure".into(), json!(ask.insecure));
     run.insert("runId".into(), json!(run_id));
+    // each scenario's settings as the run used them, for Run again: the overrides merged over the script's defaults
+    let settings: Map<String, Value> = scenarios
+        .iter()
+        .map(|scenario| (scenario.name.clone(), scenario.to_json()))
+        .collect();
+    run.insert("scenarioSettings".into(), Value::Object(settings));
     let live = Arc::new(AtomicUsize::new(0));
     let start = load::Start {
         scenarios,
@@ -589,12 +711,6 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
     };
     // the users' thread.begin waits for this ([`Bound::load`])
     let _ = bound.load.set(Arc::clone(running.load()));
-    let on_this_server = ask.target_kind != TargetKind::Url;
-    let samples = on_this_server.then(|| {
-        let mut samples = server::Samples::new();
-        samples.sample(factory);
-        Mutex::new(samples)
-    });
     let active = Arc::new(Active {
         run_id: run_id.clone(),
         script: ask.script.location.clone(),
@@ -688,18 +804,19 @@ fn finish(
         if let Some(generator) = result.get_mut("generator").and_then(Value::as_object_mut) {
             generator.insert("note".into(), json!(server::IN_TARGET_NOTE));
         }
-        drop(samples);
+    }
+    if let Err(err) = results::write_result(root, &run_id, &result) {
+        tracing::error!(run_id, error = %err, "Could not write a load run's result");
+    }
+    // after the result, so a slow search index delays neither it nor the slot's release by much
+    if active.server.is_some() {
         let status = result
             .get("run")
             .and_then(|run| run.get("status"))
             .and_then(Value::as_str)
-            .unwrap_or("ended")
-            .to_string();
-        let text = server::annotation_text(&active.label, &active.script, &status);
+            .unwrap_or("ended");
+        let text = server::annotation_text(&active.label, &active.script, status);
         server::annotate(factory, &run_id, &text, &active.user_id);
-    }
-    if let Err(err) = results::write_result(root, &run_id, &result) {
-        tracing::error!(run_id, error = %err, "Could not write a load run's result");
     }
     drop(host);
     drop(slot);
@@ -754,9 +871,7 @@ fn may_still_run(factory: &Arc<ExecutionContextFactory>, user: &str) -> Result<(
         return Err(format!("the user who started it can no longer log in: {err}"));
     }
     let holds = moqui_core::user::has_permission(super::PERMISSION).unwrap_or(false);
-    if let Err(err) = moqui_core::user::logout() {
-        tracing::debug!("logout after a load run's check: {err}");
-    }
+    forget_user(&context);
     if holds {
         Ok(())
     } else {
@@ -806,9 +921,9 @@ pub(crate) fn stop(run_id: &str, now: bool) -> Option<()> {
 
 /// At shutdown: no run starts from now, every running load is stopped now (under the registry's lock, so none is
 /// added meanwhile), and its result written as stopped, waiting at most [`SHUTDOWN_WAIT`] for them.
-pub(crate) fn stop_all() {
+pub(crate) fn stop_all(factory: &ExecutionContextFactory) {
     let mut held = lock(&REGISTRY.runs);
-    SHUTTING_DOWN.store(true, Ordering::SeqCst);
+    lock(&SHUTTING_DOWN).insert(factory_key(factory));
     for active in held.values() {
         active.stop_now();
     }

@@ -5,7 +5,7 @@ plan({
     title: "What a load user reaches",
     description: "A fixture of the Tools load runner's spec",
     uses: ["service"],
-    params: { mode: { default: "ec", options: ["ec", "host", "http", "toplevel", "tamper", "spin", "authz"] } },
+    params: { mode: { default: "ec", options: ["ec", "host", "http", "toplevel", "tamper", "spin", "authz", "renew"] } },
 })
 
 const seen = (fn) => {
@@ -18,7 +18,14 @@ const seen = (fn) => {
 const ECHO = JSON.stringify({ name: "org.moqui.impl.BasicServices.echo#Data", parameters: { textIn1: "x" }, opts: {} })
 
 // at the top level, around the prelude's refusal: the host refuses it too, before the user has begun
-const topLevel = params.mode === "toplevel" ? seen(() => __moquiTestHost.call("service.call", ECHO)) : null
+const topLevel = params.mode !== "toplevel" ? null : [
+    "call " + seen(() => __moquiTestHost.call("service.call", ECHO)),
+    // a wait with no recorder to see a stop would hold the run's slot
+    "ramp " + seen(() => __moquiTestHost.call("load.ramp", JSON.stringify({ until: Date.now() + 3600000 }))),
+    "sleep " + seen(() => __moquiTestHost.call("sleep", JSON.stringify({ ms: 3600000 }))),
+    // the token of the prelude's own thread.begin went to its first config, not to this one
+    "token " + seen(() => JSON.parse(__moquiTestHost.call("config", "null")).threadToken),
+].join("; ")
 
 scenario("reach", {
     users: 1, iterations: 1,
@@ -46,6 +53,11 @@ scenario("reach", {
                 "end " + seen(() => __moquiTestHost.call("thread.end", "{}")),
                 "after " + seen(() => __moquiTestHost.call("service.call", ECHO)),
             ].join("; "))
+        } else if (params.mode === "renew") {
+            // a call that leaves authorization off and its user's account disabled: no fresh login, so nothing more
+            service.call("example.LoadFixtureServices.leave#AuthzDisabledAccountDisabled", {}, { expect: ["error"] })
+            const next = seen(() => service.call("org.moqui.impl.BasicServices.echo#Data", { textIn1: "x" }))
+            fail("next " + (next.includes("could not be renewed") ? "refused" : next))
         } else if (params.mode === "spin") {
             // no host call: only the interrupt of a stop now ends it
             for (;;) { /* spin */ }

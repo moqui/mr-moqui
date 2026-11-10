@@ -180,7 +180,16 @@ pub(crate) fn summary(id: &str, result: &Value) -> Value {
     let run = result.get("run").cloned().unwrap_or_else(|| json!({}));
     let mut out = Map::new();
     out.insert("runId".into(), json!(id));
-    for key in ["script", "label", "user", "status", "target", "start", "end"] {
+    for key in [
+        "script",
+        "label",
+        "user",
+        "status",
+        "target",
+        "targetKind",
+        "start",
+        "end",
+    ] {
         out.insert(key.into(), run.get(key).cloned().unwrap_or(Value::Null));
     }
     for key in [

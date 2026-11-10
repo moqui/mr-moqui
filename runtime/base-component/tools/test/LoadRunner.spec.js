@@ -55,6 +55,8 @@ spec({
             nameIsPattern: "N", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
         // set#Preference writes a row keyed by the current user: what shows whom a call ran as
         // the dev example's fixture that leaves its caller's authorization off
+        make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "example.LoadFixtureServices.leave#AuthzDisabledAccountDisabled",
+            nameIsPattern: "N", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
         make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "example.LoadFixtureServices.leave#AuthzDisabled",
             nameIsPattern: "N", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
         make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "org.moqui.impl.UserServices.set#Preference",
@@ -87,17 +89,23 @@ spec({
 
 feature("a holder runs ServiceCall for 2 users and 2 iterations: completed with 4 requests, and listed", {
     expect() {
+        const loggedOut = () => ec.entity.find("moqui.security.UserAccount").condition("userId", holderId).disableAuthz().one().hasLoggedOut
+        const loggedOutBefore = loggedOut()
         const started = start({ scenarios: quick(2, 2), label: "spec" })
         started.error == ""
         runIds.push(started.runId)
         const status = ended(started.runId)
+        // the run's own logins do not sign its starter out (hasLoggedOut is what a browser session checks)
+        loggedOut() == loggedOutBefore
+        result(started.runId).run.scenarioSettings.calls.users == 2
+        result(started.runId).run.scenarioSettings.calls.iterations == 2
         status.running == false
         status.status == "completed"
         status.summary.requests == 4
         status.summary.errors == 0
         status.summary.user == "spec.lr.holder"
         const listed = invoke(S + "find#LoadRuns", { scriptLocation: SCRIPT }).runs
-        listed.some(run => run.runId == started.runId && run.status == "completed")
+        listed.some(run => run.runId == started.runId && run.status == "completed" && run.targetKind == "service")
         // the script list reads each plan
         const script = invoke(S + "find#LoadScripts").scripts.find(s => s.location == SCRIPT)
         script.title == "Service call"
@@ -250,8 +258,10 @@ feature("a run on this server keeps the server's samples and notes that its gene
         runIds.push(started.runId)
         ended(started.runId).status == "completed"
         const done = result(started.runId)
-        done.server.samples.length >= 2
+        // a run of milliseconds: one sample, at its end, with no CPU share over so short a span
+        done.server.samples.length >= 1
         done.server.samples[0].memoryMb > 0
+        done.server.samples[0].cpu == null
         done.generator.where == "in-target"
         done.generator.note.includes("server")
     },
@@ -269,7 +279,11 @@ const reached = (mode) => {
 
 feature("a script's own host calls neither act at its top level nor rebind or end its thread", {
     expect() {
-        reached("toplevel").includes("toplevel threw a load script makes no request at its top level")
+        const top = reached("toplevel")
+        top.includes("call threw a load script makes no request at its top level")
+        top.includes("ramp threw load.ramp is only for a load user's scenario")
+        top.includes("sleep threw sleep is only for a load user's scenario")
+        top.includes("token ok null")
         const tampered = reached("tamper")
         tampered.includes("other threw thread.begin names a load that is not this thread's")
         tampered.includes("after threw this load user has ended")
@@ -295,5 +309,20 @@ feature("a stop now ends a script that spins without a host call", {
         const status = ended(started.runId)
         status.running == false
         status.status == "stopped"
+    },
+})
+
+feature("when a call's changed context cannot be renewed, the user makes no more calls", {
+    expect() {
+        try {
+            reached("renew").includes("next refused")
+        } finally {
+            // the fixture disabled the holder's account
+            ec.artifactExecution.disableAuthz()
+            const account = ec.entity.find("moqui.security.UserAccount").condition("userId", holderId).one()
+            account.disabled = "N"
+            account.update()
+            ec.artifactExecution.enableAuthz()
+        }
     },
 })

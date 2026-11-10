@@ -740,11 +740,7 @@ fn compare(files: &[PathBuf], print: &mut dyn FnMut(&str)) -> Result<(), Error> 
             (text, row)
         })
         .collect();
-    let width = table
-        .iter()
-        .map(|(label, _)| label.chars().count())
-        .max()
-        .unwrap_or(0);
+    let width = table.iter().map(|(label, _)| label.chars().count()).max().unwrap_or(0);
     let mut header = format!("{:<width$}", "");
     for index in 0..loaded.len() {
         let _ = write!(header, "  {:>22}", format!("[{}]", index + 1));

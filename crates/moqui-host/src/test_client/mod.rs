@@ -699,8 +699,9 @@ pub(crate) trait InServer: Send + Sync {
     fn allow(&self, url: &str) -> Result<(), String>;
     /// `service.call(name, parameters, opts)` on the user's thread, whose ExecutionContext the run entered.
     fn service_call(&self, args: &Value) -> Result<Value, String>;
-    /// The thread's first host call (`config`), before any of its scripts: the run binds what it must to the thread.
-    fn thread_start(&self);
+    /// The thread's `config` calls, the first before any of its scripts: the run binds what it must to the thread, and
+    /// answers the first one with the token of the prelude's own `thread.begin`.
+    fn thread_start(&self) -> Option<String>;
     /// Every host call of the run's threads, before it is answered: a `thread.begin` or `thread.end` that is not the
     /// thread's own is refused, whatever a script passes.
     fn check_call(&self, name: &str, args: &Value) -> Result<(), String>;
@@ -1461,15 +1462,17 @@ impl ClientHost {
             "config" => {
                 // the client prelude's first call, before any script of the thread: in a server run the thread's
                 // scripts reach only the client harness's host functions from here on
+                let mut token = None;
                 if let Some(in_server) = &self.in_server {
                     moqui_core::script::restrict_host_calls(in_server_host_call);
-                    in_server.thread_start();
+                    token = in_server.thread_start();
                 }
                 Ok(json!({
                     "server": self.server.to_json(),
                     "params": self.params,
                     "timeout": self.timeout.as_secs_f64(),
                     "inServer": self.in_server.is_some(),
+                    "threadToken": token,
                 }))
             }
             "service.call" => match &self.in_server {
@@ -1564,7 +1567,7 @@ impl ClientHost {
             }
             "sleep" => {
                 let ms = field(args, "ms").as_f64().unwrap_or(0.0).clamp(0.0, 3_600_000.0);
-                if load::is_user() {
+                if load::is_user() || self.in_server.is_some() {
                     // a load user's wait ends on a stop, as its pauses do
                     load::pause(&load::Pause::Fixed(ms), None);
                 } else {

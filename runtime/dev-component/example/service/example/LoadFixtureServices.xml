@@ -19,4 +19,14 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="leave" noun="AuthzDisabled">
         <actions><script>ec.artifactExecution.disableAuthz()</script></actions>
     </service>
+    <!-- As leave#AuthzDisabled, and the caller's own account disabled too, so a fresh login for it fails: the spec puts
+        the account back. -->
+    <service verb="leave" noun="AuthzDisabledAccountDisabled">
+        <actions><script><![CDATA[
+            ec.artifactExecution.disableAuthz()
+            const account = ec.entity.find('moqui.security.UserAccount').condition('userId', ec.user.userId).one()
+            account.disabled = 'Y'
+            account.update()
+        ]]></script></actions>
+    </service>
 </services>

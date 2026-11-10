@@ -159,6 +159,12 @@ pub(crate) fn interrupted() -> bool {
     })
 }
 
+/// Whether the scripts on this thread are to end now: its [`interrupt_thread_on`] flag is set, or its deadline has
+/// passed. A host's own wait on such a thread (a load user's pause) ends with them.
+pub fn thread_interrupted() -> bool {
+    interrupted() || DEADLINE.with(Cell::get).is_some_and(|deadline| Instant::now() >= deadline)
+}
+
 /// From now on the scripts on this thread have `until` as their deadline, for the thread's life: a thread that only
 /// reads a load script's plan, whose top level must end (plans/LoadRunner.md §10). A nested [`DeadlineGuard`] keeps
 /// the earlier deadline.
