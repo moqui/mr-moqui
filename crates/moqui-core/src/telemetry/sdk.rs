@@ -20,14 +20,15 @@ const ARTIFACT_SLOW: &str = "moqui.artifact.slow";
 /// Artifact attribute sets a thread keeps; past this many they are dropped and made again as they come.
 const ARTIFACT_ATTRIBUTES_CAP: usize = 4096;
 
-/// Counts changes of the metric attribute lists, so a thread's [`ARTIFACT_ATTRIBUTES`] made before one is dropped.
-static ATTRIBUTE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// A thread's artifact attribute sets, by the runtime, the instrument and the artifact's key.
+/// A thread's artifact attribute sets, by runtime, instrument and artifact key.
 #[derive(Default)]
 struct ArtifactAttributes {
-    generation: u64,
-    rows: HashMap<(usize, u8, u64), Arc<[KeyValue]>>,
+    rows: HashMap<(usize, u8, u64), CachedArtifactAttributes>,
+}
+
+struct CachedArtifactAttributes {
+    allowed: Arc<AllowedAttributes>,
+    attributes: Arc<[KeyValue]>,
 }
 
 thread_local! {
@@ -177,7 +178,6 @@ impl Runtime {
     /// Replace the attribute lists by instrument, from the live config.
     pub(super) fn set_metric_attributes(&self, lists: &HashMap<String, Vec<String>>) {
         self.allowed.store(Arc::new(allowed_keys(lists)));
-        ATTRIBUTE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// `moqui.artifact.duration` of one artifact frame, and `moqui.artifact.slow` when `slow`. The attributes are made
@@ -215,18 +215,27 @@ impl Runtime {
         instrument: &str,
         attributes: &impl Fn() -> Document,
     ) -> Arc<[KeyValue]> {
-        let generation = ATTRIBUTE_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+        // Change 7: Only this runtime's configuration invalidates its cached attributes.
+        // Retaining the configuration Arc also prevents an allocator address reuse from looking current.
+        let allowed = self.allowed.load_full();
         let owner = std::ptr::from_ref(self) as usize;
         ARTIFACT_ATTRIBUTES.with(|memo| {
             let mut memo = memo.borrow_mut();
-            if memo.generation != generation || memo.rows.len() >= ARTIFACT_ATTRIBUTES_CAP {
+            if memo.rows.len() >= ARTIFACT_ATTRIBUTES_CAP {
                 memo.rows.clear();
-                memo.generation = generation;
             }
-            memo.rows
+            let cached = memo
+                .rows
                 .entry((owner, which, key))
-                .or_insert_with(|| self.metric_attributes(instrument, attributes()).into())
-                .clone()
+                .or_insert_with(|| CachedArtifactAttributes {
+                    attributes: allowed_attributes(allowed.get(instrument).map(Vec::as_slice), attributes()).into(),
+                    allowed: Arc::clone(&allowed),
+                });
+            if !Arc::ptr_eq(&cached.allowed, &allowed) {
+                cached.attributes = allowed_attributes(allowed.get(instrument).map(Vec::as_slice), attributes()).into();
+                cached.allowed = allowed;
+            }
+            Arc::clone(&cached.attributes)
         })
     }
 

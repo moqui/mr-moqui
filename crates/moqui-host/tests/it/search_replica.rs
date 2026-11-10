@@ -84,12 +84,16 @@ fn reads_go_to_the_replica_and_fresh_reads_wait_or_use_the_primary() {
         request
     };
 
-    // An eventual read reaches the replica, which soon has the first document.
+    // Change 6: Wait for setup WAL directly: search can fall back while the replica lacks the new table,
+    // and those setup fallbacks must not masquerade as a failure of the fresh-read routing below.
     backend.index_documents(&mapping, &[note("N1", "first")]).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while ids(&eventual) != vec!["N1"] && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    let lsn = driver
+        .connect()
+        .unwrap()
+        .query("SELECT pg_current_wal_lsn()::text AS lsn", &[])
+        .unwrap();
+    standby.wait_for_replay(lsn[0].get("lsn").and_then(Value::as_str).unwrap());
+    // An eventual read now reaches a replica that has both the table and first document.
     assert_eq!(ids(&eventual), vec!["N1"]);
     // A fresh read right after a write sees it, by waiting for replay.
     backend.index_documents(&mapping, &[note("N2", "second")]).unwrap();
@@ -206,6 +210,31 @@ struct Standby {
 }
 
 impl Standby {
+    fn wait_for_replay(&self, lsn: &str) {
+        let driver = PostgresDriver::unix_socket("postgres", "moqui", &self.data)
+            .port(STANDBY_PORT)
+            .password(&self.password);
+        let mut conn = driver.connect().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let rows = conn
+                .query(
+                    "SELECT pg_last_wal_replay_lsn() >= ?::pg_lsn AS caught_up",
+                    &[Value::string(lsn)],
+                )
+                .unwrap();
+            if rows[0].get("caught_up") == Some(&Value::Bool(true)) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "standby did not replay setup WAL {lsn}: {rows:?}; log: {}",
+                std::fs::read_to_string(self.data.join("standby.log")).unwrap_or_default()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     fn start(bin: &Path, primary_socket: &Path, data: &Path, password: &str) -> Self {
         let conninfo = format!(
             "host={} port=5432 user=postgres password={password}",
@@ -226,7 +255,20 @@ impl Standby {
             "-c port={STANDBY_PORT} -c unix_socket_directories='{}' -c listen_addresses='' -c hot_standby=on",
             data.display()
         );
+        // Change 6: The extracted WAL receiver links libpq; its packaged /opt runpath is not this install.
+        // Set the child's loader path only, preserving any caller-supplied library directories.
+        let loader_path = if cfg!(target_os = "macos") {
+            "DYLD_LIBRARY_PATH"
+        } else {
+            "LD_LIBRARY_PATH"
+        };
+        let inherited = std::env::var_os(loader_path).unwrap_or_default();
+        let libraries = std::env::join_paths(
+            std::iter::once(bin.parent().unwrap().join("lib")).chain(std::env::split_paths(&inherited)),
+        )
+        .unwrap();
         let output = Command::new(bin.join("pg_ctl"))
+            .env(loader_path, libraries)
             .arg("-D")
             .arg(data)
             .args(["-o", &options, "-l"])

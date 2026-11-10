@@ -46,6 +46,8 @@ fn setup() -> (ExecutionContext, EntityFacade) {
 fn install() {
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
+        // Change 4: File services inherit the installed ownership interface parameters.
+        framework.join("admin/IdentityServices.xml"),
         framework.join("impl/FileServices.xml"),
         framework.join("impl/GitServices.xml"),
     ];
@@ -1445,6 +1447,8 @@ fn install_with_record_hook() -> std::path::PathBuf {
     std::fs::write(dir.join("service/test/DriveStub.xml"), RECORD_HOOK).unwrap();
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
+        // Change 4: File services inherit the installed ownership interface parameters.
+        framework.join("admin/IdentityServices.xml"),
         framework.join("impl/FileServices.xml"),
         framework.join("impl/GitServices.xml"),
         framework.join("impl/ChatServices.xml"),
@@ -2662,6 +2666,8 @@ fn an_external_user_reaches_no_records_drive() {
     std::fs::write(dir.join("service/test/DriveStub.xml"), RECORD_HOOK).unwrap();
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let failures = moqui_core::service::lint(&[
+        // Change 4: File services inherit the installed ownership interface parameters.
+        framework.join("admin/IdentityServices.xml"),
         framework.join("impl/FileServices.xml"),
         framework.join("impl/GitServices.xml"),
         framework.join("impl/ChatServices.xml"),

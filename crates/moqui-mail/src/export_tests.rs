@@ -67,6 +67,8 @@ fn a_sent_message_exports_with_its_files() {
     let _entered = ctx.enter();
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let failures = moqui_core::service::lint(&[
+        // Change 4: Mail services inherit the installed ownership interface parameters.
+        framework.join("admin/IdentityServices.xml"),
         framework.join("EmailServices.xml"),
         framework.join("impl/EmailServices.xml"),
         framework.join("impl/EmailClientServices.xml"),

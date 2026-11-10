@@ -53,6 +53,8 @@ pub(super) fn setup_with(conf: &str) -> (ExecutionContext, EntityFacade) {
 pub(super) fn install() {
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let paths = vec![
+        // Change 4: Mail services inherit the installed ownership interface parameters.
+        framework.join("admin/IdentityServices.xml"),
         framework.join("EmailServices.xml"),
         framework.join("impl/EmailServices.xml"),
         framework.join("impl/EmailClientServices.xml"),

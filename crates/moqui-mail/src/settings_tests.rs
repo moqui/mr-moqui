@@ -75,6 +75,8 @@ const STUBS: &str = r#"<services>
 fn install_with(stubs: Option<&std::path::Path>) {
     let framework = moqui_core::context::framework_dir().join("service/org/moqui");
     let mut paths = vec![
+        // Change 4: Mail services inherit the installed ownership interface parameters.
+        framework.join("admin/IdentityServices.xml"),
         framework.join("EmailServices.xml"),
         framework.join("impl/EmailServices.xml"),
         framework.join("impl/EmailClientServices.xml"),

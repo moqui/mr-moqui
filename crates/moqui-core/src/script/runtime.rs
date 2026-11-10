@@ -1017,6 +1017,11 @@ fn with_engine<R>(kind: EngineKind, body: impl FnOnce(&Ctx) -> Result<R, Error>)
     counts::DEPTH_MAX.fetch_max(depth + 1, std::sync::atomic::Ordering::Relaxed);
     let _guard = DepthGuard;
     engine.context.with(|ctx| {
+        // Change 8: Reused engines measure this entry's stack, not their creation-time host call depth.
+        // rquickjs only refreshes it automatically with its parallel feature. Nested entries return above:
+        // refreshing there would give each nested script a new budget instead of sharing the outer limit.
+        // SAFETY: Context::with holds this engine's runtime lock; ctx belongs to it and no script in it is running.
+        unsafe { rquickjs::qjs::JS_UpdateStackTop(rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr())) };
         let _run = RunValues {
             engine: &engine,
             outer: None,

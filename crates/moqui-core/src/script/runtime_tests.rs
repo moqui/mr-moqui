@@ -682,6 +682,45 @@ fn the_default_limit_is_script_timeout_else_the_request_timeout_on_a_request_wor
     assert_eq!(limit("junk", false, ""), None);
 }
 
+// Change 8: An engine first entered deep in the host stack must not keep that origin on later shallow entries.
+#[test]
+fn a_reused_engine_measures_stack_from_each_outer_entry() {
+    #[inline(never)]
+    fn padded(depth: usize, body: &mut impl FnMut() -> i64) -> i64 {
+        let padding = [0_u8; 64 * 1024];
+        std::hint::black_box(&padding);
+        let result = if depth == 0 { body() } else { padded(depth - 1, body) };
+        std::hint::black_box(&padding);
+        result
+    }
+
+    std::thread::Builder::new()
+        .stack_size(4 * 1024 * 1024)
+        .spawn(|| {
+            let mut depth = || {
+                with_ctx(|ctx| {
+                    eval_source::<i64>(
+                        ctx,
+                        "(function () { let most = 0; function down(n) { most = n; down(n + 1); } \
+                            try { down(0); } catch (e) {} return most; })()",
+                    )
+                })
+                .unwrap()
+            };
+            let deep = padded(8, &mut depth);
+            let shallow = depth();
+            assert!(deep > 0);
+            // Host entry frames vary slightly; half a MiB of stale origin would add far more than ten percent.
+            assert!(
+                (deep - shallow).abs() <= deep / 10,
+                "the same budget should allow comparable recursion: deep={deep}, shallow={shallow}"
+            );
+        })
+        .unwrap()
+        .join()
+        .expect("the thread did not overflow");
+}
+
 #[test]
 fn deep_recursion_in_a_nested_script_is_a_script_error() {
     // Less stack than a worker thread's 2 MiB, so a nested engine with a whole 1 MiB of its own under the outer

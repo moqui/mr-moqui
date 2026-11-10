@@ -1789,6 +1789,12 @@ mod live {
         assert_eq!(global, ["moqui.artifact.name", "moqui.artifact.type"]);
         assert_eq!(kept(), global);
         assert_eq!(made.get(), 1, "made once");
+        // Change 7: Updating another runtime must not rebuild this runtime's artifact attributes.
+        let other = Telemetry::from_conf("<moqui-conf/>", Resource::default());
+        other.set_live(telemetry_config(&disk, &BTreeMap::new()));
+        assert_eq!(kept(), global);
+        assert_eq!(made.get(), 1, "unrelated runtime preserves cached attributes");
+        other.shutdown();
         telemetry.set_live(telemetry_config(
             &disk,
             &overrides(&[(

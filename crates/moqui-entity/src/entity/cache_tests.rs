@@ -304,6 +304,7 @@ fn a_rolled_back_sim_write_poisons_the_sim() {
     assert!(super::sim_check_find(&facade, TEST).is_err());
     // The sim's own records on production are still read.
     assert!(super::sim_check_find(&facade, "moqui.agent.AgentRun").is_ok());
+    assert!(super::sim_check_find(&facade, "moqui.agent.AgentConstitutionSnapshot").is_ok());
     super::SIM.with(|slot| slot.borrow_mut().clear());
 }
 

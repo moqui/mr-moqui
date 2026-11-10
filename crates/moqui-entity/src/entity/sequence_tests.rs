@@ -133,7 +133,7 @@ fn temp_set_pins_ids_and_reset_refills() {
     assert_eq!(next(&banks), 55_502);
     banks.temp_reset("A");
     assert_eq!(next(&banks), 100_051);
-    drop(next);
+    // Change 9: The last closure call ends its borrow; this closure has no destructor to run.
     assert_eq!(refills, 1);
 }
 

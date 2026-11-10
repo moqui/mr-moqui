@@ -712,6 +712,8 @@ fn assert_hold_commit_and_rollback(facade: &EntityFacade, driver: &Arc<dyn DbDri
 }
 
 fn assert_sim_overlay(facade: &EntityFacade, driver: &Arc<dyn DbDriver>) {
+    const SNAPSHOT: &str = "moqui.agent.AgentConstitutionSnapshot";
+    facade.check_tables(&[SNAPSHOT]).unwrap();
     create_test(facade, "T1", "main");
     assert_eq!(
         raw_rows(driver, "SELECT test_id FROM test_entity WHERE test_id = ?", "T1").len(),
@@ -720,6 +722,20 @@ fn assert_sim_overlay(facade: &EntityFacade, driver: &Arc<dyn DbDriver>) {
 
     enter_sim(facade).unwrap();
     assert!(facade.sim_active());
+    // Change 5: Run bookkeeping survives the preview, while the business row below stays in its overlay.
+    let mut snapshot = facade.make_value(SNAPSHOT).unwrap();
+    snapshot.set("contentHash", Value::string("sim-constitution"));
+    snapshot.set("documentJson", Value::string("{}"));
+    snapshot.create(facade).unwrap();
+    assert_eq!(
+        raw_rows(
+            driver,
+            "SELECT content_hash FROM agent_constitution_snapshot WHERE content_hash = ?",
+            "sim-constitution"
+        )
+        .len(),
+        1
+    );
     create_test(facade, "SIM2", "overlay");
     let sim_row = find_one(facade, "moqui.test.TestEntity", "testId", "SIM2").unwrap();
     assert_eq!(sim_row.get("testMedium").and_then(Value::as_str), Some("overlay"));
@@ -737,6 +753,13 @@ fn assert_sim_overlay(facade: &EntityFacade, driver: &Arc<dyn DbDriver>) {
 
     exit_sim(facade).unwrap();
     assert!(!facade.sim_active());
+    assert_eq!(
+        find_one(facade, SNAPSHOT, "contentHash", "sim-constitution")
+            .unwrap()
+            .get("documentJson")
+            .and_then(Value::as_str),
+        Some("{}")
+    );
     assert!(find_one(facade, "moqui.test.TestEntity", "testId", "SIM2").is_none());
     assert!(find_one(facade, "moqui.test.TestEntity", "testId", "T1").is_some());
 
@@ -846,6 +869,9 @@ fn cell(row: &DbRow, column: &str) -> String {
 }
 
 const AUTHZ_TABLES: &[&str] = &[
+    // Change 6: Authorization records allocate IDs even when their parent fixture has explicit keys.
+    "moqui.entity.SequenceValueItem",
+    "moqui.entity.EntityAuditLog",
     "moqui.basic.EnumerationType",
     "moqui.basic.Enumeration",
     "moqui.security.UserGroup",
