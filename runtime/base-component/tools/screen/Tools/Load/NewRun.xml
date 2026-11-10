@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- A run of a load script (plans/LoadRunner.md §8, Task): the target its plan allows, the plan's params each by its
+    kind, each scenario's users, ramp, duration and iterations, a label, and Start, which opens the run's page. With
+    runId (Run again) it is filled from that run: its script and target are resolved again among the loaded components'
+    scripts (template/LoadRuns.js planForm, which ../planForm answers), and start#LoadRun checks them again; a secret
+    param is asked again. The browser form is NewRun.qvue, posting to ../startRun; the terminal form is NewRun.tui.json,
+    posting to start here. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="New run" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <parameter name="scriptLocation"/>
+    <parameter name="runId"/>
+
+    <!-- the terminal's form: p_<param> and s_<scenario>_<setting> fields, from the request body only (a param may be a
+        password); the run's page on a start, the form again on a refusal -->
+    <transition name="start" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const body = ec.web.secureRequestParameters
+            const started = ec.resource.script('component://tools/template/LoadRuns.js').startRun({scriptLocation: body.scriptLocation,
+                targetKind: body.targetKind, targetUrl: body.targetUrl, label: body.label, insecure: body.insecure,
+                scenarioNames: body.scenarioNames, fields: body})
+            startedRunId = started.runId || null
+            if (started.error) ec.message.addError(started.error)
+        ]]></script></actions>
+        <conditional-response url="../Run"><condition><expression>startedRunId</expression></condition>
+            <parameter name="runId" from="startedRunId"/></conditional-response>
+        <default-response url="."><parameter name="scriptLocation"/></default-response>
+        <error-response url="."><parameter name="scriptLocation"/></error-response>
+    </transition>
+
+    <widgets>
+        <render-mode>
+            <text type="qvue" location="component://tools/screen/Tools/Load/NewRun.qvue" template="false"/>
+            <text type="tui" location="component://tools/screen/Tools/Load/NewRun.tui.json" template="fancy"/>
+        </render-mode>
+    </widgets>
+</screen>

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One load run (plans/LoadRunner.md §8, Detail): its header, Stop and Stop now while it runs, Run again, Download
+    result and Delete after; the number cards; the charts of requests and errors per second, of p50, p95 and p99, and of
+    active users; the table by name; the first errors; the generator and, for a load running on this server, the
+    server's CPU load and memory. A run that is not here (no such run, or a load running on another server) is "Not
+    available". The browser page is Run.qvue, which asks ../runStatus for the run, and again every 2 seconds while it
+    runs; the terminal page is Run.tui.json, the run as it is when shown, with Refresh and the transitions here. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Run" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <parameter name="runId" required="true"/>
+
+    <!-- the terminal's actions; the browser posts to ../stopRun and ../deleteRun -->
+    <transition name="stop" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const stopped = ec.resource.script('component://tools/template/LoadRuns.js').call('stop#LoadRun', {runId: String(runId || ''), now: false})
+            if (stopped.error) ec.message.addError(stopped.error)
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="stopNow" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const stopped = ec.resource.script('component://tools/template/LoadRuns.js').call('stop#LoadRun', {runId: String(runId || ''), now: true})
+            if (stopped.error) ec.message.addError(stopped.error)
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="delete" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const deleted = ec.resource.script('component://tools/template/LoadRuns.js').call('delete#LoadRun', {runId: String(runId || '')})
+            if (deleted.error) ec.message.addError(deleted.error)
+        ]]></script></actions>
+        <default-response url="../Runs"/>
+        <error-response url="."/>
+    </transition>
+
+    <widgets>
+        <render-mode>
+            <text type="qvue" location="component://tools/screen/Tools/Load/Run.qvue" template="false"/>
+            <text type="tui" location="component://tools/screen/Tools/Load/Run.tui.json" template="fancy"/>
+        </render-mode>
+    </widgets>
+</screen>

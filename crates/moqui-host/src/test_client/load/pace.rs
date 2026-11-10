@@ -173,7 +173,8 @@ pub(crate) fn sleep(wait: Duration, until: Option<Instant>, stopped: &dyn Fn() -
     }
     loop {
         let now = Instant::now();
-        if now >= end || stopped() {
+        // and when the thread's scripts are to end (a load run's stop now, a plan read's limit)
+        if now >= end || stopped() || moqui_core::script::thread_interrupted() {
             return now - started;
         }
         std::thread::sleep((end - now).min(SLICE));

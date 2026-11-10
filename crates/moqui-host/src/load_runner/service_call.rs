@@ -17,6 +17,12 @@
 //! who started the run, through the service facade with authorization required and the transaction its definition
 //! gives. Timed from the call to its return; the context's error messages are the sample's error, and every message
 //! is cleared after the call, so none piles up over the run; a transaction left open is rolled back and is an error.
+//! A call that leaves the context changed (authorization or entity ECA rules off, another user) is an error too, and
+//! the context is replaced with a fresh one ([`super::run::in_user_context`]).
+//!
+//! The call goes straight to the service facade, so a service's `allow-remote="false"` does not refuse it: that
+//! attribute is about calls from outside the server (REST, JSON-RPC), and this one runs in process, as the user who
+//! started the run, with authorization required, as the services the user's own screens call do.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -61,9 +67,11 @@ pub(crate) fn call(args: &Value) -> Result<Value, String> {
         .map(|outcomes| outcomes.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
     load::before_request()?;
-    let Some(called) = super::run::in_user_context(|| run_service(&name, &parameters)) else {
-        return Err("service.call needs a load run's user thread in this server".to_string());
-    };
+    let (mut called, taint) = super::run::in_user_context(|| run_service(&name, &parameters))?;
+    if let Some(reason) = taint {
+        // the context was replaced; the call that changed it is an error
+        called.errors.push(format!("{name}: {reason}"));
+    }
     let error = (!called.errors.is_empty()).then(|| called.errors.join("; "));
     let outcome = if error.is_some() { "error" } else { "ok" };
     let counted = error.clone().filter(|_| !expected.contains(&outcome));

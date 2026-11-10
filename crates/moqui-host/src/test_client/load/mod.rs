@@ -50,7 +50,7 @@ use record::{Pending, Recorder, ScenarioCounts, Shared};
 pub(crate) use schedule::Target;
 use schedule::{Schedule, Take};
 pub(crate) use script::{LoadScript, ScenarioSettings};
-pub(crate) use stats::{grouped, table, table_ms};
+pub(crate) use stats::{grouped, process_cpu, table, table_ms};
 
 /// The errors a load result keeps whole, the first.
 pub(crate) const ERROR_SAMPLES: usize = 20;

@@ -139,6 +139,40 @@ impl DeadlineGuard {
     }
 }
 
+thread_local! {
+    /// A flag whose set ends every script on this thread ([`interrupt_thread_on`]).
+    static INTERRUPT: RefCell<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>> = const { RefCell::new(None) };
+}
+
+/// From now on every script on this thread ends, as at a passed deadline, once `flag` is set: a load run's user
+/// thread, whose script a stop must end even in a loop with no host call (plans/LoadRunner.md §10). None clears it.
+pub fn interrupt_thread_on(flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>) {
+    INTERRUPT.with(|held| *held.borrow_mut() = flag);
+}
+
+/// Whether this thread's [`interrupt_thread_on`] flag is set.
+pub(crate) fn interrupted() -> bool {
+    INTERRUPT.with(|held| {
+        held.borrow()
+            .as_ref()
+            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
+    })
+}
+
+/// Whether the scripts on this thread are to end now: its [`interrupt_thread_on`] flag is set, or its deadline has
+/// passed. A host's own wait on such a thread (a load user's pause) ends with them.
+pub fn thread_interrupted() -> bool {
+    interrupted() || DEADLINE.with(Cell::get).is_some_and(|deadline| Instant::now() >= deadline)
+}
+
+/// From now on the scripts on this thread have `until` as their deadline, for the thread's life: a thread that only
+/// reads a load script's plan, whose top level must end (plans/LoadRunner.md §10). A nested [`DeadlineGuard`] keeps
+/// the earlier deadline.
+pub fn limit_thread_scripts(until: Instant) {
+    DEADLINE.with(|deadline| deadline.set(Some(until)));
+    DEADLINE_IS_DEFAULT.with(|flag| flag.set(false));
+}
+
 impl Drop for DeadlineGuard {
     fn drop(&mut self) {
         let previous = match (self.previous, self.replaced_default) {

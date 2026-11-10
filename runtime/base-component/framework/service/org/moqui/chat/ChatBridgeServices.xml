@@ -71,7 +71,10 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             accepted = false; duplicate = false; reasonCode = null; outcomeList = []
             const refuse = (code, message) => { reasonCode = code; ec.message.addError(message) }
-            ec.artifactExecution.disableAuthz()
+            // as Java scripts do: authorization back on at the end, however the script ends, so a
+            // later call on the same context (a load run's user) is not left without it
+            const authzWasDisabled = ec.artifactExecution.disableAuthz()
+            try {
             const bridge = ec.entity.find('moqui.chat.ChatBridge').condition('chatBridgeId', chatBridgeId).one()
             if (!bridge) { refuse('unknownBridge', 'Unknown chat bridge'); return }
             if (bridge.statusId === 'CbsDisabled') { refuse('bridgeDisabled', 'The chat bridge is disabled'); return }
@@ -117,6 +120,9 @@ along with this software (see the LICENSE.md file). If not, see
             const worked = ec.service.sync().name('org.moqui.chat.ChatBridgeServices.process#Inbound').parameters({chatBridgeId: chatBridgeId,
                 transactionId: transactionId, followUp: true}).call()
             outcomeList = (worked && worked.outcomeList) || []
+            } finally {
+                if (!authzWasDisabled) ec.artifactExecution.enableAuthz()
+            }
         ]]></script></actions>
     </service>
 
@@ -194,7 +200,10 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="outcomeList" type="List"/><parameter name="acceptedCount" type="Integer"/></out-parameters>
         <actions><script><![CDATA[
             outcomeList = []; acceptedCount = 0
-            ec.artifactExecution.disableAuthz()
+            // as Java scripts do: authorization back on at the end, however the script ends, so a
+            // later call on the same context (a load run's user) is not left without it
+            const authzWasDisabled = ec.artifactExecution.disableAuthz()
+            try {
             const row = ec.entity.find('moqui.chat.ChatBridgeInbound').condition('chatBridgeId', chatBridgeId).condition('transactionId', transactionId).one()
             if (!row) return
             const parse = (text, empty) => { try { return text ? JSON.parse(text) : empty } catch (err) { return empty } }
@@ -237,6 +246,9 @@ along with this software (see the LICENSE.md file). If not, see
             items.forEach((item, index) => { const name = nameOf(item, index); outcomeList.push(Object.assign({itemId: name}, outcomes[name])) })
             if (followUp && acceptedCount) ec.service.sync().name('org.moqui.chat.ChatBridgeServices.process#PendingInbound').parameters({
                 chatBridgeId: chatBridgeId, excludeTransactionId: transactionId, nowMillis: now, waitingOnly: true}).call()
+            } finally {
+                if (!authzWasDisabled) ec.artifactExecution.enableAuthz()
+            }
         ]]></script></actions>
     </service>
 
@@ -292,7 +304,10 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="processedCount" type="Integer"/></out-parameters>
         <actions><script><![CDATA[
             processedCount = 0
-            ec.artifactExecution.disableAuthz()
+            // as Java scripts do: authorization back on at the end, however the script ends, so a
+            // later call on the same context (a load run's user) is not left without it
+            const authzWasDisabled = ec.artifactExecution.disableAuthz()
+            try {
             const now = nowMillis != null ? Number(nowMillis) : Number(ec.user.nowTimestamp)
             const cf = ec.entity.conditionFactory
             let find = ec.entity.find('moqui.chat.ChatBridgeInbound')
@@ -321,6 +336,9 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.message.popErrors()
                 }
             }
+            } finally {
+                if (!authzWasDisabled) ec.artifactExecution.enableAuthz()
+            }
         ]]></script></actions>
     </service>
 
@@ -342,7 +360,10 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script><![CDATA[
             outcome = 'rejected'; reasonCode = null; message = null; eventSeq = null
-            ec.artifactExecution.disableAuthz()
+            // as Java scripts do: authorization back on at the end, however the script ends, so a
+            // later call on the same context (a load run's user) is not left without it
+            const authzWasDisabled = ec.artifactExecution.disableAuthz()
+            try {
             const reject = (code, text) => { outcome = 'rejected'; reasonCode = code; message = text }
             const TYPES = ['message', 'edit', 'reaction', 'redaction']
             const field = (name, max) => {
@@ -519,6 +540,9 @@ along with this software (see the LICENSE.md file). If not, see
             }
             if (eventSeq != null) { external.set('eventSeq', eventSeq); external.update() }
             outcome = 'accepted'
+            } finally {
+                if (!authzWasDisabled) ec.artifactExecution.enableAuthz()
+            }
         ]]></script></actions>
     </service>
 

@@ -1,0 +1,38 @@
+${JSON.stringify((() => {
+    const plan = ec.resource.script('component://tools/template/LoadRuns.js').planForm(context.scriptLocation, context.runId)
+    if (!plan.found) return [{t: 'text', id: 'NewRunMissing', style: 'h5', text: 'Not available'},
+        {t: 'text', id: 'NewRunError', text: String(plan.error || '')},
+        {t: 'link', id: 'NewRunScripts', text: 'Load scripts', url: sri.buildUrl('../Scripts').url, kind: 'anchor'}]
+    const labels = {service: "This server's services, called in process", this: 'This server over HTTP', url: 'Another server'}
+    const field = (name, title, w, more) => Object.assign({t: 'field', id: 'NewRun_' + name, name: name, title: title, w: w}, more || {})
+    const fields = [
+        field('targetKind', 'Target', {kind: 'dropDown', value: plan.targetKind, options: plan.targets.map((kind) => ({value: kind, label: labels[kind] || kind}))})]
+    if (plan.targets.includes('url')) fields.push(
+        field('targetUrl', 'Server URL', {kind: 'textLine', value: plan.targetUrl || ''}, {visibleWhen: {field: 'targetKind', value: 'url'}}),
+        field('insecure', 'Certificate', {kind: 'check', value: plan.insecure ? 'true' : '', options: [{value: 'true', label: 'Accept an invalid certificate'}]},
+            {visibleWhen: {field: 'targetKind', value: 'url'}}))
+    for (const param of plan.params) {
+        const w = param.kind == 'password' ? {kind: 'password'}
+            : param.kind == 'options' ? {kind: 'dropDown', value: String(param.value), options: param.options.map((option) => ({value: option, label: option}))}
+            : param.kind == 'boolean' ? {kind: 'check', value: param.value ? 'true' : 'false', options: [{value: 'true', label: 'Yes'}]}
+            : {kind: 'textLine', value: String(param.value), inputType: param.kind == 'number' ? 'number' : ''}
+        fields.push(field('p_' + param.name, param.name, w, {required: param.required, tooltip: param.description}))
+    }
+    const settings = [['users', 'users'], ['rampUp', 'ramp up (s)'], ['duration', 'duration (s)'], ['iterations', 'iterations']]
+    for (const scenario of plan.scenarios) for (const [key, title] of settings)
+        fields.push(field('s_' + scenario.name + '_' + key, scenario.name + ' ' + title,
+            {kind: 'textLine', value: scenario[key] == null ? '' : String(scenario[key]), inputType: 'number'}))
+    fields.push(field('label', 'Label', {kind: 'textLine', value: plan.label || ''}),
+        field('submitButton', 'Start', {kind: 'submit', text: 'Start'}))
+    const nodes = [
+        {t: 'text', id: 'NewRunTitle', style: 'h5', text: plan.title},
+        {t: 'text', id: 'NewRunScript', text: plan.componentName + ' · ' + plan.scriptLocation + (plan.description ? ' · ' + plan.description : '')}]
+    if (plan.fromRunId) nodes.push({t: 'text', id: 'NewRunFrom', text: 'Filled from run ' + plan.fromRunId
+        + (plan.params.some((param) => param.kind == 'password') ? '; enter the passwords again.' : '.')})
+    nodes.push({t: 'text', id: 'NewRunTimes', text: 'Times are in seconds. Leave a value empty for the script\'s own.'},
+        {t: 'form', id: 'NewRunForm', name: 'NewRunForm', transitionUrl: sri.buildUrl('start').url, method: 'post', writes: true,
+            hidden: [{name: 'scriptLocation', value: plan.scriptLocation}, {name: 'scenarioNames', value: plan.scenarios.map((scenario) => scenario.name).join(',')}],
+            c: fields},
+        {t: 'link', id: 'NewRunScripts', text: 'Load scripts', url: sri.buildUrl('../Scripts').url, kind: 'anchor'})
+    return nodes
+})())}
