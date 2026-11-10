@@ -650,6 +650,17 @@ impl EntityFacade {
         body(&entity, &runtime.dialect, &model)
     }
 
+    /// Whether the database of `entity_name` runs other statements on a connection while a cursor is open on it, so an
+    /// iterator can stream while each row looks up more: every database but MySQL (and MariaDB), whose open result
+    /// takes no other query (plans/High-Level-Review.md HL-003). A caller that queries for each row reads a list there.
+    pub fn streams_beside_queries(&self, entity_name: &str) -> bool {
+        self.with_entity(entity_name, |_, dialect, _| {
+            let name = dialect.name.to_ascii_lowercase();
+            Ok(!(name.contains("mysql") || name.contains("mariadb")))
+        })
+        .unwrap_or(true)
+    }
+
     /// `model`'s definition of `name`, or else one built at runtime. The overlay's lock is not held after this.
     fn definition<'a>(&self, model: &'a EntityModel, name: &str) -> Result<Definition<'a>, Error> {
         match model.entity(name) {

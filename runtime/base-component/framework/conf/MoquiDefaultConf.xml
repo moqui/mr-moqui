@@ -911,9 +911,10 @@
     </resource-facade>
 
     <!-- check-interval-ms: how often a screen file is checked for changes; empty is never in production and two
-        seconds otherwise. -->
+        seconds otherwise. stream-threshold: the bytes of an html or text render kept before the response is sent as
+        it is written (a smaller page is sent whole); 0 keeps every response whole. -->
     <screen-facade boundary-comments="false" default-autocomplete-rows="20" default-paginate-rows="20"
-            check-interval-ms="">
+            check-interval-ms="" stream-threshold="65536">
         <!-- PDF, the html-print render through headless Chromium. chromium-path names the executable (see
             moqui_chromium_path); page-limit is the pages that print (or preview) at once; timeout is the seconds one
             document may take; preview-max-size is the largest PDF, in bytes, that Files previews. -->

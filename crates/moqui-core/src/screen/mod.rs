@@ -60,7 +60,9 @@ pub(crate) mod xlsx;
 /// the `xlsx` feature its `to_bytes` reports that xlsx is not built in.
 pub use xlsx::{CellHints, XlsxBook};
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -113,16 +115,38 @@ pub struct ScreenHit {
 /// Handle one request. The root screen is the `webroot` webapp's `root-screen` for the Host header.
 /// `.*` is the fallback, which is `webroot.xml` in the default conf.
 pub fn serve(factory: &Arc<ExecutionContextFactory>, request: WebRequest) -> WebResponse {
+    serve_to(factory, request, None)
+}
+
+/// [`serve`] with a sink for a response sent as it is written (docs/ui/Screen-Output.md): an html or text render, or a
+/// web script, past the conf's `stream-threshold` sends its head and body to `sink` while it runs, and the returned
+/// response is then only what the request ended with, which the caller does not send. A smaller one is returned whole,
+/// and the sink gets nothing.
+pub fn serve_to(
+    factory: &Arc<ExecutionContextFactory>,
+    request: WebRequest,
+    sink: Option<Box<dyn web::stream::OutputSink>>,
+) -> WebResponse {
     let host = request.header("host").unwrap_or("");
     let root = match info::root_screen_for_host(factory, host, "webroot") {
         Ok(location) => location,
         Err(err) => return web::early_error(factory, &request, 500, err.message()),
     };
-    serve_at(factory, request, &root)
+    serve_at_to(factory, request, &root, sink)
 }
 
 /// Handle one request whose root screen is `root`.
-pub fn serve_at(factory: &Arc<ExecutionContextFactory>, mut request: WebRequest, root: &str) -> WebResponse {
+pub fn serve_at(factory: &Arc<ExecutionContextFactory>, request: WebRequest, root: &str) -> WebResponse {
+    serve_at_to(factory, request, root, None)
+}
+
+/// [`serve_at`] with a sink, as [`serve_to`].
+pub fn serve_at_to(
+    factory: &Arc<ExecutionContextFactory>,
+    mut request: WebRequest,
+    root: &str,
+    sink: Option<Box<dyn web::stream::OutputSink>>,
+) -> WebResponse {
     // the request owns its spooled uploads: they go when it ends, whatever still holds a copy (a script's object that
     // waits for a collector, a value kept in the context)
     let _uploads = web::multipart::ReleaseAtEnd(request.multipart.clone());
@@ -187,6 +211,7 @@ pub fn serve_at(factory: &Arc<ExecutionContextFactory>, mut request: WebRequest,
         &parameters,
         &parsed.multipart,
         parsed.json_list.as_deref(),
+        sink,
     ) {
         Ok(response) => response,
         Err(err) => web::json_error_of(&err),
@@ -194,6 +219,7 @@ pub fn serve_at(factory: &Arc<ExecutionContextFactory>, mut request: WebRequest,
     web::finish_response(factory, &request, response, false)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle(
     factory: &Arc<ExecutionContextFactory>,
     request: &Arc<WebRequest>,
@@ -202,6 +228,7 @@ fn handle(
     parameters: &BTreeMap<String, Value>,
     multipart: &BTreeMap<String, Value>,
     json_list: Option<&[Value]>,
+    sink: Option<Box<dyn web::stream::OutputSink>>,
 ) -> Result<WebResponse, Error> {
     let session_cookie = web::session_cookie_of(request);
     let visitor_cookie = web::visitor_cookie_of(request);
@@ -253,6 +280,9 @@ fn handle(
         &merged
     };
     let _web = web::install(parameters.clone());
+    if let Some(sink) = sink {
+        web::stream::offer(sink);
+    }
     web::set_multipart(multipart.clone());
     web::set_error_parameters(error_parameters);
     web::set_host(request.header("host").unwrap_or(""));
@@ -266,6 +296,19 @@ fn handle(
     // As Java's `ExecutionContextImpl.destroy`, the after-request actions run however the request ended, and before
     // the session work ends.
     let end = EndRequest::armed();
+    // A response sent as it is written gets its session's cookies and token, and the conf's headers, when its head
+    // goes (web::stream); what the end of the request decides about the session is decided then, from the head.
+    let decided: Rc<Cell<Option<SessionChoice>>> = Rc::default();
+    web::stream::on_head(head_hook(HeadParts {
+        factory: Arc::clone(factory),
+        request: Arc::clone(request),
+        cookies: guard.cookies(),
+        presented: presented.clone(),
+        visitor_cookie: visitor_cookie.clone(),
+        token_before: token_before.clone(),
+        new_session,
+        decided: Rc::clone(&decided),
+    }));
     let outcome = run_request(
         factory,
         &scripts,
@@ -280,35 +323,46 @@ fn handle(
         scripts.fire("requestDestroyed", Value::Null);
     }
     scripts.run_actions_logged("after-request", parameters);
-    // A page a shared cache may keep, for a visitor with no live session and nobody signed in, gets no session: no
-    // cookie or token is sent and the session made for the request is not kept (impl-shop F42). A signed cookie naming
-    // a session that is gone counts as none, so a public response never carries a new session's cookie for a cache to
-    // hand to others. A screen that declined a session (`ec.web.declineSession()`, impl-commerce F86) gets the same
-    // whatever its caching, and a session the request brought is kept but sent nothing new; either way the Visit the
-    // request started is taken back.
-    let declined = user::session::session_declined();
-    let anonymous = user::session::current_user_id()?.is_none();
-    let discard = anonymous && new_session && (declined || matches!(&outcome, Ok(response) if is_public(response)));
-    if declined {
+    let committed = web::stream::committed();
+    let choice = match decided.get() {
+        Some(choice) => choice,
+        None => session_choice(new_session, matches!(&outcome, Ok(response) if is_public(response)))?,
+    };
+    if choice.declined {
         user::session::take_back_request_visit();
     }
-    if discard {
+    if choice.discard {
         user::session::discard_bound_session();
     }
-    let response = match end.finish() {
+    let finished = end.finish();
+    if committed {
+        // the client has the head; the body ends once the session work is done, abnormally when the request failed
+        if let Err(err) = &outcome {
+            web::stream::abort(&format!("the request failed after its response began: {err}"));
+        }
+        if let Err(err) = finished {
+            tracing::error!("Error ending the session work of a request whose response was sent: {err}");
+        }
+        web::stream::finish();
+        drop(guard);
+        return outcome;
+    }
+    let response = match finished {
         Err(err) if !web::output_sent() && outcome.is_ok() => web::json_error_of(&err),
         _ => outcome?,
     };
-    let mut response = if discard || declined {
+    let mut response = if choice.discard || choice.declined {
         response
     } else {
+        let mut response = response;
         attach_session(
-            response,
-            &guard,
+            &mut response,
+            guard.cookies(),
             presented.as_deref(),
             visitor_cookie.as_deref(),
             token_before.as_deref(),
-        )?
+        )?;
+        response
     };
     not_modified(request, &mut response);
     // the preferences this request set, for the page to apply at once (docs/ui/Qvt-Client.md, Preferences)
@@ -354,6 +408,10 @@ fn run_request(
     };
     web::set_servlet_match(&found.servlet_path, found.path_info.as_deref());
     let filters = scripts.filters_for(&request.path);
+    if !filters.is_empty() {
+        // a filter sees and may change the servlet's whole response
+        web::stream::withdraw();
+    }
     if filters.is_empty() {
         return serve_servlet(
             factory,
@@ -417,18 +475,25 @@ fn serve_servlet(
                 Some(path),
             )
         }
-        Handler::Script(location) => match crate::script::invoke_web_handler(location, "servlet", found.servlet.data())
-        {
-            Ok(()) => Ok(web::take_response()),
-            Err(err) => {
-                let status = web::status_for(&err);
-                if status >= 500 {
-                    tracing::error!("Error in servlet {} ({location}): {err}", found.servlet.name);
+        Handler::Script(location) => {
+            // a script's writer commits as a servlet's does: when its buffer fills, or at `flushBuffer`
+            web::stream::arm(ScreenFacade::of(factory).conf().stream_threshold);
+            match crate::script::invoke_web_handler(location, "servlet", found.servlet.data()) {
+                Ok(()) => Ok(web::take_response()),
+                Err(err) => {
+                    let status = web::status_for(&err);
+                    if status >= 500 {
+                        tracing::error!("Error in servlet {} ({location}): {err}", found.servlet.name);
+                    }
+                    if web::stream::committed() {
+                        web::stream::abort(&web::error_text(status, &err));
+                        return Ok(WebResponse::new(status, Vec::new()));
+                    }
+                    web::clear_output();
+                    Ok(web::json_error(status, &web::error_text(status, &err)))
                 }
-                web::clear_output();
-                Ok(web::json_error(status, &web::error_text(status, &err)))
             }
-        },
+        }
     }
 }
 
@@ -554,6 +619,16 @@ fn dispatch_request(
         // was unavailable under it (a 503).
         let status = web::status_for(&err);
         let message = web::error_text(status, &err);
+        if web::stream::committed() {
+            // the client has part of the page: say where it stops and why, then end the body abnormally, so the part
+            // is not taken for the whole (a render error, or a commit that failed)
+            web::write_output(&format!(
+                "\n{}\n",
+                encode_html(&format!("Error rendering page: {message}"))
+            ));
+            web::stream::abort(&message);
+            return Ok(WebResponse::new(status, Vec::new()));
+        }
         if let Some(mut page) = error_page(factory, request, root, parameters, status, &err, &message) {
             web::add_retry_after(&mut page.headers, &err);
             return Ok(page);
@@ -766,31 +841,93 @@ fn is_public(response: &WebResponse) -> bool {
     })
 }
 
+/// What the end of a request decides about its session. A page a shared cache may keep, for a visitor with no live
+/// session and nobody signed in, gets no session: no cookie or token is sent and the session made for the request is
+/// not kept (impl-shop F42). A signed cookie naming a session that is gone counts as none, so a public response never
+/// carries a new session's cookie for a cache to hand to others. A screen that declined a session
+/// (`ec.web.declineSession()`, impl-commerce F86) gets the same whatever its caching, and a session the request brought
+/// is kept but sent nothing new; either way the Visit the request started is taken back.
+#[derive(Clone, Copy, Debug)]
+struct SessionChoice {
+    declined: bool,
+    discard: bool,
+}
+
+/// The choice for a request whose response is `public` ([`is_public`]), as the request stands now.
+fn session_choice(new_session: bool, public: bool) -> Result<SessionChoice, Error> {
+    let declined = user::session::session_declined();
+    let anonymous = user::session::current_user_id()?.is_none();
+    Ok(SessionChoice {
+        declined,
+        discard: anonymous && new_session && (declined || public),
+    })
+}
+
+/// What a request's head hook needs of it ([`head_hook`]).
+struct HeadParts {
+    factory: Arc<ExecutionContextFactory>,
+    request: Arc<WebRequest>,
+    cookies: user::SessionCookies,
+    presented: Option<String>,
+    visitor_cookie: Option<String>,
+    token_before: Option<String>,
+    new_session: bool,
+    decided: Rc<Cell<Option<SessionChoice>>>,
+}
+
+/// The request's part of a streamed response's head: what [`handle`] and [`serve_at`] add to a whole response once it
+/// is made, here from the head as it is when the response commits. The session choice is kept for the end of the
+/// request; preferences set after the head goes are not sent.
+fn head_hook(parts: HeadParts) -> web::stream::HeadHook {
+    Box::new(move |head: &mut WebResponse| {
+        let choice = session_choice(parts.new_session, is_public(head))?;
+        parts.decided.set(Some(choice));
+        if !(choice.discard || choice.declined) {
+            attach_session(
+                head,
+                parts.cookies,
+                parts.presented.as_deref(),
+                parts.visitor_cookie.as_deref(),
+                parts.token_before.as_deref(),
+            )?;
+        }
+        let changed = web::take_changed_preferences();
+        if !changed.is_empty() {
+            head.headers
+                .push(("X-Moqui-Preferences".to_string(), web::preferences_header(&changed)));
+        }
+        stamp_http_log(head);
+        let whole = std::mem::replace(head, WebResponse::new(head.status, Vec::new()));
+        *head = web::finish_response(&parts.factory, &parts.request, whole, false);
+        Ok(())
+    })
+}
+
 fn attach_session(
-    mut response: WebResponse,
-    guard: &user::SessionGuard,
+    response: &mut WebResponse,
+    cookies: user::SessionCookies,
     presented: Option<&str>,
     visitor_cookie: Option<&str>,
     token_before: Option<&str>,
-) -> Result<WebResponse, Error> {
-    if presented != Some(guard.session_id().as_str()) {
+) -> Result<(), Error> {
+    if presented != Some(cookies.session_id().as_str()) {
         response
             .headers
-            .push(("Set-Cookie".to_string(), guard.session_cookie_header()?));
+            .push(("Set-Cookie".to_string(), cookies.session_cookie_header()?));
     }
-    if guard.visitor_id().as_deref() != visitor_cookie {
-        if let Some(cookie) = guard.visitor_cookie_header() {
+    if cookies.visitor_id().as_deref() != visitor_cookie {
+        if let Some(cookie) = cookies.visitor_cookie_header() {
             response.headers.push(("Set-Cookie".to_string(), cookie));
         }
     }
     let token_after = user::csrf_token()?;
-    if presented != Some(guard.session_id().as_str()) || token_before != Some(token_after.as_str()) {
+    if presented != Some(cookies.session_id().as_str()) || token_before != Some(token_after.as_str()) {
         response
             .headers
             .push(("moquiSessionToken".to_string(), token_after.clone()));
         response.headers.push(("X-CSRF-Token".to_string(), token_after));
     }
-    Ok(response)
+    Ok(())
 }
 
 fn peek_token() -> Option<String> {

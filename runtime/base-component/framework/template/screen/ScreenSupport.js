@@ -299,7 +299,9 @@
 
     // The statements that render a text element: a file or inline text, with boundary comments when the
     // screen facade asks for them. Inline text with template true is a trusted fancy template, compiled once
-    // and cached by its text. A text file is rendered by the renderer registered for its extension.
+    // and cached by its text. A text file is rendered by the renderer registered for its extension. A template
+    // writes as it renders (renderText, writeInlineText), so a screen it renders keeps its place in its text and
+    // the page streams; one to encode is rendered for its value and encoded.
     const renderTextCode = (node) => {
         const template = attr(node, "template");
         const label = template || "true";
@@ -307,7 +309,7 @@
         const boundary = attr(node, "no-boundary-comment") !== "true";
         let code = "";
         if (attr(node, "location")) {
-            const call = `sri.renderText($location, ${jsString(template)})`;
+            const call = `sri.${encode ? "renderTextValue" : "renderText"}($location, ${jsString(template)})`;
             const comment = (word) => `if (sri.doBoundaryComments()) sri.write(${jsString(`<!-- ${word} render-mode.text[@location=`)} + $location + ${jsString(`][@template=${label}] -->`)});`;
             const begin = boundary ? comment("BEGIN") : "";
             const end = boundary ? comment("END  ") : "";
@@ -324,13 +326,13 @@
         if (inline.trim() !== "") {
             const marker = `render-mode.text[inline][@template=${label}]`;
             const isTemplate = !template || template === "true";
-            const text = isTemplate ? `sri.renderInlineText(${jsString(inline)})` : jsString(inline);
-            const value = encode && !isTemplate ? `sri.encodeHtml(${text})` : text;
+            const value = encode && !isTemplate ? `sri.encodeHtml(${jsString(inline)})` : jsString(inline);
+            const written = isTemplate ? `sri.writeInlineText(${jsString(inline)});` : `sri.write(${value});`;
             const begin = boundary ? `if (sri.doBoundaryComments()) sri.write(${jsString(`<!-- BEGIN ${marker} -->`)});` : "";
             const end = boundary ? `if (sri.doBoundaryComments()) sri.write(${jsString(`<!-- END   ${marker} -->`)});` : "";
             code += js`
                 ${begin}
-                sri.write(${value});
+                ${written}
                 ${end}
             `;
         }

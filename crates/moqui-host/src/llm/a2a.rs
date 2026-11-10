@@ -22,20 +22,18 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
 
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use bytes::Bytes;
-use hyper::body::Frame;
 use moqui_lib::sync::lock;
 use moqui_llm::a2a::{self, Answer, HttpRequest, Origin, Reply};
 use tokio::sync::mpsc;
 
+use crate::channel_body::{ChannelBody, Chunk};
 use crate::guard::Event;
 use crate::http::{forwarded_https, plain, read_body, ClientAddr, HttpState, TlsConnection};
 
@@ -89,8 +87,6 @@ impl Drop for Open {
     }
 }
 
-type Chunk = std::io::Result<Bytes>;
-
 /// Write an A2A stream into the response channel on the stream's thread: each frame (`None` is a keep-alive comment)
 /// sent within `stall`, as the Assist stream sends ([`crate::stall::send_within`]), so a client that stops reading ends
 /// the stream and gives back its thread and slot (HL-027); the stop check is the server stopping or the client gone,
@@ -110,20 +106,6 @@ fn write_stream(
         crate::stall::send_within(tx, Ok(Bytes::from(text)), stall).is_ok()
     };
     write(&mut sink, &stop);
-}
-
-/// The response body of a stream: chunks from its thread until it drops its sender.
-struct ChannelBody(mpsc::Receiver<Chunk>);
-
-impl hyper::body::Body for ChannelBody {
-    type Data = Bytes;
-    type Error = std::io::Error;
-
-    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
-        self.0
-            .poll_recv(cx)
-            .map(|chunk| chunk.map(|chunk| chunk.map(Frame::data)))
-    }
 }
 
 /// 503 when the node has no room, 429 when the user has [`MAX_OPEN_PER_USER`] open.
@@ -290,7 +272,7 @@ pub(crate) async fn handle(
                 .header("content-type", "text/event-stream; charset=utf-8")
                 .header("cache-control", "no-cache, no-store")
                 .header("x-accel-buffering", "no")
-                .body(axum::body::Body::new(ChannelBody(rx)))
+                .body(axum::body::Body::new(ChannelBody::new(rx)))
                 .unwrap_or_else(|_| plain(500, "the A2A stream header was not valid"))
         }
     }

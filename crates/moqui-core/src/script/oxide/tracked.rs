@@ -58,11 +58,11 @@ fn print_held(name: &str, print: u64) -> bool {
 /// The values of one run, by name.
 #[derive(Default)]
 pub(super) struct RunValues {
-    /// Lists and maps read or assigned by name, written back at a flush.
+    /// Lists, maps and decimals read or assigned by name, written back at a flush.
     tracked: HashMap<String, Value>,
     /// Values a [`Flush::Release`] took off `tracked`, with the [`fingerprint`] of the host value written for each.
     released: HashMap<String, (Value, u64)>,
-    /// Decimals and entity values read by name, kept so a second read is the same object.
+    /// Entity values read by name, kept so a second read is the same object.
     kept: HashMap<String, Value>,
     /// Whether a flush is writing back now: a conversion meanwhile does not flush again.
     flushing: bool,
@@ -102,8 +102,8 @@ fn values(engine: &OxideEngine) -> &RefCell<RunValues> {
     engine.run_values()
 }
 
-/// A bare `name` read: the run's own object for it, else the stack's value converted (a list or map tracked, a decimal
-/// or entity value kept). `context` is the stack object; the helper objects QuickJS answers by name fall back.
+/// A bare `name` read: the run's own object for it, else the stack's value converted (a list, map or decimal tracked,
+/// an entity value kept). `context` is the stack object; the helper objects QuickJS answers by name fall back.
 pub(super) fn read_name<J: Js>(js: &mut J, name: &str) -> Result<Value, Conv> {
     if super::engine::fallback_pending() {
         return Err(Conv::Unsupported("a run that fell back"));
@@ -122,8 +122,10 @@ pub(super) fn read_name<J: Js>(js: &mut J, name: &str) -> Result<Value, Conv> {
     // which could reach the stack: that value is copied out and converted with the stack free, as QuickJS's
     // `read_name` does (`converts_with_script`).
     let kind_of = |value: &HostValue| match value {
-        HostValue::List(_) | HostValue::Map(_) => Some(true),
-        HostValue::Decimal(_) | HostValue::Object(_) => Some(false),
+        // a decimal is tracked as a list is, so a releasing flush notes it and a read after the host call is the same
+        // object while the stack holds an equal decimal, as QuickJS's was
+        HostValue::List(_) | HostValue::Map(_) | HostValue::Decimal(_) => Some(true),
+        HostValue::Object(_) => Some(false),
         _ => None,
     };
     let held = STACK.with(|stack| {
@@ -251,7 +253,7 @@ pub(super) fn flush<J: Js>(js: &mut J, mode: Flush) -> Result<(), Conv> {
 fn flush_values<J: Js>(js: &mut J, engine: &OxideEngine, mode: Flush) -> Result<(), Conv> {
     // a host call that may change the stack may put another value under a kept name (a form-list's next row, a row
     // action's find): the next read takes the stack's value again, as QuickJS reads an entity value from the stack
-    // each time and releases a decimal there
+    // each time (a decimal is tracked, and released below)
     if mode != Flush::Keep {
         values(engine).borrow_mut().kept.clear();
     }

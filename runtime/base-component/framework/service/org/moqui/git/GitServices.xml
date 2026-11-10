@@ -250,18 +250,23 @@ along with this software (see the LICENSE.md file). If not, see
             <script><![CDATA[
                 const basisTimestamp = new Date(ec.user.timestampMillis(ec.user.nowTimestamp) - daysToKeep * 86400000).toISOString()
                 let removed = 0
+                // read through the find's iterator, so a long log is not held whole; each row goes beside the cursor
                 const updates = ec.entity.find("moqui.resource.GitUpdate")
                         .condition(ec.entity.conditionFactory.makeCondition("updateDate", "<", basisTimestamp))
-                        .disableAuthz().list()
-                for (const update of updates) {
-                    if (update.ecaStatus !== "done" && update.ecaStatus !== "none") continue
-                    try {
-                        ec.entity.find("moqui.resource.GitUpdateRef").condition("updateId", update.updateId).disableAuthz().deleteAll()
-                        ec.entity.find("moqui.resource.GitUpdate").condition("updateId", update.updateId).disableAuthz().deleteAll()
-                        removed++
-                    } catch (err) {
-                        ec.logger.log("error", "GitUpdate " + update.updateId + " was not removed: " + err)
+                        .disableAuthz().iterator()
+                try {
+                    for (const update of updates) {
+                        if (update.ecaStatus !== "done" && update.ecaStatus !== "none") continue
+                        try {
+                            ec.entity.find("moqui.resource.GitUpdateRef").condition("updateId", update.updateId).disableAuthz().deleteAll()
+                            ec.entity.find("moqui.resource.GitUpdate").condition("updateId", update.updateId).disableAuthz().deleteAll()
+                            removed++
+                        } catch (err) {
+                            ec.logger.log("error", "GitUpdate " + update.updateId + " was not removed: " + err)
+                        }
                     }
+                } finally {
+                    updates.close()
                 }
                 recordsRemoved = removed
             ]]></script>

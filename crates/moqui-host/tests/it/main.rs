@@ -100,6 +100,7 @@ mod report_schedule_lock;
 mod resources;
 #[cfg(feature = "rtc")]
 mod rtc;
+mod screen_stream;
 #[cfg(feature = "sip")]
 mod sip;
 mod search;

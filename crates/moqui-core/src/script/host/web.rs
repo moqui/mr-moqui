@@ -134,15 +134,15 @@ macro_rules! web_js {
     RS.getWriter = function () {
         const response = this;
         return { write: (text) => response.write(text), print: (text) => response.write(text),
-            println: (text) => response.write((text ?? "") + "\n"), flush: () => {}, close: () => {} };
+            println: (text) => response.write((text ?? "") + "\n"), flush: () => host.webFlush(), close: () => {} };
     };
     RS.getOutputStream = function () {
         const response = this;
-        return { write: (bytes) => response.write(bytes), flush: () => {}, close: () => {} };
+        return { write: (bytes) => response.write(bytes), flush: () => host.webFlush(), close: () => {} };
     };
     Object.defineProperty(RS, "writer", { get() { return this.getWriter(); } });
     Object.defineProperty(RS, "outputStream", { get() { return this.getOutputStream(); } });
-    RS.flushBuffer = function () {};
+    RS.flushBuffer = function () { host.webFlush(); };
     RS.isCommitted = function () { return host.webCommitted(); };
     RS.sendError = function (status, message) { ec.web.sendError(Number(status), message == null ? null : String(message), null); };
     RS.sendRedirect = function (location) { host.webSendRedirect(String(location)); };
@@ -192,6 +192,7 @@ pub(super) static METHODS: &[Method] = &[
     method!("tools", "webHeaderNames", [], web_header_names),
     method!("tools", "webWrite", [Value], web_write),
     method!("tools", "webCommitted", [], web_committed),
+    method!("tools", "webFlush", [], web_flush),
     method!("tools", "webSendRedirect", [Text], web_send_redirect),
     method!("tools", "webForward", [Int, Value, Value], web_forward),
     method!("tools", "restOpen", [Value], rest_open),
@@ -361,6 +362,13 @@ fn web_write(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 fn web_committed(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(crate::web::output_sent().into())
+}
+
+/// The writer's `flush` and `flushBuffer`: a response that may go as it is written (docs/ui/Screen-Output.md) sends its
+/// head and what is written now; any other is still sent whole when the script ends.
+fn web_flush(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::web::stream::flush();
+    Ok(Ret::Undefined)
 }
 
 fn web_send_redirect(call: &mut Call<'_>) -> Result<Ret, HostError> {

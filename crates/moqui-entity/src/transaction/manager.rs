@@ -570,12 +570,11 @@ impl TransactionManager {
     }
 
     /// Parks the enlisted client on the frame, off the free list. Returns `false` when nothing is active. The linked
-    /// managers suspend their frames too.
+    /// managers suspend their frames too. An open stream stays open on the parked client, as a Java cursor stays open
+    /// on its connection while a nested transaction runs on another: its iterator reads only in its own frame (the
+    /// frame token), so it reads again once the frame is resumed.
     pub fn suspend(&self) -> Result<bool, Error> {
         let others = self.linked();
-        if others.iter().any(|other| other.has_active() && other.stream_open()) {
-            return Err(Error::new("an open stream is the enlisted connection"));
-        }
         let suspended = self.suspend_local()?;
         for other in others {
             other.suspend_local()?;
@@ -586,9 +585,6 @@ impl TransactionManager {
     fn suspend_local(&self) -> Result<bool, Error> {
         if !self.has_active() {
             return Ok(false);
-        }
-        if self.stream_open() {
-            return Err(Error::new("an open stream is the enlisted connection"));
         }
         let slot = self.active_conn()?;
         if let Some(conn) = slot.borrow_mut().as_mut() {
@@ -662,9 +658,6 @@ impl TransactionManager {
         let parking = usize::from(self.active_conn().is_ok_and(|slot| slot.borrow().is_some()));
         if self.parked_in_thread() + parking > self.park_budget() {
             return Err(Error::new("park budget exceeded"));
-        }
-        if self.stream_open() {
-            return Err(Error::new("an open stream is the enlisted connection"));
         }
         Ok(())
     }

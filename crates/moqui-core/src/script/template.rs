@@ -643,8 +643,16 @@ const html = (v) => new $Raw($h(v));
 const raw = (v) => new $Raw($s(v));
 const cssString = (v) => new $Raw('"' + $s(v).replace(/[\\"<>\r\n]/g, (c) => c === "\n" ? "\\A " : "\\" + c.charCodeAt(0).toString(16).toUpperCase() + " ") + '"');
 const $list = (v) => v == null ? [] : $Array.isArray(v) ? v : typeof v === "string" ? [v] : typeof v[$Symbol.iterator] === "function" ? $Array.from(v) : typeof v.length === "number" ? $Array.from({length: v.length}, (_, i) => v[i]) : $Object.values(v);
-const $o = [];
 "#;
+
+/// A live template's output: written through `sri.write` as it goes when the screen render asked for it ([`writing`]),
+/// so it streams and keeps its place around a screen it renders (`${sri.renderSubscreen()}`), else gathered and
+/// returned.
+const LIVE_OUT: &str = "const $o = typeof sri !== \"undefined\" && typeof sri.takeTemplateWrite === \"function\" && \
+sri.takeTemplateWrite() ? { push: (s) => { if (s !== \"\") sri.write(s); }, join: () => \"\" } : [];\n";
+
+/// A snapshot template's output, always returned: it has no `sri`.
+const SNAPSHOT_OUT: &str = "const $o = [];\n";
 
 /// The statements for a template, without the prelude and the function around them.
 fn compile_body(source: &str, escape: Escape) -> Result<String, Error> {
@@ -666,7 +674,7 @@ fn compile(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> 
     }
     let text = match scope {
         Scope::Live => format!(
-            "(function(){{\n{INTRINSICS}return function(){{\n{PRELUDE}{declared}{body}return $o.join(\"\");\n}};\n}})()"
+            "(function(){{\n{INTRINSICS}return function(){{\n{PRELUDE}{LIVE_OUT}{declared}{body}return $o.join(\"\");\n}};\n}})()"
         ),
         // The live form's shape over the snapshot: each name the body reads or writes is a variable of the function's
         // own frame, read once from the snapshot by `$scope`'s reader (plans/archive/Script-Engine-Oxide.md section 5.4). A
@@ -683,7 +691,7 @@ fn compile(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> 
             }
             format!(
                 "(function(){{\n\"use strict\";\n{INTRINSICS}const $t = function($data){{\nconst $n = $scope($data);\n\
-                 {PRELUDE}{names}{body}return $o.join(\"\");\n}};\n$Object.freeze($t.prototype);\nreturn $Object.freeze($t);\n}})()"
+                 {PRELUDE}{SNAPSHOT_OUT}{names}{body}return $o.join(\"\");\n}};\n$Object.freeze($t.prototype);\nreturn $Object.freeze($t);\n}})()"
             )
         }
     };
@@ -1074,7 +1082,16 @@ fn generate(tokens: &[Token], escape: Escape, source: &str) -> Result<String, Er
             Token::Text(text) => run.text(text),
             Token::Interp(expr) => {
                 check_expression(expr, source)?;
+                // a screen the expression renders (`sri.renderSubscreen()`) writes as it runs: in a run of its own it
+                // comes after the text before it and before the text after it
+                let renders = expr.contains("sri.");
+                if renders {
+                    run.flush(&mut out);
+                }
                 run.expr(format!("{encode}({expr})"));
+                if renders {
+                    run.flush(&mut out);
+                }
             }
             Token::Comment => {}
             _ => run.flush(&mut out),
@@ -1333,6 +1350,31 @@ pub(super) const SANDBOX_LOCKDOWN: &str = r#"
 
 /// Texts by key for `t(key)` in a locked render: a theme package's `locales/` for the view's locale (`script/theme`).
 pub(crate) type Texts = std::collections::HashMap<String, String>;
+
+thread_local! {
+    /// The next live template run writes its output through `sri.write` ([`writing`]).
+    static WRITE_THROUGH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `render` with the first live template it runs writing its output to the screen render as it goes, instead of
+/// returning it (docs/ui/Screen-Output.md): a screen's `text` element, whose output is written anyway. A template that
+/// one renders for its value (`sri.renderTextValue`, an `<#assign>` of a call) is not the first and returns its output.
+pub(crate) fn writing<R>(render: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            WRITE_THROUGH.with(|cell| cell.set(self.0));
+        }
+    }
+    let _restore = Restore(WRITE_THROUGH.with(|cell| cell.replace(true)));
+    render()
+}
+
+/// `sri.takeTemplateWrite()`, the live template prelude's question: whether this template writes through, which only
+/// the first to ask after [`writing`] does.
+pub(crate) fn take_write_through() -> bool {
+    WRITE_THROUGH.with(|cell| cell.replace(false))
+}
 
 thread_local! {
     static LOCKED_TEXTS: RefCell<Option<Arc<Texts>>> = const { RefCell::new(None) };

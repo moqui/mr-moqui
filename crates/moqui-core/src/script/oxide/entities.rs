@@ -185,6 +185,16 @@ pub(in crate::script::oxide) fn object_to_js<J: Js>(
             object.clone(),
             &conditions::CONDITION,
         )?)));
+    } else if object
+        .downcast::<crate::script::host::list_iterator::IteratorHandle>()
+        .is_some()
+    {
+        // an iterator in the context (use-iterator) reads on with its methods
+        return Ok(Some(Value::Object(super::class_instance(
+            js,
+            object.clone(),
+            &crate::script::host::list_iterator::ITERATOR,
+        )?)));
     } else if object.downcast::<crate::web::error_info::ErrorInfo>().is_some() {
         return Ok(Some(Value::Object(super::class_instance(
             js,
@@ -269,6 +279,9 @@ pub(crate) fn object_to_host<J: Js>(js: &mut J, object: &ObjectRef) -> JsResult<
         if held.downcast::<crate::web::multipart::UploadedFile>().is_some()
             || held.downcast::<crate::script::host::StreamBytes>().is_some()
             || held.downcast::<moqui_db::sql::Condition>().is_some()
+            || held
+                .downcast::<crate::script::host::list_iterator::IteratorHandle>()
+                .is_some()
         {
             return Ok(Some(HostValue::Object(held)));
         }

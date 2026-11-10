@@ -1111,9 +1111,10 @@ fn a_registered_callback_hears_each_call_and_on_end_needs_a_transaction() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// Java's `EntityListIterator` in a script: next, hasNext, previous, absolute, relative, currentIndex.
+/// Java's `EntityListIterator` in a script, scrolling (`resultSetType(1004)`): next, hasNext, previous, hasPrevious,
+/// first, last, beforeFirst, afterLast, absolute, relative, currentIndex, nextIndex, currentEntityValue and close.
 #[test]
-fn a_script_iterator_moves_like_an_entity_list_iterator() {
+fn a_scrolling_script_iterator_moves_as_an_entity_list_iterator() {
     clear_context_stack();
     let context = database();
     let _entered = context.enter();
@@ -1126,17 +1127,88 @@ fn a_script_iterator_moves_like_an_entity_list_iterator() {
                 value.create();
             }
             const it = ec.entity.find("moqui.basic.Enumeration").condition("enumId", "in", ["I1", "I2", "I3"])
-                .orderBy("enumId").iterator();
+                .orderBy("enumId").resultSetType(1004).iterator();
             const seen = [];
             let row;
             while ((row = it.next()) != null) seen.push(row.enumId);
             const back = it.previous().enumId;
-            const jumped = it.absolute(1) && it.currentIndex() === 1;
-            const moved = it.relative(1) && it.next().enumId === "I3" && !it.hasNext();
+            const jumped = it.absolute(1) && it.currentIndex() === 1 && it.nextIndex() === 2 && it.previousIndex() === 0;
+            const moved = it.relative(1) && it.next().enumId === "I3" && !it.hasNext() && it.hasPrevious();
+            const ends = it.last() && it.currentEntityValue().enumId === "I3" && it.first()
+                && it.currentEntityValue().enumId === "I1";
+            it.afterLast();
+            const fromEnd = it.previous().enumId;
+            it.beforeFirst();
+            const again = it.next().enumId + it.getPartialList(2, 5, false).map((value) => value.enumId).join("");
+            const whole = it.getCompleteList(true).length;
             it.close();
-            return seen.join(",") === "I1,I2,I3" && back === "I3" && jumped && moved;
+            return seen.join(",") === "I1,I2,I3" && back === "I3" && jumped && moved && ends && fromEnd === "I3"
+                && again === "I1I2I3" && whole === 3;
         })()"#,
     );
+}
+
+/// `iterator()` reads forward through a database cursor by default, as Java's `TYPE_FORWARD_ONLY`
+/// (docs/ui/Screen-Output.md): next, hasNext, `for...of`, Java's 1-based `getPartialList`, the rest as a list, close,
+/// a jump back refused, and `writeXmlText` to a writer; an XML `use-iterator` find is one, which `iterate` reads with
+/// its `has_next`, and a paginated one is a list for a page and an iterator with its count when there is no limit.
+#[test]
+fn an_iterator_reads_forward_and_use_iterator_makes_one() {
+    clear_context_stack();
+    let context = database();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    holds(
+        r#"(function () {
+            for (const id of ["C1", "C2", "C3", "C4", "C5"]) {
+                const value = ec.entity.makeValue("moqui.basic.Enumeration");
+                value.enumId = id;
+                value.create();
+            }
+            const find = () => ec.entity.find("moqui.basic.Enumeration")
+                .condition("enumId", "in", ["C1", "C2", "C3", "C4", "C5"]).orderBy("enumId");
+            const forward = find().getResultSetType() === 1003 && find().forUpdate(true).getResultSetType() === 1005;
+            const seen = [];
+            for (const row of find().iterator()) seen.push(row.enumId);
+            const it = find().iterator();
+            const first = it.next().enumId;
+            const part = it.getPartialList(3, 2, false).map((row) => row.enumId).join(",");
+            const more = it.hasNext();
+            const rest = it.getCompleteList(true).map((row) => row.enumId).join(",");
+            let closed = false;
+            try { it.next(); } catch (err) { closed = String(err).includes("closed"); }
+            const ahead = find().iterator();
+            ahead.next(); ahead.next(); ahead.next();
+            let refused = false;
+            try { ahead.absolute(1); } catch (err) { refused = String(err).includes("forward only"); }
+            ahead.close();
+            const out = [];
+            const records = find().iterator().writeXmlText({ write: (text) => out.push(text) }, "", 0);
+            const xml = out.join("");
+            return forward && seen.join(",") === "C1,C2,C3,C4,C5" && first === "C1" && part === "C3,C4" && more
+                && rest === "C5" && closed && refused && records === 5
+                // the element is the entity's short alias, as the data writer writes it
+                && xml.includes('<enums enumId="C1"') && xml.includes('enumId="C5"');
+        })()"#,
+    );
+    crate::script::run_actions(
+        r#"<actions>
+            <entity-find entity-name="moqui.basic.Enumeration" list="rows">
+                <econdition field-name="enumId" operator="in" from="['C1', 'C2', 'C3']"/>
+                <order-by field-name="enumId"/><use-iterator/>
+            </entity-find>
+            <set field="walked" value=""/>
+            <iterate list="rows" entry="row"><set field="walked" from="walked + row.enumId + (row_has_next ? ',' : '.')"/></iterate>
+            <entity-find entity-name="moqui.basic.Enumeration" list="paged">
+                <search-form-inputs default-order-by="enumId"/><econdition field-name="enumId" operator="in" from="['C1', 'C2', 'C3', 'C4', 'C5']"/>
+                <use-iterator/>
+            </entity-find>
+        </actions>"#,
+    )
+    .unwrap();
+    holds("walked === 'C1,C2,C3.' && typeof rows.length !== 'number'");
+    // search-form-inputs pages by 20 here, so the page is a list
+    holds("typeof paged.length === 'number' && paged.length === 5 && pagedCount === 5");
 }
 
 #[test]

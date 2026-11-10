@@ -442,11 +442,14 @@ impl EntityDataWriter {
         Ok((find, full_name, master))
     }
 
-    /// Write the records of one entity as they are read from a cursor, [`CHUNK`] at a time. Records with dependents
-    /// are read first, because a dependent query needs the connection the cursor holds. Returns the record count.
+    /// Write the records of one entity as they are read from a cursor, [`CHUNK`] at a time, as Java's writer iterates
+    /// them. A record's dependents are read beside the cursor; on a database that runs no other query while a cursor
+    /// is open (MySQL, [`EntityFacade::streams_beside_queries`]) records with dependents are read first. Returns the
+    /// record count.
     fn write_records(&self, name: &str, out: &mut impl Write) -> Result<u64, Error> {
         let (find, full_name, master) = self.entity_find(name)?;
         let dependents = self.file_type != DataFileType::Csv && (master.is_some() || self.dependent_levels > 0);
+        let held = dependents && !self.facade.streams_beside_queries(&full_name);
         let tx = self.facade.transactions_for(&full_name)?;
         tx.run(TransactionAttribute::UseOrBegin, Some(READ_TIMEOUT), || {
             let mut cursor = find.iterator()?;
@@ -454,7 +457,7 @@ impl EntityDataWriter {
             let mut count = 0_u64;
             while let Some(value) = cursor.next_value()? {
                 rows.push(value.fields().clone());
-                if !dependents && rows.len() >= CHUNK {
+                if !held && rows.len() >= CHUNK {
                     count += self.write_rows(&full_name, &rows, master, out)?;
                     rows.clear();
                 }

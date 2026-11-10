@@ -122,6 +122,16 @@ pub fn value_items(value: &Value) -> Option<Vec<Value>> {
                         .collect(),
                 );
             }
+            // An iterator read as a list is the rows it has not given yet, which closes it.
+            if let Some(cursor) = object.downcast::<crate::script::host::list_iterator::IteratorHandle>() {
+                return Some(match cursor.rest() {
+                    Ok(rows) => rows.into_iter().map(entity_value).collect(),
+                    Err(err) => {
+                        tracing::error!("Error reading the rest of a cursor as a list: {err}");
+                        Vec::new()
+                    }
+                });
+            }
             let list = object.downcast::<EntityList>()?;
             Some(list.values().iter().map(|item| entity_value(item.clone())).collect())
         }

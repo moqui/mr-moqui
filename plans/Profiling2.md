@@ -591,7 +591,6 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
   part of a list render (`makeUrlByType`, `startFormListRow`, `getFieldValueTexts`), then the builtins of the escapes
   (`RegExp.test`, `String`) and tui's stringify replacer. Measure with `rounds/r53/screen_bench.py` and the
   sampler.
-- **In the fork:** `using` and `await using` are a SyntaxError (the parser).
 - **F1 step 3:** instructions are shared through the image bodies with unit-local key tables, and R51 shares the key
   tables themselves. Still open: the process store's byte cap and when a text counts as one-off (Oxide §10).
 - **Older leftovers:**
@@ -605,16 +604,23 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
 - Gate status: every test-apps process under it since R52 (the largest 62 MB of 73, with the half-second idle
   release). It rises as the apps add code and data.
 
-**Engine differences to settle** (Oxide "Engine differences under `oxide`", "Phase 3: engine differences")
+**Engine differences, settled** (2026-11-09; Oxide "Engine differences under `oxide`", "Phase 3: engine differences")
 
-Each is to be fixed in the fork or listed in [Parity-Diffs](Parity-Diffs.md):
-- `using` and `await using`;
-- `performance.now()` counts whole milliseconds;
-- `Error.captureStackTrace` and `Error.prototype.stack`;
-- stack columns (oxide at the call's `(`) and native messages (`stack overflow`, `cannot convert to object`);
-- a decimal re-read after a releasing flush is a new object;
-- the frozen helper globals (`ObjectUtilities`, `System`, ...) win over a context value of the same name, where QuickJS
-  read the stack first.
+The rule was the standard where there is one. "QuickJS" in these notes was rquickjs, which bundled quickjs-ng 0.16;
+Bellard's QuickJS 2026-06-04, the fork's reference, already behaved as oxide does on several of them.
+- `using` and `await using`: explicit resource management (ES2026) is in the fork (FORK-EXPLICIT-RESOURCE-MANAGEMENT-001),
+  with native `SuppressedError`, `DisposableStack`, `AsyncDisposableStack` and the dispose symbols; the bindings' JavaScript
+  versions are gone.
+- `performance`: the fork's `Context::install_performance`, as High Resolution Time has it (`now()` in fractional
+  milliseconds on a monotonic clock, `timeOrigin` an epoch time).
+- `Error.captureStackTrace` and `Error.stackTraceLimit`: in the fork (FORK-CAPTURE-STACK-TRACE-001), as V8 and
+  quickjs-ng have them; errors keep their own `stack`, as Bellard's do, so there is no `Error.prototype.stack` accessor.
+- Stack columns and native messages: kept. Bellard's QuickJS gives oxide's (`(`, `stack overflow`, `cannot convert to
+  object`); quickjs-ng's are V8's, and no standard covers either.
+- A decimal re-read after a releasing flush is the same object while the stack holds an equal decimal (the bindings
+  track it as a list).
+- The frozen helper globals win over a context value of the same name: kept. It fails safe for `UserSecurityChecks` and
+  is close to Groovy, which resolves a class name before a binding variable.
 
 **Allocation and CPU leftovers**
 - `Value::clone` and the maps built to call services (R15).

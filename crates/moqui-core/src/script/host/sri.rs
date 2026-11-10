@@ -120,6 +120,7 @@ const SRI_JS: &str = r#"(function (global, hidden) {
     for (const name of ["sendRedirectAndStopRender", "baseLinkUrl", "getBaseLinkUrl", "setFocusField", "uniqueId",
         "htmlText", "write", "stamp", "renderSection", "renderSectionValue", "renderSectionInclude", "renderSubscreen", "renderIncludeScreen",
         "renderDynamicForm", "renderUserColumnsForm", "renderText", "renderTextValue", "renderInlineText",
+        "writeInlineText", "takeTemplateWrite",
         "doBoundaryComments", "getRenderMode", "encodeHtml", "getActiveScreenDef", "getScreenUrlInfo", "pushContext",
         "popContext", "setInContext", "pushSingleFormMapContext", "getSingleFormMap", "holdNodeLits",
         "getFieldValueString", "getFieldValue", "getFieldValuePlainString", "getFieldValueClass", "getFieldValueTexts",
@@ -193,6 +194,8 @@ static SRI: &[Method] = &[
     method!("sri", "renderText", [Text, OptText], Release, render_text),
     method!("sri", "renderTextValue", [Text, OptText], Release, render_text_value),
     method!("sri", "renderInlineText", [Text], render_inline_text),
+    method!("sri", "writeInlineText", [Text], write_inline_text),
+    method!("sri", "takeTemplateWrite", [], None, leaf, take_template_write),
     method!("sri", "doBoundaryComments", [], Keep, leaf, do_boundary_comments),
     method!("sri", "getRenderMode", [], Keep, leaf, get_render_mode),
     method!("sri", "encodeHtml", [OptValue], None, leaf, encode_html),
@@ -235,7 +238,7 @@ static SRI: &[Method] = &[
     method!("sri", "getNamedValuePlain", [Text, Node], Keep, get_named_value_plain),
     method!("sri", "getFieldEntityValue", [Node], Keep, get_field_entity_value),
     method!("sri", "getFieldOptions", [Node], Release, get_field_options),
-    method!("sri", "openFormList", [Text], Release, open_form_list),
+    method!("sri", "openFormList", [Text, OptBool], Release, open_form_list),
     method!("sri", "startFormListRow", [Value, Int], Release, start_form_list_row),
     method!("sri", "endFormListRow", [], Release, leaf, pop_context),
     method!(
@@ -550,6 +553,23 @@ fn render_inline_text(call: &mut Call<'_>) -> Result<Ret, HostError> {
         .map_err(|err| thrown(&err))
 }
 
+/// `sri.writeInlineText(body)`: a `<text template="true">` body written as it renders (the macros' text element), so a
+/// screen it renders keeps its place in the text and the output streams (docs/ui/Screen-Output.md).
+fn write_inline_text(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let body = opt_text(call, 0).to_string();
+    let runner = call.ops.screen_runner()?;
+    let rest = crate::script::template::writing(|| runner.render_inline_text(&body)).map_err(|err| thrown(&err))?;
+    if !rest.is_empty() {
+        read_render(|state| logic::write(state, &rest))?;
+    }
+    Ok(Ret::Undefined)
+}
+
+/// `sri.takeTemplateWrite()`: asked by a live template as it starts, whether it writes its output as it goes.
+fn take_template_write(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(crate::script::template::take_write_through().into())
+}
+
 fn do_boundary_comments(_: &mut Call<'_>) -> Result<Ret, HostError> {
     read_render(logic::do_boundary_comments).map(Ret::from)
 }
@@ -747,12 +767,15 @@ fn get_field_options(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 // ---- form lists ----
 
+/// `sri.openFormList(name, streamed)`: the handle, and the row count; null for a list sent a row at a time, whose rows
+/// the macro reads with `startFormListRow` until it gives false.
 fn open_form_list(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let name = opt_text(call, 0).to_string();
-    let (id, rows) = in_render(|state| logic::open_form_list(state, &name))?;
+    let streamed = call.bool(1).unwrap_or(false);
+    let (id, rows) = in_render(|state| logic::open_form_list(state, &name, streamed))?;
     Ok(Ret::Value(map([
         ("id", count(id)),
-        ("count", count(rows)),
+        ("count", rows.map_or(Value::Null, count)),
         ("name", Value::String(name)),
     ])))
 }
@@ -782,8 +805,9 @@ fn index_arg(call: &Call<'_>, index: usize, what: &str) -> Result<usize, HostErr
 fn start_form_list_row(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let id = list_id(call)?;
     let index = index_arg(call, 1, "row")?;
-    in_render(|state| logic::start_form_list_row(state, id, index))?;
-    Ok(done())
+    Ok(Ret::from(in_render(|state| {
+        logic::start_form_list_row(state, id, index)
+    })?))
 }
 
 fn form_list_sub_row_count(call: &mut Call<'_>) -> Result<Ret, HostError> {

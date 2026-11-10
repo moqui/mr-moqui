@@ -52,6 +52,7 @@ mod misconfig;
 pub mod multipart;
 pub mod origin;
 pub mod servlet;
+pub mod stream;
 pub(crate) mod upstream;
 
 use crate::context::{Error, ErrorKind, ExecutionContext};
@@ -252,6 +253,8 @@ struct WebSlot {
     /// The user preferences this request set, by key (`None` removed), which the response tells the client
     /// (`X-Moqui-Preferences`, [`take_changed_preferences`]).
     changed_preferences: BTreeMap<String, Option<String>>,
+    /// The sink the host offered, for a response sent as it is written ([`stream`]). None keeps the response whole.
+    streaming: Option<stream::Streaming>,
 }
 
 /// Puts back the thread-local web slot that was there before the install, or clears it when there was
@@ -307,6 +310,7 @@ pub(crate) fn install_with(parameters: BTreeMap<String, Value>, base_url: String
             headers: Vec::new(),
             body: Vec::new(),
             stream: None,
+            streaming: None,
         })
     });
     WebGuard { previous }
@@ -681,6 +685,9 @@ pub(crate) fn set_status(status: u16) {
 pub(crate) fn set_header(name: &str, value: Option<&str>) {
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
+            if head_sent(web, name) {
+                return;
+            }
             web.headers.retain(|(key, _)| !key.eq_ignore_ascii_case(name));
             if let Some(value) = value {
                 web.headers.push((name.to_string(), value.to_string()));
@@ -723,16 +730,21 @@ pub(crate) fn response_header_names() -> Vec<String> {
 /// The servlet API's writer: append bytes to the body and commit the response, its status and headers as they are.
 /// Nothing is written after a response another way sent (an error, a redirect, a stream).
 pub(crate) fn write_bytes(bytes: &[u8]) {
-    WEB.with(|slot| {
+    let written = WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
             if web.stream.is_some() || (web.sent && !web.writing) {
-                return;
+                return stream::Written::Done(true);
             }
             web.sent = true;
             web.writing = true;
-            web.body.extend_from_slice(bytes);
+            stream::write(web, bytes)
+        } else {
+            stream::Written::Done(true)
         }
     });
+    if matches!(written, stream::Written::Commit) {
+        stream::commit();
+    }
 }
 
 /// Put a whole response in the slot, as the screen servlet made it, for the filters around it to see and change.
@@ -851,21 +863,29 @@ pub(crate) fn start_output(content_type: &str) -> bool {
     })
 }
 
-/// Append text to the open body. Nothing happens before [`start_output`].
-pub(crate) fn write_output(text: &str) {
-    WEB.with(|slot| {
-        if let Some(web) = slot.borrow_mut().as_mut() {
-            if web.sent {
-                web.body.extend_from_slice(text.as_bytes());
-            }
-        }
+/// Append text to the open body, or send it when the response committed ([`stream`]). Nothing happens before
+/// [`start_output`]. False when a committed response could not be sent (its client went away): the text was dropped.
+pub(crate) fn write_output(text: &str) -> bool {
+    let written = WEB.with(|slot| match slot.borrow_mut().as_mut() {
+        Some(web) if web.sent => stream::write(web, text.as_bytes()),
+        _ => stream::Written::Done(true),
     });
+    match written {
+        stream::Written::Done(sent) => sent,
+        stream::Written::Commit => {
+            stream::commit();
+            !stream::failed()
+        }
+    }
 }
 
 /// Drop what was written to the body after its first `len` bytes ([`output_body_len`]).
 pub(crate) fn truncate_output(len: usize) {
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
+            if rewound_after_commit(web) {
+                return;
+            }
             web.body.truncate(len);
         }
     });
@@ -884,6 +904,9 @@ pub(crate) fn with_body<R>(read: impl FnOnce(&[u8]) -> R) -> R {
 pub(crate) fn rewrite_tail(start: usize, bytes: &[u8]) {
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
+            if rewound_after_commit(web) {
+                return;
+            }
             let start = start.min(web.body.len());
             web.body.truncate(start);
             web.body.extend_from_slice(bytes);
@@ -895,9 +918,21 @@ pub(crate) fn rewrite_tail(start: usize, bytes: &[u8]) {
 pub(crate) fn replace_body(body: Vec<u8>) {
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
-            web.body = body;
+            if !rewound_after_commit(web) {
+                web.body = body;
+            }
         }
     });
+}
+
+/// Whether the body already went to the client, so it cannot be changed: a bug in the choice of what streams (only
+/// html and text renders, which never rewind, are armed), logged, not a panic.
+fn rewound_after_commit(web: &WebSlot) -> bool {
+    let sent = web.streaming.as_ref().is_some_and(stream::Streaming::is_committed);
+    if sent {
+        tracing::error!("A response body was changed after it was sent; the change is dropped");
+    }
+    sent
 }
 
 /// Note a user preference this request set (`ec.user.setPreference`), for the response to tell the client. Nothing
@@ -951,11 +986,24 @@ pub(crate) fn preferences_header(changed: &BTreeMap<String, Option<String>>) -> 
 }
 
 pub(crate) fn add_header(name: impl Into<String>, value: impl Into<String>) {
+    let name = name.into();
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
-            web.headers.push((name.into(), value.into()));
+            if !head_sent(web, &name) {
+                web.headers.push((name, value.into()));
+            }
         }
     });
+}
+
+/// Whether the response's head already went to the client ([`stream`]), so a header `name` set now is dropped, as a
+/// servlet's is once its response is committed.
+fn head_sent(web: &WebSlot, name: &str) -> bool {
+    let sent = web.streaming.as_ref().is_some_and(stream::Streaming::is_committed);
+    if sent {
+        tracing::warn!("The response header {name} was set after the response was sent; it is dropped");
+    }
+    sent
 }
 
 /// `application/json`.
@@ -1464,7 +1512,8 @@ pub(crate) fn output_sent() -> bool {
 pub fn clear_output() {
     WEB.with(|slot| {
         if let Some(web) = slot.borrow_mut().as_mut() {
-            web.sent = false;
+            // a committed response is the one the client has; no other can be sent instead
+            web.sent = web.streaming.as_ref().is_some_and(stream::Streaming::is_committed);
             web.writing = false;
             web.status = 200;
             web.headers.clear();

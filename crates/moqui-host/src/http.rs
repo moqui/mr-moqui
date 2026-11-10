@@ -39,6 +39,7 @@ use crate::notws;
 
 pub(crate) mod admission;
 mod serve;
+mod stream;
 #[cfg(feature = "edge")]
 pub(crate) use serve::h2_request_form;
 pub(crate) use serve::{http1_builder, run_connection, Activity, Http, Serving};
@@ -935,37 +936,66 @@ async fn dispatch_screen(
     let serve_factory = Arc::clone(&state.factory);
     let guard = Arc::clone(&state.guard);
     let worker_trace = trace_context.clone();
+    // a page past the screen facade's stream-threshold goes as it renders: its head comes first, then its body
+    // (docs/ui/Screen-Output.md); a smaller one comes whole as the job's answer
+    let (head_tx, mut head_rx) = tokio::sync::oneshot::channel::<WebResponse>();
+    let (body_tx, body_rx) = tokio::sync::mpsc::channel(stream::QUEUED);
+    // a HEAD's body is never read, so it is not written as it comes: the render would wait on it for the write timeout
+    let head_only = web.method.eq_ignore_ascii_case("HEAD");
+    let stall = state.limits.write.unwrap_or(DEFAULT_STREAM_STALL);
+    let sink = (!head_only).then(|| stream::ScreenSink::new(head_tx, body_tx, stall));
     let served = admission::run(
         Arc::clone(&state.factory),
         Arc::clone(&state.guard),
         state.guard.conf().queue_timeout,
         move || {
             let _trace = moqui_core::telemetry::attach(worker_trace);
-            let response = moqui_core::screen::serve(&serve_factory, web);
+            let sink = sink.map(|sink| Box::new(sink) as Box<dyn moqui_core::web::stream::OutputSink>);
+            let response = moqui_core::screen::serve_to(&serve_factory, web, sink);
             if moqui_core::web::take_auth_failure() {
                 guard.record(client, Event::AuthFailure);
             }
             response
         },
     );
-    // an upload was exempt from the request deadline while it arrived; its screen has the deadline
-    let served = match state.limits.request.filter(|_| upload) {
-        Some(deadline) => match tokio::time::timeout(deadline, served).await {
-            Ok(served) => served,
-            Err(_) => return plain(504, "the request took too long"),
+    // an upload was exempt from the request deadline while it arrived; its screen has the deadline, up to its head
+    let deadline = state.limits.request.filter(|_| upload);
+    let served = async move {
+        match deadline {
+            Some(deadline) => tokio::time::timeout(deadline, served).await.ok(),
+            None => Some(served.await),
+        }
+    };
+    tokio::pin!(served);
+    let served = tokio::select! {
+        biased;
+        head = &mut head_rx => match head {
+            Ok(head) => {
+                // the job goes on writing the body; its answer is only what the request ended with, not sent
+                let _trace = moqui_core::telemetry::attach(trace_context);
+                let body = axum::body::Body::new(crate::channel_body::ChannelBody::new(body_rx));
+                return respond(head, body);
+            }
+            // the response stayed whole: the job's answer is it
+            Err(_) => served.await,
         },
-        None => served.await,
+        served = &mut served => served,
     };
     match served {
-        Ok(response) => {
+        None => plain(504, "the request took too long"),
+        Some(Ok(response)) => {
             // Only the synchronous body construction uses this guard; the stream
             // captures an owned handle for its transfer workers before it returns.
             let _trace = moqui_core::telemetry::attach(trace_context);
             from_web(&state.factory, response)
         }
-        Err(refusal) => refusal.response(&state.guard),
+        Some(Err(refusal)) => refusal.response(&state.guard),
     }
 }
+
+/// How long a screen response being written waits for a client that takes nothing, when the conf has no
+/// `write-timeout`.
+const DEFAULT_STREAM_STALL: Duration = Duration::from_secs(60);
 
 /// Bytes of an upload gathered before the reader takes them, on a blocking thread (it may write a spool file).
 const UPLOAD_FEED: usize = 1024 * 1024;
@@ -1437,16 +1467,21 @@ fn status_allowed(configured: &str, ip: &str) -> bool {
     allowed.iter().any(|item| item == ip)
 }
 
-fn from_web(factory: &Arc<moqui_core::context::ExecutionContextFactory>, response: WebResponse) -> Response {
-    let http_log = response.http_log.clone();
+fn from_web(factory: &Arc<moqui_core::context::ExecutionContextFactory>, mut response: WebResponse) -> Response {
+    let body = match response.stream.take() {
+        Some(stream) => crate::source_body::body(Arc::clone(factory), stream),
+        None => axum::body::Body::from(std::mem::take(&mut response.body)),
+    };
+    respond(response, body)
+}
+
+/// The response of `response`'s status, headers and log identity, with `body`.
+fn respond(response: WebResponse, body: axum::body::Body) -> Response {
+    let http_log = response.http_log;
     let mut builder = Response::builder().status(response.status);
     for (name, value) in response.headers {
         builder = builder.header(name, value);
     }
-    let body = match response.stream {
-        Some(stream) => crate::source_body::body(Arc::clone(factory), stream),
-        None => axum::body::Body::from(response.body),
-    };
     let mut built = builder
         .body(body)
         .unwrap_or_else(|_| plain(500, "could not build the response"));
@@ -1490,7 +1525,9 @@ impl tower_http::compression::Predicate for Compressible {
             .and_then(|value| value.to_str().ok())
             .map(|value| value.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
             .unwrap_or_default();
-        // an event stream is sent as it comes; a compressor would hold it back
+        // The compressor flushes what it has whenever the body waits for more, so a body written as it is made (a
+        // screen sent as it renders) still reaches the client as it comes. An event stream is left as it is: each of
+        // its small frames would be flushed alone, for little gain, and some proxies hold a compressed one back.
         !small
             && kind != "text/event-stream"
             && (kind.starts_with("text/")

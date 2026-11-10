@@ -1,10 +1,10 @@
 sri.write("\n");
 {
-    const $info = sri.openFormList("Rows");
+    // the rows come one at a time, each made as it is written (docs/ui/Screen-Output.md)
+    const $info = sri.openFormList("Rows", true);
     sri.write("    <Rows>\n");
-    for (let $index = 0; $index < $info.count; $index++) {
+    for (let $index = 0; sri.startFormListRow($info, $index); $index++) {
         sri.write("        <RowsEntry");
-        sri.startFormListRow($info, $index);
         try {
             sri.write(" id=\"");
             sri.write($attr(sri.getFieldValueString({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}})));
@@ -41,11 +41,11 @@ sri.write("\n");
     sri.write("    </Rows>\n");
 }
 {
-    const $info = sri.openFormList("Cols");
+    // the rows come one at a time, each made as it is written (docs/ui/Screen-Output.md)
+    const $info = sri.openFormList("Cols", true);
     sri.write("    <Cols>\n");
-    for (let $index = 0; $index < $info.count; $index++) {
+    for (let $index = 0; sri.startFormListRow($info, $index); $index++) {
         sri.write("        <ColsEntry");
-        sri.startFormListRow($info, $index);
         try {
             sri.write(" a=\"");
             sri.write($attr(sri.getFieldValueString({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"a"},"parent":{"name":"form-list","attrs":{"name":"Cols","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}})));

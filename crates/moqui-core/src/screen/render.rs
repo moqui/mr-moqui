@@ -814,16 +814,44 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
         record_history(job, &state);
         return Ok(());
     }
+    arm_stream(job, &facade, &state);
     let begin = state.url_info.begin_transaction;
     let timeout = state.url_info.transaction_timeout;
     in_transaction(begin, timeout, || render_screens(&state, &facade))?;
-    add_client_component_headers(&state);
-    if negotiated && web::output_sent() && web::output_status() == 200 {
-        web::add_header("X-Moqui-Qvt", state.render_mode.clone());
+    // a response sent as it was written got these headers when its head went (arm_stream)
+    if !web::stream::committed() {
+        add_client_component_headers(&state);
+        if negotiated && web::output_sent() && web::output_status() == 200 {
+            web::add_header("X-Moqui-Qvt", state.render_mode.clone());
+        }
+        add_server_static_header(&state);
     }
-    add_server_static_header(&state);
     record_history(job, &state);
     Ok(())
+}
+
+/// Let the response go to the client as the render writes it, once it passes the conf's `stream-threshold`
+/// (docs/ui/Screen-Output.md): only for the request's own render (not a render mode an option asked for, which a PDF
+/// or an error page is) in an html or text mode, which never rewinds what it wrote. A binary, vue or JSON mode keeps
+/// its response whole. The render's own late headers are added when the head goes.
+fn arm_stream(job: &Job<'_>, facade: &ScreenFacade, state: &Rc<RenderState>) {
+    let streams = job.render_mode.is_none()
+        && !state.binary
+        && matches!(state.output_kind, OutputKind::Html | OutputKind::Text)
+        && web::stream::arm(facade.conf().stream_threshold);
+    if !streams {
+        return;
+    }
+    let state = Rc::clone(state);
+    web::stream::on_head(Box::new(move |head| {
+        if server_static_marked(&state, head.status) {
+            head.headers.push((
+                "Cache-Control".to_string(),
+                super::statics::server_static_cache_control(),
+            ));
+        }
+        Ok(())
+    }));
 }
 
 /// The screen whose `render-modes` must name `mode`: the target, except in qvt for a target that a default subscreen item
@@ -876,22 +904,21 @@ fn client_mode(request: &WebRequest, target: &ScreenDef, picked: &str) -> Option
 /// A screen that says `server-static` for a mode other than the qvt family gets the cache header, as in Java: it is right only for output
 /// that does not vary. The subscreens-only case the schema marks by itself is not sent that way for html, whose page holds the navbar of the user.
 fn add_server_static_header(state: &RenderState) {
-    let def = &state.url_info.target_screen;
-    let mode = state.render_mode.as_str();
-    if matches!(mode, "qvt" | "qjs" | "qvue")
-        || def.server_static_auto
-        || !web::output_sent()
-        || web::output_status() != 200
-    {
-        return;
-    }
-    let marked = def
-        .server_static
-        .iter()
-        .any(|name| name == "all" || canonical_render_mode(name) == mode);
-    if marked {
+    if web::output_sent() && server_static_marked(state, web::output_status()) {
         web::add_header("Cache-Control", super::statics::server_static_cache_control());
     }
+}
+
+/// Whether a written response with `status` is a server-static page of its mode, which a cache may keep.
+fn server_static_marked(state: &RenderState, status: u16) -> bool {
+    let def = &state.url_info.target_screen;
+    let mode = state.render_mode.as_str();
+    if matches!(mode, "qvt" | "qjs" | "qvue") || def.server_static_auto || status != 200 {
+        return false;
+    }
+    def.server_static
+        .iter()
+        .any(|name| name == "all" || canonical_render_mode(name) == mode)
 }
 
 /// The qvt family answers a client that builds a component from the text. A merged response is for one user and one

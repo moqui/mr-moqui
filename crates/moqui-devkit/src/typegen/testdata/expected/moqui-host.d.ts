@@ -182,6 +182,42 @@ interface EntityList<N extends string = string> extends Iterable<EntityValue<N>>
     filter(callback: (value: EntityValue<N>, index: number) => boolean): EntityValue<N>[];
 }
 
+/**
+ * A find's rows through a database cursor (`EntityFind.iterator()`), as Java's `EntityListIterator`. A move back or a
+ * jump needs a scrolling find (`resultSetType(1004)`); a forward-only one throws.
+ */
+interface EntityListIterator<N extends string = string> extends Iterable<EntityValue<N>> {
+    /** The next row; null after the last. */
+    next(): EntityValue<N> | null;
+    hasNext(): boolean;
+    /** The row before; null before the first. */
+    previous(): EntityValue<N> | null;
+    hasPrevious(): boolean;
+    nextIndex(): number;
+    previousIndex(): number;
+    /** Move to the first row; false when there is none. */
+    first(): boolean;
+    /** Move to the last row; false when there is none. */
+    last(): boolean;
+    beforeFirst(): void;
+    afterLast(): void;
+    /** Row `rowNum`, 1-based; from the end when negative. True when on a row. */
+    absolute(rowNum: number): boolean;
+    relative(rows: number): boolean;
+    /** The current row, 1-based; 0 before the first. */
+    currentIndex(): number;
+    currentEntityValue(): EntityValue<N> | null;
+    setFetchSize(rows: number): void;
+    /** Every row: from the first when the find scrolls, else from here on. */
+    getCompleteList(closeAfter?: boolean): EntityList<N>;
+    /** Up to `limit` rows from row `offset`, 1-based from the first. */
+    getPartialList(offset: number, limit: number, closeAfter?: boolean): EntityList<N>;
+    /** Each row as its XML element, with dependents to `dependentLevels`; the records written. */
+    writeXmlText(writer: { write(text: string): unknown }, prefix?: string | null, dependentLevels?: number): number;
+    writeXmlTextMaster(writer: { write(text: string): unknown }, prefix?: string | null, masterName?: string): number;
+    close(): void;
+}
+
 /** A condition made by `ec.entity.conditionFactory`. */
 interface EntityCondition {
     readonly __moquiCondition: never;
@@ -220,7 +256,17 @@ interface EntityFind<N extends string = string> {
     /** A plain master graph retaining nested identities; `default` when omitted. */
     oneMaster(master?: string): MoquiMap | null;
     list(): EntityList<N>;
-    iterator(): EntityList<N>;
+    /**
+     * Java's `EntityListIterator` over a database cursor, never held whole (`use-iterator` in XML actions): forward
+     * only unless `resultSetType` is 1004 or 1005 (or the find is for update). Close it when done; it closes itself
+     * after its last row.
+     */
+    iterator(): EntityListIterator<N>;
+    /** 1003 `TYPE_FORWARD_ONLY` (the default), 1004 `TYPE_SCROLL_INSENSITIVE` or 1005 `TYPE_SCROLL_SENSITIVE`. */
+    resultSetType(type: number): EntityFind<N>;
+    getResultSetType(): number;
+    /** Kept for Java code; an iterator here is read only. */
+    resultSetConcurrency(concurrency: number): EntityFind<N>;
     count(): number;
     /** How many rows were deleted. */
     deleteAll(): number;

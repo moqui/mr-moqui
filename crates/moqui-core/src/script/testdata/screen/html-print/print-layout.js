@@ -133,7 +133,7 @@ sri.write("<div>");
 }
 sri.write("</div>\n");
 if (sri.doBoundaryComments()) sri.write("<!-- BEGIN render-mode.text[inline][@template=true] -->");
-sri.write(sri.renderInlineText("print only"));
+sri.writeInlineText("print only");
 if (sri.doBoundaryComments()) sri.write("<!-- END   render-mode.text[inline][@template=true] -->");
 sri.renderSubscreen();
 sri.renderIncludeScreen("component://x/Y.xml", "");

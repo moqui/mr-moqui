@@ -19,17 +19,16 @@
 //! [`HostClass`] cannot say): the engine makes one from a host value that holds a [`ScriptList`] or an [`EntityCell`],
 //! with the class here as its prototype, and gives a method the list's [`ListState`] or the value's cell as its
 //! receiver. A method that returns a list or a value returns that host value. A find is an ordinary object of its
-//! class over a [`FindState`].
+//! class over a [`FindState`]; its `iterator()` is Java's `EntityListIterator` ([`super::list_iterator`]).
 //!
 //! Every method that reads or writes the database, or reads an entity definition, may run a nested script (an entity
-//! ECA rule, an authorization filter), so it is not a leaf; the builder steps and the list's cursor are. `find` and
+//! ECA rule, an authorization filter), so it is not a leaf; the builder steps and the list's reads are. `find` and
 //! `condition` are leaves that lend the engine only for the step that may nest: a definition made at run time from rows.
 //! `list` and `one` are leaves that answer a hit of the shared entity cache without the lend, when no authorization
 //! filter applies and nothing reads the database (`EntityFind::list_from_cache`), and lend it for any other find.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicI64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use indexmap::IndexMap;
@@ -123,7 +122,17 @@ pub(crate) static FIND: HostClass = HostClass {
         method!("EntityFind", "copy", [], None, leaf, copy),
         method!("EntityFind", "deleteAll", [], delete_all),
         method!("EntityFind", "purge", [OptValue, OptValue], purge),
-        method!("EntityFind", "iterator", [], None, leaf, list),
+        method!("EntityFind", "iterator", [], super::list_iterator::find_iterator),
+        method!("EntityFind", "resultSetType", [Int], None, leaf, result_set_type),
+        method!("EntityFind", "getResultSetType", [], None, leaf, get_result_set_type),
+        method!(
+            "EntityFind",
+            "resultSetConcurrency",
+            [Int],
+            None,
+            leaf,
+            result_set_concurrency
+        ),
         method!("EntityFind", "havingCondition", [Value], None, leaf, having_condition),
         method!(
             "EntityFind",
@@ -168,24 +177,13 @@ const LIST_PROTOTYPE_JS: &str = r#"(function (list) {
     }
 })"#;
 
-/// An entity list (a find's `list()`), as Java's `EntityList` and `EntityListIterator`.
+/// An entity list (a find's `list()`), as Java's `EntityList`. A cursor over the rows is `iterator()`'s
+/// ([`super::list_iterator`]), not the list's.
 pub(crate) static LIST: HostClass = HostClass {
     name: "host:EntityList",
     methods: &[
-        method!("EntityList", "next", [], None, leaf, list_next),
-        method!("EntityList", "hasNext", [], None, leaf, list_has_next),
-        method!("EntityList", "previous", [], None, leaf, list_previous),
-        method!("EntityList", "hasPrevious", [], None, leaf, list_has_previous),
-        method!("EntityList", "absolute", [Int], None, leaf, list_absolute),
-        method!("EntityList", "relative", [Int], None, leaf, list_relative),
-        method!("EntityList", "currentIndex", [], None, leaf, list_current_index),
         method!("EntityList", "first", [], None, leaf, list_first),
         method!("EntityList", "last", [], None, leaf, list_last),
-        method!("EntityList", "beforeFirst", [], None, leaf, list_before_first),
-        method!("EntityList", "afterLast", [], None, leaf, list_after_last),
-        method!("EntityList", "getCompleteList", [OptBool], None, leaf, list_complete),
-        method!("EntityList", "setFetchSize", [Int], None, leaf, list_nothing),
-        method!("EntityList", "close", [], None, leaf, list_nothing),
         method!("EntityList", "get", [Int], None, leaf, list_get),
         method!(
             "EntityList",
@@ -278,7 +276,7 @@ pub(crate) static ENTITY_VALUE: HostClass = HostClass {
     shim_members: &["entrySet"],
 };
 
-fn lib(err: moqui_lib::error::Error) -> HostError {
+pub(super) fn lib(err: moqui_lib::error::Error) -> HostError {
     HostError::Lib(err)
 }
 
@@ -295,6 +293,11 @@ fn list_of_cells(cells: Vec<Arc<EntityCell>>) -> Value {
 /// A host value of a new list of a find's result.
 fn list_of(list: EntityList) -> Value {
     Value::Object(HostObject::new(ScriptList::of_list(list)))
+}
+
+/// A host value of a new list of `rows` ([`super::cursor`]).
+pub(super) fn list_value(rows: Vec<EntityValue>) -> Value {
+    list_of(EntityList::new(rows))
 }
 
 // ec.entity
@@ -454,6 +457,11 @@ fn run_find<T>(call: &Call<'_>, body: impl FnOnce(&EntityFind) -> T) -> Result<T
 /// A clone of the receiver's find, which stays usable.
 fn peek_find(call: &Call<'_>) -> Result<EntityFind, HostError> {
     call.this::<FindState>()?.peek().ok_or_else(running)
+}
+
+/// A clone of the receiver's find, for a method kept in another module ([`super::cursor`]).
+pub(super) fn peek_find_of(call: &Call<'_>) -> Result<EntityFind, HostError> {
+    peek_find(call)
 }
 
 /// The text of a value argument that must be a string.
@@ -664,6 +672,23 @@ fn flag_or_true(call: &Call<'_>) -> bool {
 fn for_update(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let on = flag_or_true(call);
     chain(call, |find| find.for_update(on))
+}
+
+/// Java's `resultSetType(type)`: 1003 (`TYPE_FORWARD_ONLY`, the default) gives an `iterator()` that reads forward; 1004
+/// and 1005 one that moves back and jumps.
+fn result_set_type(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let kind = call.int(0).unwrap_or(crate::entity::TYPE_FORWARD_ONLY);
+    chain(call, |find| find.result_set_type(kind))
+}
+
+fn get_result_set_type(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let kind = run_find(call, EntityFind::get_result_set_type)?;
+    Ok(Ret::Value(Value::I32(kind)))
+}
+
+/// Java's `resultSetConcurrency`: an iterator here is read only, so the value is not used.
+fn result_set_concurrency(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    chain(call, |find| find)
 }
 
 fn distinct(call: &mut Call<'_>) -> Result<Ret, HostError> {
@@ -882,31 +907,14 @@ impl ScriptList {
     }
 }
 
-/// The state of one script object of a list: the rows, and the `EntityListIterator` cursor of `iterator()` (the
-/// current row's index, -1 before the first), which is the object's own.
+/// The state of one script object of a list: its rows.
 pub(crate) struct ListState {
     pub(crate) list: Arc<ScriptList>,
-    cursor: AtomicI64,
 }
 
 impl ListState {
     pub(crate) fn of(list: Arc<ScriptList>) -> Self {
-        ListState {
-            list,
-            cursor: AtomicI64::new(-1),
-        }
-    }
-
-    fn cursor(&self) -> i64 {
-        self.cursor.load(AtomicOrdering::Relaxed)
-    }
-
-    fn set_cursor(&self, index: i64) {
-        self.cursor.store(index, AtomicOrdering::Relaxed);
-    }
-
-    fn len(&self) -> i64 {
-        i64::try_from(self.list.len()).unwrap_or(i64::MAX)
+        ListState { list }
     }
 
     /// The row at `index` itself, not a copy, so a field set on it is kept in the list; null outside the rows.
@@ -915,18 +923,6 @@ impl ListState {
             Some(cell) => Value::Object(HostObject::new(ListRow(Arc::clone(cell)))),
             None => Value::Null,
         }
-    }
-
-    /// The row at the cursor after moving it to `index`, or null when `index` is outside the rows (the cursor stops
-    /// before the first or after the last).
-    fn move_to(&self, index: i64) -> Value {
-        let len = self.len();
-        let index = index.clamp(-1, len);
-        self.set_cursor(index);
-        if index < 0 || index >= len {
-            return Value::Null;
-        }
-        self.item(usize::try_from(index).unwrap_or(0))
     }
 }
 
@@ -939,83 +935,18 @@ fn this_list(call: &Call<'_>) -> Result<Arc<ListState>, HostError> {
     call.this::<ListState>()
 }
 
-/// Java's `EntityListIterator.next`: the row after the current one, null past the last.
-fn list_next(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let list = this_list(call)?;
-    Ok(Ret::Value(list.move_to(list.cursor() + 1)))
-}
-
-fn list_has_next(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let list = this_list(call)?;
-    Ok(Ret::from(list.cursor() + 1 < list.len()))
-}
-
-/// Java's `previous`: the row before the current one, null before the first.
-fn list_previous(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let list = this_list(call)?;
-    Ok(Ret::Value(list.move_to(list.cursor() - 1)))
-}
-
-fn list_has_previous(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    Ok(Ret::from(this_list(call)?.cursor() > 0))
-}
-
-/// Java's `absolute`, 1-based; from the end when negative; 0 is before the first. True when on a row.
-fn list_absolute(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let list = this_list(call)?;
-    let len = list.len();
-    let index = match i64::from(call.int(0).unwrap_or(0)) {
-        0 => -1,
-        row if row > 0 => row - 1,
-        row => len + row,
-    }
-    .clamp(-1, len);
-    list.set_cursor(index);
-    Ok(Ret::from(index >= 0 && index < len))
-}
-
-/// Java's `relative`: move `rows` from the current row. True when on a row.
-fn list_relative(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let list = this_list(call)?;
-    let len = list.len();
-    let index = (list.cursor() + i64::from(call.int(0).unwrap_or(0))).clamp(-1, len);
-    list.set_cursor(index);
-    Ok(Ret::from(index >= 0 && index < len))
-}
-
-/// Java's `currentIndex`: the current row, 1-based; 0 before the first.
-fn list_current_index(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    Ok(Ret::Value(Value::I64(this_list(call)?.cursor() + 1)))
-}
-
+/// Groovy's `List.first()`: the first row, null for an empty list.
 fn list_first(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    Ok(Ret::Value(this_list(call)?.move_to(0)))
+    Ok(Ret::Value(this_list(call)?.item(0)))
 }
 
+/// Groovy's `List.last()`: the last row, null for an empty list.
 fn list_last(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let list = this_list(call)?;
-    Ok(Ret::Value(list.move_to(list.len() - 1)))
-}
-
-fn list_before_first(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    this_list(call)?.set_cursor(-1);
-    Ok(Ret::Undefined)
-}
-
-fn list_after_last(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let list = this_list(call)?;
-    list.set_cursor(list.len());
-    Ok(Ret::Undefined)
-}
-
-/// Java's `getCompleteList`: every row.
-fn list_complete(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    Ok(Ret::Value(list_of_cells(this_list(call)?.list.cells().to_vec())))
-}
-
-/// Java's `setFetchSize` and `close`: the rows are already here.
-fn list_nothing(_call: &mut Call<'_>) -> Result<Ret, HostError> {
-    Ok(Ret::Undefined)
+    Ok(Ret::Value(match list.list.len() {
+        0 => Value::Null,
+        len => list.item(len - 1),
+    }))
 }
 
 fn list_get(call: &mut Call<'_>) -> Result<Ret, HostError> {

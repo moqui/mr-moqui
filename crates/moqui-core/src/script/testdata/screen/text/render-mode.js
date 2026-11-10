@@ -2,15 +2,15 @@ $lineChars = Number(lineCharacters || "132");
 $pageLines = pageLines ? Number(pageLines) : 0;
 $lineWrap = lineWrap === "true";
 if (sri.doBoundaryComments()) sri.write("<!-- BEGIN render-mode.text[inline][@template=true] -->");
-sri.write(sri.renderInlineText("text csv xml"));
+sri.writeInlineText("text csv xml");
 if (sri.doBoundaryComments()) sri.write("<!-- END   render-mode.text[inline][@template=true] -->");
 if (sri.doBoundaryComments()) sri.write("<!-- BEGIN render-mode.text[inline][@template=true] -->");
-sri.write(sri.renderInlineText("typed text"));
+sri.writeInlineText("typed text");
 if (sri.doBoundaryComments()) sri.write("<!-- END   render-mode.text[inline][@template=true] -->");
 {
     const $location = ec.resource.expandNoL10n("component://x/template/Part.txt");
     if (sri.doBoundaryComments()) sri.write("<!-- BEGIN render-mode.text[@location=" + $location + "][@template=false] -->");
-    sri.write(sri.encodeHtml(sri.renderText($location, "false")));
+    sri.write(sri.encodeHtml(sri.renderTextValue($location, "false")));
     if (sri.doBoundaryComments()) sri.write("<!-- END   render-mode.text[@location=" + $location + "][@template=false] -->");
 }
 {
@@ -22,4 +22,4 @@ if (sri.doBoundaryComments()) sri.write("<!-- END   render-mode.text[inline][@te
 if (sri.doBoundaryComments()) sri.write("<!-- BEGIN render-mode.text[inline][@template=false] -->");
 sri.write(sri.encodeHtml("a < b"));
 if (sri.doBoundaryComments()) sri.write("<!-- END   render-mode.text[inline][@template=false] -->");
-sri.write(sri.renderInlineText("quiet ${name}"));
+sri.writeInlineText("quiet ${name}");

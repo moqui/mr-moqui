@@ -228,11 +228,30 @@
                 var _${entry}Entry = _${entry}Entries[${entry}_index];
                 ${key} = _${entry}Entry[0];
                 ${entry} = _${entry}Entry[1];
+                ${entry}_has_next = (${entry}_index + 1) < ${limit};
             `;
         } else {
+            // An entity iterator (use-iterator) has no length: its rows are read one ahead, so has_next is known. Its
+            // next() gives null after the last, as Java's; a JavaScript iterator (no hasNext) is not one.
+            const cursor = `_${entry}_cursor`;
+            const ahead = `_${entry}_ahead`;
             limit = `${entry}_len`;
-            setup = `var ${entry}_len = (typeof ${local}.length === "number") ? ${local}.length : 0;`;
-            assign = `${entry} = (typeof ${local}.get === "function") ? ${local}.get(${entry}_index) : ${local}[${entry}_index];`;
+            setup = js`
+                var ${cursor} = typeof ${local}.length !== "number" && typeof ${local}.hasNext === "function" && typeof ${local}.next === "function";
+                var ${ahead} = ${cursor} ? ${local}.next() : null;
+                var ${entry}_len = ${cursor} ? Infinity : (typeof ${local}.length === "number") ? ${local}.length : 0;
+            `;
+            assign = js`
+                if (${cursor}) {
+                    if (${ahead} == null) break;
+                    ${entry} = ${ahead};
+                    ${ahead} = ${local}.next();
+                    ${entry}_has_next = ${ahead} != null;
+                } else {
+                    ${entry} = (typeof ${local}.get === "function") ? ${local}.get(${entry}_index) : ${local}[${entry}_index];
+                    ${entry}_has_next = (${entry}_index + 1) < ${limit};
+                }
+            `;
         }
         return js`
             if (${list} != null) {
@@ -241,7 +260,6 @@
                 ${setup}
                 for (; ${entry}_index < ${limit}; ${entry}_index = ${entry}_index + 1) {
                     ${assign}
-                    ${entry}_has_next = (${entry}_index + 1) < ${limit};
                     ${body}
                 }
             }
@@ -435,30 +453,39 @@
             const sfi = child(node, "search-form-inputs");
             const limitRange = child(node, "limit-range");
             const limitView = child(node, "limit-view");
+            // use-iterator reads the rows through the find's iterator (Java's EntityListIterator, forward only unless
+            // the find scrolls), so a long result is not held whole; a cached find is in memory anyway, and a
+            // paginated page is a list (docs/ui/Screen-Output.md)
+            const iterate = !!child(node, "use-iterator") && !cached;
+            const read = iterate ? "iterator()" : "list()";
+            const paginate = sfi && attr(sfi, "paginate") !== "false" && !limitRange && !limitView;
             let run;
             if (limitRange && !cached) {
-                run = `${list}_xafind.offset(${attr(limitRange, "start")}).limit(${attr(limitRange, "size")}).list()`;
+                run = `${list}_xafind.offset(${attr(limitRange, "start")}).limit(${attr(limitRange, "size")}).${read}`;
             } else if (limitView && !cached) {
                 const index = attr(limitView, "view-index");
                 const size = attr(limitView, "view-size");
-                run = `${list}_xafind.offset((${index} - 1) * ${size}).limit(${size}).list()`;
-            } else run = `${list}_xafind.list()`;
+                run = `${list}_xafind.offset((${index} - 1) * ${size}).limit(${size}).${read}`;
+            } else if (iterate && paginate) {
+                run = `${list}_xalimit == null ? ${list}_xafind.iterator() : ${list}_xafind.list()`;
+            } else run = `${list}_xafind.${read}`;
             // A cached list cannot filter by date in the query, so it filters the result.
             const dateFilters = cached
                 ? childrenNamed(node, "date-filter")
                     .map((kid) => `${list} = ${list}.filterByDate(${dateFilterArgs(kid)});`).join("\n")
                 : "";
             // A paginated search sets the list's Count, PageIndex, PageSize, PageMaxIndex, PageRangeLow and PageRangeHigh, which the
-            // form-list pagination reads (Java's XmlActions entity-find). The count of all rows runs only when the page is full.
-            const paginate = sfi && attr(sfi, "paginate") !== "false" && !limitRange && !limitView;
+            // form-list pagination reads (Java's XmlActions entity-find). The count of all rows runs only when the page is full,
+            // or, for an iterator, which has no length, before it opens (on MySQL nothing else runs while one is open).
             const pageLines = paginate ? js`
                 var ${list}_xalimit = ${list}_xafind.getLimit();
                 var ${list}_xaoffset = ${list}_xafind.getOffset() || 0;
                 var ${list}_xacount = ${list}_xalimit == null ? null : ${list}_xafind.copy();
+                ${iterate ? `var ${list}_xaall = ${list}_xalimit == null ? ${list}_xafind.count() : null;` : ""}
             ` : "";
             const pageAfter = paginate ? js`
                 if (${list}_xalimit == null) {
-                    ${list}Count = ${list}.length;
+                    ${list}Count = ${iterate ? `${list}_xaall` : `${list}.length`};
                     ${list}PageIndex = 0;
                     ${list}PageSize = ${list}Count > 20 ? ${list}Count : 20;
                 } else {

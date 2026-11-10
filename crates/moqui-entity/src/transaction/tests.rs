@@ -954,8 +954,22 @@ fn open_stream_reuses_the_enlisted_connection() {
     .expect("reuse");
     assert_eq!(driver.connects(), 1);
     assert_eq!(mgr.stats().checkouts, 1);
-    let err = mgr.force_new(None).expect_err("stream");
-    assert!(err.to_string().contains("open stream"), "{err}");
+    // a nested transaction runs on another connection while the stream waits on the parked one, as a Java cursor
+    // waits while a requires-new service runs
+    assert!(mgr.force_new(None).expect("force new beside the stream"));
+    mgr.with_connection(|conn| {
+        assert!(!conn.stream_open(), "the new frame has a connection of its own");
+        Ok(())
+    })
+    .expect("nested");
+    assert_eq!(driver.connects(), 2);
+    // the commit resumes the frame it suspended
+    mgr.commit().expect("commit nested");
+    mgr.with_connection(|conn| {
+        assert!(conn.stream_open(), "the stream is still open on the resumed frame");
+        Ok(())
+    })
+    .expect("resumed");
 }
 
 #[test]

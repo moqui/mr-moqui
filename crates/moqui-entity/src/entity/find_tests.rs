@@ -68,6 +68,33 @@ fn a_scrollable_iterator_moves_back_and_jumps_and_a_forward_one_does_not() {
         // The last two rows are kept, so one step back works; the first row is gone.
         assert_eq!(id(forward.previous_value()?).as_deref(), Some("B"));
         assert!(forward.absolute(1).is_err());
+        assert!(forward.before_first().is_err());
+        assert!(forward.last().is_err());
+        drop(forward);
+        // Java's first, last, beforeFirst, afterLast, hasPrevious and currentEntityValue, by resultSetType
+        let mut moved = facade
+            .find("moqui.test.TestEntity")?
+            .order_by("testId", false)
+            .result_set_type(crate::entity::TYPE_SCROLL_INSENSITIVE)
+            .iterator()?;
+        assert!(!moved.has_previous());
+        assert!(moved.current_value()?.is_none());
+        assert!(moved.last()?);
+        assert_eq!(id(moved.current_value()?).as_deref(), Some("C"));
+        assert!(moved.has_previous());
+        assert!(moved.first()?);
+        assert_eq!(id(moved.current_value()?).as_deref(), Some("A"));
+        moved.after_last()?;
+        assert_eq!(id(moved.previous_value()?).as_deref(), Some("C"));
+        moved.before_first()?;
+        assert_eq!(id(moved.next_value()?).as_deref(), Some("A"));
+        // a find for update scrolls, as Java's scroll-sensitive one; the default is forward only
+        let find = facade.find("moqui.test.TestEntity")?;
+        assert_eq!(find.get_result_set_type(), crate::entity::TYPE_FORWARD_ONLY);
+        assert_eq!(
+            find.for_update(true).get_result_set_type(),
+            crate::entity::TYPE_SCROLL_SENSITIVE
+        );
         Ok(())
     })
     .unwrap();

@@ -13,12 +13,12 @@
  */
 
 //! The globals QuickJS's main context has that quickjs-oxide does not (`check::QUICKJS_ONLY_GLOBALS`' first group):
-//! `queueMicrotask`, `atob`, `btoa`, `performance`, `DOMException`, `SuppressedError`, `DisposableStack` and
-//! `AsyncDisposableStack`, with `Symbol.dispose` and `Symbol.asyncDispose`, made in JavaScript for a whole runtime
+//! `queueMicrotask`, `atob`, `btoa` and `DOMException`, made in JavaScript for a whole runtime
 //! (`script_engine=oxide` and the spec runtime) before the runtime's own globals are counted, so they are builtins as
 //! on QuickJS: writable and configurable, not frozen as the host's globals are. What QuickJS shows of each (names,
-//! lengths, descriptors, error names and codes) is what these show; the differences left are in
-//! plans/archive/Script-Engine-Oxide.md (`using` declarations, `performance.timeOrigin`). A small script's static check
+//! lengths, descriptors, error names and codes) is what these show; `performance` is the fork's
+//! (`Context::install_performance`), and so are explicit resource management's (`using`, `SuppressedError`,
+//! `DisposableStack`, `AsyncDisposableStack`, `Symbol.dispose`, `Symbol.asyncDispose`). A small script's static check
 //! refuses these names, so the small-script runtime does not have them. What they call when they run is taken when
 //! they are made, so a script that later changes a builtin's prototype does not change them or reach their state.
 
@@ -29,10 +29,10 @@ const QUICKJS_GLOBALS_JS: &str = r#"(function () {
     // What the functions below call when they run, taken now: a script that later changes a builtin (an
     // `Array.prototype` setter, `Object.prototype.get`, `WeakMap.prototype.get`, `Promise.prototype.then`) does not
     // change what they do or reach their state. Descriptors have no prototype, and lists grow by definition.
-    const { apply, construct } = Reflect;
-    const { defineProperty, setPrototypeOf, create } = Object;
-    const OurError = Error, OurTypeError = TypeError, OurReferenceError = ReferenceError, OurWeakMap = WeakMap;
-    const toText = String, fromCharCode = String.fromCharCode, dateNow = Date.now;
+    const { apply } = Reflect;
+    const { defineProperty, setPrototypeOf } = Object;
+    const OurError = Error, OurTypeError = TypeError, OurWeakMap = WeakMap;
+    const toText = String, fromCharCode = String.fromCharCode;
     const uncurry = (method) => (self, a, b) => apply(method, self, [a, b]);
     const charCodeAt = uncurry(String.prototype.charCodeAt);
     const weakGet = uncurry(WeakMap.prototype.get), weakSet = uncurry(WeakMap.prototype.set);
@@ -42,10 +42,6 @@ const QUICKJS_GLOBALS_JS: &str = r#"(function () {
     const builtin = (name, value, enumerable) => defineProperty(globalThis, name, data(value, true, !!enumerable, true));
     const hidden = (target, name, value) => defineProperty(target, name, data(value, true, false, true));
     const tag = (target, name) => defineProperty(target, Symbol.toStringTag, data(name, false, false, true));
-    for (const name of ["dispose", "asyncDispose"]) {
-        if (typeof Symbol[name] !== "symbol") defineProperty(Symbol, name, data(Symbol("Symbol." + name), false, false, false));
-    }
-    const disposeSymbol = Symbol.dispose, asyncDisposeSymbol = Symbol.asyncDispose;
     const callable = (value) => typeof value === "function";
 
     // DOMException: the WebIDL names with a legacy code, and the code constants on the constructor and its prototype
@@ -82,118 +78,6 @@ const QUICKJS_GLOBALS_JS: &str = r#"(function () {
     });
     tag(DOMException.prototype, "DOMException");
     builtin("DOMException", DOMException);
-
-    // SuppressedError(error, suppressed, message), callable without `new` as the native errors are
-    const SuppressedError = function SuppressedError(error, suppressed, message) {
-        const made = construct(OurError, message === undefined ? [] : [message], new.target || SuppressedError);
-        hidden(made, "error", error);
-        hidden(made, "suppressed", suppressed);
-        return made;
-    };
-    setPrototypeOf(SuppressedError, Error);
-    SuppressedError.prototype = create(Error.prototype);
-    defineProperty(SuppressedError, "prototype", { writable: false, enumerable: false, configurable: false });
-    hidden(SuppressedError.prototype, "name", "SuppressedError");
-    hidden(SuppressedError.prototype, "message", "");
-    hidden(SuppressedError.prototype, "constructor", SuppressedError);
-    builtin("SuppressedError", SuppressedError);
-
-    // DisposableStack and AsyncDisposableStack (explicit resource management): resources disposed last first, a later
-    // error wrapping the earlier one as its `suppressed`
-    const stacks = new OurWeakMap();
-    const stateOf = (self, kind) => {
-        const state = weakGet(stacks, self);
-        if (state === undefined || state.kind !== kind) throw new OurTypeError("not a " + kind);
-        return state;
-    };
-    const live = (self, kind) => {
-        const state = stateOf(self, kind);
-        if (state.disposed) throw new OurReferenceError(kind + " has been disposed");
-        return state;
-    };
-    // the dispose method of `value` (GetDisposeMethod): for the async stack `Symbol.asyncDispose`, else its
-    // `Symbol.dispose` called and awaited; null as undefined
-    const disposer = (value, symbol, fallback) => {
-        if (value === null || typeof value !== "object" && typeof value !== "function") throw new OurTypeError("not an object");
-        let method = value[symbol];
-        if ((method === undefined || method === null) && fallback !== undefined) {
-            const sync = value[fallback];
-            if (callable(sync)) method = function () { apply(sync, this, []); };
-        }
-        if (!callable(method)) throw new OurTypeError("not a function");
-        return () => apply(method, value, []);
-    };
-    const noOp = () => undefined;
-    const define = (kind, symbol, fallback, disposeName, dispose) => {
-        const made = {
-            [kind]: class {
-                constructor() { weakSet(stacks, this, { __proto__: null, kind, disposed: false, resources: [] }); }
-                get disposed() { return stateOf(this, kind).disposed; }
-                use(value) {
-                    const state = live(this, kind);
-                    if (value !== null && value !== undefined) append(state.resources, disposer(value, symbol, fallback));
-                    // an async stack awaits even a null resource
-                    else if (fallback !== undefined) append(state.resources, noOp);
-                    return value;
-                }
-                adopt(value, onDispose) {
-                    const state = live(this, kind);
-                    if (!callable(onDispose)) throw new OurTypeError("not a function");
-                    append(state.resources, () => onDispose(value));
-                    return value;
-                }
-                defer(onDispose) {
-                    const state = live(this, kind);
-                    if (!callable(onDispose)) throw new OurTypeError("not a function");
-                    append(state.resources, () => onDispose());
-                }
-                move() {
-                    const state = live(this, kind);
-                    const moved = new made();
-                    weakGet(stacks, moved).resources = state.resources;
-                    state.resources = [];
-                    state.disposed = true;
-                    return moved;
-                }
-            }
-        }[kind];
-        const method = dispose(made);
-        defineProperty(method, "name", data(disposeName, false, false, true));
-        hidden(made.prototype, disposeName, method);
-        hidden(made.prototype, symbol, method);
-        tag(made.prototype, kind);
-        builtin(kind, made);
-    };
-    // the resources of a stack not yet disposed, which it is now; null for one disposed already
-    const taken = (self, kind) => {
-        const state = stateOf(self, kind);
-        if (state.disposed) return null;
-        state.disposed = true;
-        const resources = state.resources;
-        state.resources = [];
-        return resources;
-    };
-    const failed = (thrown, earlier) => (earlier.has ? new SuppressedError(thrown, earlier.error) : thrown);
-    define("DisposableStack", disposeSymbol, undefined, "dispose", () => function () {
-        const resources = taken(this, "DisposableStack");
-        if (resources === null) return undefined;
-        const earlier = { __proto__: null, has: false, error: undefined };
-        for (let index = resources.length - 1; index >= 0; index--) {
-            try { resources[index](); } catch (thrown) { earlier.error = failed(thrown, earlier); earlier.has = true; }
-        }
-        if (earlier.has) throw earlier.error;
-        return undefined;
-    });
-    define("AsyncDisposableStack", asyncDisposeSymbol, disposeSymbol, "disposeAsync", () => async function () {
-        const resources = taken(this, "AsyncDisposableStack");
-        if (resources === null) return undefined;
-        const earlier = { __proto__: null, has: false, error: undefined };
-        for (let index = resources.length - 1; index >= 0; index--) {
-            try { await resources[index](); } catch (thrown) { earlier.error = failed(thrown, earlier); earlier.has = true; }
-        }
-        if (earlier.has) throw earlier.error;
-        return undefined;
-    });
 
     // queueMicrotask, atob and btoa: methods, so neither has a prototype or constructs, as QuickJS's. The microtask
     // runs one job later through an await, which reads no `then` or `constructor` a script could change.
@@ -257,14 +141,13 @@ const QUICKJS_GLOBALS_JS: &str = r#"(function () {
         }
     };
     for (const name of ["queueMicrotask", "atob", "btoa"]) builtin(name, functions[name]);
-
-    // performance: now() in milliseconds since the runtime started, and timeOrigin, its start as epoch milliseconds
-    const origin = dateNow();
-    builtin("performance", { now: { now() { return dateNow() - origin; } }.now, timeOrigin: origin }, true);
 })()"#;
 
 /// Make the QuickJS-only builtins on a whole runtime's global object, before its own globals are counted.
 pub(super) fn install(context: &Context) -> Result<(), RuntimeError> {
+    // the fork's own, as the High Resolution Time standard has it: now() in fractional milliseconds on a monotonic
+    // clock, and timeOrigin the epoch time at which it read 0
+    context.install_performance()?;
     super::compiled::eval_start(&mut context.clone(), QUICKJS_GLOBALS_JS)?;
     Ok(())
 }

@@ -1094,6 +1094,7 @@ mod scan;
 mod servlets;
 mod shell;
 mod statics;
+mod stream;
 mod tarpit;
 mod tui;
 mod walk;

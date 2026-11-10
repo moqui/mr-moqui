@@ -273,7 +273,7 @@ Framework service XML with no Rust body (`BasicServices`, `UserServices`, `Serve
 |---|---|---|
 | `script/actions.rs`, `script/walker.rs`, `script/parse.rs` | `XmlActionsScriptRunner`, `actions/XmlAction.java`, `framework/template/XmlActions.groovy.ftl`. The embedded module is `runtime/base-component/framework/template/XmlActions.js`. | Port |
 | `script/runtime.rs` | QuickJS evaluation. Replaces the Groovy binding (`ContextBinding`): bare names resolve through a proxy, `ec` is a host object. `plans/archive/ContextObjects.md`. | Redesign |
-| `script/runtime/entities.rs` | Entity value, find, and list methods scripts call on `ec.entity`, including `EntityListIterator`. | Port |
+| `script/runtime/entities.rs` | Entity value, find, and list methods scripts call on `ec.entity`; the script `EntityListIterator` of `iterator()` is `script/host/list_iterator.rs`. | Port |
 | `script/runtime/services.rs` | `ec.service` call shape (`ServiceFacade` from script). | Port |
 | `script/runtime/facades.rs` | Smaller `ec` members: cache, message, logger, resource, user, web. | Port |
 | `script/runtime/ec_extra.rs` | `ec.resource.expand`, `ec.l10n`, `ec.context`, `ec.screen`, and the bare helpers `WebUtilities`, `StringUtilities`, `CollectionUtilities`, `UserSecurityChecks`. | Partial |

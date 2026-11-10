@@ -71,11 +71,11 @@
         const fields = [].concat(...S.formListColumns(node)).map((field) => S.hideGuard(field, attributeCode(field))).join("");
         return js`
             {
-                const $info = sri.openFormList(${jsString(name)});
+                // the rows come one at a time, each made as it is written (docs/ui/Screen-Output.md)
+                const $info = sri.openFormList(${jsString(name)}, true);
                 sri.write(${jsString("    <" + name + ">\n")});
-                for (let $index = 0; $index < $info.count; $index++) {
+                for (let $index = 0; sri.startFormListRow($info, $index); $index++) {
                     sri.write(${jsString("        <" + name + "Entry")});
-                    sri.startFormListRow($info, $index);
                     try {
                         ${fields}
                         sri.write("/>\\n");

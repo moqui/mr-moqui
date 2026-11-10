@@ -116,6 +116,21 @@ pub fn xml_element(
     Ok(out)
 }
 
+/// One record as Java's `EntityValue.writeXmlText(writer, prefix, dependentLevels)` writes it, or with the `master`
+/// definition (`writeXmlTextMaster`), and how many records that is (each dependent counts).
+pub fn xml_text(
+    facade: &EntityFacade,
+    entity_name: &str,
+    fields: &crate::entity::FieldMap,
+    levels: i64,
+    master: Option<&str>,
+    prefix: &str,
+) -> Result<(String, u64), Error> {
+    let node = render_record(facade, entity_name, fields, levels, master)?;
+    let count = xml_record_count(&node);
+    Ok((xml_body(std::slice::from_ref(&node), prefix, false), count))
+}
+
 /// `EntityFacade.rest`. Operations are find, create, store, update, and delete.
 ///
 /// `get`/`post`/`put`/`patch`/`delete` map the same way as `EntityFacadeImpl.rest`.
@@ -1372,6 +1387,36 @@ fn blank_view(entity_name: &str) -> EntityDefinition {
 /// Run a built view. With `authorize`, reading it needs `view` authorization on each member entity, and the entity
 /// filters of each authorizing record apply, as a find of each member would.
 fn run_view(facade: &EntityFacade, built: &BuiltView, authorize: bool) -> Result<Vec<BTreeMap<String, Value>>, Error> {
+    let prepared = prepare_view(facade, built, authorize)?;
+    let rows = query_tx(&prepared.tx, &prepared.sql, &prepared.params)?;
+    after_statement(facade, &prepared.tx, false);
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(prepared.row(facade, row)?);
+    }
+    Ok(out)
+}
+
+/// A built view's statement, ready to run, with the member artifacts it pushed while it runs.
+struct PreparedView {
+    view: EntityDefinition,
+    sql: String,
+    params: Vec<Value>,
+    columns: Vec<(std::sync::Arc<str>, String)>,
+    tx: crate::transaction::TransactionManager,
+    _artifacts: Vec<EntityArtifact>,
+}
+
+impl PreparedView {
+    /// A database row as the view's fields, read as a find reads them.
+    fn row(&self, facade: &EntityFacade, row: crate::driver::DbRow) -> Result<BTreeMap<String, Value>, Error> {
+        let mapped = map_row(&self.columns, row);
+        let row = field_rw::after_read(facade, &self.view, mapped)?;
+        Ok(row.into_iter().map(|(name, value)| (name.to_string(), value)).collect())
+    }
+}
+
+fn prepare_view(facade: &EntityFacade, built: &BuiltView, authorize: bool) -> Result<PreparedView, Error> {
     let anchor = built
         .view
         .member_entities
@@ -1417,15 +1462,57 @@ fn run_view(facade: &EntityFacade, built: &BuiltView, authorize: bool) -> Result
         )
     })?;
     let columns = view_columns(&view);
-    let rows = query_tx(&tx, &statement.sql, &statement.params)?;
-    after_statement(facade, &tx, false);
-    let mut out = Vec::with_capacity(rows.len());
-    for row in rows {
-        let mapped = map_row(&columns, row);
-        let row = field_rw::after_read(facade, &view, mapped)?;
-        out.push(row.into_iter().map(|(name, value)| (name.to_string(), value)).collect());
+    Ok(PreparedView {
+        view,
+        sql: statement.sql,
+        params: statement.params,
+        columns,
+        tx,
+        _artifacts: artifacts,
+    })
+}
+
+/// [`run_code_view`] a row at a time through a database cursor, as Java iterates a DataDocument's view: `body` gets
+/// each row as it is read, and no row is held after it. The cursor lives on the transaction's connection; with none
+/// in place one is begun and committed at the end. `body` should not run another query on MySQL
+/// ([`EntityFacade::streams_beside_queries`]).
+pub(crate) fn each_code_view_row(
+    facade: &EntityFacade,
+    code: &CodeView,
+    condition: Option<Condition>,
+    order: Vec<OrderBy>,
+    page: LimitOffset,
+    body: &mut dyn FnMut(BTreeMap<String, Value>) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let built = code_view_built(facade, code, condition, order, page)?;
+    let prepared = prepare_view(facade, &built, false)?;
+    let tx = &prepared.tx;
+    let scope = if tx.in_transaction() {
+        None
+    } else {
+        Some(tx.scope(None)?)
+    };
+    tx.with_connection(|conn| conn.open_stream(&prepared.sql, &prepared.params))?;
+    after_statement(facade, tx, false);
+    let read = (|| loop {
+        match tx.with_connection(|conn| conn.next_row())? {
+            Some(row) => body(prepared.row(facade, row)?)?,
+            None => return Ok(()),
+        }
+    })();
+    let closed = tx.with_connection(|conn| {
+        if conn.stream_open() {
+            conn.close_stream()
+        } else {
+            Ok(())
+        }
+    });
+    match scope {
+        // dropped, the scope rolls back
+        Some(scope) if read.is_ok() && closed.is_ok() => scope.commit()?,
+        _ => {}
     }
-    Ok(out)
+    read.and(closed)
 }
 
 /// A view built in code: one primary member, then relationship members joined in order.
@@ -1438,15 +1525,15 @@ pub(crate) struct CodeView {
     pub(crate) aliases: Vec<FieldAlias>,
 }
 
-/// Run a [`CodeView`]. Field names in `condition` and `order` are alias names, or
-/// `entity_alias.field` through [`FieldRef::aliased`].
-pub(crate) fn run_code_view(
+/// A [`CodeView`] as a built view: its members joined in order and the conditions of the joins. Field names in
+/// `condition` and `order` are alias names, or `entity_alias.field` through [`FieldRef::aliased`].
+fn code_view_built(
     facade: &EntityFacade,
     code: &CodeView,
     condition: Option<Condition>,
     order: Vec<OrderBy>,
     page: LimitOffset,
-) -> Result<Vec<BTreeMap<String, Value>>, Error> {
+) -> Result<BuiltView, Error> {
     let primary_name = facade.with_entity(&code.primary_entity, |entity, _, _| Ok(entity.full_name.clone()))?;
     let mut members = vec![MemberEntity::new(code.primary_alias.clone(), primary_name)];
     let mut conditions = Vec::new();
@@ -1465,16 +1552,12 @@ pub(crate) fn run_code_view(
     let mut view = blank_view(&code.name);
     view.member_entities = members;
     view.aliases = code.aliases.clone();
-    run_view(
-        facade,
-        &BuiltView {
-            view,
-            condition: and_all(conditions),
-            order,
-            page,
-        },
-        false,
-    )
+    Ok(BuiltView {
+        view,
+        condition: and_all(conditions),
+        order,
+        page,
+    })
 }
 
 /// Comma-separated order entries as Java `FieldOrderOptions` reads them. `alias.field` names a

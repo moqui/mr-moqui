@@ -71,6 +71,6 @@ $h.subscreensMenu({"name":"subscreens-menu","attrs":{"type":"popup","title":"App
 $h.subscreensPanel({"name":"subscreens-panel","attrs":{"id":"Tabs","dynamic":"true"}});
 sri.renderSection("First");
 if (sri.doBoundaryComments()) sri.write("<!-- BEGIN render-mode.text[inline][@template=true] -->");
-sri.write(sri.renderInlineText("<b>raw</b>"));
+sri.writeInlineText("<b>raw</b>");
 if (sri.doBoundaryComments()) sri.write("<!-- END   render-mode.text[inline][@template=true] -->");
 if (sri.doBoundaryComments()) sri.write("<!-- END   screen[@location=" + sri.getActiveScreenDef().location + "].widgets -->\n");

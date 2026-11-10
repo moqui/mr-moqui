@@ -38,6 +38,13 @@ mod bulk;
 
 pub use bulk::{Purged, BULK_CHUNK};
 
+/// Java's `ResultSet.TYPE_FORWARD_ONLY`, a find's iterator by default ([`EntityFind::result_set_type`]).
+pub const TYPE_FORWARD_ONLY: i32 = 1003;
+/// Java's `ResultSet.TYPE_SCROLL_INSENSITIVE`: an iterator that moves back and jumps.
+pub const TYPE_SCROLL_INSENSITIVE: i32 = 1004;
+/// Java's `ResultSet.TYPE_SCROLL_SENSITIVE`, a find for update's iterator; here as scroll insensitive.
+pub const TYPE_SCROLL_SENSITIVE: i32 = 1005;
+
 /// A find builder. Methods consume `self` so conditions chain. A clone is the same find, for a count beside a list.
 #[derive(Clone)]
 pub struct EntityFind {
@@ -64,6 +71,8 @@ pub struct EntityFind {
     pub(super) use_cache: Option<bool>,
     /// Java's scroll-insensitive result set type: the iterator can move back. See [`EntityListIterator`].
     scrollable: bool,
+    /// Java's `resultSetType`: [`TYPE_FORWARD_ONLY`] unless set, or [`TYPE_SCROLL_SENSITIVE`] for update.
+    result_set_type: i32,
     /// Java's `useClone`: read from a clone datasource of the entity's group when one is open.
     use_clone: bool,
     /// SQL actually executed by this find; clones retain its diagnostic history.
@@ -95,6 +104,7 @@ impl EntityFind {
             disable_authz: false,
             use_cache: None,
             scrollable: false,
+            result_set_type: TYPE_FORWARD_ONLY,
             use_clone: false,
             query_texts: Arc::new(Mutex::new(Vec::new())),
             bulk_chunk: None,
@@ -123,7 +133,22 @@ impl EntityFind {
     #[must_use]
     pub fn scrollable(mut self, on: bool) -> Self {
         self.scrollable = on;
+        self.result_set_type = if on { TYPE_SCROLL_INSENSITIVE } else { TYPE_FORWARD_ONLY };
         self
+    }
+
+    /// Java's `resultSetType(type)`: [`TYPE_FORWARD_ONLY`] (the default) reads forward through the cursor holding a
+    /// row or two; [`TYPE_SCROLL_INSENSITIVE`] and [`TYPE_SCROLL_SENSITIVE`] move back and jump, keeping the rows read.
+    #[must_use]
+    pub fn result_set_type(mut self, kind: i32) -> Self {
+        self.result_set_type = kind;
+        self.scrollable = kind != TYPE_FORWARD_ONLY;
+        self
+    }
+
+    /// Java's `getResultSetType`.
+    pub fn get_result_set_type(&self) -> i32 {
+        self.result_set_type
     }
 
     /// `useCache(flag)`: true reads through the entity cache even for an entity whose `cache` is not `true` (but not one
@@ -157,6 +182,11 @@ impl EntityFind {
 
     pub fn entity_name(&self) -> &str {
         &self.entity_name
+    }
+
+    /// The facade the find reads through.
+    pub fn facade(&self) -> &EntityFacade {
+        &self.facade
     }
 
     /// Java's `condition(field, value)`: a second value for the same field replaces the first.
@@ -238,6 +268,9 @@ impl EntityFind {
     /// reads from the database, not from the entity cache or the rows a transaction cache holds.
     pub fn for_update(mut self, lock: bool) -> Self {
         self.for_update = lock;
+        // as Java's forUpdate: a locking find's iterator is scroll sensitive, else forward only
+        self.result_set_type = if lock { TYPE_SCROLL_SENSITIVE } else { TYPE_FORWARD_ONLY };
+        self.scrollable = lock;
         self
     }
 
@@ -1144,6 +1177,12 @@ impl EntityListIterator {
         }
     }
 
+    /// An iterator over rows already read, as one a hold or a cached find gives: for a caller whose database would not
+    /// run its other statements beside an open cursor (MySQL's open result).
+    pub fn of_list(facade: EntityFacade, entity_name: String, list: EntityList) -> Self {
+        Self::memory(facade, entity_name, list)
+    }
+
     fn memory(facade: EntityFacade, entity_name: String, list: EntityList) -> Self {
         let l10n = find_l10n(&facade, &entity_name);
         Self {
@@ -1230,6 +1269,59 @@ impl EntityListIterator {
         self.current + 1
     }
 
+    /// Java's `first`: move to the first row; false when there is none. A forward-only stream moves there only before
+    /// it has read past it.
+    pub fn first(&mut self) -> Result<bool, Error> {
+        self.absolute(1)
+    }
+
+    /// Java's `last`: move to the last row; false when there is none.
+    ///
+    /// # Errors
+    ///
+    /// A forward-only stream cannot know its last row without reading past it.
+    pub fn last(&mut self) -> Result<bool, Error> {
+        self.absolute(-1)
+    }
+
+    /// Java's `beforeFirst`: `next` gives the first row again.
+    ///
+    /// # Errors
+    ///
+    /// A forward-only stream that has read a row cannot move back.
+    pub fn before_first(&mut self) -> Result<(), Error> {
+        if self.memory.is_none() && !self.scrollable && self.consumed > 0 {
+            return Err(self.forward_only());
+        }
+        self.current = -1;
+        Ok(())
+    }
+
+    /// Java's `afterLast`: `previous` gives the last row.
+    ///
+    /// # Errors
+    ///
+    /// A forward-only stream cannot move back from there.
+    pub fn after_last(&mut self) -> Result<(), Error> {
+        let total = self.total()?;
+        self.current = i64::try_from(total).unwrap_or(i64::MAX);
+        Ok(())
+    }
+
+    /// Java's `hasPrevious`: whether a row comes before the current one.
+    pub fn has_previous(&self) -> bool {
+        self.current > 0
+    }
+
+    /// Java's `currentEntityValue`: the row the cursor is on; `None` before the first or after the last.
+    pub fn current_value(&mut self) -> Result<Option<EntityValue>, Error> {
+        let Ok(index) = usize::try_from(self.current) else {
+            return Ok(None);
+        };
+        let row = self.row_at(index)?;
+        row.map(|row| self.emit(row)).transpose()
+    }
+
     /// Java's `setFetchSize`: a hint for how many rows a read brings. Kept; the stream reads by its own batches.
     pub fn set_fetch_size(&mut self, rows: usize) {
         self.fetch_size = Some(rows);
@@ -1264,6 +1356,23 @@ impl EntityListIterator {
             out.push(row);
         }
         Ok(EntityList::new(out))
+    }
+
+    /// Java's `writeXmlText` and `writeXmlTextMaster`: each row as its XML element (with dependents to `levels`, or the
+    /// `master` definition), from the first when the cursor can go back, else from here on; the text and how many
+    /// records it holds. A dependent is read beside the cursor ([`EntityFacade::streams_beside_queries`]).
+    pub fn write_xml_text(&mut self, prefix: &str, levels: i64, master: Option<&str>) -> Result<(String, u64), Error> {
+        if self.memory.is_some() || self.scrollable {
+            self.current = -1;
+        }
+        let (mut text, mut count) = (String::new(), 0);
+        while let Some(row) = self.next_value()? {
+            let (xml, records) =
+                super::query_rest::xml_text(&self.facade, &self.entity_name, row.fields(), levels, master, prefix)?;
+            text.push_str(&xml);
+            count += records;
+        }
+        Ok((text, count))
     }
 
     /// Every row, reading the stream to its end. Only for a cursor that keeps its rows.

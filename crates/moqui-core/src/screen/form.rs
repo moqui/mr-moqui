@@ -48,6 +48,9 @@ pub struct FormInstance {
     pub list_entry: String,
     /// The form's `entity-find` as actions that fill `list_name`.
     pub entity_find: Option<Actions>,
+    /// The same find with `use-iterator`, filling `list_name` with a cursor (none for a cached find): for a list sent
+    /// a row at a time (`sri.openFormList` streamed, docs/ui/Screen-Output.md).
+    pub entity_find_cursor: Option<Actions>,
     pub row_actions: Option<Actions>,
     /// Fields with a `from` expression, evaluated for each row after the row actions.
     pub field_from: Vec<(String, String)>,
@@ -91,19 +94,31 @@ impl FormInstance {
         let list = node.has_name("form-list");
         let label = format!("{} form {name}", def.location);
         let list_name = node.attribute("list").unwrap_or_default();
-        let entity_find = match node.first_named("entity-find") {
+        let (entity_find, entity_find_cursor) = match node.first_named("entity-find") {
             Some(find) if list => {
                 let copy = find.deep_copy();
                 copy.set_attribute("list", list_name.clone());
                 copy.set_attribute("form-select-fields", form_select_fields(node).join(","));
                 let actions = MNode::new("actions");
-                actions.append_node(copy);
-                Some(Actions::from_xml(
-                    actions.write_string(),
-                    &format!("{label} entity-find"),
-                )?)
+                actions.append_node(copy.clone());
+                let whole = Actions::from_xml(actions.write_string(), &format!("{label} entity-find"))?;
+                let cursor = if copy.attribute_is("cache", "true") {
+                    None
+                } else {
+                    let iterating = copy.deep_copy();
+                    if iterating.first_named("use-iterator").is_none() {
+                        iterating.append_node(MNode::new("use-iterator"));
+                    }
+                    let actions = MNode::new("actions");
+                    actions.append_node(iterating);
+                    // the find checked above with one more child the actions know
+                    Some(Actions {
+                        xml: std::sync::Arc::from(actions.write_string()),
+                    })
+                };
+                (Some(whole), cursor)
             }
-            _ => None,
+            _ => (None, None),
         };
         let row_actions = match node.first_named("row-actions") {
             Some(actions) if list => Some(Actions::from_node(&actions, &format!("{label} row-actions"))?),
@@ -137,6 +152,7 @@ impl FormInstance {
             list_name,
             list_entry: node.attribute("list-entry").unwrap_or_default(),
             entity_find,
+            entity_find_cursor,
             row_actions,
             field_from,
         })

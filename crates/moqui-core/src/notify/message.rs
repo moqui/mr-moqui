@@ -453,15 +453,16 @@ fn resolve_users(
         }
     }
     if let Some(user_group_id) = user_group_id.filter(|id| !id.is_empty()) {
-        let members = facade
+        // read through a cursor, as Java iterates a group's members: a group of every user holds no list of them
+        let mut members = facade
             .find(GROUP_MEMBER)?
             .eq("userGroupId", Value::string(user_group_id))
-            .list()?;
-        for member in members.values() {
-            if !member_active(member, now) {
+            .iterator()?;
+        while let Some(member) = members.next_value()? {
+            if !member_active(&member, now) {
                 continue;
             }
-            let user_id = field_str(member, "userId").unwrap_or_default();
+            let user_id = field_str(&member, "userId").unwrap_or_default();
             if user_id.is_empty() || !checked.insert(user_id.clone()) {
                 continue;
             }

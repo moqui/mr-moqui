@@ -942,7 +942,7 @@ fn form_package(state: &RenderState, def: &ScreenDef, name: &str) -> Result<(), 
         prepare_screen(state, def)?;
     }
     let node = instance.shared_node()?;
-    let (handle, _) = sri::open_form_list(state, name)?;
+    let (handle, _) = sri::open_form_list(state, name, false)?;
     let mut rows: Vec<IndexMap<String, Value>> = state
         .form_lists
         .borrow()
