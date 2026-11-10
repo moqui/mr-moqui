@@ -1138,7 +1138,7 @@ pub fn now_effective_value() -> Value {
 pub fn now_effective_millis() -> i64 {
     ExecutionContext::with_current(ExecutionContext::effective_time)
         .flatten()
-        .unwrap_or_else(now_millis)
+        .unwrap_or_else(moqui_lib::data_clock::now_millis)
 }
 
 pub fn now_millis() -> i64 {

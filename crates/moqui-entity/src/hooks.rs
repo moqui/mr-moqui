@@ -249,7 +249,7 @@ pub fn now_millis() -> i64 {
 
 /// Java's `ec.user.nowTimestamp` as epoch millis: the entered context's effective time, or the clock.
 pub fn now_effective_millis() -> i64 {
-    (get().effective_millis)().unwrap_or_else(now_millis)
+    (get().effective_millis)().unwrap_or_else(moqui_lib::data_clock::now_millis)
 }
 
 /// A `java.sql.Timestamp` value of epoch `millis`.

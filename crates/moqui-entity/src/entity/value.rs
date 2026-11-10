@@ -17,7 +17,6 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock, RwLockReadGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use moqui_db::model::EntityDefinition;
 use moqui_db::sql::{delete, insert, insert_if_missing, insert_or_update, update, Condition};
@@ -1719,13 +1718,8 @@ impl EntityFacade {
             .ok()
             .and_then(|tx| tx.start_time_millis())
             .filter(|millis| *millis > 0);
-        let millis = began.unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .ok()
-                .and_then(|duration| i64::try_from(duration.as_millis()).ok())
-                .unwrap_or(0)
-        });
+        // Change 10: writes outside a transaction use the same validated data clock.
+        let millis = began.unwrap_or_else(moqui_lib::data_clock::now_millis);
         basic_convert(&Value::I64(millis), "java.sql.Timestamp").value
     }
 
