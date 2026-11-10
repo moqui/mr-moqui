@@ -493,6 +493,7 @@
             // false; an option that is an expression keeps the chain.
             const literal = (name) => !has(node, name) || attr(node, name) === "true" || attr(node, name) === "false";
             if (literal("cache") && literal("for-update") && literal("for-no-key-update") && literal("use-clone")) {
+                oneLock(node);
                 let flags = 0;
                 if (has(node, "cache")) flags |= 1 | (attr(node, "cache") === "true" ? 2 : 0);
                 if (has(node, "for-update")) flags |= 4 | (attr(node, "for-update") === "true" ? 8 : 0);

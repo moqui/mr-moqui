@@ -277,6 +277,27 @@
         }
     }));
 
+    // A query part decoded as a form's: + is a space. A part with neither + nor % is as it is, with no copy.
+    const PLUS = /\+/g, ENCODED = /[+%]/;
+    const decodeQuery = (text) => {
+        if (!ENCODED.test(text)) return text;
+        try { return decodeURIComponent(text.replace(PLUS, " ")); } catch (e) { return text; }
+    };
+    // The first value of the query parameter key of url, decoded; null when it has none.
+    const queryParam = (url, key) => {
+        if (url == null) return null;
+        const text = typeof url === "string" ? url : String(url);
+        const at = text.indexOf("?");
+        if (at < 0) return null;
+        const hash = text.indexOf("#", at + 1);
+        for (const part of text.slice(at + 1, hash < 0 ? text.length : hash).split("&")) {
+            if (part === "") continue;
+            const eq = part.indexOf("=");
+            if (decodeQuery(eq < 0 ? part : part.slice(0, eq)) === key) return decodeQuery(eq < 0 ? "" : part.slice(eq + 1));
+        }
+        return null;
+    };
+
     class Response {
         constructor(data) { Object.assign(this, data); }
         // The first value of a header, case-insensitive; null when the response has none.
@@ -303,21 +324,8 @@
         // A query parameter of the final url, else of location (a redirect not followed); null when neither has it.
         urlParam(name) {
             const key = String(name);
-            const decode = (text) => { try { return decodeURIComponent(text.replace(/\+/g, " ")); } catch (e) { return text; } };
-            const find = (url) => {
-                if (url == null) return null;
-                const text = String(url);
-                const at = text.indexOf("?");
-                if (at < 0) return null;
-                for (const part of text.slice(at + 1).split("#")[0].split("&")) {
-                    if (part === "") continue;
-                    const eq = part.indexOf("=");
-                    if (decode(eq < 0 ? part : part.slice(0, eq)) === key) return decode(eq < 0 ? "" : part.slice(eq + 1));
-                }
-                return null;
-            };
-            const found = find(this.url);
-            return found != null ? found : find(this.location);
+            const found = queryParam(this.url, key);
+            return found != null ? found : queryParam(this.location, key);
         }
         assertContains(text) {
             assert(this.text.includes(text), `the response of ${this.url} (status ${this.status}) does not contain ` +

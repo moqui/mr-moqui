@@ -34,6 +34,7 @@ mod schedule;
 pub(crate) mod script;
 mod stats;
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
@@ -548,7 +549,7 @@ pub(crate) fn iterated(iteration: u64) -> bool {
     if let Some((name, elapsed, failed)) = timed {
         let sample = Sample {
             kind: Kind::Step,
-            outcome: if failed { "error" } else { "ok" },
+            outcome: Cow::Borrowed(if failed { "error" } else { "ok" }),
             status: None,
             elapsed,
             error: failed.then(|| "the iteration had an error".to_string()),
@@ -710,7 +711,7 @@ pub(crate) fn step_end(name: &str, error: Option<&str>) {
     };
     let sample = Sample {
         kind: Kind::Step,
-        outcome: if error.is_some() { "error" } else { "ok" },
+        outcome: Cow::Borrowed(if error.is_some() { "error" } else { "ok" }),
         status: None,
         elapsed,
         error: error.map(str::to_string),
@@ -719,10 +720,10 @@ pub(crate) fn step_end(name: &str, error: Option<&str>) {
 }
 
 /// One sample, of any kind, for [`record`].
-pub(crate) struct Sample<'a> {
+pub(crate) struct Sample {
     pub(crate) kind: Kind,
     /// The outcome label: an HTTP status, `ok`, `error`.
-    pub(crate) outcome: &'a str,
+    pub(crate) outcome: Cow<'static, str>,
     /// For HTTP, the status for `statuses`: 0 for a transport error.
     pub(crate) status: Option<u16>,
     pub(crate) elapsed: Duration,
@@ -732,22 +733,28 @@ pub(crate) struct Sample<'a> {
 
 /// Count one sample of a load user's scenario under its name. An error (except a step's) is counted here and comes
 /// back as `Err`, which the host throws so that the user's iteration ends. Outside a load's scenario this does nothing.
-pub(crate) fn record(name: impl FnOnce() -> String, sample: Sample<'_>) -> Result<(), String> {
+pub(crate) fn record(name: impl FnOnce() -> String, sample: Sample) -> Result<(), String> {
     with_recorder(|recorder| {
         if !recorder.timed {
             return Ok(());
         }
-        let name = name();
+        let mut name = name();
         let micros = u64::try_from(sample.elapsed.as_micros()).unwrap_or(u64::MAX);
         let second = recorder.load.started.elapsed().as_secs();
         if sample.kind != Kind::Step {
             recorder.waited += sample.elapsed;
         }
         let error = sample.error.is_some();
+        // the name is kept here only for an error's message and sample, so a request that is not one copies nothing
+        let counted = error && sample.kind != Kind::Step;
         recorder.push(Pending {
-            name: name.clone(),
+            name: if counted {
+                name.clone()
+            } else {
+                std::mem::take(&mut name)
+            },
             kind: sample.kind,
-            outcome: sample.outcome.to_string(),
+            outcome: sample.outcome,
             status: sample.status,
             micros,
             second,
@@ -801,10 +808,10 @@ pub(crate) fn observe(name: impl FnOnce() -> String, kind: Kind, observed: &Obse
     };
     let outcome = observed
         .status
-        .map_or_else(|| "error".to_string(), |status| status.to_string());
+        .map_or(Cow::Borrowed("error"), |status| Cow::Owned(status.to_string()));
     let sample = Sample {
         kind,
-        outcome: &outcome,
+        outcome,
         status: Some(observed.status.unwrap_or(0)),
         elapsed: observed.elapsed,
         error,

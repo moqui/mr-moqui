@@ -203,8 +203,7 @@ fn expand(scope: &mut Scope<'_>, localize: bool) -> Result<Value, Conv> {
         if !text.contains('$') || text.ends_with('$') {
             return Ok(text_value(&text));
         }
-        let literal = crate::script::runtime::template_literal(&text);
-        let hash = crate::script::text::hash_text(&literal);
+        let (literal, hash) = crate::script::runtime::template_source(&text);
         match run_here(scope, &literal, hash, super::compiled::FILE_NAME, Some(&text)) {
             Ok(Value::String(text)) => Ok(Value::String(text)),
             Ok(other) => Ok(Value::String(scope.to_js_string(&other)?)),

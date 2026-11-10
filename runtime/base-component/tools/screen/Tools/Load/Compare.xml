@@ -40,9 +40,12 @@ along with this software (see the LICENSE.md file). If not, see
             const metrics = {requests: 'Requests', rps: 'Per second', errors: 'Errors', errorRate: 'Error rate', p50: 'p50 (ms)', p95: 'p95 (ms)',
                 p99: 'p99 (ms)', count: 'Count'}
             const number = lib.number
-            const shown = (metric, value) => number(value) == null ? '' : metric == 'errorRate' ? ec.l10n.format(number(value) * 100, '#,##0.##') + '%'
-                : ec.l10n.format(number(value), metric == 'requests' || metric == 'count' || metric == 'errors' ? '#,##0' : '#,##0.##')
-            const change = (value) => number(value) == null ? '' : ' (' + (number(value) > 0 ? '+' : '') + ec.l10n.format(number(value), '#,##0.#') + '%)'
+            const shown = (metric, value) => {
+                const n = number(value)
+                return n == null ? '' : metric == 'errorRate' ? ec.l10n.format(n * 100, '#,##0.##') + '%'
+                    : ec.l10n.format(n, metric == 'requests' || metric == 'count' || metric == 'errors' ? '#,##0' : '#,##0.##')
+            }
+            const change = (value) => { const n = number(value); return n == null ? '' : ' (' + (n > 0 ? '+' : '') + ec.l10n.format(n, '#,##0.#') + '%)' }
             let lastGroup = null
             compareRows = (compared.out.rows || []).map((row, index) => {
                 const group = row.section == 'summary' ? 'Summary' : String(row.name || '')

@@ -58,26 +58,30 @@ along with this software (see the LICENSE.md file). If not, see
             const statuses = {running: ['Running', 'primary'], completed: ['Completed', 'positive'], stopped: ['Stopped', 'warning'], failed: ['Failed', 'negative']}
             const kinds = {service: "This server's services", this: 'This server'}
             // a run's start, an RFC 3339 text or epoch milliseconds, as a timestamp
+            const DIGITS = /^[0-9]+$/, SCRIPT_DIR = /^.*\//, LOAD_JS = /\.load\.js$/
             const stamp = (value) => {
                 if (value == null || value === '') return null
-                try { return basicConvert(/^[0-9]+$/.test(String(value)) ? Number(value) : String(value), 'Timestamp') } catch (e) { return null }
+                try { return basicConvert(DIGITS.test(String(value)) ? Number(value) : String(value), 'Timestamp') } catch (e) { return null }
             }
             const time = (value) => { const at = stamp(value); return at == null ? '' : ec.l10n.format(at, 'yyyy-MM-dd HH:mm:ss') }
             // the day a run started in the user's time zone, against the day asked for
             const day = (value) => { const at = stamp(value); return at == null ? '' : String(ec.l10n.format(at, 'yyyy-MM-dd')) }
             const from = context.startedFrom ? String(context.startedFrom).slice(0, 10) : ''
-            const all = (listed.out.runs || []).map((run) => {
+            // the runs asked for, then a row for each run of the page only (its start formatted, its script's title)
+            const all = from ? (listed.out.runs || []).filter((run) => { const started = day(run.start); return !!started && started >= from })
+                : (listed.out.runs || [])
+            const row = (run) => {
                 const status = statuses[run.status] || [String(run.status || ''), 'grey-7']
                 const script = String(run.script || '')
-                return {runId: String(run.runId || ''), scriptTitle: titles[script] || script.replace(/^.*\//, '').replace(/\.load\.js$/, ''),
+                return {runId: String(run.runId || ''), scriptTitle: titles[script] || script.replace(SCRIPT_DIR, '').replace(LOAD_JS, ''),
                     label: String(run.label || ''), targetText: kinds[run.targetKind] || String(run.target || ''), statusText: status[0], statusColor: status[1],
                     start: String(run.start || ''), startText: time(run.start), users: run.users, requests: run.requests, rps: run.rps, errors: run.errors,
                     p95: run.p95, user: String(run.user || ''), finished: run.status != 'running'}
-            }).filter((run) => !from || (day(run.start) && day(run.start) >= from))
+            }
             const pageSize = Math.min(100, Math.max(1, Number(context.pageSize) || 20))
             const pageMaxIndex = Math.max(0, Math.ceil(all.length / pageSize) - 1)
             const pageIndex = Math.min(pageMaxIndex, Math.max(0, Number(context.pageIndex) || 0))
-            runList = all.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize)
+            runList = all.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize).map(row)
             runListCount = all.length
             runListPageIndex = pageIndex
             runListPageSize = pageSize

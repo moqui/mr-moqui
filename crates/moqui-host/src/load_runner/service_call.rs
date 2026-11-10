@@ -77,7 +77,7 @@ pub(crate) fn call(args: &Value) -> Result<Value, String> {
     let counted = error.clone().filter(|_| !expected.contains(&outcome));
     let sample = Sample {
         kind: Kind::Service,
-        outcome,
+        outcome: std::borrow::Cow::Borrowed(outcome),
         status: None,
         elapsed: called.elapsed,
         error: counted.clone(),

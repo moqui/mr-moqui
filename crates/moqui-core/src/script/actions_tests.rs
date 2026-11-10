@@ -333,6 +333,7 @@ fn for_no_key_update_is_a_lock_of_its_own_and_not_with_for_update() {
     for both in [
         r#"<actions><entity-find entity-name="mantle.party.Party" list="l" for-update="true" for-no-key-update="true"/></actions>"#,
         r#"<actions><entity-find-related value-field="org" relationship-name="roles" list="roles" for-update="true" for-no-key-update="true"/></actions>"#,
+        r#"<actions><entity-find-one entity-name="mantle.party.Party" value-field="org" for-update="true" for-no-key-update="true"><field-map field-name="partyId"/></entity-find-one></actions>"#,
     ] {
         let err = generate(both).unwrap_err();
         assert!(

@@ -512,12 +512,14 @@ fn select_tail(
 
 /// The database's text for `lock` ([`Dialect::lock_text`]), when it has one.
 pub(crate) fn lock_rows(out: &mut Writer<'_>, lock: Lock) {
-    let text = out.dialect.lock_text(lock).to_string();
+    // the dialect outlives the writer's borrow, so its text is pushed as it is, not copied first
+    let dialect = out.dialect;
+    let text = dialect.lock_text(lock);
     if text.is_empty() {
         return;
     }
     out.push(" ");
-    out.push(&text);
+    out.push(text);
 }
 
 fn select_list(entity: &EntityDefinition, dialect: &Dialect, fields: &[FieldRef]) -> String {

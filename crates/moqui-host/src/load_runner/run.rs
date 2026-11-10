@@ -98,11 +98,6 @@ impl Active {
         self.load.stop_now();
         self.bound.interrupt.store(true, Ordering::SeqCst);
     }
-
-    /// The server's samples so far, for a run on this server.
-    pub(crate) fn server_json(&self) -> Option<Value> {
-        self.server.as_ref().map(|samples| lock(samples).to_json())
-    }
 }
 
 /// The registry: the running loads by runId, and the condition a run's end and shutdown wait on.

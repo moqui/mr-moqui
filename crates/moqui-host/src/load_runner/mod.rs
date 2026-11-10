@@ -330,10 +330,9 @@ fn get_load_run_status(parameters: &BTreeMap<String, Value>, _facade: &EntityFac
         run::wait_for_end(&id, Duration::from_secs_f64(wait.min(MAX_WAIT_SECONDS)));
     }
     if let Some(active) = run::find(&id) {
-        let mut snapshot = active.load.snapshot();
-        if let Some(server) = active.server_json() {
-            snapshot["server"] = server;
-        }
+        // the server's samples (up to 720) are in the finished result, not in each poll: the run page shows the
+        // server's numbers from the status map
+        let snapshot = active.load.snapshot();
         let summary = active.summary(&snapshot);
         return Ok(BTreeMap::from([
             ("runId".to_string(), Value::String(id)),

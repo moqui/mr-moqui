@@ -20,6 +20,7 @@
 
 use std::path::Path;
 
+use super::definition::ScreenDef;
 use super::ScreenFacade;
 use crate::context::{Error, ErrorKind, ExecutionContextFactory};
 use crate::web::{self, WebRequest};
@@ -110,7 +111,7 @@ pub fn file_under(
 }
 
 /// Whether the file at `location`, under the screen at `screen_location`, is a screen's source rather than a static file:
-/// a [render-mode source](is_render_mode_source), `<stem>.tui.json` beside a screen `<stem>.xml`, or a file that a
+/// a render-mode source (`<stem>.<mode>` beside a screen `<stem>.xml` that names the mode), `<stem>.tui.json` beside a screen `<stem>.xml`, or a file that a
 /// `render-mode` `text` of that sibling screen or of the screen above names by `location`. A request for it renders the
 /// screen when its name is `<screen>.<mode>`, and is not found otherwise. A file no screen text reads (a public island's
 /// `.qvue`, loaded by URL) stays static. Moqui Java serves them all.
@@ -120,27 +121,52 @@ pub(crate) fn is_screen_source(
     screen_location: &str,
     location: &str,
 ) -> bool {
-    if is_render_mode_source(factory, facade, location) {
-        return true;
-    }
-    let named = |screen: &str| {
-        facade.is_screen(factory, screen)
-            && facade
-                .screen_def(factory, screen)
-                .is_ok_and(|def| def.text_locations.iter().any(|text| text == location))
-    };
-    let (dir, name) = location.rsplit_once('/').unwrap_or(("", location));
-    if let Some(stem) = name
-        .split_once('.')
-        .map(|(stem, _)| stem)
-        .filter(|stem| !stem.is_empty())
-    {
-        let sibling = format!("{dir}/{stem}.xml");
-        if (name.ends_with(".tui.json") && facade.is_screen(factory, &sibling)) || named(&sibling) {
+    let names_file = |def: &ScreenDef| def.text_locations.iter().any(|text| text == location);
+    // the screen beside the file is looked for once (a file system check when it is not a cached screen, as for every
+    // static asset) and asked each way it can claim the file
+    if let Some(beside) = Beside::of(factory, facade, location) {
+        if beside.name.ends_with(".tui.json") {
+            return true;
+        }
+        let claims = |def: &ScreenDef| beside.names_mode(facade, def) || names_file(def);
+        if beside.def.as_deref().is_ok_and(claims) {
             return true;
         }
     }
-    named(screen_location)
+    facade.is_screen(factory, screen_location)
+        && facade
+            .screen_def(factory, screen_location)
+            .is_ok_and(|def| names_file(&def))
+}
+
+/// The screen `<stem>.xml` beside a file `<stem>.<rest>`, when there is one.
+struct Beside<'a> {
+    /// The file's name.
+    name: &'a str,
+    /// What follows the stem's first dot: a render mode when the file is the screen's source in that mode.
+    mode: &'a str,
+    def: Result<std::sync::Arc<ScreenDef>, Error>,
+}
+
+impl<'a> Beside<'a> {
+    fn of(factory: &ExecutionContextFactory, facade: &ScreenFacade, location: &'a str) -> Option<Self> {
+        let (dir, name) = location.rsplit_once('/').unwrap_or(("", location));
+        let (stem, mode) = name.split_once('.').filter(|(stem, _)| !stem.is_empty())?;
+        let screen = format!("{dir}/{stem}.xml");
+        if !facade.is_screen(factory, &screen) {
+            return None;
+        }
+        Some(Self {
+            name,
+            mode,
+            def: facade.screen_def(factory, &screen),
+        })
+    }
+
+    /// The file is `<stem>.<mode>` for a render mode of the conf that the screen names in its `render-modes`.
+    fn names_mode(&self, facade: &ScreenFacade, def: &ScreenDef) -> bool {
+        facade.is_render_mode_valid(self.mode) && def.names_render_mode(self.mode)
+    }
 }
 
 /// Whether the file at `location` is `<stem>.<mode>` for a render mode of the conf, beside a screen `<stem>.xml` that names
@@ -148,19 +174,12 @@ pub(crate) fn is_screen_source(
 /// reads), so a request for the name renders the screen, with its authorization, actions and template, and the file is
 /// never sent raw. A file beside a screen that does not name the mode (an island's `.qvue` read as a file), or with no
 /// screen beside it, is a static file as before. Moqui Java serves the file.
+///
+/// The check alone; [`is_screen_source`] makes it with the others on one look for the screen beside the file.
+#[cfg(test)]
 pub(crate) fn is_render_mode_source(factory: &ExecutionContextFactory, facade: &ScreenFacade, location: &str) -> bool {
-    let (dir, name) = location.rsplit_once('/').unwrap_or(("", location));
-    let Some((stem, mode)) = name.split_once('.').filter(|(stem, _)| !stem.is_empty()) else {
-        return false;
-    };
-    if !facade.is_render_mode_valid(mode) {
-        return false;
-    }
-    let screen = format!("{dir}/{stem}.xml");
-    facade.is_screen(factory, &screen)
-        && facade
-            .screen_def(factory, &screen)
-            .is_ok_and(|def| def.names_render_mode(mode))
+    Beside::of(factory, facade, location)
+        .is_some_and(|beside| beside.def.as_deref().is_ok_and(|def| beside.names_mode(facade, def)))
 }
 
 /// Whether a file under a screen is a template a renderer of the conf renders (`.md`, `.html.fancy` and the like), as

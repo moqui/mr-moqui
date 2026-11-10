@@ -77,23 +77,28 @@ function nameRows(names, order) {
     })
 }
 
-// the bins as per-second series: t is the bin's start in seconds from the run's
+// a count of a bin per second, to two places
+const perSecond = (value, seconds) => Math.round(((number(value) || 0) / seconds) * 100) / 100
+
+// the bins as per-second series: t is the bin's start in seconds from the run's. One pass over the bins, which a run's
+// page asks for every 2 seconds while it runs.
 function series(bins, binSeconds) {
     const seconds = number(binSeconds) || 1
     const list = Array.isArray(bins) ? bins : []
-    const round = (value) => (value == null ? null : Math.round(value * 100) / 100)
-    return {
-        binSeconds: seconds,
-        t: list.map((bin) => number(bin.t) || 0),
-        rps: list.map((bin) => round((number(bin.requests) || 0) / seconds)),
-        eps: list.map((bin) => round((number(bin.errors) || 0) / seconds)),
-        p50: list.map((bin) => number(bin.p50)),
-        p95: list.map((bin) => number(bin.p95)),
-        p99: list.map((bin) => number(bin.p99)),
-        users: list.map((bin) => number(bin.users)),
-        // a rate scenario's scheduled starts that no user took, per second
-        dropped: list.map((bin) => round((number(bin.dropped) || 0) / seconds)),
+    // dropped: a rate scenario's scheduled starts that no user took, per second
+    const t = [], rps = [], eps = [], p50 = [], p95 = [], p99 = [], users = [], dropped = []
+    for (let i = 0; i < list.length; i++) {
+        const bin = list[i]
+        t.push(number(bin.t) || 0)
+        rps.push(perSecond(bin.requests, seconds))
+        eps.push(perSecond(bin.errors, seconds))
+        p50.push(number(bin.p50))
+        p95.push(number(bin.p95))
+        p99.push(number(bin.p99))
+        users.push(number(bin.users))
+        dropped.push(perSecond(bin.dropped, seconds))
     }
+    return { binSeconds: seconds, t, rps, eps, p50, p95, p99, users, dropped }
 }
 
 // CPU load and memory of this server, from the status map

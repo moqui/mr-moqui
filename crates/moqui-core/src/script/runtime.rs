@@ -403,9 +403,9 @@ pub fn expand(template: &str) -> Result<String, Error> {
     }
     refuse_null(template)?;
     // the template literal itself, run as an expression
-    let literal = template_literal(template);
+    let (literal, hash) = template_source(template);
     note_widget_expression(template);
-    crate::script::engine::run(EntryKind::Expand, &literal, crate::script::oxide::eval_text)
+    crate::script::engine::run_hashed(EntryKind::Expand, &literal, hash, crate::script::oxide::eval_text)
 }
 
 /// Run one generated action script whose text and cache key were made once.
@@ -584,6 +584,44 @@ pub(crate) fn template_literal(template: &str) -> String {
     source.push('`');
     source
 }
+
+/// [`template_literal`] of `template` and its hash, kept by the thread for the templates it expanded, so an expand of
+/// the same text scans, copies and hashes no new source (plans/Profiling3.md W15, as `ec.resource.expression` keeps
+/// its strict sources). Up to [`TEMPLATE_SOURCES`] texts of up to [`TEMPLATE_SOURCE_MAX`] bytes; a full memo starts
+/// again, and a longer text is made each time.
+pub(crate) fn template_source(template: &str) -> (std::rc::Rc<str>, u64) {
+    thread_local! {
+        static SOURCES: std::cell::RefCell<TemplateSources> = std::cell::RefCell::default();
+    }
+    let made = || {
+        let literal: std::rc::Rc<str> = template_literal(template).into();
+        let hash = crate::script::text::hash_text(&literal);
+        (literal, hash)
+    };
+    if template.len() > TEMPLATE_SOURCE_MAX {
+        return made();
+    }
+    SOURCES.with_borrow_mut(|sources| {
+        if let Some((literal, hash)) = sources.get(template) {
+            return (std::rc::Rc::clone(literal), *hash);
+        }
+        let (literal, hash) = made();
+        if sources.len() >= TEMPLATE_SOURCES {
+            sources.clear();
+        }
+        sources.insert(template.into(), (std::rc::Rc::clone(&literal), hash));
+        (literal, hash)
+    })
+}
+
+/// A template's text to its template literal and that literal's hash.
+type TemplateSources = std::collections::HashMap<Box<str>, (std::rc::Rc<str>, u64), foldhash::fast::RandomState>;
+
+/// The templates a thread keeps the template literal of.
+const TEMPLATE_SOURCES: usize = 1024;
+
+/// The longest template a thread keeps the literal of: a longer one (a message body) costs more to keep than to scan.
+const TEMPLATE_SOURCE_MAX: usize = 4096;
 
 /// The property of a thrown error that names its security kind, so a security error is still one after it has
 /// crossed the script and come back: an authorization failure in a service's script is still one for the call, as

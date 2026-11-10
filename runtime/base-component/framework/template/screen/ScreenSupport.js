@@ -354,11 +354,12 @@
         };
         // An html-print text html can show: inline, or from a location that is an HTML template (not a FO one such as a
         // configured .xsl-fo.ftl, nor an expression whose file is not known here). xsl-fo texts are FO and never qualify.
+        const HTML_LOCATION = /\.html?(\.|#|$)/i;
         const htmlPrintText = (text) => {
             const attrs = text.attrs || {};
             if (!String(attrs.type || "").split(",").some((name) => name.trim() === "html-print")) return false;
             const location = String(attrs.location || "");
-            return !location || (!location.includes("${") && /\.html?(\.|#|$)/i.test(location));
+            return !location || (!location.includes("${") && HTML_LOCATION.test(location));
         };
         // Last explicit match wins over the last fallback, regardless of their document order. An html render of a
         // print-only screen with neither takes the last html-print HTML text, so the screen opened in a browser shows its
@@ -381,7 +382,9 @@
         // punctuator other than ) and ], or after a keyword such as return; a word after . or ?. is a property name) and divides everywhere
         // else, as after a postfix ++ or --. As the host's scan_expression.
         const OPERAND_KEYWORDS = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"]);
-        const WORD = /[A-Za-z0-9_$\u0080-\uffff]/;
+        // The patterns are made once: a regular expression literal in a function is a new object at each evaluation, and
+        // these are tested at each character.
+        const WORD = /[A-Za-z0-9_$\u0080-\uffff]/, SPACE = /\s/, FLAG = /[A-Za-z]/;
         const regexEnd = (text, start) => {
             let j = start + 1;
             let inClass = false;
@@ -395,19 +398,21 @@
             }
             if (j >= text.length) return -1;
             j++;
-            while (j < text.length && /[A-Za-z]/.test(text.charAt(j))) j++;
+            while (j < text.length && FLAG.test(text.charAt(j))) j++;
             return j;
         };
         const exprEnd = (text, from) => {
             let depth = 0;
             let operandNext = true;
             let propertyNext = false;
+            let regex = -1;
             let j = from;
             while (j < text.length) {
                 const ch = text.charAt(j);
                 const next = text.charAt(j + 1);
                 const property = propertyNext;
-                if (!/\s/.test(ch)) propertyNext = ch === ".";
+                const space = SPACE.test(ch);
+                if (!space) propertyNext = ch === ".";
                 if (ch === "'" || ch === '"') {
                     for (j++; j < text.length && text.charAt(j) !== ch; j++) if (text.charAt(j) === "\\") j++;
                     operandNext = false;
@@ -429,8 +434,8 @@
                     if (close < 0) return -1;
                     j = close + 2;
                     continue;
-                } else if (ch === "/" && operandNext && regexEnd(text, j) >= 0) {
-                    j = regexEnd(text, j);
+                } else if (ch === "/" && operandNext && (regex = regexEnd(text, j)) >= 0) {
+                    j = regex;
                     operandNext = false;
                     continue;
                 } else if (WORD.test(ch)) {
@@ -438,7 +443,7 @@
                     while (j < text.length && WORD.test(text.charAt(j))) j++;
                     operandNext = !property && OPERAND_KEYWORDS.has(text.slice(start, j));
                     continue;
-                } else if (/\s/.test(ch)) {
+                } else if (space) {
                     // whitespace leaves what may come next as it was
                 } else if ((ch === "+" || ch === "-") && next === ch) {
                     // a postfix ++ or -- leaves an operand, a prefix one an operator: what may come next is as it was

@@ -16,6 +16,7 @@
 //! [`Recorder`], with no lock, and merges them into the load's [`Shared`] state at most once a second and when it ends.
 //! The shared state has, per name, a histogram, counts by outcome and an error count, and the run's bins.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -130,7 +131,13 @@ impl Shared {
         };
         stats.histogram.record(micros);
         stats.errors += u64::from(error);
-        *stats.outcomes.entry(outcome).or_default() += 1;
+        // the label is copied only the first time the name has it
+        match stats.outcomes.get_mut(outcome.as_ref()) {
+            Some(count) => *count += 1,
+            None => {
+                stats.outcomes.insert(outcome.into_owned(), 1);
+            }
+        }
         if let Some(status) = status {
             *stats.statuses.entry(status).or_default() += 1;
         }
@@ -142,7 +149,8 @@ impl Shared {
 pub(crate) struct Pending {
     pub(crate) name: String,
     pub(crate) kind: Kind,
-    pub(crate) outcome: String,
+    /// An HTTP status, `ok` or `error`: the labels are not copied per sample.
+    pub(crate) outcome: Cow<'static, str>,
     pub(crate) status: Option<u16>,
     pub(crate) micros: u64,
     /// Seconds from the load's start.
