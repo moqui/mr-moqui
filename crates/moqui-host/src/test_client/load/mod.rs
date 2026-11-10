@@ -60,7 +60,6 @@ pub(crate) enum Kind {
     /// `http.raw`.
     Raw,
     /// `service.call` in a server's process.
-    #[allow(dead_code)] // for `moqui test-load` and a run in a server (plans/LoadRunner.md L2, L3)
     Service,
     /// `step(name, fn)`: the whole of `fn`, whose requests are counted under their own names too.
     Step,
@@ -149,7 +148,6 @@ impl Load {
         self.id
     }
 
-    #[allow(dead_code)] // for `moqui test-load` and a run in a server (plans/LoadRunner.md L2, L3)
     pub(crate) fn users(&self) -> u64 {
         self.users
     }
@@ -876,12 +874,11 @@ impl Running {
 }
 
 impl Drop for Running {
-    /// A run dropped without [`Running::wait`] stops its users: those already begun see the stop, and one that has
-    /// not begun is refused, since the load is out of the registry.
+    /// A run dropped, with or without [`Running::wait`], stops its users: those already begun see the stop (a thread
+    /// [`join_all`] gave up on among them), and one that has not begun is refused, since the load is out of the registry.
     fn drop(&mut self) {
-        if !self.handles.is_empty() {
-            self.load.stop_now();
-        }
+        // whatever the handles hold: a thread past its time that wait() left still sees the stop
+        self.load.stop_now();
         self.load.unregister();
     }
 }

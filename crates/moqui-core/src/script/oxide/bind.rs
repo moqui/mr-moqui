@@ -417,6 +417,10 @@ fn trampoline(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'_
     if super::engine::fallback_pending() {
         return Err(super::engine::host_error(scope, super::convert::Conv::Unsupported(FELL_BACK)));
     }
+    if !crate::script::host_call_allowed(method.path) {
+        let message = format!("{} is not available to this script", method.path);
+        return Err(scope.throw_error(NativeErrorKind::Type, &message));
+    }
     let required = method.required();
     let given = scope.argc();
     if given < required {

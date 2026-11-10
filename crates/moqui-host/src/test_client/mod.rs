@@ -25,7 +25,7 @@
 mod browser;
 pub mod cdp;
 mod http;
-mod load;
+pub(crate) mod load;
 mod load_cmd;
 mod offline;
 mod raw;
@@ -307,6 +307,7 @@ fn new_host(args: &ClientArgs, server: Server, client: reqwest::blocking::Client
         offline: Mutex::new(false),
         video: args.video,
         recording: Arc::new(Mutex::new(None)),
+        in_server: None,
     })
 }
 
@@ -691,6 +692,15 @@ fn camel_case(name: &str) -> String {
     out
 }
 
+/// What a load run in a server (`crate::load_runner`, plans/LoadRunner.md §7) adds to the client host: the check of
+/// every URL its users reach, each redirect's included (§10 Targets), and `service.call` in process (§6).
+pub(crate) trait InServer: Send + Sync {
+    /// Whether the run may send a request to `url`; the error says why not.
+    fn allow(&self, url: &str) -> Result<(), String>;
+    /// `service.call(name, parameters, opts)` on the user's thread, whose ExecutionContext the run entered.
+    fn service_call(&self, args: &Value) -> Result<Value, String>;
+}
+
 /// The client host of a run: the server, the params, the HTTP client, and what the current spec opened.
 pub(crate) struct ClientHost {
     /// This host, for the threads of `load` and `parallel`.
@@ -722,7 +732,31 @@ pub(crate) struct ClientHost {
     /// `--video`: each spec's browser screencasts its pages into `recording`.
     video: bool,
     recording: video::Shared,
+    /// A load run in a server: none for `moqui test-client`.
+    in_server: Option<Arc<dyn InServer>>,
 }
+
+/// The calls a load run in a server refuses: a browser, nested loads and `parallel` threads have no place there.
+/// The longest a request, a socket connect or a socket wait of a load run in a server may take: a stop reaches a user
+/// between requests, so this bounds how long a stopped run's threads still send.
+const IN_SERVER_MAX_WAIT: Duration = Duration::from_secs(30);
+
+/// The host functions a script's thread of a load run in a server may call: the client host's calls and the pure
+/// helpers. Not `System`, `SftpClient`, `ResourceReference`, the `ec` facades, or the spec host's `setProperty`,
+/// `parallel` and the like: in the server those would be the server's own (plans/LoadRunner.md §10).
+fn in_server_host_call(path: &str) -> bool {
+    const PURE: [&str; 5] = [
+        "global.",
+        "StringUtilities.",
+        "CollectionUtilities.",
+        "WebUtilities.",
+        "ObjectUtilities.",
+    ];
+    path == "__moquiTestHost.call" || PURE.iter().any(|prefix| path.starts_with(prefix))
+}
+
+/// `response.save` would write into the server's files.
+const NOT_IN_SERVER: [&str; 6] = ["browser.", "page.", "locator.", "load.run", "parallel", "response.save"];
 
 /// A request's `expect: [401, ...]`: the statuses a load does not count as errors.
 fn expected(opts: &Value) -> Option<Vec<u16>> {
@@ -886,6 +920,71 @@ fn merge_limits(script: &Value, run: &Value) -> Value {
 }
 
 impl ClientHost {
+    /// The host of a load run in a server (plans/LoadRunner.md §7): its users' sessions go to `server`, every URL
+    /// through `in_server`'s check, `files` stays in `component_dir` (the script's component), and `service.call`
+    /// runs in process. No browser.
+    pub(crate) fn for_server_run(
+        server: &str,
+        params: BTreeMap<String, String>,
+        insecure: bool,
+        component_dir: PathBuf,
+        in_server: Arc<dyn InServer>,
+    ) -> Result<Arc<ClientHost>, String> {
+        // the target rule is in_server's, which also knows when plain http is allowed
+        let server = Server::parse(server, true).map_err(|err| err.to_string())?;
+        let client = reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .danger_accept_invalid_certs(insecure)
+            .user_agent(load::LOAD_AGENT)
+            .build()
+            .map_err(|err| format!("HTTP client: {err}"))?;
+        Ok(Arc::new_cyclic(|me| ClientHost {
+            me: me.clone(),
+            server,
+            params,
+            client,
+            insecure,
+            timeout: REQUEST_TIMEOUT,
+            request_timeout: REQUEST_TIMEOUT,
+            out_dir: std::env::temp_dir(),
+            component_dir: Mutex::new(component_dir),
+            next_id: AtomicU64::new(1),
+            sessions: Mutex::new(HashMap::new()),
+            sockets: Mutex::new(HashMap::new()),
+            bodies: Mutex::new(VecDeque::new()),
+            current: Mutex::new((String::new(), String::new())),
+            output: Mutex::new(Vec::new()),
+            browser_config: browser::BrowserConfig {
+                chromium: None,
+                headed: false,
+                insecure,
+                runtime: None,
+            },
+            browser: Mutex::new(None),
+            offline: Mutex::new(false),
+            video: false,
+            recording: Arc::new(Mutex::new(None)),
+            in_server: Some(in_server),
+        }))
+    }
+
+    /// A load run in a server checks each URL its users reach; `moqui test-client` checks none.
+    fn allow(&self, url: &str) -> Result<(), String> {
+        match &self.in_server {
+            Some(in_server) => in_server.allow(url),
+            None => Ok(()),
+        }
+    }
+
+    /// A wait of a load run in a server, at most [`IN_SERVER_MAX_WAIT`]; any wait for `moqui test-client`.
+    fn capped(&self, wait: Duration) -> Duration {
+        if self.in_server.is_some() {
+            wait.min(IN_SERVER_MAX_WAIT)
+        } else {
+            wait
+        }
+    }
+
     fn id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
@@ -937,8 +1036,13 @@ impl ClientHost {
         if load::is_user() {
             agent_header(&mut ask, &lock(&session).headers);
         }
+        if self.in_server.is_some() {
+            let timeout = self.capped(ask.timeout(REQUEST_TIMEOUT));
+            ask.opts.insert("timeout".to_string(), json!(timeout.as_secs_f64()));
+        }
         let started = Instant::now();
-        let sent = http::send(&self.client, &mut lock(&session), &ask, self.request_timeout);
+        let allow = |url: &str| self.allow(url);
+        let sent = http::send(&self.client, &mut lock(&session), &ask, self.request_timeout, &allow);
         let opts = field(args, "opts");
         observe(opts, || load::default_name(&ask.method, &path), &sent, started)?;
         Ok(self.answer(sent?))
@@ -948,17 +1052,19 @@ impl ClientHost {
         let session = self.session(args)?;
         let opts = field(args, "opts");
         let cookies = field(opts, "cookies").as_bool().unwrap_or(true);
-        let timeout = self.seconds(opts, "timeout", self.timeout);
+        let timeout = self.capped(self.seconds(opts, "timeout", self.timeout));
+        let text = text_field(args, "text");
+        let target = text
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("");
+        // the connection is to the server whatever the request line names: both are checked
+        self.allow(&self.server.url)?;
+        self.allow(&self.server.join(target))?;
         let answer = {
             let held = lock(&session);
-            raw::send(
-                &self.server,
-                &held,
-                &text_field(args, "text"),
-                cookies,
-                self.insecure,
-                timeout,
-            )?
+            raw::send(&self.server, &held, &text, cookies, self.insecure, timeout)?
         };
         let content_type = answer.header("content-type").unwrap_or("").to_string();
         lock(&session).absorb(&answer.url, &answer.headers, &content_type, &answer.body);
@@ -1171,6 +1277,9 @@ impl ClientHost {
     fn connect(&self, args: &Value) -> Result<Value, String> {
         let session = self.session(args)?;
         let origin = field(args, "origin").as_str().map(str::to_string);
+        // the socket connects to the server, its request names the path: both are checked
+        self.allow(&self.server.url)?;
+        self.allow(&self.server.join(&text_field(args, "path")))?;
         let connected = {
             let held = lock(&session);
             ws::connect(
@@ -1180,7 +1289,7 @@ impl ClientHost {
                 &pairs(field(args, "headers")),
                 origin.as_deref(),
                 self.insecure,
-                self.seconds(args, "timeout", self.timeout),
+                self.capped(self.seconds(args, "timeout", self.timeout)),
             )?
         };
         let id = connected.socket.is_some().then(|| self.id());
@@ -1328,6 +1437,9 @@ impl ClientHost {
         if let Some(answer) = load::host_call(name, args) {
             return answer;
         }
+        if self.in_server.is_some() && NOT_IN_SERVER.iter().any(|refused| name.starts_with(refused)) {
+            return Err(format!("{name} is not available in a load run in a server"));
+        }
         if name.starts_with("page.") || name.starts_with("locator.") {
             let mut held = lock(&self.browser);
             let spec_browser = held
@@ -1338,11 +1450,23 @@ impl ClientHost {
         match name {
             "browser.newPage" => self.new_page(args),
             "browser.runInPage" => self.run_in_page(args),
-            "config" => Ok(json!({
-                "server": self.server.to_json(),
-                "params": self.params,
-                "timeout": self.timeout.as_secs_f64(),
-            })),
+            "config" => {
+                // the client prelude's first call, before any script of the thread: in a server run the thread's
+                // scripts reach only the client harness's host functions from here on
+                if self.in_server.is_some() {
+                    moqui_core::script::restrict_host_calls(in_server_host_call);
+                }
+                Ok(json!({
+                    "server": self.server.to_json(),
+                    "params": self.params,
+                    "timeout": self.timeout.as_secs_f64(),
+                    "inServer": self.in_server.is_some(),
+                }))
+            }
+            "service.call" => match &self.in_server {
+                Some(in_server) => in_server.service_call(args),
+                None => Err("service.call runs in a server's own process (a load run from Tools › Load)".to_string()),
+            },
             "session.new" => {
                 let id = self.id();
                 let session = Session {
@@ -1404,7 +1528,7 @@ impl ClientHost {
                 Ok(Value::Null)
             }
             "ws.receive" => {
-                let timeout = self.seconds(args, "timeout", self.timeout);
+                let timeout = self.capped(self.seconds(args, "timeout", self.timeout));
                 let socket = self.socket(args)?;
                 let frame = lock(&socket).receive(timeout)?;
                 Ok(json!(frame))
@@ -1425,7 +1549,12 @@ impl ClientHost {
             }
             "sleep" => {
                 let ms = field(args, "ms").as_f64().unwrap_or(0.0).clamp(0.0, 3_600_000.0);
-                std::thread::sleep(Duration::from_secs_f64(ms / 1000.0));
+                if load::is_user() {
+                    // a load user's wait ends on a stop, as its pauses do
+                    load::pause(&load::Pause::Fixed(ms), None);
+                } else {
+                    std::thread::sleep(Duration::from_secs_f64(ms / 1000.0));
+                }
                 Ok(Value::Null)
             }
             "log" => {

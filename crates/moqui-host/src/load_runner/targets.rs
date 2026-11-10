@@ -223,10 +223,6 @@ pub(crate) fn check_users(total: usize) -> Result<(), String> {
 }
 
 /// The loads that may run at once on this instance (`load_runner_max_runs`, D6).
-#[expect(
-    dead_code,
-    reason = "the run registry checks it when it starts a load, which comes with the load engine"
-)]
 pub(crate) fn max_runs() -> usize {
     limit_of(
         &moqui_lib::env::get_prop_or_env("load_runner_max_runs"),

@@ -406,3 +406,12 @@ A screen's response sent as it renders, and list rows read from a cursor as they
 | data writer, entity sync, data documents | Records with dependents (or a master) are written as the cursor reads them, and a DataDocument's rows are merged into documents as they are read, as Java iterates them; on MySQL the writer and sync read the rows first | Bounded memory (`entity/data_writer.rs`, `service/system_sync/entity_sync.rs`, `entity/document.rs`) |
 | form-list | A csv, text or xml form-list makes each row (its `row-actions` and field `from`) as it is written, so a row-action's error comes after the rows before it were written, and `_formListResultCount` is set once the last row is written; Java makes every row before the first is written | One row held at a time (`screen/sri/forms.rs`) |
 | text element | A `.fancy` template or `<text template="true">` writes as it renders, so `${sri.renderSubscreen()}` keeps its place between the template's text; `encode="true"` on a template location encodes its output (it was ignored) | FreeMarker writes to the screen's writer in order (`script/template.rs`, `ScreenSupport.js`) |
+
+## Load runs in a server (2026-11-10)
+
+The Tools load runner's runs in the server's own process ([LoadRunner](LoadRunner.md) §6, §7, D10), which replace the
+Service Load Runner screen.
+
+| Area | Difference | Rationale / where documented |
+|---|---|---|
+| in-process service calls | A load script's `service.call` runs as the user who started the run, with authorization required and the tarpit off for the run's contexts; Java's Service Load Runner ran the calls as anonymous with authorization off. A service the user is not granted is counted as an error and does not run | A load run is no way around authorization; an override is added only when a real case needs one (LoadRunner §16) (`moqui-host/src/load_runner/service_call.rs`, `run.rs`) |

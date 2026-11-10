@@ -23,8 +23,10 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="find" noun="LoadScripts" type="rust" location="moqui_host::load_runner::find_load_scripts"
             allow-remote="false" transaction="ignore">
         <description>The load scripts of the loaded components, the test/load/*.load.js files (D2, D12), by component and
-            name. Each has location (component://name/test/load/File.load.js), componentName, name (File) and
-            fileName.</description>
+            name. Each has location (component://name/test/load/File.load.js), componentName, name (File), fileName,
+            and from its plan, read with the params' defaults: title, description, uses, params (a secret's default
+            left out) and scenarios (name, users, duration, iterations). A file that does not evaluate has error in
+            place of its plan, and the others still list.</description>
         <out-parameters>
             <parameter name="scripts" type="List"><parameter name="script" type="Map"/></parameter>
         </out-parameters>
@@ -66,7 +68,11 @@ along with this software (see the LICENSE.md file). If not, see
         <description>For the run page's poll: a running load's snapshot from memory, or a finished run's summary. running
             says which; status is running, completed, stopped or failed. A runId that is neither is refused as not on
             this server.</description>
-        <in-parameters><parameter name="runId" required="true"/></in-parameters>
+        <in-parameters>
+            <parameter name="runId" required="true"/>
+            <parameter name="waitSeconds" type="BigDecimal"><description>Wait up to this long (at most 30) for a running
+                load to end before answering.</description></parameter>
+        </in-parameters>
         <out-parameters>
             <parameter name="runId"/>
             <parameter name="running" type="Boolean"/>

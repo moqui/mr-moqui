@@ -15,9 +15,11 @@
     const config = host("config");
     const OUTSIDE = "a client test (test/client) runs outside the server";
 
+    // In a load run in a server the thread's engine is used once, so `ec` is fixed there: not deletable, and the
+    // thread runs with no context entered and only the client harness's host functions (load_runner/run.rs).
     Object.defineProperty(g, "ec", {
         get() { throw new Error(`\`ec\` is the server's: ${OUTSIDE}; use http, ws or browser`); },
-        configurable: true
+        configurable: !config.inServer
     });
     for (const [name, instead] of [
         ["call", "http.post or http.get on the service's REST path (/rest/s1/...)"],
@@ -187,10 +189,18 @@
     define("pause", (spec) => { host("load.pause", { pause: spec ?? null }); });
     // Ends the iteration as an error with the message.
     define("fail", (message) => { throw new Error(message == null || message === "" ? "failed" : String(message)); });
+    // service.call(name, parameters, { name, expect }): in a load run in a server, the service in process as the user
+    // who started the run (plans/LoadRunner.md section 6), timed as a sample named the service (or opts.name); its
+    // out-parameters. An error ends the iteration, unless expect lists "error": then the answer is { error }.
     define("service", Object.freeze({
-        call(name) {
-            throw new Error(`service.call(${JSON.stringify(String(name))}) runs in a server's own process (a load run from Tools › Load); ` +
-                "from a client use http.post on the service's REST path (/rest/s1/...)");
+        call(name, parameters, opts) {
+            if (!config.inServer) {
+                throw new Error(`service.call(${JSON.stringify(String(name))}) runs in a server's own process (a load run from Tools › Load); ` +
+                    "from a client use http.post on the service's REST path (/rest/s1/...)");
+            }
+            const o = options(opts);
+            return host("service.call", { name: String(name), parameters: plainArgs(parameters) ?? {},
+                opts: { name: o.name == null ? null : String(o.name), expect: Array.isArray(o.expect) ? o.expect.map(String) : null } });
         },
     }));
 
