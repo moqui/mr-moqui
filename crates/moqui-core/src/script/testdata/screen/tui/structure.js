@@ -47,6 +47,15 @@ $closeRender();
 $openRender({t:"section",id:$uid("First"),name:"First"});
 sri.renderSectionInclude({"name":"section-include","attrs":{"name":"First"}});
 $closeRender();
+{
+            const $menu = sri.getMenuItems() || [];
+        const $items = [];
+        for (let $mi = 0; $mi < $menu.length; $mi++) {
+            const $item = $menu[$mi];
+            $items.push({title:$item.title || "",url:$item.url || "",active:!!$item.inPath});
+        }
+$emit({t:"subscreens",id:$uid("subscreens"),kind:"tab",items:$items,c:[]});
+        }
 $openRender({t:"active",id:$uid("subscreens")});
 sri.renderSubscreen();
 $closeRender();
