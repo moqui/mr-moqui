@@ -686,7 +686,8 @@ function evaluate(group, changes) {
                 return refuse("SEALED_PERMISSION", change.id + " is sealed: only a holder of it may grant or end it")
             return result
         }
-        if (change.kind === "scope") return evaluateScope(change, result, refuse, {registry, delegableBundles, authz, changes})
+        if (change.kind === "scope")
+            return evaluateScope(change, result, refuse, {registry, delegableBundles, authz, changes, registeredArtifact})
         // an artifact binding: only a registered one, added or ended with the type the bundle registers, never a deny
         const definition = registeredArtifact(change.id, change.bundleGroupId)
         result.label = one("moqui.security.ArtifactGroup", {artifactGroupId: change.id})?.description || change.id
@@ -733,8 +734,15 @@ function evaluateScope(change, result, refuse, context) {
     const bindings = context.authz.filter(
         row => row.artifactGroupId === change.id && row.authzTypeEnumId === definition.authzTypeEnumId
     )
-    // a binding the same request adds comes with every filter set its bundle registers
-    const adding = context.changes.some(other => other.kind === "artifact" && other.id === change.id && other.action === "add")
+    // a binding the same request adds (of this type: the bundle it comes from may be another, registering another type or
+    // other filter sets) is bound after it is written, so the rule previewed is the rule bound
+    const adding = context.changes.some(
+        other =>
+            other.kind === "artifact" &&
+            other.id === change.id &&
+            other.action === "add" &&
+            context.registeredArtifact(other.id, other.bundleGroupId)?.authzTypeEnumId === definition.authzTypeEnumId
+    )
     if (!bindings.length && !adding)
         return refuse("SCOPE_UNBOUND", "The group has no registered binding on " + change.id + " to bind a row rule to")
     // a binding that carries a filter set no registered bundle names for this artifact group was scoped on purpose (an
@@ -759,7 +767,7 @@ function evaluateScope(change, result, refuse, context) {
     const missing = bindings.filter(row => !filterSetIds(row.artifactAuthzId).includes(change.filterSetId))
     result.before = bindings.length && !missing.length ? "bound" : "not bound"
     result.after = "bound"
-    if (!missing.length) result.noChange = true
+    if (bindings.length && !missing.length) result.noChange = true
     return result
 }
 function grantPreview(p) {
@@ -821,7 +829,12 @@ function applyGrants(p) {
     auditReason(reason, ["fromDate", "thruDate", "authzTypeEnumId"])
     let added = 0
     let ended = 0
-    for (const change of preview.changes.filter(change => !change.noChange)) {
+    // row rules last, so one on a binding this request adds finds it
+    const effective = preview.changes.filter(change => !change.noChange)
+    const ordered = effective
+        .filter(change => change.kind !== "scope")
+        .concat(effective.filter(change => change.kind === "scope"))
+    for (const change of ordered) {
         if (change.kind === "permission" && change.action === "add") {
             const fromDate = change.fromDate ? Math.max(ms(change.fromDate), now) : now
             const value = ec.entity.makeValue(GRANT)
@@ -852,6 +865,8 @@ function applyGrants(p) {
             }
             ended++
         } else if (change.kind === "scope") {
+            // a binding this request added with the set already (its bundle registers it) is left as written, not counted
+            let bound = false
             for (const row of rows(AUTHZ, {
                 userGroupId: groupId,
                 artifactGroupId: change.id,
@@ -878,8 +893,9 @@ function applyGrants(p) {
                     })
                     .disableAuthz()
                     .call()
+                bound = true
             }
-            added++
+            if (bound) added++
         } else if (change.action === "add") {
             const definition = one(BUNDLE_ARTIFACT, {userGroupId: change.bundleGroupId, artifactGroupId: change.id})
             const value = ec.entity.makeValue(AUTHZ)

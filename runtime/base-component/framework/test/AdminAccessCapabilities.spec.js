@@ -15,6 +15,8 @@ const bundleId = "SPEC_CAP_BUNDLE"
 const teamId = "SPEC_CAP_TEAM"
 const looseId = "SPEC_CAP_LOOSE"
 const scopedId = "SPEC_CAP_SCOPED"
+const plainId = "SPEC_CAP_PLAIN"
+const freshId = "SPEC_CAP_FRESH"
 const appGroupId = "SPEC_CAP_APP"
 const otherAppGroupId = "SPEC_CAP_OTHER_APP"
 const setId = "SPEC_CAP_ORG"
@@ -155,7 +157,7 @@ spec({
     cleanupSpec() {
         ec.message.clearErrors()
         ec.artifactExecution.disableAuthz()
-        const groups = [teamId, looseId, scopedId, bundleId, adminsId]
+        const groups = [teamId, looseId, scopedId, bundleId, adminsId, plainId, freshId]
         for (const authz of ec.entity.find("moqui.security.ArtifactAuthz").condition("userGroupId", "in", groups).list())
             find("moqui.security.ArtifactAuthzFilter", {artifactAuthzId: authz.artifactAuthzId}).deleteAll()
         for (const entityName of [
@@ -297,7 +299,29 @@ feature("a row rule is bound only as a registered filter set on a registered bin
                 team
             }
         })
+        // a second bundle registers the launcher with no row rule: a rule asked for beside the launcher taken from it is
+        // bound all the same, whatever the order of the request
+        ec.artifactExecution.disableAuthz()
+        make("moqui.security.UserGroup", {userGroupId: plainId, description: "Spec plain bundle"})
+        make("moqui.security.UserGroup", {userGroupId: freshId, description: "Spec fresh team", groupTypeEnumId: "UgtCustomTeam"})
+        make("moqui.security.CapabilityBundle", {userGroupId: plainId, appName: "SpecCapPlain", description: "Spec plain bundle"})
+        make("moqui.security.CapabilityBundleArtifact", {
+            userGroupId: plainId,
+            artifactGroupId: appGroupId,
+            authzTypeEnumId: "AUTHZT_ALLOW",
+            authzActionEnumId: "AUTHZA_ALL"
+        })
+        ec.artifactExecution.enableAuthz()
+        const together = as(adminUser, () => {
+            const grantList = scope(setId).concat([{action: "add", artifactGroupId: appGroupId, bundleGroupId: plainId}])
+            const preview = invoke(S + "preview#Grants", {userGroupId: freshId, grantList})
+            return invoke(S + "apply#Grants", {userGroupId: freshId, grantList, expectedRevision: preview.revision})
+        })
+        for (const entityName of ["moqui.security.CapabilityBundleArtifact", "moqui.security.CapabilityBundle"])
+            find(entityName, {userGroupId: plainId}).deleteAll()
         return Object.assign(asAdmin, {
+            together,
+            freshSets: boundSets(freshId),
             sets: boundSets(looseId),
             audit: rows("moqui.entity.EntityAuditLog", {
                 changedEntityName: "moqui.security.ArtifactAuthzFilter",
@@ -319,6 +343,8 @@ feature("a row rule is bound only as a registered filter set on a registered bin
         again,
         after,
         team,
+        together,
+        freshSets,
         sets,
         audit
     }) {
@@ -337,6 +363,7 @@ feature("a row rule is bound only as a registered filter set on a registered bin
         sets.join() == setId
         audit.length == 1 && audit[0].newValueText == setId && audit[0].changeReason == "Spec scope"
         again.changeList[0].noChange == true
+        together.applied == true && together.added == 2 && freshSets.join() == setId
         after.missingCount == 0
         after.ruleList.find(row => row.artifactGroupId === appGroupId).source == "bundle"
         // the launcher granted from the bundle came with its row rule
