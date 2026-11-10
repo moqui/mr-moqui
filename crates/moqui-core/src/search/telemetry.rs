@@ -171,6 +171,11 @@ pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
             ("rule_id", Keyword),
             ("series_id", Keyword),
             ("state", Keyword),
+            // a business event (source business; moqui-report annotations.rs): its organization, type and record
+            ("organizationPartyId", Keyword),
+            ("event", Keyword),
+            ("recordType", Keyword),
+            ("recordId", Keyword),
         ],
         REPLAYS => &[
             ("replay_id", Keyword),

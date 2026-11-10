@@ -208,6 +208,27 @@ alert state changes and notes.
 - A signed-in user or a script with a login key can post the same to `/rest/s1/moqui/monitor/annotations`.
 - Dashboards › Annotations lists them and adds notes by hand.
 
+### Business events
+
+A domain's event (a price list published, a promotion's dates, a fiscal period closed) is an annotation of source `business`,
+which a dashboard over business data draws like any other marker.
+
+- **Writing.** `ReportServices.create#Annotation` with `source: "business"`, `text` (a name of at most 255 bytes, never an
+  amount), `time` (and `timeEnd` for a band), `organizationPartyId`, `event` (the event's type), and optionally `recordType` and
+  `recordId` (the record behind it) or `link` (a path on this server). It needs the artifact
+  `org.moqui.report.annotation.business` (create), `ADMIN`'s; `MONITOR_INGEST` and the ingest keys do not write one. The owner
+  of an event writes it from its own service after its commit, with authorization off (mr-mantle's
+  `mantle.party.BusinessEventServices.record#BusinessEvent`, registered on commit by the publication, promotion and period close
+  services, reads the marker from the stored record). With an `eventKey` and the same `time` the event keeps one marker.
+- **Reading.** A domain registers a source: a `ReportAnnotationSource` enumeration whose `enumCode` is a dataset over the
+  annotations (`indexName: "monitor_annotations"`) with the domain's row filter (mr-mantle's `mantle-business-events`, scoped to
+  the viewer's organizations by `get#OrganizationRowFilter`). A dashboard with a panel over a business dataset reads each
+  registered source as the viewer and adds its `business` markers to every panel: the dataset's own artifact and row filter
+  decide, a source the viewer may not read adds nothing, and only `business` markers are taken from a source whatever its
+  dataset says. A marker carries `event`, `organizationPartyId`, `recordType`, `recordId` and `link`; an app resolves the record
+  to a screen by the viewer's own permissions. Technical dashboards show none, and the technical marker list leaves them out.
+- The regression spec is `framework/test/ReportAnnotations.spec.js`.
+
 ## The Monitor app
 
 Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/report/` and Explore presets.
@@ -397,7 +418,7 @@ The app's root sets, in its `always-actions` so that the transitions read them t
 
 | Context | What it does |
 |---|---|
-| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns) and `share`. Without the map the screens keep Tools' own (`//apps/dashboards/...`); a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and the editor's save keeps the saved group, whatever group is posted |
+| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns), `share` and `drill` (the app's drill screen, which each panel's menu then offers as Drill, in the browser and the terminal: it opens the screen with `definitionId`, `panelId`, `from`, `thru` and `variablesJson`; Tools mounts none). Without the map the screens keep Tools' own (`//apps/dashboards/...`); a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and the editor's save keeps the saved group, whatever group is posted |
 | `reportFixedVariables` | Dashboard variables the app fixes, such as the organization in scope: a viewer's `var-` parameter, carried value or panel export and inspect variables never replace one, and it is shown as a constant (set by the Dashboard screen's own `always-actions` when it depends on the request) |
 | `reportHiddenComponents` | Components whose shipped definitions the list leaves out (Insights: `tools`, the telemetry dashboards) |
 | `reportDefinitionTypes` | Set by an editor's screen in its `always-actions`: the definition types it offers, and the only ones its save and copy take |
@@ -457,6 +478,51 @@ by `crates/moqui-report/src/business.rs` (BOSS impl-insights P3, INS-03):
   dataset's update artifact (the steward of a saved one, `ADMIN`), so a view grant on such an artifact, by pattern or by mistake,
   reaches no unfiltered rows.
 - The regression spec is `framework/test/BusinessDatasets.spec.js`.
+
+### Semantic guards
+
+What a business dataset's `fieldDefaults` declare about a measure decides which aggregations of it mean something; the engine
+refuses the others with a coded reason, for every caller (a panel, Explore, `run#Query`, an alert, a schedule, a drill). A
+dataset that is not a business one is read as before.
+
+| Declared on a field | Refused | Until |
+|---|---|---|
+| `unitField` (an amount's currency, a quantity's unit) | `UNIT_MIXED`: a sum, average, least or greatest over records of several units (it was shown without a unit) | the query groups by the unit field, or is filtered to one unit; a count of the field is in no unit; a measure the owner converts to one unit has a fixed `unit` and no `unitField` |
+| `ratio: {numerator, denominator}` (a stored rate) | `RATIO_AGGREGATE`: a sum or an average of it | the group's rate is computed from the summed numerator and denominator (a calculate step) |
+| `nonAdditive: [dimension, ...]` (a balance or snapshot) | `NONADDITIVE`: a sum across one of the dimensions | each is a group of the query, or pinned to one value by a filter |
+
+A document query returns a page: when more records match than were read, the result carries a `bounded_result` notice with
+`returned` and `total` (`sourceCount` stays the engine's own count of what matches), and a total, a `reduce`, a `groupBy` or a
+`pivot` of those rows is refused (`BOUNDED_RESULT`).
+
+A dataset whose definition says `rows: "restricted"` gives its readers aggregates only: its records (`query#Documents`, a
+query of mode `documents`, a top-hits aggregation, a drill's records) need the artifact `org.moqui.report.rows.<id>` (view),
+and are refused with `ROWS_RESTRICTED` otherwise. The rules are in `crates/moqui-report/src/semantics.rs`; the regression spec
+is `framework/test/ReportDrill.spec.js`.
+
+### Drill
+
+`ReportServices.get#Drill` goes from a value of a saved panel to a breakdown and the records behind it. The request names a
+definition the viewer reads (`definitionId`: a dashboard with `panelId`, or a library panel), one of the panel's queries
+(`queryReference`, its index, 0 by default), the `range` (or `from`, `thru`), the dashboard's `variables`, the buckets chosen
+(`selectedBuckets`: `field` and `value` as the panel showed them), an optional `breakdownDimension` and a page. It never takes a
+query, a dataset, an entity or a service.
+
+- The engine reads the definition as the viewer and runs the panel as its dashboard does: variables fill the saved variables
+  only, and each dataset's artifact, admission and row filter apply again.
+- Each chosen bucket's predicate is taken from the panel's own result, where the engine recorded it, so an "Other" bucket is
+  everything but the buckets shown and a missing bucket the records without the field. A bucket that is not in the result is
+  refused.
+- The answer is the saved query narrowed by those predicates: `selected`, `panelFrames` (the panel's result, whose buckets may
+  be chosen), `dimensions` (the dataset's aggregatable fields), `breakdown` (the saved measures by one of them, or `refused` with
+  a guard's reason), and `rows` with `columns` (the query's time, groups and measured fields), `total` and `bounded` (a page is
+  a sample).
+- A viewer who reads the dataset's aggregates and not its records gets `rowsAvailable` false with `rowsReason` and no record
+  (nothing is fetched). A panel the viewer cannot read, or whose value is not an aggregate of a dataset, answers `available`
+  false with its reason.
+
+A mount offers it from each panel's menu by naming its drill screen in `reportLinks` (above). The code is
+`crates/moqui-report/src/drill.rs`; the regression spec is `framework/test/ReportDrill.spec.js`.
 
 ## Regressions and incidents
 
@@ -662,6 +728,12 @@ take the index refresh interval to appear.
   for the `ReportScopePolicy` type and mr-mantle's `MonitoringSalesSecurityData.xml` for its policy. From then on a dataset with `signal`
   business is read only once admitted or by a holder of its update artifact (`ADMIN` holds them all), so a non-`ADMIN` reader of
   one sees it as not admitted until a steward admits it ([Business datasets](#business-datasets)).
+- **Business events, drill and the semantic guards** (Insights P6): load `ReportSetupData.xml` (the `ReportAnnotationSource`
+  type), `MonitoringSecurityData.xml` (`REPORT_BUSINESS_ADMIN`: the business annotation artifact and the restricted records
+  artifacts, `ADMIN`'s) and mr-mantle's `MonitoringSalesSecurityData.xml` (its source) again. The annotations index gains four
+  fields (`organizationPartyId`, `event`, `recordType`, `recordId`), added to an existing table in place. From then on a panel
+  over a business dataset that sums an amount across several currencies without grouping by the currency says so
+  (`UNIT_MIXED`) instead of showing a number without a unit: group it by its unit field or filter it to one.
 - **Retired:** the ArtifactHit and ArtifactHitBin entities and their report view, the System Artifact Summary,
   Artifact Bins, Log Viewer and DataDocument Search screens, the hit REST resources, and the shipping of logs to
   `moqui_logs` and `moqui_http_log`. Startup pauses the old `clean_ArtifactData_daily`,

@@ -492,7 +492,8 @@ fn a_mounted_dashboard_links_its_apps_screens_and_an_unreadable_panel_says_so() 
     // An app that mounts the report screens (Insights) sends appLinks: edit, Explore and the panel posts go to its
     // screens, and a screen it leaves out (no alert rules) is not offered.
     let props = json!({"dashboard":{"definitionId":"d","editable":true,"absoluteTime":{"from":"2026-10-27T00:00:00Z","thru":"2026-10-28T00:00:00Z"},
-        "appLinks":{"definition":"/apps/Insights/DashboardEditor","panel":"/apps/Insights/PanelDetail","explore":"/apps/Insights/ReportBuilder/Explore","dashboard":"/apps/Insights/Dashboard","alertRule":null},
+        "appLinks":{"definition":"/apps/Insights/DashboardEditor","panel":"/apps/Insights/PanelDetail","explore":"/apps/Insights/ReportBuilder/Explore","dashboard":"/apps/Insights/Dashboard","alertRule":null,"drill":"/apps/Insights/Drill"},
+        "variableValues":{"organizationPartyId":"ORG"},
         "panels":{"p":{"title":"Orders","queries":[{"datasetId":"orders","aggregations":[{"id":"n","type":"sum","role":"metric"}]}]},
             "q":{"title":"Sales","queries":[{"datasetId":"sales"}],"notices":[{"level":"error","complete":false,"message":"viewer may not read dataset sales"}]}}},"frames":{}});
     let mut state = ComponentState::default();
@@ -504,7 +505,16 @@ fn a_mounted_dashboard_links_its_apps_screens_and_an_unreadable_panel_says_so() 
         .collect();
     assert_eq!(
         items,
-        ["view", "edit", "share", "explore", "inspect", "duplicate", "remove"]
+        [
+            "view",
+            "edit",
+            "share",
+            "explore",
+            "inspect",
+            "drill",
+            "duplicate",
+            "remove"
+        ]
     );
     let dashboard = &props["dashboard"];
     let panel = &dashboard["panels"]["p"];
@@ -524,6 +534,14 @@ fn a_mounted_dashboard_links_its_apps_screens_and_an_unreadable_panel_says_so() 
         "{duplicate:?}"
     );
     assert!(panel_menu_act("alert", dashboard, "p", panel, &mut state).is_empty());
+    // Drill opens the app's drill screen with the panel, the range and the variable values; the screen reads the saved
+    // panel again, so no query goes with it.
+    let drill = panel_menu_act("drill", dashboard, "p", panel, &mut state);
+    assert!(
+        matches!(&drill[..], [Act::Follow(url)] if url.starts_with("/apps/Insights/Drill?definitionId=d&panelId=p&from=2026-10-27")
+            && url.contains("variablesJson=") && !url.contains("datasetId")),
+        "{drill:?}"
+    );
     let unavailable = panel_lines(&json!({"fields":[]}), &dashboard["panels"]["q"], 80)
         .iter()
         .map(|line| line.iter().map(|span| span.text.as_str()).collect::<String>())
@@ -536,6 +554,9 @@ fn a_mounted_dashboard_links_its_apps_screens_and_an_unreadable_panel_says_so() 
     assert!(!unavailable.contains("No data"), "{unavailable}");
     // Tools' own dashboards send Tools' links, and a dashboard without appLinks keeps them.
     let tools = json!({"definitionId":"d","panels":{}});
+    // Tools mounts no drill screen: none is offered there, nor by a mount that names none.
+    assert!(!panel_menu(&tools, &json!({})).iter().any(|(id, _)| *id == "drill"));
+    assert!(drill_link(&json!({"appLinks":{"explore":"/apps/X/Explore"}})).is_none());
     assert_eq!(
         app_link(&tools, "alertRule", "AlertRule").as_deref(),
         Some("/apps/dashboards/AlertRule")

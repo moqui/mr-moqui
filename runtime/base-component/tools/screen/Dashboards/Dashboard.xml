@@ -6,7 +6,9 @@
     dashboard's appLinks beside screenUrl; without one they are Tools' Dashboards screens, and a link the map sets to null is
     not offered. A mount may fix variables (reportFixedVariables, such as the organization in scope): a viewer's var-* parameter
     or carried value never replaces a fixed one (nor the variables of a panel export or inspect), and a fixed variable is not
-    offered for editing. The mount sets reportLinks and reportFixedVariables in always-actions, so these transitions read them. -->
+    offered for editing. The mount sets reportLinks and reportFixedVariables in always-actions, so these transitions read them.
+    A mount whose reportLinks names a drill screen gets Drill in each panel's menu: it opens that screen with the dashboard, the
+    panel, the range and the variable values, and the screen asks get#Drill, which reads the saved panel again. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dashboard">
     <parameter name="filtersJson"/><parameter name="definitionId" required="true"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/>
     <transition name="exportPanel" method="get" read-only="true">
@@ -160,6 +162,8 @@
             const url = mountLinks ? mountLinks[key] : '//apps/dashboards/' + screen
             dashboardDefinition.appLinks[key] = url ? sri.buildUrl(url).path : null
         }
+        // a mount's drill screen (Tools mounts none): the panel menu's Drill, in the browser and the terminal
+        if (mountLinks && mountLinks.drill) dashboardDefinition.appLinks.drill = sri.buildUrl(mountLinks.drill).path
         dashboardDefinition.panelId = panelId || null
         dashboardDefinition.kiosk = String(ec.web.parameters.kiosk || '') === 'true'
         dashboardDefinition.variableValues = rendered.variableValues || dashboardDefinition.variableValues
