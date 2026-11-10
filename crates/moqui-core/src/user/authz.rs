@@ -498,7 +498,7 @@ pub(crate) fn is_permitted(
             let mut authz_type = check.authz_type.clone();
             if !check.authz_service_name.is_empty() {
                 if let Some(overridden) =
-                    authz_service_type(&check.authz_service_name, &user_id, &action_id, artifact_type, name)?
+                    authz_service_type(&check.authz_service_name, &user_id, action_id, artifact_type, name)?
                 {
                     authz_type = overridden;
                 }
@@ -516,7 +516,7 @@ pub(crate) fn is_permitted(
                 return Ok((true, info));
             }
             if permit.is_access {
-                record_failure(&facade, artifact_type, name, &action_id, &user_id, true);
+                record_failure(&facade, artifact_type, name, action_id, &user_id, true);
             }
             return Ok((false, info));
         }
@@ -539,7 +539,7 @@ pub(crate) fn is_permitted(
             return Ok((true, info));
         }
         if permit.is_access {
-            record_failure(&facade, artifact_type, name, &action_id, &user_id, false);
+            record_failure(&facade, artifact_type, name, action_id, &user_id, false);
         }
     }
     info.granted = Some(false);
