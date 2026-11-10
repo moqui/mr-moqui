@@ -31,7 +31,7 @@ use super::stats::{self, FlushCause};
 use super::{
     entity_columns, load_by_pk, load_plain, may_match, owned_lookup_key, pk_condition, pk_of, query_tx, row_key,
     row_matches, rows_plain, sim_session_open, sim_view, sort_rows, with_lookup_key, write_pk, EntityFacade,
-    EntityValue, FieldMap, FindLookup, MemRow, Op, ReadMeta, SelectPlan, SimView,
+    EntityValue, FieldMap, FindLookup, MemRow, Op, ReadMeta, RowLock, SelectPlan, SimView,
 };
 use crate::driver::DbConnection;
 use crate::transaction::{CacheMode, TransactionManager};
@@ -161,7 +161,7 @@ pub(super) fn flush_through(facade: &EntityFacade, entity: &str) -> Result<(), E
         return Ok(());
     };
     stats::note_early_flush(&tx, token, FlushCause::SelectiveFind, entity);
-    tx.with_connection(|conn| flush_writes(facade, prefix.into_iter(), &HashSet::new(), conn, true))
+    tx.with_connection(|conn| flush_writes(facade, prefix.into_iter(), &HashMap::new(), conn, true))
         .map(|_| ())
 }
 
@@ -292,7 +292,7 @@ pub(super) fn overlay_rows(
     condition: Option<&Condition>,
     order: &[OrderBy],
     page: LimitOffset,
-    lock: Option<bool>,
+    lock: Option<RowLock>,
     list: Option<&FindLookup>,
 ) -> Result<Option<Vec<EntityValue>>, Error> {
     if sim_session_open() {
@@ -385,8 +385,8 @@ pub(super) fn overlay_rows(
                         buffer.clear();
                         if write_pk(row, &meta.pk_fields, &mut buffer) {
                             frame.keep_stored(entity, &buffer, Some(Arc::clone(row)));
-                            if lock.is_some() {
-                                frame.note_locked(entity, &buffer);
+                            if let Some(lock) = lock {
+                                frame.note_locked(entity, &buffer, lock.mode);
                             }
                         }
                     }
@@ -649,7 +649,7 @@ fn sim_overlay_rows(
     condition: Option<&Condition>,
     order: &[OrderBy],
     page: LimitOffset,
-    lock: Option<bool>,
+    lock: Option<RowLock>,
     sim: SimView,
 ) -> Result<Option<Vec<EntityValue>>, Error> {
     let token = hold_token(facade, &meta.full_name);

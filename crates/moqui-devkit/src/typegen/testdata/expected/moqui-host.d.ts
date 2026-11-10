@@ -139,6 +139,8 @@ interface EntityValueMethods<N extends string = string> {
         orderBy?: string[] | null,
         useCache?: boolean | null,
         forUpdate?: boolean | null,
+        /** MR Moqui: lock as `forUpdate` with Postgres's `FOR NO KEY UPDATE`; not with `forUpdate`. */
+        forNoKeyUpdate?: boolean | null,
     ): EntityList<MoquiRelated<N, R>>;
     /** The primary key fields of the value. */
     getPrimaryKeys(): { [K in MoquiPk<N> & MoquiFieldName<N>]?: MoquiFields<N>[K] };
@@ -146,6 +148,8 @@ interface EntityValueMethods<N extends string = string> {
         relationship: R,
         useCache?: boolean | null,
         forUpdate?: boolean | null,
+        /** MR Moqui: lock as `forUpdate` with Postgres's `FOR NO KEY UPDATE`; not with `forUpdate`. */
+        forNoKeyUpdate?: boolean | null,
     ): EntityValue<MoquiRelated<N, R>> | null;
 }
 
@@ -239,6 +243,12 @@ interface EntityFind<N extends string = string> {
     requireSearchFormParameters(require?: boolean): EntityFind<N>;
     useCache(flag?: boolean | null): EntityFind<N>;
     forUpdate(flag?: boolean | null): EntityFind<N>;
+    /**
+     * MR Moqui: `forUpdate` with Postgres's `FOR NO KEY UPDATE` (other databases lock for update). It does not block
+     * another transaction's foreign key check on the rows, so an insert of a child row does not wait; for a lock whose
+     * transaction changes no key field of the rows, such as an organization's Party serializing its postings.
+     */
+    forNoKeyUpdate(flag?: boolean | null): EntityFind<N>;
     useClone(flag?: boolean | null): EntityFind<N>;
     distinct(flag?: boolean | null): EntityFind<N>;
     disableAuthz(): EntityFind<N>;

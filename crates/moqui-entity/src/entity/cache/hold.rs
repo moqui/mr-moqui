@@ -20,6 +20,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use moqui_db::sql::Lock;
 use moqui_lib::error::Error;
 
 use super::{write_pk, FieldMap, MemRow, Op};
@@ -62,9 +63,10 @@ pub(super) struct FrameHold {
     entities: HashMap<String, EntityHold>,
     /// Rows kept in `stored` over every entity, up to [`READ_CAP`] (plans/archive/TX-Cache.md D2).
     kept: usize,
-    /// The rows (entity, primary key text) a locking find of the frame read: no other transaction can delete one before
-    /// the commit, so a held update of one needs no check that it changed a row.
-    locked: HashSet<(String, String)>,
+    /// The rows (entity, primary key text) a locking find of the frame read, with the strongest lock taken on each: no
+    /// other transaction can delete one before the commit (either lock blocks a delete), so a held update of one needs
+    /// no check that it changed a row.
+    locked: HashMap<(String, String), Lock>,
 }
 
 /// Rows a frame keeps of what it read; past it, nothing more is kept (plans/archive/TX-Cache.md D2). Reaching it is not a flush.
@@ -215,13 +217,21 @@ impl FrameHold {
     }
 
     /// Every held write in flush order, with the rows the frame locked.
-    pub(super) fn into_parts(self) -> (impl Iterator<Item = Rc<Held>>, HashSet<(String, String)>) {
+    pub(super) fn into_parts(self) -> (impl Iterator<Item = Rc<Held>>, HashMap<(String, String), Lock>) {
         (self.order.into_iter().flatten(), self.locked)
     }
 
-    /// A row of `entity` a locking find read.
-    pub(super) fn note_locked(&mut self, entity: &str, pk: &str) {
-        self.locked.insert((entity.to_string(), pk.to_string()));
+    /// A row of `entity` a locking find read with `lock`. A row already held `FOR UPDATE` stays so after a later
+    /// `FOR NO KEY UPDATE`, which it covers; the reverse raises the row to `FOR UPDATE`.
+    pub(super) fn note_locked(&mut self, entity: &str, pk: &str, lock: Lock) {
+        let held = self.locked.entry((entity.to_string(), pk.to_string())).or_default();
+        *held = held.stronger(lock);
+    }
+
+    /// The lock this frame holds on a row of `entity`, when a locking find read it.
+    #[cfg(test)]
+    pub(super) fn locked_as(&self, entity: &str, pk: &str) -> Option<Lock> {
+        self.locked.get(&(entity.to_string(), pk.to_string())).copied()
     }
 
     /// The stored row under a held update of `entity`, when this frame has read it: `Some(None)` when there is none.

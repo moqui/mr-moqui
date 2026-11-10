@@ -1101,6 +1101,67 @@ fn a_held_update_of_a_locked_row_is_not_checked_at_the_commit() {
     assert_eq!(one.get("description"), Some(&Value::string("locked")));
 }
 
+/// A for-no-key-update find goes to the database with its own lock text, keeps the rows it locked as a for-update find
+/// does (a held update of one is not checked at the commit), and the frame knows each row by the strongest lock taken:
+/// a `FOR UPDATE` covers a later `FOR NO KEY UPDATE`, and a `FOR UPDATE` after a no-key lock raises it.
+#[test]
+fn a_no_key_lock_is_kept_by_the_frame_by_its_mode() {
+    use moqui_db::sql::Lock;
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put_enum(&facade, "N1", "A", "one");
+    put_enum(&facade, "N2", "B", "two");
+    put_enum(&facade, "N3", "C", "three");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    let before = testing::checked_deferred();
+    run(&tx, TransactionAttribute::Cache, || {
+        let lock = |id: &str, no_key: bool| -> Result<(), Error> {
+            let find = facade.find(ENUM)?.eq("enumId", Value::string(id));
+            let find = if no_key {
+                find.for_no_key_update(true)
+            } else {
+                find.for_update(true)
+            };
+            assert_eq!(find.list()?.len(), 1);
+            Ok(())
+        };
+        let no_key = statements(&tape, "FOR NO KEY UPDATE");
+        lock("N1", false)?;
+        lock("N1", true)?;
+        lock("N2", true)?;
+        lock("N2", false)?;
+        lock("N3", true)?;
+        assert_eq!(
+            statements(&tape, "FOR NO KEY UPDATE") - no_key,
+            3,
+            "each no-key lock goes to the database"
+        );
+        let (token, _) = tx.cache_frame().expect("a cache frame");
+        let held = |id: &str| {
+            super::TX_HOLD.with(|slot| {
+                slot.borrow()
+                    .get(&token)
+                    .and_then(|frame| frame.locked_as(ENUM, &format!("enumId={id}")))
+            })
+        };
+        assert_eq!(held("N1"), Some(Lock::Update), "for update covers a later no-key lock");
+        assert_eq!(
+            held("N2"),
+            Some(Lock::Update),
+            "for update after a no-key lock raises it"
+        );
+        assert_eq!(held("N3"), Some(Lock::NoKeyUpdate));
+        set_enum(&facade, "N3", "description", "locked")?;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        testing::checked_deferred() - before,
+        0,
+        "a row held no-key is not checked"
+    );
+}
+
 /// D5: a view read shadows a member's table only when a held row of the member may be in its result.
 #[test]
 fn a_view_read_shadows_only_a_held_row_it_may_show() {

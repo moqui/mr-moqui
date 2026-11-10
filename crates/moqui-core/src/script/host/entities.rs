@@ -107,6 +107,7 @@ pub(crate) static FIND: HostClass = HostClass {
         method!("EntityFind", "updateAll", [Value], update_all),
         method!("EntityFind", "useCache", [Value], None, leaf, use_cache),
         method!("EntityFind", "forUpdate", [Value], None, leaf, for_update),
+        method!("EntityFind", "forNoKeyUpdate", [Value], None, leaf, for_no_key_update),
         method!("EntityFind", "distinct", [Value], None, leaf, distinct),
         method!("EntityFind", "disableAuthz", [], None, leaf, disable_authz),
         method!("EntityFind", "useClone", [Value], None, leaf, use_clone),
@@ -253,13 +254,13 @@ pub(crate) static ENTITY_VALUE: HostClass = HostClass {
         method!(
             "EntityValue",
             "findRelated",
-            [Text, OptValue, OptValue, OptValue, OptValue],
+            [Text, OptValue, OptValue, OptValue, OptValue, OptValue],
             value_find_related
         ),
         method!(
             "EntityValue",
             "findRelatedOne",
-            [Text, OptValue, OptValue],
+            [Text, OptValue, OptValue, OptValue],
             value_find_related_one
         ),
         method!(
@@ -672,6 +673,13 @@ fn flag_or_true(call: &Call<'_>) -> bool {
 fn for_update(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let on = flag_or_true(call);
     chain(call, |find| find.for_update(on))
+}
+
+/// `forNoKeyUpdate(flag)`, an MR Moqui addition: `forUpdate` with Postgres's `FOR NO KEY UPDATE`
+/// ([`crate::entity::EntityFind::for_no_key_update`]).
+fn for_no_key_update(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let on = flag_or_true(call);
+    chain(call, |find| find.for_no_key_update(on))
 }
 
 /// Java's `resultSetType(type)`: 1003 (`TYPE_FORWARD_ONLY`, the default) gives an `iterator()` that reads forward; 1004
@@ -1647,11 +1655,23 @@ fn locks(call: &Call<'_>, index: usize) -> bool {
     matches!(call.value(index), Some(Value::Bool(true)))
 }
 
-/// `findRelated(relationshipName, byAndFields, orderBy, useCache, forUpdate)`.
+/// The lock of a related find: `forUpdate` at `index`, or `forNoKeyUpdate` (an MR Moqui addition) after it; both true
+/// is refused, as XML actions refuse both attributes.
+fn related_lock(call: &Call<'_>, index: usize, find: EntityFind) -> Result<EntityFind, HostError> {
+    let (update, no_key) = (locks(call, index), locks(call, index + 1));
+    if update && no_key {
+        return Err(HostError::message(
+            "a related find cannot be both forUpdate and forNoKeyUpdate",
+        ));
+    }
+    Ok(find.for_update(update).for_no_key_update(no_key))
+}
+
+/// `findRelated(relationshipName, byAndFields, orderBy, useCache, forUpdate, forNoKeyUpdate)`.
 fn value_find_related(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let cell = this_cell(call)?;
     let name = call.text_or_empty(0);
-    let mut find = related_find(&cell, &name).map_err(lib)?.for_update(locks(call, 4));
+    let mut find = related_lock(call, 4, related_find(&cell, &name).map_err(lib)?)?;
     if let Some(Value::Map(entries)) = call.value(1) {
         for (key, value) in entries {
             find = find.eq(key, value.clone());
@@ -1665,13 +1685,12 @@ fn value_find_related(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::Value(list_of(find.list().map_err(lib)?)))
 }
 
-/// `findRelatedOne(relationshipName, useCache, forUpdate)`.
+/// `findRelatedOne(relationshipName, useCache, forUpdate, forNoKeyUpdate)`.
 fn value_find_related_one(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let cell = this_cell(call)?;
     let name = call.text_or_empty(0);
-    let found = related_find(&cell, &name)
-        .and_then(|find| find.for_update(locks(call, 2)).one())
-        .map_err(lib)?;
+    let find = related_lock(call, 2, related_find(&cell, &name).map_err(lib)?)?;
+    let found = find.one().map_err(lib)?;
     Ok(Ret::Value(found.map_or(Value::Null, value_of)))
 }
 

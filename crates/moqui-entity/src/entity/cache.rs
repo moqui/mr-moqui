@@ -31,7 +31,7 @@ use moqui_db::dialect::Dialect;
 use moqui_db::model::EntityDefinition;
 use moqui_db::sql::{
     create_table, delete, insert, insert_or_update, select_with_head, update, CompareOp, Condition, FieldRef,
-    LimitOffset, Nulls, OrderBy,
+    LimitOffset, Lock, Nulls, OrderBy,
 };
 use moqui_lib::cache::{CacheConfig, MCache};
 use moqui_lib::error::Error;
@@ -588,11 +588,19 @@ pub fn before_count(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option
     Ok(None)
 }
 
+/// The row lock of a locking find: `for-update` or `for-no-key-update`, and with it `skip_locked`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowLock {
+    /// [`Lock::Update`] or [`Lock::NoKeyUpdate`].
+    pub mode: Lock,
+    pub skip_locked: bool,
+}
+
 /// What a find asks beyond its condition, order and page, which the cache and the overlay do not key on.
 #[derive(Clone, Debug, Default)]
 pub struct Selective {
-    /// `for-update`, and with it `skip_locked`.
-    pub lock: Option<bool>,
+    /// The row lock of a locking find.
+    pub lock: Option<RowLock>,
     /// The fields selected; empty for every field.
     pub fields: Vec<String>,
     /// `distinct`, a `having` condition or an aggregate: the rows the database gives are not the entity's rows.
@@ -2058,7 +2066,7 @@ fn load_plain(
     order: &[OrderBy],
     limit: Option<i64>,
     overlay_schema: Option<&str>,
-    lock: Option<bool>,
+    lock: Option<RowLock>,
 ) -> Result<Vec<FieldMap>, Error> {
     let plan = plan_select(facade, &meta.full_name, condition, order, limit, lock)?;
     let db_rows = if let Some(schema) = overlay_schema {
@@ -2124,7 +2132,7 @@ fn plan_select(
     condition: Option<&Condition>,
     order: &[OrderBy],
     limit: Option<i64>,
-    lock: Option<bool>,
+    lock: Option<RowLock>,
 ) -> Result<SelectPlan, Error> {
     facade.with_group(entity_name, |entity, dialect, _, tx| {
         if entity.is_view {
@@ -2134,8 +2142,8 @@ fn plan_select(
         let shape = super::sql_cache::read_shape(facade, entity, dialect);
         let page = LimitOffset { limit, offset: None };
         let options = moqui_db::sql::SelectOptions {
-            for_update: lock.is_some(),
-            skip_locked: lock.unwrap_or(false),
+            lock: lock.map_or(Lock::None, |lock| lock.mode),
+            skip_locked: lock.is_some_and(|lock| lock.skip_locked),
             ..Default::default()
         };
         // An encrypted field is compared with its stored ciphertext, as a find outside the frame compares it.

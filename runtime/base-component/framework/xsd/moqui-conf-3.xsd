@@ -1074,7 +1074,8 @@ along with this software (see the LICENSE.md file). If not, see
                             <xs:attribute name="location" type="xs:string"/>
                             <xs:attribute name="menu-title" type="xs:string"/>
                             <xs:attribute name="menu-index" type="xs:positiveInteger"/>
-                            <xs:attribute name="menu-include" type="boolean" default="true"/>
+                            <xs:attribute name="menu-include" type="xs:string" default="true">
+                                <xs:annotation><xs:documentation>true, false, or an expression evaluated per request</xs:documentation></xs:annotation></xs:attribute>
                             <xs:attribute name="no-sub-path" type="boolean" default="false"/>
                         </xs:complexType></xs:element>
                     </xs:sequence>
@@ -2102,6 +2103,11 @@ along with this software (see the LICENSE.md file). If not, see
                 </xs:restriction></xs:simpleType>
             </xs:attribute>
             <xs:attribute name="for-update" type="xs:string" default="FOR UPDATE"/>
+            <xs:attribute name="for-no-key-update" type="xs:string">
+                <xs:annotation><xs:documentation>MR Moqui: the text a find with for-no-key-update ends with, a row lock that
+                does not block another transaction's foreign key check on the row (Postgres FOR NO KEY UPDATE). When not
+                set the for-update text is used, so a database without such a lock locks as for update. When set it is used
+                as it is: it does not follow an override of this database's for-update.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="use-tm-join" default="true" type="boolean">
                 <xs:annotation><xs:documentation>For Bitronix set this to false to not use tm join (for Atomikos this is
                 set in the serial_jta_transactions property in jta.properties)</xs:documentation></xs:annotation></xs:attribute>

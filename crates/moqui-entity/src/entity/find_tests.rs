@@ -160,6 +160,31 @@ fn for_update_needs_a_transaction_and_is_written_inside_one() {
     assert!(tape.lock().unwrap().iter().any(|sql| sql.ends_with(" FOR UPDATE")));
 }
 
+/// A no-key lock is written as its own text; both lock calls on are refused when the find runs, in either order, and a
+/// `false` of one leaves the other's lock.
+#[test]
+fn for_no_key_update_is_written_and_not_with_for_update() {
+    let (facade, tape) = seeded();
+    let find = || facade.find("moqui.test.TestEntity").unwrap();
+    facade.begin("moqui.test.TestEntity", None).unwrap();
+    let _ = find().for_no_key_update(true).list();
+    let _ = find().for_update(true).for_no_key_update(false).list();
+    let both = [
+        find().for_update(true).for_no_key_update(true).list(),
+        find().for_no_key_update(true).for_update(true).list(),
+    ];
+    facade.rollback("moqui.test.TestEntity").unwrap();
+    for outcome in both {
+        let err = outcome.unwrap_err();
+        assert!(err.to_string().contains("cannot be both"), "{err}");
+    }
+    let tape = tape.lock().unwrap();
+    assert!(tape.iter().any(|sql| sql.ends_with(" FOR NO KEY UPDATE")));
+    assert!(tape
+        .iter()
+        .any(|sql| sql.ends_with(" FOR UPDATE") && !sql.contains("NO KEY")));
+}
+
 /// Java's `condition(field, value)` keeps one value per field: the second replaces the first, also inside an `AND`.
 #[test]
 fn a_second_equality_on_a_field_replaces_the_first() {

@@ -27,6 +27,7 @@ use std::sync::Arc;
 
 use moqui_db::dialect::Dialect;
 use moqui_db::model::EntityDefinition;
+use moqui_db::sql::Lock;
 use moqui_lib::object::Value;
 
 use super::super::sql_cache;
@@ -129,7 +130,7 @@ fn sets_key_field(facade: &EntityFacade, key_fields: &mut HashMap<String, HashSe
 pub(super) fn flush_writes(
     facade: &EntityFacade,
     writes: impl Iterator<Item = Rc<Held>>,
-    locked: &HashSet<(String, String)>,
+    locked: &HashMap<(String, String), Lock>,
     conn: &mut dyn DbConnection,
     wait: bool,
 ) -> Result<Flushed, Error> {
@@ -154,7 +155,7 @@ pub(super) fn flush_writes(
             Op::Create | Op::Upsert => conn.execute_deferred_row(&sql, params, row_key(held)),
             // A row the frame locked is there until the commit and needs no check. Another must change a row: the
             // driver has the server check that where it can, so the COMMIT need not wait for it.
-            Op::Update if !mysql && !locked.contains(&(held.entity_name.clone(), held.pk.clone())) => {
+            Op::Update if !mysql && !locked.contains_key(&(held.entity_name.clone(), held.pk.clone())) => {
                 let missing = format!("Could not write the {}: the record was not found", held.describe());
                 conn.execute_deferred_update(&sql, params, missing)
             }

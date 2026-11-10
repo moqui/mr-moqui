@@ -107,16 +107,30 @@
     // `ec.resource.expand(...) as Integer`; the host find reads the integer, and empty or non-numeric text is no limit.
     const countExpr = (text) => text.indexOf("$") >= 0 && text.charAt(text.length - 1) !== "$" ? expandExpr(text) : text;
 
+    // for-update and for-no-key-update (an MR Moqui addition) are two modes of one lock, so an element may not set both.
+    const oneLock = (node) => {
+        if (attr(node, "for-update") === "true" && attr(node, "for-no-key-update") === "true") {
+            throw new Error(`${node.name} cannot be both for-update and for-no-key-update`);
+        }
+    };
+
     // ec.entity.find(...) through the options that entity-find-one and the find-by-condition elements share.
-    const findHead = (node, distinct) => joinPresent([
-        // An entity name with ${} is expanded, as the Groovy string of the Java template was.
-        `ec.entity.find(${literalOrExpand(attr(node, "entity-name"))})`,
-        has(node, "cache") && `.useCache(${attr(node, "cache")})`,
-        has(node, "for-update") && `.forUpdate(${attr(node, "for-update")})`,
-        distinct && has(node, "distinct") && `.distinct(${attr(node, "distinct")})`,
-        has(node, "use-clone") && `.useClone(${attr(node, "use-clone")})`,
-        attr(node, "disable-authz") === "true" && ".disableAuthz()"
-    ]);
+    const findHead = (node, distinct) => {
+        oneLock(node);
+        return joinPresent([
+            // An entity name with ${} is expanded, as the Groovy string of the Java template was.
+            `ec.entity.find(${literalOrExpand(attr(node, "entity-name"))})`,
+            has(node, "cache") && `.useCache(${attr(node, "cache")})`,
+            has(node, "for-update") && `.forUpdate(${attr(node, "for-update")})`,
+            has(node, "for-no-key-update") && `.forNoKeyUpdate(${attr(node, "for-no-key-update")})`,
+            distinct && has(node, "distinct") && `.distinct(${attr(node, "distinct")})`,
+            has(node, "use-clone") && `.useClone(${attr(node, "use-clone")})`,
+            attr(node, "disable-authz") === "true" && ".disableAuthz()"
+        ]);
+    };
+
+    // The for-no-key-update argument of findRelated and findRelatedOne, after for-update; left off when not set.
+    const relatedNoKey = (node) => has(node, "for-no-key-update") ? `, ${attr(node, "for-no-key-update")}` : "";
 
     const findCondition = (kid, cached) => {
         switch (kid.name) {
@@ -531,12 +545,14 @@
             `;
         }),
         "entity-find-related-one": stmt((node) => {
+            oneLock(node);
             const value = attr(node, "value-field");
-            return `${attr(node, "to-value-field")} = (${value} == null) ? null : ${value}.findRelatedOne(${jsString(attr(node, "relationship-name"))}, ${attrOrNull(node, "cache")}, ${attrOrNull(node, "for-update")});`;
+            return `${attr(node, "to-value-field")} = (${value} == null) ? null : ${value}.findRelatedOne(${jsString(attr(node, "relationship-name"))}, ${attrOrNull(node, "cache")}, ${attrOrNull(node, "for-update")}${relatedNoKey(node)});`;
         }),
         "entity-find-related": stmt((node) => {
+            oneLock(node);
             const value = attr(node, "value-field");
-            return `${attr(node, "list")} = (${value} == null) ? null : ${value}.findRelated(${jsString(attr(node, "relationship-name"))}, ${attrOrNull(node, "map")}, ${attrOrNull(node, "order-by-list")}, ${attrOrNull(node, "cache")}, ${attrOrNull(node, "for-update")});`;
+            return `${attr(node, "list")} = (${value} == null) ? null : ${value}.findRelated(${jsString(attr(node, "relationship-name"))}, ${attrOrNull(node, "map")}, ${attrOrNull(node, "order-by-list")}, ${attrOrNull(node, "cache")}, ${attrOrNull(node, "for-update")}${relatedNoKey(node)});`;
         }),
         "entity-make-value": stmt((node) => {
             const field = attr(node, "value-field");

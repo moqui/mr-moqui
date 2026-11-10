@@ -20,6 +20,8 @@ use std::str::FromStr;
 use moqui_lib::error::Error;
 use moqui_lib::node::MNode;
 
+use crate::sql::Lock;
+
 /// JDBC `?` placeholder. Every profile uses this. The conf has no attribute for it.
 pub const PLACEHOLDER: &str = "?";
 
@@ -70,6 +72,9 @@ pub struct Dialect {
     pub result_fetch_size: Option<i32>,
     /// Text written in place of `FOR UPDATE`. Empty writes nothing.
     pub for_update: Option<String>,
+    /// `for-no-key-update`: text written for a [`Lock::NoKeyUpdate`]. Absent falls back to the `for-update` text, so a
+    /// database without the mode locks as for update.
+    pub for_no_key_update: Option<String>,
     pub use_foreign_key_indexes: bool,
     pub use_pk_constraint_names: bool,
     /// `use-foreign-keys`: false creates no foreign keys.
@@ -86,15 +91,31 @@ pub struct Dialect {
 }
 
 impl Dialect {
-    /// Whether a locking select may add `SKIP LOCKED`: Postgres, MySQL 8 and Oracle. Not with a `for-update` text of the
-    /// database's own (DB2's `WITH RS`), and not where it writes no lock (SQLite).
+    /// Whether a for-update select may add `SKIP LOCKED`: Postgres, MySQL 8 and Oracle. Not with a `for-update` text of
+    /// the database's own (DB2's `WITH RS`), and not where it writes no lock (SQLite).
     #[must_use]
     pub fn skips_locked(&self) -> bool {
+        self.skips_locked_with(Lock::Update)
+    }
+
+    /// [`Self::skips_locked`] for a select with `lock`, whose text is `FOR UPDATE` or `FOR NO KEY UPDATE`.
+    #[must_use]
+    pub fn skips_locked_with(&self, lock: Lock) -> bool {
+        let text = self.lock_text(lock).trim();
         matches!(self.name.as_str(), "postgres" | "mysql8" | "oracle")
-            && self
-                .for_update
-                .as_deref()
-                .is_none_or(|text| text.trim().eq_ignore_ascii_case("FOR UPDATE"))
+            && (text.eq_ignore_ascii_case("FOR UPDATE") || text.eq_ignore_ascii_case("FOR NO KEY UPDATE"))
+    }
+
+    /// The text a select ends with for `lock`: empty for none, or where the database writes no lock (SQLite's empty
+    /// `for-update`). A [`Lock::NoKeyUpdate`] is the `for-no-key-update` text, else the `for-update` one.
+    #[must_use]
+    pub fn lock_text(&self, lock: Lock) -> &str {
+        let update = || self.for_update.as_deref().unwrap_or("FOR UPDATE");
+        match lock {
+            Lock::None => "",
+            Lock::Update => update(),
+            Lock::NoKeyUpdate => self.for_no_key_update.as_deref().unwrap_or_else(update),
+        }
     }
 
     /// The fractional digits of seconds a `date-time` column keeps, where the database rounds a finer time stamp
@@ -243,6 +264,9 @@ fn parse_database(node: &MNode) -> Result<Dialect, Error> {
         result_fetch_size: optional_int(node, "result-fetch-size")?,
         // Present and empty means no row lock text at all (SQLite). Absent means `FOR UPDATE`.
         for_update: node.attribute("for-update").map(|value| value.trim().to_string()),
+        for_no_key_update: node
+            .attribute("for-no-key-update")
+            .map(|value| value.trim().to_string()),
         use_foreign_key_indexes: !matches!(optional(node, "use-foreign-key-indexes").as_deref(), Some("false")),
         use_pk_constraint_names: !matches!(optional(node, "use-pk-constraint-names").as_deref(), Some("false")),
         use_foreign_keys: !matches!(optional(node, "use-foreign-keys").as_deref(), Some("false")),

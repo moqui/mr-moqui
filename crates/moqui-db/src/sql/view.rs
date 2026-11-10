@@ -44,7 +44,7 @@ use crate::model::{
 
 use super::condition::{Column, Condition, FieldRef, LimitOffset, OrderBy, Writer};
 use super::ident::{quote_column, quote_ident, quote_physical_ident};
-use super::statement::{for_update, write_table, SelectOptions, TableShadow};
+use super::statement::{lock_rows, write_table, SelectOptions, TableShadow};
 use super::{ConditionValues, Statement};
 
 /// View-entity select. See the module notes.
@@ -83,7 +83,7 @@ pub fn select_view_with(
 ) -> Result<Statement, Error> {
     let renderer = Renderer::new(view, model, dialect, values)?.shadowed(&options.shadows);
     let query = renderer.query(condition, options, order_by)?;
-    if options.for_update && (query.distinct || renderer.grouped()) {
+    if options.lock.is_locking() && (query.distinct || renderer.grouped()) {
         return Err(Error::new("a select cannot lock rows with distinct or an aggregate"));
     }
     let mut out = Writer::new(dialect);
@@ -91,9 +91,7 @@ pub fn select_view_with(
     let columns = |field: &FieldRef| renderer.column(field, true);
     out.order_by(&query.order_by, page.is_set(), &columns)?;
     out.page(page);
-    if options.for_update {
-        for_update(&mut out);
-    }
+    lock_rows(&mut out, options.lock);
     Ok(out.finish())
 }
 
