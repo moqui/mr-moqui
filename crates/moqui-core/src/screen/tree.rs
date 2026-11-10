@@ -275,12 +275,12 @@ fn child_nodes(
     Ok(out)
 }
 
-/// The `javascript:` href that loads `url_text` into the element `load_id`, as Java's ScreenTree makes it. Both values are
+/// Change 8: use the installed HTML client's fragment loader; jQuery is not loaded. Both values are
 /// JSON strings in the script, and a browser percent-decodes a `javascript:` URL before it runs it, so each `%` is encoded.
 fn load_href(load_id: &str, url_text: &str) -> String {
     let quote = |text: &str| serde_json::Value::from(text).to_string().replace('%', "%25");
     format!(
-        "javascript:{{$('#' + {}).load({}); void(0);}}",
+        "javascript:{{moqui.load(document.getElementById({}), {}); void(0);}}",
         quote(load_id),
         quote(url_text)
     )
@@ -294,11 +294,32 @@ mod tests {
     fn load_href_quotes_the_url_as_a_js_string() {
         assert_eq!(
             load_href("Tree", "/apps/x/Edit/a');alert(1);//?q=%22"),
-            r#"javascript:{$('#' + "Tree").load("/apps/x/Edit/a');alert(1);//?q=%2522"); void(0);}"#
+            r#"javascript:{moqui.load(document.getElementById("Tree"), "/apps/x/Edit/a');alert(1);//?q=%2522"); void(0);}"#
         );
         assert_eq!(
             load_href("T", "/a?x=\"b\""),
-            r#"javascript:{$('#' + "T").load("/a?x=\"b\""); void(0);}"#
+            r#"javascript:{moqui.load(document.getElementById("T"), "/a?x=\"b\""); void(0);}"#
         );
+    }
+    #[test]
+    fn dynamic_href_calls_installed_loader_without_jquery_or_script_injection() {
+        let runtime = rquickjs::Runtime::new().unwrap();
+        let context = rquickjs::Context::full(&runtime).unwrap();
+        let id = "FieldList\"Container";
+        let url = "/apps/FieldList/create?q=%22&literal=+&x=\"');globalThis.injected=true;//";
+        let href = load_href(id, url);
+        context.with(|ctx| {
+            ctx.eval::<(), _>(r#"
+                globalThis.calls = [];
+                globalThis.document = { getElementById: id => ({ id }) };
+                globalThis.moqui = { load: (target, url) => { calls.push([target.id, url]); return 'not page content'; } };
+            "#).unwrap();
+            ctx.globals().set("href", href).unwrap();
+            // Browsers decode javascript URLs once; the completion value must not replace the current document.
+            assert!(ctx.eval::<bool, _>("eval(decodeURIComponent(href.slice(11))) === undefined").unwrap());
+            let calls: String = ctx.eval("JSON.stringify(calls)").unwrap();
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&calls).unwrap(), serde_json::json!([[id, url]]));
+            assert!(ctx.eval::<bool, _>("typeof $ === 'undefined' && typeof injected === 'undefined'").unwrap());
+        });
     }
 }
