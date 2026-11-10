@@ -46,6 +46,7 @@ fn request(mode: BackupMode, backup_dir: PathBuf, daily: u32) -> BackupRequest {
         monthly: 12,
         yearly: None,
         full_every: 7,
+        chain_incrementals: false,
         // A spread checkpoint on the idle test cluster takes about 30 seconds for each pg_basebackup.
         fast_checkpoint: true,
         timeout: Duration::from_secs(180),
@@ -248,4 +249,29 @@ fn another_database_of_the_cluster_is_archived_under_its_own_prefix() {
 fn week_key(stamp: Timestamp) -> (i16, i8) {
     let week = stamp.to_zoned(TimeZone::system()).date().iso_week_date();
     (week.year(), week.week())
+}
+
+#[test]
+fn a_chained_incremental_is_taken_from_the_newest_archive_of_its_generation() {
+    let at = |seconds: i64| Timestamp::from_second(1_800_000_000 + seconds).unwrap();
+    let physical = |name: &str, seconds: i64, parent: Option<&str>| Physical {
+        name: name.to_string(),
+        stamp: at(seconds),
+        parent: parent.map(str::to_string),
+        full: parent.is_none(),
+    };
+    let archives = vec![
+        physical("old-full", 0, None),
+        physical("old-incr", 10, Some("old-full")),
+        physical("full", 20, None),
+        physical("incr1", 30, Some("full")),
+        physical("incr2", 40, Some("incr1")),
+        physical("stray", 50, Some("old-incr")),
+    ];
+    let full = newest_full(&archives).unwrap();
+    assert_eq!(full.name, "full");
+    let generation = generation(&archives, &full.name);
+    assert_eq!(generation.len(), 3);
+    assert_eq!(incremental_parent(&archives, full, &generation, false).name, "full");
+    assert_eq!(incremental_parent(&archives, full, &generation, true).name, "incr2");
 }

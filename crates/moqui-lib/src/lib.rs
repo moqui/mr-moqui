@@ -16,6 +16,8 @@
 //!
 //! Feature `http` links blocking `reqwest`. It is off unless a dependent enables it.
 
+#[cfg(feature = "age")]
+pub mod age;
 pub mod barcode;
 pub mod cache;
 pub mod codec;
@@ -37,6 +39,8 @@ pub mod object;
 pub mod reconnect;
 pub mod remote_login;
 pub mod resource;
+#[cfg(feature = "s3")]
+pub mod s3;
 pub mod safe_html;
 pub mod signer;
 pub mod string;

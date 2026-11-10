@@ -13,7 +13,8 @@
  */
 
 //! `backup#EmbeddedDatabase`. The host takes the local archive. This service mirrors it over SFTP when
-//! the named [`SystemMessageRemote`](https://moqui.org) has a `sendUrl`.
+//! the named [`SystemMessageRemote`](https://moqui.org) has a `sendUrl`, or encrypted to S3 when that is `s3://bucket`
+//! (`backup_s3.rs`).
 //!
 //! Two properties let a deployment set the backup up without editing its job row (plans/archive/PostgresBackup.md):
 //! `embedded_db_backup_dir` is the archive directory when the call names no `backupDir`, and
@@ -116,9 +117,8 @@ fn request_from(parameters: &BTreeMap<String, Value>) -> BackupRequest {
         monthly: count_param(parameters, "monthlyCount", 12),
         yearly: optional_count(parameters, "yearlyCount"),
         full_every: count_param(parameters, "fullEvery", 7),
-        fast_checkpoint: parameters
-            .get("fastCheckpoint")
-            .is_some_and(|value| matches!(basic_convert(value, "Boolean").value, Value::Bool(true))),
+        chain_incrementals: flag_param(parameters, "chainIncrementals"),
+        fast_checkpoint: flag_param(parameters, "fastCheckpoint"),
         timeout: Duration::from_secs(u64::from(minutes) * 60),
     }
 }
@@ -178,6 +178,17 @@ fn mirror(facade: &EntityFacade, remote_id: &str, outcome: &backup::BackupOutcom
         tracing::info!("embedded database backup mirror is off, SystemMessageRemote {remote_id} has no sendUrl");
         return Ok("N".to_string());
     }
+    if send_url.starts_with("s3://") {
+        let send_path = send_path(facade, &remote, remote_id)?;
+        let s3 = super::backup_s3::S3Remote {
+            send_url: &send_url,
+            access_key: &field(&remote, "username"),
+            secret_key: &field(&remote, "password"),
+            recipient: &field(&remote, "publicKey"),
+            prefix: &send_path,
+        };
+        return super::backup_s3::mirror_s3(&s3, outcome);
+    }
     if field(&remote, "username").is_empty() {
         return Err(LibError::new(format!(
             "SystemMessageRemote {remote_id} has a sendUrl and no username"
@@ -195,7 +206,20 @@ fn mirror(facade: &EntityFacade, remote_id: &str, outcome: &backup::BackupOutcom
             "SystemMessageRemote {remote_id} has a private key and no public key"
         )));
     }
-    let type_id = field(&remote, "systemMessageTypeId");
+    let send_path = send_path(facade, &remote, remote_id)?;
+    let mut client = client_for(&remote, &send_url, &private_key, &public_key)?;
+    if field(&remote, "remoteAttributes") == "N" {
+        client.preserve_attributes(false);
+    }
+    client.connect()?;
+    let mirrored = mirror_with(&mut client, &send_path, outcome);
+    client.close();
+    mirrored
+}
+
+/// The remote directory or key prefix of the mirror: its message type's `sendPath`.
+fn send_path(facade: &EntityFacade, remote: &EntityValue, remote_id: &str) -> Result<String, LibError> {
+    let type_id = field(remote, "systemMessageTypeId");
     let Some(message_type) = find_one(facade, MESSAGE_TYPE, "systemMessageTypeId", &type_id)? else {
         return Err(LibError::new(format!(
             "SystemMessageRemote {remote_id} has no SystemMessageType"
@@ -207,14 +231,7 @@ fn mirror(facade: &EntityFacade, remote_id: &str, outcome: &backup::BackupOutcom
             "SystemMessageType {type_id} has no sendPath for the backup mirror"
         )));
     }
-    let mut client = client_for(&remote, &send_url, &private_key, &public_key)?;
-    if field(&remote, "remoteAttributes") == "N" {
-        client.preserve_attributes(false);
-    }
-    client.connect()?;
-    let mirrored = mirror_with(&mut client, &send_path, outcome);
-    client.close();
-    mirrored
+    Ok(send_path)
 }
 
 fn mirror_with(client: &mut SftpClient, send_path: &str, outcome: &backup::BackupOutcome) -> Result<String, LibError> {
@@ -331,6 +348,12 @@ fn count_param(parameters: &BTreeMap<String, Value>, name: &str, default: u32) -
             _ => default,
         },
     }
+}
+
+fn flag_param(parameters: &BTreeMap<String, Value>, name: &str) -> bool {
+    parameters
+        .get(name)
+        .is_some_and(|value| matches!(basic_convert(value, "Boolean").value, Value::Bool(true)))
 }
 
 fn optional_count(parameters: &BTreeMap<String, Value>, name: &str) -> Option<u32> {

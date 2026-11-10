@@ -102,8 +102,8 @@ along with this software (see the LICENSE.md file). If not, see
             authenticate="false" transaction="ignore">
         <description>
             Live backup of each embedded Postgres cluster this process runs, then the retention ladder, then an
-            optional SFTP mirror of the archives that remain. The schedule is the ServiceJob cron.
-            See plans/PostgresBackup.md.
+            optional mirror of the archives that remain: over SFTP, or to S3 encrypted to an age recipient when the
+            remote's sendUrl is s3://bucket. The schedule is the ServiceJob cron. See docs/Run-Deploy.md#backups.
         </description>
         <in-parameters>
             <parameter name="dailyCount" type="Integer" default="7"/>
@@ -113,6 +113,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="backupMode" type="String" default="dump"/>
             <parameter name="backupDir" type="String"/>
             <parameter name="fullEvery" type="Integer" default="7"/>
+            <parameter name="chainIncrementals" type="Boolean" default="false">
+                <description>In incremental mode, take each incremental from the archive before it rather than from the
+                    full: the smallest archives to keep and send; a restore combines the whole chain.</description></parameter>
             <parameter name="fastCheckpoint" type="Boolean" default="false"/>
             <parameter name="timeoutMinutes" type="Integer" default="120"/>
             <parameter name="systemMessageRemoteId" type="String"/>
