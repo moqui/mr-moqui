@@ -518,13 +518,36 @@ It returns the statistics, prints a table after the feature's line, and writes t
 | `users` | The number of users, 1 to 10,000; 1 by default |
 | `duration`, `iterations` | Seconds the scenario repeats for, and/or iterations per user; at least one. With both, a user stops at whichever comes first |
 | `rampUp` | Seconds over which the users start, evenly |
-| `think` | Milliseconds between a user's iterations, or `[min, max]` for a random pause; not timed |
+| `think` | Between a user's iterations, not timed: milliseconds, `[min, max]` (uniform) or `{ gaussian: [mean, deviation] }` (clamped at 0) |
+| `pause` | A wait of the same forms before each request of the scenario, not timed |
+| `newSession` | `true` starts each iteration on a fresh `http` session (no cookies, no token) |
 | `setup(user, args)`, `scenario(user, args, iteration)`, `teardown(user, args)` | `setup` runs once per user before the timed part, `scenario` repeats, `teardown` runs after. `user` is the user's number from 0 |
 | `args` | Copied to each user as JSON |
+| `thresholds` | `{ errorRate, p95, p99, names: { "<name>": { p95 } } }` (also `min`, `mean`, `p50`, `p90`, `max`), milliseconds; checked at the end into `thresholds` and `passed`. An unknown metric or a limit that is not a number is refused before the users start |
+| `label` | Kept in the result's `run` block |
+| `stopAfter`, `stopNowAfter` | Seconds after which the users stop after their current iteration, or before their next request (a refused request is not an error) |
 | `timeout` | Seconds before the users are told to stop; `duration + rampUp + 120`, or 600 with only `iterations`, by default. A user still running 10 s later is counted as an error |
 
 The functions run from their source text on other threads, so they cannot use the spec's variables: pass what they need
-in `args`.
+in `args`, or put the load in a load script.
+
+**Load scripts** ([LoadRunner](../../plans/LoadRunner.md#4-load-scripts)). `load({ script: "test/load/Name.load.js",
+params, scenarios: { name: { users, iterations, ... } } })` runs a `.load.js` file of the spec's component. Its top
+level has `plan({ title, description, uses, params: { name: { default, description, options, secret, required } },
+thresholds })` and one or more `scenario(name, { users, rampUp, duration, iterations, think, pause, newSession,
+setup(user), run(user, iteration), teardown(user) })`; the functions get `this`, an object of the user's own. The file is
+evaluated once to read the plan (the given `params` resolved over the defaults, of the defaults' types, into `params`),
+and once in each user's engine, so its constants and helpers work in every scenario. A request at its top level throws
+"a load script makes no request at its top level". Every scenario starts together, each with its own ramp and users
+numbered from 0; with `scenarios` (`{ name: settings }`, or `[names]`), only those named run, with their settings over the script's, and a name the script does not have is refused. `users`, `iterations`,
+`duration`, `rampUp`, `think` and `pause` beside `script` apply to every scenario. A secret param is left out of the
+result.
+
+Globals for any spec or script: `step(name, fn)` times `fn` as one sample of kind `step` (its requests still count under
+their own names; a step is not a request in the totals); `pause(ms | [min, max] | { gaussian: [mean, deviation] })`
+waits untimed; `fail(message)` ends the iteration as an error; `response.urlParam(name)` is a query parameter of the
+response's final `url`, else of its `location`, or null. `service.call` throws in a client: it runs in a server's
+process. A load user's requests carry `User-Agent: moqui-load/<version>`.
 
 Each request of the scenario is timed in Rust from send to the last byte of the body, and grouped under its `name`
 (`GET /rest/s1/moqui/basic/enums` by default: the method and the path without the query; `RAW <target>` for
@@ -539,15 +562,21 @@ The result:
 |---|---|
 | `users`, `iterations`, `requests`, `errors` | Counts over all users |
 | `duration` | Seconds from the first user's timed start to the last user's end |
-| `errorRate`, `rps` | Errors per request, and requests per second |
+| `errorRate`, `rps` | Errors per attempt (each request, and each error that was not a request's, such as a throw or `fail()`), so at most 1; and requests per second. `errors` is every error |
 | `latency` | `min`, `mean`, `p50`, `p90`, `p95`, `p99`, `max` in milliseconds, over every request |
-| `names` | For each name, the `latency` fields with `count`, `errors` and `statuses` (`{ "200": 804 }`, `"0"` for a transport error) |
-| `errorSamples` | The first 20 errors: `name` (null for a throw), `status`, `user`, `iteration` and `message` |
+| `names` | For each name, the `latency` fields with `kind` (`http`, `raw`, `step`), `count`, `errors`, `outcomes` (`{ "200": 804 }`, `ok`, `error`), for HTTP `statuses` (`"0"` for a transport error), and `bins` of `count`, `errors` and `mean` every `binSeconds` (10 to start) |
+| `scenarios` | For each scenario, its `users`, `iterations` and `errors` |
+| `bins`, `binSeconds` | The time series: a bin a second from the start with `t`, `users` (active), `requests`, `errors`, `mean`, `p50`, `p95`, `p99`, `max`. Past 7,200 bins neighbours merge and the length doubles; a merged bin's percentiles are the mean of its two, weighted by requests |
+| `thresholds`, `passed` | Each limit with `name`, `metric`, `limit`, `value` and `passed`; `passed` is false when one is broken (a name with no samples breaks its limits) |
+| `generator` | `where` (`same-machine` for the client), `cores`, `cpu` (the process's CPU share over the run, on Linux) and `scriptShare` (the users' time not spent waiting on a request or a pause): high values mean the numbers are the generator's |
+| `run` | `script`, `scenarios` (the settings used), `params`, `target`, `label`, `start`, `end`, `status` (`completed`, `stopped`), `stopReason` (`stop`, `stop-now`, `timeout`, or null) |
+| `errorSamples` | The first 20 errors: `name` (null for a throw), `status`, `scenario`, `user`, `iteration` and `message` |
 
-Percentiles are by nearest rank over every sample. The table, with the first three error samples under it, goes to the
-console and into the case's JUnit `system-out`. The JSON, with a `run` block (`component`, `spec`, `feature`, `server`,
-`finished`), goes to `<out>/load/<component>.<Spec>.<feature>.json` (`-2` and on for another load in the same feature),
-for comparing runs.
+Percentiles come from a log-linear histogram per name (64 steps in each power of two, 1 µs to an hour), so they are
+within about 1.6% of the exact nearest-rank value; `min`, `mean` and `max` are exact. The table, with the first three
+error samples and any broken threshold under it, goes to the console and into the case's JUnit `system-out`. The JSON,
+whose `run` block also has `component`, `spec`, `feature`, `server` and `finished`, goes to
+`<out>/load/<component>.<Spec>.<feature>.json` (`-2` and on for another load in the same feature), for comparing runs.
 
 ```js
 feature("mixed reads and writes", {

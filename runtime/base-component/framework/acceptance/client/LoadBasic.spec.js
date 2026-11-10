@@ -101,5 +101,10 @@ feature("mixed reads and writes", {
         stats.names["dashboard qvt"].p95 < Number(params.maxP95 ?? 2000)
         stats.names["UserGroupList tui"].p95 < Number(params.maxP95 ?? 2000)
         stats.names["setPreference"].p95 < Number(params.maxP95 ?? 2000)
+        // the time series: a bin a second, whose requests add up to the total
+        stats.binSeconds >= 1
+        stats.bins.length > 0
+        stats.bins.reduce((n, bin) => n + bin.requests, 0) == stats.requests
+        stats.names["s1 enums"].bins.length > 0
     },
 })

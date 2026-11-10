@@ -27,6 +27,7 @@ pub mod env;
 pub mod error;
 pub mod etl;
 pub mod format;
+pub mod histogram;
 #[cfg(feature = "http")]
 pub mod http;
 pub mod json;

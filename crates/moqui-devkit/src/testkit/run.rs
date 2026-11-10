@@ -973,6 +973,98 @@ pub fn run_on_thread(
         })
 }
 
+/// What a thread's engine runs once its body is entered: [`run_script_on_thread`]'s work.
+pub type ThreadBody<'a> = Box<dyn FnOnce() -> Result<String, String> + 'a>;
+
+/// Runs a thread's body inside what the caller sets up on the thread, such as an entered ExecutionContext with a
+/// user logged in (a load run in a server, plans/LoadRunner.md section 6), and answers the body's answer.
+pub type AroundThread = Box<dyn for<'a> FnOnce(ThreadBody<'a>) -> Result<String, String> + Send>;
+
+/// A script file for [`run_script_on_thread`]: its text, and the name an error gives for it.
+pub struct ScriptFile {
+    pub display: String,
+    pub source: String,
+}
+
+/// What [`run_script_on_thread`] evaluates, in order, after the preludes.
+#[derive(Default)]
+pub struct ScriptThread {
+    /// The thread's name.
+    pub name: String,
+    /// JavaScript evaluated before the file, such as the state the file's top level reads.
+    pub before: String,
+    /// The file, evaluated whole inside a function, so that its top-level names are its own and the functions it
+    /// registers keep them.
+    pub file: Option<ScriptFile>,
+    /// A function's text, called with the items of `args_json` (a JSON array) once the file has run.
+    pub call: String,
+    pub args_json: String,
+    /// JavaScript evaluated last, whether the file and the call answered or threw, such as closing what the
+    /// preludes opened; an error in it is logged, and the thread's answer stays the call's.
+    pub after: String,
+    /// With an ExecutionContext to enter on the thread, the wrapper that enters it around the body; without, the
+    /// thread has no context, as [`run_on_thread`]'s.
+    pub around: Option<AroundThread>,
+}
+
+/// Run a script on a thread of its own (plans/LoadRunner.md section 5, a load script's users): an engine with the
+/// core prelude and `host`'s, then [`ScriptThread::before`], the file, and the call. The thread answers the call's
+/// value as JSON, or the error, which names the file and line for an error in the file.
+///
+/// # Errors
+///
+/// Returns an error when the thread does not start.
+pub fn run_script_on_thread(
+    host: Arc<dyn SpecHost>,
+    script: ScriptThread,
+) -> std::io::Result<std::thread::JoinHandle<Result<String, String>>> {
+    let ScriptThread {
+        name,
+        before,
+        file,
+        call,
+        args_json,
+        after,
+        around,
+    } = script;
+    std::thread::Builder::new()
+        .name(name)
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let _host = HostGuard::set(Some(Arc::clone(&host)));
+            let body: ThreadBody<'_> = Box::new(move || {
+                moqui_core::script::clear_context_stack();
+                let run = || -> Result<String, Error> {
+                    install_prelude_for(Some(&*host))?;
+                    if !before.is_empty() {
+                        // its value is not read: it may be an object, such as `globalThis`, that does not convert
+                        moqui_core::script::eval_named_value(&format!("{before}\n;null"), "thread")?;
+                    }
+                    if let Some(file) = &file {
+                        // The wrapper opens on the file's first line, so a line in an error is the file's.
+                        let wrapped = format!("(function(){{{}\n}})();", file.source);
+                        moqui_core::script::eval_named_value(&wrapped, &file.display)?;
+                    }
+                    let code = format!("JSON.stringify((({call}))(...({args_json})) ?? null)");
+                    let value = moqui_core::script::eval_named_value(&code, "thread")?;
+                    Ok(to_plain_string(&value))
+                };
+                let out = run().map_err(|err| err.to_string());
+                if !after.is_empty() {
+                    if let Err(err) = moqui_core::script::eval_named_value(&format!("{after}\n;null"), "thread") {
+                        tracing::warn!("after a script thread: {err}");
+                    }
+                }
+                moqui_core::script::clear_context_stack();
+                out
+            });
+            match around {
+                Some(around) => around(body),
+                None => body(),
+            }
+        })
+}
+
 /// `__moquiTestHost.parallel` ([`super::host`]): the function source on `count` threads, each with its own execution
 /// context and engine; `{results, errors}` as JSON.
 pub(super) fn run_parallel(

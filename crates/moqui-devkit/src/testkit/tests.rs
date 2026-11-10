@@ -16,7 +16,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::run::{run_on_thread, run_spec, CaseExtras, Outcome, RunOptions, SpecFile, SpecHost, SpecResult};
+use super::run::{
+    run_on_thread, run_script_on_thread, run_spec, CaseExtras, Outcome, RunOptions, ScriptFile, ScriptThread, SpecFile,
+    SpecHost, SpecResult,
+};
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 
 fn run(source: &str) -> SpecResult {
@@ -636,6 +639,57 @@ fn run_on_thread_calls_a_function_in_its_own_engine_with_the_host() {
     .join()
     .unwrap();
     assert!(failed.unwrap_err().contains("in the thread"));
+}
+
+#[test]
+fn run_script_on_thread_evaluates_a_file_then_calls_a_function() {
+    let fake = Arc::new(FakeHost::default());
+    let host: Arc<dyn SpecHost> = fake.clone();
+    let file = |source: &str| {
+        Some(ScriptFile {
+            display: "test/load/Thread.load.js".to_string(),
+            source: source.to_string(),
+        })
+    };
+    // what the file registers keeps the file's top-level names
+    let handle = run_script_on_thread(
+        Arc::clone(&host),
+        ScriptThread {
+            name: "moqui-test-script".to_string(),
+            // a plain set of a global is the context stack's data, so the state is defined
+            before: "Object.defineProperty(globalThis, 'registered', { value: {}, configurable: true }); \
+                     Object.defineProperty(globalThis, 'given', { value: 5, configurable: true })"
+                .to_string(),
+            file: file("const helper = (n) => n * given\nregistered.run = (n) => helper(n) + echo(1).echoed"),
+            call: "(n) => ({ out: registered.run(n) })".to_string(),
+            args_json: "[2]".to_string(),
+            after: String::new(),
+            around: Some(Box::new(|body| body().map(|json| format!("{{\"wrapped\":{json}}}")))),
+        },
+    )
+    .unwrap();
+    let out: serde_json::Value = serde_json::from_str(&handle.join().unwrap().unwrap()).unwrap();
+    assert_eq!(out["wrapped"]["out"], 11);
+    // an error in the file names it and its line
+    let failed = run_script_on_thread(
+        host,
+        ScriptThread {
+            name: "moqui-test-script".to_string(),
+            file: file("const ok = 1\nthrow new Error('in the file')"),
+            call: "() => 1".to_string(),
+            args_json: "[]".to_string(),
+            // still evaluated after the file threw
+            after: "echo('after')".to_string(),
+            ..ScriptThread::default()
+        },
+    )
+    .unwrap()
+    .join()
+    .unwrap()
+    .unwrap_err();
+    assert!(failed.contains("in the file"), "{failed}");
+    assert!(failed.contains("Thread.load.js"), "{failed}");
+    assert!(fake.calls.lock().unwrap().iter().any(|call| call == "echo \"after\""));
 }
 
 #[test]

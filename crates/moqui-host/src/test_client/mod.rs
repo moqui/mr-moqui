@@ -304,7 +304,6 @@ fn run_against(
         sessions: Mutex::new(HashMap::new()),
         sockets: Mutex::new(HashMap::new()),
         bodies: Mutex::new(VecDeque::new()),
-        loads: Mutex::new(HashMap::new()),
         current: Mutex::new((String::new(), String::new())),
         output: Mutex::new(Vec::new()),
         browser_config: browser::BrowserConfig {
@@ -693,8 +692,6 @@ pub(crate) struct ClientHost {
     sessions: Mutex<HashMap<u64, Arc<Mutex<Session>>>>,
     sockets: Mutex<HashMap<u64, Arc<Mutex<ws::Socket>>>>,
     bodies: Mutex<VecDeque<(u64, Arc<Vec<u8>>)>>,
-    /// The loads running, by id, for their users' `thread.begin`.
-    loads: Mutex<HashMap<u64, Arc<load::Load>>>,
     /// The component and spec running, which name a load's JSON.
     current: Mutex<(String, String)>,
     /// The case's output so far (load tables), taken by `after_case`.
@@ -707,13 +704,6 @@ pub(crate) struct ClientHost {
     /// `--video`: each spec's browser screencasts its pages into `recording`.
     video: bool,
     recording: video::Shared,
-}
-
-/// The time now, as `Date.now()` gives it.
-fn epoch_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |since| since.as_secs_f64() * 1000.0)
 }
 
 /// A request's `expect: [401, ...]`: the statuses a load does not count as errors.
@@ -745,10 +735,11 @@ fn observe(
                 elapsed: answer.elapsed,
                 expect: expected(opts),
             };
-            load::observe(name, &observed)
+            load::observe(name, load::Kind::Http, &observed)
         }
         Err(err) => load::observe(
             name,
+            load::Kind::Http,
             &load::Observed {
                 status: None,
                 text: err,
@@ -812,6 +803,70 @@ fn pairs(value: &Value) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+/// A load user's request says it is one: `User-Agent: moqui-load/<version>`, unless the request or its session names
+/// an agent of its own.
+fn agent_header(ask: &mut Ask, session_headers: &[(String, String)]) {
+    let named = |name: &str| name.eq_ignore_ascii_case("user-agent");
+    if session_headers.iter().any(|(name, _)| named(name)) {
+        return;
+    }
+    let headers = ask
+        .opts
+        .entry("headers")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if !headers.is_object() {
+        *headers = Value::Object(serde_json::Map::new());
+    }
+    if let Some(headers) = headers.as_object_mut() {
+        if !headers.keys().any(|name| named(name)) {
+            headers.insert("User-Agent".to_string(), json!(load::LOAD_AGENT));
+        }
+    }
+}
+
+/// Seconds from a JSON number, when it is one from 0.
+fn seconds_of(value: &Value) -> Option<Duration> {
+    value
+        .as_f64()
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+        .map(load::seconds)
+}
+
+/// A load's function source, or `null`.
+fn source_of(args: &Value, name: &str) -> String {
+    field(args, name)
+        .as_str()
+        .map_or_else(|| "null".to_string(), str::to_string)
+}
+
+/// A script's thresholds with the run's over them: each top-level limit, and each name's.
+fn merge_limits(script: &Value, run: &Value) -> Value {
+    let mut out = script.as_object().cloned().unwrap_or_default();
+    let Some(run) = run.as_object() else {
+        return Value::Object(out);
+    };
+    for (key, value) in run {
+        match (
+            key.as_str(),
+            value.as_object(),
+            out.get_mut(key).and_then(Value::as_object_mut),
+        ) {
+            ("names", Some(names), Some(into)) => {
+                for (name, limits) in names {
+                    let entry = into.entry(name.clone()).or_insert_with(|| json!({}));
+                    if let (Some(entry), Some(limits)) = (entry.as_object_mut(), limits.as_object()) {
+                        entry.extend(limits.clone());
+                    }
+                }
+            }
+            _ => {
+                out.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    Value::Object(out)
+}
+
 impl ClientHost {
     fn id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
@@ -837,7 +892,7 @@ impl ClientHost {
         field(args, name)
             .as_f64()
             .filter(|seconds| *seconds >= 0.0)
-            .map_or(default, Duration::from_secs_f64)
+            .map_or(default, load::seconds)
     }
 
     /// Keep a body for `save` and answer the response JSON.
@@ -855,12 +910,15 @@ impl ClientHost {
     fn request(&self, args: &Value) -> Result<Value, String> {
         let session = self.session(args)?;
         let path = text_field(args, "path");
-        let ask = Ask {
+        let mut ask = Ask {
             method: text_field(args, "method"),
             url: self.server.join(&path),
             opts: field(args, "opts").as_object().cloned().unwrap_or_default(),
         };
-        load::check_stopped()?;
+        load::before_request()?;
+        if load::is_user() {
+            agent_header(&mut ask, &lock(&session).headers);
+        }
         let started = Instant::now();
         let sent = http::send(&self.client, &mut lock(&session), &ask, REQUEST_TIMEOUT);
         let opts = field(args, "opts");
@@ -891,7 +949,7 @@ impl ClientHost {
 
     /// `http.raw` under a load: timed as a request named `RAW` and its target, unless it has a `name`.
     fn raw_timed(&self, args: &Value) -> Result<Value, String> {
-        load::check_stopped()?;
+        load::before_request()?;
         let started = Instant::now();
         let text = text_field(args, "text");
         let target = text
@@ -925,13 +983,12 @@ impl ClientHost {
                 .as_str()
                 .map_or_else(|| load::default_name("RAW", target), str::to_string)
         };
-        load::observe(name, &observed)?;
+        load::observe(name, load::Kind::Raw, &observed)?;
         sent
     }
 
-    /// Start `count` user threads, each `source` (a function's text) called with the `args` that `item` gives it,
-    /// and wait for them until `timeout`, then `on_timeout` and 10 seconds more. Each user's answer, or why it has
-    /// none.
+    /// Start `count` threads, each `source` (a function's text) called with the `args` that `item` gives it, and
+    /// wait for them until `timeout`, then 10 seconds more. Each thread's answer, or why it has none.
     fn run_threads(
         &self,
         kind: &str,
@@ -939,7 +996,6 @@ impl ClientHost {
         source: &str,
         item: &dyn Fn(u64) -> String,
         timeout: Duration,
-        on_timeout: &dyn Fn(),
     ) -> Vec<(u64, Result<String, String>)> {
         let Some(me) = self.me.upgrade() else {
             return Vec::new();
@@ -947,109 +1003,85 @@ impl ClientHost {
         let host: Arc<dyn SpecHost> = me;
         let mut running = Vec::new();
         let mut out = Vec::new();
-        for user in 0..count {
-            match run_on_thread(Arc::clone(&host), &format!("moqui-{kind}-{user}"), source, &item(user)) {
-                Ok(handle) => running.push((user, handle)),
-                Err(err) => out.push((user, Err(format!("the thread did not start: {err}")))),
+        for index in 0..count {
+            match run_on_thread(
+                Arc::clone(&host),
+                &format!("moqui-{kind}-{index}"),
+                source,
+                &item(index),
+            ) {
+                Ok(handle) => running.push((index, handle)),
+                Err(err) => out.push((index, Err(format!("the thread did not start: {err}")))),
             }
         }
-        let deadline = Instant::now() + timeout;
-        let mut stopping = false;
-        while !running.is_empty() {
-            let (done, left): (Vec<_>, Vec<_>) = running.into_iter().partition(|(_, handle)| handle.is_finished());
-            running = left;
-            for (user, handle) in done {
-                let answer = handle.join().unwrap_or_else(|_| Err("the thread panicked".to_string()));
-                out.push((user, answer));
-            }
-            if running.is_empty() {
-                break;
-            }
-            let now = Instant::now();
-            if now >= deadline && !stopping {
-                stopping = true;
-                on_timeout();
-            }
-            if now >= deadline + Duration::from_secs(10) {
-                // Left to end on their own: the spec's sessions close after it, so their requests fail.
-                for (user, _) in running.drain(..) {
-                    out.push((
-                        user,
-                        Err(format!("still running {}s after the start", timeout.as_secs())),
-                    ));
-                }
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        out.sort_by_key(|(user, _)| *user);
+        out.extend(load::join_all(running, timeout, &|| {}, &|| {}));
+        out.sort_by_key(|(index, _)| *index);
         out
     }
 
-    /// `load(opts)` (5.6): the users, until the duration ends or each has run its iterations; the result, its table
-    /// for the case's output, and its JSON in `<out>/load`.
+    /// `load(opts)` (5.6; plans/LoadRunner.md section 9): the users of its functions, or of a load script's scenarios,
+    /// until the duration ends or each has run its iterations; the result, its table for the case's output, and its
+    /// JSON in `<out>/load`.
     fn run_load(&self, args: &Value) -> Result<Value, String> {
-        let users = field(args, "users").as_f64().unwrap_or(1.0);
-        if !((1.0..=10_000.0).contains(&users) && users.fract() == 0.0) {
-            return Err(format!("load: users is a whole number from 1 to 10000, not {users}"));
-        }
-        let users = users as u64;
-        let duration = field(args, "duration").as_f64().filter(|seconds| *seconds > 0.0);
-        let iterations = field(args, "iterations")
-            .as_f64()
-            .filter(|count| *count >= 1.0)
-            .map(|count| count as u64);
-        if duration.is_none() && iterations.is_none() {
-            return Err("load needs a duration (seconds) or iterations (per user)".to_string());
-        }
-        let ramp_up = field(args, "rampUp").as_f64().unwrap_or(0.0).max(0.0);
-        let think = field(args, "think").as_array().map(|pair| {
-            let at = |index: usize| pair.get(index).and_then(Value::as_f64).unwrap_or(0.0).max(0.0);
-            let (min, max) = (at(0), at(1));
-            json!([min.min(max), min.max(max)])
-        });
-        let timeout = field(args, "timeout")
-            .as_f64()
-            .filter(|seconds| *seconds > 0.0)
-            .unwrap_or_else(|| duration.map_or(600.0, |seconds| seconds + ramp_up + 120.0));
-        let source_of = |name: &str| {
-            field(args, name)
-                .as_str()
-                .map_or_else(|| "null".to_string(), str::to_string)
+        let Some(me) = self.me.upgrade() else {
+            return Err("load: the client host is closing".to_string());
         };
-        let source = format!(
-            "(spec) => __moquiThread.load(spec, {}, {}, {})",
-            source_of("setup"),
-            source_of("scenario"),
-            source_of("teardown")
-        );
-        let id = self.id();
-        let running = Arc::new(load::Load::default());
-        lock(&self.loads).insert(id, Arc::clone(&running));
-        let start_ms = epoch_ms();
-        let user_args = field(args, "args").clone();
-        let item = |user: u64| {
-            let start_at = start_ms + ramp_up * 1000.0 * user as f64 / users as f64;
-            json!([{
-                "load": id, "user": user, "args": user_args, "startAt": start_at,
-                "endAt": duration.map(|seconds| start_ms + seconds * 1000.0), "iterations": iterations, "think": think,
-            }])
-            .to_string()
-        };
-        let started = Instant::now();
-        let answers = self.run_threads("load", users, &source, &item, Duration::from_secs_f64(timeout), &|| {
-            running.stop.store(true, std::sync::atomic::Ordering::Relaxed)
-        });
-        lock(&self.loads).remove(&id);
-        let mut collected = lock(&running.collected);
-        for (user, answer) in answers {
-            if let Err(err) = answer {
-                tracing::warn!("load user {user}: {err}");
-                collected.user_error(user, &err);
+        let host: Arc<dyn SpecHost> = me;
+        let mut thresholds = field(args, "thresholds").clone();
+        let mut run = serde_json::Map::new();
+        let (scenarios, source) = match field(args, "script").as_str() {
+            Some(relative) => {
+                let component = lock(&self.component_dir).clone();
+                let script = load::LoadScript::read(&component, relative)?;
+                let plan = load::script::read_plan(&host, &script, field(args, "params"))?;
+                if !plan.uses().iter().any(|uses| uses == "http") {
+                    return Err(format!(
+                        "load: {} uses {}, which a client cannot make: it runs in a server (Tools › Load)",
+                        script.display,
+                        plan.uses().join(", ")
+                    ));
+                }
+                let scenarios = load::script::settings(&plan, args)?;
+                thresholds = merge_limits(plan.thresholds(), &thresholds);
+                run.insert("script".into(), json!(script.display));
+                run.insert("params".into(), plan.public_params());
+                let source = load::Source::Script {
+                    script: Arc::new(script),
+                    params: plan.params.clone(),
+                };
+                (scenarios, source)
             }
-        }
-        let (stats, order) = load::stats(users, &mut collected, started.elapsed());
-        drop(collected);
+            None => {
+                let settings = load::ScenarioSettings::from_json("load", args, "load")?;
+                let source = format!(
+                    "(spec) => __moquiThread.load(spec, {}, {}, {})",
+                    source_of(args, "setup"),
+                    source_of(args, "scenario"),
+                    source_of(args, "teardown")
+                );
+                run.insert("script".into(), Value::Null);
+                let source = load::Source::Functions {
+                    source,
+                    args: field(args, "args").clone(),
+                };
+                (vec![settings], source)
+            }
+        };
+        run.insert("target".into(), json!(self.server.url));
+        run.insert("label".into(), field(args, "label").clone());
+        let start = load::Start {
+            scenarios,
+            source,
+            timeout: field(args, "timeout").as_f64(),
+            thresholds,
+            run,
+            generator: "same-machine",
+            around: None,
+            stop_after: seconds_of(field(args, "stopAfter")),
+            stop_now_after: seconds_of(field(args, "stopNowAfter")),
+        };
+        let running = load::start(&host, start)?;
+        let (stats, order) = running.wait();
         let mut text = load::table(&stats, &order);
         if let Err(err) = self.write_load(args, &stats) {
             tracing::error!("{err}");
@@ -1079,12 +1111,12 @@ impl ClientHost {
             number += 1;
         }
         let mut file = stats.clone();
-        if let Some(map) = file.as_object_mut() {
-            map.insert(
-                "run".to_string(),
-                json!({ "component": component, "spec": spec, "feature": feature, "server": self.server.url,
-                    "finished": jiff::Timestamp::now().to_string() }),
-            );
+        if let Some(run) = file.get_mut("run").and_then(Value::as_object_mut) {
+            let more = json!({ "component": component, "spec": spec, "feature": feature, "server": self.server.url,
+                "finished": jiff::Timestamp::now().to_string() });
+            if let Value::Object(more) = more {
+                run.extend(more);
+            }
         }
         let text = serde_json::to_string_pretty(&file).map_err(|err| format!("load: {err}"))?;
         std::fs::write(&path, text).map_err(|err| format!("load: {}: {err}", path.display()))?;
@@ -1106,7 +1138,7 @@ impl ClientHost {
         let thread_args = field(args, "args").clone();
         let item = |index: u64| json!([index, thread_args]).to_string();
         let timeout = self.seconds(args, "timeout", Duration::from_secs(120));
-        let answers = self.run_threads("parallel", count, &source, &item, timeout, &|| {});
+        let answers = self.run_threads("parallel", count, &source, &item, timeout);
         let mut results = vec![Value::Null; count as usize];
         let mut errors = Vec::new();
         for (index, answer) in answers {
@@ -1275,6 +1307,9 @@ impl ClientHost {
     }
 
     fn dispatch(&self, name: &str, args: &Value) -> Result<Value, String> {
+        if let Some(answer) = load::host_call(name, args) {
+            return answer;
+        }
         if name.starts_with("page.") || name.starts_with("locator.") {
             let mut held = lock(&self.browser);
             let spec_browser = held
@@ -1299,6 +1334,11 @@ impl ClientHost {
                 lock(&self.sessions).insert(id, Arc::new(Mutex::new(session)));
                 load::track_session(id);
                 Ok(json!(id))
+            }
+            "session.close" => {
+                let id = field(args, "session").as_u64().unwrap_or(0);
+                lock(&self.sessions).remove(&id);
+                Ok(Value::Null)
             }
             "session.cookies" => {
                 let session = self.session(args)?;
@@ -1326,13 +1366,6 @@ impl ClientHost {
             "hmac.sha256Base64" | "hmac.sha256Timestamp" => hmac_sign(name, args),
             "load.run" => self.run_load(args),
             "parallel" => self.run_parallel(args),
-            "thread.begin" => {
-                let running = field(args, "load")
-                    .as_u64()
-                    .and_then(|id| lock(&self.loads).get(&id).cloned());
-                load::begin(running, field(args, "user").as_u64().unwrap_or(0));
-                Ok(Value::Null)
-            }
             "thread.end" => {
                 let mut ended = load::end();
                 ended.extend(field(args, "session").as_u64());
@@ -1341,20 +1374,6 @@ impl ClientHost {
                     sessions.remove(&id);
                 }
                 Ok(Value::Null)
-            }
-            "load.timed" => {
-                load::timed(
-                    field(args, "on").as_bool().unwrap_or(false),
-                    field(args, "iterations").as_u64().unwrap_or(0),
-                );
-                Ok(Value::Null)
-            }
-            "load.error" => {
-                let stop = load::scenario_error(
-                    &text_field(args, "message"),
-                    field(args, "iteration").as_u64().unwrap_or(0),
-                );
-                Ok(json!({ "stop": stop }))
             }
             "response.save" => self.save(args),
             "ws.connect" => {

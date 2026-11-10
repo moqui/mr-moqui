@@ -120,7 +120,7 @@ tui = ["dep:moqui-tui", "dep:tungstenite", "dep:webpki-roots", "reqwest/cookies"
 # `moqui test-client` (plans/archive/ClientTestHarness.md): a component's test/client specs against a running server, over
 # HTTP (the host's reqwest), raw TCP or TLS and WebSocket (tungstenite, as tui has it), with no database or listener.
 # In every package, so a CI box with any binary can test any server.
-test-client = ["dep:tungstenite", "dep:webpki-roots", "dep:regex"]
+test-client = ["dep:tungstenite", "dep:webpki-roots", "dep:regex", "dep:getrandom"]
 
 [dependencies]
 # The workspace entry has default features off (moqui-browser). The host always has HTTP and the cluster
@@ -157,6 +157,8 @@ moqui-drivers = { workspace = true }
 # `ui` pulls Revue. The `tui` feature above links it.
 moqui-tui = { workspace = true, optional = true, features = ["ui"] }
 tungstenite = { workspace = true, optional = true }
+# The seed of a load user's pause generator, in moqui test-client: already in the graph through moqui-lib.
+getrandom = { workspace = true, optional = true }
 tracing = { workspace = true }
 # the web protection conf a conf reload replaces (plans/archive/Component-Deploy.md)
 arc-swap = { workspace = true }

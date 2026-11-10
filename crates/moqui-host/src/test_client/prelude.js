@@ -4,7 +4,14 @@
 // before each spec file. There is no execution context: `ec` and the server helpers throw, naming what to use instead.
 (function (g) {
     const define = (name, value) => Object.defineProperty(g, name, { value, writable: true, configurable: true });
-    const host = (name, args) => JSON.parse(__moquiTestHost.call(name, JSON.stringify(args === undefined ? null : args)));
+    // A load script's state in this engine (plans/LoadRunner.md section 4): the run's raw params, its plan and scenarios,
+    // and whether its top level is running, where a request is refused.
+    const loadState = { topLevel: false, raw: {}, plan: null, scenarios: {}, order: [] };
+    const TOP_LEVEL_REFUSED = new Set(["http.request", "http.raw", "ws.connect", "browser.newPage", "service.call"]);
+    const host = (name, args) => {
+        if (loadState.topLevel && TOP_LEVEL_REFUSED.has(name)) throw new Error("a load script makes no request at its top level");
+        return JSON.parse(__moquiTestHost.call(name, JSON.stringify(args === undefined ? null : args)));
+    };
     const config = host("config");
     const OUTSIDE = "a client test (test/client) runs outside the server";
 
@@ -33,25 +40,154 @@
     };
     const plainArgs = (args) => args === undefined ? null : __moquiTest.plain(args, 0);
 
-    // Virtual users (plans/archive/ClientTestHarness.md 5.6): each a thread with its own engine and default session (`http`)
-    // runs setup once, scenario until the duration ends or for its iterations, then teardown. They run from their
-    // source text, so they cannot use the spec file's variables; args are copied as JSON. The requests of scenario are
-    // timed; a response of 400 or more (unless the request has expect: [...]), a transport error or a throw is an
-    // error, which ends that iteration. Answers the statistics; the table goes after the feature's line and the whole
-    // result to <out>/load.
+    // Virtual users (plans/archive/ClientTestHarness.md 5.6, plans/LoadRunner.md): each a thread with its own engine and
+    // default session (`http`) runs setup once, scenario until the duration ends or for its iterations, then teardown.
+    // They run from their source text, so they cannot use the spec file's variables; args are copied as JSON. With
+    // `script`, the users run a load script's scenarios instead, the file evaluated whole in each user's engine. The
+    // requests of the scenario are timed; a response of 400 or more (unless the request has expect: [...]), a
+    // transport error or a throw is an error, which ends that iteration. Answers the statistics; the table goes after
+    // the feature's line and the whole result to <out>/load.
+    const numberOr = (value) => value == null ? null : Number(value);
     define("load", (opts) => {
         const o = options(opts);
-        if (typeof o.scenario !== "function") throw new Error("load needs a scenario function");
-        const think = o.think == null ? null : Array.isArray(o.think) ? [Number(o.think[0]), Number(o.think[1] ?? o.think[0])]
-            : [Number(o.think), Number(o.think)];
-        return host("load.run", {
-            users: o.users == null ? 1 : Number(o.users), duration: o.duration == null ? null : Number(o.duration),
-            iterations: o.iterations == null ? null : Number(o.iterations), rampUp: Number(o.rampUp || 0), think,
-            timeout: o.timeout == null ? null : Number(o.timeout), args: plainArgs(o.args),
-            setup: sourceOf(o.setup, "setup"), scenario: sourceOf(o.scenario, "scenario"), teardown: sourceOf(o.teardown, "teardown"),
+        const common = {
+            users: numberOr(o.users), duration: numberOr(o.duration), iterations: numberOr(o.iterations),
+            rampUp: numberOr(o.rampUp), think: o.think ?? null, pause: o.pause ?? null,
+            newSession: o.newSession == null ? null : !!o.newSession, timeout: numberOr(o.timeout),
+            thresholds: plainArgs(o.thresholds), label: o.label == null ? null : String(o.label),
+            stopAfter: numberOr(o.stopAfter), stopNowAfter: numberOr(o.stopNowAfter),
             feature: __moquiTest.caseName || "load",
-        });
+        };
+        if (o.script != null) {
+            return host("load.run", Object.assign(common, { script: String(o.script), params: plainArgs(o.params) ?? {},
+                scenarios: plainArgs(o.scenarios) }));
+        }
+        if (typeof o.scenario !== "function") throw new Error("load needs a scenario function, or a script");
+        return host("load.run", Object.assign(common, { users: common.users ?? 1, args: plainArgs(o.args),
+            setup: sourceOf(o.setup, "setup"), scenario: sourceOf(o.scenario, "scenario"), teardown: sourceOf(o.teardown, "teardown") }));
     });
+
+    // A load script's top level (plans/LoadRunner.md section 4): plan() resolves the run's params over its defaults,
+    // of the defaults' types, into `params`; scenario() registers a group of users.
+    const paramDef = (def) => def && typeof def === "object" && !Array.isArray(def) ? def : { default: def };
+    const typeOf = (value) => typeof value === "number" ? "number" : typeof value === "boolean" ? "boolean" : "text";
+    // A value for an error message; a secret's is left out.
+    const shownValue = (def, value) => def.secret ? "the value given" : JSON.stringify(value);
+    const resolveParams = (defs, raw) => {
+        const out = {};
+        const declared = Object.entries(defs || {});
+        for (const [name, given] of declared) {
+            const def = paramDef(given);
+            let value = raw[name];
+            if (value == null || value === "") {
+                if (def.required && def.default == null) throw new Error(`the load script's parameter ${name} is required`);
+                value = def.default ?? null;
+            } else if (typeOf(def.default) === "number") {
+                const number = Number(value);
+                if (!Number.isFinite(number)) throw new Error(`the load script's parameter ${name} is a number, not ${shownValue(def, value)}`);
+                value = number;
+            } else if (typeOf(def.default) === "boolean" && typeof value !== "boolean") {
+                const text = String(value).toLowerCase();
+                if (["true", "yes", "1"].includes(text)) value = true;
+                else if (["false", "no", "0"].includes(text)) value = false;
+                else throw new Error(`the load script's parameter ${name} is true or false, not ${shownValue(def, value)}`);
+            } else if (typeof value !== "string" && typeOf(def.default) === "text") {
+                value = String(value);
+            }
+            if (Array.isArray(def.options) && value != null && !def.options.map(String).includes(String(value))) {
+                throw new Error(`the load script's parameter ${name} is one of ${def.options.join(", ")}, not ${shownValue(def, value)}`);
+            }
+            out[name] = value;
+        }
+        for (const name of Object.keys(raw)) {
+            if (!(name in out)) {
+                if (declared.length > 0) {
+                    throw new Error(`the load script has no parameter ${name} (it has ${declared.map(([n]) => n).join(", ")})`);
+                }
+                out[name] = raw[name];
+            }
+        }
+        return out;
+    };
+    define("plan", (opts) => {
+        if (!loadState.topLevel) throw new Error("plan() is called at the top level of a load script");
+        if (loadState.plan) throw new Error("a load script has one plan()");
+        loadState.plan = options(opts);
+        define("params", Object.freeze(resolveParams(loadState.plan.params, loadState.raw)));
+    });
+    define("scenario", (name, opts) => {
+        if (!loadState.topLevel) throw new Error("scenario() is called at the top level of a load script");
+        const key = String(name);
+        const o = options(opts);
+        if (typeof o.run !== "function") throw new Error(`scenario ${key} needs a run(user, iteration) function`);
+        if (loadState.scenarios[key]) throw new Error(`a load script has one scenario named ${key}`);
+        loadState.scenarios[key] = o;
+        loadState.order.push(key);
+    });
+    // What the host evaluates around a load script (the host's load/script.rs).
+    define("__moquiLoad", Object.freeze({
+        begin(raw) {
+            loadState.topLevel = true;
+            loadState.raw = raw && typeof raw === "object" ? raw : {};
+            loadState.plan = null;
+            loadState.scenarios = {};
+            loadState.order = [];
+            define("params", Object.freeze(Object.assign({}, loadState.raw)));
+        },
+        // After the thread's work, whether it ran or threw: the default session goes, which thread.end does not
+        // close when the file threw before the user began.
+        close() {
+            loadState.topLevel = false;
+            if (g.http && g.http.id != null) host("session.close", { session: g.http.id });
+        },
+        describe() {
+            loadState.topLevel = false;
+            const p = loadState.plan || {};
+            const params = {};
+            for (const [name, given] of Object.entries(p.params || {})) {
+                const def = paramDef(given);
+                params[name] = { default: def.secret ? null : (def.default ?? null), description: def.description ?? null,
+                    options: Array.isArray(def.options) ? def.options : null, secret: !!def.secret, required: !!def.required,
+                    type: typeOf(def.default) };
+            }
+            const scenarios = loadState.order.map((name) => {
+                const s = loadState.scenarios[name];
+                return { name, users: s.users ?? null, rampUp: s.rampUp ?? null, duration: s.duration ?? null,
+                    iterations: s.iterations ?? null, think: s.think ?? null, pause: s.pause ?? null, newSession: !!s.newSession };
+            });
+            return {
+                plan: { title: p.title ?? null, description: p.description ?? null, uses: p.uses || ["http"], params,
+                    thresholds: plainArgs(p.thresholds) },
+                params: plainArgs(g.params), scenarios,
+            };
+        },
+    }));
+
+    // step(name, fn): fn's whole time as a sample of kind step, its requests counted under their own names too.
+    define("step", (name, fn) => {
+        if (typeof fn !== "function") throw new Error("step needs a name and a function");
+        host("step.begin");
+        let value;
+        try {
+            value = fn();
+        } catch (e) {
+            host("step.end", { name: String(name), error: messageOf(e) });
+            throw e;
+        }
+        host("step.end", { name: String(name) });
+        return value;
+    });
+    // A wait that is not timed: milliseconds, [min, max], or { gaussian: [mean, deviation] }.
+    define("pause", (spec) => { host("load.pause", { pause: spec ?? null }); });
+    // Ends the iteration as an error with the message.
+    define("fail", (message) => { throw new Error(message == null || message === "" ? "failed" : String(message)); });
+    define("service", Object.freeze({
+        call(name) {
+            throw new Error(`service.call(${JSON.stringify(String(name))}) runs in a server's own process (a load run from Tools › Load); ` +
+                "from a client use http.post on the service's REST path (/rest/s1/...)");
+        },
+    }));
+
     // fn(index, args) on n threads, each with its own engine and default session, from its source text as in load;
     // { results, errors }, a thread that threw leaving null in results and its error in errors. For races such as
     // simultaneous logins.
@@ -60,38 +196,53 @@
         return host("parallel", { n: Number(n), source: sourceOf(fn, "parallel's fn"), args: plainArgs(args),
             timeout: o.timeout == null ? null : Number(o.timeout) });
     });
-    // What a load user's and a parallel thread run (the host's run_load and run_parallel).
+    // A load user: setup once, run(iteration) until the duration ends, its iterations are done or the load stops, then
+    // teardown. With newSession each iteration starts on a fresh `http`.
+    const runUser = (spec, setup, run, teardown) => {
+        host("thread.begin", { load: spec.load, scenario: spec.scenario, user: spec.user, pause: spec.pause ?? null });
+        let iteration = 0;
+        try {
+            // the ramp ends on any stop, and a user stopped before its start runs neither setup nor teardown
+            if (host("load.ramp", { until: spec.startAt }).stop) return iteration;
+            if (setup) setup();
+            let stop = host("load.timed", { on: true }).stop;
+            const more = () => !stop && (spec.iterations == null || iteration < spec.iterations) && (spec.endAt == null || Date.now() < spec.endAt);
+            while (more()) {
+                if (spec.newSession) {
+                    const old = g.http;
+                    define("http", newSession());
+                    host("session.close", { session: old.id });
+                }
+                try {
+                    run(iteration);
+                } catch (e) {
+                    host("load.error", { message: messageOf(e), iteration });
+                }
+                iteration++;
+                stop = host("load.iterated", { iteration }).stop;
+                if (spec.think && more()) host("load.pause", { pause: spec.think, until: spec.endAt });
+            }
+            host("load.timed", { on: false });
+            if (teardown) teardown();
+        } finally {
+            host("thread.end", { session: g.http.id });
+        }
+        return iteration;
+    };
+    // What a load user's and a parallel thread run (the host's load module and run_parallel).
     define("__moquiThread", Object.freeze({
         load(spec, setup, scenario, teardown) {
-            host("thread.begin", { load: spec.load, user: spec.user });
-            let iteration = 0;
-            try {
-                const wait = spec.startAt - Date.now();
-                if (wait > 0) sleep(wait);
-                if (setup) setup(spec.user, spec.args);
-                host("load.timed", { on: true });
-                const more = () => (spec.iterations == null || iteration < spec.iterations) && (spec.endAt == null || Date.now() < spec.endAt);
-                while (more()) {
-                    let stop = false;
-                    try {
-                        scenario(spec.user, spec.args, iteration);
-                    } catch (e) {
-                        stop = host("load.error", { message: messageOf(e), iteration }).stop;
-                    }
-                    iteration++;
-                    if (stop) break;
-                    if (spec.think && more()) {
-                        let ms = spec.think[0] + Math.random() * (spec.think[1] - spec.think[0]);
-                        if (spec.endAt != null) ms = Math.min(ms, spec.endAt - Date.now());
-                        if (ms > 0) sleep(ms);
-                    }
-                }
-                host("load.timed", { on: false, iterations: iteration });
-                if (teardown) teardown(spec.user, spec.args);
-            } finally {
-                host("thread.end", { session: g.http.id });
-            }
-            return iteration;
+            return runUser(spec, setup && (() => setup(spec.user, spec.args)), (iteration) => scenario(spec.user, spec.args, iteration),
+                teardown && (() => teardown(spec.user, spec.args)));
+        },
+        // A load script's user, once the file has run: its scenario's functions, with `this` an object of the user's own.
+        script(spec) {
+            loadState.topLevel = false;
+            const s = loadState.scenarios[spec.scenarioName];
+            if (!s) throw new Error(`the load script has no scenario ${spec.scenarioName}`);
+            const self = {};
+            return runUser(spec, s.setup && (() => s.setup.call(self, spec.user)), (iteration) => s.run.call(self, spec.user, iteration),
+                s.teardown && (() => s.teardown.call(self, spec.user)));
         },
         parallel(index, args, fn) {
             host("thread.begin", { user: index });
@@ -126,6 +277,25 @@
             }
         }
         cookie(name) { return this.cookies.find((c) => c.name === name) || null; }
+        // A query parameter of the final url, else of location (a redirect not followed); null when neither has it.
+        urlParam(name) {
+            const key = String(name);
+            const decode = (text) => { try { return decodeURIComponent(text.replace(/\+/g, " ")); } catch (e) { return text; } };
+            const find = (url) => {
+                if (url == null) return null;
+                const text = String(url);
+                const at = text.indexOf("?");
+                if (at < 0) return null;
+                for (const part of text.slice(at + 1).split("#")[0].split("&")) {
+                    if (part === "") continue;
+                    const eq = part.indexOf("=");
+                    if (decode(eq < 0 ? part : part.slice(0, eq)) === key) return decode(eq < 0 ? "" : part.slice(eq + 1));
+                }
+                return null;
+            };
+            const found = find(this.url);
+            return found != null ? found : find(this.location);
+        }
         assertContains(text) {
             assert(this.text.includes(text), `the response of ${this.url} (status ${this.status}) does not contain ` +
                 `${JSON.stringify(text)}: ${this.text.slice(0, 300)}`);
