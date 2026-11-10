@@ -231,6 +231,8 @@ pub struct ServiceDef {
     /// `<actions>` XML, or empty when the service has none.
     pub actions: String,
     pub action_source: Option<moqui_lib::error::SourceLocation>,
+    /// `actions` prepared at its first run (plans/Profiling3.md W1). It belongs to `actions` as it was made.
+    pub actions_prepared: crate::script::PreparedActions,
     pub authenticate: Authenticate,
     pub authz_action: Option<String>,
     pub validate_input: bool,
@@ -274,6 +276,7 @@ impl ServiceDef {
             method: String::new(),
             actions: String::new(),
             action_source: None,
+            actions_prepared: crate::script::PreparedActions::default(),
             // As Java's `runImplicitEntityAuto`: no login is needed and the service itself is not authorized; each
             // entity operation it makes is.
             authenticate: Authenticate::Off,
@@ -1363,6 +1366,7 @@ fn load_service(prefix: &str, node: &MNode, failures: &mut Vec<String>) -> Optio
                 line: actions.line(),
                 column: actions.column(),
             }),
+        actions_prepared: crate::script::PreparedActions::default(),
         authenticate: authenticate_of(node),
         authz_action: node.attribute("authz-action"),
         validate_input: bool_attr(node, "validate", true),

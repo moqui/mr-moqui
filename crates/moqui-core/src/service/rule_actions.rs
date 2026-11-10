@@ -62,6 +62,27 @@ pub(crate) fn run_stored_actions(actions: &str) -> Result<(), crate::context::Er
     crate::script::run_actions(&format!("<actions>{trimmed}</actions>"))
 }
 
+/// [`run_stored_actions`] with the rule's prepared script kept in `prepared` (plans/Profiling3.md W1).
+pub(crate) fn run_prepared_actions(
+    actions: &str,
+    prepared: &crate::script::PreparedActions,
+) -> Result<(), crate::context::Error> {
+    let trimmed = actions.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    prepared.run_with(
+        || {
+            if trimmed.starts_with("<actions") {
+                std::borrow::Cow::Borrowed(trimmed)
+            } else {
+                std::borrow::Cow::Owned(format!("<actions>{trimmed}</actions>"))
+            }
+        },
+        None,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use moqui_lib::node::MNode;

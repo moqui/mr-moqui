@@ -196,7 +196,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
             frames.enter_screen(def, false)?;
             if index >= 2 {
                 if let Some(actions) = &def.pre_actions {
-                    if let Err(err) = script::run_actions(&actions.xml) {
+                    if let Err(err) = actions.run() {
                         tracing::warn!(
                             "Error running pre-actions in {} while getting menu data: {err}",
                             def.location

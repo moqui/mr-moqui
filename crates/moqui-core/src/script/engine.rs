@@ -138,8 +138,17 @@ pub(crate) fn run<T>(
     source: &str,
     run: impl FnOnce(&str, u64, bool) -> Result<T, crate::script::oxide::Outcome>,
 ) -> Result<T, Error> {
+    run_hashed(kind, source, crate::script::text::hash_text(source), run)
+}
+
+/// [`run`] of a text whose hash was kept with it (a [`crate::script::text::ScriptText`]), so it is not hashed again.
+pub(crate) fn run_hashed<T>(
+    kind: EntryKind,
+    source: &str,
+    hash: u64,
+    run: impl FnOnce(&str, u64, bool) -> Result<T, crate::script::oxide::Outcome>,
+) -> Result<T, Error> {
     use crate::script::oxide::Outcome;
-    let hash = crate::script::text::hash_text(source);
     let ran = run(source, hash, true);
     count(kind);
     match ran {

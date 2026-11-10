@@ -1383,7 +1383,9 @@ fn run_inline(def: &ServiceDef, parameters: &BTreeMap<String, Value>) -> Result<
         crate::script::set_context_name(name, value.clone()).map_err(script_err)?;
     }
     if !def.actions.trim().is_empty() {
-        crate::script::run_actions_at(&def.actions, def.action_source.as_ref()).map_err(|err| in_service(def, err))?;
+        def.actions_prepared
+            .run(&def.actions, def.action_source.as_ref())
+            .map_err(|err| in_service(def, err))?;
     }
     Ok(collect_outputs(def))
 }

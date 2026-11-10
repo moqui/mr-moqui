@@ -43,6 +43,8 @@ pub(super) struct SecaRule {
     /// What the rule checks: as Java, the first child of `<condition>` only, made into the condition group once.
     condition_check: Option<String>,
     actions: String,
+    /// `actions` prepared at the rule's first run (plans/Profiling3.md W1).
+    actions_prepared: crate::script::PreparedActions,
 }
 
 /// Run SECA actions whose service and `when` match. A false condition skips the rule.
@@ -88,7 +90,7 @@ pub fn run_seca_rules(
             None => true,
         };
         if passed {
-            super::rule_actions::run_stored_actions(&rule.actions).map_err(in_rule)?;
+            super::rule_actions::run_prepared_actions(&rule.actions, &rule.actions_prepared).map_err(in_rule)?;
         }
         read_back("parameters", parameters);
         if let Some(results) = results.as_deref_mut() {
@@ -237,6 +239,7 @@ pub(super) fn seca_rule_from(node: &MNode) -> Result<SecaRule, Error> {
             .first_named("actions")
             .map(|child| child.write_string())
             .unwrap_or_default(),
+        actions_prepared: crate::script::PreparedActions::default(),
     })
 }
 

@@ -252,7 +252,7 @@ fn list_value(form: &FormInstance, cursor: bool) -> Result<Value, Error> {
     };
     Ok(match find {
         Some(find) => {
-            script::run_actions(&find.xml)?;
+            find.run()?;
             script::context_value(&form.list_name).unwrap_or(Value::Null)
         }
         // A plain name held in the context is that value, as Java's `expression(list)` gives the object itself: through
@@ -310,7 +310,7 @@ fn form_row(
     let frame = ContextFrame::push_entries(entries);
     let ran = (|| -> Result<(), Error> {
         if let Some(actions) = &form.row_actions {
-            script::run_actions(&actions.xml)?;
+            actions.run()?;
         }
         for (field, from) in &form.field_from {
             let value = script::eval_value(from)?;

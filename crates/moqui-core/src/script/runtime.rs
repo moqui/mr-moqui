@@ -413,7 +413,7 @@ pub fn expand(template: &str) -> Result<String, Error> {
 /// The script is not strict. A strict function would reject bare assignment, and
 /// that assignment is how a plain value reaches the context stack.
 pub(super) fn eval_script_text(script: &ScriptText) -> Result<(), Error> {
-    crate::script::engine::run(EntryKind::Actions, script.text(), |source, hash, _| {
+    crate::script::engine::run_hashed(EntryKind::Actions, script.text(), script.hash(), |source, hash, _| {
         crate::script::oxide::run_actions(source, hash, script.file_name())
     })
 }

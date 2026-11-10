@@ -1385,7 +1385,7 @@ pub(crate) fn run_actions_transition(state: &RenderState) -> Result<(), Error> {
         if index >= first_pre {
             state.screen_path_index.set(index);
             if let Some(actions) = &def.pre_actions {
-                script::run_actions(&actions.xml)?;
+                actions.run()?;
             }
         }
     }

@@ -180,7 +180,7 @@ fn child_nodes(
             continue;
         }
         if let Some(actions) = &sub.actions {
-            script::run_actions(&actions.xml)?;
+            actions.run()?;
         }
         let Some(tree_node) = tree.node(&sub.node_name) else {
             continue;
@@ -198,7 +198,7 @@ fn child_nodes(
                     return Ok(None);
                 }
                 if let Some(actions) = &tree_node.actions {
-                    script::run_actions(&actions.xml)?;
+                    actions.run()?;
                 }
                 let Some(shown) = tree_node.link.as_ref().or(tree_node.label.as_ref()) else {
                     return Ok(None);

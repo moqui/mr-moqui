@@ -112,9 +112,7 @@ impl FormInstance {
                     let actions = MNode::new("actions");
                     actions.append_node(iterating);
                     // the find checked above with one more child the actions know
-                    Some(Actions {
-                        xml: std::sync::Arc::from(actions.write_string()),
-                    })
+                    Some(Actions::of(actions.write_string()))
                 };
                 (Some(whole), cursor)
             }
