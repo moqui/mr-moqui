@@ -75,7 +75,7 @@ along with this software (see the LICENSE.md file). If not, see
             <code-view text="${serviceNode.first('actions')?.toString()}" language="xml"/>
 
         </widgets></section>
-        <section name="LocationDisplaySection" condition="sd.serviceNode.attribute('location') &amp;&amp; sd.serviceNode.attribute('type')!='java'"><widgets>
+        <section name="LocationDisplaySection" condition="sd.serviceNode.attribute('location') &amp;&amp; !['java', 'rust'].includes(sd.serviceNode.attribute('type'))"><widgets>
             <label text="Script" type="h3"/>
             <code-view text="${ec.resource.getLocationText(sd.serviceNode.attribute('location'), false)}" file-name="${sd.serviceNode.attribute('location')}"/>
         </widgets></section>

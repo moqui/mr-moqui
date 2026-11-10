@@ -136,6 +136,8 @@ along with this software (see the LICENSE.md file). If not, see
             documentListPageRangeHigh = 0;
 
             if (!ec.search.isAvailable()) { ec.message.addMessage(ec.l10n.localize("Search is not configured, not running search"), "danger"); return; }
+            // a blank type (an Any choice whose key is a space) is every document in indexName
+            if (documentType != null && !String(documentType).trim()) documentType = null;
             const target = documentType ? {documentType: documentType} : {indexName: indexName};
             if (!ec.search.indexExists(target)) {
                 ec.logger.warn(`Tried to search with indexName ${indexName} that does not exist, returning empty list`);
