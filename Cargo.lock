@@ -4823,6 +4823,7 @@ dependencies = [
  "tracing",
  "tungstenite",
  "turn-client-proto",
+ "url",
  "webpki-roots",
  "yrs",
 ]

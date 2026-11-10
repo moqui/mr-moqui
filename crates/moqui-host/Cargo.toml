@@ -120,7 +120,7 @@ tui = ["dep:moqui-tui", "dep:tungstenite", "dep:webpki-roots", "reqwest/cookies"
 # `moqui test-client` (plans/archive/ClientTestHarness.md): a component's test/client specs against a running server, over
 # HTTP (the host's reqwest), raw TCP or TLS and WebSocket (tungstenite, as tui has it), with no database or listener.
 # In every package, so a CI box with any binary can test any server.
-test-client = ["dep:tungstenite", "dep:webpki-roots", "dep:regex"]
+test-client = ["dep:tungstenite", "dep:webpki-roots", "dep:regex", "dep:url"]
 
 [dependencies]
 # The workspace entry has default features off (moqui-browser). The host always has HTTP and the cluster
@@ -201,6 +201,9 @@ p256 = { workspace = true, optional = true }
 reqwest = { workspace = true }
 # A page problem that allowProblems ignores, in moqui test-client: already in the graph through moqui-tui.
 regex = { workspace = true, optional = true }
+# The load runner's target check (src/load_runner/targets.rs) parses URLs as reqwest does (WHATWG): already in the
+# graph through reqwest.
+url = { workspace = true, optional = true }
 ipp = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]

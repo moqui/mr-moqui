@@ -212,8 +212,9 @@ fn start_millis(summary: &Value) -> i64 {
     from_start.or_else(|| run_id_millis(id)).unwrap_or(0)
 }
 
-/// The summaries of the result files read, by file, with the file's time and length when read.
-type SummaryCache = HashMap<PathBuf, (SystemTime, u64, Value)>;
+/// What the cache holds for a result file: its summary, or None when it did not read or is not a result (logged
+/// once, while the file's time and length stay the same).
+type SummaryCache = HashMap<PathBuf, (SystemTime, u64, Option<Value>)>;
 
 static SUMMARIES: LazyLock<Mutex<SummaryCache>> = LazyLock::new(Mutex::default);
 
@@ -232,18 +233,30 @@ pub(crate) fn list(root: &Path, find: &Find) -> Vec<Value> {
             return Vec::new();
         }
     };
+    let mut seen = Vec::new();
     let mut summaries = Vec::new();
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                tracing::error!(dir = %root.display(), error = %err, "Could not read an entry of the load runs");
+                continue;
+            }
+        };
         let name = entry.file_name();
         let Some(id) = name.to_str().filter(|id| valid_run_id(id)) else {
             continue;
         };
-        if let Some(summary) = cached_summary(&entry.path().join(RESULT_FILE), id) {
+        let file = entry.path().join(RESULT_FILE);
+        if let Some(summary) = cached_summary(&file, id) {
             if find.keeps(&summary) {
                 summaries.push(summary);
             }
         }
+        seen.push(file);
     }
+    // forget the files of this root whose run directories are gone
+    lock_cache().retain(|file, _| !file.starts_with(root) || seen.contains(file));
     let mut keyed: Vec<(i64, String, Value)> = summaries
         .into_iter()
         .map(|summary| {
@@ -259,32 +272,69 @@ pub(crate) fn list(root: &Path, find: &Find) -> Vec<Value> {
     keyed.into_iter().map(|(_, _, summary)| summary).collect()
 }
 
-/// The summary of the result file `file`, from the cache while the file's time and length are the same.
+/// The summary of the result file `file`, from the cache while the file's time and length are the same. A file
+/// that does not read is cached as such too, so it is logged once and not on every listing.
 fn cached_summary(file: &Path, id: &str) -> Option<Value> {
     let meta = std::fs::metadata(file).ok()?;
     let (modified, len) = (meta.modified().ok()?, meta.len());
     if let Some((at, at_len, summary)) = lock_cache().get(file) {
         if *at == modified && *at_len == len {
-            return Some(summary.clone());
+            return summary.clone();
         }
     }
     let read = std::fs::read(file)
         .map_err(|err| err.to_string())
         .and_then(|text| serde_json::from_slice::<Value>(&text).map_err(|err| err.to_string()));
-    let result = match read {
-        Ok(result) if is_result(&result) => result,
+    let summary = match read {
+        Ok(result) if is_result(&result) => Some(summary(id, &result)),
         Ok(_) => {
             tracing::error!(file = %file.display(), "Not a load result; left out of the runs");
-            return None;
+            None
         }
         Err(err) => {
             tracing::error!(file = %file.display(), error = %err, "Could not read a load result; left out of the runs");
-            return None;
+            None
         }
     };
-    let summary = summary(id, &result);
     lock_cache().insert(file.to_path_buf(), (modified, len, summary.clone()));
-    Some(summary)
+    summary
+}
+
+/// The most text an imported result may have.
+pub(crate) const MAX_IMPORT_BYTES: usize = 16 * 1024 * 1024;
+
+/// A result from another machine made ready to keep as a run (§7, §10 Result files): checked to be a result and at
+/// most [`MAX_IMPORT_BYTES`], its `run.user` the importer (the file's is kept as `run.importedUser`), its label
+/// `label` when given, its status `completed` when it has none, and `run.imported` true.
+///
+/// Nothing in an imported result is trusted. Its `run.script` and `run.target` are what another machine wrote: Run
+/// again on an imported run must resolve the script again through `scripts::resolve` among the loaded components and
+/// check the target again through `TargetPolicy::allow`, never start from the file's values as given.
+pub(crate) fn imported_result(text: &str, importer: &str, label: &str) -> Result<Value, String> {
+    if text.len() > MAX_IMPORT_BYTES {
+        return Err(format!(
+            "The result is {} bytes; an import takes at most {MAX_IMPORT_BYTES}",
+            text.len()
+        ));
+    }
+    let mut result: Value = serde_json::from_str(text).map_err(|err| format!("The result is not JSON: {err}"))?;
+    if !is_result(&result) {
+        return Err("That is not a load result".to_string());
+    }
+    let Some(run) = result.get_mut("run").and_then(Value::as_object_mut) else {
+        return Err("That is not a load result".to_string());
+    };
+    let file_user = run.remove("user").unwrap_or(Value::Null);
+    run.insert("importedUser".into(), file_user);
+    run.insert("user".into(), json!(importer));
+    if !label.is_empty() {
+        run.insert("label".into(), json!(label));
+    }
+    if run.get("status").is_none_or(Value::is_null) {
+        run.insert("status".into(), json!("completed"));
+    }
+    run.insert("imported".into(), json!(true));
+    Ok(result)
 }
 
 #[cfg(test)]

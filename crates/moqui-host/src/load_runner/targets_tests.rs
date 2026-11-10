@@ -30,16 +30,41 @@ fn loopback_and_this_server_are_allowed() {
         "http://127.0.0.1",
         "http://127.3.4.5:9000/x",
         "http://[::1]:8080/",
-        "https://app.localhost/",
         "https://erp.example.com/vapps/marble",
         "https://ERP.example.com:443/",
-        "http://erp.example.com:8080/apps",
     ] {
         assert_eq!(policy.allow(url), Ok(()), "{url}");
     }
     // the same host on another port or scheme is not this server
     assert!(policy.allow("https://erp.example.com:8443/").is_err());
     assert!(policy.allow("http://erp.example.com/").is_err());
+    // this server's own http URL on a public name: behind a load balancer that is another machine, in the clear
+    let err = policy.allow("http://erp.example.com:8080/apps").unwrap_err();
+    assert!(err.contains("plain http"), "{err}");
+    // a name under .localhost may resolve anywhere
+    assert!(policy.allow("https://app.localhost/").is_err());
+    assert!(policy.allow("http://localhost.example.com/").is_err());
+}
+
+#[test]
+fn a_prefix_is_matched_on_the_path_a_request_is_sent_to() {
+    let listed = policy(&[], "https://partner.example/loadtest/");
+    assert_eq!(listed.allow("https://partner.example/loadtest/orders"), Ok(()));
+    assert_eq!(listed.allow("https://partner.example/loadtest/a/../b"), Ok(()));
+    for url in [
+        "https://partner.example/loadtest/../admin",
+        "https://partner.example/loadtest/%2e%2e/admin",
+        "https://partner.example/loadtest/%2E%2E/admin",
+        "https://partner.example/loadtest/./../admin",
+        "https://partner.example/loadtest/.%2e/admin",
+        "https://partner.example/loadtest\\..\\admin",
+    ] {
+        assert!(listed.allow(url).is_err(), "{url}");
+    }
+    // a prefix written with dot segments means where they lead
+    let dotted = policy(&[], "https://partner.example/a/../loadtest/");
+    assert_eq!(dotted.allow("https://partner.example/loadtest/x"), Ok(()));
+    assert!(dotted.allow("https://partner.example/a/x").is_err());
 }
 
 #[test]
@@ -92,6 +117,46 @@ fn userinfo_and_malformed_urls_are_refused() {
     assert!(policy.allow("http://:80/").is_err());
     // a bad entry is left out, the rest kept
     assert_eq!(parse_prefixes("nonsense, https://ok.example").len(), 1);
+}
+
+#[test]
+fn target_kinds_are_service_this_and_url() {
+    assert_eq!(TargetKind::parse(""), Ok(TargetKind::This));
+    assert_eq!(TargetKind::parse("this"), Ok(TargetKind::This));
+    assert_eq!(TargetKind::parse("service"), Ok(TargetKind::Service));
+    assert_eq!(TargetKind::parse("url"), Ok(TargetKind::Url));
+    assert!(TargetKind::parse("ftp").is_err());
+}
+
+#[test]
+fn scenario_users_must_be_whole_and_positive() {
+    let scenarios = |users: Value| {
+        let mut browse = indexmap::IndexMap::new();
+        browse.insert("users".to_string(), users);
+        let mut map = indexmap::IndexMap::new();
+        map.insert("browse".to_string(), Value::Map(browse));
+        map.insert("order".to_string(), Value::Map(indexmap::IndexMap::new()));
+        Value::Map(map)
+    };
+    let users = override_users(Some(&scenarios(Value::I64(3)))).unwrap();
+    assert_eq!(users, BTreeMap::from([("browse".to_string(), 3)]));
+    assert_eq!(
+        override_users(Some(&scenarios(Value::String("4".into())))).unwrap()["browse"],
+        4
+    );
+    assert_eq!(override_users(Some(&scenarios(Value::F64(5.0)))).unwrap()["browse"], 5);
+    assert!(override_users(None).unwrap().is_empty());
+    for bad in [
+        Value::I64(0),
+        Value::I64(-1),
+        Value::F64(1.5),
+        Value::String("many".into()),
+    ] {
+        let err = override_users(Some(&scenarios(bad.clone()))).unwrap_err();
+        assert!(err.contains("browse"), "{bad:?}: {err}");
+    }
+    assert_eq!(check_users(1000), Ok(()));
+    assert!(check_users(1001).is_err());
 }
 
 #[test]

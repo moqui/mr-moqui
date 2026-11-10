@@ -103,7 +103,8 @@
     <default-property name="moqui_chromium_path" value=""/>
 
     <!--
-        Load runs from Tools (org.moqui.dev.LoadServices, plans/LoadRunner.md §10). A run may reach this server, loopback,
+        Load runs from Tools (org.moqui.dev.LoadServices, plans/LoadRunner.md §10). A run may reach this server (its https
+        URL; its http one only on a loopback host), loopback (localhost and the loopback addresses),
         and the URL prefixes in load_runner_targets (comma-separated, each with its scheme: https://staging.example.com
         allows that origin, https://example.com/app/ only under that path); a dev instance may reach any URL. Plain
         http to another machine needs its prefix here, since a login crosses in the clear. load_runner_max_runs is how

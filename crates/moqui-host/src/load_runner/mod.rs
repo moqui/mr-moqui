@@ -153,44 +153,39 @@ fn start_load_run(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) 
         add_error(message);
         return none();
     }
-    match text(parameters, "targetKind").as_str() {
-        "" | "this" => {}
-        "url" => {
+    // The three targets of the New run form (§8): this server's services in process (`service`), this server over
+    // HTTP (`this`, the default for an http script), another server by URL (`url`). A plan whose `uses` has
+    // `service` needs the `service` target; that is checked when the plan is read, with the engine.
+    match targets::TargetKind::parse(&text(parameters, "targetKind")) {
+        Ok(targets::TargetKind::Url) => {
             let url = text(parameters, "targetUrl");
             if let Err(message) = targets::TargetPolicy::of_factory(&factory).allow(&url) {
                 add_error(message);
                 return none();
             }
         }
-        other => {
-            add_error(format!("{other} is not a target kind (this or url)"));
+        Ok(targets::TargetKind::Service | targets::TargetKind::This) => {}
+        Err(message) => {
+            add_error(message);
             return none();
         }
     }
-    let users = override_users(parameters.get("scenarios"));
-    if users > targets::max_users() {
-        add_error(format!(
-            "A run may have at most {} users (load_runner_max_users); the scenarios ask for {users}",
-            targets::max_users()
-        ));
+    let overrides = match targets::override_users(parameters.get("scenarios")) {
+        Ok(overrides) => overrides,
+        Err(message) => {
+            add_error(message);
+            return none();
+        }
+    };
+    // The total checked here is the overrides' alone. When the plan is read, each scenario's users is its override
+    // or else the plan's default, and that merged total is what check_users is given.
+    let total = overrides.values().copied().fold(0, usize::saturating_add);
+    if let Err(message) = targets::check_users(total) {
+        add_error(message);
         return none();
     }
     add_error(NO_ENGINE);
     none()
-}
-
-/// The users the `scenarios` overrides ask for, summed over the scenarios that set `users`.
-fn override_users(scenarios: Option<&Value>) -> usize {
-    let Some(Value::Map(scenarios)) = scenarios else {
-        return 0;
-    };
-    let users = scenarios.values().filter_map(|scenario| match scenario {
-        Value::Map(settings) => settings.get("users").map(to_plain_string),
-        _ => None,
-    });
-    users
-        .filter_map(|text| text.trim().parse::<usize>().ok())
-        .fold(0, usize::saturating_add)
 }
 
 fn stop_load_run(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
@@ -296,31 +291,19 @@ fn import_load_run_result(parameters: &BTreeMap<String, Value>, _facade: &Entity
     if !may_run_loads() {
         return none();
     }
-    let mut result = match parameters.get("result") {
-        Some(Value::String(text)) => match serde_json::from_str::<serde_json::Value>(text) {
-            Ok(result) => result,
-            Err(err) => {
-                add_error(format!("The result is not JSON: {err}"));
-                return none();
-            }
-        },
-        Some(value @ Value::Map(_)) => to_json(value),
-        _ => serde_json::Value::Null,
+    let text_of = match parameters.get("result") {
+        Some(Value::String(text)) => text.clone(),
+        Some(value @ Value::Map(_)) => to_json(value).to_string(),
+        _ => String::new(),
     };
-    if !results::is_result(&result) {
-        add_error("That is not a load result");
-        return none();
-    }
-    if let Some(run) = result.get_mut("run").and_then(serde_json::Value::as_object_mut) {
-        let label = text(parameters, "label");
-        if !label.is_empty() {
-            run.insert("label".into(), serde_json::Value::String(label));
+    let importer = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
+    let result = match results::imported_result(&text_of, &importer, &text(parameters, "label")) {
+        Ok(result) => result,
+        Err(message) => {
+            add_error(message);
+            return none();
         }
-        if run.get("status").is_none_or(serde_json::Value::is_null) {
-            run.insert("status".into(), "completed".into());
-        }
-        run.insert("imported".into(), serde_json::Value::Bool(true));
-    }
+    };
     let root = results::root(&*factory()?);
     let base = results::run_id_base(jiff::Timestamp::now(), std::process::id());
     let written = results::create_run_dir(&root, &base).and_then(|(id, _)| {

@@ -16,9 +16,15 @@
 //! run reaches this server, loopback and the URL prefixes of `load_runner_targets`; a dev instance any URL. Without
 //! the rule a holder could aim the server at another site, a request forgery and a denial of service tool. Plain
 //! http to another machine is refused unless the list names it, since a login crosses in the clear: a prefix carries
-//! its scheme, so an https entry does not allow http.
+//! its scheme, so an https entry does not allow http, and this server's own http URL counts only on a loopback host
+//! (behind a load balancer its public name is another machine's). URLs are parsed as reqwest parses them (WHATWG, the
+//! `url` crate), so a prefix is matched on the path a request is really sent to, after `..`, `%2e%2e` and `.`
+//! segments are resolved.
 
+use std::collections::BTreeMap;
 use std::net::IpAddr;
+
+use moqui_lib::object::{is_empty, to_plain_string, Value};
 
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::web::origin::{configured_origins, SiteOrigin};
@@ -31,7 +37,7 @@ pub(crate) const DEFAULT_MAX_USERS: usize = 1000;
 /// The targets a run may reach.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TargetPolicy {
-    /// This server's own origins (the conf webroot's http and https URLs).
+    /// This server's own origins (the conf webroot's http and https URLs); an http one counts only on a loopback host.
     pub(crate) own: Vec<SiteOrigin>,
     /// The `load_runner_targets` prefixes.
     pub(crate) prefixes: Vec<Prefix>,
@@ -62,7 +68,10 @@ impl TargetPolicy {
         let Some((origin, path)) = parse_url(url) else {
             return Err(format!("{url} is not an http or https URL"));
         };
-        if self.any || is_loopback(&origin.host) || self.own.contains(&origin) {
+        if self.any || is_loopback(&origin.host) {
+            return Ok(());
+        }
+        if origin.scheme == "https" && self.own.contains(&origin) {
             return Ok(());
         }
         if self.prefixes.iter().any(|prefix| prefix.matches(&origin, &path)) {
@@ -111,26 +120,106 @@ pub(crate) fn parse_prefixes(text: &str) -> Vec<Prefix> {
     prefixes
 }
 
-/// The origin and the path of an http or https URL. None for another scheme, a malformed authority, or userinfo in
-/// the authority (`http://127.0.0.1@example.com` reaches example.com, which a reader may not see).
-fn parse_url(url: &str) -> Option<(SiteOrigin, String)> {
-    let (_, rest) = url.split_once("://")?;
-    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let (authority, path) = rest.split_at(end);
-    if authority.contains(['@', '\\']) {
+/// The origin and the normalized path of an http or https URL, as reqwest sends it: dot segments (`..`, `%2e%2e`,
+/// `.`) resolved and a backslash read as a slash. None for another scheme, no host, or userinfo
+/// (`http://127.0.0.1@example.com` reaches example.com, which a reader may not see).
+fn parse_url(text: &str) -> Option<(SiteOrigin, String)> {
+    let url = url::Url::parse(text.trim()).ok()?;
+    if !matches!(url.scheme(), "http" | "https") || !url.username().is_empty() || url.password().is_some() {
         return None;
     }
-    let origin = SiteOrigin::parse(url)?;
-    Some((origin, path.to_string()))
+    let host = url.host_str().filter(|host| !host.is_empty())?.to_ascii_lowercase();
+    let origin = SiteOrigin {
+        scheme: url.scheme().to_string(),
+        host,
+        port: url.port_or_known_default()?,
+    };
+    Some((origin, url.path().to_string()))
 }
 
-/// localhost, 127.0.0.0/8 or ::1.
+/// The literal `localhost`, 127.0.0.0/8 or ::1. Not a name under `.localhost`, which a resolver may answer with any
+/// address.
 fn is_loopback(host: &str) -> bool {
-    if host == "localhost" || host.ends_with(".localhost") {
+    if host == "localhost" {
         return true;
     }
     let bare = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
     bare.parse::<IpAddr>().is_ok_and(|address| address.is_loopback())
+}
+
+/// What a run is aimed at (§8 New run).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TargetKind {
+    /// This server's services, called in process (a plan whose `uses` has `service`).
+    Service,
+    /// This server over HTTP, by its own URL; the default.
+    This,
+    /// Another server by URL, which [`TargetPolicy::allow`] checks.
+    Url,
+}
+
+impl TargetKind {
+    /// The `targetKind` parameter; empty is `this`.
+    pub(crate) fn parse(text: &str) -> Result<Self, String> {
+        match text.trim() {
+            "service" => Ok(Self::Service),
+            "" | "this" => Ok(Self::This),
+            "url" => Ok(Self::Url),
+            other => Err(format!("{other} is not a target kind (service, this or url)")),
+        }
+    }
+}
+
+/// The `users` of each scenario the `scenarios` overrides set, by scenario name. A `users` that is not a whole number
+/// of at least 1 is refused.
+pub(crate) fn override_users(scenarios: Option<&Value>) -> Result<BTreeMap<String, usize>, String> {
+    let mut users = BTreeMap::new();
+    let Some(Value::Map(scenarios)) = scenarios else {
+        return Ok(users);
+    };
+    for (name, scenario) in scenarios {
+        let Value::Map(settings) = scenario else {
+            continue;
+        };
+        let Some(value) = settings.get("users").filter(|value| !is_empty(value)) else {
+            continue;
+        };
+        let text = to_plain_string(value);
+        match whole_number(&text) {
+            Some(count) if count >= 1 => {
+                users.insert(name.clone(), count);
+            }
+            _ => {
+                return Err(format!(
+                    "Scenario {name}: users must be a whole number of at least 1, not {text}"
+                ))
+            }
+        }
+    }
+    Ok(users)
+}
+
+/// `text` as a whole number: digits, or a decimal with no fraction (`3.0`).
+fn whole_number(text: &str) -> Option<usize> {
+    let text = text.trim();
+    if let Ok(count) = text.parse::<usize>() {
+        return Some(count);
+    }
+    let (whole, fraction) = text.split_once('.')?;
+    (fraction.bytes().all(|byte| byte == b'0'))
+        .then(|| whole.parse::<usize>().ok())
+        .flatten()
+}
+
+/// Refuses a run of more than `load_runner_max_users` users in all.
+pub(crate) fn check_users(total: usize) -> Result<(), String> {
+    let max = max_users();
+    if total > max {
+        return Err(format!(
+            "A run may have at most {max} users (load_runner_max_users); the scenarios ask for {total}"
+        ));
+    }
+    Ok(())
 }
 
 /// The loads that may run at once on this instance (`load_runner_max_runs`, D6).

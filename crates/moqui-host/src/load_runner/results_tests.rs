@@ -207,3 +207,48 @@ fn a_result_is_told_from_other_json() {
     text_requests["requests"] = json!("4");
     assert!(!is_result(&text_requests));
 }
+
+#[test]
+fn a_bad_file_is_cached_and_a_gone_run_forgotten() {
+    let root = temp_root("cache");
+    let id = "20261110-100000-3";
+    std::fs::create_dir_all(root.join(id)).unwrap();
+    let file = root.join(id).join(RESULT_FILE);
+    std::fs::write(&file, b"not json").unwrap();
+    assert!(list(&root, &Find::default()).is_empty());
+    // the failure is kept under the file's time and length, so it is not read (and logged) again
+    assert!(matches!(lock_cache().get(&file), Some((_, 8, None))));
+    assert!(list(&root, &Find::default()).is_empty());
+
+    write_result(&root, id, &result("s", "completed", Value::Null, 1)).unwrap();
+    assert_eq!(list(&root, &Find::default()).len(), 1);
+    std::fs::remove_dir_all(root.join(id)).unwrap();
+    assert!(list(&root, &Find::default()).is_empty());
+    assert!(!lock_cache().contains_key(&file));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn an_import_is_the_importers_and_capped() {
+    let text = result("component://x/test/load/A.load.js", "completed", Value::Null, 1).to_string();
+    let imported = imported_result(&text, "jane", "from staging").unwrap();
+    assert_eq!(imported["run"]["user"], json!("jane"));
+    assert_eq!(imported["run"]["importedUser"], json!("john.doe"));
+    assert_eq!(imported["run"]["label"], json!("from staging"));
+    assert_eq!(imported["run"]["imported"], json!(true));
+    // the file's script is kept as written, only to show; Run again resolves and checks it anew
+    assert_eq!(imported["run"]["script"], json!("component://x/test/load/A.load.js"));
+
+    let mut no_status = result("s", "completed", Value::Null, 1);
+    no_status["run"].as_object_mut().unwrap().remove("status");
+    let imported = imported_result(&no_status.to_string(), "jane", "").unwrap();
+    assert_eq!(imported["run"]["status"], json!("completed"));
+    assert_eq!(imported["run"]["label"], json!("a label"));
+
+    assert!(imported_result("{", "jane", "").unwrap_err().contains("not JSON"));
+    assert!(imported_result("{\"run\": {}}", "jane", "")
+        .unwrap_err()
+        .contains("not a load result"));
+    let huge = " ".repeat(MAX_IMPORT_BYTES + 1);
+    assert!(imported_result(&huge, "jane", "").unwrap_err().contains("at most"));
+}

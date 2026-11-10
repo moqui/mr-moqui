@@ -35,7 +35,9 @@ along with this software (see the LICENSE.md file). If not, see
             returns. Refuses a location that is not a load script of a loaded component, a target that is not allowed
             (this server, loopback, a prefix in load_runner_targets, or any URL on a dev instance; plain http to another
             machine only when load_runner_targets names it), more runs at once than load_runner_max_runs (1) and more
-            users than load_runner_max_users (1,000). targetKind is this (this server, by its own URL) or url (targetUrl).
+            users than load_runner_max_users (1,000), and a scenario users that is not a whole number of at least 1.
+            targetKind is service (this server's services, called in process; a plan whose uses has service needs it),
+            this (this server over HTTP, by its own URL; the default) or url (another server, targetUrl).
             parameters fill the plan's parameters; a secret one is held in memory for the run only. scenarios overrides
             each scenario's settings by name. insecure accepts an invalid certificate and is shown on the run.</description>
         <in-parameters>
@@ -101,7 +103,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="import" noun="LoadRunResult" type="rust" location="moqui_host::load_runner::import_load_run_result"
             allow-remote="false" transaction="ignore">
         <description>Keep a result from another machine (moqui test-load's result file) as a run of its own, in a new
-            directory, with label when given. A text that is not a load result is refused.</description>
+            directory, with label when given. Its run.user is the importer, with the file's kept as run.importedUser;
+            its script and target are only shown, and Run again resolves and checks them anew. A text that is not a load
+            result, or over 16 MiB, is refused.</description>
         <in-parameters>
             <parameter name="result" type="Object" required="true" allow-html="any"><description>The result, as a Map or
                 as the JSON text of one.</description></parameter>
