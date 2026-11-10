@@ -682,6 +682,45 @@ fn the_default_limit_is_script_timeout_else_the_request_timeout_on_a_request_wor
     assert_eq!(limit("junk", false, ""), None);
 }
 
+// Change 8: An engine first entered deep in the host stack must not keep that origin on later shallow entries.
+#[test]
+fn a_reused_engine_measures_stack_from_each_outer_entry() {
+    #[inline(never)]
+    fn padded(depth: usize, body: &mut impl FnMut() -> i64) -> i64 {
+        let padding = [0_u8; 64 * 1024];
+        std::hint::black_box(&padding);
+        let result = if depth == 0 { body() } else { padded(depth - 1, body) };
+        std::hint::black_box(&padding);
+        result
+    }
+
+    std::thread::Builder::new()
+        .stack_size(4 * 1024 * 1024)
+        .spawn(|| {
+            let mut depth = || {
+                with_ctx(|ctx| {
+                    eval_source::<i64>(
+                        ctx,
+                        "(function () { let most = 0; function down(n) { most = n; down(n + 1); } \
+                            try { down(0); } catch (e) {} return most; })()",
+                    )
+                })
+                .unwrap()
+            };
+            let deep = padded(8, &mut depth);
+            let shallow = depth();
+            assert!(deep > 0);
+            // Host entry frames vary slightly; half a MiB of stale origin would add far more than ten percent.
+            assert!(
+                (deep - shallow).abs() <= deep / 10,
+                "the same budget should allow comparable recursion: deep={deep}, shallow={shallow}"
+            );
+        })
+        .unwrap()
+        .join()
+        .expect("the thread did not overflow");
+}
+
 #[test]
 fn deep_recursion_in_a_nested_script_is_a_script_error() {
     // Less stack than a worker thread's 2 MiB, so a nested engine with a whole 1 MiB of its own under the outer
@@ -787,13 +826,18 @@ fn running_out_of_memory_frees_the_engine_caches() -> Result<(), Error> {
 /// The wrapped `ec` of the static report's full check (Commerce F172): a coercion, JSON and a promise's probe of an area
 /// read it as a plain object, not as violations; a member not on the list throws; an expression the framework evaluates
 /// for itself while the check is on (an entity filter's condition) reads the real `ec`; and a script a checked
-/// expression calls into runs on an engine of its own, with the real `ec`.
+/// expression calls into sees the real `ec` in the shared engine, then restores the outer wrapper.
 #[test]
 fn the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one() -> Result<(), Error> {
     clear_context_stack();
     with_ctx(|ctx| {
-        let read = rquickjs::Function::new(ctx.clone(), || -> rquickjs::Result<String> {
-            Ok(eval_value("typeof ec.entity")
+        let read = rquickjs::Function::new(ctx.clone(), |fail: bool| -> rquickjs::Result<String> {
+            let expression = if fail {
+                "(() => { throw new Error('nested sentinel') })()"
+            } else {
+                "typeof ec.entity"
+            };
+            Ok(eval_value(expression)
                 .map(|value| value.as_str().unwrap_or_default().to_string())
                 .unwrap_or_else(|err| err.to_string()))
         })
@@ -814,9 +858,13 @@ fn the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one() -> Result
     ))?);
     assert_eq!(
         eval_value(
-            "__nestedRead() + '|' + (() => { try { ec.entity; return 'real' } catch (e) { return 'wrapped' } })()"
+            "__nestedRead(false) + '|' + (() => { try { ec.entity; return 'real' } catch (e) { return 'wrapped' } })()"
         )?,
         Value::string("object|wrapped")
     );
+    // Change 3: A failed nested evaluation must not leave the outer widget with unrestricted ec.
+    assert!(eval_condition(
+        "__nestedRead(true).includes('nested sentinel') && (() => { try { ec.entity; return false } catch (e) { return true } })()"
+    )?);
     Ok(())
 }

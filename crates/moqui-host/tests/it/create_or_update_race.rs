@@ -197,6 +197,9 @@ fn pool() -> PoolConfig {
 fn authorizing_factory(dir: &Path, facade: &EntityFacade) -> Arc<ExecutionContextFactory> {
     facade
         .check_tables(&[
+            // Change 6: Authorization records allocate IDs from the production sequence bank.
+            "moqui.entity.SequenceValueItem",
+            "moqui.entity.EntityAuditLog",
             "moqui.security.UserGroup",
             "moqui.security.UserGroupMember",
             "moqui.security.ArtifactGroup",

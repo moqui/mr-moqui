@@ -53,6 +53,9 @@ fn load_data_stores_eca_and_inserts_pending() {
     .unwrap();
     facade
         .check_tables(&[
+            // Change 6: Feed and authorization records need the sequence bank in this minimal schema.
+            "moqui.entity.SequenceValueItem",
+            "moqui.entity.EntityAuditLog",
             "moqui.test.TestEntity",
             "moqui.test.Foo",
             "moqui.screen.form.DbForm",

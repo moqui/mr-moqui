@@ -23,7 +23,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 use std::thread::ThreadId;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use moqui_lib::error::Error;
 use moqui_lib::node::MNode;
@@ -1557,11 +1557,8 @@ impl Drop for ResumeGuard<'_> {
 }
 
 fn epoch_millis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
-        .unwrap_or(0)
+    // Change 10: frame time is supplied data time; deadlines retain Instant.
+    moqui_lib::data_clock::now_millis()
 }
 
 fn active(frames: &[Frame]) -> Option<&Frame> {

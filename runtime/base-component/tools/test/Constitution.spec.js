@@ -6,6 +6,8 @@
 // Run: ./moq test tools --spec Constitution
 const ADMIN = "org.moqui.admin.ConstitutionServices"
 const systemRoot = "component://tools/screen/System.xml"
+const outsiderId = "SPEC_CONSTITUTION_OUTSIDER"
+const outsiderName = "spec.constitution.outsider"
 
 function call(name, params) {
     const out = ec.service.sync().name(name).parameters(params || {}).call() || {}
@@ -25,8 +27,28 @@ const global = () => call(`${ADMIN}.get#Constitution`, {scope: "global", include
 
 spec({
     stepwise: true,
-    setupSpec() { login("john.doe") },
+    setupSpec() {
+        login("john.doe")
+        // Change 2: Exercise the sealed-permission refusal without relying on demo users.
+        const wasDisabled = ec.artifactExecution.disableAuthz()
+        try {
+            const user = ec.entity.makeValue("moqui.security.UserAccount")
+            user.setFields({userId: outsiderId, username: outsiderName, userFullName: "Constitution outsider"}, true, null, null)
+            user.create()
+        } finally {
+            if (!wasDisabled) ec.artifactExecution.enableAuthz()
+        }
+    },
     cleanup() { login("john.doe") },
+    cleanupSpec() {
+        ec.user.internalLoginUser("john.doe")
+        const wasDisabled = ec.artifactExecution.disableAuthz()
+        try {
+            ec.entity.find("moqui.security.UserAccount").condition("userId", outsiderId).deleteAll()
+        } finally {
+            if (!wasDisabled) ec.artifactExecution.enableAuthz()
+        }
+    },
 })
 
 feature("a store refuses a stale hash and a user without the sealed permission; the shipped document stays", {
@@ -35,13 +57,22 @@ feature("a store refuses a stale hash and a user without the sealed permission; 
         const retitled = call(`${ADMIN}.edit#ConstitutionDocument`, {documentText: before.documentText, operation: "setDocumentText",
             locale: "en", title: "Stale Rules"}).documentText
         const stale = call(`${ADMIN}.store#Constitution`, {documentText: retitled, expectedHash: "0".repeat(64)})
-        logout(); login("joe@public.com")
-        const outsider = call(`${ADMIN}.store#Constitution`, {documentText: retitled, expectedHash: before.globalHash})
-        const outsiderReset = call(`${ADMIN}.create#ConstitutionCustomization`, {})
-        logout(); login("john.doe")
-        return {before, stale, outsider, outsiderReset, after: global()}
+        let outsider, outsiderReset, canEdit
+        // Change 2: A failed refusal check must not leak the outsider into later features.
+        try {
+            ec.user.internalLoginUser(outsiderName)
+            if (ec.user.userId !== outsiderId) throw new Error("Constitution outsider was not selected")
+            canEdit = ec.user.hasPermission("ADMIN_CONSTITUTION_GLOBAL")
+            outsider = call(`${ADMIN}.store#Constitution`, {documentText: retitled, expectedHash: before.globalHash})
+            outsiderReset = call(`${ADMIN}.create#ConstitutionCustomization`, {})
+        } finally {
+            ec.message.clearErrors()
+            ec.user.internalLoginUser("john.doe")
+        }
+        return {before, stale, outsider, outsiderReset, canEdit, after: global()}
     },
-    then({before, stale, outsider, outsiderReset, after}) {
+    then({before, stale, outsider, outsiderReset, canEdit, after}) {
+        canEdit === false
         before.source == "shipped" && before.customized == "N" && before.canEdit == "Y"
         before.ruleCount == 13 && before.title == "Constitution"
         stale.errors.includes("changed since it was read")

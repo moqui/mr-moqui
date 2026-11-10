@@ -5,6 +5,8 @@
 // authorization off). Loading a component is checked in crates/moqui-host/tests/it/component_deploy.rs.
 // Run: ./moq test tools --spec ConfReload
 const systemRoot = "component://tools/screen/System.xml"
+const outsiderId = "SPEC_CONF_OUTSIDER"
+const outsiderName = "spec.conf.outsider"
 
 function render(path, mode) {
     let test = ec.screen.makeTest().rootScreen(systemRoot).renderMode(mode)
@@ -18,7 +20,25 @@ function render(path, mode) {
 spec({
     setupSpec() {
         login("john.doe")
-    }
+        // Change 1: The refusal fixture belongs to this spec, not optional demo data.
+        const wasDisabled = ec.artifactExecution.disableAuthz()
+        try {
+            const user = ec.entity.makeValue("moqui.security.UserAccount")
+            user.setFields({userId: outsiderId, username: outsiderName, userFullName: "Conf reload outsider"}, true, null, null)
+            user.create()
+        } finally {
+            if (!wasDisabled) ec.artifactExecution.enableAuthz()
+        }
+    },
+    cleanupSpec() {
+        ec.user.internalLoginUser("john.doe")
+        const wasDisabled = ec.artifactExecution.disableAuthz()
+        try {
+            ec.entity.find("moqui.security.UserAccount").condition("userId", outsiderId).deleteAll()
+        } finally {
+            if (!wasDisabled) ec.artifactExecution.enableAuthz()
+        }
+    },
 })
 
 feature("a preview on a server just booted finds no change", {
@@ -92,16 +112,20 @@ feature("a staged and a deployed component show with their actions", {
 
 feature("the services need the ADMIN group", {
     when() {
-        logout()
-        login("joe@public.com")
-        ec.service.sync().name("org.moqui.impl.ComponentServices.reload#Conf").disableAuthz().call()
-        const errors = ec.message.getErrorsString()
-        ec.message.clearErrors()
-        logout()
-        login("john.doe")
-        return {errors}
+        // Change 1: Restore the administrator even if switching identity or the call fails.
+        try {
+            ec.user.internalLoginUser(outsiderName)
+            if (ec.user.userId !== outsiderId) throw new Error("Conf reload outsider was not selected")
+            const isAdmin = ec.user.isInGroup("ADMIN")
+            ec.service.sync().name("org.moqui.impl.ComponentServices.reload#Conf").disableAuthz().call()
+            return {errors: ec.message.getErrorsString(), isAdmin}
+        } finally {
+            ec.message.clearErrors()
+            ec.user.internalLoginUser("john.doe")
+        }
     },
-    then({errors}) {
+    then({errors, isAdmin}) {
+        isAdmin === false
         errors.includes("needs the ADMIN group")
     }
 })

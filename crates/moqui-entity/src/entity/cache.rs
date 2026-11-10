@@ -361,6 +361,8 @@ const SIM_SEQ_START: i64 = 0;
 /// (a preview runs inside a run: its conversation, run, steps, events, messages, tool calls and approvals, and the
 /// provider calls and their usage, plans/LLM-A2A-Assist.md section 5) and the sequence banks.
 const SIM_PRODUCTION_ENTITIES: &[&str] = &[
+    // Change 5: A production AgentRun must retain the immutable Constitution document it references.
+    "moqui.agent.AgentConstitutionSnapshot",
     "moqui.agent.AgentConversation",
     "moqui.agent.AgentRun",
     "moqui.agent.AgentRunStep",
