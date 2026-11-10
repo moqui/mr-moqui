@@ -43,8 +43,8 @@ mod email_eca;
 #[cfg(test)]
 mod fence_tests;
 pub mod git_eca;
-#[cfg(feature = "image")]
 mod idle;
+#[cfg(feature = "image")]
 mod images;
 pub mod http_fixtures;
 pub mod info;
