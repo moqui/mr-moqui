@@ -1816,6 +1816,8 @@
             kids(selection.node, "action").forEach((action) => {
                 const dialog = first(action, "dialog");
                 const form = first(action, "form-single");
+                const condition = at(action, "condition");
+                if (condition) w('<template' + A({ "v-if": held(condition, action, "condition") }) + '>');
                 if (dialog) {
                     const out = { color: quasarColor(at(dialog, "button-type") || "primary") || null, width: at(dialog, "width") || null, "button-class": at(dialog, "button-style") || null };
                     textAttr(out, "button-text", at(dialog, "button-text"), dialog, true);
@@ -1829,6 +1831,7 @@
                     pop();
                 }
                 if (dialog) w("</m-container-dialog></div></span>");
+                if (condition) w("</template>");
             });
             w("</q-card-section></q-card></template>");
         };

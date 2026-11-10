@@ -12,8 +12,12 @@
     <widgets>
         <form-list name="SelOn" list="taskList" transition="open" paginate="false">
             <row-selection id-field="taskId" parameter="taskIds" condition="canBulk">
-                <action><dialog button-text="Bulk On"/>
+                <action condition="canBulk"><dialog button-text="Bulk On"/>
                     <form-single name="BulkOn" transition="bulk"><field name="go"><default-field><submit/></default-field></field></form-single></action>
+                <action condition="!canBulk"><dialog button-text="Bulk Hidden"/>
+                    <form-single name="BulkHidden" transition="bulk"><field name="go"><default-field><submit/></default-field></field></form-single></action>
+                <action condition="noSuchAction.call()"><dialog button-text="Bulk Broken"/>
+                    <form-single name="BulkBroken" transition="bulk"><field name="go"><default-field><submit/></default-field></field></form-single></action>
             </row-selection>
             <field name="name"><first-row-field><display text="first"/></first-row-field><default-field><display/></default-field></field>
         </form-list>

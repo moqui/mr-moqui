@@ -1093,11 +1093,13 @@ try {
             if (!dialog || !form) return "";
             const button = attr(dialog, "button-text");
             const dialogId = attr(dialog, "id") || id + ".action" + index;
-            return `$openChildren({t:"dialog",id:$uid(${jsString(dialogId)}),title:String(${titleOf(attr(dialog, "title") || button)} || ""),button:String(${titleOf(button)} || ""),list:$list.id});
+            const rendered = `$openChildren({t:"dialog",id:$uid(${jsString(dialogId)}),title:String(${titleOf(attr(dialog, "title") || button)} || ""),button:String(${titleOf(button)} || ""),list:$list.id});
         {
         ${form.source || ""}}
         $closeChildren();
         `;
+            const condition = attr(action, "condition");
+            return condition ? `if (${S.heldCode(condition, `action of form-list ${formName}`)}) {\n${rendered}}\n` : rendered;
         }).join("") : "";
         const titles = (columns) => columns.map((column) => {
             const parts = column.map((field) => {

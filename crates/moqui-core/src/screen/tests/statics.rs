@@ -552,7 +552,6 @@ fn the_qvt_fixture_screens_become_templates_that_compile() {
         "status",
         "mobile",
         "views",
-        "gated",
         "scan",
     ] {
         let (html, report) = static_fixture(name);
@@ -1540,11 +1539,15 @@ fn a_status_bar_and_expression_styles_are_bound_in_a_static_template() {
 #[test]
 fn a_row_selection_condition_and_a_move_condition_are_bound_in_a_static_template() {
     let (html, script, report) = static_fixture_compiled("gated");
+    golden("render/gated.html", &html);
     for expected in [
         r#":selection-id-field="(() =&gt; { try { return !!(canBulk); } catch { return false; } })() ? 'taskId' : null""#,
         r#":selection-id-field="(() =&gt; { try { return !!(!canBulk); } catch { return false; } })() ? 'taskId' : null""#,
         r#":selection-id-field="(() =&gt; { try { return !!(noSuchThing.call()); } catch { return false; } })() ? 'taskId' : null""#,
         r#"<div class="td" v-if="mqSel"><q-checkbox"#,
+        r#"<template v-if="(() =&gt; { try { return !!(canBulk); } catch { return false; } })()"><span class="q-my-md">"#,
+        r#"<template v-if="(() =&gt; { try { return !!(!canBulk); } catch { return false; } })()"><span class="q-my-md">"#,
+        r#"<template v-if="(() =&gt; { try { return !!(noSuchAction.call()); } catch { return false; } })()"><span class="q-my-md">"#,
         r#"<div class="tr first"><div class="td" v-if="(() =&gt; { try { return !!(canBulk); } catch { return false; } })()">&nbsp;</div>"#,
         "'transition':((() =&gt; { try { return !!(!canBulk); } catch { return false; } })() ? '/moveTask' : null)",
         "'transition':((() =&gt; { try { return !!(canBulk); } catch { return false; } })() ? '/moveTask' : null)",

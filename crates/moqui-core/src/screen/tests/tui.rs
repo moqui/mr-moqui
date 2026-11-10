@@ -1206,7 +1206,7 @@ fn a_row_selection_action_is_a_dialog_of_its_list() {
             r#"<screen require-authentication="false"><actions><script>{ROWS}</script></actions><widgets>
             <form-list name="Sel" list="rows">
                 <row-selection id-field="id" parameter="ids">
-                    <action><dialog button-text="Bulk Edit" title="Edit Selected"/>
+                    <action condition="true"><dialog button-text="Bulk Edit" title="Edit Selected"/>
                         <form-single name="BulkForm" transition="bulk">
                             <field name="status"><default-field><text-line/></default-field></field>
                             <field name="go"><default-field><submit/></default-field></field>
@@ -1214,6 +1214,12 @@ fn a_row_selection_action_is_a_dialog_of_its_list() {
                     </action>
                     <action><dialog button-text="Close"/>
                         <form-single name="CloseForm" transition="close"><field name="go"><default-field><submit/></default-field></field></form-single>
+                    </action>
+                    <action condition="false"><dialog button-text="Hidden"/>
+                        <form-single name="HiddenForm" transition="hidden"><field name="go"><default-field><submit/></default-field></field></form-single>
+                    </action>
+                    <action condition="noSuchAction.call()"><dialog button-text="Broken"/>
+                        <form-single name="BrokenForm" transition="broken"><field name="go"><default-field><submit/></default-field></field></form-single>
                     </action>
                 </row-selection>
                 <field name="name"><default-field><display/></default-field></field>
@@ -1223,6 +1229,7 @@ fn a_row_selection_action_is_a_dialog_of_its_list() {
         BTreeMap::new(),
     );
     let body = output.body_text();
+    assert!(!body.contains("HiddenForm") && !body.contains("BrokenForm"), "{body}");
     let doc = document(&output);
     let list = list_named(&doc, "Sel");
     assert_eq!(list["rows"][0]["selectId"], json!("a1"));

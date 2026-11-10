@@ -175,6 +175,12 @@ along with this software (see the LICENSE.md file). If not, see
                                 <xs:element ref="form-single"/>
                             </xs:choice>
                         </xs:sequence>
+                        <xs:attribute name="condition" type="xs:string"><xs:annotation><xs:documentation>
+                            A boolean expression in the screen's context, as row-selection's condition. When false, or
+                            when evaluation fails, this action's dialog and form are omitted (qvt and tui). A server-static
+                            qvt template evaluates it over the screen's scope. This controls presentation only: the
+                            transition must still enforce the user's authority.
+                        </xs:documentation></xs:annotation></xs:attribute>
                         <!-- consider these in the future, not needed now (and more flexible to use conditional-field in the form-single)
                         <xs:attribute name="disable-condition" type="xs:string"/>
                         <xs:attribute name="disable-message" type="xs:string"/>

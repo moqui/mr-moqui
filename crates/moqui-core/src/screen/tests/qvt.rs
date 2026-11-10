@@ -1490,6 +1490,7 @@ fn a_row_selection_condition_and_a_view_move_condition_turn_them_off() {
         on.contains(r#"checkbox-parameter="taskIds""#) && on.contains(r#"id="SelOn_table""#) && on.contains("Bulk On"),
         "{on}"
     );
+    assert!(!on.contains("BulkHidden") && !on.contains("BulkBroken"), "{on}");
     for (name, next) in [("SelOff", "SelBad_table"), ("SelBad", "BoardFixed_views")] {
         let off = part_of(&out, &format!(r#"id="{name}_table""#), next);
         assert!(
