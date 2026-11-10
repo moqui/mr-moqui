@@ -448,10 +448,10 @@ thread_local! {
     static ACTIVE: RefCell<Vec<Rc<RenderState>>> = const { RefCell::new(Vec::new()) };
 }
 
-struct ActiveGuard;
+pub(super) struct ActiveGuard;
 
 impl ActiveGuard {
-    fn install(state: Rc<RenderState>) -> Self {
+    pub(super) fn install(state: Rc<RenderState>) -> Self {
         ACTIVE.with(|stack| stack.borrow_mut().push(state));
         Self
     }

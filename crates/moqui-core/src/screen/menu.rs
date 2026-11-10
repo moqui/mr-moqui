@@ -23,7 +23,7 @@ use indexmap::IndexMap;
 use moqui_lib::object::Value;
 
 use super::definition::SubscreensItem;
-use super::render::{Frames, RenderState};
+use super::render::{ActiveGuard, Frames, RenderState};
 use super::sri::screen_permitted;
 use super::url::ScreenUrlInfo;
 use super::urls::{self, UrlInstance};
@@ -116,6 +116,11 @@ pub(super) fn subscreen_entry(
     if missing {
         return Ok(None);
     }
+    if let Some(condition) = &target.root.condition {
+        if !super::render::check_condition(condition)? {
+            return Ok(None);
+        }
+    }
     let (image, image_type) = menu_image(state, sui.menu_image.as_ref());
     let disabled = match &item.disable_when {
         Some(expression) => script::eval_condition(expression)?,
@@ -178,6 +183,19 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         return Ok(None);
     }
 
+    // The menu request itself targets menuData. Its path's actions and conditions must see the screen whose menu was
+    // requested, including its parent context and relative URLs, without changing the caller's active render.
+    let menu_state = std::rc::Rc::new(RenderState::new(
+        &state.factory,
+        &state.facade,
+        std::sync::Arc::clone(&info),
+        state.render_mode.clone(),
+        state.content_type.clone(),
+        state.character_encoding.clone(),
+    ));
+    let _active = ActiveGuard::install(std::rc::Rc::clone(&menu_state));
+    let state = menu_state.as_ref();
+
     let mut full_path = info.full_path.clone();
     let extra = info.extra_path.clone();
     if !extra.is_empty() {
@@ -188,6 +206,18 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         return Ok(None);
     };
 
+    // As for a render, prepare the requested path before inspecting child conditions. Sibling actions are never run to
+    // make their menu entries; the parent supplies their record and app context.
+    {
+        let mut frames = Frames::untracked();
+        for (index, def) in info.path_defs.iter().enumerate() {
+            frames.enter_screen(def, false)?;
+            state.screen_path_index.set(index);
+            if let Some(actions) = &def.always_actions {
+                script::run_actions(&actions.xml)?;
+            }
+        }
+    }
     // Menu titles may come from values set in pre-actions: they run for every screen except the first two
     // (webroot and the app root), and an error in one is logged and does not stop the menu.
     {
@@ -195,6 +225,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         for (index, def) in info.path_defs.iter().enumerate() {
             frames.enter_screen(def, false)?;
             if index >= 2 {
+                state.screen_path_index.set(index);
                 if let Some(actions) = &def.pre_actions {
                     if let Err(err) = script::run_actions(&actions.xml) {
                         tracing::warn!(

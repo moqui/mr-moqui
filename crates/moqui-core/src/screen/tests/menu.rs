@@ -154,6 +154,99 @@ fn menu_data_lists_what_the_user_may_view_and_runs_the_pre_actions_for_titles() 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Child eligibility uses the record's prepared context in both shell menu data and rendered menus; one bad condition
+/// leaves out only its item, and making the menu never runs a sibling's actions.
+#[test]
+fn menu_entries_honor_child_conditions_in_the_requested_parents_context() {
+    let dir = std::env::temp_dir().join(format!("moqui-menu-conditions-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/App/Record")).unwrap();
+    let base = dir.to_string_lossy().into_owned();
+    let write = |path: &str, text: &str| std::fs::write(dir.join(path), text.replace("{dir}", &base)).unwrap();
+    write("Root.xml", ROOT);
+    write(
+        "Root/App.xml",
+        r#"<screen require-authentication="false"><subscreens default-item="Record"/>
+            <widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write(
+        "Root/App/Record.xml",
+        r#"<screen require-authentication="false">
+            <parameter name="kind" required="true"/>
+            <always-actions>
+                <set field="parentScreen" from="sri.getActiveScreenDef().getScreenName()"/>
+                <set field="admittedTabs" from="['Open', 'OnlyAssets', 'Broken', 'Needs']"/>
+            </always-actions>
+            <subscreens default-item="Open">
+                <subscreens-item name="Open" menu-title="${openTitle}" location="{dir}/Root/App/Record/Open.xml"/>
+            </subscreens>
+            <widgets><render-mode><text type="html"><![CDATA[<#list sri.getMenuItems() as item>[${item.name}]</#list>]]></text></render-mode>
+                <subscreens-active/></widgets>
+        </screen>"#,
+    );
+    write(
+        "Root/App/Record/Open.xml",
+        r#"<screen require-authentication="false">
+            <condition><expression>parentScreen === 'Record' &amp;&amp; admittedTabs.includes('Open')</expression></condition>
+            <pre-actions><set field="openTitle" value="Current record"/></pre-actions>
+            <widgets><label text="open"/></widgets></screen>"#,
+    );
+    write(
+        "Root/App/Record/OnlyAssets.xml",
+        r#"<screen require-authentication="false">
+            <condition><expression>parentScreen === 'Record' &amp;&amp; kind === 'asset'</expression></condition>
+            <actions><script>throw new Error('Sibling actions must not run for a menu')</script></actions>
+            <widgets/></screen>"#,
+    );
+    write(
+        "Root/App/Record/Excluded.xml",
+        r#"<screen require-authentication="false">
+            <condition><expression>admittedTabs.includes('Excluded')</expression></condition><widgets/></screen>"#,
+    );
+    write(
+        "Root/App/Record/Broken.xml",
+        r#"<screen require-authentication="false">
+            <condition><expression>missingMenuDependency.value</expression></condition><widgets/></screen>"#,
+    );
+    write(
+        "Root/App/Record/Needs.xml",
+        r#"<screen require-authentication="false"><parameter name="detailKey" required="true"/><widgets/></screen>"#,
+    );
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    world.user("plain", None);
+    for kind in ["asset", "digital"] {
+        let mut get = request("GET", "/menuData/App/Record/Open");
+        get.set_header("authorization", basic("plain"));
+        get.query.push(("kind".to_string(), kind.to_string()));
+        let response = serve_at(&world.factory, get, &root);
+        assert_eq!(response.status, 200, "{}", response.body_text());
+        let menu: serde_json::Value = serde_json::from_str(&response.body_text()).unwrap();
+        let items = menu[1]["subscreens"].as_array().unwrap();
+        let names: Vec<_> = items.iter().map(|item| item["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"Open"), "{menu}");
+        assert_eq!(names.contains(&"OnlyAssets"), kind == "asset", "{menu}");
+        for excluded in ["Excluded", "Broken", "Needs"] {
+            assert!(!names.contains(&excluded), "{excluded}: {menu}");
+        }
+        assert_eq!(
+            items.iter().find(|item| item["name"] == "Open").unwrap()["title"],
+            "Current record"
+        );
+
+        let mut get = request("GET", "/App/Record/Open");
+        get.set_header("authorization", basic("plain"));
+        get.query.push(("kind".to_string(), kind.to_string()));
+        let response = serve_at(&world.factory, get, &root);
+        let body = response.body_text();
+        assert_eq!(response.status, 200, "{body}");
+        assert!(body.contains("[Open]"), "{body}");
+        assert_eq!(body.contains("[OnlyAssets]"), kind == "asset", "{body}");
+        assert!(!body.contains("[Excluded]") && !body.contains("[Broken]"), "{body}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The titles of the subscreens (the qapps tabs and drawer) are in the user's locale, as those of the screens on the path.
 #[test]
 fn menu_data_titles_are_in_the_users_locale() {
