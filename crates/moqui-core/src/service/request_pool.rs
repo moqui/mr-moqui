@@ -27,9 +27,9 @@ use moqui_lib::sync::{lock, wait};
 use super::pool::WorkCleanup;
 use crate::context::{Error, ErrorKind, ExecutionContextFactory};
 
-const DEFAULT_REQUEST_WORKERS: u32 = 8;
+const DEFAULT_REQUEST_WORKERS: u32 = 16;
 const DEFAULT_REQUEST_QUEUE: u32 = 64;
-const DEFAULT_SERVICE_WORKERS: u32 = 25;
+const DEFAULT_SERVICE_WORKERS: u32 = 22;
 const DEFAULT_TRANSFER_WORKERS: u32 = 4;
 
 /// Factory-owned request workers. [`RequestPool::idle`] starts no threads.

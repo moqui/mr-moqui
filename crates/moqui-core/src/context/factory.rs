@@ -1275,6 +1275,11 @@ impl ExecutionContext {
         }
     }
 
+    /// Whether the top frame's span records: an attribute's value need not be made for one that does not.
+    pub(crate) fn top_span_recording(&self) -> bool {
+        self.state.artifacts.borrow().top_recording()
+    }
+
     /// An attribute on the top frame's span, when it records one.
     pub(crate) fn set_top_span_attribute(&self, key: &str, value: moqui_lib::object::Value) {
         self.state.artifacts.borrow_mut().set_top_attribute(key, value);

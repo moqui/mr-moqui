@@ -733,8 +733,12 @@ impl OperationRun {
             outcome,
             Some(self.started.elapsed().as_secs_f64()),
         );
-        let reference = self.operation.reference_of(parameters);
         crate::context::ExecutionContext::with_current(|ctx| {
+            // the span's attributes are made only for a span that records them
+            if !ctx.top_span_recording() {
+                return;
+            }
+            let reference = self.operation.reference_of(parameters);
             ctx.set_top_span_attribute("moqui.operation.name", Value::string(&self.operation.name));
             ctx.set_top_span_attribute("moqui.operation.outcome", Value::string(outcome.as_str()));
             if let Some(reference) = reference {

@@ -1379,6 +1379,9 @@ pub struct Span {
     context: Option<TraceContext>,
     #[cfg(feature = "telemetry")]
     inner: Option<sdk::OwnedSpan>,
+    /// An unsampled span under a root open on this thread: a record until its trace is decided at the root's end.
+    #[cfg(feature = "telemetry")]
+    pending: Option<Box<sdk::PendingSpan>>,
 }
 
 impl Span {
@@ -1387,6 +1390,8 @@ impl Span {
             context: None,
             #[cfg(feature = "telemetry")]
             inner: None,
+            #[cfg(feature = "telemetry")]
+            pending: None,
         }
     }
     pub fn context(&self) -> Option<TraceContext> {
@@ -1397,30 +1402,52 @@ impl Span {
     }
     pub fn set_attribute(&mut self, key: &str, value: Value) {
         #[cfg(feature = "telemetry")]
-        if let Some(span) = &mut self.inner {
-            span.set_attribute(key, value);
-            return;
+        {
+            if let Some(span) = &mut self.inner {
+                span.set_attribute(key, value);
+                return;
+            }
+            if let Some(span) = &mut self.pending {
+                span.set_attribute(key, value);
+                return;
+            }
         }
         let _ = (key, value);
     }
     pub fn set_error(&mut self, message: &str) {
         #[cfg(feature = "telemetry")]
-        if let Some(span) = &mut self.inner {
-            span.set_error(message);
-            return;
+        {
+            if let Some(span) = &mut self.inner {
+                span.set_error(message);
+                return;
+            }
+            if let Some(span) = &mut self.pending {
+                span.set_error(message);
+                return;
+            }
         }
         let _ = message;
     }
     pub fn suppress(&mut self) {
         #[cfg(feature = "telemetry")]
-        if let Some(span) = &mut self.inner {
-            span.suppress();
+        {
+            if let Some(span) = &mut self.inner {
+                span.suppress();
+            }
+            if let Some(span) = &mut self.pending {
+                span.suppress();
+            }
         }
     }
     pub fn finish(self) {
         #[cfg(feature = "telemetry")]
-        if let Some(span) = self.inner {
-            span.finish();
+        {
+            if let Some(span) = self.inner {
+                span.finish();
+            }
+            if let Some(span) = self.pending {
+                span.finish();
+            }
         }
     }
 }

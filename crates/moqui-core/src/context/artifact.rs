@@ -237,6 +237,11 @@ impl ArtifactStack {
         self.frames.last_mut().map(|frame| &mut frame.hit)
     }
 
+    /// Whether the top frame's span records, so a caller builds an attribute's value only for one that does.
+    pub(super) fn top_recording(&self) -> bool {
+        self.frames.last().is_some_and(|frame| frame.telemetry_span.is_recording())
+    }
+
     pub(super) fn set_top_attribute(&mut self, key: &str, value: Value) {
         if let Some(frame) = self.frames.last_mut() {
             frame.telemetry_span.set_attribute(key, value);
