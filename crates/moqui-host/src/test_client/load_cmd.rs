@@ -730,19 +730,19 @@ fn compare(files: &[PathBuf], print: &mut dyn FnMut(&str)) -> Result<(), Error> 
         "p99" => "p99 ms",
         other => other,
     };
-    let table: Vec<(String, Vec<Option<f64>>, Vec<Option<f64>>)> = compare::rows(&loaded)
+    let table: Vec<(String, compare::Row)> = compare::rows(&loaded)
         .into_iter()
         .map(|row| {
             let text = match &row.name {
                 Some(name) => format!("{name} {}", label(row.metric)),
                 None => label(row.metric).to_string(),
             };
-            (text, row.values, row.changes)
+            (text, row)
         })
         .collect();
     let width = table
         .iter()
-        .map(|(label, _, _)| label.chars().count())
+        .map(|(label, _)| label.chars().count())
         .max()
         .unwrap_or(0);
     let mut header = format!("{:<width$}", "");
@@ -750,9 +750,9 @@ fn compare(files: &[PathBuf], print: &mut dyn FnMut(&str)) -> Result<(), Error> 
         let _ = write!(header, "  {:>22}", format!("[{}]", index + 1));
     }
     print(header.trim_end());
-    for (label, values, changes) in table {
+    for (label, row) in table {
         let mut line = format!("{label:<width$}");
-        for (value, change) in values.iter().zip(&changes) {
+        for (value, change) in row.values.iter().zip(&row.changes) {
             let mut cell = shown(*value);
             if let Some(change) = change {
                 let _ = write!(cell, " ({change:+.1}%)");

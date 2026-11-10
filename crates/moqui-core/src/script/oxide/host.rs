@@ -56,6 +56,7 @@ impl Host for MoquiHost {
             return false;
         }
         super::engine::fallback_pending()
+            || crate::script::run::interrupted()
             || DEADLINE
                 .with(std::cell::Cell::get)
                 .is_some_and(|deadline| Instant::now() >= deadline)

@@ -24,7 +24,7 @@
 //! nothing for it (§10). Its requests go through the client host of `moqui test-client`, made for the run
 //! ([`ClientHost::for_server_run`]), which asks the run's [`TargetPolicy`] before every request and redirect.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -41,6 +41,12 @@ use super::targets::{TargetKind, TargetPolicy};
 use super::{results, server};
 use crate::test_client::load::{self, Load};
 use crate::test_client::{ClientHost, InServer};
+
+/// How long a thread that only reads a plan may run its scripts: the top level only declares.
+const PLAN_LIMIT: Duration = Duration::from_secs(30);
+/// How long a user thread's `thread.begin` waits for the run to bind its load, which it does as soon as the users
+/// have started.
+const BIND_WAIT: Duration = Duration::from_secs(5);
 
 /// How long shutdown waits for the running loads to write their results.
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(10);
@@ -68,6 +74,8 @@ pub(crate) struct Active {
     user_id: String,
     /// The server's samples, for a run on this server (`this` or `service`); none for another server's.
     server: Option<Mutex<server::Samples>>,
+    /// What the run's threads are bound to: its load and the flag that interrupts their scripts.
+    bound: Arc<Bound>,
 }
 
 impl Active {
@@ -83,6 +91,12 @@ impl Active {
             "p95": snapshot.get("latency").and_then(|latency| latency.get("p95")).cloned().unwrap_or(Value::Null),
             "stopping": field("stopping"),
         })
+    }
+
+    /// Stop the run before each user's next request, and interrupt a script that runs on without one.
+    pub(crate) fn stop_now(&self) {
+        self.load.stop_now();
+        self.bound.interrupt.store(true, Ordering::SeqCst);
     }
 
     /// The server's samples so far, for a run on this server.
@@ -163,11 +177,43 @@ pub(crate) struct Ask {
     pub(crate) user_id: String,
 }
 
-/// The run's side of the client host: its target rule, what its plan declares it uses, and `service.call`.
+/// What a run binds its threads to, in Rust and not through the script's own calls (plans/LoadRunner.md §10): its
+/// load, set once its users have started, and the flag that interrupts their scripts on a stop now.
+pub(crate) struct Bound {
+    load: OnceLock<Arc<Load>>,
+    interrupt: Arc<AtomicBool>,
+}
+
+impl Bound {
+    fn new() -> Arc<Bound> {
+        Arc::new(Bound {
+            load: OnceLock::new(),
+            interrupt: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    /// The run's load, waiting at most [`BIND_WAIT`] for the run to bind it.
+    fn load(&self) -> Option<&Arc<Load>> {
+        let deadline = Instant::now() + BIND_WAIT;
+        loop {
+            if let Some(load) = self.load.get() {
+                return Some(load);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+/// The run's side of the client host: its target rule, what its plan declares it uses, its threads' binding, and
+/// `service.call`.
 struct RunInServer {
     policy: TargetPolicy,
     /// The plan's `uses`, set once the plan is read; before that (the plan's own top level) nothing is used.
     uses: OnceLock<Vec<String>>,
+    bound: Arc<Bound>,
 }
 
 impl RunInServer {
@@ -183,6 +229,7 @@ impl InServer for RunInServer {
                 "the load script makes no HTTP request: its plan does not declare uses: [\"http\"]".to_string(),
             );
         }
+        may_act()?;
         self.policy.allow(url)
     }
 
@@ -191,6 +238,34 @@ impl InServer for RunInServer {
             return Err("the load script calls no service: its plan does not declare uses: [\"service\"]".to_string());
         }
         super::service_call::call(args)
+    }
+
+    /// A user thread's scripts end when the run is stopped now; a thread that only reads a plan (no user bound) has
+    /// [`PLAN_LIMIT`] for its scripts, so a top level that spins does not stay behind.
+    fn thread_start(&self) {
+        let user_thread = USER.with(|cell| cell.borrow().is_some());
+        if user_thread {
+            moqui_core::script::interrupt_thread_on(Some(Arc::clone(&self.bound.interrupt)));
+        } else {
+            moqui_core::script::limit_thread_scripts(Instant::now() + PLAN_LIMIT);
+        }
+    }
+
+    /// `thread.begin` once, on a user thread, for the run's own load; `thread.end` once, after it. Any other is the
+    /// script's own call, refused: another run's load, a second begin, or an end that would drop the recorder.
+    fn check_call(&self, name: &str, args: &Value) -> Result<(), String> {
+        match name {
+            "thread.begin" => {
+                let load = self.bound.load().ok_or("the run has not bound its load")?;
+                let asked = args.get("load").and_then(Value::as_u64);
+                if asked != Some(load.id()) {
+                    return Err("thread.begin names a load that is not this thread's".to_string());
+                }
+                move_phase(Phase::NotBegun, Phase::Begun)
+            }
+            "thread.end" => move_phase(Phase::Begun, Phase::Ended),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -210,10 +285,12 @@ fn host_for(
     server: &str,
     component_dir: &Path,
     insecure: bool,
+    bound: Arc<Bound>,
 ) -> Result<(Arc<dyn SpecHost>, Arc<RunInServer>), String> {
     let in_server = Arc::new(RunInServer {
         policy: TargetPolicy::of_factory(factory),
         uses: OnceLock::new(),
+        bound,
     });
     let dyn_in_server: Arc<dyn InServer> = Arc::clone(&in_server) as Arc<dyn InServer>;
     let host = ClientHost::for_server_run(
@@ -247,7 +324,7 @@ pub(crate) fn read_plan_for_list(
         }
     }
     let read = (|| {
-        let (host, _) = host_for(factory, &own_url(factory), component_dir, false)?;
+        let (host, _) = host_for(factory, &own_url(factory), component_dir, false, Bound::new())?;
         let file = load::LoadScript::from_file(&script.path, &script.location)?;
         load::script::read_plan_listed(&host, &file, &json!({}))
     })();
@@ -255,20 +332,122 @@ pub(crate) fn read_plan_for_list(
     read
 }
 
+/// Where a user thread is in its run: before its `thread.begin` (the script file's top level), between it and its
+/// `thread.end` (setup, the iterations, teardown), or after.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    NotBegun,
+    Begun,
+    Ended,
+}
+
+/// A load user's thread in a server run: its ExecutionContext (entered only while a service call runs, and replaced
+/// when a call leaves it changed), whom it is logged in as, its run's binding and its phase.
+struct UserThread {
+    context: RefCell<ExecutionContext>,
+    factory: Arc<ExecutionContextFactory>,
+    user: String,
+    bound: Arc<Bound>,
+    phase: Cell<Phase>,
+}
+
 thread_local! {
-    /// The load user's ExecutionContext on this thread, entered only while a service call runs.
-    static USER_CONTEXT: RefCell<Option<ExecutionContext>> = const { RefCell::new(None) };
+    static USER: RefCell<Option<UserThread>> = const { RefCell::new(None) };
+}
+
+/// Move this user thread from `from` to `to`, refused when it is not a user thread or not at `from`.
+fn move_phase(from: Phase, to: Phase) -> Result<(), String> {
+    USER.with(|cell| {
+        let held = cell.borrow();
+        let user = held.as_ref().ok_or("not a load user's thread")?;
+        if user.phase.get() != from {
+            return Err(format!("a load user's thread is {:?}, not {from:?}", user.phase.get()));
+        }
+        user.phase.set(to);
+        Ok(())
+    })
+}
+
+/// Whether this thread may send a request or call a service: a user thread between its `thread.begin` and its
+/// `thread.end` (not the script file's top level, not after it ended), of a load not stopped now.
+fn may_act() -> Result<(), String> {
+    USER.with(|cell| {
+        let held = cell.borrow();
+        let user = held.as_ref().ok_or("a load script makes no request at its top level")?;
+        match user.phase.get() {
+            Phase::Begun => {}
+            Phase::NotBegun => return Err("a load script makes no request at its top level".to_string()),
+            Phase::Ended => return Err("this load user has ended".to_string()),
+        }
+        let stopped = user.bound.interrupt.load(Ordering::SeqCst)
+            || user
+                .bound
+                .load
+                .get()
+                .is_none_or(|load| matches!(load.stopping(), Some("now" | "timed-out")));
+        if stopped {
+            return Err("the load was stopped".to_string());
+        }
+        Ok(())
+    })
+}
+
+/// A context of its own for `user`, logged in, the tarpit off.
+fn user_context(factory: &Arc<ExecutionContextFactory>, user: &str) -> Result<ExecutionContext, String> {
+    let context = factory.new_context();
+    {
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user(user)
+            .map_err(|err| format!("the run's user {user} could not be logged in: {err}"))?;
+        context.disable_tarpit();
+    }
+    Ok(context)
+}
+
+/// What a call left changed in the context that a later call would inherit: authorization or entity ECA rules off,
+/// or another user. Read with the context entered.
+fn tainted(context: &ExecutionContext, user: &str) -> Option<String> {
+    if context.authz_disabled() {
+        return Some("it left authorization disabled".to_string());
+    }
+    if context.entity_eca_disabled() {
+        return Some("it left entity ECA rules disabled".to_string());
+    }
+    let current = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
+    (current != user).then(|| format!("it left the context logged in as {current:?}, not the run's user"))
 }
 
 /// Run `body` with this load user's ExecutionContext entered and the host restriction lifted (a service's own
-/// scripts are the server's); None on a thread that is not a load user's in a server run.
-pub(crate) fn in_user_context<T>(body: impl FnOnce() -> T) -> Option<T> {
-    USER_CONTEXT.with(|cell| {
+/// scripts are the server's), when [`may_act`] allows. Answers what `body` gave and, when it left the context
+/// changed ([`tainted`]), why: the context is then thrown away and a fresh one logged in, so no later call
+/// inherits it, and the caller counts the call as an error.
+pub(crate) fn in_user_context<T>(body: impl FnOnce() -> T) -> Result<(T, Option<String>), String> {
+    may_act()?;
+    USER.with(|cell| {
         let held = cell.borrow();
-        let context = held.as_ref()?;
-        let _entered = context.enter();
-        let _lifted = moqui_core::script::HostCallsLifted::new();
-        Some(body())
+        let user = held.as_ref().ok_or("not a load user's thread")?;
+        let (out, taint) = {
+            let context = user.context.borrow();
+            let _entered = context.enter();
+            let out = {
+                let _lifted = moqui_core::script::HostCallsLifted::new();
+                body()
+            };
+            (out, tainted(&context, &user.user))
+        };
+        if let Some(reason) = &taint {
+            tracing::warn!(
+                user = user.user,
+                reason,
+                "A load run's service call changed its context; replacing it"
+            );
+            let fresh = user_context(&user.factory, &user.user)?;
+            let old = user.context.replace(fresh);
+            let _entered = old.enter();
+            // the old context goes as it is; its user state is only in it
+            let _ = moqui_core::user::logout();
+        }
+        Ok((out, taint))
     })
 }
 
@@ -289,25 +468,37 @@ impl Drop for Live {
 }
 
 /// Each user's thread: an ExecutionContext of its own logged in as `user`, the tarpit off, kept for the thread's life
-/// and entered only for its service calls; counted in `live` until the thread is done with it.
-fn around(factory: Arc<ExecutionContextFactory>, user: String, live: Arc<AtomicUsize>) -> load::Around {
+/// and entered only for its service calls; bound to the run ([`Bound`]) in Rust; counted in `live` until the thread
+/// is done with it.
+fn around(
+    factory: Arc<ExecutionContextFactory>,
+    user: String,
+    live: Arc<AtomicUsize>,
+    bound: Arc<Bound>,
+) -> load::Around {
     Arc::new(move || {
         let factory = Arc::clone(&factory);
         let user = user.clone();
+        let bound = Arc::clone(&bound);
         let live = Live::new(&live);
         Box::new(move |body: ThreadBody<'_>| {
             let _live = live;
-            let context = factory.new_context();
-            {
-                let _entered = context.enter();
-                if let Err(err) = moqui_core::user::internal_login_user(&user) {
-                    return Err(format!("the run's user {user} could not be logged in: {err}"));
-                }
-                context.disable_tarpit();
-            }
-            USER_CONTEXT.with(|cell| *cell.borrow_mut() = Some(context));
+            let context = user_context(&factory, &user)?;
+            USER.with(|cell| {
+                *cell.borrow_mut() = Some(UserThread {
+                    context: RefCell::new(context),
+                    factory,
+                    user,
+                    bound,
+                    phase: Cell::new(Phase::NotBegun),
+                })
+            });
             let out = body();
-            if let Some(context) = USER_CONTEXT.with(|cell| cell.borrow_mut().take()) {
+            // the recorder merges into the load here, whatever the script called
+            let _ = load::end();
+            moqui_core::script::interrupt_thread_on(None);
+            if let Some(ended) = USER.with(|cell| cell.borrow_mut().take()) {
+                let context = ended.context.into_inner();
                 let _entered = context.enter();
                 if let Err(err) = moqui_core::user::logout() {
                     tracing::debug!("logout after a load user: {err}");
@@ -330,7 +521,8 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
         TargetKind::This | TargetKind::Service => own_url(factory),
     };
     policy.allow(&target)?;
-    let (host, in_server) = host_for(factory, &target, &ask.component_dir, ask.insecure)?;
+    let bound = Bound::new();
+    let (host, in_server) = host_for(factory, &target, &ask.component_dir, ask.insecure, Arc::clone(&bound))?;
     let file = load::LoadScript::from_file(&ask.script.path, &ask.script.location)?;
     let plan = load::script::read_plan(&host, &file, &Value::Object(ask.params.clone()), &json!({}))?;
     let uses = plan.uses();
@@ -379,7 +571,12 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
         thresholds: plan.thresholds().clone(),
         run: run.clone(),
         generator: "in-target",
-        around: Some(around(Arc::clone(factory), ask.user.clone(), Arc::clone(&live))),
+        around: Some(around(
+            Arc::clone(factory),
+            ask.user.clone(),
+            Arc::clone(&live),
+            Arc::clone(&bound),
+        )),
         stop_after: None,
         stop_now_after: None,
     };
@@ -390,6 +587,8 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
             return Err(err);
         }
     };
+    // the users' thread.begin waits for this ([`Bound::load`])
+    let _ = bound.load.set(Arc::clone(running.load()));
     let on_this_server = ask.target_kind != TargetKind::Url;
     let samples = on_this_server.then(|| {
         let mut samples = server::Samples::new();
@@ -408,6 +607,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
         stopped_because: Mutex::new(None),
         user_id: ask.user_id.clone(),
         server: samples,
+        bound,
     });
     runs.insert(run_id.clone(), Arc::clone(&active));
     drop(runs);
@@ -433,7 +633,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
         .spawn(move || watch(&factory, &watched))
     {
         tracing::error!(run_id, error = %err, "A load run's watch on its user did not start; stopping it");
-        active.load.stop_now();
+        active.stop_now();
     }
     Ok(run_id)
 }
@@ -461,8 +661,9 @@ fn finish(
             json!({ "users": 0, "iterations": 0, "requests": 0, "errors": 0, "latency": {}, "names": {}, "run": run })
         }
     };
-    // the users were told to stop; a thread past its time may still be in a request, and the run is not over until
-    // it has exited
+    // the users were told to stop; a thread past its time may still be in a request or a loop of its own, which the
+    // interrupt ends, and the run is not over until it has exited
+    active.bound.interrupt.store(true, Ordering::SeqCst);
     let mut logged = Instant::now();
     while active.live.load(Ordering::SeqCst) > 0 {
         if logged.elapsed() >= LINGER_LOG_EVERY {
@@ -528,7 +729,7 @@ fn watch(factory: &Arc<ExecutionContextFactory>, active: &Active) {
             lock(samples).sample(factory);
         }
         ticks += 1;
-        if ticks % CHECK_EVERY_SAMPLES != 0 {
+        if !ticks.is_multiple_of(CHECK_EVERY_SAMPLES) {
             continue;
         }
         if let Err(reason) = may_still_run(factory, &active.user) {
@@ -539,7 +740,7 @@ fn watch(factory: &Arc<ExecutionContextFactory>, active: &Active) {
                 "Stopping a load run"
             );
             *lock(&active.stopped_because) = Some(reason);
-            active.load.stop_now();
+            active.stop_now();
             return;
         }
     }
@@ -596,7 +797,7 @@ pub(crate) fn check_uses(uses: &[String], kind: TargetKind) -> Result<(), String
 pub(crate) fn stop(run_id: &str, now: bool) -> Option<()> {
     let active = find(run_id)?;
     if now {
-        active.load.stop_now();
+        active.stop_now();
     } else {
         active.load.stop_after_iteration();
     }
@@ -609,7 +810,7 @@ pub(crate) fn stop_all() {
     let mut held = lock(&REGISTRY.runs);
     SHUTTING_DOWN.store(true, Ordering::SeqCst);
     for active in held.values() {
-        active.load.stop_now();
+        active.stop_now();
     }
     let deadline = Instant::now() + SHUTDOWN_WAIT;
     while !held.is_empty() {

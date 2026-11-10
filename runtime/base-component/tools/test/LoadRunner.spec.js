@@ -54,6 +54,9 @@ spec({
         make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "org.moqui.impl.BasicServices.echo#Data",
             nameIsPattern: "N", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
         // set#Preference writes a row keyed by the current user: what shows whom a call ran as
+        // the dev example's fixture that leaves its caller's authorization off
+        make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "example.LoadFixtureServices.leave#AuthzDisabled",
+            nameIsPattern: "N", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
         make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "org.moqui.impl.UserServices.set#Preference",
             nameIsPattern: "N", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
         make("moqui.security.ArtifactAuthz", { artifactAuthzId: "SPEC_LR_ECHO", userGroupId: "SPEC_LR_HOLDERS",
@@ -70,7 +73,7 @@ spec({
         for (const runId of runIds) invoke(S + "delete#LoadRun", { runId })
         ec.artifactExecution.disableAuthz()
         ec.entity.find("moqui.security.UserPreference").condition("userId", "in", [holderId, otherId]).deleteAll()
-        ec.entity.find("moqui.basic.Enumeration").condition("enumId", REFUSED_ENUM).deleteAll()
+        ec.entity.find("moqui.basic.Enumeration").condition("enumId", "in", [REFUSED_ENUM, "SPEC_LR_AUTHZ_LEAK"]).deleteAll()
         ec.entity.find("moqui.security.UserGroupMember").condition("userId", "in", [holderId, otherId]).deleteAll()
         ec.entity.find("moqui.security.UserGroupPermission").condition("userGroupId", "SPEC_LR_HOLDERS").deleteAll()
         ec.entity.find("moqui.security.ArtifactAuthz").condition("artifactAuthzId", "in", ["SPEC_LR_TOOLS_APP", "SPEC_LR_SERVICES", "SPEC_LR_ECHO"]).deleteAll()
@@ -251,5 +254,46 @@ feature("a run on this server keeps the server's samples and notes that its gene
         done.server.samples[0].memoryMb > 0
         done.generator.where == "in-target"
         done.generator.note.includes("server")
+    },
+})
+
+// ========== The run's binding of its threads (plans/LoadRunner.md §10) ==========
+// what a script reaches calling the host directly, around the prelude: example's dev-only ScriptReach.load.js
+const reached = (mode) => {
+    const started = start({ scriptLocation: REACH, parameters: { mode } })
+    runIds.push(started.runId)
+    ended(started.runId)
+    // every error sample's message: a counted call's error comes before the iteration's own
+    return result(started.runId).errorSamples.map(sample => sample.message).join(" | ")
+}
+
+feature("a script's own host calls neither act at its top level nor rebind or end its thread", {
+    expect() {
+        reached("toplevel").includes("toplevel threw a load script makes no request at its top level")
+        const tampered = reached("tamper")
+        tampered.includes("other threw thread.begin names a load that is not this thread's")
+        tampered.includes("after threw this load user has ended")
+    },
+})
+
+feature("a call that leaves authorization off is an error, and the user's next call is still authorized", {
+    expect() {
+        const seen = reached("authz")
+        seen.includes("left authorization disabled")
+        seen.includes("create threw")
+        seen.toLowerCase().includes("authoriz")
+        ec.entity.find("moqui.basic.Enumeration").condition("enumId", "SPEC_LR_AUTHZ_LEAK").disableAuthz().count() == 0
+    },
+})
+
+feature("a stop now ends a script that spins without a host call", {
+    expect() {
+        const started = start({ scriptLocation: REACH, parameters: { mode: "spin" } })
+        started.error == ""
+        runIds.push(started.runId)
+        invoke(S + "stop#LoadRun", { runId: started.runId, now: true }).error == ""
+        const status = ended(started.runId)
+        status.running == false
+        status.status == "stopped"
     },
 })

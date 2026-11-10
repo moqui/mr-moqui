@@ -33,6 +33,33 @@ fn a_plan_uses_what_its_target_supplies() {
 }
 
 #[test]
+fn a_thread_is_bound_to_its_own_run_only() {
+    let bound = Bound::new();
+    let load = Load::new(&[]);
+    let _ = bound.load.set(Arc::clone(&load));
+    let in_server = RunInServer {
+        policy: TargetPolicy::default(),
+        uses: OnceLock::new(),
+        bound,
+    };
+    let _ = in_server.uses.set(vec!["service".to_string(), "http".to_string()]);
+    // another run's load is refused whatever thread asks
+    let err = in_server
+        .check_call("thread.begin", &json!({ "load": load.id() + 1000 }))
+        .unwrap_err();
+    assert!(err.contains("not this thread's"), "{err}");
+    // this run's load on a thread that is not one of its users' is refused too
+    assert!(in_server
+        .check_call("thread.begin", &json!({ "load": load.id() }))
+        .is_err());
+    assert!(in_server.check_call("thread.end", &json!({})).is_err());
+    // and such a thread neither sends nor calls
+    let err = in_server.allow("http://localhost/").unwrap_err();
+    assert!(err.contains("top level"), "{err}");
+    assert!(in_server.check_call("session.new", &json!({})).is_ok());
+}
+
+#[test]
 fn an_unknown_run_is_not_running_here() {
     assert!(find("20261110-100000-1").is_none());
     assert!(stop("20261110-100000-1", true).is_none());

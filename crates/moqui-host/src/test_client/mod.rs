@@ -699,6 +699,11 @@ pub(crate) trait InServer: Send + Sync {
     fn allow(&self, url: &str) -> Result<(), String>;
     /// `service.call(name, parameters, opts)` on the user's thread, whose ExecutionContext the run entered.
     fn service_call(&self, args: &Value) -> Result<Value, String>;
+    /// The thread's first host call (`config`), before any of its scripts: the run binds what it must to the thread.
+    fn thread_start(&self);
+    /// Every host call of the run's threads, before it is answered: a `thread.begin` or `thread.end` that is not the
+    /// thread's own is refused, whatever a script passes.
+    fn check_call(&self, name: &str, args: &Value) -> Result<(), String>;
 }
 
 /// The client host of a run: the server, the params, the HTTP client, and what the current spec opened.
@@ -1434,6 +1439,9 @@ impl ClientHost {
     }
 
     fn dispatch(&self, name: &str, args: &Value) -> Result<Value, String> {
+        if let Some(in_server) = &self.in_server {
+            in_server.check_call(name, args)?;
+        }
         if let Some(answer) = load::host_call(name, args) {
             return answer;
         }
@@ -1453,8 +1461,9 @@ impl ClientHost {
             "config" => {
                 // the client prelude's first call, before any script of the thread: in a server run the thread's
                 // scripts reach only the client harness's host functions from here on
-                if self.in_server.is_some() {
+                if let Some(in_server) = &self.in_server {
                     moqui_core::script::restrict_host_calls(in_server_host_call);
+                    in_server.thread_start();
                 }
                 Ok(json!({
                     "server": self.server.to_json(),
@@ -1509,7 +1518,13 @@ impl ClientHost {
             "load.run" => self.run_load(args),
             "parallel" => self.run_parallel(args),
             "thread.end" => {
-                let mut ended = load::end();
+                // in a server run the thread's recorder ends with the thread (load_runner/run.rs around), not with a
+                // call a script can make early; its sessions go with the run's host
+                let mut ended = if self.in_server.is_some() {
+                    Vec::new()
+                } else {
+                    load::end()
+                };
                 ended.extend(field(args, "session").as_u64());
                 let mut sessions = lock(&self.sessions);
                 for id in ended {

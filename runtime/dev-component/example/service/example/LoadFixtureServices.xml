@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <!-- A fixture of runtime/base-component/tools/test/LoadRunner.spec.js (a dev component, not on a production server):
+        a service that does what a service must not, leave its caller's context with authorization off, so the spec
+        can show that a load run's next call does not inherit it. It changes nothing but the caller's own context. -->
+    <service verb="leave" noun="AuthzDisabled">
+        <actions><script>ec.artifactExecution.disableAuthz()</script></actions>
+    </service>
+</services>
