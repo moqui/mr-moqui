@@ -421,12 +421,12 @@ impl EdgeConfig {
             pairing_calls: 4,
             pair_attempts: 10,
             pair_window: Duration::from_secs(600),
-            ssh_tunnel: tunnel_bind("edge_ssh_tunnel_port", "edge_ssh_tunnel_host", "the SSH tunnel"),
+            ssh_tunnel: tunnel_bind(TUNNEL_PORTS[0].0, TUNNEL_PORTS[0].1, TUNNEL_PORTS[0].2),
             ssh_tunnel_node: moqui_lib::env::get_prop_or_env("edge_ssh_tunnel_node")
                 .trim()
                 .to_string(),
-            xmpp_tunnel: tunnel_bind("edge_xmpp_port", "edge_xmpp_host", "the XMPP tunnel"),
-            xmpp_tls_tunnel: tunnel_bind("edge_xmpp_tls_port", "edge_xmpp_host", "the XMPP direct TLS tunnel"),
+            xmpp_tunnel: tunnel_bind(TUNNEL_PORTS[1].0, TUNNEL_PORTS[1].1, TUNNEL_PORTS[1].2),
+            xmpp_tls_tunnel: tunnel_bind(TUNNEL_PORTS[2].0, TUNNEL_PORTS[2].1, TUNNEL_PORTS[2].2),
             xmpp_tunnel_node: moqui_lib::env::get_prop_or_env("edge_xmpp_node").trim().to_string(),
             offline_page: std::sync::Arc::from(web::DEFAULT_OFFLINE_PAGE),
             open_timeout: Duration::from_secs(10),
@@ -434,30 +434,68 @@ impl EdgeConfig {
     }
 }
 
+/// The tunnel ports: the port property, the host property, and what the tunnel is for its errors.
+const TUNNEL_PORTS: [(&str, &str, &str); 3] = [
+    ("edge_ssh_tunnel_port", "edge_ssh_tunnel_host", "the SSH tunnel"),
+    ("edge_xmpp_port", "edge_xmpp_host", "the XMPP tunnel"),
+    ("edge_xmpp_tls_port", "edge_xmpp_host", "the XMPP direct TLS tunnel"),
+];
+
+/// The startup report's name for the tunnel listeners.
+pub(crate) const TUNNEL_LISTENER: &str = "Edge tunnels";
+
 /// A tunnel port's address: the port property on the host property (default all addresses), none when the port is
 /// empty, or not a port, or the host not an IP address (logged as `what` being off).
 fn tunnel_bind(port_name: &str, host_name: &str, what: &str) -> Option<std::net::SocketAddr> {
+    match tunnel_address(port_name, host_name, what)? {
+        Ok(bind) => Some(bind),
+        Err(reason) => {
+            tracing::error!("{reason}");
+            None
+        }
+    }
+}
+
+/// [`tunnel_bind`] without the log: None while the port is empty, else the address or why the tunnel is off.
+fn tunnel_address(port_name: &str, host_name: &str, what: &str) -> Option<Result<std::net::SocketAddr, String>> {
     let port = moqui_lib::env::get_prop_or_env(port_name);
     let port = port.trim();
     if port.is_empty() {
         return None;
     }
     let Ok(port) = port.parse::<u16>() else {
-        tracing::error!("{port_name} {port} is not a port; {what} is off");
-        return None;
+        return Some(Err(format!("{port_name} {port} is not a port; {what} is off")));
     };
     let host = moqui_lib::env::get_prop_or_env(host_name);
     let ip = match host.trim() {
         "" => std::net::IpAddr::from([0, 0, 0, 0]),
         host => match host.parse() {
             Ok(ip) => ip,
-            Err(_) => {
-                tracing::error!("{host_name} {host} is not an IP address; {what} is off");
-                return None;
-            }
+            Err(_) => return Some(Err(format!("{host_name} {host} is not an IP address; {what} is off"))),
         },
     };
-    Some(std::net::SocketAddr::new(ip, port))
+    Some(Ok(std::net::SocketAddr::new(ip, port)))
+}
+
+/// The tunnel ports an edge or all-in-one node will bind, for the port check before the framework is built; none on
+/// a node that takes no links.
+pub(crate) fn tunnel_targets() -> Vec<crate::port_check::Target> {
+    if !moqui_core::edge::node_role_kind().takes_links() {
+        return Vec::new();
+    }
+    TUNNEL_PORTS
+        .iter()
+        .filter_map(|(port_name, host_name, what)| {
+            let bind = tunnel_address(port_name, host_name, what)?.ok()?;
+            Some(crate::port_check::Target::optional(
+                TUNNEL_LISTENER,
+                port_name,
+                bind.ip(),
+                bind.port(),
+                crate::port_check::Proto::Tcp,
+            ))
+        })
+        .collect()
 }
 
 /// A paired local node's link settings: from `edge_node_url`, `edge_node_key` and `edge_node_pin`, or from a test.

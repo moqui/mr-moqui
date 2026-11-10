@@ -292,7 +292,6 @@ pub fn start(
     *moqui_lib::sync::lock(&factory.extension(|_| IntakeSlot::default()).0) = Some(Arc::clone(&intake));
     crate::edge::handle().spawn(accept_loop(listener, intake));
     *moqui_lib::sync::lock(&factory.extension(|_| SshAddress::default()).0) = Some(address);
-    tracing::info!("SSH server listening on {address}");
     // For the cluster member row: peers pin this key, and the ssh:// base URL defaults to this address.
     moqui_lib::env::set_property(moqui_core::cluster::SSH_FINGERPRINT_PROPERTY, fingerprint);
     moqui_lib::env::set_property(moqui_core::cluster::SSH_ADDRESS_PROPERTY, address.to_string());

@@ -51,14 +51,21 @@ pub struct DevWatcher {
     watched: Mutex<BTreeSet<PathBuf>>,
 }
 
+/// The startup report's name for the watcher.
+const NAME: &str = "Dev reload";
+
 /// Start watching `factory`'s components when the instance is dev and `dev-reload` is on. Answers whether it started.
 pub fn start(factory: &Arc<ExecutionContextFactory>) -> bool {
+    use moqui_core::startup::{integration, State};
     if !moqui_core::devtools::is_dev_instance() {
+        integration(factory, NAME, State::off("instance_purpose is not dev"));
         return false;
     }
     if !factory.conf_flag("dev-reload", "enabled", true) {
-        tracing::info!(
-            "Dev reload is off (dev-reload enabled=false); changed files take effect as they do in production"
+        integration(
+            factory,
+            NAME,
+            State::off("dev-reload enabled=false; changed files take effect as they do in production"),
         );
         return false;
     }
@@ -81,6 +88,7 @@ pub(crate) fn watch(factory: &Arc<ExecutionContextFactory>, debounce: Duration) 
         Ok(watcher) => watcher,
         Err(err) => {
             tracing::error!(error = %err, "Could not start the dev file watcher; changed files will not reload");
+            moqui_core::startup::integration(factory, NAME, moqui_core::startup::State::failed(err.to_string()));
             return false;
         }
     };
@@ -104,11 +112,15 @@ pub(crate) fn watch(factory: &Arc<ExecutionContextFactory>, debounce: Duration) 
     {
         dev.watch_one(parent);
     }
-    tracing::info!(
-        "Dev reload: watching {} directories of {} components in {} ms; a changed file reloads what it defines",
-        lock(&dev.watched).len(),
-        factory.components().len(),
-        started.elapsed().as_millis()
+    moqui_core::startup::integration(
+        factory,
+        NAME,
+        moqui_core::startup::State::on(format!(
+            "watching {} directories of {} components ({} ms); a changed file reloads what it defines",
+            lock(&dev.watched).len(),
+            factory.components().len(),
+            started.elapsed().as_millis()
+        )),
     );
     factory.extension::<Arc<DevWatcher>>(|_| Arc::clone(&dev));
     let weak = Arc::downgrade(factory);

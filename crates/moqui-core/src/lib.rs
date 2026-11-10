@@ -41,6 +41,7 @@ pub mod search;
 pub mod service;
 pub mod sftp;
 pub mod sso;
+pub mod startup;
 pub mod telemetry;
 // the in-memory entity facade of the tests, here and in moqui-llm's (the test-support feature)
 #[cfg(any(test, feature = "test-support"))]

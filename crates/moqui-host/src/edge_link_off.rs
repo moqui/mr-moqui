@@ -83,7 +83,7 @@ pub(crate) struct Started {
 
 /// Nothing to start; on an edge node, say that this binary cannot be one.
 pub(crate) fn start(
-    _factory: &Arc<ExecutionContextFactory>,
+    factory: &Arc<ExecutionContextFactory>,
     _resolver: Option<Arc<dyn rustls::server::ResolvesServerCert>>,
     _shutdown: tokio::sync::watch::Receiver<bool>,
     _down: DownServe,
@@ -101,6 +101,8 @@ pub(crate) fn start(
             "edge_node_url is set, but this binary has no edge link (the edge feature: Maximal or Enterprise)"
         );
     }
+    moqui_core::startup::integration(factory, "Edge link", moqui_core::startup::State::NotBuilt);
+    moqui_core::startup::listener(factory, "Edge tunnels", moqui_core::startup::State::NotBuilt);
     Started::default()
 }
 

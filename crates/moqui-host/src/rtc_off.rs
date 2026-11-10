@@ -21,10 +21,12 @@ use moqui_core::context::ExecutionContextFactory;
 
 pub(crate) struct RtcNode;
 
-pub(crate) fn start(_factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
+pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
     if !moqui_lib::env::get_prop_or_env("rtc_media_port").trim().is_empty() {
         tracing::error!("rtc_media_port is set but this build has no call media (the rtc feature)");
     }
+    moqui_core::startup::listener(factory, "Call media", moqui_core::startup::State::NotBuilt);
+    moqui_core::startup::listener(factory, "TURN", moqui_core::startup::State::NotBuilt);
     None
 }
 

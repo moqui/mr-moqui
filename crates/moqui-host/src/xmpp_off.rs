@@ -21,10 +21,11 @@ use moqui_core::context::ExecutionContextFactory;
 
 pub(crate) struct XmppNode;
 
-pub(crate) fn start(_factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
+pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
     if !moqui_lib::env::get_prop_or_env("xmpp_domain").trim().is_empty() {
         tracing::error!("xmpp_domain is set but this build has no XMPP server (the xmpp feature)");
     }
+    moqui_core::startup::listener(factory, "XMPP", moqui_core::startup::State::NotBuilt);
     None
 }
 

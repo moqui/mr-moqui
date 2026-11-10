@@ -39,7 +39,16 @@ pub struct GrpcAddress(pub std::sync::Mutex<Option<SocketAddr>>);
 /// Where to listen, when a service is on: the receiver's address, else the PASS authority's. `tls`: the HTTPS listener
 /// has certificates, so the listener serves TLS.
 pub(crate) fn bind_address(factory: &ExecutionContextFactory, http: SocketAddr, tls: bool) -> Option<SocketAddr> {
-    let otlp = crate::monitor::grpc::bind_address(factory, http);
+    bind_address_by(&|path, name| factory.conf_setting(path, name), http, tls)
+}
+
+/// [`bind_address`] by a conf `setting`, for the port check before the factory is built.
+pub(crate) fn bind_address_by(
+    setting: crate::monitor::grpc::Setting,
+    http: SocketAddr,
+    tls: bool,
+) -> Option<SocketAddr> {
+    let otlp = crate::monitor::grpc::bind_address_by(setting, http);
     let pass =
         crate::pass_authority::direct_enabled() && pass_allowed(otlp.unwrap_or_else(|| pass_address(http)), tls, false);
     match (otlp, pass) {
@@ -133,39 +142,59 @@ fn service_routes(factory: &Arc<ExecutionContextFactory>, pass: bool) -> (tonic:
 }
 
 /// The same services for the HTTPS listener, which carries a gRPC call over HTTP/2 to them (`crate::http::serve`):
-/// that is always TLS, so the PASS authority's are there whenever `pass_authority_grpc_enabled=true`. `None` when no
-/// service is on. The gRPC listener's own port stays, opened by the same settings.
-pub(crate) fn web_routes(factory: &Arc<ExecutionContextFactory>) -> Option<tonic::service::Routes> {
+/// that is always TLS, so the PASS authority's are there whenever `pass_authority_grpc_enabled=true`, with their names
+/// for the startup report. `None` when no service is on. The gRPC listener's own port stays, opened by the same settings.
+pub(crate) fn web_routes(factory: &Arc<ExecutionContextFactory>) -> Option<(tonic::service::Routes, String)> {
     let (routes, names) = service_routes(factory, crate::pass_authority::direct_enabled());
     if names.is_empty() {
         return None;
     }
-    tracing::info!("gRPC on the HTTPS listener over HTTP/2: {}", names.join(" and "));
-    Some(routes)
+    Some((routes, names.join(" and ")))
 }
 
-/// Bind `bind` and serve until `stop`. A bind failure is logged and the HTTP listeners go on without gRPC.
-pub(crate) async fn serve(
-    factory: Arc<ExecutionContextFactory>,
+/// The gRPC listener, bound, with the routes of the services it serves.
+pub(crate) struct Bound {
+    listener: TcpListener,
+    routes: tonic::service::Routes,
+    label: String,
+    acceptor: Option<tokio_rustls::TlsAcceptor>,
+}
+
+/// Bind `bind` before the startup report, so the report has its address. A bind failure is logged and recorded, and
+/// the HTTP listeners go on without gRPC; a port that was busy at the start check is not tried.
+pub(crate) async fn open(
+    factory: &Arc<ExecutionContextFactory>,
     bind: SocketAddr,
     tls: Option<Arc<rustls::ServerConfig>>,
-    guard: Arc<crate::guard::Guard>,
-    stop: impl std::future::Future<Output = ()>,
-) {
-    let (routes, names) = routes(&factory, bind, tls.is_some());
+) -> Option<Bound> {
+    use moqui_core::startup::{listener as record, State};
+    if let Some(busy) = crate::port_check::busy(LISTENER) {
+        record(factory, LISTENER, State::Skipped(busy));
+        return None;
+    }
+    let (routes, names) = routes(factory, bind, tls.is_some());
     let label = names.join(" and ");
     let listener = match TcpListener::bind(bind).await {
         Ok(listener) => listener,
         Err(error) => {
             tracing::error!("could not bind the gRPC listener ({label}) on {bind}: {error}");
-            return;
+            record(
+                factory,
+                LISTENER,
+                State::failed(format!("{bind} did not bind: {error}")),
+            );
+            return None;
         }
     };
     let local = listener.local_addr().unwrap_or(bind);
     *moqui_lib::sync::lock(&factory.extension(|_| GrpcAddress::default()).0) = Some(local);
-    tracing::info!(
-        "gRPC listener ({label}) on {local}{}",
-        if tls.is_some() { " (TLS)" } else { "" }
+    record(
+        factory,
+        LISTENER,
+        State::on(format!(
+            "tcp {local}{}, {label}",
+            if tls.is_some() { " TLS" } else { "" }
+        )),
     );
     let acceptor = tls.map(|config| {
         // gRPC is HTTP/2 only; the HTTPS listener's config offers http/1.1 too.
@@ -173,6 +202,25 @@ pub(crate) async fn serve(
         config.alpn_protocols = vec![b"h2".to_vec()];
         tokio_rustls::TlsAcceptor::from(Arc::new(config))
     });
+    Some(Bound {
+        listener,
+        routes,
+        label,
+        acceptor,
+    })
+}
+
+/// The startup report's name for this listener.
+pub(crate) const LISTENER: &str = "gRPC";
+
+/// Serve the bound listener until `stop`.
+pub(crate) async fn serve(bound: Bound, guard: Arc<crate::guard::Guard>, stop: impl std::future::Future<Output = ()>) {
+    let Bound {
+        listener,
+        routes,
+        label,
+        acceptor,
+    } = bound;
     let (connections, incoming) = tokio::sync::mpsc::channel::<std::io::Result<Connection>>(64);
     let accepting = tokio::spawn(accept(listener, acceptor, guard, connections));
     let incoming = futures_util::stream::unfold(incoming, |mut incoming| async move {

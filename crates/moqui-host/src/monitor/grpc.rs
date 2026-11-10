@@ -28,18 +28,27 @@ use tonic::{Request, Response, Status};
 
 use super::receiver::{self, Refusal};
 
+/// A conf setting by element path and attribute, expanded and trimmed: [`ExecutionContextFactory::conf_setting`], or
+/// the merged conf node before the factory is built (the port check, `crate::port_check`).
+pub(crate) type Setting<'a> = &'a dyn Fn(&str, &str) -> String;
+
 /// Whether the OTLP/gRPC receiver is on: `<telemetry><receiver grpc-enabled="true">` with the receiver enabled.
 pub(crate) fn enabled(factory: &ExecutionContextFactory) -> bool {
-    factory.conf_setting("telemetry/receiver", "grpc-enabled") == "true" && receiver::receiver_enabled(factory)
+    enabled_by(&|path, name| factory.conf_setting(path, name))
+}
+
+/// [`enabled`] by `setting`.
+pub(crate) fn enabled_by(setting: Setting) -> bool {
+    setting("telemetry/receiver", "grpc-enabled") == "true" && setting("telemetry/receiver", "enabled") != "false"
 }
 
 /// Where the receiver listens, when it is on: `grpc-bind` (the HTTP listener's address when empty) and `grpc-port`.
-pub(crate) fn bind_address(factory: &ExecutionContextFactory, http: SocketAddr) -> Option<SocketAddr> {
-    if !enabled(factory) {
+pub(crate) fn bind_address_by(setting: Setting, http: SocketAddr) -> Option<SocketAddr> {
+    if !enabled_by(setting) {
         return None;
     }
-    let port = factory.conf_number("telemetry/receiver", "grpc-port", 4317_u16);
-    let ip = match factory.conf_setting("telemetry/receiver", "grpc-bind").trim() {
+    let port = setting("telemetry/receiver", "grpc-port").parse().unwrap_or(4317_u16);
+    let ip = match setting("telemetry/receiver", "grpc-bind").as_str() {
         "" => http.ip(),
         text => text.parse().unwrap_or_else(|_| {
             tracing::error!(

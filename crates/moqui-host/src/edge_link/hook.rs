@@ -140,10 +140,28 @@ pub(crate) fn start(
             role.as_str()
         );
     }
-    if let Some(config) = paired {
-        if let Err(err) = hook.start_dialer(config) {
-            tracing::error!("The edge link is not started: {err}");
+    use moqui_core::startup::{integration, listener, State};
+    match paired {
+        Some(config) => {
+            let url = config.url.clone();
+            match hook.start_dialer(config) {
+                Ok(()) => integration(factory, "Edge link", State::on(format!("dials the edge node {url}"))),
+                Err(err) => {
+                    tracing::error!("The edge link is not started: {err}");
+                    integration(factory, "Edge link", State::failed(err));
+                }
+            }
         }
+        None if server.is_some() => integration(
+            factory,
+            "Edge link",
+            State::on(format!(
+                "node role {}, takes links on the HTTPS listener",
+                role.as_str()
+            )),
+        ),
+        None if takes_links => integration(factory, "Edge link", State::failed("see the edge link error above")),
+        None => integration(factory, "Edge link", State::off("edge_node_url is not set")),
     }
     moqui_core::edge::install_edge_link(Arc::clone(&hook) as Arc<dyn EdgeLink>);
     if let Some((server, _)) = &server {
@@ -153,7 +171,19 @@ pub(crate) fn start(
         Some((server, acceptor)) => {
             let loading = Arc::clone(&server);
             tokio::spawn(async move { loading.load_hosts().await });
-            for port in super::tunnel::ports(server.config()) {
+            let mut opened = Vec::new();
+            let ports = super::tunnel::ports(server.config());
+            let busy = crate::port_check::busy(super::TUNNEL_LISTENER);
+            if ports.is_empty() {
+                listener(
+                    factory,
+                    super::TUNNEL_LISTENER,
+                    State::off("edge_ssh_tunnel_port, edge_xmpp_port and edge_xmpp_tls_port are not set"),
+                );
+            } else if let Some(busy) = &busy {
+                listener(factory, super::TUNNEL_LISTENER, State::Skipped(busy.clone()));
+            }
+            for port in ports.into_iter().filter(|_| busy.is_none()) {
                 // an all-in-one node's own XMPP server keeps its ports; the paired node's domain has its own (§10)
                 if let Some(own) = role
                     .all_in_one()
@@ -168,14 +198,37 @@ pub(crate) fn start(
                     );
                     continue;
                 }
-                super::tunnel::listen(&server, port, Arc::clone(&guard));
+                let kind = port.kind;
+                if let Some(address) = super::tunnel::listen(&server, port, Arc::clone(&guard)) {
+                    opened.push(format!("{kind} tcp {address}"));
+                }
+            }
+            if busy.is_none() && !opened.is_empty() {
+                listener(factory, super::TUNNEL_LISTENER, State::On(opened.join(", ")));
+            } else {
+                moqui_core::startup::report(factory).record_default(
+                    moqui_core::startup::Section::Listener,
+                    super::TUNNEL_LISTENER,
+                    State::failed("see the edge tunnel errors above"),
+                );
             }
             Started {
                 acceptor: Some(acceptor),
                 front: Some(Arc::new(WebFront::new(&server))),
             }
         }
-        None => Started::default(),
+        None => {
+            listener(
+                factory,
+                super::TUNNEL_LISTENER,
+                State::off(if takes_links {
+                    "this node takes no links"
+                } else {
+                    "node_role is not edge or all-in-one"
+                }),
+            );
+            Started::default()
+        }
     }
 }
 

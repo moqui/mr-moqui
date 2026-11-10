@@ -163,6 +163,45 @@ fn protection(factory: &ExecutionContextFactory) -> (ListenLimits, Guard) {
     (limits, guard)
 }
 
+/// Record the HTTP, HTTPS and cluster listeners in the startup report: `http` is None for a node reached in process
+/// only, and a cluster port of 0 is no cluster listener.
+fn record_web_listeners(
+    factory: &ExecutionContextFactory,
+    http: Option<SocketAddr>,
+    https: Option<SocketAddr>,
+    https_grpc: Option<String>,
+    cluster: SocketAddr,
+) {
+    use moqui_core::startup::{listener, State};
+    match http {
+        Some(http) => listener(factory, "HTTP", State::On(format!("tcp {http}"))),
+        None => listener(factory, "HTTP", State::off("no port, reached in process only")),
+    }
+    match https {
+        Some(https) => listener(
+            factory,
+            "HTTPS",
+            State::On(format!(
+                "tcp {https} TLS{}",
+                https_grpc
+                    .map(|names| format!(", gRPC over HTTP/2: {names}"))
+                    .unwrap_or_default()
+            )),
+        ),
+        None if http.is_none() => listener(factory, "HTTPS", State::off("no port, reached in process only")),
+        None => listener(
+            factory,
+            "HTTPS",
+            State::off("no certificate in runtime/cert, or webapp_https_listen_port is off"),
+        ),
+    }
+    if cluster.port() == 0 {
+        listener(factory, "Cluster", State::off("this node is reached in process only"));
+    } else {
+        listener(factory, "Cluster", State::On(format!("tcp {cluster} mTLS")));
+    }
+}
+
 /// Addresses and handles the test uses after the plain HTTP listener binds.
 pub(crate) struct ListenReport {
     pub http: SocketAddr,
@@ -256,7 +295,7 @@ pub(crate) async fn listen(
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let (limits, guard) = protection(&factory);
     let guard = Arc::new(guard);
-    guard.log_start();
+    guard.log_start(&factory);
     // a conf reload that changes the webapp's web-protection rules gives the guard the new ones; the listener limits
     // (`connections`, `requests`) wait for a restart (plans/archive/Component-Deploy.md)
     let reloaded = Arc::downgrade(&guard);
@@ -318,7 +357,7 @@ pub(crate) async fn listen(
     #[cfg(feature = "telemetry")]
     let app = crate::monitor::routes(app);
     // the chat bridges' webhooks and the files of their messages (src/channels.rs), when channels_webhooks_enabled
-    let app = crate::channels::routes(app);
+    let app = crate::channels::routes(app, &factory);
     // XMPP over WebSocket and its file uploads, while the XMPP server runs (xmpp_domain)
     #[cfg(feature = "xmpp")]
     let app = crate::xmpp::routes(app, &factory);
@@ -360,10 +399,16 @@ pub(crate) async fn listen(
     };
     // gRPC on the HTTPS listener over HTTP/2: the OTLP receiver's and the PASS authority's services, those that are on
     #[cfg(feature = "grpc")]
+    let web_grpc = (https_address.is_some() && crate::tls::http2_enabled())
+        .then(|| crate::grpc_listen::web_routes(&grpc_factory))
+        .flatten();
+    #[cfg(feature = "grpc")]
+    let https_grpc = web_grpc.as_ref().map(|(_, names)| names.clone());
+    #[cfg(not(feature = "grpc"))]
+    let https_grpc: Option<String> = None;
+    #[cfg(feature = "grpc")]
     let web = WebApp {
-        grpc: (https_address.is_some() && crate::tls::http2_enabled())
-            .then(|| crate::grpc_listen::web_routes(&grpc_factory))
-            .flatten(),
+        grpc: web_grpc.map(|(routes, _)| routes),
         ..web
     };
     let edge = started.acceptor;
@@ -379,20 +424,36 @@ pub(crate) async fn listen(
         posts,
         in_process: in_process.clone(),
     }));
-    let https_text = https_address
-        .map(|secure| format!(", HTTPS on {secure}"))
-        .unwrap_or_default();
-    let address = if listener.is_some() {
-        address.to_string()
-    } else {
-        "no port (in process only)".to_string()
+    record_web_listeners(
+        &link_factory,
+        listener.is_some().then_some(address),
+        https_address,
+        https_grpc,
+        cluster,
+    );
+    #[cfg(feature = "grpc")]
+    let grpc = match grpc {
+        Some((bind, tls)) => crate::grpc_listen::open(&grpc_factory, bind, tls).await,
+        None => {
+            moqui_core::startup::listener(
+                &link_factory,
+                crate::grpc_listen::LISTENER,
+                moqui_core::startup::State::off(
+                    "the telemetry receiver's grpc-enabled and pass_authority_grpc_enabled are not true",
+                ),
+            );
+            None
+        }
     };
-    tracing::info!(
-        "Listening for HTTP on {address}{https_text} and cluster on {cluster}; routes /health, /metrics, /dav, {}{}{}the webapp's servlets; {:.3} seconds since start",
-        if notws { "/notws, " } else { "" },
-        if termws { "/termws, " } else { "" },
-        if cfg!(feature = "git") { "/git and " } else { "" },
-        crate::process_started().elapsed().as_secs_f64()
+    crate::startup_report::log(
+        &link_factory,
+        &format!(
+            "/health, /metrics, /dav, {}{}{}the webapp's servlets",
+            if notws { "/notws, " } else { "" },
+            if termws { "/termws, " } else { "" },
+            if cfg!(feature = "git") { "/git, " } else { "" },
+        ),
+        true,
     );
     // systemd Type=notify, and a Podman quadlet with Notify=true, wait until this datagram.
     // NOTIFY_SOCKET unset means a normal start: nothing is sent.
@@ -404,11 +465,9 @@ pub(crate) async fn listen(
     moqui_core::devtools::restart::set_shutdown(|| RESTART.notify_one());
     let signal = tokio::spawn(shutdown(stop, shutdown_tx));
     #[cfg(feature = "grpc")]
-    let grpc = grpc.map(|(bind, tls)| {
+    let grpc = grpc.map(|bound| {
         tokio::spawn(crate::grpc_listen::serve(
-            Arc::clone(&grpc_factory),
-            bind,
-            tls,
+            bound,
             Arc::clone(&guard),
             stopped(shutdown_rx.clone()),
         ))

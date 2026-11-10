@@ -93,9 +93,31 @@ pub fn attach_search(
     entity: &EntityFacade,
     entity_is_postgres: bool,
 ) -> Result<SearchStore, Error> {
+    let attached = attach_backend(factory, entity, entity_is_postgres);
+    moqui_core::startup::integration(
+        factory,
+        "Search",
+        match &attached {
+            Ok((store, backend)) => moqui_core::startup::State::on(if store.started_opensearch() {
+                format!("{backend}, started from runtime/opensearch")
+            } else {
+                (*backend).to_string()
+            }),
+            Err(err) => moqui_core::startup::State::failed(err.message()),
+        },
+    );
+    attached.map(|(store, _)| store)
+}
+
+/// [`attach_search`], with the backend's name for the startup report.
+fn attach_backend(
+    factory: &ExecutionContextFactory,
+    entity: &EntityFacade,
+    entity_is_postgres: bool,
+) -> Result<(SearchStore, &'static str), Error> {
     let conf = SearchConf::from_conf_text(&factory.conf_text())?;
     match conf.backend {
-        Backend::OpenSearch => attach_opensearch(factory, entity, &conf),
+        Backend::OpenSearch => attach_opensearch(factory, entity, &conf).map(|store| (store, "OpenSearch")),
         Backend::Postgres => {
             let mut store = SearchStore::default();
             let tx = if let Some(url) = &conf.postgres.url {
@@ -121,7 +143,7 @@ pub fn attach_search(
                 facade.set_embedder(embedder_of(factory, &conf.semantic));
             }
             moqui_core::search::install(factory, facade);
-            Ok(store)
+            Ok((store, "Postgres"))
         }
     }
 }

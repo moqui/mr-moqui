@@ -24,11 +24,12 @@ pub(crate) struct SipNode;
 /// Nothing to install: without the sip feature rustls has only aws-lc-rs.
 pub(crate) fn install_crypto() {}
 
-pub(crate) fn start(_factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
+pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
     for name in ["sip_port", "sip_tls_port"] {
         if !moqui_lib::env::get_prop_or_env(name).trim().is_empty() {
             tracing::error!("{name} is set but this build has no phone calls (the sip feature)");
         }
     }
+    moqui_core::startup::listener(factory, "SIP", moqui_core::startup::State::NotBuilt);
     None
 }

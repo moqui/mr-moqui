@@ -366,13 +366,64 @@ fn tls_pair(runtime_dir: &Path, name: Option<&str>) -> Option<(Vec<u8>, Vec<u8>)
     None
 }
 
-/// Starts the SIP engine when `sip_port` or `sip_tls_port` is set. One that cannot start is logged; the server starts
-/// without phone calls.
+/// The startup report's name for the SIP listeners.
+pub(crate) const LISTENER: &str = "SIP";
+
+/// The ports SIP will bind, for the port check before the framework is built: `sip_port` over UDP and TCP, and
+/// `sip_tls_port`. None while both are empty or a setting does not parse ([`start`] reports that).
+pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
+    use crate::port_check::{Proto, Target};
+    let Ok(Some(settings)) = settings_from(&moqui_lib::env::get_prop_or_env) else {
+        return Vec::new();
+    };
+    let mut targets = Vec::new();
+    if let Some(listen) = settings.listen {
+        targets.push(Target::optional(
+            LISTENER,
+            "sip_port",
+            listen.ip(),
+            listen.port(),
+            Proto::Udp,
+        ));
+        targets.push(Target::optional(
+            LISTENER,
+            "sip_port",
+            listen.ip(),
+            listen.port(),
+            Proto::Tcp,
+        ));
+    }
+    if let Some(tls) = settings.tls {
+        targets.push(Target::optional(
+            LISTENER,
+            "sip_tls_port",
+            tls.ip(),
+            tls.port(),
+            Proto::Tcp,
+        ));
+    }
+    targets
+}
+
+/// Starts the SIP engine when `sip_port` or `sip_tls_port` is set, and records it in the startup report. One that
+/// cannot start is logged; the server starts without phone calls.
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
+    let node = start_node(factory);
+    // a start that recorded nothing returned early on an error it logged
+    moqui_core::startup::report(factory).record_default(
+        moqui_core::startup::Section::Listener,
+        LISTENER,
+        moqui_core::startup::State::failed("see the SIP error above"),
+    );
+    node
+}
+
+fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
+    use moqui_core::startup::{listener, State};
     let settings = match settings_from(&moqui_lib::env::get_prop_or_env) {
         Ok(Some(settings)) => settings,
         Ok(None) => {
-            tracing::info!("Not starting SIP, sip_port and sip_tls_port are not set");
+            listener(factory, LISTENER, State::off("sip_port and sip_tls_port are not set"));
             return None;
         }
         Err(err) => {
@@ -380,6 +431,10 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
             return None;
         }
     };
+    if let Some(busy) = crate::port_check::busy(LISTENER) {
+        listener(factory, LISTENER, State::Skipped(busy));
+        return None;
+    }
     if lock(&factory.extension(|_| crate::rtc::RtcAddress::default()).0).is_none() {
         tracing::error!("SIP did not start: phone calls need this server's call media (rtc_media_port)");
         return None;
@@ -574,13 +629,16 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
             .ok()
     };
     *lock(&factory.extension(|_| SipAddress::default()).0) = sip_address;
-    tracing::info!(
-        "SIP started: {}",
-        [("udp/tcp", bound.udp), ("tls", bound.tls)]
-            .iter()
-            .filter_map(|(k, a)| a.map(|a| format!("{k} {a}")))
-            .collect::<Vec<_>>()
-            .join(", ")
+    listener(
+        factory,
+        LISTENER,
+        State::On(
+            [("udp/tcp", bound.udp), ("tls", bound.tls)]
+                .iter()
+                .filter_map(|(k, a)| a.map(|a| format!("{k} {a}")))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
     );
     Some(SipNode {
         runtime: Some(runtime),

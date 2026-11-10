@@ -85,6 +85,11 @@ pub fn install(factory: &moqui_core::context::ExecutionContextFactory) -> PdfGua
     }
     match find_chromium(runtime_dir, &configured) {
         Ok(binary) => {
+            moqui_core::startup::integration(
+                factory,
+                "PDF",
+                moqui_core::startup::State::on(format!("Chromium {}", binary.display())),
+            );
             let temp_dir = runtime_dir.join("tmp");
             remove_orphan_profiles(&temp_dir);
             let pages = factory
@@ -100,6 +105,7 @@ pub fn install(factory: &moqui_core::context::ExecutionContextFactory) -> PdfGua
             PdfGuard { engine: Some(engine) }
         }
         Err(reason) => {
+            moqui_core::startup::integration(factory, "PDF", moqui_core::startup::State::off("no Chromium found"));
             moqui_core::screen::install_pdf_unavailable(reason);
             PdfGuard { engine: None }
         }

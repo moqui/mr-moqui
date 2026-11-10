@@ -139,7 +139,7 @@ pub mod in_process;
 mod llm;
 #[cfg(feature = "axum")]
 mod notws;
-#[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+// the listener list and its busy ports; the check itself runs only where a server boots
 mod port_check;
 #[cfg(feature = "rtc")]
 mod rtc;
@@ -157,6 +157,9 @@ mod source_body;
 mod speech_local;
 #[cfg(any(feature = "axum", all(feature = "git", feature = "ssh")))]
 mod stall;
+// the one block a server logs when it is ready
+#[cfg(feature = "axum")]
+mod startup_report;
 #[cfg(feature = "axum")]
 mod systemd_notify;
 #[cfg(all(feature = "axum", feature = "tui"))]
@@ -1485,12 +1488,7 @@ fn boot_server_factory(
     let framework_dir = canonical_dir(framework_dir)?;
     let cluster_dir = canonical_dir(cluster_dir)?;
     // The factory boots first: its default properties name the datasource. The database stays on
-    // this thread, and its clients are dropped here, after the axum runtime.
-    tracing::info!(
-        "Initializing Moqui Framework, runtime directory {}, framework directory {}",
-        runtime_dir.display(),
-        framework_dir.display()
-    );
+    // this thread, and its clients are dropped here, after the axum runtime. The factory logs the directories.
     register_build();
     tracing::info!("Built as {}", version_text());
     let options = moqui_core::context::BootOptions {
@@ -1538,8 +1536,6 @@ fn boot_server_factory(
     // Same policy as `load`: indexing runs when search is up, and the server still starts when it is not.
     let search = match crate::search::attach_search(&factory, &facade, db.is_postgres()) {
         Ok(store) => {
-            tracing::info!("Search attached, data feeds and logs can index documents");
-
             monitor::install(&factory);
             Some(store)
         }
@@ -1626,6 +1622,7 @@ fn boot_server_factory(
             "Moqui Framework initialized in {:.3} seconds, with no listeners",
             boot_started.elapsed().as_secs_f64()
         );
+        startup_report::log(&factory, "", false);
         return Ok(ServeProcess {
             runtime: None,
             pdf: Some(pdf),
@@ -1651,10 +1648,17 @@ fn boot_server_factory(
     #[cfg(feature = "ssh")]
     let sshd = ssh::server::start(&factory, &runtime_dir, Arc::clone(&cluster_posts))?;
     #[cfg(feature = "ssh")]
-    if sshd.is_some() {
-        tracing::info!("SSH server started");
-    } else {
-        tracing::info!("Not starting the SSH server, it is not configured");
+    match &sshd {
+        Some(server) => moqui_core::startup::listener(
+            &factory,
+            "SSH",
+            moqui_core::startup::State::On(format!("tcp {}", server.address())),
+        ),
+        None => moqui_core::startup::listener(
+            &factory,
+            "SSH",
+            moqui_core::startup::State::off("ssh_port is not set, or ssh-server enabled is false"),
+        ),
     }
     // One sender for every transport: a peer's base URL picks HTTPS, SSH, or Postgres NOTIFY.
     cluster_notify::install_sender(&factory, db.is_postgres())?;
@@ -1693,23 +1697,20 @@ fn boot_server_factory(
     // the chat bridges' delivery worker (plans/Comms-Framework.md §4.1), after the cluster so its leases name the instance;
     // its first round picks up what a crash left
     moqui_core::service::chat_bridge::start(&factory);
-    tracing::info!(
-        "Cluster notify {}",
+    moqui_core::startup::integration(
+        &factory,
+        "Cluster notify",
         if notify_listener.is_some() {
-            "listener started"
+            moqui_core::startup::State::on("Postgres LISTEN")
         } else {
-            "listener not started, not configured"
-        }
+            moqui_core::startup::State::off("cluster_transport is not notify")
+        },
     );
     let cluster_edge = match &listeners {
         Listeners::All(_, true) => Some(cluster_edge::listen(Arc::clone(&factory), cluster_posts)?),
-        _ => {
-            tracing::info!("No cluster listener: this node is reached in process only");
-            None
-        }
+        _ => None,
     };
     notws::install_push().map_err(moqui_lib::error::Error::from)?;
-    tracing::info!("Cluster, cluster edge listener and notification WebSocket push initialized");
     #[cfg(feature = "ssh")]
     ssh::install_client(&factory, &runtime_dir);
     #[cfg(feature = "sso")]
@@ -1718,7 +1719,6 @@ fn boot_server_factory(
     llm::screens::install(&factory);
     #[cfg(feature = "print")]
     ipp::install();
-    tracing::info!("Integrations installed: {}", integrations());
     // call media (rtc_media_port), after the cluster so the node registers under its instance id
     let rtc = rtc::start(&factory);
     // phone calls (sip_port, sip_tls_port), beside the call media they join
@@ -1831,17 +1831,23 @@ struct NoSmtp;
 /// starts without it; an empty or bad `smtp_allowed_addresses` never starts one.
 #[cfg(feature = "inbound-smtp")]
 fn start_smtp(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>) -> SmtpSlot {
+    use moqui_core::startup::{listener, State};
+    if let Some(busy) = port_check::busy(smtp::LISTENER) {
+        listener(factory, smtp::LISTENER, State::Skipped(busy));
+        return None;
+    }
     match smtp::start(factory) {
         Ok(Some(server)) => {
-            tracing::info!("SMTP listener started on {}", server.address());
+            listener(factory, smtp::LISTENER, State::On(format!("tcp {}", server.address())));
             Some(server)
         }
         Ok(None) => {
-            tracing::info!("Not starting the SMTP listener, smtp_listen_port is not set");
+            listener(factory, smtp::LISTENER, State::off("smtp_listen_port is not set"));
             None
         }
         Err(err) => {
             tracing::error!("The SMTP listener did not start, the server starts without it: {err}");
+            listener(factory, smtp::LISTENER, State::failed(err.message()));
             None
         }
     }
@@ -1969,23 +1975,6 @@ fn version_text() -> String {
         build_package(),
         moqui_core::build_info::features().join(", ")
     )
-}
-
-/// The host integrations this build installs, for the boot log.
-fn integrations() -> String {
-    let names: Vec<&str> = [
-        ("SSH client", cfg!(feature = "ssh")),
-        ("SSO", cfg!(feature = "sso")),
-        ("IPP", cfg!(feature = "print")),
-    ]
-    .into_iter()
-    .filter_map(|(name, built)| built.then_some(name))
-    .collect();
-    if names.is_empty() {
-        "none in this build".to_string()
-    } else {
-        names.join(", ")
-    }
 }
 
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]

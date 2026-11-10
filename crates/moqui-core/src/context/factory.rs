@@ -313,6 +313,7 @@ impl ExecutionContextFactory {
             .as_deref()
             .map(canonicalize_dir)
             .transpose()?;
+        let discovered_purpose = component::effective_instance_purpose(&conf_node, &runtime_dir);
         let components = component::discover(
             &runtime_dir,
             framework_component.as_deref().unwrap_or(&framework_dir),
@@ -335,7 +336,9 @@ impl ExecutionContextFactory {
                 .collect();
             (names, PropertyRollback::default())
         } else {
-            apply_default_properties(&conf_node, &runtime_dir.join(".env"))?
+            let applied = apply_default_properties(&conf_node, &runtime_dir.join(".env"))?;
+            log_instance_purpose(applied.2, &discovered_purpose);
+            (applied.0, applied.1)
         };
         if let Some(before_init) = &options.before_init {
             before_init(&conf_node)?;
@@ -645,6 +648,11 @@ impl ExecutionContextFactory {
     pub fn get_tool_factory_typed<T: crate::native::ToolFactory>(&self, name: &str) -> Option<Arc<T>> {
         let factory: Arc<dyn std::any::Any + Send + Sync> = self.get_tool_factory(name)?;
         factory.downcast::<T>().ok()
+    }
+
+    /// The names of the configured tool factories, in their init order, for the startup report.
+    pub fn tool_names(&self) -> Vec<String> {
+        self.native_tools.names()
     }
 
     /// The tool factories that give a TypeScript type for their instance, as (name, type), for `moqui types`.
@@ -1684,10 +1692,57 @@ fn component_roots(components: &[ComponentInfo]) -> std::collections::HashMap<St
         .collect()
 }
 
-fn apply_default_properties(conf_node: &MNode, env_path: &Path) -> Result<(Vec<String>, PropertyRollback), Error> {
+/// Where the `instance_purpose` of this boot came from, for its startup line.
+#[derive(Clone, Copy)]
+enum PurposeSource {
+    /// A process property or environment variable set before the boot.
+    Environment,
+    /// `runtime/.env`.
+    DotEnv,
+    /// A `default-property` of the merged conf.
+    Conf,
+}
+
+/// The instance purpose, once the properties are final, on a line of its own: it decides much of what follows
+/// (dev tools, restricted components, HTTPS defaults). A WARN when component discovery, which runs before the
+/// component confs merge, chose the components for another purpose.
+fn log_instance_purpose(source: PurposeSource, discovered: &str) {
+    let purpose = env::get_prop_or_env("instance_purpose");
+    let role = env::get_prop_or_env("node_role");
+    tracing::info!(
+        "Instance purpose {} (from {}), node role {}",
+        if purpose.is_empty() { "unset" } else { &purpose },
+        match source {
+            PurposeSource::Environment => "the environment",
+            PurposeSource::DotEnv => "runtime/.env",
+            PurposeSource::Conf => "the conf",
+        },
+        if role.is_empty() { "all" } else { &role }
+    );
+    if purpose != discovered {
+        tracing::warn!(
+            "instance_purpose is {purpose}, set by a component's conf, but the components were chosen for {}: set it in \
+             the runtime conf, runtime/.env or the environment",
+            if discovered.is_empty() { "unset" } else { discovered }
+        );
+    }
+}
+
+fn apply_default_properties(
+    conf_node: &MNode,
+    env_path: &Path,
+) -> Result<(Vec<String>, PropertyRollback, PurposeSource), Error> {
     ensure_env_readable(env_path)?;
+    let mut purpose_source = if env::get_prop_or_env("instance_purpose").is_empty() {
+        PurposeSource::Conf
+    } else {
+        PurposeSource::Environment
+    };
     if env_path.is_file() {
         env::load_dotenv_file(env_path)?;
+        if matches!(purpose_source, PurposeSource::Conf) && !env::get_prop_or_env("instance_purpose").is_empty() {
+            purpose_source = PurposeSource::DotEnv;
+        }
     }
     let mut names = Vec::new();
     let mut set_by_boot = PropertyRollback::default();
@@ -1737,7 +1792,7 @@ fn apply_default_properties(conf_node: &MNode, env_path: &Path) -> Result<(Vec<S
     }
     install_tls_pair(&mut generated, &mut set_by_boot, cert_slot, key_slot)?;
     append_env_secrets(env_path, &generated)?;
-    Ok((names, set_by_boot))
+    Ok((names, set_by_boot, purpose_source))
 }
 
 struct TlsSlot {

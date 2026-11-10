@@ -225,7 +225,71 @@ pub(crate) fn routes(
 /// ports tunnel to its local node (checked for this factory, as a test runs both ends in one process). An all-in-one
 /// node starts its own, on its own ports, beside the tunnel ports of its paired node's domain (plans/Edge-Node.md §10).
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
+    let node = start_node(factory);
+    // a start that recorded nothing returned early on an error it logged
+    moqui_core::startup::report(factory).record_default(
+        moqui_core::startup::Section::Listener,
+        LISTENER,
+        moqui_core::startup::State::failed("see the XMPP error above"),
+    );
+    node
+}
+
+/// The startup report's name for the XMPP client listeners.
+pub(crate) const LISTENER: &str = "XMPP";
+
+/// The client ports: the port property, the host property, and whether the port is direct TLS (else STARTTLS).
+const CLIENT_PORTS: [(&str, &str, bool); 2] = [
+    ("xmpp_port", "xmpp_host", false),
+    ("xmpp_tls_port", "xmpp_tls_host", true),
+];
+
+/// Where the client port `port_name` listens: None while it is empty, else its address or why that listener is off.
+fn client_address(port_name: &str, host_name: &str) -> Option<Result<SocketAddr, String>> {
+    let port = property(port_name);
+    if port.is_empty() {
+        return None;
+    }
+    let Ok(port) = port.parse::<u16>() else {
+        return Some(Err(format!("{port_name} {port} is not a port; that listener is off")));
+    };
+    let host = Some(property(host_name))
+        .filter(|host| !host.is_empty())
+        .unwrap_or_else(|| property("xmpp_host"));
+    let host = if host.is_empty() { "0.0.0.0".to_string() } else { host };
+    Some(
+        match (host.as_str(), port).to_socket_addrs().map(|mut found| found.next()) {
+            Ok(Some(bind)) => Ok(bind),
+            _ => Err(format!("{host_name} {host} does not resolve; {port_name} is off")),
+        },
+    )
+}
+
+/// The client ports XMPP will bind, for the port check before the framework is built: none while `xmpp_domain` is
+/// empty or on a dedicated edge node (`node_role=edge`), whose client ports tunnel to its local node.
+pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
+    if property("xmpp_domain").is_empty() || property("node_role") == "edge" {
+        return Vec::new();
+    }
+    CLIENT_PORTS
+        .iter()
+        .filter_map(|(port_name, host_name, _)| {
+            let bind = client_address(port_name, host_name)?.ok()?;
+            Some(crate::port_check::Target::optional(
+                LISTENER,
+                port_name,
+                bind.ip(),
+                bind.port(),
+                crate::port_check::Proto::Tcp,
+            ))
+        })
+        .collect()
+}
+
+fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> {
+    use moqui_core::startup::{listener, State};
     if property("xmpp_domain").is_empty() {
+        listener(factory, LISTENER, State::off("xmpp_domain is not set"));
         return None;
     }
     if moqui_core::edge::settings(factory).edge_node() {
@@ -233,6 +297,11 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
             "XMPP: xmpp_domain is set on an edge node (node_role=edge), which starts no XMPP server: \
              edge_xmpp_port and edge_xmpp_tls_port tunnel clients to the local node"
         );
+        listener(factory, LISTENER, State::off("an edge node starts no XMPP server"));
+        return None;
+    }
+    if let Some(busy) = crate::port_check::busy(LISTENER) {
+        listener(factory, LISTENER, State::Skipped(busy));
         return None;
     }
     let config = config()?;
@@ -283,32 +352,19 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
         runtime: runtime.handle().clone(),
     };
     let mut addresses = (None, None);
-    for (port_name, host_name, direct) in [
-        ("xmpp_port", "xmpp_host", false),
-        ("xmpp_tls_port", "xmpp_tls_host", true),
-    ] {
-        let port = property(port_name);
-        if port.is_empty() {
-            continue;
-        }
-        let Ok(port) = port.parse::<u16>() else {
-            tracing::error!("XMPP: {port_name} {port} is not a port; that listener is off");
-            continue;
+    let mut opened = Vec::new();
+    for (port_name, host_name, direct) in CLIENT_PORTS {
+        let bind = match client_address(port_name, host_name) {
+            None => continue,
+            Some(Ok(bind)) => bind,
+            Some(Err(reason)) => {
+                tracing::error!("XMPP: {reason}");
+                continue;
+            }
         };
-        let host = Some(property(host_name))
-            .filter(|host| !host.is_empty())
-            .unwrap_or_else(|| property("xmpp_host"));
-        let host = if host.is_empty() { "0.0.0.0".to_string() } else { host };
         let Some(acceptor) = intake.acceptor(direct) else {
             tracing::error!("XMPP: {port_name} is off: it has no TLS settings");
             continue;
-        };
-        let bind = match (host.as_str(), port).to_socket_addrs().map(|mut found| found.next()) {
-            Ok(Some(bind)) => bind,
-            _ => {
-                tracing::error!("XMPP: {host_name} {host} does not resolve; {port_name} is off");
-                continue;
-            }
         };
         let listener = match runtime.block_on(TcpListener::bind(bind)) {
             Ok(listener) => listener,
@@ -323,11 +379,11 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
         } else {
             addresses.0 = local;
         }
-        tracing::info!(
-            "XMPP {} listening on {}",
-            if direct { "direct TLS" } else { "STARTTLS" },
-            bind
-        );
+        opened.push(format!(
+            "tcp {} {}",
+            local.unwrap_or(bind),
+            if direct { "direct TLS" } else { "STARTTLS" }
+        ));
         runtime.spawn(accept_loop(
             listener,
             Arc::clone(&server),
@@ -338,7 +394,15 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
     }
     *lock(&slot.addresses) = addresses;
     *lock(&slot.intake) = Some(intake);
-    tracing::info!("XMPP for {} started", server.config.domain);
+    listener(
+        factory,
+        LISTENER,
+        State::On(if opened.is_empty() {
+            format!("for {}, no client port", server.config.domain)
+        } else {
+            format!("{}, for {}", opened.join(", "), server.config.domain)
+        }),
+    );
     Some(XmppNode {
         _runtime: runtime,
         _subscription: subscription,

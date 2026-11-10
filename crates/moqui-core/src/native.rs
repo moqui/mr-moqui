@@ -540,6 +540,10 @@ impl ToolSet {
         Ok(())
     }
 
+    pub(crate) fn names(&self) -> Vec<String> {
+        lock(&self.tools).iter().map(|tool| tool.name().to_string()).collect()
+    }
+
     pub(crate) fn type_declarations(&self) -> Vec<(String, &'static str)> {
         lock(&self.tools)
             .iter()

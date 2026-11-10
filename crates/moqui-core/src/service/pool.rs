@@ -617,6 +617,19 @@ impl ServicePools {
     pub fn attach(&self, factory: &Arc<ExecutionContextFactory>) {
         if let Some(shared) = &self.shared {
             *lock(&shared.factory) = Arc::downgrade(factory);
+            crate::startup::integration(
+                factory,
+                "Scheduled jobs",
+                if shared.job_runner {
+                    crate::startup::State::on(format!(
+                        "every {} seconds, {} job workers",
+                        shared.check_interval.as_secs(),
+                        shared.job_workers
+                    ))
+                } else {
+                    crate::startup::State::off("scheduled-job-check-time is 0")
+                },
+            );
         }
     }
 

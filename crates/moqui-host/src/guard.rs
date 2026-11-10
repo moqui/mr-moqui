@@ -840,8 +840,8 @@ impl Guard {
         ]
     }
 
-    /// Log at startup what is on, and a forwarding header that is believed from anyone.
-    pub(crate) fn log_start(&self) {
+    /// Record in the startup report what is on, and warn of a forwarding header that is believed from anyone.
+    pub(crate) fn log_start(&self, factory: &moqui_core::context::ExecutionContextFactory) {
         let addressing = &self.conf().addressing;
         if !addressing.header().is_empty() && !addressing.has_trusted() {
             tracing::warn!(
@@ -850,16 +850,23 @@ impl Guard {
                 addressing.header()
             );
         }
+        use moqui_core::startup::{integration, State};
         if self.conf().enabled {
-            tracing::info!(
-                "Web protection on: {} rate limits, {} bans, {} connections per client",
-                self.conf().rate_limits.len(),
-                self.conf().bans.len(),
-                self.conf().max_per_client
+            integration(
+                factory,
+                "Web protection",
+                State::on(format!(
+                    "{} rate limits, {} bans, {} connections per client",
+                    self.conf().rate_limits.len(),
+                    self.conf().bans.len(),
+                    self.conf().max_per_client
+                )),
             );
         } else {
-            tracing::info!(
-                "Web protection per client is off (no trusted-proxies and enabled is not true); global limits apply"
+            integration(
+                factory,
+                "Web protection",
+                State::off("global limits only; per client needs trusted-proxies or enabled=true"),
             );
         }
     }

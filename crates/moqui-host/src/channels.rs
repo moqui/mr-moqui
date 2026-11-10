@@ -50,11 +50,24 @@ fn enabled() -> bool {
 }
 
 /// Add the routes when `channels_webhooks_enabled` is true.
-pub(crate) fn routes(app: Router<Arc<HttpState>>) -> Router<Arc<HttpState>> {
+pub(crate) fn routes(
+    app: Router<Arc<HttpState>>,
+    factory: &moqui_core::context::ExecutionContextFactory,
+) -> Router<Arc<HttpState>> {
+    use moqui_core::startup::{integration, State};
     if !enabled() {
+        integration(
+            factory,
+            "Chat bridge webhooks",
+            State::off(format!("{ENABLED_PROPERTY} is not true")),
+        );
         return app;
     }
-    tracing::info!("The chat bridges' webhooks are on: /channels/{{chatBridgeId}}/webhook and /media/");
+    integration(
+        factory,
+        "Chat bridge webhooks",
+        State::on("/channels/{chatBridgeId}/webhook and /media/"),
+    );
     app.route("/channels/{bridge}/webhook", axum::routing::post(webhook))
         .route("/channels/{bridge}/media/{token}", axum::routing::get(media))
 }

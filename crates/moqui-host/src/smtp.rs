@@ -212,6 +212,36 @@ fn property(name: &str) -> String {
     moqui_lib::env::get_prop_or_env(name).trim().to_string()
 }
 
+/// The startup report's name for the listener.
+pub(crate) const LISTENER: &str = "SMTP";
+
+/// The host and port the listener binds, from the conf's `smtp-server` `listen-host` and `listen-port` (their
+/// properties when the conf leaves them out), by `setting` (an attribute of `smtp-server`, expanded): read the same way
+/// by [`SmtpConfig::from_conf`] and by the port check before the framework is built. None when the port is empty.
+///
+/// # Errors
+///
+/// Returns an error when the port does not parse.
+pub(crate) fn listen_target_by(setting: &dyn Fn(&str) -> String) -> Result<Option<(String, u16)>, Error> {
+    let setting_or_property = |name: &str, property_name: &str| {
+        Some(setting(name))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| property(property_name))
+    };
+    let port_text = setting_or_property("listen-port", "smtp_listen_port");
+    if port_text.is_empty() {
+        return Ok(None);
+    }
+    let port: u16 = port_text
+        .parse()
+        .map_err(|_| Error::new(format!("smtp_listen_port {port_text} is not a port number")))?;
+    let host = match setting_or_property("listen-host", "smtp_listen_host") {
+        host if !host.is_empty() => host,
+        _ => "127.0.0.1".to_string(),
+    };
+    Ok(Some((host, port)))
+}
+
 impl SmtpConfig {
     /// The settings of the conf's `smtp-server` when its `listen-port` (`smtp_listen_port`) is set, else none. An
     /// attribute the conf leaves out, or that expands to nothing, is its property when it has one.
@@ -240,13 +270,9 @@ impl SmtpConfig {
             "false" | "n" | "no" | "0" => false,
             _ => default,
         };
-        let port_text = setting_or_property("listen-port", "smtp_listen_port");
-        if port_text.is_empty() {
+        let Some((host, port)) = listen_target_by(&setting)? else {
             return Ok(None);
-        }
-        let port: u16 = port_text
-            .parse()
-            .map_err(|_| Error::new(format!("smtp_listen_port {port_text} is not a port number")))?;
+        };
         let allowed_text = setting_or_property("allowed-addresses", "smtp_allowed_addresses");
         let allowed = allowed_text
             .split([',', ' '])
@@ -273,10 +299,6 @@ impl SmtpConfig {
                 name if !name.is_empty() => name,
                 _ => "localhost".to_string(),
             },
-        };
-        let host = match setting_or_property("listen-host", "smtp_listen_host") {
-            host if !host.is_empty() => host,
-            _ => "127.0.0.1".to_string(),
         };
         let lmtp = match setting("protocol").trim().to_ascii_lowercase().as_str() {
             "" | "smtp" => false,

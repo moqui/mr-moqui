@@ -537,6 +537,17 @@ XMPP clients find the server by DNS: `_xmpp-client._tcp.<domain>` (5222, STARTTL
 
 `/health` answers `{"ready":true}` to loopback and to the addresses in `webapp_status_ips`, and 404 to everyone else.
 
+The gRPC listener (4317, `grpc-port` of the telemetry `receiver` or `pass_authority_grpc_port`) and the edge tunnel
+ports (`edge_ssh_tunnel_port`, `edge_xmpp_port`, `edge_xmpp_tls_port`) also open only when they are configured.
+
+Before the database opens, a start checks every port it will bind, over TCP or UDP as the listener uses it, and logs
+`Ports checked free: …`. If HTTP, HTTPS, cluster or SSH is busy, the start stops, and the error names each busy port
+and the process that holds it. If one of the other listeners has a busy port, the start logs a warning and goes on
+without that listener. When the server is ready it logs one report: the instance purpose, every listener and its
+address (or why it is off, failed or skipped), every integration, the tool factories, and what the build leaves out.
+The report is a warning when something that was configured did not start. The instance purpose also has a line of
+its own once the properties are set (`Instance purpose dev (from the conf), node role all`).
+
 ### HTTP/2
 
 The HTTPS listener offers HTTP/2 and HTTP/1.1 by ALPN, so browsers and other clients that speak HTTP/2 use it; the

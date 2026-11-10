@@ -239,8 +239,13 @@ fn same_listener(bind: SocketAddr, port: u16, host: &str) -> bool {
 
 /// Listen on `port`'s address and pipe each connection down a linked node's tunnel of its kind, until the listeners
 /// stop. `guard`, the web protection, admits each connection first (its deny and exempt rules, bans and per-client
-/// limit). A bind that fails is logged, and the rest of the edge node goes on.
-pub(crate) fn listen(server: &Arc<EdgeServer>, port: TunnelPort, guard: Arc<crate::guard::Guard>) {
+/// limit). A bind that fails is logged, and the rest of the edge node goes on. The bound address, for the startup
+/// report.
+pub(crate) fn listen(
+    server: &Arc<EdgeServer>,
+    port: TunnelPort,
+    guard: Arc<crate::guard::Guard>,
+) -> Option<SocketAddr> {
     let TunnelPort {
         kind,
         bind,
@@ -255,11 +260,10 @@ pub(crate) fn listen(server: &Arc<EdgeServer>, port: TunnelPort, guard: Arc<crat
         Ok(listener) => listener,
         Err(err) => {
             tracing::error!("The edge {kind} tunnel could not bind {bind}: {err}");
-            return;
+            return None;
         }
     };
     let address = listener.local_addr().unwrap_or(bind);
-    tracing::info!("Edge node: the {kind} tunnel to a linked local node listens on {address}");
     let server = Arc::clone(server);
     let node: Arc<str> = Arc::from(node);
     tokio::spawn(async move {
@@ -313,6 +317,7 @@ pub(crate) fn listen(server: &Arc<EdgeServer>, port: TunnelPort, guard: Arc<crat
             });
         }
     });
+    Some(address)
 }
 
 #[cfg(test)]

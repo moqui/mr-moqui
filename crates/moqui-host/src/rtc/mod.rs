@@ -306,13 +306,93 @@ fn media_config_from(property: &dyn Fn(&str) -> String) -> Result<Option<MediaCo
     }))
 }
 
-/// Starts the media node when `rtc_media_port` is set. A node that cannot start is logged; the server starts
-/// without calls.
+/// The startup report's names for the media node and its TURN server.
+pub(crate) const LISTENER: &str = "Call media";
+pub(crate) const TURN_LISTENER: &str = "TURN";
+
+/// The ports the media node and its TURN server will bind, for the port check before the framework is built: the
+/// media port (UDP), ICE-TCP, and TURN's UDP and TCP, TLS and TLS-on-443 ports. None while `rtc_media_port` is empty
+/// or a setting does not parse ([`start`] reports that).
+pub(crate) fn listen_targets() -> Vec<crate::port_check::Target> {
+    use crate::port_check::{Proto, Target};
+    let Ok(Some(config)) = media_config() else {
+        return Vec::new();
+    };
+    let host = config.bind.ip();
+    let mut targets = vec![Target::optional(
+        LISTENER,
+        "rtc_media_port",
+        host,
+        config.bind.port(),
+        Proto::Udp,
+    )];
+    if let Some(port) = config.tcp_port {
+        targets.push(Target::optional(LISTENER, "rtc_media_tcp_port", host, port, Proto::Tcp));
+    }
+    if let Ok(Some(turn)) = turn::settings(&moqui_lib::env::get_prop_or_env, config.bind, config.public, &[]) {
+        if let Some(port) = turn.port {
+            targets.push(Target::optional(
+                TURN_LISTENER,
+                "turn_port",
+                turn.bind,
+                port,
+                Proto::Udp,
+            ));
+            targets.push(Target::optional(
+                TURN_LISTENER,
+                "turn_port",
+                turn.bind,
+                port,
+                Proto::Tcp,
+            ));
+        }
+        if let Some(port) = turn.tls_port {
+            targets.push(Target::optional(
+                TURN_LISTENER,
+                "turn_tls_port",
+                turn.bind,
+                port,
+                Proto::Tcp,
+            ));
+        }
+        if let Some(ip) = turn.tls443 {
+            targets.push(Target::optional(TURN_LISTENER, "turn_tls443_host", ip, 443, Proto::Tcp));
+        }
+    }
+    targets
+}
+
+/// Starts the media node when `rtc_media_port` is set, and records it and its TURN server in the startup report. A
+/// node that cannot start is logged; the server starts without calls.
 pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
+    use moqui_core::startup::{Section, State};
+    let node = start_node(factory);
+    let report = moqui_core::startup::report(factory);
+    // a start that recorded nothing returned early on an error it logged
+    report.record_default(
+        Section::Listener,
+        LISTENER,
+        State::failed("see the call media error above"),
+    );
+    report.record_default(
+        Section::Listener,
+        TURN_LISTENER,
+        State::off(if node.is_some() {
+            "turn_port, turn_tls_port and turn_tls443_host are not set"
+        } else {
+            "call media is not running"
+        }),
+    );
+    node
+}
+
+fn start_node(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
+    use moqui_core::startup::{listener, State};
     let config = match media_config() {
         Ok(Some(config)) => config,
         Ok(None) => {
-            tracing::info!("Not starting call media, rtc_media_port is not set");
+            listener(factory, LISTENER, State::off("rtc_media_port is not set"));
+            listener(factory, TURN_LISTENER, State::off("call media is not running"));
             return None;
         }
         Err(err) => {
@@ -320,6 +400,11 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
             return None;
         }
     };
+    if let Some(busy) = crate::port_check::busy(LISTENER) {
+        listener(factory, LISTENER, State::Skipped(busy));
+        listener(factory, TURN_LISTENER, State::off("call media is not running"));
+        return None;
+    }
     if config.public.ip().is_unspecified() {
         tracing::error!(
             "Call media did not start: rtc_media_host {} binds every address; set rtc_public_address to the one browsers reach",
@@ -369,19 +454,17 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
     }
     // the embedded TURN server, when its ports are set: one that does not start is logged, and calls go on without it
     let turn_node = match turn::settings(&moqui_lib::env::get_prop_or_env, bound, public, &[]) {
-        Ok(Some(settings)) => match turn::start(factory.runtime_dir(), &settings) {
-            Ok(node) => {
-                tracing::info!("TURN started: {}", turn::urls(&settings, &node.bound).join(", "));
-                Some((Arc::new(node), settings))
-            }
-            Err(err) => {
-                tracing::error!("TURN did not start, calls go on without it: {err}");
+        Ok(Some(settings)) => match crate::port_check::busy(TURN_LISTENER) {
+            Some(busy) => {
+                listener(factory, TURN_LISTENER, State::Skipped(busy));
                 None
             }
+            None => start_turn(factory, settings),
         },
         Ok(None) => None,
         Err(err) => {
             tracing::error!("TURN did not start, calls go on without it: {err}");
+            listener(factory, TURN_LISTENER, State::failed(err));
             None
         }
     };
@@ -439,7 +522,16 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
             .ok()
     };
     *lock(&factory.extension(|_| RtcAddress::default()).0) = Some(bound);
-    tracing::info!("Call media started on {bound}, advertised as {public}");
+    listener(
+        factory,
+        LISTENER,
+        State::on(format!(
+            "udp {bound}{}, advertised as {public}",
+            tcp_public
+                .map(|tcp| format!(", ICE-TCP tcp {}", SocketAddr::new(bound.ip(), tcp.port())))
+                .unwrap_or_default()
+        )),
+    );
     Some(RtcNode {
         stop,
         driver: Some(driver),
@@ -448,6 +540,30 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<RtcNode> {
         turn: turn_arc,
         advertised: advertised.then(|| Arc::downgrade(factory)),
     })
+}
+
+/// The embedded TURN server, recorded in the startup report; one that does not start is logged, and calls go on
+/// without it.
+fn start_turn(
+    factory: &Arc<ExecutionContextFactory>,
+    settings: turn::TurnSettings,
+) -> Option<(Arc<turn::TurnNode>, turn::TurnSettings)> {
+    use moqui_core::startup::{listener, State};
+    match turn::start(factory.runtime_dir(), &settings) {
+        Ok(node) => {
+            listener(
+                factory,
+                TURN_LISTENER,
+                State::on(turn::urls(&settings, &node.bound).join(", ")),
+            );
+            Some((Arc::new(node), settings))
+        }
+        Err(err) => {
+            tracing::error!("TURN did not start, calls go on without it: {err}");
+            listener(factory, TURN_LISTENER, State::failed(err));
+            None
+        }
+    }
 }
 
 fn register_loop(
