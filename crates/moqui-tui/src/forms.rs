@@ -729,7 +729,6 @@ impl Index {
     }
 
     /// A link the screen has. One shown on the screen is numbered for `#`; a menu's item is not, as it is not shown.
-    #[expect(clippy::too_many_arguments)]
     fn add_link(&mut self, link: LinkInfo, numbered: bool) {
         if numbered && !link.disabled && !link.url.is_empty() && !self.links.contains_key(&link.id) {
             self.link_order.push(link.id.clone());
