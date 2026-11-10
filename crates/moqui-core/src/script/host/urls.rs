@@ -230,7 +230,7 @@ fn add_parameter(call: &mut Call<'_>) -> Result<Ret, HostError> {
 fn add_parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let entries = match call.value_or_null(0) {
         Value::Map(entries) => entries,
-        _ => indexmap::IndexMap::new(),
+        _ => indexmap::IndexMap::default(),
     };
     changed(call, |url| {
         for (key, value) in entries {

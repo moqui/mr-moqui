@@ -106,8 +106,8 @@ impl SearchBackend for EmbedStore {
         _mapping: &DocumentMapping,
         _filter: &Query,
         _aggs: &IndexMap<String, Agg>,
-    ) -> Result<IndexMap<String, Value>, Error> {
-        Ok(IndexMap::new())
+    ) -> Result<moqui_lib::object::ValueMap, Error> {
+        Ok(IndexMap::default())
     }
     fn drop_index(&self, _mapping: &DocumentMapping) -> Result<(), Error> {
         Ok(())
@@ -124,7 +124,7 @@ impl SearchBackend for EmbedStore {
             .map(|text| semantic::PendingEmbedding {
                 id: (*text).to_string(),
                 seen: "t1".to_string(),
-                body: Document::from([("message".to_string(), Value::string(*text))]),
+                body: Document::from_iter([("message".to_string(), Value::string(*text))]),
             })
             .collect())
     }
@@ -229,7 +229,7 @@ fn a_document_the_model_fails_on_is_marked_and_the_rest_embed() {
 
 #[test]
 fn telemetry_retries_only_unacknowledged_items_with_stable_ids() {
-    let documents = ["accepted", "transient", "poison"].map(|id| (id.into(), Document::new()));
+    let documents = ["accepted", "transient", "poison"].map(|id| (id.into(), Document::default()));
     let mut calls = Vec::new();
     let mut waits = Vec::new();
     let _ = crate::telemetry::take_write_error();
@@ -266,7 +266,7 @@ fn telemetry_retries_only_unacknowledged_items_with_stable_ids() {
 
 #[test]
 fn ambiguous_telemetry_writes_are_idempotent_and_retries_are_capped() {
-    let documents = [("stable-id".into(), Document::new())];
+    let documents = [("stable-id".into(), Document::default())];
     let mut stored = std::collections::HashSet::new();
     let mut calls = 0;
     let persisted = retry_telemetry_batch(

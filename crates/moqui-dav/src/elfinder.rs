@@ -83,7 +83,7 @@ fn run_command(
     let target = text("target");
     let other = match parameters.get("otherParameters") {
         Some(Value::Map(map)) => map.clone(),
-        _ => IndexMap::new(),
+        _ => IndexMap::default(),
     };
     tracing::info!(
         "elFinder cmd={cmd}, target={target}:{:?}:{:?}",
@@ -298,7 +298,7 @@ impl Connector {
                 None => (false, 0, 0),
             },
         };
-        let mut info = IndexMap::new();
+        let mut info = IndexMap::default();
         let name = if root {
             self.resource_root
                 .strip_suffix('/')
@@ -396,7 +396,7 @@ impl Connector {
     }
 
     fn options(&self, location: &str) -> Value {
-        let mut options = IndexMap::new();
+        let mut options = IndexMap::default();
         options.insert("seperator".to_string(), Value::string("/"));
         options.insert("path".to_string(), Value::string(location));
         let mut disabled = vec![
@@ -565,19 +565,19 @@ impl Connector {
         &self,
         cmd: &str,
         mut target: String,
-        other: &IndexMap<String, Value>,
+        other: &moqui_lib::object::ValueMap,
     ) -> Result<BTreeMap<String, Value>, LibError> {
         let other_text = |key: &str| match other.get(key) {
             Some(value) if !is_empty(value) => to_plain_string(value),
             _ => String::new(),
         };
         let mut out = BTreeMap::new();
-        let mut response = IndexMap::new();
-        let fail = |response: &mut IndexMap<String, Value>, message: &str| {
+        let mut response = IndexMap::default();
+        let fail = |response: &mut moqui_lib::object::ValueMap, message: &str| {
             response.clear();
             response.insert("error".to_string(), Value::string(message));
         };
-        let write_refused = |response: &mut IndexMap<String, Value>| {
+        let write_refused = |response: &mut moqui_lib::object::ValueMap| {
             if self.writes_restricted() {
                 fail(response, "Write not allowed for this resource root");
                 true
@@ -806,7 +806,7 @@ fn safe_entry_name(name: &str) -> Option<String> {
 }
 
 /// The uploaded files of the request, `_fileUploadList` of `ec.web.parameters`.
-fn uploads(other: &IndexMap<String, Value>) -> Vec<std::sync::Arc<UploadedFile>> {
+fn uploads(other: &moqui_lib::object::ValueMap) -> Vec<std::sync::Arc<UploadedFile>> {
     let Some(Value::List(items)) = other.get("_fileUploadList") else {
         return Vec::new();
     };

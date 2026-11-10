@@ -166,7 +166,7 @@ pub struct WebappScripts {
 }
 
 fn data_of(name: &str, location: &str, init_params: &BTreeMap<String, String>) -> Value {
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("name".to_string(), Value::string(name));
     map.insert("location".to_string(), Value::string(location));
     map.insert(
@@ -510,10 +510,10 @@ impl WebappScripts {
     /// `event_data` on the event object. A listener that fails is logged and the others still run.
     pub fn fire(&self, event: &str, event_data: Value) {
         for listener in &self.listeners {
-            let mut data = indexmap::IndexMap::new();
+            let mut data = indexmap::IndexMap::default();
             data.insert("name".to_string(), Value::string(&listener.location));
             data.insert("location".to_string(), Value::string(&listener.location));
-            data.insert("initParams".to_string(), Value::Map(indexmap::IndexMap::new()));
+            data.insert("initParams".to_string(), Value::Map(indexmap::IndexMap::default()));
             data.insert("event".to_string(), Value::string(event));
             data.insert("eventData".to_string(), event_data.clone());
             if let Err(err) = crate::script::invoke_web_handler(&listener.location, "listener", Value::Map(data)) {

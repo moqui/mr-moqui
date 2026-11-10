@@ -1,10 +1,13 @@
 use super::*;
 
 fn colors(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-    pairs.iter().map(|(name, value)| ((*name).to_string(), (*value).to_string())).collect()
+    pairs
+        .iter()
+        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+        .collect()
 }
 
-fn map(pairs: Vec<(&str, Value)>) -> IndexMap<String, Value> {
+fn map(pairs: Vec<(&str, Value)>) -> moqui_lib::object::ValueMap {
     pairs.into_iter().map(|(key, value)| (key.to_string(), value)).collect()
 }
 
@@ -61,24 +64,42 @@ fn a_policy_locks_its_groups_mode_and_named_keys() {
         r#"{"accent": false, "fonts": "false", "mode": "dark", "lockedKeys": ["THEME_RADIUS", "NOT_APPEARANCE"]}"#,
     ));
     assert_eq!(policy.mode, "dark");
-    for key in ["THEME_PRIMARY_COLOR", "THEME_PRIMARY_COLOR_DARK", "THEME_FONT_BODY", "THEME_FONT_MONO", "THEME_RADIUS"] {
+    for key in [
+        "THEME_PRIMARY_COLOR",
+        "THEME_PRIMARY_COLOR_DARK",
+        "THEME_FONT_BODY",
+        "THEME_FONT_MONO",
+        "THEME_RADIUS",
+    ] {
         assert!(policy.denial(key).is_some(), "{key}");
     }
-    assert!(policy.denial("QUASAR_DARK").is_some_and(|reason| reason.contains("dark mode")));
+    assert!(policy
+        .denial("QUASAR_DARK")
+        .is_some_and(|reason| reason.contains("dark mode")));
     for key in ["THEME_COLOR_SCHEME", "THEME_MOTION", "SHELL_DENSITY"] {
         assert_eq!(policy.denial(key), None, "{key}");
     }
-    let Value::Map(value) = policy.as_value() else { panic!("not a map") };
+    let Value::Map(value) = policy.as_value() else {
+        panic!("not a map")
+    };
     assert_eq!(value.get("accent"), Some(&Value::Bool(false)));
     assert_eq!(value.get("scheme"), Some(&Value::Bool(true)));
     assert_eq!(value.get("appearance"), Some(&Value::Bool(true)));
     assert_eq!(value.get("mode"), Some(&Value::string("dark")));
-    let Some(Value::List(keys)) = value.get("lockedKeys") else { panic!("no lockedKeys") };
+    let Some(Value::List(keys)) = value.get("lockedKeys") else {
+        panic!("no lockedKeys")
+    };
     let keys: Vec<String> = keys.iter().map(to_plain_string).collect();
-    assert!(keys.contains(&"QUASAR_DARK".to_string()) && keys.contains(&"THEME_RADIUS".to_string()), "{keys:?}");
+    assert!(
+        keys.contains(&"QUASAR_DARK".to_string()) && keys.contains(&"THEME_RADIUS".to_string()),
+        "{keys:?}"
+    );
     assert!(!keys.contains(&"NOT_APPEARANCE".to_string()), "{keys:?}");
     // what the page and an appearance service read back is the same policy
-    assert_eq!(AppearancePolicy::from_value(&policy.as_value()).all_locked_keys(), policy.all_locked_keys());
+    assert_eq!(
+        AppearancePolicy::from_value(&policy.as_value()).all_locked_keys(),
+        policy.all_locked_keys()
+    );
 }
 
 /// The scheme's sheet keeps the transition's format: colors by name, brand as `--q-*`, the dark extras, a bad value left
@@ -87,8 +108,17 @@ fn a_policy_locks_its_groups_mode_and_named_keys() {
 fn a_scheme_sheet_is_its_tokens_then_its_extra_css() {
     let scheme = ColorScheme {
         id: "S".to_string(),
-        light: colors(&[("page-bg", "#fff"), ("primary", "#123456"), ("text", "red; } body { display:none")]),
-        dark: colors(&[("link", "#9cf"), ("page-bg", "#000"), ("panel-bg", "#111"), ("card-shadow", "0 1px 2px rgb(0 0 0 / 40%)")]),
+        light: colors(&[
+            ("page-bg", "#fff"),
+            ("primary", "#123456"),
+            ("text", "red; } body { display:none"),
+        ]),
+        dark: colors(&[
+            ("link", "#9cf"),
+            ("page-bg", "#000"),
+            ("panel-bg", "#111"),
+            ("card-shadow", "0 1px 2px rgb(0 0 0 / 40%)"),
+        ]),
         extra_css: "body { --m-x:1 }".to_string(),
         ..ColorScheme::default()
     };
@@ -125,7 +155,10 @@ fn the_finished_appearance_follows_policy_default_scheme_and_fonts() {
         ]))
     };
     let font = |id: &str, sheet: &str| {
-        Value::Map(map(vec![("id", Value::string(id)), ("stylesheet", Value::string(sheet))]))
+        Value::Map(map(vec![
+            ("id", Value::string(id)),
+            ("stylesheet", Value::string(sheet)),
+        ]))
     };
     let base = || {
         map(vec![
@@ -133,12 +166,26 @@ fn the_finished_appearance_follows_policy_default_scheme_and_fonts() {
                 "colorSchemes",
                 Value::List(vec![
                     scheme("PLAIN", false, vec![]),
-                    scheme("LAB", true, vec![("body", Value::string("INTER")), ("mono", Value::string("JB"))]),
+                    scheme(
+                        "LAB",
+                        true,
+                        vec![("body", Value::string("INTER")), ("mono", Value::string("JB"))],
+                    ),
                 ]),
             ),
-            ("fonts", Value::List(vec![font("INTER", "/libs/inter.css"), font("JB", "/libs/jb.css"), font("SERIF", "")])),
+            (
+                "fonts",
+                Value::List(vec![
+                    font("INTER", "/libs/inter.css"),
+                    font("JB", "/libs/jb.css"),
+                    font("SERIF", ""),
+                ]),
+            ),
             ("defaultSchemeId", Value::string("LAB")),
-            ("policy", AppearancePolicy::parse(Some(r#"{"accent": false}"#)).as_value()),
+            (
+                "policy",
+                AppearancePolicy::parse(Some(r#"{"accent": false}"#)).as_value(),
+            ),
             (
                 "values",
                 Value::Map(map(vec![
@@ -150,9 +197,16 @@ fn the_finished_appearance_follows_policy_default_scheme_and_fonts() {
     };
     let done = finish_appearance(base());
     assert_eq!(done.get("schemeId"), Some(&Value::string("LAB")));
-    let Some(Value::Map(values)) = done.get("values") else { panic!("no values") };
-    assert!(!values.contains_key("THEME_PRIMARY_COLOR"), "a locked value is dropped: {values:?}");
-    let Some(Value::List(links)) = done.get("links") else { panic!("no links") };
+    let Some(Value::Map(values)) = done.get("values") else {
+        panic!("no values")
+    };
+    assert!(
+        !values.contains_key("THEME_PRIMARY_COLOR"),
+        "a locked value is dropped: {values:?}"
+    );
+    let Some(Value::List(links)) = done.get("links") else {
+        panic!("no links")
+    };
     let hrefs: Vec<String> = links
         .iter()
         .map(|link| match link {
@@ -160,10 +214,17 @@ fn the_finished_appearance_follows_policy_default_scheme_and_fonts() {
             _ => String::new(),
         })
         .collect();
-    assert_eq!(hrefs, ["/apps/colorSchemeCss?colorSchemeId=LAB&v=v1", "/libs/inter.css"], "the user's mono font has no sheet");
+    assert_eq!(
+        hrefs,
+        ["/apps/colorSchemeCss?colorSchemeId=LAB&v=v1", "/libs/inter.css"],
+        "the user's mono font has no sheet"
+    );
 
     let mut own = base();
-    own.insert("values".to_string(), Value::Map(map(vec![("THEME_COLOR_SCHEME", Value::string("PLAIN"))])));
+    own.insert(
+        "values".to_string(),
+        Value::Map(map(vec![("THEME_COLOR_SCHEME", Value::string("PLAIN"))])),
+    );
     own.insert("defaultSchemeId".to_string(), Value::string("ELSEWHERE"));
     let done = finish_appearance(own);
     assert_eq!(done.get("schemeId"), Some(&Value::string("PLAIN")));

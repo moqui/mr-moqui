@@ -57,7 +57,7 @@ fn lists_and_maps_compare_and_convert_in_place() -> Result<(), Error> {
     push_context_frame();
     set_context_name("names", Value::List(vec![Value::string("a"), Value::string("b")]))?;
     let row = |name: &str, qty: i32| {
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert("name".to_string(), Value::string(name));
         map.insert("qty".to_string(), Value::I32(qty));
         Value::Map(map)
@@ -78,7 +78,7 @@ fn lists_and_maps_compare_and_convert_in_place() -> Result<(), Error> {
         Some(Value::List(vec![row("x", 1), row("z", 3)]))
     );
     let made = value("({ text: 'x', n: 2, half: 2.5, [Symbol('s')]: 1, list: ['y', 3, null] })")?;
-    let mut expected = indexmap::IndexMap::new();
+    let mut expected = indexmap::IndexMap::default();
     expected.insert("text".to_string(), Value::string("x"));
     expected.insert("n".to_string(), Value::I32(2));
     expected.insert("half".to_string(), Value::F64(2.5));
@@ -98,7 +98,7 @@ fn tracked_values_are_written_back_at_the_end() -> Result<(), Error> {
     clear_context_stack();
     push_context_frame();
     set_context_name("items", Value::List(vec![Value::I32(2), Value::I32(1)]))?;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("a".to_string(), Value::I32(1));
     set_context_name("map", Value::Map(map))?;
     assert_eq!(written("items.sort()[0]")?, Value::I32(1));
@@ -206,7 +206,7 @@ fn bare_names_read_the_context_stack() -> Result<(), Error> {
     set_context_name("count", Value::I64(7))?;
     set_context_name("flag", Value::Bool(true))?;
     set_context_name("items", Value::List(vec![Value::I32(1), Value::string("b")]))?;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("a".to_string(), Value::I32(1));
     set_context_name("map", Value::Map(map))?;
     assert!(condition("orderId === \"2000\""));
@@ -363,7 +363,7 @@ fn a_tools_map_from_a_host_call_reads_its_members() -> Result<(), Error> {
     use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
     clear_context_stack();
     push_context_frame();
-    let mut text = indexmap::IndexMap::new();
+    let mut text = indexmap::IndexMap::default();
     text.insert("__wrap".to_string(), Value::string("Text"));
     text.insert("text".to_string(), Value::string("a rule"));
     set_context_name("rule", Value::Map(text))?;
@@ -371,7 +371,7 @@ fn a_tools_map_from_a_host_call_reads_its_members() -> Result<(), Error> {
     let global = context.global_object().unwrap();
     context
         .define_function(&global, "resourceRef", 0, |scope: &mut Scope<'_>| -> Result<JsValue, _> {
-            let mut reference = indexmap::IndexMap::new();
+            let mut reference = indexmap::IndexMap::default();
             reference.insert("__wrap".to_string(), Value::string("Resource"));
             reference.insert("location".to_string(), Value::string("component://x/page.md"));
             reference.insert("fileName".to_string(), Value::string("page.md"));
@@ -412,7 +412,7 @@ fn the_runtime_runs_whole_scripts() -> Result<(), Error> {
         assert_eq!(value("(sri = 1, typeof sri)")?, Value::string("object"), "sri is read-only");
         // a Set the stack holds is a Set, tracked and written back
         let set = |items: Vec<Value>| {
-            Value::Map(indexmap::IndexMap::from([(
+            Value::Map(indexmap::IndexMap::from_iter([(
                 crate::script::runtime::SET_KEY.to_string(),
                 Value::List(items),
             )]))
@@ -573,7 +573,7 @@ fn loops_over_values_try_and_local_functions_run_alike() -> Result<(), Error> {
     clear_context_stack();
     push_context_frame();
     let row = |name: &str, qty: Option<i32>| {
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert("name".to_string(), Value::string(name));
         if let Some(qty) = qty {
             map.insert("qty".to_string(), Value::I32(qty));
@@ -581,7 +581,7 @@ fn loops_over_values_try_and_local_functions_run_alike() -> Result<(), Error> {
         Value::Map(map)
     };
     set_context_name("rows", Value::List(vec![row("a", Some(2)), row("b", None)]))?;
-    let mut totals = indexmap::IndexMap::new();
+    let mut totals = indexmap::IndexMap::default();
     for key in ["x", "skip", "y"] {
         totals.insert(key.to_string(), Value::I32(1));
     }
@@ -659,17 +659,17 @@ fn context_is_the_stack_as_on_quickjs() -> Result<(), Error> {
 fn a_tools_map_read_by_a_read_only_run_is_not_a_changed_copy() -> Result<(), Error> {
     clear_context_stack();
     push_context_frame();
-    let mut reference = indexmap::IndexMap::new();
+    let mut reference = indexmap::IndexMap::default();
     reference.insert("__wrap".to_string(), Value::string("Resource"));
     reference.insert("location".to_string(), Value::string("component://none/page.md"));
     reference.insert("fileName".to_string(), Value::string("page.md"));
     reference.insert("exists".to_string(), Value::Bool(true));
     reference.insert("file".to_string(), Value::Bool(true));
     set_context_name("ref", Value::Map(reference))?;
-    let mut kid = indexmap::IndexMap::new();
+    let mut kid = indexmap::IndexMap::default();
     kid.insert("__wrap".to_string(), Value::string("Node"));
     kid.insert("name".to_string(), Value::string("kid"));
-    let mut node = indexmap::IndexMap::new();
+    let mut node = indexmap::IndexMap::default();
     node.insert("__wrap".to_string(), Value::string("Node"));
     node.insert("name".to_string(), Value::string("root"));
     node.insert("children".to_string(), Value::List(vec![Value::Map(kid)]));
@@ -773,7 +773,7 @@ fn web_handlers_run_on_oxide() -> Result<(), Error> {
     let not_handler = dir.join("Number.js");
     std::fs::write(&not_handler, "42").unwrap();
     let data = |location: &std::path::Path| {
-        Value::Map(indexmap::IndexMap::from([
+        Value::Map(indexmap::IndexMap::from_iter([
             ("name".to_string(), Value::string("probe")),
             ("location".to_string(), Value::string(location.to_string_lossy())),
             ("event".to_string(), Value::string("started")),

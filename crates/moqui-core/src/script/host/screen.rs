@@ -148,7 +148,7 @@ const SCREEN_JS: &str = r#"(function (proto) {
 })"#;
 
 /// The options map of the first argument, or the error `message`.
-fn options_of(call: &Call<'_>, message: &str) -> Result<indexmap::IndexMap<String, Value>, HostError> {
+fn options_of(call: &Call<'_>, message: &str) -> Result<moqui_lib::object::ValueMap, HostError> {
     match call.value_or_null(0) {
         Value::Map(options) => Ok(options),
         _ => Err(HostError::message(message)),
@@ -200,7 +200,7 @@ fn render(call: &mut Call<'_>) -> Result<Ret, HostError> {
             render = render.render_mode(text("renderMode"));
         }
         let output = render.render().map_err(|err| HostError::message(err.message()))?;
-        let mut result = indexmap::IndexMap::new();
+        let mut result = indexmap::IndexMap::default();
         result.insert("status".to_string(), Value::I32(i32::from(output.status)));
         result.insert(
             "contentType".to_string(),
@@ -296,7 +296,7 @@ fn test_render(call: &mut Call<'_>) -> Result<Ret, HostError> {
         }
         let method = text("method");
         let rendered = test.test_render(&text("screenPath"), parameters, Some(method.as_str()));
-        let mut out = indexmap::IndexMap::new();
+        let mut out = indexmap::IndexMap::default();
         out.insert(
             "output".to_string(),
             if rendered.output.is_some() {
@@ -321,7 +321,7 @@ fn test_render(call: &mut Call<'_>) -> Result<Ret, HostError> {
                 .map_or(Value::Null, |output| Value::I64(i64::from(output.status))),
         );
         // the response headers, the last of a repeated name
-        let mut headers = indexmap::IndexMap::new();
+        let mut headers = indexmap::IndexMap::default();
         for (name, value) in rendered.output.iter().flat_map(|output| output.headers.iter()) {
             headers.insert(name.clone(), Value::string(value));
         }
@@ -364,7 +364,7 @@ fn static_report(call: &mut Call<'_>) -> Result<Ret, HostError> {
         } else {
             "stays a server merge"
         };
-        let mut out = indexmap::IndexMap::new();
+        let mut out = indexmap::IndexMap::default();
         out.insert("location".to_string(), Value::string(&report.location));
         out.insert("path".to_string(), Value::string(&report.path));
         out.insert("verdict".to_string(), Value::string(verdict));
@@ -379,7 +379,7 @@ fn static_report(call: &mut Call<'_>) -> Result<Ret, HostError> {
             .violations
             .iter()
             .map(|violation| {
-                let mut row = indexmap::IndexMap::new();
+                let mut row = indexmap::IndexMap::default();
                 row.insert("kind".to_string(), Value::string(&violation.kind));
                 row.insert("element".to_string(), Value::string(&violation.element));
                 row.insert("detail".to_string(), Value::string(&violation.detail));

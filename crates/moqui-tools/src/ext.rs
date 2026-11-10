@@ -248,7 +248,7 @@ pub fn external_group(facade: &EntityFacade, connection_id: &str) -> Option<Stri
 /// The connection rows the user may pick, as the database list shows them: `db`, `description`, `databaseConf`,
 /// `readOnly`. Empty when the gate does not pass.
 #[must_use]
-pub fn database_list(facade: &EntityFacade) -> Vec<IndexMap<String, Value>> {
+pub fn database_list(facade: &EntityFacade) -> Vec<moqui_lib::object::ValueMap> {
     if !gate() {
         return Vec::new();
     }
@@ -261,7 +261,7 @@ pub fn database_list(facade: &EntityFacade) -> Vec<IndexMap<String, Value>> {
             .iter()
             .map(|row| {
                 let id = row.get("connectionId").map(to_plain_string).unwrap_or_default();
-                let mut map = IndexMap::new();
+                let mut map = IndexMap::default();
                 map.insert("db".to_string(), Value::String(format!("ext:{id}")));
                 map.insert(
                     "description".to_string(),
@@ -318,7 +318,7 @@ fn gated() -> bool {
 
 /// A connection row as the services answer it: every field but the password, and `hasPassword`.
 fn connection_value(row: &moqui_core::entity::EntityValue) -> Value {
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     for field in [
         "connectionId",
         "description",
@@ -583,7 +583,7 @@ fn get_database_list(parameters: &BTreeMap<String, Value>, facade: &EntityFacade
             continue;
         }
         seen.push(tx.clone());
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("db".to_string(), Value::String(format!("group:{name}")));
         map.insert("groupNames".to_string(), Value::List(vec![Value::String(name.clone())]));
         map.insert("databaseConf".to_string(), Value::string(&dialect.name));

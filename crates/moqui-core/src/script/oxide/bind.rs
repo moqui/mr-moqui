@@ -58,7 +58,7 @@ pub(crate) trait OxideHooks {
         Ok(())
     }
     /// The whole context as a script sees it, the tracked values written back first.
-    fn whole_context(&self, scope: &mut Scope<'_>) -> JsResult<indexmap::IndexMap<String, Value>> {
+    fn whole_context(&self, scope: &mut Scope<'_>) -> JsResult<moqui_lib::object::ValueMap> {
         self.flush(scope, FlushBefore::Keep)?;
         Ok(crate::script::context_combined())
     }
@@ -862,7 +862,7 @@ fn marked_error(scope: &mut impl Js, marked: &host::Thrown<'_>) -> JsResult<Obje
 /// [`EngineOps`] of a body the engine is lent to (a method that is not [`Method::leaf`]): only the whole context the
 /// binder read before the lend.
 struct LentOps {
-    whole: Option<indexmap::IndexMap<String, Value>>,
+    whole: Option<moqui_lib::object::ValueMap>,
 }
 
 impl LentOps {
@@ -884,7 +884,7 @@ impl EngineOps for LentOps {
         Err(Self::refused())
     }
 
-    fn whole_context(&mut self) -> Result<indexmap::IndexMap<String, Value>, HostError> {
+    fn whole_context(&mut self) -> Result<moqui_lib::object::ValueMap, HostError> {
         self.whole.take().ok_or_else(Self::refused)
     }
 
@@ -965,7 +965,7 @@ impl EngineOps for OxideOps<'_, '_> {
         }
     }
 
-    fn whole_context(&mut self) -> Result<indexmap::IndexMap<String, Value>, HostError> {
+    fn whole_context(&mut self) -> Result<moqui_lib::object::ValueMap, HostError> {
         let hooks = Rc::clone(&self.binder.hooks);
         let _engine = EngineCall;
         hooks.whole_context(self.scope).map_err(|err| self.failed(err))

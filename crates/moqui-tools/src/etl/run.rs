@@ -89,7 +89,7 @@ pub struct FailedRange {
 impl FailedRange {
     #[must_use]
     pub fn to_value(&self) -> Value {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("fromRow".to_string(), Value::I64(self.from_row));
         map.insert("toRow".to_string(), Value::I64(self.to_row));
         map.insert("message".to_string(), Value::string(&self.message));
@@ -127,7 +127,7 @@ pub struct RunOutcome {
     /// The source could not be read, or the run stopped: why.
     pub failure: Option<String>,
     /// A check of an entity target: `entity`, `pk`, `notFound`, … rows (`CheckResult::diff_info`).
-    pub diff: Vec<IndexMap<String, Value>>,
+    pub diff: Vec<moqui_lib::object::ValueMap>,
     pub fields_checked: u64,
     /// Whether what loaded was committed (or, joining, left in the caller's transaction).
     pub committed: bool,

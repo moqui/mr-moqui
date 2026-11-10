@@ -194,9 +194,9 @@ mod tests {
 
     #[test]
     fn marks_matching_words_in_requested_fields() {
-        let mut body = Document::new();
+        let mut body = Document::default();
         body.insert("combinedName".into(), Value::string("John Smith"));
-        let mut mech = Document::new();
+        let mut mech = Document::default();
         mech.insert("city".into(), Value::string("Johnstown"));
         body.insert("contactMechs".into(), Value::List(vec![Value::Map(mech)]));
         let query = Query::all(vec![
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn marks_a_phrase_only_where_its_words_are_adjacent() {
-        let mut body = Document::new();
+        let mut body = Document::default();
         body.insert("noteText".into(), Value::string("Pump water, then the water pump"));
         body.insert("title".into(), Value::string("Water and pump"));
         let query = Query::text("water pump", TextMatch::Phrase);
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn stored_text_is_escaped_around_the_marks() {
-        let mut body = Document::new();
+        let mut body = Document::default();
         body.insert(
             "combinedName".into(),
             Value::string("<img src=x onerror=alert(1)> Smith & \"Jones\""),

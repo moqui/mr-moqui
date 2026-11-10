@@ -14,7 +14,7 @@
 
 use super::*;
 
-fn row(pairs: &[(&str, Value)]) -> IndexMap<String, Value> {
+fn row(pairs: &[(&str, Value)]) -> moqui_lib::object::ValueMap {
     pairs
         .iter()
         .map(|(name, value)| ((*name).to_string(), value.clone()))
@@ -135,7 +135,7 @@ fn a_group_by_field_that_is_not_shown_is_not_in_the_group_key() {
             ]),
         ]
     };
-    let value_of = |row: &IndexMap<String, Value>, name: &str| row.get(name).cloned().unwrap_or(Value::Null);
+    let value_of = |row: &moqui_lib::object::ValueMap, name: &str| row.get(name).cloned().unwrap_or(Value::Null);
     assert_eq!(aggregation.apply(rows(), None, value_of).len(), 3);
     let shown: HashSet<String> = ["party", "amount"].into_iter().map(String::from).collect();
     let out = aggregation.apply(rows(), Some(&shown), value_of);
@@ -187,7 +187,7 @@ fn show_total_alone_adds_a_total_row_and_aggregate_needs_a_group() {
 
 #[test]
 fn avg_skips_a_value_whose_total_overflows() {
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     let max = Value::Decimal(Decimal::MAX);
     apply_function(Function::Avg, &mut map, "n", &max);
     apply_function(Function::Avg, &mut map, "n", &max);

@@ -71,7 +71,7 @@ fn cut(text: &str) -> String {
 
 /// A row as a map, its JSON text fields pretty-printed and its long texts cut.
 fn row_map(row: &EntityValue) -> Value {
-    let mut out = indexmap::IndexMap::new();
+    let mut out = indexmap::IndexMap::default();
     for (name, value) in row.fields() {
         let value = match value {
             Value::String(text) if name.ends_with("Json") => Value::string(cut(&serde_json::from_str::<Json>(text)
@@ -178,7 +178,7 @@ fn message_line(facade: &EntityFacade, message: &EntityValue, extra: &[String]) 
             }
         }
     }
-    let mut out = indexmap::IndexMap::new();
+    let mut out = indexmap::IndexMap::default();
     out.insert("messageId".to_string(), Value::string(&message_id));
     out.insert(
         "messageSeq".to_string(),
@@ -238,7 +238,7 @@ const CALL_METADATA: &[&str] = &[
 
 /// A map of `fields` of `row`.
 fn fields_of(row: &EntityValue, fields: &[&str]) -> Value {
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     for field in fields {
         map.insert((*field).to_string(), row.get(field).cloned().unwrap_or(Value::Null));
     }
@@ -328,7 +328,7 @@ fn run_view(facade: &EntityFacade, run_id: &str, reason: &str, extra: &[String])
     let redacted = |row: &EntityValue| {
         let mut map = match row_map(row) {
             Value::Map(map) => map,
-            _ => indexmap::IndexMap::new(),
+            _ => indexmap::IndexMap::default(),
         };
         for field in ["argumentsJson", "resultSummary"] {
             if let Some(Value::String(text)) = map.get(field) {
@@ -396,7 +396,7 @@ fn approval_view(facade: &EntityFacade, approval_id: &str, reason: &str) -> Out 
         .collect();
     let mut approval = match row_map(&row) {
         Value::Map(map) => map,
-        _ => indexmap::IndexMap::new(),
+        _ => indexmap::IndexMap::default(),
     };
     approval.insert("summary".to_string(), Value::string(view.summary()));
     approval.insert("changesText".to_string(), Value::string(changes.join("\n")));

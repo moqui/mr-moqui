@@ -215,8 +215,8 @@ fn day_text(date: Date) -> String {
     date.strftime("%Y-%m-%d").to_string()
 }
 
-fn person(property: &Property) -> IndexMap<String, Value> {
-    let mut out = IndexMap::new();
+fn person(property: &Property) -> moqui_lib::object::ValueMap {
+    let mut out = IndexMap::default();
     let name = property.param("CN").map(str::trim).filter(|name| !name.is_empty());
     out.insert(
         "name".to_string(),
@@ -241,8 +241,8 @@ fn text_value(text: Option<String>) -> Value {
 }
 
 /// The event map of a VEVENT.
-fn event(reader: &Reader<'_>, component: &Component) -> IndexMap<String, Value> {
-    let mut out: IndexMap<String, Value> = IndexMap::new();
+fn event(reader: &Reader<'_>, component: &Component) -> moqui_lib::object::ValueMap {
+    let mut out: moqui_lib::object::ValueMap = IndexMap::default();
     out.insert(
         "uid".into(),
         text_value(component.text("UID").map(|uid| uid.trim().to_string())),
@@ -427,7 +427,7 @@ fn event(reader: &Reader<'_>, component: &Component) -> IndexMap<String, Value> 
                 };
                 -(seconds + length) / 60
             };
-            let mut map = IndexMap::new();
+            let mut map = IndexMap::default();
             map.insert("offsetMinutes".to_string(), Value::I64(offset_minutes));
             let action = alarm
                 .text("ACTION")
@@ -448,8 +448,8 @@ fn event(reader: &Reader<'_>, component: &Component) -> IndexMap<String, Value> 
 /// The to-do map of a VTODO: `uid`, `sequence`, `summary`, `description`, `status` (NEEDS-ACTION, IN-PROCESS,
 /// COMPLETED, CANCELLED), `priority` (1 high to 9 low, 0 none), `percentComplete`, `start` and `due` (epoch millis;
 /// `dueDate` yyyy-MM-dd and `allDay` for a due day), `completed`, `timeZone` and `lastModified`.
-fn todo(reader: &Reader<'_>, component: &Component) -> IndexMap<String, Value> {
-    let mut out: IndexMap<String, Value> = IndexMap::new();
+fn todo(reader: &Reader<'_>, component: &Component) -> moqui_lib::object::ValueMap {
+    let mut out: moqui_lib::object::ValueMap = IndexMap::default();
     out.insert(
         "uid".into(),
         text_value(component.text("UID").map(|uid| uid.trim().to_string())),
@@ -513,7 +513,7 @@ fn todo(reader: &Reader<'_>, component: &Component) -> IndexMap<String, Value> {
 
 /// A calendar file read: `{events, todos, method, calendarName, timeZone}`, the events and to-dos of every VCALENDAR in
 /// it (a file of bare VEVENTs or VTODOs too). `year` is the year a VTIMEZONE is matched to an IANA zone on.
-pub(crate) fn parse(text: &str, year: i16) -> IndexMap<String, Value> {
+pub(crate) fn parse(text: &str, year: i16) -> moqui_lib::object::ValueMap {
     let top = components(text);
     let calendars: Vec<&Component> = top.iter().filter(|component| component.name == "VCALENDAR").collect();
     let loose = Component {
@@ -574,7 +574,7 @@ pub(crate) fn parse(text: &str, year: i16) -> IndexMap<String, Value> {
             }
         }
     }
-    let mut out = IndexMap::new();
+    let mut out = IndexMap::default();
     out.insert("events".to_string(), Value::List(events));
     out.insert("todos".to_string(), Value::List(todos));
     out.insert("method".to_string(), text_value(method));
@@ -585,11 +585,11 @@ pub(crate) fn parse(text: &str, year: i16) -> IndexMap<String, Value> {
 
 // ===== writing
 
-fn get<'a>(map: &'a IndexMap<String, Value>, key: &str) -> Option<&'a Value> {
+fn get<'a>(map: &'a moqui_lib::object::ValueMap, key: &str) -> Option<&'a Value> {
     map.get(key).filter(|value| !matches!(value, Value::Null))
 }
 
-fn text_of(map: &IndexMap<String, Value>, key: &str) -> Option<String> {
+fn text_of(map: &moqui_lib::object::ValueMap, key: &str) -> Option<String> {
     get(map, key)
         .map(to_plain_string)
         .map(|text| text.trim().to_string())
@@ -629,7 +629,7 @@ pub(crate) fn millis_of(value: &Value) -> Option<i64> {
     }
 }
 
-fn flag(map: &IndexMap<String, Value>, key: &str) -> bool {
+fn flag(map: &moqui_lib::object::ValueMap, key: &str) -> bool {
     match get(map, key) {
         Some(Value::Bool(flag)) => *flag,
         Some(value) => matches!(
@@ -770,13 +770,13 @@ fn set_date_properties(name: &str, values: &[String], zone: Option<&Zone>, all_d
     }
 }
 
-fn mailto(person: &IndexMap<String, Value>) -> Option<(String, Option<String>)> {
+fn mailto(person: &moqui_lib::object::ValueMap) -> Option<(String, Option<String>)> {
     let email = text_of(person, "email").or_else(|| text_of(person, "emailAddress"))?;
     let email = line::strip_prefix_ignore_case(&email, "mailto:").unwrap_or(&email);
     Some((format!("mailto:{email}"), text_of(person, "name")))
 }
 
-fn list<'a>(map: &'a IndexMap<String, Value>, key: &str) -> Vec<&'a IndexMap<String, Value>> {
+fn list<'a>(map: &'a moqui_lib::object::ValueMap, key: &str) -> Vec<&'a moqui_lib::object::ValueMap> {
     match get(map, key) {
         Some(Value::List(items)) => items
             .iter()
@@ -789,7 +789,7 @@ fn list<'a>(map: &'a IndexMap<String, Value>, key: &str) -> Vec<&'a IndexMap<Str
     }
 }
 
-fn texts(map: &IndexMap<String, Value>, key: &str) -> Vec<String> {
+fn texts(map: &moqui_lib::object::ValueMap, key: &str) -> Vec<String> {
     match get(map, key) {
         Some(Value::List(items)) => items
             .iter()
@@ -807,7 +807,7 @@ fn texts(map: &IndexMap<String, Value>, key: &str) -> Vec<String> {
 
 /// The ICS text of `{method, calendarName, timeZone, events, todos}`. `now` is the DTSTAMP. With `calendarObject` it
 /// is a CalDAV calendar object resource (RFC 4791 §4.1): no METHOD, and the reminders as a published calendar has them.
-pub(crate) fn write(calendar: &IndexMap<String, Value>, now: Timestamp) -> Result<String, String> {
+pub(crate) fn write(calendar: &moqui_lib::object::ValueMap, now: Timestamp) -> Result<String, String> {
     let calendar_object = flag(calendar, "calendarObject");
     let method = text_of(calendar, "method")
         .filter(|_| !calendar_object)

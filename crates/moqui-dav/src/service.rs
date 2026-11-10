@@ -67,7 +67,7 @@ fn serve_request(
         }
         None => crate::dav::DavResponse::text(500, "no execution context"),
     };
-    let headers: indexmap::IndexMap<String, Value> = response
+    let headers: moqui_lib::object::ValueMap = response
         .headers
         .iter()
         .map(|(name, value)| (name.clone(), Value::string(value)))

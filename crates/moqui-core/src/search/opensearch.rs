@@ -678,8 +678,8 @@ fn dir(descending: bool) -> &'static str {
 }
 
 /// Read an Elastic `aggregations` response into the facade's result shape.
-pub fn read_aggs(aggs: &IndexMap<String, Agg>, response: &Json) -> IndexMap<String, Value> {
-    let mut out = IndexMap::new();
+pub fn read_aggs(aggs: &IndexMap<String, Agg>, response: &Json) -> moqui_lib::object::ValueMap {
+    let mut out = IndexMap::default();
     for (name, agg) in aggs {
         let part = response.get(name).unwrap_or(&Json::Null);
         out.insert(name.clone(), read_agg(agg, part));
@@ -717,7 +717,7 @@ fn read_agg(agg: &Agg, part: &Json) -> Value {
                     Value::Map(map)
                 })
                 .collect();
-            Value::Map(IndexMap::from([("buckets".into(), Value::List(buckets))]))
+            Value::Map(IndexMap::from_iter([("buckets".into(), Value::List(buckets))]))
         }
         Agg::NamedFilters { aggs, .. } => {
             let buckets: Vec<Value> = part["buckets"]
@@ -734,7 +734,7 @@ fn read_agg(agg: &Agg, part: &Json) -> Value {
                     Value::Map(map)
                 })
                 .collect();
-            Value::Map(IndexMap::from([("buckets".into(), Value::List(buckets))]))
+            Value::Map(IndexMap::from_iter([("buckets".into(), Value::List(buckets))]))
         }
         Agg::Metric { kind, .. } => match kind {
             super::agg::Metric::Percentile(p) => {
@@ -782,7 +782,7 @@ fn read_agg(agg: &Agg, part: &Json) -> Value {
         }
         Agg::CountDistinct { .. } => Value::I64(part.get("value").and_then(Json::as_i64).unwrap_or(0)),
         Agg::Filter { aggs, .. } => {
-            let mut map = IndexMap::new();
+            let mut map = IndexMap::default();
             map.insert(
                 "doc_count".into(),
                 Value::I64(part.get("doc_count").and_then(Json::as_i64).unwrap_or(0)),
@@ -794,7 +794,7 @@ fn read_agg(agg: &Agg, part: &Json) -> Value {
             let histogram = matches!(agg, Agg::DateHistogram(_));
             let mut buckets = Vec::new();
             for bucket in part.get("buckets").and_then(Json::as_array).into_iter().flatten() {
-                let mut map = IndexMap::new();
+                let mut map = IndexMap::default();
                 let key = bucket.get("key").cloned().unwrap_or(Json::Null);
                 if histogram {
                     let at = key.as_i64().and_then(|millis| Timestamp::from_millisecond(millis).ok());
@@ -821,7 +821,7 @@ fn read_agg(agg: &Agg, part: &Json) -> Value {
                 map.extend(read_aggs(aggs, bucket));
                 buckets.push(Value::Map(map));
             }
-            let mut map = IndexMap::new();
+            let mut map = IndexMap::default();
             map.insert("buckets".into(), Value::List(buckets));
             Value::Map(map)
         }
@@ -1322,7 +1322,7 @@ impl SearchBackend for OpenSearchBackend {
                 }
             }
             let highlights = if request.highlight.is_empty() {
-                IndexMap::new()
+                IndexMap::default()
             } else {
                 super::highlight::highlights(&request.query, &request.highlight, &body)
             };
@@ -1347,7 +1347,7 @@ impl SearchBackend for OpenSearchBackend {
         mapping: &DocumentMapping,
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
-    ) -> Result<IndexMap<String, Value>, Error> {
+    ) -> Result<moqui_lib::object::ValueMap, Error> {
         let body = json!({"size": 0, "query": {"bool": {"filter": [query_json(mapping, filter)]}},
             "aggs": aggs_json(mapping, aggs)?});
         let response = self.searched(&format!("{}/_search", self.index_name(mapping)), body)?;
@@ -1383,7 +1383,7 @@ impl SearchBackend for OpenSearchBackend {
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
         _fresh_by: Option<std::time::Instant>,
-    ) -> Result<IndexMap<String, Value>, Error> {
+    ) -> Result<moqui_lib::object::ValueMap, Error> {
         let merged = super::mapping::combined_mapping(mappings)?;
         let population = |query: &Query| json!({"bool":{"should":mappings.iter().map(|mapping|json!({"bool":{"filter":[{"term":{"_index":self.index_name(mapping)}},query_json(mapping,query)]}})).collect::<Vec<_>>(),"minimum_should_match":1}});
         fn compile(
@@ -1545,7 +1545,7 @@ fn source_of(source: Option<&Json>) -> Document {
             map.shift_remove("__cursor");
             map
         }
-        _ => Document::new(),
+        _ => Document::default(),
     }
 }
 

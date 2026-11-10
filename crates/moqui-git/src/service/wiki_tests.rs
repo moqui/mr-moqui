@@ -164,7 +164,7 @@ fn out_text(out: &BTreeMap<String, Value>, key: &str) -> String {
     out.get(key).map(to_plain_string).unwrap_or_default()
 }
 
-fn maps(out: &BTreeMap<String, Value>, key: &str) -> Vec<IndexMap<String, Value>> {
+fn maps(out: &BTreeMap<String, Value>, key: &str) -> Vec<moqui_lib::object::ValueMap> {
     match out.get(key) {
         Some(Value::List(items)) => items
             .iter()
@@ -177,11 +177,11 @@ fn maps(out: &BTreeMap<String, Value>, key: &str) -> Vec<IndexMap<String, Value>
     }
 }
 
-fn field(map: &IndexMap<String, Value>, key: &str) -> String {
+fn field(map: &moqui_lib::object::ValueMap, key: &str) -> String {
     map.get(key).map(to_plain_string).unwrap_or_default()
 }
 
-fn column(rows: &[IndexMap<String, Value>], key: &str) -> Vec<String> {
+fn column(rows: &[moqui_lib::object::ValueMap], key: &str) -> Vec<String> {
     rows.iter().map(|row| field(row, key)).collect()
 }
 
@@ -1564,7 +1564,7 @@ fn search_and_page_lists_leave_out_what_a_user_may_not_view() {
         "moqui.resource.wiki.WikiPage",
         &[("wikiSpaceId", "PUB"), ("pagePath", "Welcome Guide")],
     );
-    let mut document = IndexMap::new();
+    let mut document = IndexMap::default();
     document.insert("wikiPageId".to_string(), text(&value_of(&guide, "wikiPageId")));
     document.insert("wikiSpaceId".to_string(), text("PUB"));
     document.insert("pagePath".to_string(), text("Welcome Guide"));
@@ -1588,7 +1588,7 @@ fn search_and_page_lists_leave_out_what_a_user_may_not_view() {
 
 /// A member of a space as create#WikiSpace takes one in memberList.
 fn member(user_id: &str, view: &str, update: &str, admin: &str) -> Value {
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     for (key, value) in [
         ("userId", user_id),
         ("allowView", view),

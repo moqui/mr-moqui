@@ -32,7 +32,7 @@ use super::definition::ScreenDef;
 use super::url::ScreenUrlInfo;
 use crate::context::Error;
 
-type Item = indexmap::IndexMap<String, Value>;
+type Item = moqui_lib::object::ValueMap;
 
 /// One `ext-action` or `ext-panel`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -334,7 +334,7 @@ fn item_json(
             moqui_lib::string::url_encode_if_needed(&item.transition)
         )
     };
-    let mut out = Item::new();
+    let mut out = Item::default();
     out.insert("name".into(), Value::string(&item.name));
     out.insert("slot".into(), Value::string(&item.slot));
     out.insert("sequence".into(), Value::I64(item.sequence));
@@ -354,7 +354,7 @@ fn item_json(
     out.insert(
         "condition".into(),
         item.condition.as_ref().map_or(Value::Null, |condition| {
-            let mut test = Item::new();
+            let mut test = Item::default();
             test.insert("field".into(), Value::string(&condition.field));
             test.insert("op".into(), Value::string(condition.op));
             test.insert("value".into(), Value::string(&condition.value));
@@ -367,13 +367,13 @@ fn item_json(
             item.parameters
                 .iter()
                 .map(|(name, from)| {
-                    let mut parameter = Item::new();
+                    let mut parameter = Item::default();
                     parameter.insert("name".into(), Value::string(name));
                     parameter.insert("from".into(), Value::string(from));
                     Value::Map(parameter)
                 })
                 .chain(item.values.iter().map(|(name, value)| {
-                    let mut parameter = Item::new();
+                    let mut parameter = Item::default();
                     parameter.insert("name".into(), Value::string(name));
                     parameter.insert("value".into(), Value::string(value));
                     Value::Map(parameter)
@@ -445,7 +445,7 @@ pub fn ext_items(state: &super::RenderState, path_names: &[String]) -> Result<Op
         return Ok(None);
     }
     let (actions, panels) = items_json(&state.factory, &root, &info.full_path, &info.target_screen)?;
-    let mut out = Item::new();
+    let mut out = Item::default();
     out.insert("actions".into(), actions);
     out.insert("panels".into(), panels);
     Ok(Some(Value::Map(out)))

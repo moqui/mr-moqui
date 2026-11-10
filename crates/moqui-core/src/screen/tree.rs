@@ -224,7 +224,7 @@ fn child_nodes(
                         url.path_with_params()
                     };
                     let load_id = link_node.attribute("dynamic-load-id").unwrap_or_default();
-                    let mut attrs = IndexMap::new();
+                    let mut attrs = IndexMap::default();
                     attrs.insert(
                         "href".to_string(),
                         Value::string(if load_id.is_empty() {
@@ -245,10 +245,10 @@ fn child_nodes(
                 } else {
                     None
                 };
-                let mut node = IndexMap::new();
+                let mut node = IndexMap::default();
                 node.insert("id".to_string(), Value::string(id.clone()));
                 node.insert("text".to_string(), Value::string(text));
-                let mut li = IndexMap::new();
+                let mut li = IndexMap::default();
                 li.insert("treeNodeName".to_string(), Value::string(tree_node.name.clone()));
                 node.insert("li_attr".to_string(), Value::Map(li));
                 if let Some(link) = link {
@@ -256,7 +256,7 @@ fn child_nodes(
                 }
                 let has_children = children.as_ref().is_some_and(|list| !list.is_empty());
                 if open {
-                    let mut state_map = IndexMap::new();
+                    let mut state_map = IndexMap::default();
                     state_map.insert("opened".to_string(), Value::Bool(true));
                     state_map.insert("selected".to_string(), Value::Bool(open_path == id));
                     node.insert("state".to_string(), Value::Map(state_map));

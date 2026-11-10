@@ -459,7 +459,7 @@ fn a_lock_holds_another_users_client_on_the_same_file_and_not_the_file_beside_it
             ("driveName", Value::string("Team")),
             (
                 "memberList",
-                Value::List(vec![Value::Map(indexmap::IndexMap::from([
+                Value::List(vec![Value::Map(indexmap::IndexMap::from_iter([
                     ("userId".to_string(), Value::string("bob")),
                     ("permissionEnumId".to_string(), Value::string("RdpEdit")),
                 ]))]),
@@ -643,7 +643,7 @@ fn the_sftp_tree_writes_versions_and_refuses_what_the_drive_does_not_allow() {
             ("driveName", Value::string("Viewed")),
             (
                 "memberList",
-                Value::List(vec![Value::Map(indexmap::IndexMap::from([
+                Value::List(vec![Value::Map(indexmap::IndexMap::from_iter([
                     ("userId".to_string(), Value::string("bob")),
                     ("permissionEnumId".to_string(), Value::string("RdpView")),
                 ]))]),

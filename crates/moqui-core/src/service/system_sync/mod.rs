@@ -19,7 +19,6 @@
 
 use std::collections::BTreeMap;
 
-use indexmap::IndexMap;
 use moqui_lib::object::{basic_convert, Value};
 
 use crate::context::ExecutionContext;
@@ -49,7 +48,7 @@ pub(in crate::service) fn register(
     Ok(())
 }
 
-fn map_text(map: &IndexMap<String, Value>, name: &str) -> String {
+fn map_text(map: &moqui_lib::object::ValueMap, name: &str) -> String {
     text_of(map.get(name))
 }
 

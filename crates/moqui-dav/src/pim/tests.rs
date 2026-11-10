@@ -30,7 +30,7 @@ fn sample(name: &str) -> String {
     .unwrap()
 }
 
-fn text(map: &IndexMap<String, Value>, key: &str) -> String {
+fn text(map: &moqui_lib::object::ValueMap, key: &str) -> String {
     map.get(key).map(to_plain_string).unwrap_or_default()
 }
 
@@ -363,7 +363,7 @@ fn an_apple_calendar_with_a_vtimezone_of_its_own_floating_times_and_alarms() {
 #[test]
 fn calendars_write_with_vtimezones_and_read_back() {
     let parsed = ics::parse(&sample("google.ics"), 2026);
-    let mut calendar = IndexMap::new();
+    let mut calendar = IndexMap::default();
     calendar.insert("method".to_string(), Value::string("PUBLISH"));
     calendar.insert("calendarName".to_string(), Value::string("Team, Calendar"));
     calendar.insert("timeZone".to_string(), Value::string("America/Chicago"));
@@ -488,7 +488,7 @@ fn a_this_and_future_override_keeps_its_range() {
     );
     assert_eq!(event(2)["recurrenceRange"], Value::Null);
 
-    let mut calendar = IndexMap::new();
+    let mut calendar = IndexMap::default();
     calendar.insert("events".to_string(), parsed["events"].clone());
     let written = ics::write(&calendar, Timestamp::from_millisecond(1_792_400_000_000).unwrap()).unwrap();
     let unfolded = super::line::unfold(&written);
@@ -538,7 +538,7 @@ fn to_dos_read_and_write_and_a_calendar_object_has_no_method() {
     assert_eq!(text(first, "percentComplete"), "40");
     assert_eq!(text(second, "due"), "1792594800000");
     assert_eq!(text(second, "completed"), "1792591200000");
-    let mut calendar = IndexMap::new();
+    let mut calendar = IndexMap::default();
     calendar.insert("calendarObject".to_string(), Value::Bool(true));
     calendar.insert("todos".to_string(), Value::List(todos.clone()));
     let written = ics::write(&calendar, Timestamp::from_millisecond(1_792_000_000_000).unwrap()).unwrap();

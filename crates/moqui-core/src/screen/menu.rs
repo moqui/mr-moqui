@@ -19,7 +19,6 @@
 //! The last entry has the target's screen documents and the user's saved finds of its form-lists that say
 //! `saved-finds="true"`, as Java's.
 
-use indexmap::IndexMap;
 use moqui_lib::object::Value;
 
 use super::definition::SubscreensItem;
@@ -30,7 +29,7 @@ use super::urls::{self, UrlInstance};
 use crate::context::{Error, ErrorKind};
 use crate::{l10n, script, user, web};
 
-type Item = IndexMap<String, Value>;
+type Item = moqui_lib::object::ValueMap;
 
 fn text(value: &str) -> Value {
     Value::string(value)
@@ -121,7 +120,7 @@ pub(super) fn subscreen_entry(
         Some(expression) => script::eval_condition(expression)?,
         None => false,
     };
-    let mut entry = Item::new();
+    let mut entry = Item::default();
     entry.insert("name".into(), text(&item.name));
     entry.insert(
         "title".into(),
@@ -245,7 +244,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         } else {
             localized
         };
-        let mut entry = Item::new();
+        let mut entry = Item::default();
         entry.insert("name".into(), text(path_item));
         entry.insert("title".into(), text(&title));
         entry.insert("subscreens".into(), Value::List(subscreens));
@@ -303,7 +302,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
         .iter()
         .map(|name| text(&moqui_lib::string::url_encode_if_needed(name)))
         .collect();
-    let mut entry = Item::new();
+    let mut entry = Item::default();
     entry.insert("name".into(), text(&last_item));
     entry.insert("title".into(), text(&last_title));
     entry.insert("path".into(), text(&last_path));
@@ -341,7 +340,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
                 .get("formListFindId")
                 .map(moqui_lib::object::to_plain_string)
                 .unwrap_or_default();
-            let mut item = Item::new();
+            let mut item = Item::default();
             item.insert("name".into(), text(&id));
             item.insert("title".into(), find.get("description").cloned().unwrap_or(Value::Null));
             item.insert("image".into(), entry.get("image").cloned().unwrap_or(Value::Null));

@@ -187,7 +187,7 @@ fn persist_survives_caller_rollback() {
     let _authz = ctx.disable_authz();
     account(&facade, "alice", None, None);
     facade.begin(MESSAGE, None).unwrap();
-    let mut body = IndexMap::new();
+    let mut body = IndexMap::default();
     body.insert("note".to_string(), Value::string("kept-body"));
     let mut note = NotificationMessage::new();
     note.topic("PersistTopic")
@@ -292,7 +292,7 @@ fn subscriber_receives_one_message() {
         ],
     );
     let (sub, seen) = kept(&title);
-    let mut message = IndexMap::new();
+    let mut message = IndexMap::default();
     message.insert("label".to_string(), Value::string(&label));
     let mut note = NotificationMessage::new();
     note.topic("HelloTopic")
@@ -327,7 +327,7 @@ fn subscriber_receives_one_message() {
             ("typeString", "danger"),
         ],
     );
-    let mut message = IndexMap::new();
+    let mut message = IndexMap::default();
     message.insert("label".to_string(), Value::string(&bad));
     let mut note = NotificationMessage::new();
     note.topic("DangerTopic")

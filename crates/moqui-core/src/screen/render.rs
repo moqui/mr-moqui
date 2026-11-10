@@ -2297,7 +2297,7 @@ fn same_origin(url: &str) -> bool {
 /// `redirectUrl`, with the messages and the current parameters. The errors make it a 500, as for any JSON answer.
 fn send_json_redirect(screen_path: Option<Vec<String>>, location: &str, parameters: &BTreeMap<String, String>) {
     use moqui_lib::object::Value as V;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     match screen_path {
         Some(names) => {
             map.insert(
@@ -2354,7 +2354,7 @@ fn send_json_redirect(screen_path: Option<Vec<String>>, location: &str, paramete
                 messages
                     .iter()
                     .map(|(message, kind)| {
-                        let mut info = indexmap::IndexMap::new();
+                        let mut info = indexmap::IndexMap::default();
                         info.insert("message".to_string(), V::string(message));
                         info.insert("type".to_string(), V::string(kind));
                         V::Map(info)

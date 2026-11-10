@@ -169,7 +169,7 @@ fn request_aggs() -> Json {
     })
 }
 
-fn request_stats(result: &IndexMap<String, Value>, stats: &mut Stats) {
+fn request_stats(result: &moqui_lib::object::ValueMap, stats: &mut Stats) {
     stats.requests = count_of(result.get("requests"));
     stats.minutes_covered = count_of(result.get("minutes"));
     if let Some(Value::Map(errors)) = result.get("errors") {
@@ -246,7 +246,7 @@ fn instance_stats(search: &SearchFacade, window: Window<'_>) -> Result<Vec<(Stri
         .collect())
 }
 
-fn buckets(value: Option<&Value>) -> Vec<IndexMap<String, Value>> {
+fn buckets(value: Option<&Value>) -> Vec<moqui_lib::object::ValueMap> {
     let Some(Value::Map(map)) = value else {
         return Vec::new();
     };

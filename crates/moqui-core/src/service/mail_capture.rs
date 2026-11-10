@@ -132,7 +132,7 @@ fn list(items: &[String]) -> Value {
 }
 
 fn mail_value(at: i64, mail: &CapturedMail) -> Value {
-    let mut out = IndexMap::new();
+    let mut out = IndexMap::default();
     for (key, value) in [
         ("subject", Value::string(&mail.subject)),
         ("fromAddress", Value::string(&mail.from_address)),

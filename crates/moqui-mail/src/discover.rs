@@ -72,7 +72,7 @@ pub(super) struct Choice {
 
 impl Choice {
     fn to_map(&self) -> Value {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("kind".to_string(), Value::string(&self.kind));
         map.insert("host".to_string(), Value::string(&self.host));
         map.insert("port".to_string(), Value::I64(i64::from(self.port)));

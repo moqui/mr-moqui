@@ -255,7 +255,7 @@ fn get_data_grid_lookup(parameters: &BTreeMap<String, Value>, facade: &EntityFac
                     options
                         .into_iter()
                         .map(|option| {
-                            let mut map = IndexMap::new();
+                            let mut map = IndexMap::default();
                             map.insert("value".to_string(), option.value);
                             map.insert("label".to_string(), Value::String(option.label));
                             Value::Map(map)
@@ -318,7 +318,7 @@ fn save_data_grid_changes(parameters: &BTreeMap<String, Value>, facade: &EntityF
 }
 
 fn view_value(row: &moqui_core::entity::EntityValue) -> Value {
-    let mut entry = IndexMap::new();
+    let mut entry = IndexMap::default();
     for field in [
         "viewId",
         "description",

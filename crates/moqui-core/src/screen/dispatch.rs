@@ -300,7 +300,7 @@ fn call_user_service(name: &str, pairs: &[(&str, &str)]) -> Result<Option<BTreeM
 /// one at the conf's expiry (`get_login_key`). A key that could not be made is logged and left out, and the login
 /// stands.
 fn send_logged_in(logged_in: bool, key: Option<&str>) {
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("loggedIn".to_string(), Value::Bool(logged_in));
     if let Some(device) = key {
         let made = if device.trim().is_empty() {

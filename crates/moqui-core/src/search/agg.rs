@@ -652,19 +652,20 @@ pub(crate) fn fill_other_buckets(
     mapping: &super::DocumentMapping,
     filter: &Query,
     aggs: &IndexMap<String, Agg>,
-    results: &mut IndexMap<String, Value>,
+    results: &mut moqui_lib::object::ValueMap,
 ) -> Result<(), Error> {
     let mut aggregate = |filter: &Query, aggs: &IndexMap<String, Agg>| backend.aggregate(mapping, filter, aggs);
     fill_other_buckets_with(&mut aggregate, filter, aggs, results)
 }
 
-type AggregateCallback<'a> = dyn FnMut(&Query, &IndexMap<String, Agg>) -> Result<IndexMap<String, Value>, Error> + 'a;
+type AggregateCallback<'a> =
+    dyn FnMut(&Query, &IndexMap<String, Agg>) -> Result<moqui_lib::object::ValueMap, Error> + 'a;
 
 pub(crate) fn fill_other_buckets_with(
     aggregate: &mut AggregateCallback<'_>,
     filter: &Query,
     aggs: &IndexMap<String, Agg>,
-    results: &mut IndexMap<String, Value>,
+    results: &mut moqui_lib::object::ValueMap,
 ) -> Result<(), Error> {
     fn has_other(aggs: &IndexMap<String, Agg>) -> bool {
         aggs.values().any(|agg| {

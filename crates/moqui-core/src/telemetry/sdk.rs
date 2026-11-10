@@ -882,7 +882,7 @@ impl SpanExporter for LocalSpanExporter {
 fn normalize_spans(batch: Vec<SpanData>, shared: &Shared) -> Vec<Document> {
     let mut documents = Vec::new();
     for span in batch {
-        let mut document = Document::new();
+        let mut document = Document::default();
         document.insert(
             "trace_id".into(),
             Value::String(span.span_context.trace_id().to_string()),
@@ -1096,7 +1096,7 @@ fn normalize_logs(
     let documents = batch
         .into_iter()
         .map(|(record, scope)| {
-            let mut document = Document::new();
+            let mut document = Document::default();
             document.insert(
                 "timestamp".into(),
                 Value::I64(millis(record.timestamp().unwrap_or_else(SystemTime::now))),

@@ -71,7 +71,7 @@ pub struct FileSpec {
 impl FileSpec {
     /// From a grid source map: `location`, `sheet`, `headerRow` (default 1), `format`, `delimiter`.
     #[must_use]
-    pub fn from_map(map: &IndexMap<String, Value>) -> Self {
+    pub fn from_map(map: &moqui_lib::object::ValueMap) -> Self {
         let text = |key: &str| map.get(key).map(to_plain_string).unwrap_or_default();
         Self {
             location: text("location"),
@@ -97,7 +97,7 @@ pub struct FileColumn {
 impl FileColumn {
     #[must_use]
     pub fn to_value(&self) -> Value {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("name".to_string(), Value::string(&self.name));
         map.insert("title".to_string(), Value::string(&self.title));
         map.insert("type".to_string(), Value::string(self.kind));
@@ -112,7 +112,7 @@ pub struct FileTable {
     pub sheet_names: Vec<String>,
     pub sheet_name: String,
     pub columns: Vec<FileColumn>,
-    pub rows: Vec<IndexMap<String, Value>>,
+    pub rows: Vec<moqui_lib::object::ValueMap>,
     /// The cache's measure of it.
     bytes: usize,
 }
@@ -186,7 +186,7 @@ fn infer_kind<'a>(values: impl Iterator<Item = &'a Value>) -> &'static str {
     kind.unwrap_or("text")
 }
 
-fn columns_of(names: &[String], rows: &[IndexMap<String, Value>]) -> Vec<FileColumn> {
+fn columns_of(names: &[String], rows: &[moqui_lib::object::ValueMap]) -> Vec<FileColumn> {
     names
         .iter()
         .map(|name| FileColumn {
@@ -215,7 +215,7 @@ fn read_sheet_table(spec: &FileSpec, bytes: &[u8]) -> Result<FileTable, Error> {
     let width = sheet.rows.iter().map(Vec::len).max().unwrap_or(0);
     let names = names_of(&header, width);
     let mut bytes_used = 0;
-    let rows: Vec<IndexMap<String, Value>> = sheet
+    let rows: Vec<moqui_lib::object::ValueMap> = sheet
         .rows
         .into_iter()
         .zip(sheet.row_numbers)
@@ -233,7 +233,7 @@ fn read_sheet_table(spec: &FileSpec, bytes: &[u8]) -> Result<FileTable, Error> {
         })
         .collect();
     // each row's map and its slot in the list
-    bytes_used += rows.len() * (std::mem::size_of::<IndexMap<String, Value>>() + 16);
+    bytes_used += rows.len() * (std::mem::size_of::<moqui_lib::object::ValueMap>() + 16);
     Ok(FileTable {
         sheet_names: sheet.sheet_names,
         sheet_name: sheet.sheet_name,
@@ -284,7 +284,7 @@ fn sheet_table(spec: &FileSpec) -> Result<Arc<FileTable>, Error> {
 /// What [`csv_rows`] read.
 struct CsvRead {
     names: Vec<String>,
-    rows: Vec<IndexMap<String, Value>>,
+    rows: Vec<moqui_lib::object::ValueMap>,
     count: usize,
 }
 
@@ -338,7 +338,7 @@ fn csv_rows(spec: &FileSpec, offset: usize, limit: Option<usize>, count: bool) -
             }
             break;
         }
-        let row: IndexMap<String, Value> = names
+        let row: moqui_lib::object::ValueMap = names
             .iter()
             .cloned()
             .zip(
@@ -367,7 +367,7 @@ fn csv_rows(spec: &FileSpec, offset: usize, limit: Option<usize>, count: bool) -
 }
 
 /// What [`file_info`] reads: the columns, the sheet names (empty for a CSV), the first rows and the row count.
-pub type FileInfo = (Vec<FileColumn>, Vec<String>, Vec<IndexMap<String, Value>>, usize);
+pub type FileInfo = (Vec<FileColumn>, Vec<String>, Vec<moqui_lib::object::ValueMap>, usize);
 
 /// A file source's columns, sheet names, first `limit` rows and row count, a CSV read once.
 ///
@@ -411,7 +411,7 @@ pub fn file_columns(spec: &FileSpec) -> Result<(Vec<FileColumn>, Vec<String>), E
 /// # Errors
 ///
 /// Returns an error when the file is not there or does not read.
-pub fn file_rows(spec: &FileSpec, offset: usize, limit: usize) -> Result<Vec<IndexMap<String, Value>>, Error> {
+pub fn file_rows(spec: &FileSpec, offset: usize, limit: usize) -> Result<Vec<moqui_lib::object::ValueMap>, Error> {
     if is_csv(&spec.format, &spec.location) {
         return Ok(csv_rows(spec, offset, Some(limit), false)?.rows);
     }
@@ -483,7 +483,7 @@ pub fn file_query(
     spec: &FileSpec,
     sort: &[crate::grid::Sort],
     filter: &[crate::grid::Filter],
-) -> Result<(Vec<IndexMap<String, Value>>, bool), Error> {
+) -> Result<(Vec<moqui_lib::object::ValueMap>, bool), Error> {
     let (mut rows, truncated) = if is_csv(&spec.format, &spec.location) {
         let read = csv_rows(spec, 0, Some(MAX_QUERY_ROWS), true)?;
         let truncated = read.count > MAX_QUERY_ROWS;
@@ -615,7 +615,7 @@ pub(crate) fn get_grid_file_info(
     if !crate::service::may_view_tools() {
         return Ok(Out::new());
     }
-    let map: IndexMap<String, Value> = parameters.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let map: moqui_lib::object::ValueMap = parameters.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     let spec = FileSpec::from_map(&map);
     let limit = crate::group_db::number(parameters, "limit")
         .unwrap_or(100)

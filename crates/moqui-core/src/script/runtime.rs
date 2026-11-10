@@ -162,7 +162,7 @@ impl ContextFrame {
 
     /// Push a frame holding `entries`, without copying them in one by one. A `context` entry is left out, as a put of it
     /// is refused.
-    pub fn push_entries(mut entries: indexmap::IndexMap<String, Value>) -> Self {
+    pub fn push_entries(mut entries: moqui_lib::object::ValueMap) -> Self {
         entries.shift_remove("context");
         STACK.with(|stack| {
             let mut stack = stack.borrow_mut();
@@ -174,7 +174,7 @@ impl ContextFrame {
     }
 
     /// Pop the frame and return what it holds.
-    pub fn take(self) -> indexmap::IndexMap<String, Value> {
+    pub fn take(self) -> moqui_lib::object::ValueMap {
         std::mem::forget(self);
         pop_context_frame()
     }
@@ -244,7 +244,7 @@ impl Drop for IsolatedContext {
 }
 
 /// The names set in the top context frame, as an entity ECA rule's `set-results` reads them.
-pub fn top_context_entries() -> indexmap::IndexMap<String, Value> {
+pub fn top_context_entries() -> moqui_lib::object::ValueMap {
     STACK.with(|stack| stack.borrow().top_entries())
 }
 

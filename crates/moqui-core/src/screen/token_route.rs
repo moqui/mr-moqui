@@ -311,7 +311,7 @@ fn check_token(found: &RouteMatch) -> Option<Value> {
         Ok(out) if matches!(out.get("valid"), Some(Value::Bool(true))) => Some(
             out.get("routeContext")
                 .cloned()
-                .unwrap_or(Value::Map(indexmap::IndexMap::new())),
+                .unwrap_or(Value::Map(indexmap::IndexMap::default())),
         ),
         Ok(_) => None,
         Err(err) => {
@@ -364,7 +364,7 @@ pub(super) fn dispatch(
         return Ok(expired(request));
     };
     let base_path = format!("/{}/{}", found.route.name, found.token);
-    let mut route = indexmap::IndexMap::new();
+    let mut route = indexmap::IndexMap::default();
     route.insert("name".to_string(), Value::string(&found.route.name));
     route.insert("token".to_string(), Value::string(&found.token));
     route.insert("basePath".to_string(), Value::string(&base_path));

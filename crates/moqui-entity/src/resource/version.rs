@@ -82,7 +82,7 @@ pub struct ResourceChangeInfo {
 impl ResourceChangeInfo {
     /// `{isFile, size, versionName, date, userId, note}` for a script.
     pub fn to_value(&self) -> Value {
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert("isFile".to_string(), Value::Bool(self.is_file));
         map.insert(
             "size".to_string(),

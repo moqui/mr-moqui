@@ -385,7 +385,7 @@ fn get_local_actors(
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let users = super::shell::user_ids(parameters.get("userIdList"));
     let actors = local_actors(facade, &users)?;
-    let map: IndexMap<String, Value> = actors
+    let map: moqui_lib::object::ValueMap = actors
         .into_iter()
         .map(|(user, actor)| (user, Value::string(actor)))
         .collect();
@@ -401,7 +401,7 @@ fn get_local_actors(
 /// Returns an error when the actors cannot be read or written, or a user's id is an external actor's.
 pub fn local_actors(facade: &EntityFacade, users: &[String]) -> Result<IndexMap<String, String>, LibError> {
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    let mut out = IndexMap::new();
+    let mut out = IndexMap::default();
     let mut found: HashMap<String, Option<String>> = HashMap::new();
     for chunk in users.chunks(500) {
         let rows = facade
@@ -498,7 +498,7 @@ fn get_bridge_capabilities(
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let ids = super::shell::user_ids(parameters.get("chatBridgeIdList"));
     let factory = current_factory().ok_or_else(|| LibError::new("no execution context"))?;
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     for id in ids {
         let Some(row) = facade
             .find(BRIDGE)?
@@ -514,7 +514,7 @@ fn get_bridge_capabilities(
             .as_ref()
             .map(|adapter| adapter.capabilities(&info))
             .unwrap_or_default();
-        let entry: IndexMap<String, Value> = [
+        let entry: moqui_lib::object::ValueMap = [
             ("edit", Value::Bool(caps.edit)),
             ("delete", Value::Bool(caps.delete)),
             ("reaction", Value::Bool(caps.reaction)),

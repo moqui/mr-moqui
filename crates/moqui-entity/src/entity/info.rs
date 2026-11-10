@@ -89,9 +89,9 @@ pub fn all_entities_info(
     filter: &str,
     master_only: bool,
     exclude_views: bool,
-) -> Vec<IndexMap<String, Value>> {
+) -> Vec<moqui_lib::object::ValueMap> {
     let names = all_entity_names(facade, filter);
-    let mut rows: Vec<IndexMap<String, Value>> = facade.with_model(|model| {
+    let mut rows: Vec<moqui_lib::object::ValueMap> = facade.with_model(|model| {
         names
             .iter()
             .filter_map(|name| model.entity_full(name))
@@ -105,7 +105,7 @@ pub fn all_entities_info(
                         && entity.pk_field_names().len() <= 1)
             })
             .map(|entity| {
-                let mut row = IndexMap::new();
+                let mut row = IndexMap::default();
                 row.insert("entityName".to_string(), text(&entity.entity_name));
                 row.insert("package".to_string(), text(&entity.package_name));
                 row.insert(
@@ -123,7 +123,7 @@ pub fn all_entities_info(
 }
 
 /// Sort maps by one field as `CollectionUtilities.orderMapList` does: `-` descends, `^` and `+` are dropped.
-fn order_rows(rows: &mut [IndexMap<String, Value>], order_by: &str) {
+fn order_rows(rows: &mut [moqui_lib::object::ValueMap], order_by: &str) {
     let mut field = order_by.trim();
     let descending = field.starts_with('-');
     field = field.trim_start_matches(['-', '+', '^']);
@@ -148,7 +148,7 @@ fn order_rows(rows: &mut [IndexMap<String, Value>], order_by: &str) {
 }
 
 /// `getAllEntityInfo(levels, excludeViewEntities)`: entity and view counts by the first `levels` parts of the name.
-pub fn all_entity_info(facade: &EntityFacade, levels: usize, exclude_views: bool) -> Vec<IndexMap<String, Value>> {
+pub fn all_entity_info(facade: &EntityFacade, levels: usize, exclude_views: bool) -> Vec<moqui_lib::object::ValueMap> {
     let mut counts: BTreeMap<String, (i64, i64)> = BTreeMap::new();
     facade.with_model(|model| {
         for name in all_entity_names(facade, "") {
@@ -169,7 +169,7 @@ pub fn all_entity_info(facade: &EntityFacade, levels: usize, exclude_views: bool
     counts
         .into_iter()
         .map(|(name, (entities, views))| {
-            let mut row = IndexMap::new();
+            let mut row = IndexMap::default();
             row.insert("name".to_string(), Value::string(name));
             row.insert("entities".to_string(), Value::I64(entities));
             row.insert("viewEntities".to_string(), Value::I64(views));
@@ -243,12 +243,12 @@ fn relationship_info(model: &EntityModel, entity: &EntityDefinition, relationshi
         || relationship.related_entity_name.clone(),
         |related| related.entity_name.clone(),
     );
-    let key_map: IndexMap<String, Value> = relationship
+    let key_map: moqui_lib::object::ValueMap = relationship
         .key_pairs
         .iter()
         .map(|(field, related)| (field.clone(), Value::string(related)))
         .collect();
-    let mut row = IndexMap::new();
+    let mut row = IndexMap::default();
     row.insert("type".to_string(), text(&relationship.relationship_type));
     row.insert(
         "isTypeOne".to_string(),
@@ -353,9 +353,9 @@ fn build_dependents(
 /// One entity as the tools screens read an `EntityDefinition`: the names, the flags of `entityInfo`, the fields, the
 /// relationships, the master definitions, the dependents, and the entity element's attributes. `None` when the entity
 /// is not defined. A DB view entity or `DataDocument.<id>` is one too.
-pub fn definition_info(facade: &EntityFacade, name: &str) -> Option<IndexMap<String, Value>> {
+pub fn definition_info(facade: &EntityFacade, name: &str) -> Option<moqui_lib::object::ValueMap> {
     let found = facade.with_entity(name, |entity, _, model| {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("fullEntityName".to_string(), text(&entity.full_name));
         map.insert("entityName".to_string(), text(&entity.entity_name));
         map.insert("packageName".to_string(), text(&entity.package_name));
@@ -389,7 +389,7 @@ pub fn definition_info(facade: &EntityFacade, name: &str) -> Option<IndexMap<Str
             .fields
             .iter()
             .map(|field| {
-                let mut row = IndexMap::new();
+                let mut row = IndexMap::default();
                 row.insert("name".to_string(), text(&field.name));
                 row.insert("type".to_string(), text(&field.field_type));
                 row.insert("columnName".to_string(), text(&field.column_name));
@@ -437,7 +437,7 @@ pub fn definition_info(facade: &EntityFacade, name: &str) -> Option<IndexMap<Str
             "allDescendants".to_string(),
             Value::List(descendants.into_iter().map(Value::string).collect()),
         );
-        let mut attributes = IndexMap::new();
+        let mut attributes = IndexMap::default();
         attributes.insert("entity-name".to_string(), text(&entity.entity_name));
         attributes.insert("package".to_string(), text(&entity.package_name));
         if let Some(group) = &entity.group {
@@ -460,7 +460,7 @@ pub fn definition_info(facade: &EntityFacade, name: &str) -> Option<IndexMap<Str
 /// [`definition_info`] with what an entity view shows besides (plans/design-dev-aide.md 8.1, 8.3): each field's SQL
 /// type in its group's database, the indexes, the master definitions with their details, and for a view entity its
 /// members, its aliases as declared (not those `alias-all` made), its `alias-all`s and whether it has a condition.
-pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<IndexMap<String, Value>> {
+pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<moqui_lib::object::ValueMap> {
     let mut map = definition_info(facade, name)?;
     let extra = facade.with_entity(name, |entity, dialect, _| {
         let mut extra = IndexMap::new();
@@ -488,7 +488,7 @@ pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<IndexMap<Strin
                     .indexes
                     .iter()
                     .map(|index| {
-                        let mut row = IndexMap::new();
+                        let mut row = IndexMap::default();
                         row.insert("name".to_string(), text(&index.name));
                         row.insert("unique".to_string(), Value::Bool(index.unique));
                         row.insert(
@@ -501,7 +501,7 @@ pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<IndexMap<Strin
             ),
         );
         fn detail(of: &moqui_db::model::MasterDetail) -> Value {
-            let mut row = IndexMap::new();
+            let mut row = IndexMap::default();
             row.insert("relationship".to_string(), text(&of.relationship));
             row.insert(
                 "useMaster".to_string(),
@@ -520,7 +520,7 @@ pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<IndexMap<Strin
                     .masters
                     .iter()
                     .map(|master| {
-                        let mut row = IndexMap::new();
+                        let mut row = IndexMap::default();
                         row.insert("name".to_string(), text(&master.name));
                         row.insert(
                             "details".to_string(),
@@ -539,7 +539,7 @@ pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<IndexMap<Strin
                         .member_entities
                         .iter()
                         .map(|member| {
-                            let mut row = IndexMap::new();
+                            let mut row = IndexMap::default();
                             row.insert("entityAlias".to_string(), text(&member.entity_alias));
                             row.insert("entityName".to_string(), text(&member.entity_name));
                             row.insert(
@@ -558,7 +558,7 @@ pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<IndexMap<Strin
                                         .key_map
                                         .iter()
                                         .map(|key| {
-                                            let mut pair = IndexMap::new();
+                                            let mut pair = IndexMap::default();
                                             pair.insert("fieldName".to_string(), text(&key.field_name));
                                             pair.insert(
                                                 "related".to_string(),
@@ -582,7 +582,7 @@ pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<IndexMap<Strin
                         .iter()
                         .filter(|alias| !alias.from_alias_all)
                         .map(|alias| {
-                            let mut row = IndexMap::new();
+                            let mut row = IndexMap::default();
                             row.insert("name".to_string(), text(&alias.name));
                             row.insert(
                                 "entityAlias".to_string(),
@@ -609,7 +609,7 @@ pub fn entity_detail(facade: &EntityFacade, name: &str) -> Option<IndexMap<Strin
                         .alias_alls
                         .iter()
                         .map(|all| {
-                            let mut row = IndexMap::new();
+                            let mut row = IndexMap::default();
                             row.insert("entityAlias".to_string(), text(&all.entity_alias));
                             row.insert("prefix".to_string(), all.prefix.as_deref().map_or(Value::Null, text));
                             row.insert(
@@ -663,7 +663,7 @@ pub fn view_sql(facade: &EntityFacade, name: &str, limit: i64) -> Result<String,
 
 /// The field types of the entity model's dictionary, each with its Java type and its SQL type in the database of
 /// `group` (the default group's when none), for an entity view's type picker.
-pub fn field_types(facade: &EntityFacade, group: Option<&str>) -> Vec<IndexMap<String, Value>> {
+pub fn field_types(facade: &EntityFacade, group: Option<&str>) -> Vec<moqui_lib::object::ValueMap> {
     let dialect = {
         let default_group = facade.inner.default_group.as_str();
         facade
@@ -678,7 +678,7 @@ pub fn field_types(facade: &EntityFacade, group: Option<&str>) -> Vec<IndexMap<S
             .dictionary_types()
             .iter()
             .map(|entry| {
-                let mut row = IndexMap::new();
+                let mut row = IndexMap::default();
                 row.insert("type".to_string(), text(&entry.type_name));
                 row.insert("javaType".to_string(), text(&entry.java_type));
                 let sql = dialect

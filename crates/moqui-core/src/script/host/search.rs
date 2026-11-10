@@ -92,16 +92,16 @@ fn count(value: usize) -> Ret {
     Ret::Value(Value::I64(i64::try_from(value).unwrap_or(i64::MAX)))
 }
 
-fn options(value: Value) -> Result<indexmap::IndexMap<String, Value>, HostError> {
+fn options(value: Value) -> Result<moqui_lib::object::ValueMap, HostError> {
     match value {
         Value::Map(map) => Ok(map),
-        Value::Null => Ok(indexmap::IndexMap::new()),
+        Value::Null => Ok(indexmap::IndexMap::default()),
         _ => Err(HostError::message("ec.search takes an options map")),
     }
 }
 
 /// The options map of the first argument.
-fn options_arg(call: &Call<'_>) -> Result<indexmap::IndexMap<String, Value>, HostError> {
+fn options_arg(call: &Call<'_>) -> Result<moqui_lib::object::ValueMap, HostError> {
     options(call.value_or_null(0))
 }
 
@@ -130,7 +130,7 @@ fn number(value: Option<&Value>, default: usize) -> usize {
         .unwrap_or(default)
 }
 
-fn target_of(map: &indexmap::IndexMap<String, Value>) -> Result<Target, HostError> {
+fn target_of(map: &moqui_lib::object::ValueMap) -> Result<Target, HostError> {
     // Session replays are read only through the replay services, which need MONITOR_REPLAY (moqui-report browser.rs).
     let replays = || HostError::message("browser replays are read through the replay services, not ec.search");
     let documents = text_list(map.get("documentType").or_else(|| map.get("documentTypes")));
@@ -193,7 +193,7 @@ fn search_search(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let page = facade.search(&target, &request).map_err(HostError::Lib)?;
     let mut hits = Vec::with_capacity(page.hits.len());
     for hit in page.hits {
-        let mut entry = indexmap::IndexMap::new();
+        let mut entry = indexmap::IndexMap::default();
         entry.insert("documentId".to_string(), Value::String(hit.document_id));
         entry.insert("id".to_string(), Value::String(hit.id));
         entry.insert("index".to_string(), Value::String(hit.index));
@@ -207,7 +207,7 @@ fn search_search(call: &mut Call<'_>) -> Result<Ret, HostError> {
         entry.insert("highlights".to_string(), Value::Map(highlights));
         hits.push(Value::Map(entry));
     }
-    let mut out = indexmap::IndexMap::new();
+    let mut out = indexmap::IndexMap::default();
     out.insert("hits".to_string(), Value::List(hits));
     out.insert(
         "total".to_string(),
@@ -219,7 +219,7 @@ fn search_search(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// `retrieval: "hybrid" | "semantic"` with `text`, `k`, `weights: {lexical, prefix, fuzzy, semantic}`, `fuzzyBelow`,
 /// and `qualityBoost`. Absent or `"lexical"` is the query alone.
-fn retrieval(map: &indexmap::IndexMap<String, Value>) -> Result<search::Retrieval, HostError> {
+fn retrieval(map: &moqui_lib::object::ValueMap) -> Result<search::Retrieval, HostError> {
     let kind = map.get("retrieval").map(to_plain_string).unwrap_or_default();
     if kind.is_empty() || kind == "lexical" {
         return Ok(search::Retrieval::Lexical);
@@ -256,7 +256,7 @@ fn retrieval(map: &indexmap::IndexMap<String, Value>) -> Result<search::Retrieva
 const MAX_FRESH_TIMEOUT: u64 = 60_000;
 
 /// The read-your-writes deadline from `consistency` and `freshTimeout`, which is at most [`MAX_FRESH_TIMEOUT`].
-fn fresh_by(map: &indexmap::IndexMap<String, Value>) -> Option<std::time::Instant> {
+fn fresh_by(map: &moqui_lib::object::ValueMap) -> Option<std::time::Instant> {
     let consistency = map.get("consistency").map(to_plain_string)?;
     if !consistency.eq_ignore_ascii_case("readYourWrites") {
         return None;
@@ -430,7 +430,7 @@ fn process_feed_pending(call: &mut Call<'_>) -> Result<Ret, HostError> {
         }
     };
     let report = search::feed::process_pending(ids.as_deref(), stuck_after).map_err(HostError::Lib)?;
-    let mut out = indexmap::IndexMap::new();
+    let mut out = indexmap::IndexMap::default();
     let count = |value: usize| Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
     out.insert("documentsIndexed".to_string(), count(report.documents_indexed));
     out.insert("documentsDeleted".to_string(), count(report.documents_deleted));
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn a_huge_fresh_timeout_waits_at_most_the_maximum() {
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert("consistency".to_string(), Value::string("readYourWrites"));
         map.insert("freshTimeout".to_string(), Value::string("18446744073709551615"));
         let before = Instant::now();

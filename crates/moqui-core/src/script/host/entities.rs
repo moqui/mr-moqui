@@ -498,7 +498,7 @@ fn condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
         return chain(call, |find| find.condition(condition));
     }
     let entries = match &first {
-        Value::List(_) => IndexMap::new(),
+        Value::List(_) => IndexMap::default(),
         other => crate::script::value_map(other)
             .ok_or_else(|| HostError::message("entity condition needs a field and a value"))?,
     };
@@ -1346,7 +1346,7 @@ fn value_clone(call: &mut Call<'_>) -> Result<Ret, HostError> {
 fn value_equals(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let cell = this_cell(call)?;
     let other = call.value_or_null(0);
-    let theirs: IndexMap<String, Value> = match &other {
+    let theirs: moqui_lib::object::ValueMap = match &other {
         Value::Map(entries) => entries.clone(),
         Value::Object(object) => match object.downcast::<EntityCell>() {
             Some(theirs) => val(&theirs)
@@ -1389,7 +1389,7 @@ fn value_equals(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// `getMap()`: the fields as a plain map, the localized ones in the user's locale.
 fn value_get_map(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let map: IndexMap<String, Value> = field_map(&*this_cell(call)?).into_iter().collect();
+    let map: moqui_lib::object::ValueMap = field_map(&*this_cell(call)?).into_iter().collect();
     Ok(Ret::Value(Value::Map(map)))
 }
 
@@ -1411,8 +1411,8 @@ fn plain_value_map(
     value: &EntityValue,
     levels: i32,
     parent_pks: &[String],
-) -> Result<IndexMap<String, Value>, moqui_lib::error::Error> {
-    let mut map = IndexMap::new();
+) -> Result<moqui_lib::object::ValueMap, moqui_lib::error::Error> {
+    let mut map = IndexMap::default();
     for (name, field) in crate::entity::string_map(value.fields()) {
         if field.is_null() || parent_pks.iter().any(|pk| pk == &name) {
             continue;
@@ -1540,7 +1540,7 @@ fn value_set_fields(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// What `setFields` reads its fields from, as the QuickJS object's `in` and property read saw it: a map's entries, an
 /// entity value's fields (a field its entity defines that it does not hold is there, as null), a list's indexes.
 enum FieldSource {
-    Entries(IndexMap<String, Value>),
+    Entries(moqui_lib::object::ValueMap),
     Entity(Arc<EntityCell>),
 }
 
@@ -1566,7 +1566,7 @@ fn setfields_source(value: Option<&Value>) -> Option<FieldSource> {
         Value::Map(entries) => FieldSource::Entries(entries.clone()),
         Value::Object(object) => match object.downcast::<EntityCell>() {
             Some(cell) => FieldSource::Entity(cell),
-            None => FieldSource::Entries(IndexMap::new()),
+            None => FieldSource::Entries(IndexMap::default()),
         },
         _ => return None,
     })
@@ -1618,7 +1618,7 @@ fn value_primary_keys(call: &mut Call<'_>) -> Result<Ret, HostError> {
             Ok(entity.pk_field_names().iter().map(|name| (*name).to_string()).collect())
         })
         .map_err(lib)?;
-    let map: IndexMap<String, Value> = names
+    let map: moqui_lib::object::ValueMap = names
         .into_iter()
         .map(|name| {
             let field = value.get(&name).cloned().unwrap_or(Value::Null);

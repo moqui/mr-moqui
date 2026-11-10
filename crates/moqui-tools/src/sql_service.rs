@@ -320,7 +320,7 @@ fn get_sql_catalog(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) 
             return none();
         }
     };
-    let mut tables: IndexMap<String, Value> = IndexMap::new();
+    let mut tables: moqui_lib::object::ValueMap = IndexMap::default();
     for row in &rows {
         let schema = row.get("table_schema").map(to_plain_string).unwrap_or_default();
         let current = row.get("current_schema").map(to_plain_string).unwrap_or_default();
@@ -337,7 +337,7 @@ fn get_sql_catalog(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) 
     }
     let groups = facade.group_names();
     let default = facade.default_group().to_string();
-    let entities: IndexMap<String, Value> = facade.with_model(|model| {
+    let entities: moqui_lib::object::ValueMap = facade.with_model(|model| {
         model
             .entities()
             .iter()
@@ -497,7 +497,7 @@ fn find_sql_history(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
     let history = rows
         .iter()
         .map(|row| {
-            let mut entry = IndexMap::new();
+            let mut entry = IndexMap::default();
             for field in [
                 "auditId",
                 "db",
@@ -520,7 +520,7 @@ fn find_sql_history(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
 }
 
 fn saved_query_value(row: &moqui_core::entity::EntityValue) -> Value {
-    let mut entry = IndexMap::new();
+    let mut entry = IndexMap::default();
     for field in [
         "queryId",
         "description",

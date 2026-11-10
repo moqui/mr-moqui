@@ -353,7 +353,7 @@ fn fixture_of(value: &Value) -> Result<Fixture, Error> {
 }
 
 fn recorded_value(recorded: &Recorded) -> Value {
-    let mut out = IndexMap::new();
+    let mut out = IndexMap::default();
     out.insert("method".to_string(), Value::string(&recorded.method));
     out.insert("url".to_string(), Value::string(&recorded.url));
     out.insert(

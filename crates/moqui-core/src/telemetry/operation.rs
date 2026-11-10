@@ -253,7 +253,7 @@ impl Registry {
 
 /// The metric attributes of a run.
 pub(super) fn attributes(name: &str, outcome: Outcome) -> Document {
-    let mut attributes = Document::new();
+    let mut attributes = Document::default();
     attributes.insert("moqui.operation.name".into(), Value::string(name));
     attributes.insert("outcome".into(), Value::string(outcome.as_str()));
     attributes

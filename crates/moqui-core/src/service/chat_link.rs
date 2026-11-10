@@ -314,7 +314,7 @@ fn extract_link_urls(
     let list = extract_urls(&body)
         .into_iter()
         .map(|url| {
-            let mut map = IndexMap::new();
+            let mut map = IndexMap::default();
             map.insert("urlHash".to_string(), Value::string(url_hash(&url)));
             map.insert("url".to_string(), Value::string(url));
             Value::Map(map)

@@ -17,7 +17,6 @@
 
 use std::collections::BTreeMap;
 
-use indexmap::IndexMap;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{basic_convert, is_empty, to_plain_string, Value};
 
@@ -70,7 +69,7 @@ pub fn param_text(parameters: &BTreeMap<String, Value>, name: &str) -> String {
 }
 
 /// The plain text of entry `name` of `map`. Empty when it is missing or empty.
-pub fn map_text(map: &IndexMap<String, Value>, name: &str) -> String {
+pub fn map_text(map: &moqui_lib::object::ValueMap, name: &str) -> String {
     text_of(map.get(name))
 }
 

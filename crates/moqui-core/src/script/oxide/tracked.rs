@@ -48,7 +48,10 @@ pub(crate) enum Flush {
 
 /// What a screen unit sets aside of the run around it ([`RunValues::take_outer`]): its released values and the values
 /// it kept by name.
-pub(super) type OuterValues = (HashMap<String, (Value, u64)>, HashMap<String, Value>);
+pub(super) type OuterValues = (
+    HashMap<String, (Value, u64), foldhash::fast::RandomState>,
+    HashMap<String, Value, foldhash::fast::RandomState>,
+);
 
 /// Whether the stack still holds, for `name`, the host value whose [`fingerprint`] a [`Flush::Release`] noted.
 fn print_held(name: &str, print: u64) -> bool {
@@ -59,11 +62,11 @@ fn print_held(name: &str, print: u64) -> bool {
 #[derive(Default)]
 pub(super) struct RunValues {
     /// Lists, maps and decimals read or assigned by name, written back at a flush.
-    tracked: HashMap<String, Value>,
+    tracked: HashMap<String, Value, foldhash::fast::RandomState>,
     /// Values a [`Flush::Release`] took off `tracked`, with the [`fingerprint`] of the host value written for each.
-    released: HashMap<String, (Value, u64)>,
+    released: HashMap<String, (Value, u64), foldhash::fast::RandomState>,
     /// Entity values read by name, kept so a second read is the same object.
-    kept: HashMap<String, Value>,
+    kept: HashMap<String, Value, foldhash::fast::RandomState>,
     /// Whether a flush is writing back now: a conversion meanwhile does not flush again.
     flushing: bool,
 }
@@ -355,7 +358,7 @@ pub(super) fn kept_matches<J: Js>(
         return Ok(false);
     }
     // a map whose `__wrap` is not a name passes through as itself, its members unread (`convert::to_js`)
-    let wrapped = |entries: &indexmap::IndexMap<String, HostValue>| {
+    let wrapped = |entries: &moqui_lib::object::ValueMap| {
         matches!(entries.get(WRAP_KEY), Some(HostValue::String(_))) && engine.tools_wrap().is_some()
     };
     let passes_through = matches!(held, HostValue::Map(entries) if entries.contains_key(WRAP_KEY) && !wrapped(entries));

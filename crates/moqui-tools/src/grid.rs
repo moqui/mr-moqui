@@ -222,7 +222,7 @@ impl Column {
     #[must_use]
     pub fn to_value(&self) -> Value {
         let text = |value: &Option<String>| value.clone().map_or(Value::Null, Value::String);
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("name".to_string(), Value::string(&self.name));
         map.insert("title".to_string(), Value::string(&self.title));
         map.insert("type".to_string(), Value::string(self.kind));
@@ -499,7 +499,7 @@ fn file_refusal(err: &Error) -> Refusal {
 }
 
 /// A file source's rows as the grid's: the `columns` asked for (all when empty), no secret.
-fn file_row_values(rows: Vec<IndexMap<String, Value>>, columns: &[String]) -> Vec<Value> {
+fn file_row_values(rows: Vec<moqui_lib::object::ValueMap>, columns: &[String]) -> Vec<Value> {
     rows.into_iter()
         .map(|row| {
             Value::Map(
@@ -1052,7 +1052,7 @@ fn entity_find(
 }
 
 fn row_value(facade: &EntityFacade, entity: &EntityDefinition, value: &EntityValue, columns: &[String]) -> Value {
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     let names: Vec<&str> = if columns.is_empty() {
         entity.fields.iter().map(|field| field.name.as_str()).collect()
     } else {
@@ -1135,7 +1135,7 @@ fn sql_rows(result: moqui_core::entity::info::SqlResult, columns: &[String], sta
         .records
         .into_iter()
         .map(|record| {
-            let mut map: IndexMap<String, Value> = IndexMap::new();
+            let mut map: moqui_lib::object::ValueMap = IndexMap::default();
             for (name, value) in result.columns.iter().zip(record) {
                 if Some(name.as_str()) == stamp_column {
                     if let Value::Timestamp(stamp) = &value {
@@ -1774,7 +1774,7 @@ pub struct RefusedRow {
 impl RefusedRow {
     #[must_use]
     pub fn to_value(&self) -> Value {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("kind".to_string(), Value::string(self.kind));
         map.insert(
             "index".to_string(),
@@ -2213,7 +2213,7 @@ mod tests {
 
     #[test]
     fn tabulator_sorts_filters_and_stamps_are_read() {
-        let mut sort = indexmap::IndexMap::new();
+        let mut sort = indexmap::IndexMap::default();
         sort.insert("field".to_string(), Value::string("a"));
         sort.insert("dir".to_string(), Value::string("desc"));
         assert_eq!(
@@ -2223,7 +2223,7 @@ mod tests {
                 descending: true
             }]
         );
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert("field".to_string(), Value::string("b"));
         map.insert("value".to_string(), Value::I64(1));
         assert_eq!(parse_filter(Some(&Value::List(vec![Value::Map(map)])))[0].kind, "=");

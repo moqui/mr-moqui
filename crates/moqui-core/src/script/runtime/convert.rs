@@ -50,7 +50,7 @@ pub(crate) fn converts_with_script(value: &Value) -> bool {
 
 /// Whether a map may hold one of the names a conversion treats apart (`__set__`, `__wrap`, `__proto__`): one starting
 /// `__`. A scan of the keys' first bytes, cheaper than a hashed lookup of each name in the small maps a script reads.
-pub(crate) fn has_special_key(entries: &indexmap::IndexMap<String, Value>) -> bool {
+pub(crate) fn has_special_key(entries: &moqui_lib::object::ValueMap) -> bool {
     entries.keys().any(|key| key.as_bytes().starts_with(b"__"))
 }
 

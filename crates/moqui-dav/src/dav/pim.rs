@@ -30,7 +30,6 @@
 
 use std::collections::HashMap;
 
-use indexmap::IndexMap;
 use moqui_lib::object::Value;
 
 use super::{
@@ -95,7 +94,7 @@ impl Adapter {
     }
 
     /// The user's collections, or only `collection_id`'s (an empty list when the user may not see it).
-    fn collections(&self, collection_id: Option<&str>) -> Result<Vec<IndexMap<String, Value>>, String> {
+    fn collections(&self, collection_id: Option<&str>) -> Result<Vec<moqui_lib::object::ValueMap>, String> {
         let parameters: Vec<(&str, Value)> = collection_id
             .map(|id| ("collectionId", Value::string(id)))
             .into_iter()
@@ -111,7 +110,7 @@ impl Adapter {
         names: Option<&[String]>,
         with_data: bool,
         query: Option<&Query>,
-    ) -> Result<Vec<IndexMap<String, Value>>, String> {
+    ) -> Result<Vec<moqui_lib::object::ValueMap>, String> {
         let mut parameters = vec![
             ("collectionId", Value::string(collection_id)),
             ("withData", Value::Bool(with_data)),
@@ -175,7 +174,7 @@ fn failed(err: &str) -> DavResponse {
     DavResponse::text(status, err)
 }
 
-fn collection_resource(context: &Context<'_>, adapter: &Adapter, row: &IndexMap<String, Value>) -> Resource {
+fn collection_resource(context: &Context<'_>, adapter: &Adapter, row: &moqui_lib::object::ValueMap) -> Resource {
     let collection_id = text_of(row, "collectionId");
     let mut resource = Resource::new(collection_href(context, adapter.kind, &collection_id));
     let name = text_of(row, "name");
@@ -260,7 +259,7 @@ fn object_resource(
     context: &Context<'_>,
     adapter: &Adapter,
     collection_id: &str,
-    row: &IndexMap<String, Value>,
+    row: &moqui_lib::object::ValueMap,
     writable: bool,
 ) -> Resource {
     let name = text_of(row, "name");
@@ -324,7 +323,7 @@ fn home(context: &Context<'_>, adapter: &Adapter, method: &str) -> DavResponse {
     multistatus(&resources, &wanted)
 }
 
-fn find_collection(adapter: &Adapter, collection_id: &str) -> Result<Option<IndexMap<String, Value>>, String> {
+fn find_collection(adapter: &Adapter, collection_id: &str) -> Result<Option<moqui_lib::object::ValueMap>, String> {
     Ok(adapter
         .collections(Some(collection_id))?
         .into_iter()
@@ -452,9 +451,9 @@ fn asked_hrefs(body: &Element) -> Vec<(String, String)> {
 fn multiget_matches<'a, 'o>(
     base: &str,
     asked: &'a [(String, String)],
-    objects: &'o [IndexMap<String, Value>],
-) -> Vec<(&'a str, Option<&'o IndexMap<String, Value>>)> {
-    let mut by_name: HashMap<String, &IndexMap<String, Value>> = HashMap::with_capacity(objects.len());
+    objects: &'o [moqui_lib::object::ValueMap],
+) -> Vec<(&'a str, Option<&'o moqui_lib::object::ValueMap>)> {
+    let mut by_name: HashMap<String, &moqui_lib::object::ValueMap> = HashMap::with_capacity(objects.len());
     for object in objects {
         // the first object of a name wins, as the scan it replaces found
         by_name.entry(text_of(object, "name")).or_insert(object);
@@ -525,7 +524,7 @@ fn object(context: &Context<'_>, adapter: &Adapter, method: &str, collection_id:
         collection_href(context, adapter.kind, collection_id),
         encode(name)
     );
-    let one = |with_data: bool| -> Result<Option<IndexMap<String, Value>>, String> {
+    let one = |with_data: bool| -> Result<Option<moqui_lib::object::ValueMap>, String> {
         Ok(adapter
             .objects(collection_id, Some(&[name.to_string()]), with_data, None)?
             .into_iter()

@@ -191,7 +191,7 @@ pub enum Arg {
     /// `ec.context` passed as a parameters map ([`ArgKind::Parameters`]).
     WholeContext,
     /// The entries of an additional-context object.
-    Context(Option<indexmap::IndexMap<String, Value>>),
+    Context(Option<moqui_lib::object::ValueMap>),
     /// The state of a host object ([`ArgKind::Host`]).
     Host(HostObject),
     /// An element literal ([`ArgKind::Node`], [`ArgKind::OptNode`]).
@@ -391,7 +391,7 @@ pub trait EngineOps {
     /// Write the engine's tracked values back to the context stack.
     fn flush(&mut self, mode: FlushBefore) -> Result<(), HostError>;
     /// The whole context as a script sees it, its tracked values written back first ([`Arg::WholeContext`]).
-    fn whole_context(&mut self) -> Result<indexmap::IndexMap<String, Value>, HostError>;
+    fn whole_context(&mut self) -> Result<moqui_lib::object::ValueMap, HostError>;
     /// Evaluate `source` (a script whose completion value is the result, `name` its file name in errors) in the running
     /// engine; its value as a host value. A script that throws is [`HostError::Message`] of the error's text.
     fn evaluate(&mut self, source: &str, name: &str) -> Result<Value, HostError>;

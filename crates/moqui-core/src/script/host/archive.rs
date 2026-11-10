@@ -215,7 +215,7 @@ fn resource_extract_archive(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let mut written = Vec::new();
     let mut skipped = Vec::new();
     let mut skip = |path: String, reason: &str| {
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert("path".to_string(), Value::String(path));
         map.insert("reason".to_string(), Value::string(reason));
         skipped.push(Value::Map(map));
@@ -248,12 +248,12 @@ fn resource_extract_archive(call: &mut Call<'_>) -> Result<Ret, HostError> {
         if let Err(err) = result {
             return Err(HostError::message(format!("cannot write {path}: {}", err.message())));
         }
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert("path".to_string(), Value::String(path));
         map.insert("size".to_string(), Value::I64(size as i64));
         written.push(Value::Map(map));
     }
-    let mut result = indexmap::IndexMap::new();
+    let mut result = indexmap::IndexMap::default();
     result.insert("entries".to_string(), Value::List(written));
     result.insert("skipped".to_string(), Value::List(skipped));
     Ok(Value::Map(result).into())
@@ -311,7 +311,7 @@ fn resource_read_lines(call: &mut Call<'_>) -> Result<Ret, HostError> {
         buffered.consume(used);
         consumed += used as u64;
     }
-    let mut result = indexmap::IndexMap::new();
+    let mut result = indexmap::IndexMap::default();
     result.insert("lines".to_string(), Value::List(lines));
     result.insert("nextOffset".to_string(), Value::I64((start + consumed) as i64));
     result.insert("done".to_string(), Value::Bool(done));

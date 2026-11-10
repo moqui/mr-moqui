@@ -1204,7 +1204,7 @@ impl StatementResult {
     /// `rowsAffected`, `durationMs`, `error`, `rerunnable`, `skipped`, `rolledBack`, `auditId`.
     #[must_use]
     pub fn to_value(&self) -> Value {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert(
             "seq".to_string(),
             Value::I64(i64::try_from(self.seq).unwrap_or(i64::MAX)),
@@ -1245,7 +1245,7 @@ impl Statement {
     /// As the service answers it: `seq`, `sql`, `changes`, `ownTransaction`, `implicitCommit`, `transactionControl`.
     #[must_use]
     pub fn to_value(&self) -> Value {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert(
             "seq".to_string(),
             Value::I64(i64::try_from(self.seq).unwrap_or(i64::MAX)),

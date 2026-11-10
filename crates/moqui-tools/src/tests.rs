@@ -184,7 +184,7 @@ fn the_embedded_cluster_allows_everything_with_pg_stat_statements_loaded() {
     assert!(read.embedded);
     assert!(read.settings.len() >= 2);
     let name =
-        |row: &indexmap::IndexMap<String, moqui_lib::object::Value>| moqui_lib::object::to_plain_string(&row["name"]);
+        |row: &moqui_lib::object::ValueMap| moqui_lib::object::to_plain_string(&row["name"]);
     assert!(read.settings.iter().all(|row| name(row).contains("work_mem")));
     let work_mem = read.settings.iter().find(|row| name(row) == "work_mem").unwrap();
     assert_eq!(

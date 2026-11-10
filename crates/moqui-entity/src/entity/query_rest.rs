@@ -645,12 +645,12 @@ pub fn master_value(facade: &EntityFacade, record: &EntityValue, master: &str) -
 /// As in Java, read-only relationships and unrelated metadata maps are not persisted.
 pub fn values_from_plain_map(
     facade: &EntityFacade,
-    map: &indexmap::IndexMap<String, Value>,
+    map: &moqui_lib::object::ValueMap,
     entity: &str,
 ) -> Result<Vec<EntityValue>, Error> {
     fn add(
         facade: &EntityFacade,
-        map: &indexmap::IndexMap<String, Value>,
+        map: &moqui_lib::object::ValueMap,
         entity: &str,
         inherited: &BTreeMap<String, Value>,
         depth: u32,
@@ -2242,11 +2242,11 @@ mod tests {
         let stamp: jiff::Timestamp = "2024-01-02T03:04:05.123Z".parse().unwrap();
         let date = jiff::civil::date(2024, 1, 2);
         let time = jiff::civil::time(3, 4, 5, 0);
-        let child = Value::Map(indexmap::IndexMap::from([
+        let child = Value::Map(indexmap::IndexMap::from_iter([
             ("c".to_string(), Value::I64(1)),
             ("d".to_string(), Value::List(vec![Value::I64(1), Value::I64(2)])),
         ]));
-        let value = Value::Map(indexmap::IndexMap::from([
+        let value = Value::Map(indexmap::IndexMap::from_iter([
             ("stamp".to_string(), Value::Timestamp(stamp)),
             (
                 "before".to_string(),
@@ -2257,7 +2257,7 @@ mod tests {
             ("rows".to_string(), Value::List(vec![child.clone(), Value::string("x")])),
             ("one".to_string(), child),
             ("none".to_string(), Value::List(Vec::new())),
-            ("empty".to_string(), Value::Map(indexmap::IndexMap::new())),
+            ("empty".to_string(), Value::Map(indexmap::IndexMap::default())),
             ("text".to_string(), Value::string("a\"b")),
             ("null".to_string(), Value::Null),
         ]));

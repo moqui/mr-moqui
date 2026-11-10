@@ -23,7 +23,7 @@ use crate::object::{is_empty, to_plain_string, Value};
 
 /// The `key` value of each map. A missing key is a null, as in Java, so the values line up
 /// with the maps unless `exclude_null` drops them.
-pub fn get_map_list_values(maps: &[IndexMap<String, Value>], key: &str, exclude_null: bool) -> Vec<Value> {
+pub fn get_map_list_values(maps: &[crate::object::ValueMap], key: &str, exclude_null: bool) -> Vec<Value> {
     let mut values = Vec::with_capacity(maps.len());
     for map in maps {
         let value = map.get(key).unwrap_or(&Value::Null);
@@ -35,13 +35,13 @@ pub fn get_map_list_values(maps: &[IndexMap<String, Value>], key: &str, exclude_
     values
 }
 
-pub fn flatten_nested_map(map: &IndexMap<String, Value>) -> IndexMap<String, Value> {
-    let mut out = IndexMap::new();
+pub fn flatten_nested_map(map: &crate::object::ValueMap) -> crate::object::ValueMap {
+    let mut out = IndexMap::default();
     flatten_into(map, &mut out);
     out
 }
 
-fn flatten_into(map: &IndexMap<String, Value>, out: &mut IndexMap<String, Value>) {
+fn flatten_into(map: &crate::object::ValueMap, out: &mut crate::object::ValueMap) {
     for (key, value) in map {
         match value {
             Value::Map(nested) => flatten_into(nested, out),
@@ -65,7 +65,7 @@ fn flatten_into(map: &IndexMap<String, Value>, out: &mut IndexMap<String, Value>
 pub fn paginate_parameters(
     list_size: i32,
     page_list_name: &str,
-    context: &mut IndexMap<String, Value>,
+    context: &mut crate::object::ValueMap,
 ) -> Result<(), Error> {
     let mut page_index = context_int(context, "pageIndex").unwrap_or(0);
     if page_index < 0 {
@@ -108,7 +108,7 @@ pub fn paginate_parameters(
     Ok(())
 }
 
-fn context_int(context: &IndexMap<String, Value>, key: &str) -> Option<i32> {
+fn context_int(context: &crate::object::ValueMap, key: &str) -> Option<i32> {
     let value = context.get(key)?;
     if is_empty(value) {
         return None;
@@ -127,7 +127,7 @@ mod tests {
     use super::*;
     use crate::object::java_equals;
 
-    fn row(pairs: &[(&str, Value)]) -> IndexMap<String, Value> {
+    fn row(pairs: &[(&str, Value)]) -> crate::object::ValueMap {
         pairs
             .iter()
             .map(|(key, value)| ((*key).to_string(), value.clone()))
@@ -152,9 +152,9 @@ mod tests {
 
     #[test]
     fn nested_maps_flatten() {
-        let mut nested = IndexMap::new();
+        let mut nested = IndexMap::default();
         nested.insert("id".to_string(), Value::string("2"));
-        let mut root = IndexMap::new();
+        let mut root = IndexMap::default();
         root.insert("child".to_string(), Value::Map(nested));
         let flat = flatten_nested_map(&root);
         assert_eq!(flat.get("id"), Some(&Value::string("2")));
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn pagination_sets_the_page_keys() {
-        let mut context = IndexMap::new();
+        let mut context = IndexMap::default();
         context.insert("pageIndex".to_string(), Value::I32(1));
         context.insert("pageSize".to_string(), Value::I32(20));
         paginate_parameters(25, "rows", &mut context).unwrap();

@@ -326,7 +326,7 @@ fn defaults_and_set_if_empty_follow_java() {
         ("zeroText", Value::string("0")),
         ("noItems", Value::List(Vec::new())),
         ("items", Value::List(vec![Value::I32(1)])),
-        ("noEntries", Value::Map(indexmap::IndexMap::new())),
+        ("noEntries", Value::Map(indexmap::IndexMap::default())),
         ("entries", map(&[("k", Value::I32(1))])),
         ("noSet", map(&[("__set__", Value::List(Vec::new()))])),
         ("kept", Value::string("before")),

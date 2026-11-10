@@ -22,7 +22,8 @@ use std::collections::HashMap;
 use std::hash::Hash;
 
 pub struct BoundedMap<K, V> {
-    entries: HashMap<K, Entry<V>>,
+    // foldhash: these maps are keyed by script texts and hashes, looked up on each run (plans/Profiling3.md W10)
+    entries: HashMap<K, Entry<V>, foldhash::fast::RandomState>,
     tick: u64,
     cap: usize,
     bytes: usize,
@@ -43,7 +44,7 @@ impl<K: Hash + Eq + Clone, V: Clone> BoundedMap<K, V> {
     /// A map of at most `cap` entries whose sizes, as given to [`Self::insert_sized`], total at most `max_bytes`.
     pub fn with_bytes(cap: usize, max_bytes: usize) -> Self {
         Self {
-            entries: HashMap::new(),
+            entries: HashMap::default(),
             tick: 0,
             cap: cap.max(4),
             bytes: 0,

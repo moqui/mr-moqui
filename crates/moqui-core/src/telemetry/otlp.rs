@@ -792,7 +792,7 @@ mod tests {
 
     #[test]
     fn export_json_round_trips_through_the_receiver() {
-        let mut document = Document::new();
+        let mut document = Document::default();
         for (key, value) in [
             ("trace_id", Value::string("0123456789abcdef0123456789abcdef")),
             ("span_id", Value::string("0123456789abcdef")),

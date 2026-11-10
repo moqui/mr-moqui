@@ -194,7 +194,7 @@ fn reference(info: &DocumentInfo, rows: &[BTreeMap<String, Value>]) -> Vec<Docum
             match matched {
                 Some(Value::Map(existing)) => populate(&rel.node, row, existing),
                 _ => {
-                    let mut child = Document::new();
+                    let mut child = Document::default();
                     set_fields(&rel.node, row, &mut child);
                     populate(&rel.node, row, &mut child);
                     if child.is_empty() {
@@ -213,7 +213,7 @@ fn reference(info: &DocumentInfo, rows: &[BTreeMap<String, Value>]) -> Vec<Docum
     let mut docs: indexmap::IndexMap<String, Document> = indexmap::IndexMap::new();
     for row in rows {
         let doc = docs.entry(info.doc_id(row)).or_insert_with(|| {
-            let mut doc = Document::new();
+            let mut doc = Document::default();
             set_fields(&info.root, row, &mut doc);
             doc
         });

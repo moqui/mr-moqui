@@ -4840,6 +4840,7 @@ dependencies = [
  "bytes",
  "csv",
  "datamatrix",
+ "foldhash 0.2.0",
  "getrandom 0.4.3",
  "indexmap",
  "jiff",

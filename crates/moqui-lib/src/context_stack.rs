@@ -29,7 +29,7 @@ use indexmap::IndexMap;
 use crate::error::Error;
 use crate::object::{java_equals, Value};
 
-pub type Frame = Rc<RefCell<IndexMap<String, Value>>>;
+pub type Frame = Rc<RefCell<crate::object::ValueMap>>;
 
 /// What [`ContextStack::get`] found.
 #[derive(Clone, Debug, PartialEq)]
@@ -72,7 +72,7 @@ impl ContextStack {
     }
 
     /// The entries of the top frame only, the map the last [`Self::push`] began.
-    pub fn top_entries(&self) -> IndexMap<String, Value> {
+    pub fn top_entries(&self) -> crate::object::ValueMap {
         self.top
             .as_ref()
             .map(|frame| frame.borrow().clone())
@@ -96,7 +96,7 @@ impl ContextStack {
         Ok(())
     }
 
-    pub fn push_entries(&mut self, map: IndexMap<String, Value>) -> Result<(), Error> {
+    pub fn push_entries(&mut self, map: crate::object::ValueMap) -> Result<(), Error> {
         self.push_map(Rc::new(RefCell::new(map)))
     }
 
@@ -234,7 +234,7 @@ impl ContextStack {
         self.top.as_ref().and_then(|frame| frame.borrow_mut().shift_remove(key))
     }
 
-    pub fn put_all(&mut self, map: &IndexMap<String, Value>) -> Result<(), Error> {
+    pub fn put_all(&mut self, map: &crate::object::ValueMap) -> Result<(), Error> {
         if self.include_context && map.contains_key("context") {
             return Err(Error::new("cannot push a map containing key 'context'"));
         }
@@ -299,8 +299,8 @@ impl ContextStack {
     }
 
     /// Root first, so a higher frame overrides a lower one.
-    pub fn combined_map(&self) -> IndexMap<String, Value> {
-        let mut combined = IndexMap::new();
+    pub fn combined_map(&self) -> crate::object::ValueMap {
+        let mut combined = IndexMap::default();
         for frame in self.root_first() {
             for (key, value) in frame.borrow().iter() {
                 combined.insert(key.clone(), value.clone());
@@ -402,7 +402,7 @@ mod tests {
             .borrow_mut()
             .insert("hidden".to_string(), Value::string("x"));
         assert_eq!(stack.get("hidden"), Lookup::Missing);
-        let mut bad = IndexMap::new();
+        let mut bad = IndexMap::default();
         bad.insert("context".to_string(), Value::Null);
         assert!(stack.push_entries(bad).is_err());
     }

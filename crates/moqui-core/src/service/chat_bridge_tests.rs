@@ -22,7 +22,6 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use indexmap::IndexMap;
 use moqui_lib::object::{to_plain_string, Value};
 use serde_json::json;
 
@@ -224,7 +223,7 @@ fn out_number(out: &BTreeMap<String, Value>, key: &str) -> i64 {
         .unwrap_or(-1)
 }
 
-fn maps(value: Option<&Value>) -> Vec<IndexMap<String, Value>> {
+fn maps(value: Option<&Value>) -> Vec<moqui_lib::object::ValueMap> {
     match value {
         Some(Value::List(items)) => items
             .iter()
@@ -237,7 +236,7 @@ fn maps(value: Option<&Value>) -> Vec<IndexMap<String, Value>> {
     }
 }
 
-fn field(map: &IndexMap<String, Value>, key: &str) -> String {
+fn field(map: &moqui_lib::object::ValueMap, key: &str) -> String {
     map.get(key).map(to_plain_string).unwrap_or_default()
 }
 
@@ -413,7 +412,7 @@ impl Bed {
         find.count().unwrap()
     }
 
-    fn timeline(&self) -> Vec<IndexMap<String, Value>> {
+    fn timeline(&self) -> Vec<moqui_lib::object::ValueMap> {
         maps(ok(&format!("{CHAT}.get#Timeline"), &[("chatRoomId", text(&self.room))]).get("eventList"))
     }
 }

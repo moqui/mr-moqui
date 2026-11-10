@@ -84,7 +84,7 @@ pub fn blocking_trees(blocked_by: &BTreeMap<i64, Vec<i64>>) -> Vec<Value> {
         roots.extend(blocks.keys().next().copied());
     }
     fn tree(pid: i64, blocks: &BTreeMap<i64, BTreeSet<i64>>, seen: &mut BTreeSet<i64>) -> Value {
-        let mut node = IndexMap::new();
+        let mut node = IndexMap::default();
         node.insert("pid".to_string(), Value::I64(pid));
         let mut children = Vec::new();
         if seen.insert(pid) {
@@ -114,7 +114,7 @@ pub(crate) fn get_database_activity(
         return Ok(Out::new());
     };
     let own_name = moqui_core::driver::application_name().map(|name| name.to_string());
-    let mut reasons = IndexMap::new();
+    let mut reasons = IndexMap::default();
     let (mut rows, waits, app_names) = if db.is_postgres() {
         let rows = db.query_or_note(POSTGRES_ACTIVITY, &[], "sessions", &mut reasons);
         (rows, HashMap::new(), HashMap::new())
@@ -364,7 +364,7 @@ fn duplicates(indexes: &[IndexRow]) -> Vec<Value> {
                 && (other.columns.len() > index.columns.len() || other.name < index.name)
         });
         if let Some(other) = covering {
-            let mut row = IndexMap::new();
+            let mut row = IndexMap::default();
             row.insert("table_name".to_string(), Value::string(&index.table));
             row.insert("index_name".to_string(), Value::string(&index.name));
             row.insert("columns".to_string(), Value::string(index.columns.join(", ")));
@@ -392,7 +392,7 @@ pub(crate) fn get_index_health(
     let Some(db) = GroupDb::of(parameters, facade) else {
         return Ok(Out::new());
     };
-    let mut reasons = IndexMap::new();
+    let mut reasons = IndexMap::default();
     let mut out = Out::new();
     let Some(catalog) = moqui_db::sql::catalog::schema_catalog(&db.dialect) else {
         add_error("This database has no index catalog the Tools read");
@@ -424,7 +424,7 @@ pub(crate) fn get_index_health(
         .iter()
         .filter(|index| !index.valid)
         .map(|index| {
-            let mut row = IndexMap::new();
+            let mut row = IndexMap::default();
             row.insert("table_name".to_string(), Value::string(&index.table));
             row.insert("index_name".to_string(), Value::string(&index.name));
             Value::Map(row)
@@ -448,7 +448,7 @@ pub(crate) fn get_index_health(
                     && index.columns[..columns.len()].iter().collect::<BTreeSet<_>>() == wanted
             });
             if !indexed {
-                let mut out_row = IndexMap::new();
+                let mut out_row = IndexMap::default();
                 out_row.insert("table_name".to_string(), Value::string(&table));
                 out_row.insert(
                     "constraint_name".to_string(),

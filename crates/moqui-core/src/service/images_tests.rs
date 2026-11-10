@@ -111,7 +111,7 @@ fn a_location_is_text_or_a_resource_reference() {
         location_of(Some(&Value::string("runtime://a.png"))),
         Some("runtime://a.png".to_string())
     );
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("location".to_string(), Value::string("runtime://b.png"));
     assert_eq!(location_of(Some(&Value::Map(map))), Some("runtime://b.png".to_string()));
     assert_eq!(location_of(Some(&Value::Null)), None);

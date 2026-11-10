@@ -1313,7 +1313,7 @@ impl SearchBackend for PostgresBackend {
         mapping: &DocumentMapping,
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
-    ) -> Result<IndexMap<String, Value>, Error> {
+    ) -> Result<moqui_lib::object::ValueMap, Error> {
         self.aggregate_fresh(mapping, filter, aggs, None)
     }
 
@@ -1323,7 +1323,7 @@ impl SearchBackend for PostgresBackend {
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
         fresh_by: Option<Instant>,
-    ) -> Result<IndexMap<String, Value>, Error> {
+    ) -> Result<moqui_lib::object::ValueMap, Error> {
         let table = self.table(mapping);
         let route = self.read_route(fresh_by);
         let mut run = |sql: &Sql| self.query_on(route, sql);
@@ -1338,7 +1338,7 @@ impl SearchBackend for PostgresBackend {
         filter: &Query,
         aggs: &IndexMap<String, Agg>,
         fresh_by: Option<Instant>,
-    ) -> Result<IndexMap<String, Value>, Error> {
+    ) -> Result<moqui_lib::object::ValueMap, Error> {
         let mapping = super::mapping::combined_mapping(mappings)?;
         let mut population = Sql::new("");
         for (index, source) in mappings.iter().enumerate() {

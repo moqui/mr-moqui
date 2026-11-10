@@ -356,7 +356,7 @@ fn backup_admin() -> Result<(), LibError> {
 
 fn backup_value(state: &BackupState) -> Value {
     let (entity, backup, kept, rows, reason) = *state;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("entityName".to_string(), Value::string(entity));
     map.insert("backupTable".to_string(), Value::string(backup));
     map.insert(

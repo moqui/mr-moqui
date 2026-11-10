@@ -156,11 +156,11 @@ impl Capabilities {
         out.insert("startTime".to_string(), self.start_time.clone().unwrap_or(Value::Null));
         out.insert("uptimeSeconds".to_string(), number(self.uptime_seconds));
         out.insert("databaseSize".to_string(), number(self.database_size));
-        let features: IndexMap<String, Value> = FEATURES
+        let features: moqui_lib::object::ValueMap = FEATURES
             .iter()
             .map(|name| {
                 let feature = self.feature(name);
-                let mut entry = IndexMap::new();
+                let mut entry = IndexMap::default();
                 entry.insert("available".to_string(), Value::Bool(feature.available));
                 entry.insert("reason".to_string(), text(&feature.reason));
                 ((*name).to_string(), Value::Map(entry))
@@ -171,7 +171,7 @@ impl Capabilities {
     }
 }
 
-pub(crate) type Row = IndexMap<String, Value>;
+pub(crate) type Row = moqui_lib::object::ValueMap;
 /// Runs one named probe query, its error as text.
 type Probe<'a> = &'a dyn Fn(&str, &str) -> Result<Vec<Row>, String>;
 type Cache = Mutex<HashMap<String, (Instant, Arc<Capabilities>)>>;

@@ -112,7 +112,7 @@ fn only_a_test_run_enables_them_and_bad_fixtures_are_refused() {
     assert!(intercept(&request(Method::Get, "https://gateway.test/", None)).is_none());
     tool.call(&ctx, "reset", &[]).unwrap();
     assert!(tool.call(&ctx, "add", &[Value::Null]).is_err());
-    assert!(fixture_of(&Value::Map(IndexMap::new())).is_err());
+    assert!(fixture_of(&Value::Map(IndexMap::default())).is_err());
     let bad_status = [
         ("url".to_string(), Value::string("x")),
         ("status".to_string(), Value::I64(7)),

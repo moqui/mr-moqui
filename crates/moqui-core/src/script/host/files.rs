@@ -207,7 +207,7 @@ fn content_bytes(value: Value) -> Result<Vec<u8>, HostError> {
 }
 
 /// The text of a field of a change or an entry, as the script gave it; empty for none.
-fn text_field(item: &indexmap::IndexMap<String, Value>, name: &str) -> String {
+fn text_field(item: &moqui_lib::object::ValueMap, name: &str) -> String {
     match item.get(name) {
         None | Some(Value::Null) => String::new(),
         Some(value) => moqui_lib::object::to_plain_string(value),
@@ -215,7 +215,7 @@ fn text_field(item: &indexmap::IndexMap<String, Value>, name: &str) -> String {
 }
 
 /// The items of a list argument that are objects.
-fn entries_of(value: Value) -> Vec<indexmap::IndexMap<String, Value>> {
+fn entries_of(value: Value) -> Vec<moqui_lib::object::ValueMap> {
     match value {
         Value::List(items) => items
             .into_iter()
@@ -295,7 +295,7 @@ fn files_apply_change_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
             resources.apply_change_set(&root, &changes, message.as_deref())
         })
     })?;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert(
         "versionName".to_string(),
         outcome.version_name.map_or(Value::Null, Value::string),
@@ -311,7 +311,7 @@ fn files_apply_change_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
                 .failures
                 .into_iter()
                 .map(|(path, error)| {
-                    let mut failure = indexmap::IndexMap::new();
+                    let mut failure = indexmap::IndexMap::default();
                     failure.insert("path".to_string(), Value::string(path));
                     failure.insert("error".to_string(), Value::string(error));
                     Value::Map(failure)
@@ -367,7 +367,7 @@ fn files_change_log(call: &mut Call<'_>) -> Result<Ret, HostError> {
         .into_iter()
         .map(|entry| {
             let version = entry.version;
-            let mut map = indexmap::IndexMap::new();
+            let mut map = indexmap::IndexMap::default();
             map.insert("versionName".to_string(), Value::string(version.version_name));
             map.insert(
                 "previousVersionName".to_string(),
@@ -434,7 +434,7 @@ fn files_thumbnail(call: &mut Call<'_>) -> Result<Ret, HostError> {
         return Ok(Ret::Value(Value::Null));
     };
     with_resources(|resources| resources.write_bytes(&target, &png))?;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("width".to_string(), Value::I64(i64::from(width)));
     map.insert("height".to_string(), Value::I64(i64::from(height)));
     map.insert("contentType".to_string(), Value::string("image/png"));
@@ -530,7 +530,7 @@ fn files_pdf_preview(call: &mut Call<'_>) -> Result<Ret, HostError> {
         }
     };
     with_resources(|resources| resources.write_bytes(&target, &preview.png))?;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("width".to_string(), Value::I64(i64::from(preview.width)));
     map.insert("height".to_string(), Value::I64(i64::from(preview.height)));
     map.insert("pages".to_string(), Value::I64(i64::from(preview.pages)));
@@ -566,7 +566,7 @@ fn files_sheet_preview(call: &mut Call<'_>) -> Result<Ret, HostError> {
 fn sheet_preview(bytes: &[u8], sheet_name: &str, max_rows: usize, max_cols: usize) -> Result<Value, String> {
     let preview = crate::service::spreadsheet::preview_rows(bytes, sheet_name, max_rows, max_cols)
         .map_err(|err| err.message().to_string())?;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert(
         "sheetNames".to_string(),
         Value::List(preview.sheet_names.into_iter().map(Value::String).collect()),
@@ -728,7 +728,7 @@ fn files_write_zip(call: &mut Call<'_>) -> Result<Ret, HostError> {
         .into_inner();
     let size = i64::try_from(data.len()).unwrap_or(i64::MAX);
     with_resources(|resources| resources.write_bytes(&target, &data))?;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("count".to_string(), Value::I64(count));
     map.insert("size".to_string(), Value::I64(size));
     map.insert(
@@ -737,7 +737,7 @@ fn files_write_zip(call: &mut Call<'_>) -> Result<Ret, HostError> {
             failures
                 .into_iter()
                 .map(|(path, error)| {
-                    let mut failure = indexmap::IndexMap::new();
+                    let mut failure = indexmap::IndexMap::default();
                     failure.insert("path".to_string(), Value::string(path));
                     failure.insert("error".to_string(), Value::string(error));
                     Value::Map(failure)

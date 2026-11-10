@@ -42,7 +42,7 @@ pub struct CheckResult {
     pub fields_checked: u64,
     /// Java's `checkInfo` rows: `entity`, `pk`, `notFound`, `pkComplete` and `location`, with `createValues` for a
     /// record not found, or `field`, `value` and `dbValue` for a field that did not match.
-    pub diff_info: Vec<IndexMap<String, Value>>,
+    pub diff_info: Vec<moqui_lib::object::ValueMap>,
     /// With [`list_with`], the values of the records read, nested records after the record they are in.
     pub values: Vec<EntityValue>,
 }
@@ -332,14 +332,14 @@ struct Findings {
     info: bool,
     location: String,
     messages: Vec<String>,
-    diff_info: Vec<IndexMap<String, Value>>,
+    diff_info: Vec<moqui_lib::object::ValueMap>,
     fields_checked: u64,
 }
 
 impl Findings {
     /// A `checkInfo` row with the fields every row has.
-    fn row(&self, entity: &str, pk: &[(String, Value)], not_found: bool) -> IndexMap<String, Value> {
-        let mut row = IndexMap::new();
+    fn row(&self, entity: &str, pk: &[(String, Value)], not_found: bool) -> moqui_lib::object::ValueMap {
+        let mut row = IndexMap::default();
         row.insert("entity".to_string(), Value::string(entity));
         row.insert(
             "pk".to_string(),

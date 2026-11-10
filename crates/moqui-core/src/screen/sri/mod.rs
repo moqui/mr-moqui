@@ -35,7 +35,6 @@ pub(in crate::screen) use sections::strip_controls;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use moqui_lib::object::Value;
 
 use super::definition::ScreenDef;
 use super::form::FormInstance;
@@ -197,7 +196,7 @@ impl NodeLit {
 /// sent a row at a time, the stream that makes them as they are asked for, and no rows.
 #[derive(Debug, Default)]
 pub struct FormRows {
-    pub rows: Vec<IndexMap<String, Value>>,
+    pub rows: Vec<moqui_lib::object::ValueMap>,
     pub(crate) stream: Option<forms::RowStream>,
 }
 

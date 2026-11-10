@@ -122,11 +122,11 @@ fn mounted_transition_metadata_has_service_parameters_and_a_path() {
     .unwrap();
     let context = ExecutionContextFactory::test_context();
     let _entered = context.enter();
-    put_context_all(&indexmap::indexmap! {
-        "rootLocation".to_string() => Value::string(root.to_str().unwrap()),
-        "childLocation".to_string() => Value::string(child.to_str().unwrap()),
-        "outsideLocation".to_string() => Value::string(outside.to_str().unwrap()),
-    });
+    put_context_all(&moqui_lib::object::ValueMap::from_iter([
+        ("rootLocation".to_string(), Value::string(root.to_str().unwrap())),
+        ("childLocation".to_string(), Value::string(child.to_str().unwrap())),
+        ("outsideLocation".to_string(), Value::string(outside.to_str().unwrap())),
+    ]));
     run_script(r#"transition = ec.screen.getTransitionInfo(rootLocation, childLocation, "submit", "post")"#).unwrap();
     holds(
         r#"transition.path === "/child/submit" && transition.serviceName === "test.store#Thing" && transition.parameterMap.id.required && transition.pathParameters[0] === "id""#,
@@ -154,7 +154,10 @@ fn mounted_transition_metadata_has_service_parameters_and_a_path() {
         ),
     )
     .unwrap();
-    put_context_all(&indexmap::indexmap! { "ambiguousRoot".to_string() => Value::string(ambiguous.to_str().unwrap()) });
+    put_context_all(&moqui_lib::object::ValueMap::from_iter([(
+        "ambiguousRoot".to_string(),
+        Value::string(ambiguous.to_str().unwrap()),
+    )]));
     assert!(eval_condition(r#"ec.screen.getTransitionInfo(ambiguousRoot, childLocation, "submit", "post")"#).is_err());
 }
 

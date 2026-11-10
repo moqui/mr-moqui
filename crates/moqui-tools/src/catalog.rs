@@ -17,7 +17,6 @@
 //! `crates/moqui-db/src/sql/` beside the DDL builders, since `moqui-entity` cannot depend on this crate. Each query's
 //! columns are aliased in lower case, so a row reads the same on every server.
 
-use indexmap::IndexMap;
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
 
@@ -153,7 +152,7 @@ pub fn db_text(group: &str) -> String {
 /// # Errors
 ///
 /// Returns an error for an unknown group or when the statement fails.
-pub fn query(facade: &EntityFacade, group: &str, sql: &str) -> Result<Vec<IndexMap<String, Value>>, Error> {
+pub fn query(facade: &EntityFacade, group: &str, sql: &str) -> Result<Vec<moqui_lib::object::ValueMap>, Error> {
     query_with(facade, group, sql, &[])
 }
 
@@ -167,7 +166,7 @@ pub fn query_with(
     group: &str,
     sql: &str,
     params: &[Value],
-) -> Result<Vec<IndexMap<String, Value>>, Error> {
+) -> Result<Vec<moqui_lib::object::ValueMap>, Error> {
     target(facade, group)?.query(sql, params)
 }
 

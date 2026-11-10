@@ -17,7 +17,6 @@
 
 use moqui_lib::sync::lock;
 
-use indexmap::IndexMap;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -32,7 +31,7 @@ use crate::script::host::entities::ScriptList;
 
 /// The fields of a map or an entity value, an entity value's localized fields in the user's locale and a view's
 /// `pq-expression` aliases, as Java's `getMap`.
-pub fn value_map(value: &Value) -> Option<IndexMap<String, Value>> {
+pub fn value_map(value: &Value) -> Option<moqui_lib::object::ValueMap> {
     match value {
         Value::Map(entries) => Some(entries.clone()),
         Value::Object(object) => {
@@ -145,7 +144,7 @@ fn entity_value(value: EntityValue) -> Value {
 }
 
 /// Pop the top frame and return what it held.
-pub(crate) fn pop_context_frame() -> IndexMap<String, Value> {
+pub(crate) fn pop_context_frame() -> moqui_lib::object::ValueMap {
     STACK.with(|stack| {
         stack
             .borrow_mut()
@@ -159,7 +158,7 @@ pub(crate) fn pop_context_frame() -> IndexMap<String, Value> {
 }
 
 /// Put every entry in the top frame.
-pub(crate) fn put_context_all(entries: &IndexMap<String, Value>) {
+pub(crate) fn put_context_all(entries: &moqui_lib::object::ValueMap) {
     STACK.with(|stack| {
         let mut stack = stack.borrow_mut();
         for (key, value) in entries {
@@ -169,6 +168,6 @@ pub(crate) fn put_context_all(entries: &IndexMap<String, Value>) {
 }
 
 /// The combined visible names.
-pub(crate) fn context_combined() -> IndexMap<String, Value> {
+pub(crate) fn context_combined() -> moqui_lib::object::ValueMap {
     STACK.with(|stack| stack.borrow().combined_map())
 }

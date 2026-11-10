@@ -252,7 +252,7 @@ fn parameters(_call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// A message line of the page: `{message, typeString}`.
 fn entry(text: &str, kind: &str) -> Value {
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("message".to_string(), Value::string(text));
     map.insert("typeString".to_string(), Value::string(kind));
     Value::Map(map)
@@ -266,7 +266,7 @@ fn invalid(message: &str, field: &str, form: &str) -> Value {
     } else {
         format!("{message} (for field {pretty})")
     };
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("message".to_string(), Value::string(text));
     map.insert("typeString".to_string(), Value::string("danger"));
     map.insert("field".to_string(), Value::string(field));
@@ -383,7 +383,7 @@ fn get_screen_history(_call: &mut Call<'_>) -> Result<Ret, HostError> {
                 .rsplit('/')
                 .find(|part| !part.is_empty())
                 .map_or_else(|| "Home".to_string(), crate::web::percent_decode);
-            let mut map = indexmap::IndexMap::new();
+            let mut map = indexmap::IndexMap::default();
             map.insert("name".to_string(), Value::string(name));
             map.insert("url".to_string(), Value::string(format!("{base}{path}")));
             map.insert("urlNoParams".to_string(), Value::string(format!("{base}{bare}")));

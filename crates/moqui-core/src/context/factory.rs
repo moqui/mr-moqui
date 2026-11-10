@@ -492,7 +492,7 @@ impl ExecutionContextFactory {
                 session: RefCell::new(crate::user::Memory::default()),
                 user_context: RefCell::new(std::collections::BTreeMap::new()),
                 agent_origin: RefCell::new(None),
-                shared_map: RefCell::new(indexmap::IndexMap::new()),
+                shared_map: RefCell::new(indexmap::IndexMap::default()),
                 #[cfg(feature = "telemetry")]
                 telemetry: std::cell::OnceCell::new(),
                 effective_time: std::cell::Cell::new(None),
@@ -1058,7 +1058,7 @@ struct ContextState {
     /// The agent run this context works for ([`AgentOrigin`]), which entity hooks deep in a service call read.
     agent_origin: RefCell<Option<AgentOrigin>>,
     /// `ec.context.sharedMap`: one map for the execution context, shared by every service call and script in it.
-    shared_map: RefCell<indexmap::IndexMap<String, moqui_lib::object::Value>>,
+    shared_map: RefCell<moqui_lib::object::ValueMap>,
     #[cfg(feature = "telemetry")]
     telemetry: std::cell::OnceCell<Arc<crate::telemetry::Telemetry>>,
     /// Java's `UserFacade.setEffectiveTime`: epoch millis that `ec.user.nowTimestamp` returns instead of the clock.
@@ -1115,7 +1115,7 @@ impl ExecutionContext {
 
     /// Java's `ExecutionContext.getContext().getSharedMap()`: a map that lives as long as this execution context, whatever
     /// the context stack does, so a script can keep a re-entrancy guard in it.
-    pub fn shared_map(&self) -> RefMut<'_, indexmap::IndexMap<String, moqui_lib::object::Value>> {
+    pub fn shared_map(&self) -> RefMut<'_, moqui_lib::object::ValueMap> {
         self.state.shared_map.borrow_mut()
     }
 

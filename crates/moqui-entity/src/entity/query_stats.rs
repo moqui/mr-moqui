@@ -212,7 +212,12 @@ impl Registry {
         }
     }
 
-    pub(crate) fn list(&self, order_by: &str, entity_filter: &str, sql_filter: &str) -> Vec<IndexMap<String, Value>> {
+    pub(crate) fn list(
+        &self,
+        order_by: &str,
+        entity_filter: &str,
+        sql_filter: &str,
+    ) -> Vec<moqui_lib::object::ValueMap> {
         let entity_filter = entity_filter.trim().to_lowercase();
         let sql_filter = sql_filter.trim().to_lowercase();
         let mut rows = Vec::new();
@@ -277,7 +282,7 @@ pub fn clear() {
 /// `entity_filter` and `sql_filter` keep the rows whose entity name or text holds them, ignoring case. `order_by` is a
 /// field name, `-` in front for descending; numbers sort as numbers.
 #[must_use]
-pub fn list(order_by: &str, entity_filter: &str, sql_filter: &str) -> Vec<IndexMap<String, Value>> {
+pub fn list(order_by: &str, entity_filter: &str, sql_filter: &str) -> Vec<moqui_lib::object::ValueMap> {
     registry().list(order_by, entity_filter, sql_filter)
 }
 
@@ -285,7 +290,7 @@ fn micros(nanos: u128) -> f64 {
     nanos as f64 / 1000.0
 }
 
-fn row(sql: &str, entity: &str, stat: &Stat) -> IndexMap<String, Value> {
+fn row(sql: &str, entity: &str, stat: &Stat) -> moqui_lib::object::ValueMap {
     let hits = stat.hits.max(1) as f64;
     let total = micros(stat.total_nanos);
     let average = total / hits;
@@ -296,11 +301,11 @@ fn row(sql: &str, entity: &str, stat: &Stat) -> IndexMap<String, Value> {
     };
     let mut artifacts: Vec<(&String, &u64)> = stat.artifacts.iter().collect();
     artifacts.sort_by(|left, right| right.1.cmp(left.1).then_with(|| left.0.cmp(right.0)));
-    let artifact_counts: IndexMap<String, Value> = artifacts
+    let artifact_counts: moqui_lib::object::ValueMap = artifacts
         .into_iter()
         .map(|(name, hits)| (name.clone(), Value::I64(i64::try_from(*hits).unwrap_or(i64::MAX))))
         .collect();
-    let mut row = IndexMap::new();
+    let mut row = IndexMap::default();
     row.insert("entityName".to_string(), Value::string(entity));
     row.insert("sql".to_string(), Value::string(sql));
     row.insert(
@@ -321,7 +326,7 @@ fn row(sql: &str, entity: &str, stat: &Stat) -> IndexMap<String, Value> {
     row
 }
 
-fn order(rows: &mut [IndexMap<String, Value>], order_by: &str) {
+fn order(rows: &mut [moqui_lib::object::ValueMap], order_by: &str) {
     let field = order_by.trim();
     let descending = field.starts_with('-');
     let field = field.trim_start_matches(['-', '+', '^']);
@@ -337,7 +342,7 @@ fn order(rows: &mut [IndexMap<String, Value>], order_by: &str) {
         let ordering = match (number(left.get(field)), number(right.get(field))) {
             (Some(left), Some(right)) => left.total_cmp(&right),
             _ => {
-                let text = |row: &IndexMap<String, Value>| {
+                let text = |row: &moqui_lib::object::ValueMap| {
                     row.get(field)
                         .map(moqui_lib::object::to_plain_string)
                         .unwrap_or_default()

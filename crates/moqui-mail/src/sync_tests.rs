@@ -21,7 +21,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
-use indexmap::IndexMap;
 use moqui_lib::object::{basic_convert, to_plain_string, Value};
 
 use super::fake_servers::{fake_dns, fake_http, FakeImap, FakePop};
@@ -72,7 +71,7 @@ pub(super) fn map(pairs: &[(&str, &str)]) -> Value {
         pairs
             .iter()
             .map(|(key, value)| ((*key).to_string(), Value::string(*value)))
-            .collect::<IndexMap<_, _>>(),
+            .collect::<moqui_lib::object::ValueMap>(),
     )
 }
 
@@ -458,7 +457,7 @@ fn thread_changes(page: &BTreeMap<String, Value>) -> HashMap<String, (String, Ve
         panic!("no changes: {page:?}")
     };
     let text_of =
-        |change: &IndexMap<String, Value>, name: &str| change.get(name).map(to_plain_string).unwrap_or_default();
+        |change: &moqui_lib::object::ValueMap, name: &str| change.get(name).map(to_plain_string).unwrap_or_default();
     changes
         .iter()
         .filter_map(|change| match change {

@@ -74,7 +74,7 @@ fn out(entries: impl IntoIterator<Item = (&'static str, Value)>) -> BTreeMap<Str
 }
 
 fn map(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
-    let mut out = indexmap::IndexMap::new();
+    let mut out = indexmap::IndexMap::default();
     for (key, value) in entries {
         out.insert(key.to_string(), value);
     }

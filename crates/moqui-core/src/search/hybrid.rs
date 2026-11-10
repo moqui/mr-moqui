@@ -280,7 +280,7 @@ mod tests {
             id: id.into(),
             index: String::new(),
             score: 0.0,
-            body: Document::new(),
+            body: Document::default(),
             highlights: Default::default(),
         }
     }

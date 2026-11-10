@@ -91,7 +91,7 @@ fn embeddings_are_stored_guarded_and_searched() {
     };
     backend.ensure_index(&mapping).unwrap();
     let item = |id: &str, title: &str| -> (String, Document) {
-        let mut body = Document::new();
+        let mut body = Document::default();
         body.insert("itemId".into(), Value::string(id));
         body.insert("title".into(), Value::string(title));
         (id.to_string(), body)

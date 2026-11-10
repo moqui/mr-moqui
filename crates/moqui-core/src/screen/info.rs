@@ -116,7 +116,7 @@ struct Totals {
 }
 
 struct Info {
-    row: IndexMap<String, Value>,
+    row: moqui_lib::object::ValueMap,
     level: usize,
     own: Totals,
     all: Totals,
@@ -134,7 +134,7 @@ pub fn screen_info_list(
     factory: &ExecutionContextFactory,
     root_location: &str,
     levels: usize,
-) -> Result<Vec<IndexMap<String, Value>>, Error> {
+) -> Result<Vec<moqui_lib::object::ValueMap>, Error> {
     let facade = ScreenFacade::of(factory);
     let root = facade.screen_def(factory, root_location)?;
     let mut path = vec![root.location.clone()];
@@ -198,23 +198,23 @@ pub fn transition_info(
         .map(|(name, required, has_default)| {
             (
                 name.clone(),
-                Value::Map(indexmap::indexmap! {
-                    "name".to_string() => Value::string(name),
-                    "required".to_string() => Value::Bool(required),
-                    "hasDefault".to_string() => Value::Bool(has_default),
-                }),
+                Value::Map(moqui_lib::object::ValueMap::from_iter([ 
+                    ("name".to_string(), Value::string(name)),
+                    ("required".to_string(), Value::Bool(required)),
+                    ("hasDefault".to_string(), Value::Bool(has_default)),
+                ])),
             )
         })
         .collect();
-    Ok(Value::Map(indexmap::indexmap! {
-        "location".to_string() => Value::string(location),
-        "name".to_string() => Value::string(name),
-        "method".to_string() => Value::string(method.to_ascii_lowercase()),
-        "path".to_string() => Value::string(format!("{path}/{name}")),
-        "serviceName".to_string() => transition.single_service.as_deref().map_or(Value::Null, Value::string),
-        "pathParameters".to_string() => Value::List(transition.path_parameters.iter().map(Value::string).collect()),
-        "parameterMap".to_string() => Value::Map(parameters),
-    }))
+    Ok(Value::Map(moqui_lib::object::ValueMap::from_iter([ 
+        ("location".to_string(), Value::string(location)),
+        ("name".to_string(), Value::string(name)),
+        ("method".to_string(), Value::string(method.to_ascii_lowercase())),
+        ("path".to_string(), Value::string(format!("{path}/{name}"))),
+        ("serviceName".to_string(), transition.single_service.as_deref().map_or(Value::Null, Value::string)),
+        ("pathParameters".to_string(), Value::List(transition.path_parameters.iter().map(Value::string).collect())),
+        ("parameterMap".to_string(), Value::Map(parameters)),
+    ])))
 }
 
 fn walk(
@@ -280,7 +280,7 @@ fn walk(
         all.transitions += child.own.transitions + child.all.transitions;
         all.with_actions += child.own.with_actions + child.all.with_actions;
     }
-    let mut row = IndexMap::new();
+    let mut row = IndexMap::default();
     let name = item
         .as_ref()
         .map_or_else(|| def.screen_name.clone(), |(name, _, _)| (*name).to_string());
@@ -291,7 +291,7 @@ fn walk(
         "ssi".to_string(),
         match &item {
             Some((name, title, index)) => {
-                let mut ssi = IndexMap::new();
+                let mut ssi = IndexMap::default();
                 ssi.insert("name".to_string(), Value::string(*name));
                 ssi.insert("menuTitle".to_string(), Value::string(title));
                 ssi.insert("menuIndex".to_string(), index.map_or(Value::Null, Value::I64));
@@ -314,7 +314,7 @@ fn child_is_non_placeholder(info: &Info) -> bool {
     info.row.get("isNonPlaceholder") == Some(&Value::Bool(true))
 }
 
-fn flatten(info: Info, levels: usize, out: &mut Vec<IndexMap<String, Value>>) {
+fn flatten(info: Info, levels: usize, out: &mut Vec<moqui_lib::object::ValueMap>) {
     let mut row = info.row;
     let pairs = [
         ("subscreens", info.own.subscreens),
@@ -360,7 +360,7 @@ fn count(number: usize) -> i64 {
 pub fn screen_children(
     factory: &ExecutionContextFactory,
     location: &str,
-) -> Result<Vec<IndexMap<String, Value>>, Error> {
+) -> Result<Vec<moqui_lib::object::ValueMap>, Error> {
     let facade = ScreenFacade::of(factory);
     let def = facade.screen_def(factory, location)?;
     let mut items: Vec<_> = def.subscreens.items.iter().collect();
@@ -369,7 +369,7 @@ pub fn screen_children(
     Ok(items
         .into_iter()
         .map(|item| {
-            let mut row = IndexMap::new();
+            let mut row = IndexMap::default();
             row.insert("name".to_string(), Value::string(&item.name));
             row.insert("location".to_string(), Value::string(&item.location));
             row.insert("menuTitle".to_string(), Value::string(&item.menu_title));

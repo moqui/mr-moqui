@@ -625,7 +625,7 @@ fn map_list_values(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let Value::List(items) = value(call, 0) else {
         return Ok(Ret::Value(Value::Null));
     };
-    let maps: Vec<indexmap::IndexMap<String, Value>> = items
+    let maps: Vec<moqui_lib::object::ValueMap> = items
         .into_iter()
         .filter_map(|item| match item {
             Value::Map(map) => Some(map),
@@ -640,7 +640,7 @@ fn map_list_values(call: &mut Call<'_>) -> Result<Ret, HostError> {
 fn paginate_parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let mut entries = match value(call, 2) {
         Value::Map(entries) => entries,
-        _ => indexmap::IndexMap::new(),
+        _ => indexmap::IndexMap::default(),
     };
     let size = call.int(0).unwrap_or(0);
     moqui_lib::collection::paginate_parameters(size, &call.text_or_empty(1), &mut entries).map_err(lib)?;

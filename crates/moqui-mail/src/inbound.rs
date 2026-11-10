@@ -337,7 +337,7 @@ pub(super) fn store_steps(
                     .map(|attribute| name_attribute(&format!("{attribute:?}")))
                     .collect();
                 let kind = folder_kind(name.name(), &attributes);
-                let mut map = IndexMap::new();
+                let mut map = IndexMap::default();
                 map.insert("folderPath".to_string(), Value::string(name.name()));
                 map.insert(
                     "delimiter".to_string(),
@@ -406,7 +406,7 @@ pub(super) struct StoreSettings {
 }
 
 fn eca_fields(message: &Inbound, server_id: &str) -> BTreeMap<String, Value> {
-    let mut fields = IndexMap::new();
+    let mut fields = IndexMap::default();
     fields.insert("toList".into(), string_list(&message.to));
     fields.insert("ccList".into(), string_list(&message.cc));
     fields.insert("bccList".into(), string_list(&message.bcc));
@@ -421,7 +421,7 @@ fn eca_fields(message: &Inbound, server_id: &str) -> BTreeMap<String, Value> {
     fields.insert("subject".into(), Value::string(&message.subject));
     fields.insert("sentDate".into(), message.sent.clone());
     fields.insert("receivedDate".into(), message.received.clone());
-    let mut flags = IndexMap::new();
+    let mut flags = IndexMap::default();
     flags.insert("answered".into(), Value::Bool(message.flags.answered));
     flags.insert("deleted".into(), Value::Bool(message.flags.deleted));
     flags.insert("draft".into(), Value::Bool(message.flags.draft));
@@ -429,7 +429,7 @@ fn eca_fields(message: &Inbound, server_id: &str) -> BTreeMap<String, Value> {
     flags.insert("recent".into(), Value::Bool(message.flags.recent));
     flags.insert("seen".into(), Value::Bool(message.seen));
     // Java puts the MimeMessage here; this is the part of it the rules read: its id, size and raw text.
-    let mut raw = IndexMap::new();
+    let mut raw = IndexMap::default();
     raw.insert(
         "messageId".into(),
         Value::string(header_one(&message.headers, "message-id")),
@@ -471,7 +471,7 @@ pub(super) struct Inbound {
     flags: Flags,
     /// The message as it came from the server.
     pub(super) raw: Vec<u8>,
-    pub(super) headers: IndexMap<String, Value>,
+    pub(super) headers: moqui_lib::object::ValueMap,
     pub(super) parts: Vec<Value>,
     pub(super) subject: String,
     pub(super) from: String,
@@ -489,7 +489,7 @@ impl Inbound {
             seen: false,
             flags: Flags::default(),
             raw: Vec::new(),
-            headers: IndexMap::new(),
+            headers: IndexMap::default(),
             parts: Vec::new(),
             subject: String::new(),
             from: String::new(),
@@ -1189,7 +1189,7 @@ fn leaf_parts(part: mail_parser::MessagePart<'_>, raw: &[u8], out: &mut Vec<Valu
         PartKind::Message(_) => return,
         _ => {}
     }
-    let mut map = IndexMap::new();
+    let mut map = IndexMap::default();
     let content_type = part
         .headers()
         .iter()
@@ -1220,7 +1220,7 @@ fn leaf_parts(part: mail_parser::MessagePart<'_>, raw: &[u8], out: &mut Vec<Valu
     out.push(Value::Map(map));
 }
 
-fn push_header(headers: &mut IndexMap<String, Value>, name: &str, value: String) {
+fn push_header(headers: &mut moqui_lib::object::ValueMap, name: &str, value: String) {
     let key = name.to_ascii_lowercase();
     if let Some(existing) = headers.shift_remove(&key) {
         let list = match existing {
@@ -1236,7 +1236,7 @@ fn push_header(headers: &mut IndexMap<String, Value>, name: &str, value: String)
     }
 }
 
-pub(super) fn header_one(headers: &IndexMap<String, Value>, name: &str) -> String {
+pub(super) fn header_one(headers: &moqui_lib::object::ValueMap, name: &str) -> String {
     match headers.get(name) {
         Some(Value::List(items)) => items.first().map(to_plain_string).unwrap_or_default(),
         Some(value) => to_plain_string(value),

@@ -198,7 +198,7 @@ fn pass_open(host_call: &mut Call<'_>) -> Result<Ret, HostError> {
         Ok(opened) => opened,
         Err(err) => Err(unavailable(&endpoint, &call, &err)),
     };
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     match opened {
         Ok(download) => {
             let meta = &download.meta;

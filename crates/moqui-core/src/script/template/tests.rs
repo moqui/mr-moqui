@@ -246,7 +246,7 @@ fn locked_down_sees_plain_values_and_decimals_as_strings() {
 
 fn locked_down_sees_plain_values_and_decimals_as_strings_on() {
     use std::str::FromStr;
-    let mut entries = indexmap::IndexMap::new();
+    let mut entries = indexmap::IndexMap::default();
     entries.insert(
         "amount".to_string(),
         Value::Decimal(moqui_lib::format::Decimal::from_str("10.50").unwrap()),
@@ -332,7 +332,7 @@ fn a_locked_down_template_cannot_change_what_the_next_one_runs_on() {
         let err = render_locked_with(attempt, Escape::None, &empty).expect_err(attempt);
         assert!(err.message().contains("Error"), "{attempt}: {}", err.message());
     }
-    let mut entries = indexmap::IndexMap::new();
+    let mut entries = indexmap::IndexMap::default();
     entries.insert("v".to_string(), Value::string("<b>"));
     let out = render_locked_with(
         "${v}|${globalThis.leak == null}|<#list ['a', 'b'] as x>${x}</#list>",
@@ -391,7 +391,7 @@ fn locked_down_format_reads_a_decimal_text_by_a_number_pattern_and_a_date_by_a_d
 
 fn locked_down_format_reads_a_decimal_text_by_a_number_pattern_and_a_date_by_a_date_pattern_on() {
     use std::str::FromStr;
-    let mut entries = indexmap::IndexMap::new();
+    let mut entries = indexmap::IndexMap::default();
     entries.insert(
         "qty".to_string(),
         Value::Decimal(moqui_lib::format::Decimal::from_str("100").unwrap()),

@@ -863,7 +863,7 @@ fn map_rule_world(workers: usize, queue: usize) -> Jobs {
 }
 
 fn commit_map() {
-    let mut items = indexmap::IndexMap::new();
+    let mut items = indexmap::IndexMap::default();
     items.insert("color".to_string(), Value::string("blue"));
     let mut params = BTreeMap::new();
     params.insert("items".to_string(), Value::Map(items));

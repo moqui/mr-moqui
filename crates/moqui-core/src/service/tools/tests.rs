@@ -415,7 +415,7 @@ fn a_spreadsheet_loads_into_an_entity_through_the_auto_service() {
     let mut call = BTreeMap::new();
     call.insert("entityName".to_string(), Value::string("moqui.basic.Uom"));
     call.insert("contentBytes".to_string(), Value::Bytes(book.to_bytes().unwrap()));
-    let mut field_map = indexmap::IndexMap::new();
+    let mut field_map = indexmap::IndexMap::default();
     field_map.insert("Name".to_string(), Value::string("description"));
     call.insert("fieldMap".to_string(), Value::Map(field_map));
     let out = crate::service::sync("org.moqui.resource.SpreadsheetServices.load#SpreadsheetEntity", &call).unwrap();
@@ -466,7 +466,7 @@ fn a_screen_document_prints_its_pdf_or_reports_that_pdf_is_not_available() {
     let out = crate::service::sync("org.moqui.impl.PrintServices.print#ScreenDocument", &call).unwrap();
     // With no jobName it is the screen name and the screenParameters values in the order given, as Java's `[:]`.
     let mut unnamed = params(&[("networkPrinterId", "P"), ("screenLocation", &location)]);
-    let mut screen_parameters = indexmap::IndexMap::new();
+    let mut screen_parameters = indexmap::IndexMap::default();
     screen_parameters.insert("zeta".to_string(), Value::string("first"));
     screen_parameters.insert("alpha".to_string(), Value::string("second"));
     unnamed.insert("screenParameters".to_string(), Value::Map(screen_parameters));
@@ -572,7 +572,7 @@ fn encrypted_fields_are_rewritten_in_key_pages() {
 fn key_after_orders_by_each_key_field_in_turn() {
     use crate::entity::Condition;
     let names: Vec<String> = ["a", "b", "c"].iter().map(|name| name.to_string()).collect();
-    let mut last = indexmap::IndexMap::new();
+    let mut last = indexmap::IndexMap::default();
     for name in &names {
         last.insert(name.clone(), Value::string(format!("{name}1")));
     }

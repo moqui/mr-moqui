@@ -266,7 +266,7 @@ pub fn get_field_entity_value(widget: &NodeLit) -> Result<String, Error> {
     };
     let text = widget.attr("text");
     if !text.is_empty() {
-        let fields: IndexMap<String, Value> = found
+        let fields: moqui_lib::object::ValueMap = found
             .localized_fields(&facade)
             .into_iter()
             .map(|(name, value)| (name.to_string(), value))
@@ -290,7 +290,7 @@ pub fn get_field_entity_value(widget: &NodeLit) -> Result<String, Error> {
 /// # Errors
 ///
 /// Returns an error when an expression fails.
-pub fn node_parameters(parent: &NodeLit) -> Result<IndexMap<String, Value>, Error> {
+pub fn node_parameters(parent: &NodeLit) -> Result<moqui_lib::object::ValueMap, Error> {
     node_parameters_checked(parent).map(|(parameters, _)| parameters)
 }
 
@@ -300,8 +300,8 @@ pub fn node_parameters(parent: &NodeLit) -> Result<IndexMap<String, Value>, Erro
 /// # Errors
 ///
 /// Returns an error when an expression fails.
-pub fn node_parameters_checked(parent: &NodeLit) -> Result<(IndexMap<String, Value>, bool), Error> {
-    let mut parameters = IndexMap::new();
+pub fn node_parameters_checked(parent: &NodeLit) -> Result<(moqui_lib::object::ValueMap, bool), Error> {
+    let mut parameters = IndexMap::default();
     let map_expr = parent.attr("parameter-map");
     if !map_expr.is_empty() {
         if let Some(map) = script::value_map(&script::eval_value(map_expr)?) {

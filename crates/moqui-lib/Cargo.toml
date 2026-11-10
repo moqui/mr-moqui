@@ -12,6 +12,8 @@ datamatrix = { workspace = true }
 jiff = { workspace = true }
 rust_decimal = { workspace = true }
 indexmap = { workspace = true }
+# The hasher of Value::Map and the context stack frames (plans/Profiling3.md W10, D2).
+foldhash = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

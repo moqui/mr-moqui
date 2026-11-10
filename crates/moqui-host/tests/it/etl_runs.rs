@@ -96,7 +96,7 @@ fn a_saved_mapping_is_checked_run_as_a_job_and_rolled_back_on_a_bad_file() {
         "dbresource://moqui/etl/test/bad.csv",
         "Id,Type,Name\nEtlHost3,EtlHostType,Three\nEtlHost4,NoSuchType,Four\n",
     );
-    let mut mapping = IndexMap::new();
+    let mut mapping = IndexMap::default();
     mapping.insert("description".to_string(), Value::string("enumerations"));
     mapping.insert("sourceTypeEnumId".to_string(), Value::string("EtlsFile"));
     mapping.insert(
@@ -215,7 +215,7 @@ fn a_saved_mapping_is_checked_run_as_a_job_and_rolled_back_on_a_bad_file() {
         "{detail:?}"
     );
     assert!(text(&detail, "errorFile").contains("NoSuchType"), "{detail:?}");
-    let mut entries = IndexMap::new();
+    let mut entries = IndexMap::default();
     entries.insert("Active".to_string(), Value::string("ACTIVE"));
     let stored_map = call(
         "store#EtlValueMap",
@@ -390,7 +390,7 @@ fn call_as_user(verb_noun: &str, parameters: &[(&str, Value)]) -> (BTreeMap<Stri
 }
 
 fn csv_mapping(location: &str, target_type: &str, target: &str, fields: Vec<Value>) -> Value {
-    let mut mapping = IndexMap::new();
+    let mut mapping = IndexMap::default();
     mapping.insert("sourceTypeEnumId".to_string(), Value::string("EtlsFile"));
     mapping.insert("sourceLocation".to_string(), Value::string(location));
     mapping.insert("targetTypeEnumId".to_string(), Value::string(target_type));
@@ -537,7 +537,7 @@ fn authorization_is_on(
         (results, errors)
     };
     let file_source = |location: &str| {
-        let mut source = IndexMap::new();
+        let mut source = IndexMap::default();
         source.insert("type".to_string(), Value::string("file"));
         source.insert("location".to_string(), Value::string(location));
         Value::Map(source)
@@ -550,7 +550,7 @@ fn authorization_is_on(
         matches!(columns.get("columns"), Some(Value::List(list)) if list.len() == 3),
         "{columns:?}"
     );
-    let mut filter = IndexMap::new();
+    let mut filter = IndexMap::default();
     filter.insert("field".to_string(), Value::string("Name"));
     filter.insert("type".to_string(), Value::string("like"));
     filter.insert("value".to_string(), Value::string("tw"));
@@ -697,7 +697,7 @@ fn authorization_is_on(
         }
     }
     let entity_source = |name: &str| {
-        let mut source = IndexMap::new();
+        let mut source = IndexMap::default();
         source.insert("type".to_string(), Value::string("entity"));
         source.insert("entityName".to_string(), Value::string(name));
         Value::Map(source)
@@ -713,9 +713,9 @@ fn authorization_is_on(
             .all(|row| matches!(row, Value::Map(row) if !row.contains_key("pw") && row.contains_key("userId"))),
         "{rows:?}"
     );
-    let mut conditions = IndexMap::new();
+    let mut conditions = IndexMap::default();
     conditions.insert("pw".to_string(), Value::string("x"));
-    let mut conditioned = IndexMap::new();
+    let mut conditioned = IndexMap::default();
     conditioned.insert("type".to_string(), Value::string("entity"));
     conditioned.insert("entityName".to_string(), Value::string("EtlUserPw"));
     conditioned.insert("conditions".to_string(), Value::Map(conditions));
@@ -726,7 +726,7 @@ fn authorization_is_on(
         &[("source", entity_source("moqui.security.UserGroupMemberUser"))],
     );
     assert!(errors.contains("not available"), "{errors}");
-    let mut view_source = IndexMap::new();
+    let mut view_source = IndexMap::default();
     view_source.insert("sourceTypeEnumId".to_string(), Value::string("EtlsEntity"));
     view_source.insert("sourceEntityName".to_string(), Value::string("EtlUserPw"));
     view_source.insert("targetTypeEnumId".to_string(), Value::string("EtltEntity"));

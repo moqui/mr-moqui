@@ -1097,7 +1097,7 @@ impl Telemetry {
                         .hash_one((kind, name, action, sub_type))
                 };
                 sdk.record_artifact(attributes_key, seconds, slow, || {
-                    let mut attributes = Document::new();
+                    let mut attributes = Document::default();
                     attributes.insert("moqui.artifact.type".into(), Value::string(kind));
                     attributes.insert("moqui.artifact.name".into(), Value::string(name));
                     attributes.insert("moqui.artifact.action".into(), Value::string(action));
@@ -1313,7 +1313,7 @@ impl Shared {
         let resource = lock(&self.resource);
         let mut attributes = match document.get("resource") {
             Some(Value::Map(attributes)) => attributes.clone(),
-            _ => Document::new(),
+            _ => Document::default(),
         };
         for (key, value) in [
             ("service.name", &resource.service_name),
@@ -1429,7 +1429,7 @@ impl LogRecord {
             severity_text: severity_text.into(),
             body: body.into(),
             scope_name: String::new(),
-            attributes: Document::new(),
+            attributes: Document::default(),
             context: capture(),
         }
     }
@@ -1947,7 +1947,7 @@ fn error_document(span: &Document) -> Document {
         text(span, "body")
     };
     let stack = text(span, "exception.stacktrace");
-    let mut document = Document::new();
+    let mut document = Document::default();
     use sha2::{Digest, Sha256};
     let fingerprint = error_fingerprint(&kind, &message, &stack);
     document.insert(

@@ -1478,7 +1478,7 @@ fn run_entity(
     }
     // The audit row of a field reads `{field}_changeReason` from the context (`field_rw::insert_audit`, as Java), so the
     // reasons passed to the service are in a frame of their own while the record is written (Commerce F63).
-    let reasons: indexmap::IndexMap<String, Value> = parameters
+    let reasons: moqui_lib::object::ValueMap = parameters
         .iter()
         .filter(|(key, value)| key.ends_with(super::validate::CHANGE_REASON) && !is_empty(value))
         .map(|(key, value)| (key.clone(), value.clone()))

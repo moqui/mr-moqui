@@ -159,7 +159,7 @@ fn an_element_changed_in_an_iterate_is_changed_in_the_next_one() {
     let ctx = ExecutionContextFactory::test_context();
     let _guard = ctx.enter();
     let item = |name: &str| {
-        let mut map = indexmap::IndexMap::new();
+        let mut map = indexmap::IndexMap::default();
         map.insert("name".to_string(), Value::string(name));
         Value::Map(map)
     };

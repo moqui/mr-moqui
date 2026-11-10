@@ -121,7 +121,7 @@ fn refused(name: &str, parameters: &[(&str, Value)], expected: &str) {
     );
 }
 
-fn maps(value: Option<&Value>) -> Vec<IndexMap<String, Value>> {
+fn maps(value: Option<&Value>) -> Vec<moqui_lib::object::ValueMap> {
     match value {
         Some(Value::List(items)) => items
             .iter()
@@ -134,7 +134,7 @@ fn maps(value: Option<&Value>) -> Vec<IndexMap<String, Value>> {
     }
 }
 
-fn get(map: &IndexMap<String, Value>, key: &str) -> String {
+fn get(map: &moqui_lib::object::ValueMap, key: &str) -> String {
     map.get(key).map(to_plain_string).unwrap_or_default()
 }
 
@@ -147,7 +147,7 @@ fn conditions(items: &[(&str, &str, &str)]) -> Value {
         items
             .iter()
             .map(|(field, operator, value)| {
-                let mut map = IndexMap::new();
+                let mut map = IndexMap::default();
                 map.insert("field".to_string(), text(field));
                 map.insert("operator".to_string(), text(operator));
                 map.insert("value".to_string(), text(value));
@@ -828,7 +828,7 @@ fn a_rule_is_tried_on_recent_mail_without_acting() {
         60_000,
         &[("subject", text("Invoice draft")), ("statusId", text("ES_DRAFT"))],
     );
-    let mut actions = IndexMap::new();
+    let mut actions = IndexMap::default();
     actions.insert("action".to_string(), text("moveToFolder"));
     actions.insert("value".to_string(), text(&bills));
     let rule = out_text(
@@ -856,7 +856,7 @@ fn a_rule_is_tried_on_recent_mail_without_acting() {
     assert_eq!(get(&maps(tried.get("matchList"))[0], "subject"), "Invoice 3");
     // each match carries what opens it in the Inbox: the store, its thread (R3 is a reply in R1's), account and folder
     let inbox = folder_id(&facade, &account, "EfkInbox");
-    let opens = |found: &IndexMap<String, Value>| {
+    let opens = |found: &moqui_lib::object::ValueMap| {
         [
             "store",
             "threadId",
@@ -1023,7 +1023,7 @@ fn an_app_action_of_a_rule_runs_the_service_its_enumeration_names() {
     );
     message(&facade, &account, "T3", "EfkInbox", DAY, &[("subject", text("Lunch"))]);
     let action = |name: &str, value: &str| {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("action".to_string(), text(name));
         if !value.is_empty() {
             map.insert("value".to_string(), text(value));
@@ -1140,7 +1140,7 @@ fn a_removed_account_is_deleted_by_its_owner_only() {
     );
     let removed = ok("delete#EmailAccount", &[("emailAccountId", text(&account))]);
     assert_eq!(out_number(&removed, "keptMessageCount"), 2);
-    let listed = |include: bool| -> Vec<IndexMap<String, Value>> {
+    let listed = |include: bool| -> Vec<moqui_lib::object::ValueMap> {
         maps(ok("get#EmailAccountAccess", &[("includeRemoved", Value::Bool(include))]).get("accountList"))
             .into_iter()
             .filter(|item| get(item, "emailAccountId") == account)
@@ -1186,7 +1186,7 @@ fn a_removed_account_is_deleted_by_its_owner_only() {
 }
 
 /// A progress message as a socket gets it: when, the message, and the users it is for.
-type Seen = (std::time::Instant, IndexMap<String, Value>, Vec<String>);
+type Seen = (std::time::Instant, moqui_lib::object::ValueMap, Vec<String>);
 
 /// A sync with mail to fetch sends its progress to the account's users, at most one a second, then one when done; a sync
 /// with nothing to fetch sends none.

@@ -22,7 +22,6 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use indexmap::IndexMap;
 use jiff::tz::TimeZone;
 use moqui_db::model::EntityDefinition;
 use moqui_db::sql::Condition;
@@ -128,7 +127,7 @@ pub struct EntityHooks {
     pub expand: fn(&str) -> Result<String, Error>,
     pub context_value: fn(&str) -> Option<Value>,
     /// The fields of a map or a script's entity value.
-    pub value_map: fn(&Value) -> Option<IndexMap<String, Value>>,
+    pub value_map: fn(&Value) -> Option<moqui_lib::object::ValueMap>,
     pub value_items: fn(&Value) -> Option<Vec<Value>>,
     // services
     /// Call a service, with authorization off when asked.

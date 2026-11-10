@@ -425,7 +425,7 @@ fn bind_presented(
 
 /// The event of a session listener: `{sessionId}`.
 pub(crate) fn session_event(id: &str) -> Value {
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("sessionId".to_string(), Value::string(id));
     Value::Map(map)
 }

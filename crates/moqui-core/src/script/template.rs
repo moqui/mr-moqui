@@ -1208,7 +1208,7 @@ fn write_snapshot_items(items: &[Value], out: &mut String) {
     out.push(']');
 }
 
-fn write_snapshot_entries(entries: &indexmap::IndexMap<String, Value>, out: &mut String) {
+fn write_snapshot_entries(entries: &moqui_lib::object::ValueMap, out: &mut String) {
     let write = |out: &mut String, index: usize, key: &str, item: &Value| {
         if index > 0 {
             out.push(',');

@@ -19,7 +19,6 @@
 //! `match`, `range` (`gt`, `gte`, `lt`, `lte`), `exists`, `prefix`, `wildcard`, `match_all`,
 //! `nested`, and `query_string`. Anything else is an error that names it.
 
-use indexmap::IndexMap;
 use moqui_lib::error::Error;
 use moqui_lib::object::{to_plain_string, Value};
 
@@ -49,7 +48,7 @@ pub fn from_es(value: &Value) -> Result<Query, Error> {
 /// # Errors
 ///
 /// Returns an error when an entry is not in the supported subset.
-pub fn from_nested_map(map: &IndexMap<String, Value>) -> Result<Vec<Query>, Error> {
+pub fn from_nested_map(map: &moqui_lib::object::ValueMap) -> Result<Vec<Query>, Error> {
     let mut out = Vec::with_capacity(map.len());
     for (path, value) in map {
         let inner = from_es(value)?;
@@ -62,7 +61,7 @@ pub fn from_nested_map(map: &IndexMap<String, Value>) -> Result<Vec<Query>, Erro
     Ok(out)
 }
 
-pub(super) fn from_map(map: &IndexMap<String, Value>) -> Result<Query, Error> {
+pub(super) fn from_map(map: &moqui_lib::object::ValueMap) -> Result<Query, Error> {
     if map.len() != 1 {
         return Err(Error::new(format!(
             "an Elastic query has one key, not {}",
@@ -190,7 +189,7 @@ pub(super) fn from_map(map: &IndexMap<String, Value>) -> Result<Query, Error> {
     }
 }
 
-fn as_map<'a>(kind: &str, value: &'a Value) -> Result<&'a IndexMap<String, Value>, Error> {
+fn as_map<'a>(kind: &str, value: &'a Value) -> Result<&'a moqui_lib::object::ValueMap, Error> {
     match value {
         Value::Map(map) => Ok(map),
         _ => Err(Error::new(format!("Elastic {kind} needs an object"))),
@@ -257,7 +256,7 @@ mod tests {
     #[test]
     fn pop_store_category_text() {
         // PopRestStore search#ProductSearchResults: must with match, range, and a should-only bool.
-        let mut map = IndexMap::new();
+        let mut map = moqui_lib::object::ValueMap::default();
         map.insert(
             "categories".to_string(),
             json(

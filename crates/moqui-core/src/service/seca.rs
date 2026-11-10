@@ -194,7 +194,7 @@ impl SecaIndex {
     }
 }
 
-fn to_index_map(values: &BTreeMap<String, Value>) -> indexmap::IndexMap<String, Value> {
+fn to_index_map(values: &BTreeMap<String, Value>) -> moqui_lib::object::ValueMap {
     values
         .iter()
         .map(|(name, value)| (name.clone(), value.clone()))

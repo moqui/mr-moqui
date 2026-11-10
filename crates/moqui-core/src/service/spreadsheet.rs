@@ -546,8 +546,8 @@ fn read_spreadsheet(
 }
 
 /// A row by header. A column with a blank header is left out; a repeated header keeps the first value.
-fn row_map(headers: &[String], row: &[Value]) -> IndexMap<String, Value> {
-    let mut map = IndexMap::new();
+fn row_map(headers: &[String], row: &[Value]) -> moqui_lib::object::ValueMap {
+    let mut map = IndexMap::default();
     for (header, value) in headers.iter().zip(row) {
         if !header.is_empty() && !map.contains_key(header) {
             map.insert(header.clone(), value.clone());

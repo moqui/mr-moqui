@@ -153,18 +153,18 @@ pub struct Mapping {
     pub fields: Vec<MappingField>,
 }
 
-fn text_of(map: &IndexMap<String, Value>, key: &str) -> String {
+fn text_of(map: &moqui_lib::object::ValueMap, key: &str) -> String {
     map.get(key)
         .filter(|value| !is_empty(value))
         .map(to_plain_string)
         .unwrap_or_default()
 }
 
-fn optional(map: &IndexMap<String, Value>, key: &str) -> Option<String> {
+fn optional(map: &moqui_lib::object::ValueMap, key: &str) -> Option<String> {
     Some(text_of(map, key)).filter(|text| !text.is_empty())
 }
 
-fn indicator(map: &IndexMap<String, Value>, key: &str, default: bool) -> bool {
+fn indicator(map: &moqui_lib::object::ValueMap, key: &str, default: bool) -> bool {
     match map.get(key) {
         Some(Value::Bool(flag)) => *flag,
         Some(value) if !is_empty(value) => matches!(to_plain_string(value).as_str(), "Y" | "true" | "y" | "1"),
@@ -172,7 +172,7 @@ fn indicator(map: &IndexMap<String, Value>, key: &str, default: bool) -> bool {
     }
 }
 
-fn whole(map: &IndexMap<String, Value>, key: &str, default: usize) -> usize {
+fn whole(map: &moqui_lib::object::ValueMap, key: &str, default: usize) -> usize {
     let text = text_of(map, key);
     if text.is_empty() {
         return default;
@@ -182,7 +182,7 @@ fn whole(map: &IndexMap<String, Value>, key: &str, default: usize) -> usize {
         .map_or(default, |number| number.max(0.0) as usize)
 }
 
-fn row_map(row: &EntityValue) -> IndexMap<String, Value> {
+fn row_map(row: &EntityValue) -> moqui_lib::object::ValueMap {
     row.fields()
         .iter()
         .map(|(name, value)| (name.to_string(), value.clone()))
@@ -191,7 +191,7 @@ fn row_map(row: &EntityValue) -> IndexMap<String, Value> {
 
 impl MappingField {
     /// From a map of `EtlMappingField`'s names, an inline `valueMap` (from value to value) allowed.
-    fn from_map(map: &IndexMap<String, Value>) -> Self {
+    fn from_map(map: &moqui_lib::object::ValueMap) -> Self {
         let value_map = match map.get("valueMap") {
             Some(Value::Map(entries)) => Some(
                 entries
@@ -224,7 +224,7 @@ impl MappingField {
     pub fn to_value(&self) -> Value {
         let text = |value: &Option<String>| value.clone().map_or(Value::Null, Value::String);
         let flag = |value: bool| Value::string(if value { "Y" } else { "N" });
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         map.insert("targetField".to_string(), Value::string(&self.target_field));
         map.insert("sourceColumn".to_string(), text(&self.source_column));
         map.insert("constantValue".to_string(), text(&self.constant_value));
@@ -263,7 +263,7 @@ impl Mapping {
     /// # Errors
     ///
     /// Returns an error for an unknown source type or load mode, or a mapping with no target.
-    pub fn from_map(map: &IndexMap<String, Value>) -> Result<Self, Error> {
+    pub fn from_map(map: &moqui_lib::object::ValueMap) -> Result<Self, Error> {
         let delimiter = text_of(map, "csvDelimiter");
         let delimiter = match delimiter.as_str() {
             "" => b',',
@@ -489,7 +489,7 @@ impl Mapping {
     /// As an inline map (`fields` a list of maps), for the screens and a copy.
     #[must_use]
     pub fn to_value(&self) -> Value {
-        let mut map = IndexMap::new();
+        let mut map = IndexMap::default();
         let text = |value: &str| Value::string(value);
         map.insert(
             "mappingId".to_string(),

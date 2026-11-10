@@ -181,7 +181,7 @@ fn create_pairing_code(parameters: &BTreeMap<String, Value>, _facade: &EntityFac
 }
 
 fn client_value(client: &EdgeClientInfo) -> Value {
-    let mut row = indexmap::IndexMap::new();
+    let mut row = indexmap::IndexMap::default();
     row.insert("pairedNodeId".to_string(), Value::string(&client.paired_node_id));
     row.insert("keyFingerprint".to_string(), Value::string(&client.key_fingerprint));
     row.insert("statusId".to_string(), Value::string(&client.status_id));
@@ -228,7 +228,7 @@ fn ping_edge_client(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade
 }
 
 fn host_value(host: &EdgeHostInfo) -> Value {
-    let mut row = indexmap::IndexMap::new();
+    let mut row = indexmap::IndexMap::default();
     row.insert("hostName".to_string(), Value::string(&host.host_name));
     row.insert("pairedNodeId".to_string(), Value::string(&host.paired_node_id));
     row.insert("modeEnumId".to_string(), Value::string(&host.mode_enum_id));
@@ -322,7 +322,7 @@ fn get_queue_status(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
     let kind_list = kinds
         .iter()
         .map(|kind| {
-            let mut row = indexmap::IndexMap::new();
+            let mut row = indexmap::IndexMap::default();
             row.insert("pairedNodeId".to_string(), Value::string(&kind.paired_node_id));
             row.insert("directionEnumId".to_string(), Value::string(&kind.direction));
             row.insert("kind".to_string(), Value::string(&kind.kind));
@@ -342,7 +342,7 @@ fn get_queue_status(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
         .unwrap_or_default()
         .iter()
         .map(|set| {
-            let mut row = indexmap::IndexMap::new();
+            let mut row = indexmap::IndexMap::default();
             row.insert("setName".to_string(), Value::string(&set.name));
             row.insert("epoch".to_string(), Value::string(&set.epoch));
             row.insert("acked".to_string(), count(set.acked));
@@ -356,7 +356,7 @@ fn get_queue_status(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
     let cursor_list = crate::edge::replica::cursors(facade, node.as_deref())?
         .iter()
         .map(|cursor| {
-            let mut row = indexmap::IndexMap::new();
+            let mut row = indexmap::IndexMap::default();
             row.insert("pairedNodeId".to_string(), Value::string(&cursor.paired_node_id));
             row.insert("setName".to_string(), Value::string(&cursor.set_name));
             row.insert("epoch".to_string(), Value::string(&cursor.epoch));
@@ -435,7 +435,7 @@ fn get_replica_values(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
     let value_list = values
         .iter()
         .map(|value| {
-            let mut row = indexmap::IndexMap::new();
+            let mut row = indexmap::IndexMap::default();
             row.insert("pairedNodeId".to_string(), Value::string(&value.paired_node_id));
             row.insert("entityName".to_string(), Value::string(&value.entity_name));
             row.insert("pk".to_string(), moqui_lib::json::from_json(&value.pk));

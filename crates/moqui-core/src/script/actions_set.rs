@@ -210,7 +210,7 @@ fn constant(text: &str) -> Option<Value> {
         "true" => return Some(Value::Bool(true)),
         "false" => return Some(Value::Bool(false)),
         "[]" => return Some(Value::List(Vec::new())),
-        "{}" => return Some(Value::Map(indexmap::IndexMap::new())),
+        "{}" => return Some(Value::Map(indexmap::IndexMap::default())),
         _ => {}
     }
     for quote in ['\'', '"'] {
@@ -301,7 +301,7 @@ impl Step {
         let kind = node.attribute("type").unwrap_or_default();
         let (source, default, convert) = match kind.as_str() {
             "NewList" => (Source::Constant(Value::List(Vec::new())), None, None),
-            "NewMap" => (Source::Constant(Value::Map(indexmap::IndexMap::new())), None, None),
+            "NewMap" => (Source::Constant(Value::Map(indexmap::IndexMap::default())), None, None),
             _ => {
                 let source = if let Some(from) = node.attribute("from") {
                     let from = from.trim();

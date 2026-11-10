@@ -20,7 +20,6 @@
 
 use std::collections::BTreeMap;
 
-use indexmap::IndexMap;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 
@@ -95,7 +94,7 @@ fn map(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
         entries
             .into_iter()
             .map(|(key, value)| (key.to_string(), value))
-            .collect::<IndexMap<_, _>>(),
+            .collect::<moqui_lib::object::ValueMap>(),
     )
 }
 

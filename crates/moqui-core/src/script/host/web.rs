@@ -234,7 +234,7 @@ fn web_request_info(_call: &mut Call<'_>) -> Result<Ret, HostError> {
         })
     });
     let text = |value: Option<String>| value.map_or(Value::Null, Value::String);
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("method".to_string(), Value::string(request.method.to_ascii_uppercase()));
     map.insert("requestURI".to_string(), Value::string(&request.path));
     map.insert("queryString".to_string(), text(request.raw_query.clone()));
@@ -428,7 +428,7 @@ fn header_pairs(value: &Value) -> Vec<(String, String)> {
 const MAX_READ_BODY: u64 = 32 * 1024 * 1024;
 
 /// A bounded multipart body rebuilt from spooled uploads. Raw multipart requests are not retained after parsing.
-fn multipart_body(parts: &indexmap::IndexMap<String, Value>) -> Result<(String, bytes::Bytes), HostError> {
+fn multipart_body(parts: &moqui_lib::object::ValueMap) -> Result<(String, bytes::Bytes), HostError> {
     const LIMIT: usize = 64 * 1024 * 1024;
     let boundary = crate::user::random_string(32).map_err(|error| HostError::message(error.message()))?;
     let mut body = Vec::new();
@@ -535,7 +535,7 @@ fn rest_open(call: &mut Call<'_>) -> Result<Ret, HostError> {
             err.message()
         ))
     })?;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("statusCode".to_string(), Value::I64(i64::from(opened.status)));
     map.insert(
         "reasonPhrase".to_string(),
@@ -568,7 +568,7 @@ fn rest_read_body(call: &mut Call<'_>) -> Result<Ret, HostError> {
         .map_err(|_| crate::context::Error::new("no such response body"))
         .and_then(|id| crate::web::upstream::read_all(id, MAX_READ_BODY))
         .map_err(|err| HostError::message(err.message()))?;
-    let mut map = indexmap::IndexMap::new();
+    let mut map = indexmap::IndexMap::default();
     map.insert("text".to_string(), Value::string(String::from_utf8_lossy(&bytes)));
     map.insert("bytes".to_string(), Value::Bytes(bytes));
     Ok(Value::Map(map).into())

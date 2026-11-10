@@ -195,7 +195,9 @@ impl Tool for ICalendarTool {
             "write" => {
                 let calendar = match args.first() {
                     Some(Value::Map(map)) => map.clone(),
-                    Some(Value::List(events)) => IndexMap::from([("events".to_string(), Value::List(events.clone()))]),
+                    Some(Value::List(events)) => {
+                        IndexMap::from_iter([("events".to_string(), Value::List(events.clone()))])
+                    }
                     _ => {
                         return Err(Error::new(
                             "ICalendar.write takes {method, calendarName, timeZone, events}",

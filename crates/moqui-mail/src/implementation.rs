@@ -453,7 +453,10 @@ struct Expanded {
     subject: String,
 }
 
-fn expand_headers(template: &EntityValue, parameters: Option<&IndexMap<String, Value>>) -> Result<Expanded, LibError> {
+fn expand_headers(
+    template: &EntityValue,
+    parameters: Option<&moqui_lib::object::ValueMap>,
+) -> Result<Expanded, LibError> {
     let _frame = moqui_core::script::ContextFrame::push();
     if let Some(map) = parameters {
         for (name, value) in map {
@@ -877,7 +880,7 @@ fn collect_attachments(
 
 fn push_parameter_attachment(
     out: &mut Vec<AttachmentBytes>,
-    map: &IndexMap<String, Value>,
+    map: &moqui_lib::object::ValueMap,
     env: &RenderEnv,
 ) -> Result<(), Error> {
     let filename = expand_text(&map_text(map, "fileName"))?;
@@ -2085,7 +2088,7 @@ pub(super) fn test_server(
             steps
                 .into_iter()
                 .map(|TestStep { step, ok, message }| {
-                    let mut map = IndexMap::new();
+                    let mut map = IndexMap::default();
                     map.insert("step".to_string(), Value::string(step));
                     map.insert("ok".to_string(), Value::Bool(ok));
                     map.insert("message".to_string(), Value::string(message));
@@ -2174,7 +2177,7 @@ pub(super) fn find_one(
     facade.find(entity)?.eq(field, Value::string(value)).one()
 }
 
-fn body_parameters(parameters: &BTreeMap<String, Value>) -> Option<&IndexMap<String, Value>> {
+fn body_parameters(parameters: &BTreeMap<String, Value>) -> Option<&moqui_lib::object::ValueMap> {
     match parameters.get("bodyParameters") {
         Some(Value::Map(map)) => Some(map),
         _ => None,

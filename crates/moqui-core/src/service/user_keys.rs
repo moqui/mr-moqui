@@ -492,7 +492,7 @@ fn get_app_passwords(
         .list()?
         .iter()
         .map(|row| {
-            let mut map = indexmap::IndexMap::new();
+            let mut map = indexmap::IndexMap::default();
             for field in ["appPasswordId", "name", "createdDate", "lastUsedDate", "revokedDate"] {
                 map.insert(field.to_string(), row.get(field).cloned().unwrap_or(Value::Null));
             }
@@ -533,7 +533,7 @@ fn get_device_keys(
                 .is_none_or(|thru| thru > now)
         })
         .map(|row| {
-            let mut map = indexmap::IndexMap::new();
+            let mut map = indexmap::IndexMap::default();
             for field in ["loginKey", "deviceName", "fromDate", "lastUsedDate", "thruDate"] {
                 map.insert(field.to_string(), row.get(field).cloned().unwrap_or(Value::Null));
             }
