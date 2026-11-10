@@ -1,6 +1,8 @@
 # Performance: where it stands, what remains, and the ideas
 
-Status 2026-11-09. This file replaces four running logs, now in `archive/`:
+Status 2026-11-10 (the numbers are R53's, 2026-11-09). [Profiling3](Profiling3.md) reads these numbers again with
+the code beside them and holds the next plan: what to measure, the small certain work and the larger work. This file
+replaces four running logs, now in `archive/`:
 - [Profiling](archive/Profiling.md): Rounds 1 to 49.
 - [TX-Cache](archive/TX-Cache.md): the transaction cache, Phases 0 to 6 and Censuses 1 to 9.
 - [Script-Engine-Oxide](archive/Script-Engine-Oxide.md): quickjs-oxide in and rquickjs out, Phases 0 to 4.
@@ -22,6 +24,9 @@ Most of the database and service work is done:
 No js_speed row loses to QuickJS's last numbers since R52: walk itemList ×0.94, cached finds ×0.91, the locked
 template ×0.56. The heap of the script runtimes is under its gate in every test-apps process (the largest 62 MB of 73,
 R52). It rises as the apps add code and data.
+
+Not measured yet ([Profiling3](Profiling3.md) §2 and §4): an operation's round trips by kind, its CPU apart from
+them, anything but the entity rows on more than one thread, and the process's memory beyond the script heap.
 
 ## 1. Headline numbers
 
@@ -105,7 +110,7 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
   as `../quickjs-oxide-bench` (its `README.md`; it was the `../oxide-bench` workspace until R50):
   - its tools: `tools/gates.sh`, `tools/run-sweep.sh`, `tools/mantle-pg/` and `tools/ngrun/`;
   - the Sweep and memory results (`sweeps/`), the gates and Test262 logs;
-  - each round's scripts, notes and tables (`rounds/r32` to `rounds/r50`).
+  - each round's scripts, notes and tables (`rounds/r32` to `rounds/r53`).
 
   Binaries, worktrees, the suites and traces go in its `work/`, which git ignores.
   - **The Sweep.** Build a base from the fork's current `main` (`work/base-<sha>`), then `tools/run-sweep.sh`:
@@ -115,6 +120,8 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
   - **Merging.** A branch merges `--no-ff` into the fork's `main` with the Sweep's numbers in the message. The user
     pushes the fork, then mr-moqui's pin moves and `cargo update -p quickjs-oxide` runs.
   - No upstream issues or pull requests without asking.
+  - **What goes in the fork** (the user, 2026-11-10): anything of high value to mr-moqui. Upstream taking a change
+    is a plus and does not decide it ([Profiling3](Profiling3.md) §9 D4).
   - **`tools/mantle-pg/`** times the nine Mantle operations against `moqui-pg18` 200 µs away: `setup.sh`, `run.sh`,
     `table.py`, `teardown.sh`. It ran two engines in turn; it now runs one.
 - **Rules learned:**
@@ -125,6 +132,9 @@ CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test <name> -
     Not `/tmp` (a tmpfs filled up once), and not under mr-moqui's `target/`, which `cargo clean` removes (R50's raw
     outputs went that way).
   - Under low load, memory matters more than the last millisecond; under high load, speed does.
+  - The rows are small and run on one thread: a service of a few lines, a short context. A cost that grows with a
+    body's size, with what the caller's context holds or with the thread count does not show in them
+    ([Profiling3](Profiling3.md) §2, "What the speed rows do not show"; its M3 and M4 add the rows).
 
 ## 3. Where things stand
 
@@ -164,8 +174,9 @@ ms, the mail store with two attachments 14.8 → 8.7 ms, all at 200 µs to the d
 
 ### The script engine
 
-quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` f873d7e7
-(R53, the sampling profiler; ddba97fe in R51, 1cdb77e2 in R50, 7cf1f530 before, Oxide §7, Phase 4 result).
+quickjs-oxide, a QuickJS-compatible engine in safe Rust, is the only engine, pinned to the fork's `main` b7e34e04
+(the engine differences settled, 2026-11-09; f873d7e7 in R53, the sampling profiler; ddba97fe in R51, 1cdb77e2 in
+R50, 7cf1f530 before, Oxide §7, Phase 4 result).
 
 The fork's changes:
 - **F1:** compiled code shared by the process. Code images (step 1) and shared unit bodies (step 2) are done; shared
@@ -513,6 +524,11 @@ on a render. `sri.renderText` was 0.6 ms of Cache Elements (four templates) and 
   already has in script.
 - **`sri.write`** outside buffered rows: rows with other widgets, headers, and the hidden row forms of html.
 - **The host boundary:** argument and result conversions are 11% of html.
+- **No profile of the end:** `perf` was taken at the base and after the first changes, the second with the render
+  profile on. Screen output has streamed since (0a1f1a41, 2026-11-10), so a rerun of `screen_bench.py` with a clean
+  `perf` profile is the next base ([Profiling3](Profiling3.md) M5).
+- **A row is still about 840 thousand instructions and 65 host calls** (Entities html). Profiling3 S4 proposes rows
+  as templates the host fills.
 
 ### Startup and threads
 
@@ -536,6 +552,9 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
 
 **Concurrency**
 - Cached finds past two threads: a per-thread memo of the definition lookups (R7, Further work 2).
+- Nothing but `entity_speed` runs on more than one thread. The per-call path takes process-wide locks (the
+  generated-actions cache, the artifact statistics, the tarpit map), and both pools wake every idle worker for a job:
+  [Profiling3](Profiling3.md) §2, its W1, W6 and W13, and the thread rows of its M4.
 
 **Startup** (R9)
 - Create tables on several connections at once, foreign keys after.
@@ -544,6 +563,10 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
 - Feed documents are indexed twice on a first start.
 
 **The transaction cache** (TX §Gaps, §Results, §Later rounds)
+- **Round trips nobody has classified:** a Mantle operation's time is its round trips (300 to 470 µs each at 200 µs
+  to the database), and the frame counts only some of them as its reads: place#Order 21 of 66, pack#Shipment 45 of
+  117, the rest but the commit unnamed (R48's census, read in [Profiling3](Profiling3.md) §2). Its M2 adds statement
+  shapes to the census and its S1 lists what could then go.
 - **Gaps still open:**
   - G9 is kept by design: a joined `cache` service holds for the rest of its caller's frame, so mark an operation's
     first service.
@@ -569,7 +592,8 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
 - **Later rounds:**
   - mr-mantle's order, shipment, invoice and payment flows, starting where Java's cache was taken off;
   - append-only entities always to the commit batch;
-  - the cache on by default for some kinds of service;
+  - the cache on by default for some kinds of service: to test, turned on for services with no setting of their
+    own, with a rule for when such a service holds taken from what that shows ([Profiling3](Profiling3.md) S1, §9 D3);
   - MySQL multi-row inserts;
   - REST calls' own transactions (R26).
 - **Risks:**
@@ -596,6 +620,9 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
 - **Older leftovers:**
   - bare-name writes still convert (R11);
   - script object keys and strings are one copy each (R18).
+- **In [Profiling3](Profiling3.md):** bare names as bindings the engine caches (S2), a generated `service-call` or
+  find as one crossing (S3a, S3b), action plans (S3c), the host call's fixed cost, inline-cache coverage and a mark
+  for tracked objects (S5).
 
 **The script heap, in the fork** (R49 "Next")
 - Shared atoms: built in R51 ([Round 51](#round-51-shared-atoms)), phases 1 to 3, with the embedder's declared keys.
@@ -603,6 +630,11 @@ cached PK find scales to two threads, then stops: the slots lock's reader count 
 - A compacting value heap: the arenas give back only their ends.
 - Gate status: every test-apps process under it since R52 (the largest 62 MB of 73, with the half-second idle
   release). It rises as the apps add code and data.
+
+**Memory beyond the script heap**
+- The process was 480 MB on glibc and 603 falling to 502 MB on jemalloc the one time it was read (R37), against a
+  script heap of 62 MB at most. What the rest is has not been looked at: [Profiling3](Profiling3.md) M7.
+- jemalloc's decay (`_RJEM_MALLOC_CONF`) has not been tuned for a quiet instance (R37).
 
 **Engine differences, settled** (2026-11-09; Oxide "Engine differences under `oxide`", "Phase 3: engine differences")
 
@@ -622,7 +654,8 @@ Bellard's QuickJS 2026-06-04, the fork's reference, already behaved as oxide doe
 - The frozen helper globals win over a context value of the same name: kept. It fails safe for `UserSecurityChecks` and
   is close to Groovy, which resolves a class name before a binding variable.
 
-**Allocation and CPU leftovers**
+**Allocation and CPU leftovers** ([Profiling3](Profiling3.md) §5 lists what a service call, a find and a row still
+do on every call, with the lines: W1 to W17)
 - `Value::clone` and the maps built to call services (R15).
 - Allocation (12 to 13%) and `memcmp` (3 to 3.7%) in a service call (R27, R29, R30).
 - OpenTelemetry attribute-set hashing and `IndexMap`s of values (R29).
@@ -679,8 +712,9 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
 - **The three ×1.16 rows in the bindings:** a host map's conversion, a find's arguments and the snapshot's copy, from a
   new profile (R48).
 
-**Tier 3: later**
-- **PGO builds:** zipp B114, −13% overall, −10 to −30% where the interpreter dominates (Zipp 12).
+**Tier 3: later** ([Profiling3](Profiling3.md) orders what comes next; its §6 takes up three of these)
+- **PGO builds:** zipp B114, −13% overall, −10 to −30% where the interpreter dominates (Zipp 12). Cheap enough to
+  try as one experiment now (Profiling3 S5e).
 - **The dispatch loop,** after a new qvt profile, within the loop size gate (Zipp 13):
   - fused instruction pairs (−5%; zipp's triples lost 9 to 20% elsewhere);
   - frameless leaf calls (B117);
@@ -688,15 +722,19 @@ plans; the regexp's lazy loops and failed-run skip; the compacting heap. Shared 
   - `x == null` with no heap read.
 - **`using` and `await using`,** with zipp's grammar and DisposeResources as the reference (Zipp 14).
 - **A generational GC:** the fork's `docs/planned.md` §6, with zipp's NURSERY_DESIGN.md to read (Zipp 15).
-- **A JIT,** a distant option: deadlines by step loans per block, `MAP_JIT` on macOS and none on iOS (Zipp 16).
+- **A JIT,** a distant option: deadlines by step loans per block, `MAP_JIT` on macOS and none on iOS (Zipp 16). Not
+  by these numbers: the interpreter's loop is 1% of a transaction's samples and 12 to 24% of a list render's
+  (Profiling3 §3, §8).
 - **The database side:**
   - binary parameters;
   - the per-thread definition memo;
   - table creation in parallel at a first start;
   - a template cluster;
-  - the transaction cache on by default for some kinds of service (Further work, R9, TX §Later rounds).
+  - the transaction cache on by default for some kinds of service (Further work, R9, TX §Later rounds; a test now,
+    Profiling3 S1).
 - **More native actions:** R52's plan covers bodies of only simple `<set>`s; `<if>`, `<iterate>` and
-  `entity-find-one` over the same plan would take loop#Actions and the screens' actions off the engine.
+  `entity-find-one` over the same plan would take loop#Actions and the screens' actions off the engine. Profiling3
+  S3c gives it a shape: one parsed form of a body, the script and a native executor as its two back ends.
 
 ## 6. Measured and dropped: do not retry
 
@@ -829,3 +867,5 @@ The archived files stay whole as the record. Code comments cite them by section:
   - what was not taken.
 - **[Performance-Summary](Performance-Summary.md):** the digest of the performance plan and the Mantle USL audit.
 - **[Performance](Performance.md):** the targets.
+- **[Profiling3](Profiling3.md):** the second reading of these numbers (2026-11-10), the instruments still missing,
+  and the next work in order. It adds no measurement of its own.
