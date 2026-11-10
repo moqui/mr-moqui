@@ -16,7 +16,7 @@ ${JSON.stringify((() => {
             : param.kind == 'options' ? {kind: 'dropDown', value: String(param.value), options: param.options.map((option) => ({value: option, label: option}))}
             : param.kind == 'boolean' ? {kind: 'check', value: param.value ? 'true' : 'false', options: [{value: 'true', label: 'Yes'}]}
             : {kind: 'textLine', value: String(param.value), inputType: param.kind == 'number' ? 'number' : ''}
-        // a secret's field name has "password" in it: a refused form's parameters kept in the session leave it out
+        // the field of a secret param has password in its name: the session keeps the parameters of a refused form without it
         fields.push(field((param.kind == 'password' ? 'password_' : 'p_') + param.name, param.name, w, {required: param.required, tooltip: param.description}))
     }
     const settings = [['users', 'users'], ['rampUp', 'ramp up (s)'], ['duration', 'duration (s)'], ['iterations', 'iterations']]
@@ -31,7 +31,7 @@ ${JSON.stringify((() => {
     if (plan.fromRunId) nodes.push({t: 'text', id: 'NewRunFrom', text: plan.imported
         ? 'Run ' + plan.fromRunId + ' was imported from another machine: only its target kind is filled in.'
         : 'Filled from run ' + plan.fromRunId + (plan.params.some((param) => param.kind == 'password') ? '; enter the passwords again.' : '.')})
-    nodes.push({t: 'text', id: 'NewRunTimes', text: 'Times are in seconds. Leave a value empty for the script\'s own.'},
+    nodes.push({t: 'text', id: 'NewRunTimes', text: "Times are in seconds. Leave a value empty for the script's own."},
         {t: 'form', id: 'NewRunForm', name: 'NewRunForm', transitionUrl: sri.buildUrl('start').url, method: 'post', writes: true,
             hidden: [{name: 'scriptLocation', value: plan.scriptLocation}, {name: 'runId', value: plan.fromRunId || ''},
                 {name: 'scenarioNames', value: JSON.stringify(plan.scenarios.map((scenario) => scenario.name))}]

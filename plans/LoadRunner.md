@@ -1,6 +1,8 @@
 # LoadRunner
 
-Status 2026-11-10: research and plan. Nothing is built. The plan turns the Tools app's Service Load Runner screen into
+Status 2026-11-10: L1 to L6 are built (2026-11-10); L7, other kinds of load, is deferred. The
+guide is [docs/tools/Load-Runner.md](../docs/tools/Load-Runner.md), which says what was built where this plan
+differs. Corrections the build made are marked "Built:" below. The plan turns the Tools app's Service Load Runner screen into
 a general load runner: load scripts in JavaScript on the `moqui test-client` harness, run from Tools › Load, from a
 command, or from a client spec, against this server's services in process or any server over HTTP, with room for SSH
 and other loads later. The first script is an order to cash walk that runs against Moqui Java (MarbleERP) and MR Moqui
@@ -178,7 +180,7 @@ them into the run's shared state at most once a second and when it ends. The sha
 counts by outcome and an error count; and the first 20 error samples.
 
 **Histogram.** `moqui_lib::histogram`: counters by power of two with 64 steps in each, values in microseconds. It
-gives min, mean, max and any percentile, merges by adding, and is about 16 KB. Percentiles are within 1.6% of the
+gives min, mean, max and any percentile, merges by adding, and is about 14 KB. Percentiles are within 1.6% of the
 value.
 
 **Bins.** One per second from the run's start: active users, requests, errors, mean, p50, p95, p99 and max, computed
@@ -195,7 +197,8 @@ file, then runs its scenario by name (`run_script_on_thread` in devkit's testkit
 scenario's users are numbered from 0.
 
 **Pacing.** `think` between iterations as now. `pause` before each request, in Rust, from a per-thread random
-generator (the `rand` crate is linked); a Gaussian wait is clamped at zero.
+generator; a Gaussian wait is clamped at zero. Built: the generator is a SplitMix64 per thread seeded from
+`getrandom` (`pace.rs`), not the `rand` crate.
 
 **The result** keeps today's fields and adds:
 
@@ -205,7 +208,7 @@ generator (the `rand` crate is linked); a Gaussian wait is clamped at zero.
 | `bins`, `binSeconds` | The time series |
 | `names.<name>.kind`, `.outcomes` | The kind, and counts by outcome label (`statuses` stays for HTTP) |
 | `thresholds`, `passed` | Each limit with its value, and the verdict |
-| `generator` | Where the generator ran (`in-target`, `same-machine`, `remote` when known), its cores, its process CPU share over the run, and the share of the users' time spent in script rather than waiting on a request or a pause |
+| `generator` | Where the generator ran (`in-target`, `same-machine`; built: no `remote`, `same-machine` is every command run whatever machine the server is on, `in-target` a Tools run against this server and `in-server` a Tools run against another server), its cores, its process CPU share over the run, and the share of the users' time spent in script rather than waiting on a request or a pause |
 | `run` | The script, the scenario settings used, the parameters without secrets, the target URL, a label, start and end |
 
 The generator block is there so that a run limited by the generator can be seen: a high CPU share or script share
@@ -218,7 +221,7 @@ omission). Iterations that could not start for lack of a free user are counted a
 no user has taken it by the time of the start after it (one interval late, and at least 25 ms), or when the scenario
 ends with it due. Each iteration of a rate scenario is also a `<scenario> iteration` step sample from its scheduled
 start. The semantics of stages and of a live change (`Load::set_target`, `update#LoadRunUsers`) are in
-`test_client/load/schedule.rs` and [Client-Testing](../docs/dev/Client-Testing.md#load-and-parallel).
+`test_client/load/schedule.rs` and [Load-Runner](../docs/tools/Load-Runner.md#rates-and-stages).
 
 ## 6. Kinds of load
 
@@ -226,7 +229,8 @@ start. The semantics of stages and of a live change (`Load::set_target`, `update
 requests, redirects on request. Added: `pause`, `urlParam`, `newSession`, and a `User-Agent` of `moqui-load/<version>`.
 The target is any URL the run may reach (§10): this server by its own address, another MR Moqui, a Moqui Java server.
 A server with the demo data needs its tarpits off (`conf/MoquiLoadTestConf.xml` on both MR and Java); a run shows the
-share of 429 answers on its page, since that is the usual reason for a wall of errors.
+share of 429 answers on its page, since that is the usual reason for a wall of errors. Built: no share of 429s; they
+show in each name's outcomes.
 
 **Services in process.** In a server, each user's thread has an ExecutionContext of its own for the thread's life (as
 the server specs' `parallel` threads do), logged in as the user who started the run (D10), with the tarpit off.
@@ -294,7 +298,7 @@ box (Load scripts, Runs), shown with the permission, and loses the "Service load
 | `NewRun.xml`, `NewRun.qvue`, `NewRun.tui.json` | Task | Target: this server's services (when the script uses `service`), this server over HTTP, or another server with its URL. The plan's parameters, each as its kind (text, number, drop-down, password). Each scenario's users, ramp, duration, iterations. A label. One primary, Start, which opens the run's page. Opened from a run with Run again, it is filled from that run |
 | `Runs.xml` | List | Started, script, label, target, status chip, users, requests, per second, errors, p95, by whom. Find options by script, status and date. A row selection action Compare (2 to 4 runs). Import result (a result file from another machine). Phone columns: script and label; status and p95 |
 | `Run.xml`, `Run.qvue`, `Run.tui.json` | Detail | Record header: script and label, status chip, target, started and ended, user. Actions: while running, Stop (primary; after the current iterations) and Stop now (danger, confirmed); after, Run again (primary), Download result, Delete (danger, confirmed, naming the run). Body: number cards (active users, requests, per second, errors and rate, p50, p95, p99); charts of requests and errors per second, of p50, p95 and p99, and of active users; the table by name (kind, count, errors, mean, p50, p90, p95, p99, max, outcomes); the first errors; the generator panel; for a run on this server, the server panel (CPU load and memory from the status map). A "Not available" state (no such run, or a load running on another server) links to Runs |
-| `Compare.xml` | Report | The runs as columns: summary rows, then each name with count, per second, p50, p95, p99 and errors, and the change against the first run in percent |
+| `Compare.xml` | Report | The runs as columns: summary rows, then each name with count, per second, p50, p95, p99 and errors, and the change against the first run in percent. Built: no per second by name |
 
 The form of New run is built from the plan and the run's page draws live charts, which the XML widgets do not
 express, so those two have a `.qvue` with a `tui` twin; the lists and Compare are plain XML screens. The run's page
@@ -476,11 +480,11 @@ and a new session each iteration. The generator's CPU share was 0.2%.
 | Path | What |
 | --- | --- |
 | `crates/moqui-lib/src/histogram.rs` | The log-linear histogram (no ExecutionContext, so the lowest crate) |
-| `crates/moqui-host/src/test_client/load/` | `mod.rs` (a load, its users, snapshot, stop), `record.rs` (the thread's buffer and the merge), `bins.rs`, `stats.rs` (the result, the table, thresholds), `pace.rs` (ramp, think, pause, later the arrival rate), `script.rs` (reading a plan, starting users on a script file) |
+| `crates/moqui-host/src/test_client/load/` | `mod.rs` (a load, its users, snapshot, stop), `record.rs` (the thread's buffer and the merge), `bins.rs`, `stats.rs` (the result, the table, thresholds), `pace.rs` (think, pause), `schedule.rs` (built: stages, the arrival rate, a live target), `script.rs` (reading a plan, starting users on a script file) |
 | `crates/moqui-host/src/test_client/load_cmd.rs` | `moqui test-load`: options, the script list, the progress line, `--compare`; `usage.rs` and `lib.rs` for the help and the dispatch; `moq` for `./moq test-load` |
 | `crates/moqui-host/src/test_client/prelude.js` | `plan`, `scenario`, `step`, `pause`, `service`, `fail`, `urlParam` on a response, `load({ script })` |
 | `crates/moqui-devkit/src/testkit/run.rs` | `run_script_on_thread`: a thread that evaluates files and then calls a function, with or without an entered ExecutionContext |
-| `crates/moqui-host/src/load_runner/` | The server side, under the `test-client` feature with an off stub: `mod.rs` (the extension entry and the services), `run.rs` (the registry, the run's thread, stop, shutdown), `results.rs` (the result files: list, read, import, delete, compare), `service_call.rs` (the in-process call), `targets.rs` |
+| `crates/moqui-host/src/load_runner/` | The server side, under the `test-client` feature with an off stub: `mod.rs` (the extension entry and the services), `run.rs` (the registry, the run's thread, stop, shutdown), `results.rs` (the result files: list, read, import, delete, compare), `service_call.rs` (the in-process call), `targets.rs`; built also `scripts.rs` (the components' scripts), `compare.rs` and `server.rs` (the server samples, the Monitor annotations) |
 | `runtime/base-component/framework/service/org/moqui/dev/LoadServices.xml`, `data/SecurityTypeData.xml`, `conf/MoquiDefaultConf.xml` | The services; the permission and its place in the sealed list. No entity |
 | `runtime/base-component/tools/screen/Tools/Load.xml`, `Tools/Load/` | The screens of §8 |
 | `runtime/base-component/tools/test/load/ServiceCall.load.js` | The shipped script |
@@ -527,8 +531,8 @@ either suite, since no suite starts a Java server.
 - `runtime/base-component/tools/README.md`: the `Load/` row, `test/load/`; mr-marble's README: its script.
 - [Attack-Surface](../docs/security/Attack-Surface.md), [Parity-Diffs](Parity-Diffs.md) (D10, the removed screen),
   [Parity-Mapping](Parity-Mapping.md) (`ServiceFacadeImpl.LoadRunner` to `load_runner`).
-- [Remaining-Work](Remaining-Work.md): its "browser users in load tests, an arrival-rate model, server metrics around
-  load runs and merged client reports" item points here (§17, L6).
+- [Remaining-Work](Remaining-Work.md): a load runner row with what is left (§17, L7), pointing here; the arrival-rate
+  model, server samples and compare are built.
 
 ## 16. Risks and open questions
 
@@ -562,6 +566,20 @@ either suite, since no suite starts a Java server.
 9. **A stop now interrupts a service's script.** A load run's stop now ends whatever script runs on a user's thread,
    a service's own included (`moqui_core::script::interrupt_thread_on`). A service with a transaction rolls back; one
    with `transaction="ignore"` can be left half done, as a request's timeout leaves it.
+
+**What the build settled** (L1 to L6):
+
+- 1: the ceiling was not measured; Client-Testing gives the scale (a few hundred users a process) and the `generator`
+  block's `cpu` and `scriptShare` show a run at it. Still to measure.
+- 2: a run from Tools against this server is `in-target`, with a `generator.note` and the server samples; one
+  against another server is `in-server`, since the generator is this server's process and not the target's.
+- 3: no per-context counters were added; the server panel has the machine's load, the process's CPU share, memory
+  and threads (`load_runner/server.rs`).
+- 5: the limits are `load_runner_max_runs` and `load_runner_max_users`, as planned.
+- 6: percentiles are the histogram's, within about 1.6%, and the guide and `moqui help test-load` say so.
+- 8: still open: no override; a service the starter is not granted is an error.
+- 9: built as described. A run also stops now when its starter can no longer log in or loses `LOAD_RUNNER` (checked
+  every 10 seconds), and the result says why.
 
 ## 17. Later
 

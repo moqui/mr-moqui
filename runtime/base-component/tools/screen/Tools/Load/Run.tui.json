@@ -17,24 +17,40 @@ ${JSON.stringify((() => {
     if (run.running) nodes.push(
         {t: 'link', id: 'LoadRunStop', text: 'Stop', url: sri.buildUrl('stop').addParameter('runId', run.runId).getUrlWithParams(), kind: 'hidden-form-link', method: 'post', btnType: 'primary', writes: true},
         {t: 'link', id: 'LoadRunStopNow', text: 'Stop now', url: sri.buildUrl('stopNow').addParameter('runId', run.runId).getUrlWithParams(), kind: 'hidden-form-link', method: 'post', btnType: 'danger',
-            confirm: 'Stop run ' + run.runId + ' before each user\'s next request?', writes: true},
+            confirm: 'Stop run ' + run.runId + " before each user's next request?", writes: true},
         {t: 'link', id: 'LoadRunRefresh', text: 'Refresh', url: sri.buildUrl('.').addParameter('runId', run.runId).getUrlWithParams(), kind: 'anchor'})
     else nodes.push(
         {t: 'link', id: 'LoadRunAgain', text: 'Run again', url: sri.buildUrl('../NewRun').addParameter('runId', run.runId).getUrlWithParams(), kind: 'anchor', btnType: 'primary'},
         {t: 'link', id: 'LoadRunDownload', text: 'Download result', url: sri.buildUrl('../downloadResult').addParameter('runId', run.runId).getUrlWithParams(), kind: 'anchor', browser: true},
         {t: 'link', id: 'LoadRunDelete', text: 'Delete', url: sri.buildUrl('delete').addParameter('runId', run.runId).getUrlWithParams(), kind: 'hidden-form-link', method: 'post', btnType: 'danger',
             confirm: 'Delete run ' + run.runId + (run.label ? ' (' + run.label + ')' : '') + ' and its result file?', writes: true})
+    // while it runs: the users of a closed scenario, or the rate of a rate scenario, from now on
+    if (run.running && run.targets.length) {
+        const hasRate = run.targets.some((target) => target.rate != null)
+        nodes.push({t: 'text', id: 'LoadRunTargetsNow', text: 'Scenarios now: ' + run.targets.map((target) => target.name + ' '
+            + (target.rate != null ? fmt(target.rate) + ' per second, at most ' + fmt(target.users) + ' users' : fmt(target.users) + ' users')).join('; ')},
+            {t: 'form', id: 'LoadRunTargets', name: 'LoadRunTargets', method: 'post', writes: true,
+                transitionUrl: sri.buildUrl('updateUsers').addParameter('runId', run.runId).getUrlWithParams(),
+                c: [{t: 'field', id: 'LoadRunTargets_scenario', name: 'scenario', title: 'Scenario', w: {kind: 'dropDown', value: run.targets[0].name,
+                        options: run.targets.map((target) => ({value: target.name, label: target.name + (target.rate != null ? ' (rate)' : '')}))}},
+                    {t: 'field', id: 'LoadRunTargets_users', name: 'users', title: 'Users', tooltip: "A closed scenario's users, or a rate scenario's most at once", w: {kind: 'textLine', value: '', inputType: 'number'}}]
+                    .concat(hasRate ? [{t: 'field', id: 'LoadRunTargets_rate', name: 'rate', title: 'Per second', tooltip: "A rate scenario's starts per second",
+                        w: {kind: 'textLine', value: '', inputType: 'number'}}] : [])
+                    .concat([{t: 'field', id: 'LoadRunTargets_apply', name: 'applyButton', title: 'Apply', w: {kind: 'submit', text: 'Apply'}}])})
+    }
     nodes.push({t: 'dashboard', id: 'LoadRunCards', c: [
         ['ActiveUsers', 'Active users', fmt(totals.activeUsers) + ' of ' + fmt(totals.users)], ['Requests', 'Requests', fmt(totals.requests)],
-        ['Rps', 'Per second', fmt(totals.rps)], ['Errors', 'Errors', fmt(totals.errors) + ' (' + percent(totals.errorRate) + ')'],
-        ['P50', 'p50', fmt(totals.p50) + ' ms'], ['P95', 'p95', fmt(totals.p95) + ' ms'], ['P99', 'p99', fmt(totals.p99) + ' ms']]
+        ['Rps', 'Per second', fmt(totals.rps)], ['Errors', 'Errors', fmt(totals.errors) + ' (' + percent(totals.errorRate) + ')']]
+        .concat(run.hasRate ? [['Dropped', 'Dropped', fmt(totals.dropped || 0)]] : []).concat([
+        ['P50', 'p50', fmt(totals.p50) + ' ms'], ['P95', 'p95', fmt(totals.p95) + ' ms'], ['P99', 'p99', fmt(totals.p99) + ' ms']])
         .map(([id, title, value]) => ({t: 'numberCard', id: 'LoadRunCard' + id, title: title, value: value}))})
     const series = run.series || {t: []}
     if (series.t.length) {
         const labels = series.t.map((t) => t + 's')
         const chart = (id, title, sets) => ({t: 'component', id: id, name: 'chart', props: {title: title, labels: labels,
             series: sets.map(([name, data]) => ({name: name, data: data.map((value) => value == null ? 0 : value)}))}})
-        nodes.push(chart('LoadRunRates', 'Requests and errors per second', [['Requests', series.rps], ['Errors', series.eps]]),
+        nodes.push(chart('LoadRunRates', 'Requests and errors per second', [['Requests', series.rps], ['Errors', series.eps]]
+                .concat(run.hasRate ? [['Dropped', series.dropped || []]] : [])),
             chart('LoadRunLatency', 'Response time (ms)', [['p95', series.p95], ['p50', series.p50], ['p99', series.p99]]),
             chart('LoadRunUsers', 'Active users', [['Users', series.users]]))
     }
@@ -56,10 +72,10 @@ ${JSON.stringify((() => {
     }
     const generator = run.generator
     const where = generator ? generator.where : 'in-target'
-    nodes.push({t: 'text', id: 'LoadRunGenerator', text: 'Generator: ' + (where == 'in-target' ? 'threads in this server' : where == 'same-machine'
+    nodes.push({t: 'text', id: 'LoadRunGenerator', text: 'Generator: ' + (where == 'in-target' ? 'threads in this server' : where == 'in-server' ? 'threads in this server, against another server' : where == 'same-machine'
         ? 'the moqui command, on the machine it ran on' : where) + (generator ? ' · ' + generator.cores + ' cores'
         + (generator.cpu != null ? ' · CPU ' + percent(generator.cpu) + ' of the machine' : '')
-        + (generator.scriptShare != null ? ' · scripts ' + percent(generator.scriptShare) + ' of the users\' time' : '') : '')})
+        + (generator.scriptShare != null ? ' · scripts ' + percent(generator.scriptShare) + " of the users' time" : '') : '')})
     if (run.server) nodes.push({t: 'text', id: 'LoadRunServer', text: 'This server: CPU load ' + fmt(run.server.load)
         + (run.server.processors ? ' on ' + run.server.processors + ' processors' : '') + (run.server.loadPercent != null ? ' · busy ' + fmt(run.server.loadPercent) + '%' : '')
         + ' · memory ' + run.server.memoryUsed + ' MiB' + (run.server.threads != null ? ' · ' + run.server.threads + ' threads' : '')})

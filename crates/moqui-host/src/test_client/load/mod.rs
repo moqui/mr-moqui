@@ -961,7 +961,8 @@ pub(crate) struct Start {
     /// The result's `run` block: `script`, `target`, `label`, `params` (without secrets). The scenarios, start, end and
     /// status are added at the end.
     pub(crate) run: Map<String, Value>,
-    /// Where the generator runs, for the result: `same-machine` (the client) or `in-target` (a run in the server).
+    /// Where the generator runs, for the result: `same-machine` (the client), `in-target` (a run in the server against itself) or `in-server` (a run in
+    /// the server against another server).
     pub(crate) generator: &'static str,
     /// Wraps each user's thread, as a run in a server enters an ExecutionContext on it; none for a client.
     pub(crate) around: Option<Around>,

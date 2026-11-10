@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <parameter name="runId" required="true"/>
 
-    <!-- the terminal's actions; the browser posts to ../stopRun and ../deleteRun -->
+    <!-- the terminal's actions; the browser posts to ../stopRun, ../updateUsers and ../deleteRun -->
     <transition name="stop" method="post" begin-transaction="false" authz-action="all">
         <actions><script><![CDATA[
             const stopped = ec.resource.script('component://tools/template/LoadRuns.js').call('stop#LoadRun', {runId: String(runId || ''), now: false})
@@ -36,6 +36,16 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const stopped = ec.resource.script('component://tools/template/LoadRuns.js').call('stop#LoadRun', {runId: String(runId || ''), now: true})
             if (stopped.error) ec.message.addError(stopped.error)
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="updateUsers" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const error = ec.resource.script('component://tools/template/LoadRuns.js').updateUsers(runId, context.scenario, context.users, context.rate)
+            if (error) ec.message.addError(error)
+            else ec.message.addMessage(ec.resource.expand('${scenario}: ${what} from now on', '', {scenario: String(context.scenario || ''),
+                what: context.rate != null && context.rate !== '' ? context.rate + ' per second' : context.users + ' users'}), 'success')
         ]]></script></actions>
         <default-response url="."/>
         <error-response url="."/>

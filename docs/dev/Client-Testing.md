@@ -518,8 +518,8 @@ It returns the statistics, prints a table after the feature's line, and writes t
 | `users` | The number of users, 1 to 10,000; 1 by default |
 | `duration`, `iterations` | Seconds the scenario repeats for, and/or iterations per user; at least one. With both, a user stops at whichever comes first |
 | `rampUp` | Seconds over which the users start, evenly; with `rate` and no `stages`, the seconds over which the rate rises from 0 |
-| `rate` | Iterations started per second (an arrival rate, below), with `users` the most at once (by default the highest rate rounded up, which assumes an iteration takes a second or less: give more for longer ones). `iterations` is then the scenario's starts in all. Not with `stages` |
-| `stages` | `[{ duration, users }]`, the users over time, or `[{ duration, rate }]`, the rate over time (below); with no `duration`, the scenario lasts as long as its stages |
+| `rate` | Iterations started per second (an arrival rate, [Load-Runner](../tools/Load-Runner.md#rates-and-stages)), with `users` the most at once (by default the highest rate rounded up, which assumes an iteration takes a second or less: give more for longer ones). `iterations` is then the scenario's starts in all. Not with `stages` |
+| `stages` | `[{ duration, users }]`, the users over time, or `[{ duration, rate }]`, the rate over time; with no `duration`, the scenario lasts as long as its stages |
 | `think` | Between a user's iterations, not timed: milliseconds, `[min, max]` (uniform) or `{ gaussian: [mean, deviation] }` (clamped at 0) |
 | `pause` | A wait of the same forms before each request of the scenario, not timed |
 | `newSession` | `true` starts each iteration on a fresh `http` session (no cookies, no token) |
@@ -528,34 +528,33 @@ It returns the statistics, prints a table after the feature's line, and writes t
 | `thresholds` | `{ errorRate, p95, p99, names: { "<name>": { p95 } } }` (also `min`, `mean`, `p50`, `p90`, `max`), milliseconds; checked at the end into `thresholds` and `passed`. An unknown metric or a limit that is not a number is refused before the users start |
 | `label` | Kept in the result's `run` block |
 | `stopAfter`, `stopNowAfter` | Seconds after which the users stop after their current iteration, or before their next request (a refused request is not an error) |
-| `timeout` | Seconds before the users are told to stop; `duration + rampUp + 120`, or 600 with only `iterations`, by default. A user still running 10 s later is counted as an error |
+| `timeout` | Seconds before the users are told to stop; `duration + rampUp + 120`, or with only `iterations` 600 (a rate scenario: the time of its last start and 120), by default. A user still running 10 s later is counted as an error |
 
 The functions run from their source text on other threads, so they cannot use the spec's variables: pass what they need
 in `args`, or put the load in a load script.
 
-**Load scripts** ([LoadRunner](../../plans/LoadRunner.md#4-load-scripts)). `load({ script: "test/load/Name.load.js",
-params, scenarios: { name: { users, iterations, ... } } })` runs a `.load.js` file of the spec's component. Its top
-level has `plan({ title, description, uses, params: { name: { default, description, options, secret, required } },
-thresholds })` and one or more `scenario(name, { users, rampUp, duration, iterations, think, pause, newSession, rate,
-stages, setup(user), run(user, iteration), teardown(user) })`; the functions get `this`, an object of the user's own. The file is
-evaluated once to read the plan (the given `params` resolved over the defaults, of the defaults' types, into `params`),
-and once in each user's engine, so its constants and helpers work in every scenario. A request at its top level throws
-"a load script makes no request at its top level". Every scenario starts together, each with its own ramp and users
-numbered from 0. With `scenarios` (`{ name: settings }`, or `[names]`), only those named run, with their settings over
-the script's (null unsets one), and a name the script does not have is refused. `users`, `iterations`, `duration`,
-`rampUp`, `think`, `pause`, `rate` and `stages` beside `script` apply to every scenario; a `duration` given alone
-replaces the script's `iterations`, and `iterations` alone its `duration`; a `rate` replaces the script's stages
-(and, for a closed scenario, its `iterations`, which were each user's), `stages` its `rate`, and `stages` alone its
-`duration` and `iterations`. A secret param is left out of the result.
+**Load scripts** ([Load-Runner](../tools/Load-Runner.md#writing-a-script)). `load({ script: "test/load/Name.load.js",
+params, scenarios: { name: { users, iterations, ... } } })` runs a `.load.js` file of the spec's component, whose
+`plan` and `scenario` calls the guide describes. With `scenarios` (`{ name: settings }`, or `[names]`), only those
+named run, with their settings over the script's (null unsets one), and a name the script does not have is refused.
+`users`, `iterations`, `duration`, `rampUp`, `think`, `pause`, `rate` and `stages` beside `script` apply to every
+scenario; a `duration` given alone replaces the script's `iterations`, and `iterations` alone its `duration`; a `rate`
+replaces the script's stages (and, for a closed scenario, its `iterations`, which were each user's), `stages` its
+`rate`, and `stages` alone its `duration` and `iterations`. A secret param is left out of the result. `moqui
+test-load` runs a script from the command line, and Tools › Load in a server
+([Load-Runner](../tools/Load-Runner.md)).
 
-`moqui test-load <component> --script Name` runs a load script from the command line, with a progress line, Ctrl-C,
-and the result in `runtime/tmp/test-load/<run>/result.json` (`moqui help test-load`).
+Globals for any spec or load script:
 
-Globals for any spec or script: `step(name, fn)` times `fn` as one sample of kind `step` (its requests still count under
-their own names; a step is not a request in the totals); `pause(ms | [min, max] | { gaussian: [mean, deviation] })`
-waits untimed; `fail(message)` ends the iteration as an error; `response.urlParam(name)` is a query parameter of the
-response's final `url`, else of its `location`, or null. `service.call` throws in a client: it runs in a server's
-process. A load user's requests carry `User-Agent: moqui-load/<version>`.
+| Global | |
+| --- | --- |
+| `step(name, fn)` | Runs `fn` and records its whole time as one sample `name` of kind `step` (a JMeter transaction controller). The requests inside still count under their own names; a step is not a request in the totals |
+| `pause(ms \| [min, max] \| { gaussian: [mean, deviation] })` | A wait that is not timed. A stop ends it |
+| `fail(message)` | Ends the iteration as an error with the message, as a failed `assert` does |
+| `response.urlParam(name)` | A query parameter of the response's final `url`, else of its `location` (a redirect not followed); null when neither has it. A transition's redirect carries the new record's id this way |
+| `service.call(name, parameters, { name, expect })` | In a load run in a server only: the service in process, as the user who started the run ([Load-Runner, Security](../tools/Load-Runner.md#security)). Its out-parameters; the sample is named the service, or `name`. An error ends the iteration unless `expect` lists `"error"`; then the call answers `{ error }`. In a client it throws, naming `http.post` on the service's REST path |
+
+A load user's requests carry `User-Agent: moqui-load/<version>`.
 
 Each request of the scenario is timed in Rust from send to the last byte of the body, and grouped under its `name`
 (`GET /rest/s1/moqui/basic/enums` by default: the method and the path without the query; `RAW <target>` for
@@ -564,25 +563,10 @@ Each request of the scenario is timed in Rust from send to the last byte of the 
 allows a 401 names 200 too if 200 is also fine. An error ends that user's iteration (the request throws in the scenario)
 and is counted once; the next iteration starts after the think time.
 
-The result:
-
-| Field | |
-|---|---|
-| `users`, `iterations`, `requests`, `errors` | Counts over all users |
-| `duration` | Seconds from the first user's timed start to the last user's end |
-| `errorRate`, `rps` | Errors per attempt (each request, and each error that was not a request's, such as a throw or `fail()`), so at most 1; and requests per second. `errors` is every error |
-| `latency` | `min`, `mean`, `p50`, `p90`, `p95`, `p99`, `max` in milliseconds, over every request |
-| `names` | For each name, the `latency` fields with `kind` (`http`, `raw`, `step`), `count`, `errors`, `outcomes` (`{ "200": 804 }`, `ok`, `error`), for HTTP `statuses` (`"0"` for a transport error), and `bins` of `count`, `errors` and `mean` every `binSeconds` (10 to start) |
-| `scenarios` | For each scenario, its `users` (those started), `iterations` and `errors`, and for a rate scenario `dropped` |
-| `dropped` | The scheduled starts dropped, over every rate scenario |
-| `bins`, `binSeconds` | The time series: a bin a second from the start with `t`, `users` (active), `requests`, `errors`, `dropped` (the starts scheduled in that second and dropped), `mean`, `p50`, `p95`, `p99`, `max`. Past 7,200 bins neighbours merge and the length doubles; a merged bin's percentiles are the mean of its two, weighted by requests |
-| `thresholds`, `passed` | Each limit with `name`, `metric`, `limit`, `value` and `passed`; `passed` is false when one is broken (a name with no samples breaks its limits) |
-| `generator` | `where` (`same-machine` for the client), `cores`, `cpu` (the process's CPU share over the run, on Linux) and `scriptShare` (the users' time not spent waiting on a request or a pause): high values mean the numbers are the generator's |
-| `run` | `script`, `scenarios` (the settings used), `params`, `target`, `label`, `start`, `end`, `status` (`completed`, `stopped`), `stopReason` (`stop`, `stop-now`, `timeout`, or null) |
-| `errorSamples` | The first 20 errors: `name` (null for a throw), `status`, `scenario`, `user`, `iteration` and `message` |
-
-Percentiles come from a log-linear histogram per name (64 steps in each power of two, 1 µs to an hour), so they are
-within about 1.6% of the exact nearest-rank value; `min`, `mean` and `max` are exact. The table, with the first three
+The result has the totals, `latency`, a row per name, per-second `bins`, `dropped` for a rate scenario,
+`thresholds` and `passed`, the `generator` block and the `run` block; its fields are in
+[Load-Runner, Reading a result](../tools/Load-Runner.md#reading-a-result), where it also says how approximate its
+percentiles are. The table, with the first three
 error samples and any broken threshold under it, goes to the console and into the case's JUnit `system-out`. The JSON,
 whose `run` block also has `component`, `spec`, `feature`, `server` and `finished`, goes to
 `<out>/load/<component>.<Spec>.<feature>.json` (`-2` and on for another load in the same feature), for comparing runs.
@@ -619,38 +603,14 @@ A user's thread and engine start in about 7 ms and take about 1 MB, so a few hun
 beyond that, run several client processes. Without `rate` it is a closed model: each user waits for its answer before
 the next request.
 
-**Stages.** `stages: [{ duration, users }]` ramps the target users linearly within each stage, from the stage before's
-target (the first from 0), and holds the last stage's until `duration` when that is longer. User `u` (from 0) may start
-an iteration while `u < floor(target)`; a user above the target finishes its iteration and waits, untimed and not
-counted in the active users, and users start as the target reaches them, up to `users` (by default the largest
-stage's). `rampUp` is not used with stages: the first stage is the ramp.
+`stages` and `rate` ([Load-Runner, Rates and stages](../tools/Load-Runner.md#rates-and-stages)) give users over
+time and an arrival rate, which keeps the wait for a stalled server in the times (coordinated omission).
 
-**An arrival rate.** With `rate` (or, not with it, `stages: [{ duration, rate }]`, ramped the same way) iterations are
-started on a schedule rather than by users looping. The scenario's clock starts when its first user begins its timed
-part (after its boot and setup); the `k`-th start (from 0) is where the rate's integral from then reaches `k`,
-`k / rate` for a constant rate, the first at the first time the rate is above 0. A free user takes the next start once it is due. A start is **dropped** when no
-user has taken it by the time of the start after it (one interval late), or 25 ms after its own time if that is later,
-and when the scenario ends (its duration or a stop) with it due and not taken; a dropped start is not run. A request's
-time is still from its send, but the first `step` an iteration begins is timed from as long before its begin as the
-iteration started late (so the wait is in it, and work before the step, such as a login, is not), and each iteration
-is also a sample `<scenario> iteration` (kind `step`) timed from its scheduled start (pauses left out of both, and none
-for an iteration cut short by a stop now), so the wait for a free user while a server stalls shows in those times
-rather than being hidden (coordinated omission). A user added while the load runs takes starts on the schedule as it
-stands, so starts due while its thread boots may be dropped. With only `iterations`, the timeout is the time of the
-last start and 120 s.
-`think` still waits after an iteration before the user is free again.
-
-A running load's target can be changed: a server run's page calls `update#LoadRunUsers` (`runId`, `scenario`, and
-`users` or `rate`), which holds the new users (a closed scenario's target, or a rate scenario's most at once) or rate
-from then on in place of the rest of the stages, within `load_runner_max_users` counting every user already started.
-A plain closed scenario's users are not held by its schedule until its target is set.
-
-**Tarpits.** A load against a server with the demo data is answered 429 by its tarpits: the demo `ALL_SCREENS` tarpit
-(120 hits in 60 s) is on `ALL_USERS`, which every user is in, and every matching tarpit applies, so a row of the load
-user's own cannot exempt it. Run a load against `conf/MoquiLoadTestConf.xml`, the production conf with the screen,
-transition and service tarpits off, as the framework suite's `--serve` does. As in Java, REST paths, services, the
-target screen of each request (when it requires authentication) and every transition count against tarpits; an
-in-process `screenTest` render does not.
+**Tarpits.** A load against a server with the demo data is answered 429 by its tarpits. Run it against
+`conf/MoquiLoadTestConf.xml`, the production conf with the screen, transition and service tarpits off, as the
+framework suite's `--serve` does ([Load-Runner, Notes on measuring](../tools/Load-Runner.md#notes-on-measuring)). As
+in Java, REST paths, services, the target screen of each request (when it requires authentication) and every
+transition count against tarpits; an in-process `screenTest` render does not.
 
 ## Output
 

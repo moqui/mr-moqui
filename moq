@@ -716,8 +716,8 @@ is already running (./moq run in another terminal, on conf/MoquiLoadTestConf.xml
 tarpits). With no --script it lists the component's scripts. The result goes to
 runtime/tmp/test-load/<run>/result.json, where Tools > Load > Runs lists it; Ctrl-C stops the users,
 writes the result and exits 130. --out, the --compare files and a path target are read from the
-directory moq runs in. Arguments go to moqui
-test-load; the moq options below are read first and any other option is passed on:
+directory moq runs in. The guide is docs/tools/Load-Runner.md. Arguments go to moqui test-load; the
+moq options below are read first and any other option is passed on:
   ./moq test-load mr-marble                                  list the scripts and their params
   ./moq test-load mr-marble --script OrderToCash -p 8081     against http://localhost:8081
   ./moq test-load mr-marble --script OrderToCash --param pdf=false --users 20 --label "MR"
@@ -2286,8 +2286,8 @@ task_test_load() {
                 comparing=''
                 ;;
             --compare) args+=("$arg"); comparing=1 ;;
-            --script | --server | --param | --users | --ramp-up | --duration | --iterations | --scenario | --label | \
-                --log-level | --timeout)
+            --script | --server | --param | --users | --ramp-up | --duration | --iterations | --rate | --scenario | \
+                --label | --log-level | --timeout)
                 args+=("$arg")
                 if [ ${#OPT_REST[@]} -gt 0 ]; then
                     args+=("${OPT_REST[0]}")

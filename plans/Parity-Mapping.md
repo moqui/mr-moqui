@@ -248,6 +248,7 @@ The same phase numbers. Component Groovy that this table used to call missing is
 | `service/email_eca.rs` | `EmailEcaRule.groovy`, `*.emecas.xml` | 7 |
 | `service/security_checks.rs` | `Security.eecas.xml` and `UserSecurityChecks.groovy` (`assertPrivilegedGroupMembership`, `assertSealedPermissionGrant`). The script helper is `script/runtime/ec_extra.rs`. | 7 |
 | `service/pool.rs` | `ServiceFacadeImpl` worker threads, `ServiceCallAsyncImpl` | 7 |
+| `moqui-host/src/load_runner/` | `ServiceFacadeImpl.LoadRunner` and the Tools `ServiceLoadRunner.xml` screen, redesigned as load runs of a script on the engine in `moqui-host/src/test_client/load/`: in-process calls as the starting user with authorization required, HTTP targets, result files. [Load-Runner](../docs/tools/Load-Runner.md), [LoadRunner](LoadRunner.md). | Redesign |
 | `service/request_pool.rs` | `ExecutionContextFactoryImpl` request workers. The HTTP listener does not use the servlet thread. | 7 |
 | `service/jobs.rs` | `ScheduledJobRunner.groovy`, `ServiceCallJobImpl`, `ServiceCallJob` | 7 |
 | `service/schedule.rs` | `ScheduledJobRunner` cron parsing and the scheduler thread | 7 |
@@ -450,6 +451,7 @@ The service section names the Rust service bodies. This section is where the add
 | `moqui/src/main.rs` | Process entry that calls the host. | Native |
 | `moqui-devkit/src/testkit/mod.rs`, `testkit/run.rs`, `testkit/rewrite.rs` | Spock, reimplemented as JavaScript specs. [TestHarness](archive/TestHarness.md). | Native |
 | `moqui-host/src/test_cmd/mod.rs`, `test_cmd/fixture.rs`, `test_cmd/report.rs`, `test_cmd/coverage.rs` | `moqui test` driver, database fixture, JUnit XML, coverage. | Native |
+| `moqui-host/src/test_client/load/`, `test_client/load_cmd.rs`, `moqui-lib/src/histogram.rs` | The load engine of client specs, `moqui test-load` and Tools › Load: scripts, scenarios, arrival rates, histograms and bins. [Load-Runner](../docs/tools/Load-Runner.md). | Native |
 | `moqui-devkit/src/typegen/mod.rs`, `typegen/entities.rs`, `typegen/services.rs`, `typegen/screens.rs`, `typegen/ts.rs` | TypeScript declarations from the loaded definitions. [TypeGeneration](archive/TypeGeneration.md). | Native |
 | `moqui-host/src/types.rs` | `moqui types`. | Native |
 | `moqui-host/src/qvt_report.rs` | `moqui lint --screens --qvt-static`. The report is `screen/statics/report.rs`. | Native |
@@ -586,6 +588,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `service/ServiceFacadeImpl.groovy`, `ServiceDefinition.java`, `ParameterInfo.java` | `service/define.rs`, `validate.rs`, `info.rs` | Port |
 | `service/ServiceCallImpl.java`, `ServiceCallSyncImpl.java`, `ServiceCallSpecialImpl.groovy` | `service/call.rs` | Port |
 | `service/ServiceCallAsyncImpl.groovy` | `service/pool.rs` | Port |
+| `service/ServiceFacadeImpl.groovy` (`LoadRunner`, `getLoadRunner`) | `moqui-host/src/load_runner/`, `moqui-host/src/test_client/load/` | Redesign |
 | `service/ServiceCallJobImpl.groovy`, `ScheduledJobRunner.groovy` | `service/jobs.rs`, `schedule.rs` | Port |
 | `service/ServiceEcaRule.groovy` | `service/eca_rules.rs`, `seca.rs`, `rule_actions.rs` | Port |
 | `service/EmailEcaRule.groovy` | `service/email_eca.rs` | Port |

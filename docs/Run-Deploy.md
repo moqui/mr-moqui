@@ -133,6 +133,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Get a component and its dependencies | `./moq component-get mr-boss` | `./gradlew getComponent -Pcomponent=...` |
 | Run a component's specs | `./moq test mr-mantle` | `./gradlew runtime:component:mantle-usl:test` |
 | Run client specs against a server | `./moq test-client framework` | |
+| Run a load script against a server | `./moq test-load mr-marble --script OrderToCash` | |
 | Archive the runtime with the binary | `./moq archive --release` | `./gradlew addRuntime` |
 | Remove the database, logs and old build output | `./moq clean-all` | `./gradlew cleanAll` |
 | Show the binary's package and features | `target/release/moqui version` (`target\release\moqui.exe version` on Windows) | |
@@ -320,6 +321,7 @@ The database properties are in [Database and search](#database-and-search), and 
 | `moqui load-save <cluster-dir> <dump-file>` | `pg_restore` into an embedded cluster; stop the server first |
 | `moqui tui [--path P] [--user U]` | The apps in this terminal, on this runtime; `--server URL` reaches a running server instead ([TUI](ui/TUI.md)) |
 | `moqui test`, `moqui test-client` | Component specs ([Testing](Build-Test.md#component-specs), [Client-Testing](dev/Client-Testing.md)) |
+| `moqui test-load` | A component's load script against a running server ([Load-Runner](tools/Load-Runner.md)) |
 | `moqui lint`, `check`, `refs`, `types`, `lsp` | Checks and tools for developers |
 | `moqui version` | The version, package and features of this binary |
 

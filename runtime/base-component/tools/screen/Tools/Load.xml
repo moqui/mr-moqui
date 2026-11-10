@@ -57,6 +57,15 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- a running scenario's users (a closed one) or rate (a rate one) from now on (update#LoadRunUsers) -->
+    <transition name="updateUsers" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const error = ec.resource.script('component://tools/template/LoadRuns.js').updateUsers(context.runId, context.scenario,
+                context.users, context.rate)
+            ec.web.sendJsonResponse({errors: error || null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="deleteRun" method="post" begin-transaction="false" authz-action="all">
         <actions><script><![CDATA[
             const deleted = ec.resource.script('component://tools/template/LoadRuns.js').call('delete#LoadRun', {runId: String(context.runId || '')})

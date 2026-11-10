@@ -39,7 +39,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <label text="${scriptsError}" type="p" style="text-negative" condition="scriptsError"/>
                 <label text="A load script is a file in a component's test/load directory (Name.load.js), with a plan and its scenarios. Open one to start a run." type="p" style="m-muted"/>
                 <section name="NoScripts" condition="!scriptsError &amp;&amp; !scriptList.length"><widgets>
-                    <label text="No load scripts. Add one as test/load/Name.load.js in a component, as the tools component's test/load/ServiceCall.load.js is." type="p"/>
+                    <label text="No load scripts. Add one as test/load/Name.load.js in a component, as the tools component's test/load/ServiceCall.load.js is. The guide is docs/tools/Load-Runner.md." type="p"/>
                 </widgets></section>
                 <form-list name="ScriptList" list="scriptList" skip-form="true" paginate="false">
                     <field name="title"><default-field title="Script">

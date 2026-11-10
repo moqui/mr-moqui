@@ -6,6 +6,7 @@
 // - runView(runId): one run as its page shows it: a running load's snapshot or a finished run's result, made into the
 //   header, the totals, the series of the charts, the table by name, the first errors, the generator and, for a load
 //   running on this server, the server's numbers from the status map. A run that is not here is { found: false }.
+//   While it runs, targets has each scenario's users and rate now, which updateUsers (update#LoadRunUsers) changes.
 // - planForm(scriptLocation, runId): what New run asks for a script: the targets its plan's uses allow, each param by
 //   its kind, each scenario's settings. From a run (Run again) the script and target are the run's, resolved again
 //   against the scripts of the loaded components; start#LoadRun checks them again. A secret is never filled, and an
@@ -90,6 +91,8 @@ function series(bins, binSeconds) {
         p95: list.map((bin) => number(bin.p95)),
         p99: list.map((bin) => number(bin.p99)),
         users: list.map((bin) => number(bin.users)),
+        // a rate scenario's scheduled starts that no user took, per second
+        dropped: list.map((bin) => round((number(bin.dropped) || 0) / seconds)),
     }
 }
 
@@ -158,7 +161,7 @@ function runView(runId, options) {
         totals: {
             users: number(source.users), activeUsers: running ? number(source.activeUsers) : 0,
             requests: number(source.requests), iterations: number(source.iterations), rps: number(source.rps),
-            errors: number(source.errors), errorRate: number(source.errorRate),
+            errors: number(source.errors), errorRate: number(source.errorRate), dropped: number(source.dropped),
             p50: number(latency.p50), p95: number(latency.p95), p99: number(latency.p99),
             duration: number(running ? source.elapsed : source.duration),
         },
@@ -173,6 +176,14 @@ function runView(runId, options) {
             name: text(limit.name), metric: text(limit.metric), limit: number(limit.limit), value: number(limit.value), passed: limit.passed === true,
         })),
         server: running && onThisServer ? serverNumbers() : null,
+        // each scenario's target now, while it runs: users (a rate scenario's most at once) and a rate scenario's rate
+        targets: running ? Object.entries(source.targets || {}).map(([name, target]) => ({
+            name: text(name), users: number((target || {}).users), rate: (target || {}).rate == null ? null : number(target.rate),
+        })) : [],
+        // whether a scenario starts its iterations at a rate, so starts can be dropped: a finished run's stats give a
+        // rate scenario (and only one) its dropped count, whether it ran from here, from the command or was imported
+        hasRate: running ? Object.values(source.targets || {}).some((target) => target && target.rate != null)
+            : Object.values(source.scenarios || {}).some((scenario) => scenario && scenario.dropped != null),
     }
 }
 
@@ -325,4 +336,13 @@ function startRun(form) {
     return started.error ? { error: started.error } : { runId: text(started.out.runId) }
 }
 
-;({ runView, planForm, startRun, call, number })
+// change a running scenario's users or rate (update#LoadRunUsers): an error text, or null
+function updateUsers(runId, scenario, users, rate) {
+    const parameters = { runId: text(runId), scenario: text(scenario) }
+    if (users != null && users !== '') parameters.users = users
+    if (rate != null && rate !== '') parameters.rate = rate
+    if (parameters.users == null && parameters.rate == null) return 'Give the users or the rate'
+    return call('update#LoadRunUsers', parameters).error
+}
+
+;({ runView, planForm, startRun, updateUsers, call, number })

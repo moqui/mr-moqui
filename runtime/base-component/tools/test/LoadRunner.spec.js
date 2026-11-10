@@ -202,7 +202,7 @@ feature("a file that is not a load script and a target the run may not reach are
     },
 })
 
-feature("a second run while one runs is refused, and stop ends the run", {
+feature("a second run while one runs is refused, its users change while it runs, and stop ends the run", {
     expect() {
         const long = start({ scenarios: { calls: { users: 1, duration: 30, rampUp: 0, think: 20 } } })
         long.error == ""
@@ -210,6 +210,13 @@ feature("a second run while one runs is refused, and stop ends the run", {
         invoke(S + "get#LoadRunStatus", { runId: long.runId }).running == true
         withProperty("load_runner_max_runs", "1", () => start({ scenarios: quick(1, 1) }).error).includes("already running")
         invoke(S + "delete#LoadRun", { runId: long.runId }).error.includes("running")
+        // the run page's control (Load/updateUsers, update#LoadRunUsers): the scenario's target is 2 users from now on,
+        // and a rate for a closed scenario is refused
+        const update = (parameters) => JSON.parse(String(ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml")
+            .render("Load/updateUsers", Object.assign({ runId: long.runId, scenario: "calls" }, parameters), "post").output || "{}"))
+        update({ users: 2 }).errors == null
+        invoke(S + "get#LoadRunStatus", { runId: long.runId }).snapshot.targets.calls.users == 2
+        update({ rate: 5 }).errors != null
         invoke(S + "stop#LoadRun", { runId: long.runId, now: true }).error == ""
         const status = ended(long.runId)
         status.status == "stopped"
@@ -241,7 +248,10 @@ feature("a finished run's page and ServiceCall's run form render in qvue and in 
         run.status == 200 && run.errors == "" && !run.broken
         run.output.includes("Requests and errors per second")
         run.output.includes("Run again")
+        run.output.includes("Change a scenario's users") && run.output.includes("'Dropped'")
         status.found == true && status.status == "completed" && status.scriptTitle == "Service call" && status.label == "spec render"
+        // a closed scenario: no Dropped card, and no scenario control once it has ended
+        status.hasRate == false && status.targets.length == 0
         status.names[0].name == "org.moqui.impl.BasicServices.echo#Data" && status.names[0].count == 2
         // the terminal page has the run in it
         runTui.status == 200 && runTui.errors == "" && !runTui.broken
@@ -249,6 +259,7 @@ feature("a finished run's page and ServiceCall's run form render in qvue and in 
         runTui.output.includes("Completed · " + runId)
         runTui.output.includes('"cells":["org.moqui.impl.BasicServices.echo#Data","service","2","0"')
         runTui.output.includes('"LoadRunAgain"')
+        !runTui.output.includes('"LoadRunCardDropped"') && !runTui.output.includes('"LoadRunTargets"')
         // the plan's title, its params and its scenario, and the one target a service script has
         form.status == 200 && form.errors == "" && !form.broken
         form.output.includes("Scenarios")

@@ -73,6 +73,30 @@ along with this software (see the LICENSE.md file). If not, see
             </div>
         </div>
 
+        <q-card v-if="run.running && run.targets && run.targets.length" flat bordered class="q-mb-sm" id="LoadRunTargets">
+            <q-card-section>
+                <div class="text-subtitle1">Scenarios</div>
+                <div class="text-caption q-mb-sm" :class="mutedClass">Change a scenario's users, or a rate scenario's starts per second, from now on.</div>
+                <div v-for="target in run.targets" :key="target.name" class="row q-col-gutter-sm items-center q-mb-xs">
+                    <div class="col-12 col-md-3 text-weight-medium">{{target.name}}
+                        <span class="text-caption" :class="mutedClass">· now {{target.rate != null ? number(target.rate) + ' per second, at most ' + count(target.users) + ' users' : count(target.users) + ' users'}}</span></div>
+                    <!-- a rate scenario's rate and its most users at once, each applied on its own: the service takes one per call -->
+                    <template v-if="edits[target.name] && target.rate != null">
+                        <div class="col-6 col-md-2"><q-input v-model.number="edits[target.name].rate" type="number" min="0" step="any" dense outlined
+                                label="Per second" :name="'rate_' + target.name"></q-input></div>
+                        <div class="col-6 col-md-auto"><q-btn outline no-caps color="primary" label="Apply" :disable="acting || run.stopping"
+                                @click="applyTarget(target, 'rate')"></q-btn></div>
+                    </template>
+                    <template v-if="edits[target.name]">
+                        <div class="col-6 col-md-2"><q-input v-model.number="edits[target.name].users" type="number" min="1" dense outlined
+                                :label="target.rate != null ? 'Most users' : 'Users'" :name="'users_' + target.name"></q-input></div>
+                        <div class="col-6 col-md-auto"><q-btn outline no-caps color="primary" label="Apply" :disable="acting || run.stopping"
+                                @click="applyTarget(target, 'users')"></q-btn></div>
+                    </template>
+                </div>
+            </q-card-section>
+        </q-card>
+
         <div v-if="run.series.t.length" class="row q-col-gutter-sm q-mb-sm">
             <div class="col-12 col-lg-4"><q-card flat bordered><q-card-section>
                 <div class="text-subtitle2">Requests and errors per second</div>
@@ -157,7 +181,7 @@ module.exports = {
     inject: { mScreen: { default: null } },
     data() {
         return { run: { found: false, series: { t: [] }, names: [], errorSamples: [], thresholds: [], totals: {} }, loaded: false, acting: false, timer: null,
-            failures: 0, stalled: false };
+            failures: 0, stalled: false, edits: {} };
     },
     computed: {
         runId() { return String(((this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}).runId || ''); },
@@ -182,7 +206,8 @@ module.exports = {
         generatorText() {
             // a run started here runs on threads of this server; an imported one names where it ran
             const where = this.run.generator ? this.run.generator.where : 'in-target';
-            return where === 'in-target' ? 'Threads in this server' : where === 'same-machine' ? 'The moqui command, on the machine it ran on' : where;
+            return where === 'in-target' ? 'Threads in this server' : where === 'in-server' ? 'Threads in this server, against another server'
+                : where === 'same-machine' ? 'The moqui command, on the machine it ran on' : where;
         },
         cards() {
             const totals = this.run.totals || {};
@@ -191,13 +216,19 @@ module.exports = {
                 { title: 'Requests', value: this.count(totals.requests), caption: this.count(totals.iterations) + ' iterations' },
                 { title: 'Per second', value: this.number(totals.rps), caption: this.seconds(totals.duration) },
                 { title: 'Errors', value: this.count(totals.errors), caption: this.percent(totals.errorRate) },
+                // a rate scenario's starts no user was free to take
+                ...(this.run.hasRate ? [{ title: 'Dropped', value: this.count(totals.dropped || 0), caption: 'starts no user took' }] : []),
                 { title: 'p50', value: this.ms(totals.p50) + ' ms' },
                 { title: 'p95', value: this.ms(totals.p95) + ' ms' },
                 { title: 'p99', value: this.ms(totals.p99) + ' ms' }
             ];
         },
         labels() { return this.run.series.t.map((t) => t + 's'); },
-        chartRates() { return this.lineChart([['Requests', this.run.series.rps, '#1976d2'], ['Errors', this.run.series.eps, '#c62828']]); },
+        chartRates() {
+            const sets = [['Requests', this.run.series.rps, '#1976d2'], ['Errors', this.run.series.eps, '#c62828']];
+            if (this.run.hasRate) sets.push(['Dropped', this.run.series.dropped || [], '#ef6c00']);
+            return this.lineChart(sets);
+        },
         chartLatency() {
             return this.lineChart([['p50', this.run.series.p50, '#26a69a'], ['p95', this.run.series.p95, '#1976d2'], ['p99', this.run.series.p99, '#9c27b0']]);
         },
@@ -230,6 +261,18 @@ module.exports = {
                 if (!json.found) { this.run = Object.assign({}, this.run, { found: false, error: json.errors }); this.stopPolling(); return; }
                 // the title is read once, with the page
                 this.run = Object.assign({}, json, { scriptTitle: first ? json.scriptTitle : this.run.scriptTitle });
+                // each scenario's inputs follow its target (changed here or from elsewhere) while the user has not changed
+                // them; base is the target an input was last filled from
+                const edits = Object.assign({}, this.edits);
+                for (const target of this.run.targets || []) {
+                    const edit = edits[target.name];
+                    if (!edit) { edits[target.name] = { users: target.users, rate: target.rate, baseUsers: target.users, baseRate: target.rate }; continue; }
+                    const next = Object.assign({}, edit, { baseUsers: target.users, baseRate: target.rate });
+                    if (edit.users === edit.baseUsers) next.users = target.users;
+                    if (edit.rate === edit.baseRate) next.rate = target.rate;
+                    edits[target.name] = next;
+                }
+                this.edits = edits;
                 if (this.run.running) this.poll(); else this.stopPolling();
             }, (err) => {
                 if (!this.loaded) { this.loaded = true; this.stopPolling(); moqui.handleAjaxError(err); return; }
@@ -241,6 +284,19 @@ module.exports = {
             this.failures++;
             if (this.failures > 4) { this.stalled = true; this.stopPolling(); return; }
             this.poll(Math.min(30000, 2000 * Math.pow(2, this.failures)));
+        },
+        // what: users (a closed scenario's users, a rate scenario's most at once) or rate
+        applyTarget(target, what) {
+            const edit = this.edits[target.name] || {};
+            const params = what === 'rate' ? { scenario: target.name, rate: edit.rate } : { scenario: target.name, users: edit.users };
+            this.post('updateUsers', params).then((json) => {
+                if (!json) return;
+                moqui.notifyMessages(target.name + ': ' + (what === 'rate' ? edit.rate + ' per second' : (target.rate != null ? 'at most ' : '') + edit.users + ' users')
+                    + ' from now on');
+                this.edits = Object.assign({}, this.edits, { [target.name]: null });
+                this.stopPolling();
+                this.load();
+            });
         },
         refresh() { this.failures = 0; this.stalled = false; this.stopPolling(); this.load(); },
         poll(wait) { if (!this.timer && !this.unmounted) this.timer = setTimeout(() => { this.timer = null; this.load(); }, wait || 2000); },

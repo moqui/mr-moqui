@@ -693,7 +693,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
         timeout: None,
         thresholds: plan.thresholds().clone(),
         run: run.clone(),
-        generator: "in-target",
+        generator: if on_this_server { "in-target" } else { "in-server" },
         around: Some(around(
             Arc::clone(factory),
             ask.user.clone(),
