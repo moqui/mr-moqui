@@ -27,6 +27,30 @@ function renderDialog(label) {
     return html;
 }
 
+feature('numeric text inputs accept decimals while declared digits retain integer steps', { expect() {
+    const module = readModule('ScreenHtml.js')({ stmt: fn => fn, noops: () => ({}) }, support());
+    const render = (type, classes) => {
+        let html = '';
+        const context = {
+            sri: { write: text => { html += text; }, getFieldValueString: () => '12.50',
+                getFieldValidation: () => ({ classes, regexp: '[0-9.]+', message: 'Custom number format' }) },
+            ec: { resource: { expand: text => text }, context: { get: () => null } }
+        };
+        runInContext(module.runtime, context);
+        context.$mqHtml.textLine({ attrs: { 'input-type': type }, parent: {
+            attrs: { 'validate-service': 'test' }, parent: { attrs: { name: 'amount' }, parent: { attrs: { name: 'Price' } } }
+        } });
+        return html;
+    };
+    const decimal = render('number', 'number'), integer = render('number', 'digits'), text = render('text', 'number');
+    assert.match(decimal, /type="number"[^>]*step="any"/);
+    assert.match(integer, /type="number"[^>]*step="1"/);
+    assert.doesNotMatch(text, /step=/);
+    assert.match(decimal, /value="12.50"/);
+    assert.match(decimal, /pattern="\[0-9\.\]\+"/);
+    assert.match(decimal, /data-msg-pattern="Custom number format"/);
+} });
+
 function renderList({ fields = [], columns = [], header = true, skipHeader = false, hideNav = false, orderBy = '', savedFinds = [], activeFind = '', withSavedFinds = false } = {}) {
     const factory = readModule('ScreenHtml.js');
     const module = factory({ stmt: fn => fn, noops: () => ({}) }, support());
