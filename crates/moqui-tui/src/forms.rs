@@ -475,6 +475,9 @@ impl Index {
                     self.add(c, &inner);
                 }
                 Node::Subscreen { id, kind, items, c, .. } => {
+                    // A wizard's steps leave its disabled items out, as its bar does.
+                    let wizard_items = crate::layout::wizard_items(items);
+                    let items = if kind == "wizard" { &wizard_items } else { items };
                     // The deepest tab bar wins: Alt+N picks among the tabs nearest the content.
                     let tabs: Vec<TabInfo> = items
                         .iter()

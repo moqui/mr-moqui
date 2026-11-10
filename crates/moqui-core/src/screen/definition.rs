@@ -505,14 +505,35 @@ impl SubscreensItem {
     }
 }
 
-/// A `menu-include` (or `default-menu-include`) value: `false` is left out, empty or `true` is in, and anything else is
-/// an expression run per request. The literals take no script.
-fn menu_include_of(value: Option<&str>) -> (bool, Option<String>) {
-    match value.map(str::trim) {
-        Some("false") => (false, None),
-        None | Some("" | "true") => (true, None),
-        Some(expression) => (true, Some(expression.to_string())),
+/// A `menu-include` (or `default-menu-include`) value of the item `at` (its file and line): `false` is left out, empty or
+/// `true` is in (in any case), and anything else is an expression run per request. The literals take no script.
+///
+/// An expression is parsed here, once per load of the screen: one that does not parse is logged naming `at` and the item
+/// is left out, rather than failing at every request. A near-literal (`Y`, `no`, `on`, `0`...) is logged as a warning and
+/// taken for what it says, since as JavaScript it would name a variable.
+fn menu_include_of(value: Option<&str>, at: &str) -> (bool, Option<String>) {
+    let Some(text) = value.map(str::trim).filter(|text| !text.is_empty()) else {
+        return (true, None);
+    };
+    let lower = text.to_ascii_lowercase();
+    match lower.as_str() {
+        "true" => return (true, None),
+        "false" => return (false, None),
+        "y" | "yes" | "on" | "1" | "n" | "no" | "off" | "0" => {
+            let include = matches!(lower.as_str(), "y" | "yes" | "on" | "1");
+            tracing::warn!("{at}: menu-include=\"{text}\" is not true, false or an expression; taken as {include}");
+            return (include, None);
+        }
+        _ => {}
     }
+    if let Err(err) = crate::script::parse_js(text) {
+        tracing::error!(
+            "{at}: menu-include `{text}` is not a JavaScript expression, so the item is left out of the menu: {}",
+            err.message()
+        );
+        return (false, None);
+    }
+    (true, Some(text.to_string()))
 }
 
 #[derive(Clone, Debug, Default)]
@@ -700,7 +721,6 @@ pub struct ScreenDef {
     pub login_path: Option<String>,
     pub default_menu_title: String,
     pub default_menu_index: Option<i64>,
-    pub default_menu_include: bool,
     pub menu_image: Option<String>,
     pub menu_image_type: String,
     pub screen_theme_type: String,
@@ -708,6 +728,9 @@ pub struct ScreenDef {
     pub density: Option<String>,
     /// `all`, or the render modes this screen supports.
     pub render_modes: Vec<String>,
+    /// The `location` of each `render-mode` `text` in the screen's widgets that names a file (not an expression): the
+    /// screen's sources in those modes, which are never sent as static files ([`super::static_files::file_under`]).
+    pub text_locations: Vec<String>,
     pub server_static: Vec<String>,
     /// `server_static` is `all` because the widgets are only the subscreens placeholders, not because the screen says so.
     pub server_static_auto: bool,
@@ -1107,7 +1130,6 @@ impl ScreenDef {
             login_path: node.attribute("login-path").filter(|text| !text.is_empty()),
             default_menu_title,
             default_menu_index: int_attr("default-menu-index"),
-            default_menu_include: !node.attribute_is("default-menu-include", "false"),
             menu_image: node.attribute("menu-image").filter(|text| !text.is_empty()),
             menu_image_type: node
                 .attribute("menu-image-type")
@@ -1122,6 +1144,7 @@ impl ScreenDef {
                 .map(|text| text.trim().to_string())
                 .filter(|text| !text.is_empty()),
             render_modes,
+            text_locations: text_locations(node),
             server_static,
             server_static_auto,
             web,
@@ -1352,6 +1375,30 @@ fn breadth_first(root: &MNode, visit: &mut dyn FnMut(&MNode)) {
 
 /// Every element below `root` that is a section, form, tree, section-include, or subscreens
 /// panel or menu, in document order. Nested ones are included.
+/// The literal `location`s of the `render-mode` `text` elements under the screen's widgets, at any depth.
+fn text_locations(node: &MNode) -> Vec<String> {
+    fn walk(node: &MNode, in_render_mode: bool, out: &mut Vec<String>) {
+        node.for_each_child(|child| {
+            if in_render_mode && child.has_name("text") {
+                if let Some(location) = child
+                    .attribute("location")
+                    .filter(|text| !text.is_empty() && !text.contains("${"))
+                {
+                    out.push(location);
+                }
+            }
+            walk(child, child.has_name("render-mode"), out);
+        });
+    }
+    let mut out = Vec::new();
+    for root in ["widgets", "fail-widgets"] {
+        if let Some(widgets) = node.first_named(root) {
+            walk(&widgets, false, &mut out);
+        }
+    }
+    out
+}
+
 fn descendants(root: &MNode, out: &mut Vec<MNode>) {
     root.for_each_child(|child| {
         let wanted = child.with_name(|name| {
@@ -1536,7 +1583,8 @@ fn load_subscreens(
             }
             let item_location = format!("{base}/{file}");
             sources.push(Source::of(factory, entry.location()));
-            let (menu_include, menu_include_when) = menu_include_of(root.attribute("default-menu-include").as_deref());
+            let (menu_include, menu_include_when) =
+                menu_include_of(root.attribute("default-menu-include").as_deref(), entry.location());
             subscreens.put(SubscreensItem {
                 name: name.to_string(),
                 menu_title: root
@@ -1685,10 +1733,15 @@ fn subscreens_item_of(
             sources.push(Source::of(factory, &location));
             target_menu_title(factory, &location)
         });
+    let at = match item.file_location() {
+        Some(file) => format!("{file}:{}", item.line()),
+        None => format!("subscreens-item {name}"),
+    };
     let (menu_include, menu_include_when) = menu_include_of(
         item.attribute("menu-include")
             .or_else(|| item.attribute("include-in-menu"))
             .as_deref(),
+        &at,
     );
     Some(SubscreensItem {
         name,

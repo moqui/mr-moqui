@@ -479,3 +479,22 @@ fn a_lookup_with_no_method_prefers_any_then_get_over_the_first_declared() {
         "the first declared is the last fallback"
     );
 }
+
+/// `menu-include`: true and false in any case are literals, a near-literal is taken for what it says (with a warning),
+/// an expression is kept, and one that does not parse leaves the item out (logged once, at load).
+#[test]
+fn menu_include_literals_near_literals_and_expressions() {
+    let of = |text: &str| super::menu_include_of(Some(text), "test.xml:1");
+    assert_eq!(super::menu_include_of(None, "test.xml:1"), (true, None));
+    for (text, include) in [("true", true), ("TRUE", true), ("False", false), (" false ", false)] {
+        assert_eq!(of(text), (include, None), "{text}");
+    }
+    for (text, include) in [("Y", true), ("yes", true), ("N", false), ("no", false), ("off", false)] {
+        assert_eq!(of(text), (include, None), "{text}");
+    }
+    assert_eq!(
+        of("ec.user.hasPermission('X')"),
+        (true, Some("ec.user.hasPermission('X')".to_string()))
+    );
+    assert_eq!(of("ec.user.hasPermission("), (false, None));
+}

@@ -688,6 +688,16 @@ pub fn wizard_next(id: &str) -> String {
     format!("{id}#next")
 }
 
+/// The steps of a wizard: its items without the disabled ones, as qvt's `m-subscreens-wizard` leaves them out. The
+/// active step stays even when disabled, as the screen shown.
+pub fn wizard_items(items: &[crate::model::SubscreenItem]) -> Vec<crate::model::SubscreenItem> {
+    items
+        .iter()
+        .filter(|item| !item.disabled || item.active)
+        .cloned()
+        .collect()
+}
+
 /// The steps of a wizard as status stages, and the active step.
 pub fn wizard_steps(items: &[crate::model::SubscreenItem]) -> (Vec<StatusStage>, usize) {
     let active = items.iter().position(|item| item.active).unwrap_or(0);
@@ -917,7 +927,8 @@ fn place_subscreens(
 ) -> Vec<Piece> {
     let mut pieces = Vec::new();
     match kind {
-        "wizard" if !items.is_empty() => {
+        "wizard" if !wizard_items(items).is_empty() => {
+            let items = &wizard_items(items);
             let (stages, active) = wizard_steps(items);
             let title = items.get(active).map(|item| item.title.as_str()).unwrap_or("");
             pieces.push(Piece::Status(LaidStatus {

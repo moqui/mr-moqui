@@ -732,6 +732,10 @@ impl Session {
             }
             return;
         };
+        // a step that is not a link (disabled) goes nowhere
+        if next.is_empty() {
+            return;
+        }
         match self.first_dirty_form() {
             Some(form) => self.submit_form(&form, Some(Then::Navigate(next))),
             None => self.navigate(&next, true),

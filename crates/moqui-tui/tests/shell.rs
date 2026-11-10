@@ -383,6 +383,52 @@ fn a_disabled_menu_item_is_a_drawer_row_without_a_link() {
     );
 }
 
+/// Enter or Right on a disabled drawer row does nothing: the drawer stays open on it and nothing is loaded.
+#[test]
+fn enter_on_a_disabled_drawer_row_keeps_the_drawer_open() {
+    let (mut session, link) = started();
+    session.set_menu(vec![MenuItem {
+        title: "App".to_string(),
+        url: "/apps/app".to_string(),
+        children: vec![
+            MenuItem {
+                title: "Orders".to_string(),
+                url: "/apps/app/Orders".to_string(),
+                ..MenuItem::default()
+            },
+            MenuItem {
+                title: "Locked".to_string(),
+                url: "/apps/app/Locked".to_string(),
+                disabled: true,
+                ..MenuItem::default()
+            },
+        ],
+        disabled: false,
+    }]);
+    if session.top_overlay() != Some(&Overlay::Drawer(0)) {
+        press(&mut session, &link, Key::F(9));
+    }
+    if session.top_overlay() != Some(&Overlay::Drawer(0)) {
+        press(&mut session, &link, Key::F(9));
+    }
+    assert_eq!(session.top_overlay(), Some(&Overlay::Drawer(0)));
+    press(&mut session, &link, Key::Down);
+    press(&mut session, &link, Key::Down);
+    let before = calls(&link).len();
+    for key in [Key::Enter, Key::Right] {
+        let shown = format!("{key:?}");
+        press(&mut session, &link, key);
+        assert_eq!(session.top_overlay(), Some(&Overlay::Drawer(2)), "{shown}");
+    }
+    assert!(
+        !calls(&link)[before..]
+            .iter()
+            .any(|call| matches!(call, LinkCall::Level { path, .. } if path.contains("Locked") || path.is_empty())),
+        "{:?}",
+        calls(&link)
+    );
+}
+
 #[test]
 fn the_drawer_choice_is_kept_as_a_preference() {
     let (mut session, link) = started();

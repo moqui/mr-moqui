@@ -73,8 +73,9 @@ pub fn file_under(
     if !resource.exists() || !resource.is_file() || facade.is_screen(factory, &location) {
         return None;
     }
-    // `NewRun.qvue` beside `NewRun.xml`, which renders in qvue: the screen answers that name, not the file.
-    if is_render_mode_source(factory, facade, &location) {
+    // A screen's source (`NewRun.qvue` beside `NewRun.xml`, a `.tui.json`, a file a render-mode text reads) is the
+    // screen's to render, never a file to send.
+    if is_screen_source(factory, facade, screen_location, &location) {
         return None;
     }
     // A template is never a file to send. It is the child content of a screen that says include-child-content, which
@@ -106,6 +107,40 @@ pub fn file_under(
         }
     }
     Some(location)
+}
+
+/// Whether the file at `location`, under the screen at `screen_location`, is a screen's source rather than a static file:
+/// a [render-mode source](is_render_mode_source), `<stem>.tui.json` beside a screen `<stem>.xml`, or a file that a
+/// `render-mode` `text` of that sibling screen or of the screen above names by `location`. A request for it renders the
+/// screen when its name is `<screen>.<mode>`, and is not found otherwise. A file no screen text reads (a public island's
+/// `.qvue`, loaded by URL) stays static. Moqui Java serves them all.
+pub(crate) fn is_screen_source(
+    factory: &ExecutionContextFactory,
+    facade: &ScreenFacade,
+    screen_location: &str,
+    location: &str,
+) -> bool {
+    if is_render_mode_source(factory, facade, location) {
+        return true;
+    }
+    let named = |screen: &str| {
+        facade.is_screen(factory, screen)
+            && facade
+                .screen_def(factory, screen)
+                .is_ok_and(|def| def.text_locations.iter().any(|text| text == location))
+    };
+    let (dir, name) = location.rsplit_once('/').unwrap_or(("", location));
+    if let Some(stem) = name
+        .split_once('.')
+        .map(|(stem, _)| stem)
+        .filter(|stem| !stem.is_empty())
+    {
+        let sibling = format!("{dir}/{stem}.xml");
+        if (name.ends_with(".tui.json") && facade.is_screen(factory, &sibling)) || named(&sibling) {
+            return true;
+        }
+    }
+    named(screen_location)
 }
 
 /// Whether the file at `location` is `<stem>.<mode>` for a render mode of the conf, beside a screen `<stem>.xml` that names

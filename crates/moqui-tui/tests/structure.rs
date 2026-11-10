@@ -462,3 +462,41 @@ fn a_card_opens_a_relative_url_under_its_screen() {
         link.calls()
     );
 }
+
+/// A disabled step (`disable-when`) is left out of a wizard, as qvt's `m-subscreens-wizard` does: the bar counts the
+/// others, and Next from the step before it goes to the step after it, never to a step that is not a link.
+#[test]
+fn a_wizard_leaves_a_disabled_step_out() {
+    let json = r#"{ "v": 1, "screen": { "path": "/wiz/Start", "title": "Start" }, "c": [
+        { "t": "subscreens", "id": "Steps", "kind": "wizard",
+          "items": [ { "title": "Start", "url": "/wiz/Start", "active": true },
+                     { "title": "Locked", "url": "/wiz/Locked", "disabled": true },
+                     { "title": "Confirm", "url": "/wiz/Confirm" } ], "c": [] } ] }"#;
+    let link = FakeLink::from_json(&[json]).unwrap();
+    let mut session = Session::start("/wiz/Start");
+    session.run_now(&link);
+    let outline = outline_of(&layout_levels(
+        session.nav().models(),
+        100,
+        &Breakpoints::default(),
+        &session,
+    ));
+    assert!(
+        outline.contains("status Step 1 of 2 · Start Start:current Confirm:todo"),
+        "{outline}"
+    );
+    press(&mut session, &link, Key::PageDown);
+    let calls = link.calls();
+    assert!(
+        calls
+            .iter()
+            .any(|call| matches!(call, LinkCall::Level { path, .. } if path == "/wiz/Confirm")),
+        "{calls:?}"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|call| matches!(call, LinkCall::Level { path, .. } if path.is_empty() || path == "/wiz/Locked")),
+        "{calls:?}"
+    );
+}

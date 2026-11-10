@@ -246,6 +246,18 @@ fn a_render_mode_file_beside_its_screen_renders_the_screen() {
         ),
     );
     write("Site/Private.qvue", "<template><p>private</p></template>");
+    write("Site/Private.tui.json", "[\"private tui\"]");
+    // read by its screen's render-mode text, with no render-modes of its own (all)
+    let named = site.dir.join("Site/Named.qvue").to_string_lossy().into_owned();
+    write(
+        "Site/Named.xml",
+        &format!(
+            r#"<screen require-authentication="true">
+                <widgets><render-mode><text type="qvue" template="false" location="{named}"/></render-mode></widgets>
+            </screen>"#
+        ),
+    );
+    write("Site/Named.qvue", "<template><p>named source</p></template>");
     write(
         "Site/Island.xml",
         r#"<screen require-authentication="false"><widgets><label text="island"/></widgets></screen>"#,
@@ -259,14 +271,20 @@ fn a_render_mode_file_beside_its_screen_renders_the_screen() {
     let body = response.body_text();
     assert!(body.contains("Hello from the screen"), "{body}");
     assert!(!body.contains("${greeting}"), "the raw file was sent: {body}");
-    // the screen's authentication holds: no user, no file
-    let response = serve_at(&world.factory, request("GET", "/Private.qvue"), &site.root);
-    assert!(
-        !response.body_text().contains("<p>private</p>"),
-        "{}: {}",
-        response.status,
-        response.body_text()
-    );
+    // the screen's authentication holds: no user, no file, for every source of a screen
+    for (path, raw) in [
+        ("/Private.qvue", "<p>private</p>"),
+        ("/Private.tui.json", "private tui"),
+        ("/Named.qvue", "named source"),
+    ] {
+        let response = serve_at(&world.factory, request("GET", path), &site.root);
+        assert!(
+            !response.body_text().contains(raw),
+            "{path} {}: {}",
+            response.status,
+            response.body_text()
+        );
+    }
 
     for (path, text) in [
         ("/Island.qvue", "<template><p>island ${raw}</p></template>"),
@@ -287,6 +305,19 @@ fn a_render_mode_file_beside_its_screen_renders_the_screen() {
     for name in ["Island.qvue", "Loose.qvue"] {
         assert!(
             !crate::screen::static_files::is_render_mode_source(&world.factory, &facade, &location(name)),
+            "{name}"
+        );
+    }
+    let screen = site.root.clone();
+    for (name, source) in [
+        ("Private.tui.json", true),
+        ("Named.qvue", true),
+        ("Island.qvue", false),
+        ("Loose.qvue", false),
+    ] {
+        assert_eq!(
+            crate::screen::static_files::is_screen_source(&world.factory, &facade, &screen, &location(name)),
+            source,
             "{name}"
         );
     }

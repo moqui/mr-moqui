@@ -303,6 +303,8 @@ impl Session {
         let next = match &press.key {
             Key::Up => at.saturating_sub(1),
             Key::Down => (at + 1).min(last),
+            // a disabled item is no link: the drawer stays open on it
+            Key::Enter | Key::Right if rows.get(at).is_some_and(|row| row.disabled) => return true,
             Key::Enter | Key::Right => {
                 self.overlays.pop();
                 if let Some(url) = rows.get(at).map(|row| row.url.clone()) {

@@ -419,8 +419,9 @@ impl Walk<'_> {
         self.info.path_defs.push(Arc::clone(next));
     }
 
-    /// Whether `<before>.<mode>` under `from` names a transition, or a subscreen that names `mode` in its `render-modes`
-    /// ([`ScreenDef::names_render_mode`]): then that screen or transition answers it, not a file of that name.
+    /// Whether `<before>.<mode>` under `from` names a transition, for any render mode, or a subscreen that names `mode`
+    /// in its `render-modes` ([`ScreenDef::names_render_mode`]): then that transition or screen answers it, and a file of
+    /// that name under `from` is never sent. Java's `ScreenUrlInfo` looks for the file first and sends it.
     fn claims_mode(&self, from: &ScreenDef, before: &str, mode: &str) -> bool {
         if from.has_transition(before) {
             return true;
