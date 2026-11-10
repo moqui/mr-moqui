@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use moqui_core::sftp::{SftpAttributes, SftpConfig, SftpConnector, SftpEntry, SftpKind, SftpSession};
+use moqui_core::sftp::{SftpAttributes, SftpConfig, SftpConnector, SftpEntry, SftpKind, SftpSession, SshExec};
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
 use russh::client;
@@ -59,6 +59,14 @@ impl SftpConnector for RusshConnector {
         let known_hosts = self.known_hosts.clone();
         let session = crate::edge::block_on(async move { open(config, known_hosts).await })??;
         Ok(Box::new(session))
+    }
+
+    fn exec(&self, config: &SftpConfig, command: &str) -> Result<Box<dyn SshExec>, Error> {
+        let config = config.clone();
+        let known_hosts = self.known_hosts.clone();
+        let command = command.to_string();
+        let exec = crate::edge::block_on(async move { start(config, known_hosts, command).await })??;
+        Ok(Box::new(exec))
     }
 }
 
@@ -146,7 +154,8 @@ pub(crate) fn same_fingerprint(pinned: &str, actual: &str) -> bool {
     clean(pinned) == clean(actual)
 }
 
-async fn open(config: SftpConfig, known_hosts: PathBuf) -> Result<RusshSession, Error> {
+/// Connect, check the host key, and log in.
+async fn login(config: &SftpConfig, known_hosts: PathBuf) -> Result<client::Handle<KeyCheck>, Error> {
     let target = config.target();
     let refused = Arc::new(Mutex::new(None));
     let check = KeyCheck {
@@ -171,12 +180,18 @@ async fn open(config: SftpConfig, known_hosts: PathBuf) -> Result<RusshSession, 
         }
         Err(_) => return Err(Error::new(format!("timed out connecting to {target}"))),
     };
-    let authenticated = authenticate(&mut handle, &config).await;
+    let authenticated = authenticate(&mut handle, config).await;
     if let Err(err) = authenticated {
         tracing::error!("Authentication failed for {target}: {err}");
         let _ = handle.disconnect(russh::Disconnect::ByApplication, "", "").await;
         return Err(err);
     }
+    Ok(handle)
+}
+
+async fn open(config: SftpConfig, known_hosts: PathBuf) -> Result<RusshSession, Error> {
+    let target = config.target();
+    let handle = login(&config, known_hosts).await?;
     let channel = handle
         .channel_open_session()
         .await
@@ -199,6 +214,128 @@ async fn open(config: SftpConfig, known_hosts: PathBuf) -> Result<RusshSession, 
         next_handle: 0,
         open: true,
     })
+}
+
+async fn start(config: SftpConfig, known_hosts: PathBuf, command: String) -> Result<RusshExec, Error> {
+    let target = config.target();
+    let handle = login(&config, known_hosts).await?;
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|err| Error::new(format!("could not open an SSH channel to {target}: {err}")))?;
+    channel
+        .exec(true, command.as_bytes())
+        .await
+        .map_err(|err| Error::new(format!("{target} refused to run {command}: {err}")))?;
+    Ok(RusshExec {
+        inner: Arc::new(ExecInner {
+            handle,
+            channel: tokio::sync::Mutex::new(channel),
+        }),
+        pending: Vec::new(),
+        stderr: Vec::new(),
+        exit_status: None,
+        ended: false,
+        target,
+    })
+}
+
+struct ExecInner {
+    handle: client::Handle<KeyCheck>,
+    channel: tokio::sync::Mutex<russh::Channel<client::Msg>>,
+}
+
+/// One command running over its own connection.
+pub struct RusshExec {
+    inner: Arc<ExecInner>,
+    /// Output received and not read yet.
+    pending: Vec<u8>,
+    stderr: Vec<u8>,
+    exit_status: Option<u32>,
+    ended: bool,
+    target: String,
+}
+
+/// What [`RusshExec::read`] waited for.
+enum Received {
+    Data(Vec<u8>),
+    Stderr(Vec<u8>),
+    Exit(u32),
+    End,
+    Other,
+}
+
+impl SshExec for RusshExec {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        let bytes = bytes::Bytes::copy_from_slice(bytes);
+        let target = self.target.clone();
+        let inner = Arc::clone(&self.inner);
+        crate::edge::block_on(async move {
+            let channel = inner.channel.lock().await;
+            tokio::time::timeout(TIMEOUT, channel.data_bytes(bytes))
+                .await
+                .map_err(|_| Error::new(format!("timed out writing to {target}")))?
+                .map_err(|err| Error::new(format!("writing to {target}: {err}")))
+        })?
+    }
+
+    fn finish_input(&mut self) -> Result<(), Error> {
+        let target = self.target.clone();
+        let inner = Arc::clone(&self.inner);
+        crate::edge::block_on(async move {
+            let channel = inner.channel.lock().await;
+            channel
+                .eof()
+                .await
+                .map_err(|err| Error::new(format!("ending the input of {target}: {err}")))
+        })?
+    }
+
+    fn read(&mut self, max: usize) -> Result<Vec<u8>, Error> {
+        while self.pending.is_empty() && !self.ended {
+            let target = self.target.clone();
+            let inner = Arc::clone(&self.inner);
+            let received = crate::edge::block_on(async move {
+                let mut channel = inner.channel.lock().await;
+                let message = tokio::time::timeout(TIMEOUT, channel.wait())
+                    .await
+                    .map_err(|_| Error::new(format!("timed out reading from {target}")))?;
+                Ok::<_, Error>(match message {
+                    Some(russh::ChannelMsg::Data { data }) => Received::Data(data.to_vec()),
+                    Some(russh::ChannelMsg::ExtendedData { data, .. }) => Received::Stderr(data.to_vec()),
+                    Some(russh::ChannelMsg::ExitStatus { exit_status }) => Received::Exit(exit_status),
+                    Some(russh::ChannelMsg::Eof | russh::ChannelMsg::Close) | None => Received::End,
+                    Some(_) => Received::Other,
+                })
+            })??;
+            match received {
+                Received::Data(data) => self.pending.extend_from_slice(&data),
+                Received::Stderr(data) => self.stderr.extend_from_slice(&data),
+                Received::Exit(status) => self.exit_status = Some(status),
+                Received::End => self.ended = true,
+                Received::Other => {}
+            }
+        }
+        let take = max.min(self.pending.len());
+        Ok(self.pending.drain(..take).collect())
+    }
+
+    fn stderr(&self) -> String {
+        String::from_utf8_lossy(&self.stderr).into_owned()
+    }
+
+    fn exit_status(&self) -> Option<u32> {
+        self.exit_status
+    }
+}
+
+impl Drop for RusshExec {
+    fn drop(&mut self) {
+        let inner = Arc::clone(&self.inner);
+        let _ = crate::edge::block_on(async move {
+            let _ = inner.handle.disconnect(russh::Disconnect::ByApplication, "", "").await;
+        });
+    }
 }
 
 async fn authenticate(handle: &mut client::Handle<KeyCheck>, config: &SftpConfig) -> Result<(), Error> {

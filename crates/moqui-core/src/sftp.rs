@@ -193,6 +193,44 @@ pub trait SftpConnector: Send + Sync {
     ///
     /// Returns an error when the connection, the host key check, or the login fails.
     fn connect(&self, config: &SftpConfig) -> Result<Box<dyn SftpSession>, Error>;
+
+    /// Connect and log in as [`SftpConnector::connect`] does, and run `command` on the server (an `exec` channel), as
+    /// `git push` over SSH runs `git-receive-pack`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection, the login, or the command's start fails, or the connector runs no
+    /// commands.
+    fn exec(&self, config: &SftpConfig, command: &str) -> Result<Box<dyn SshExec>, Error> {
+        let _ = (config, command);
+        Err(Error::new("SSH commands are not available in this build"))
+    }
+}
+
+/// A command running on an SSH server: its standard input and output. Dropping it closes the connection.
+pub trait SshExec: Send {
+    /// Send `bytes` to the command's standard input.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection closed.
+    fn write(&mut self, bytes: &[u8]) -> Result<(), Error>;
+    /// End the command's standard input.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection closed.
+    fn finish_input(&mut self) -> Result<(), Error>;
+    /// Up to `max` bytes of the command's standard output; empty once it ended.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection failed.
+    fn read(&mut self, max: usize) -> Result<Vec<u8>, Error>;
+    /// What the command wrote to its standard error so far.
+    fn stderr(&self) -> String;
+    /// The command's exit status, once the server sent it.
+    fn exit_status(&self) -> Option<u32>;
 }
 
 /// The factory's connector. A connector carries the runtime's own state (its `ssh_known_hosts`), so each factory
@@ -317,6 +355,25 @@ impl SftpClient {
     ///
     /// Java's messages for a missing host, username, or credential; else the connector's error.
     pub fn connect(&mut self) -> Result<&mut Self, Error> {
+        self.check_ready()?;
+        if let Some(mut old) = self.session.take() {
+            old.close();
+        }
+        self.session = Some(connector()?.connect(&self.config)?);
+        Ok(self)
+    }
+
+    /// Connect, authenticate, and run `command` on the server, with the checks of [`SftpClient::connect`].
+    ///
+    /// # Errors
+    ///
+    /// See [`SftpClient::connect`].
+    pub fn exec(&mut self, command: &str) -> Result<Box<dyn SshExec>, Error> {
+        self.check_ready()?;
+        connector()?.exec(&self.config, command)
+    }
+
+    fn check_ready(&mut self) -> Result<(), Error> {
         // nothing goes out under the read fence or in a sim preview, nor in sim mode, as remote messages do
         crate::entity::fence::check_effect(
             crate::entity::fence::Effect::RemoteCall,
@@ -347,11 +404,7 @@ impl SftpClient {
         if !has_password {
             self.config.password = None;
         }
-        if let Some(mut old) = self.session.take() {
-            old.close();
-        }
-        self.session = Some(connector()?.connect(&self.config)?);
-        Ok(self)
+        Ok(())
     }
 
     /// True between `connect` and `close` while the connection is up.
