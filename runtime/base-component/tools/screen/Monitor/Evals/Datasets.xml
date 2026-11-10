@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Datasets" default-menu-index="2">
+    <transition name="createDataset" method="post">
+        <actions><script><![CDATA[
+            if (!ec.user.hasPermission('MONITOR_EVAL')) { ec.message.addError(ec.l10n.localize('This needs the MONITOR_EVAL permission')); return }
+            datasetId = ec.service.sync().name('create#moqui.agent.AgentDataset').parameters({datasetId: datasetId || null, datasetName, description, agentId: agentId || null, versionNum: 0, createdDate: ec.user.nowTimestamp}).disableAuthz().call()?.datasetId
+        ]]></script></actions>
+        <default-response url="../DatasetDetail"><parameter name="datasetId"/></default-response>
+        <error-response url="."/>
+    </transition>
+    <transition name="datasetDetail"><default-response url="../DatasetDetail"/></transition>
+    <actions>
+        <entity-find entity-name="moqui.agent.AgentDataset" list="datasetList"><order-by field-name="datasetName"/></entity-find>
+        <script><![CDATA[
+            canEdit = ec.user.hasPermission('MONITOR_EVAL')
+            const count = (n, c) => ec.entity.find(n).condition(c).disableAuthz().count()
+            datasetRows = Array.from(datasetList).map(d => Object.assign(d.getMap(), {
+                itemCount: Array.from(ec.entity.find('moqui.agent.AgentDatasetItem').condition({datasetId: d.datasetId}).disableAuthz().list()).filter(i => i.thruVersion == null).length,
+                experimentCount: count('moqui.agent.AgentExperiment', {datasetId: d.datasetId})}))
+            agentOptions = Array.from(ec.entity.find('moqui.agent.AgentDefinition').disableAuthz().list()).map(a => ({value: a.agentId, label: a.agentName || a.agentId}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="A dataset is the test cases for an agent: an input, and what a good answer has (expected output). Each change makes a new version, and an experiment keeps the version it ran. Add cases here, or save a real run as a case from Runs." type="p"/>
+        <form-list name="Datasets" list="datasetRows" skip-form="true">
+            <field name="datasetId"><default-field title="Dataset"><link url="datasetDetail" text="${datasetName || datasetId}" link-type="anchor"><parameter name="datasetId"/></link></default-field></field>
+            <field name="description"><default-field><display/></default-field></field>
+            <field name="agentId"><default-field title="Agent"><display/></default-field></field>
+            <field name="versionNum"><default-field title="Version"><display/></default-field></field>
+            <field name="itemCount"><default-field title="Items"><display/></default-field></field>
+            <field name="experimentCount"><default-field title="Experiments"><display/></default-field></field>
+        </form-list>
+        <section name="CreateSection" condition="canEdit"><widgets>
+            <label text="New dataset" type="h6"/>
+            <form-single name="CreateDataset" transition="createDataset">
+                <field name="datasetId"><default-field title="Dataset ID"><text-line size="20"/></default-field></field>
+                <field name="datasetName"><default-field title="Name"><text-line size="40"/></default-field></field>
+                <field name="description"><default-field><text-area rows="2" cols="60"/></default-field></field>
+                <field name="agentId"><default-field title="Agent"><drop-down allow-empty="true"><list-options list="agentOptions" key="${value}" text="${label}"/></drop-down></default-field></field>
+                <field name="submitButton"><default-field title=""><submit text="Create"/></default-field></field>
+            </form-single>
+        </widgets></section>
+    </widgets>
+</screen>

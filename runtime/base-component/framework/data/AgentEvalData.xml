@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Agent evals (AgentEvalEntities.xml): types, the built-in scorers, the jobs and the permissions. -->
+<entity-facade-xml type="seed">
+    <moqui.basic.EnumerationType enumTypeId="AgentScorerType" description="Agent Scorer Type"/>
+    <moqui.basic.Enumeration enumId="AgstService" enumTypeId="AgentScorerType" enumCode="service" sequenceNum="1" description="Service (code)"/>
+    <moqui.basic.Enumeration enumId="AgstJudge" enumTypeId="AgentScorerType" enumCode="judge" sequenceNum="2" description="Judge (model with a rubric)"/>
+    <moqui.basic.Enumeration enumId="AgstHuman" enumTypeId="AgentScorerType" enumCode="human" sequenceNum="3" description="Human"/>
+    <moqui.basic.EnumerationType enumTypeId="AgentScoreSource" description="Agent Score Source"/>
+    <moqui.basic.Enumeration enumId="AgssExperiment" enumTypeId="AgentScoreSource" enumCode="experiment" sequenceNum="1" description="Experiment"/>
+    <moqui.basic.Enumeration enumId="AgssLive" enumTypeId="AgentScoreSource" enumCode="live" sequenceNum="2" description="Live sample"/>
+    <moqui.basic.Enumeration enumId="AgssTrace" enumTypeId="AgentScoreSource" enumCode="trace" sequenceNum="3" description="Scored from a run"/>
+    <moqui.basic.Enumeration enumId="AgssReview" enumTypeId="AgentScoreSource" enumCode="review" sequenceNum="4" description="Human review"/>
+
+    <moqui.basic.StatusType statusTypeId="AgentExperiment" description="Agent Experiment"/>
+    <moqui.basic.StatusItem statusId="EvRunning" statusTypeId="AgentExperiment" sequenceNum="1" description="Running" statusColor="info"/>
+    <moqui.basic.StatusItem statusId="EvCompleted" statusTypeId="AgentExperiment" sequenceNum="2" description="Completed" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="EvFailed" statusTypeId="AgentExperiment" sequenceNum="3" description="Failed" statusColor="negative"/>
+    <moqui.basic.StatusItem statusId="EvCanceled" statusTypeId="AgentExperiment" sequenceNum="4" description="Canceled"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EvRunning" toStatusId="EvCompleted" transitionName="Complete"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EvRunning" toStatusId="EvFailed" transitionName="Fail"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EvRunning" toStatusId="EvCanceled" transitionName="Cancel"/>
+    <moqui.basic.StatusType statusTypeId="AgentExperimentResult" description="Agent Experiment Result"/>
+    <moqui.basic.StatusItem statusId="EvrPending" statusTypeId="AgentExperimentResult" sequenceNum="1" description="Pending"/>
+    <moqui.basic.StatusItem statusId="EvrRunning" statusTypeId="AgentExperimentResult" sequenceNum="2" description="Running" statusColor="info"/>
+    <moqui.basic.StatusItem statusId="EvrScored" statusTypeId="AgentExperimentResult" sequenceNum="3" description="Scored" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="EvrFailed" statusTypeId="AgentExperimentResult" sequenceNum="4" description="Failed" statusColor="negative"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EvrPending" toStatusId="EvrRunning" transitionName="Start"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EvrPending" toStatusId="EvrFailed" transitionName="Fail"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EvrRunning" toStatusId="EvrScored" transitionName="Score"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="EvrRunning" toStatusId="EvrFailed" transitionName="Fail"/>
+
+    <moqui.agent.AgentScorer scorerId="EXACT_MATCH" scorerName="Matches expected" scorerTypeEnumId="AgstService"
+            serviceName="org.moqui.agent.AgentEvalServices.score#ExactMatch" passThreshold="1"
+            description="1 when the output equals the item's expected output, ignoring case and spacing"/>
+    <moqui.agent.AgentScorer scorerId="CONTAINS" scorerName="Contains" scorerTypeEnumId="AgstService"
+            serviceName="org.moqui.agent.AgentEvalServices.score#Contains" passThreshold="1"
+            description="The share of the expected output's lines (phrases) the output contains"/>
+    <moqui.agent.AgentScorer scorerId="CALLED_TOOL" scorerName="Called tool" scorerTypeEnumId="AgstService"
+            serviceName="org.moqui.agent.AgentEvalServices.score#CalledTool" passThreshold="1"
+            description="The share of the expected output's lines (tool names) the run called"/>
+    <moqui.agent.AgentScorer scorerId="HELPFUL" scorerName="Helpful and correct" scorerTypeEnumId="AgstJudge" passThreshold="0.7"
+            description="A model judges whether the output answers the input correctly"
+            rubric="Score 1 when the output answers the input correctly and completely, agreeing with the expected answer when one is given. Score 0.5 when it is partly right or misses something important. Score 0 when it is wrong, invents facts or does not answer."/>
+    <moqui.agent.AgentScorer scorerId="HUMAN_REVIEW" scorerName="Human review" scorerTypeEnumId="AgstHuman" passThreshold="0.5"
+            description="A person scores the output"/>
+
+    <moqui.service.job.ServiceJob jobName="advance_AgentExperiments_frequent" description="Read and score the results of running agent experiments"
+            serviceName="org.moqui.agent.AgentEvalServices.advance#Experiments" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
+    <moqui.service.job.ServiceJob jobName="score_AgentLiveRuns_frequent" description="Score a sample of the finished runs of agents with attached scorers"
+            serviceName="org.moqui.agent.AgentEvalServices.score#LiveRuns" cronExpression="0 0/5 * * * ?" paused="N" errorHistoryOnly="Y"/>
+
+    <moqui.security.UserPermission userPermissionId="MONITOR_EVAL" description="Edit eval datasets and scorers, and score agent runs (Monitor › Evals)"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_EVAL" fromDate="0"/>
+    <moqui.security.UserPermission userPermissionId="MONITOR_EVAL_RUN" description="Start and cancel eval experiments, which start agent runs that cost money"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_EVAL_RUN" fromDate="0"/>
+</entity-facade-xml>

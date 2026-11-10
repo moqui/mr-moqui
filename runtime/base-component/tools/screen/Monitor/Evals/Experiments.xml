@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Experiments" default-menu-index="1">
+    <parameter name="datasetId"/>
+    <transition name="startExperiment" method="post">
+        <actions><script><![CDATA[
+            experimentId = ec.service.sync().name('org.moqui.agent.AgentEvalServices.start#Experiment').parameters({datasetId, agentId, serviceName, trials, experimentName, notes}).call()?.experimentId
+        ]]></script></actions>
+        <default-response url="../ExperimentDetail"><parameter name="experimentId"/></default-response>
+        <error-response url="."/>
+    </transition>
+    <transition name="experimentDetail"><default-response url="../ExperimentDetail"/></transition>
+    <transition name="compare"><default-response url="../Compare"/></transition>
+    <actions>
+        <entity-find entity-name="moqui.agent.AgentExperiment" list="experimentList">
+            <econdition field-name="datasetId" ignore-if-empty="true"/><order-by field-name="-startedDate"/></entity-find>
+        <entity-find entity-name="moqui.agent.AgentDataset" list="datasetList"><order-by field-name="datasetName"/></entity-find>
+        <script><![CDATA[
+            canRun = ec.user.hasPermission('MONITOR_EVAL_RUN')
+            const pct = v => v == null ? '' : Math.round((v.toNumber ? v.toNumber() : Number(v)) * 100) + '%'
+            const datasets = {}; for (const d of datasetList) datasets[d.datasetId] = d.datasetName
+            experimentRows = Array.from(experimentList).map(e => Object.assign(e.getMap(), {datasetName: datasets[e.datasetId] || e.datasetId,
+                target: e.agentId || e.serviceName, progress: (e.doneCount || 0) + (e.failedCount || 0) + ' / ' + (e.resultCount || 0) + (e.failedCount ? ' (' + e.failedCount + ' failed)' : ''),
+                mean: e.meanScore == null ? '' : (e.meanScore.toNumber ? e.meanScore.toNumber() : Number(e.meanScore)).toFixed(2), pass: pct(e.passRate)}))
+            // agents an experiment can run: those that serve the job surface
+            agentOptions = Array.from(ec.entity.find('moqui.agent.AgentDefinition').disableAuthz().list())
+                .filter(a => String(a.surfaces || '').split(',').map(s => s.trim()).includes('job'))
+                .map(a => ({value: a.agentId, label: (a.agentName || a.agentId)}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="An experiment runs every item of a dataset through an agent (or a service) and scores each output with the scorers attached to the dataset. Agent runs start at once; a job each minute reads the runs that ended and scores them. Pick two experiments of one dataset to compare them." type="p"/>
+        <form-list name="Experiments" list="experimentRows" skip-form="true">
+            <field name="experimentId"><default-field title="Experiment"><link url="experimentDetail" text="${experimentName || experimentId}" link-type="anchor"><parameter name="experimentId"/></link></default-field></field>
+            <field name="datasetName"><default-field title="Dataset"><display/></default-field></field>
+            <field name="datasetVersion"><default-field title="Version"><display/></default-field></field>
+            <field name="target"><default-field title="Agent or service"><display/></default-field></field>
+            <field name="trials"><default-field><display/></default-field></field>
+            <field name="statusId"><default-field title="Status"><display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+            <field name="progress"><default-field title="Done"><display/></default-field></field>
+            <field name="mean"><default-field title="Mean score"><display/></default-field></field>
+            <field name="pass"><default-field title="Passed"><display/></default-field></field>
+            <field name="cost"><default-field><display format="#,##0.0000"/></default-field></field>
+            <field name="startedDate"><default-field title="Started"><display format="yyyy-MM-dd HH:mm"/></default-field></field>
+            <field name="compare"><default-field title=""><link url="compare" text="Compare" link-type="anchor"><parameter name="baseId" from="experimentId"/></link></default-field></field>
+        </form-list>
+        <section name="StartSection" condition="canRun"><widgets>
+            <label text="New experiment" type="h5"/>
+            <label text="Agent runs are on the job surface as you, so the agent must serve job and they cost what a run costs. At most 200 items × trials." type="p"/>
+            <form-single name="StartExperiment" transition="startExperiment">
+                <field name="datasetId"><default-field title="Dataset"><drop-down><list-options list="datasetList" key="${datasetId}" text="${datasetName} (v${versionNum || 0})"/></drop-down></default-field></field>
+                <field name="agentId"><default-field title="Agent"><drop-down allow-empty="true"><list-options list="agentOptions" key="${value}" text="${label}"/></drop-down></default-field></field>
+                <field name="serviceName"><default-field title="Or service"><text-line size="50"/></default-field></field>
+                <field name="trials"><default-field><text-line size="3" default-value="1"/></default-field></field>
+                <field name="experimentName"><default-field title="Name"><text-line size="40"/></default-field></field>
+                <field name="notes"><default-field title="What changed"><text-area rows="2" cols="60"/></default-field></field>
+                <field name="submitButton"><default-field title=""><submit text="Start"/></default-field></field>
+            </form-single>
+        </widgets></section>
+    </widgets>
+</screen>
