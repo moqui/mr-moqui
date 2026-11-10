@@ -107,10 +107,23 @@ pub struct Unit {
     pub runtime_id: u64,
 }
 
+/// The units of a definition by mode, macro location and section, then widgets (0) or fail-widgets (1).
+type Units = Map<Map<Map<[Option<Option<Arc<Unit>>>; 2]>>>;
+type Map<V> = HashMap<String, V, foldhash::fast::RandomState>;
+
+/// Which units a section has: its mode, the mode's macro location, the section and whether it is the fail-widgets.
+pub(crate) struct UnitKey<'a> {
+    pub mode: &'a str,
+    pub macro_location: &'a str,
+    pub section: &'a str,
+    pub fail: bool,
+}
+
 /// What a definition keeps for rendering: generated units and assembled forms.
 pub struct Generated {
-    /// By section and mode, so bounded by the definition.
-    units: Mutex<HashMap<String, Option<Arc<Unit>>>>,
+    /// By mode, macro location and section, so bounded by the definition; nested, and under a read lock, so a render
+    /// finds each of its sections' units without making a key or waiting on another render (plans/Profiling3.md W12).
+    units: std::sync::RwLock<Units>,
     /// By the text of an assembled dynamic or user-column form, which varies with the context and user.
     dynamic_units: Mutex<crate::script::BoundedMap<String, Arc<Unit>>>,
     forms: Mutex<HashMap<String, Arc<FormInstance>>>,
@@ -128,7 +141,7 @@ pub struct Generated {
 impl Default for Generated {
     fn default() -> Self {
         Self {
-            units: Mutex::default(),
+            units: std::sync::RwLock::default(),
             dynamic_units: Mutex::new(crate::script::BoundedMap::new(MAX_DYNAMIC_UNITS)),
             forms: Mutex::default(),
             statics: Mutex::new(crate::script::BoundedMap::new(MAX_STATIC_TEMPLATES)),
@@ -201,12 +214,22 @@ impl Generated {
         lock(&self.eligibility).insert(key, value);
     }
 
-    fn unit(&self, key: &str) -> Option<Option<Arc<Unit>>> {
-        lock(&self.units).get(key).cloned()
+    fn unit(&self, key: &UnitKey<'_>) -> Option<Option<Arc<Unit>>> {
+        moqui_lib::sync::read(&self.units)
+            .get(key.mode)?
+            .get(key.macro_location)?
+            .get(key.section)?[usize::from(key.fail)]
+        .clone()
     }
 
-    fn put_unit(&self, key: String, unit: Option<Arc<Unit>>) {
-        lock(&self.units).insert(key, unit);
+    fn put_unit(&self, key: &UnitKey<'_>, unit: Option<Arc<Unit>>) {
+        moqui_lib::sync::write(&self.units)
+            .entry(key.mode.to_string())
+            .or_default()
+            .entry(key.macro_location.to_string())
+            .or_default()
+            .entry(key.section.to_string())
+            .or_default()[usize::from(key.fail)] = Some(unit);
     }
 
     fn dynamic_unit(&self, key: &str) -> Option<Arc<Unit>> {
@@ -220,7 +243,13 @@ impl Generated {
     /// The number of units generated, for tests.
     #[cfg(test)]
     pub fn unit_count(&self) -> usize {
-        lock(&self.units).len() + self.dynamic_unit_count()
+        let units: usize = moqui_lib::sync::read(&self.units)
+            .values()
+            .flat_map(Map::values)
+            .flat_map(Map::values)
+            .map(|kinds| kinds.iter().filter(|kind| kind.is_some()).count())
+            .sum();
+        units + self.dynamic_unit_count()
     }
 
     /// The number of dynamic form units kept, for tests.
@@ -252,6 +281,16 @@ pub struct UnitRequest<'a> {
 ///
 /// Generation runs on the thread's quickjs-oxide generator (`script::oxide::walker`).
 pub fn unit_for(request: &UnitRequest<'_>) -> Result<Option<Arc<Unit>>, Error> {
+    let unit_key = UnitKey {
+        mode: request.mode,
+        macro_location: request.macro_location,
+        section: request.section,
+        fail: request.fail,
+    };
+    if let Some(found) = request.def.generated.unit(&unit_key) {
+        return Ok(found);
+    }
+    // the name a unit dump and an error give it
     let key = format!(
         "{}|{}|{}|{}",
         request.mode,
@@ -259,9 +298,6 @@ pub fn unit_for(request: &UnitRequest<'_>) -> Result<Option<Arc<Unit>>, Error> {
         request.section,
         if request.fail { "fail" } else { "widgets" }
     );
-    if let Some(found) = request.def.generated.unit(&key) {
-        return Ok(found);
-    }
     let made = match unit_root(request.def, request.section, request.fail)? {
         Some(root) => match mode_source(request.factory, request.macro_location) {
             Ok(source) => {
@@ -330,7 +366,7 @@ pub fn unit_for(request: &UnitRequest<'_>) -> Result<Option<Arc<Unit>>, Error> {
         },
         None => None,
     };
-    request.def.generated.put_unit(key, made.clone());
+    request.def.generated.put_unit(&unit_key, made.clone());
     Ok(made)
 }
 
@@ -648,7 +684,13 @@ mod tests {
                 runtime_id: 0,
             })
         };
-        generated.put_unit("text|loc|S|widgets".to_string(), Some(unit(0)));
+        let key = UnitKey {
+            mode: "text",
+            macro_location: "loc",
+            section: "S",
+            fail: false,
+        };
+        generated.put_unit(&key, Some(unit(0)));
         for id in 1..2_000 {
             generated.put_dynamic_unit(format!("dynamic|text|loc|Form|{id:x}"), unit(id));
             assert!(generated.dynamic_unit_count() <= MAX_DYNAMIC_UNITS);
@@ -658,7 +700,7 @@ mod tests {
             Some(1_999)
         );
         // Section units are not dropped to make room.
-        assert!(generated.unit("text|loc|S|widgets").is_some());
+        assert!(generated.unit(&key).is_some());
     }
 
     /// The render modes with a built-in macro module, and the module's file.

@@ -124,11 +124,12 @@ fn is_anchor_link(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let instance = call
         .host::<State>(1)
         .ok_or_else(|| HostError::Type("isAnchorLink needs a URL".to_string()))?;
-    let instance = lock_state(&instance, "UrlInstance")?.clone();
     let link = match call.node(0) {
         Some(link) => Arc::clone(link),
         None => Arc::new(crate::screen::sri::NodeLit::default()),
     };
+    // read in place under its lock, not copied (plans/Profiling3.md W17)
+    let instance = lock_state(&instance, "UrlInstance")?;
     Ok(urls::is_anchor_link(&link, &instance).into())
 }
 
