@@ -1654,7 +1654,7 @@ Each definition includes a recovery path and local scope. For an individual run,
 | T04 — Database view authoring | Developer administrator; disposable view | Compose and inspect a local database view | Find view → edit aliases/members → save → view/filter → remove fixture | Source entities, aliases and returned columns clear | Invalid alias/join, empty view and cancelled edit |
 | T05 — SQL and script recovery | Developer administrator; disposable DB; read-only examples | Run a safe query and recover from error | SQL Runner SELECT 1 → invalid missing column → SELECT 2; SQL Script Runner controlled local query | Results/columns distinguish from input; error is readable and recovery works | Syntax/missing-column error and denied role; no nonfixture writes |
 | T06 — Service invocation | Developer administrator; BasicServices.echo#Data | Inspect and invoke a harmless service | ServiceDetail → Run Service → enter TextIn1 → submit → verify TextOut1; invalid parameter then correct | Service identity, input/output grouping and values remain visible after run | Validation/service error and retry; output must show echoed text; no external services |
-| T07 — Statistics and load tools | Developer administrator; isolated run with bounded settings | Inspect diagnostics and understand safe test controls | ArtifactStats, Database Queries and Tables → inspect/filter; Database Speed Test/ServiceLoadRunner inspect before running bounded fixture only | Units, metrics availability and test scope clear | Unsupported platform and empty stats; load execution pending coordinator budget |
+| T07 — Statistics and load tools | Developer administrator; isolated run with bounded settings | Inspect diagnostics and understand safe test controls | ArtifactStats, Database Queries and Tables → inspect/filter; Database Speed Test and Load testing (Tools/Load) inspect before running bounded fixture only | Units, metrics availability and test scope clear | Unsupported platform and empty stats; load execution pending coordinator budget |
 | B01 — Comms home and navigation | Signed-in local user with no external accounts | Find conversations and next useful action | Open BasicComms/Home → Inbox/Chat/Calls/Settings; inspect empty/new-user states and shortcuts | Counts and titles describe user-visible destinations; no dead primary action | Partial data failure, no account and empty rooms; return/back works |
 | B02 — Inbox triage | Local user; hosted account/folder/message fixtures | Read, find and organize local mail | Inbox → search/filter/saved search → thread → MessageDetail → mark/read/flag/archive/move/trash → return | Thread selection, unread state, content/source and feedback correct | No matches, inaccessible thread and unavailable request; retry preserves current view |
 | B03 — Compose, draft and attachments | Local user; hosted identity with capture enabled | Write, retain and recover a message without external send | Compose/reply → recipients/subject/body → attach local file → save/close/reopen → discard or captured send/undo | Saved status truthful; intended identity and recipients preserved; files readable | Invalid recipient, no identity, failed save/upload/send; retain text and retry; schedule only captured fixture |
@@ -1830,7 +1830,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `Tools/Schema/Entity.xml` | XML widgets | T02 | P |
 | `Tools/Schema.xml` | Container → Entities | T02 | P |
 | `Tools/Service/ServiceDetail.xml` | hidden menu | T01 | V/P; focused rule passed |
-| `Tools/Service/ServiceLoadRunner.xml` | modes vue,qvue,tui | T07 | P |
+| `Tools/Load/Run.xml`, `Tools/Load/NewRun.xml` | modes vue,qvue,tui | T07 | P |
 | `Tools/Service/ServiceReference.xml` | XML widgets | T01 | P |
 | `Tools/Service/ServiceRun.xml` | XML widgets | T06 | V/P; parent observation |
 | `Tools/Service.xml` | Container → ServiceReference | T01 | P |
@@ -1914,7 +1914,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 
 ### Optional public-demo override (not enabled merely by loading demo data)
 
-`runtime/dev-component/demo/screen/Disabled.xml` replaces Tools Sql, Data/{Load,Export,Snapshots}, Database/{SpeedTest,Connections} and Service/{ServiceRun,ServiceLoadRunner} only when the separate demo lock-down component is enabled. Map this single user-facing unavailable screen to T03/T05/T06/T07 permission-limited inspection; pending. The normal framework review must not confuse demo seed data with this optional lock-down mode.
+`runtime/dev-component/demo/screen/Disabled.xml` replaces Tools Sql, Data/{Load,Export,Snapshots}, Database/{SpeedTest,Connections} and Service/ServiceRun and Load only when the separate demo lock-down component is enabled. Map this single user-facing unavailable screen to T03/T05/T06/T07 permission-limited inspection; pending. The normal framework review must not confuse demo seed data with this optional lock-down mode.
 
 
 ### Dev AIDE screen mapping and activities

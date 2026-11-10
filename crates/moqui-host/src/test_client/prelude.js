@@ -56,6 +56,7 @@
             users: numberOr(o.users), duration: numberOr(o.duration), iterations: numberOr(o.iterations),
             rampUp: numberOr(o.rampUp), think: o.think ?? null, pause: o.pause ?? null,
             newSession: o.newSession == null ? null : !!o.newSession, timeout: numberOr(o.timeout),
+            rate: numberOr(o.rate), stages: plainArgs(o.stages) ?? null,
             thresholds: plainArgs(o.thresholds), label: o.label == null ? null : String(o.label),
             stopAfter: numberOr(o.stopAfter), stopNowAfter: numberOr(o.stopNowAfter),
             feature: __moquiTest.caseName || "load",
@@ -65,7 +66,8 @@
                 scenarios: plainArgs(o.scenarios) }));
         }
         if (typeof o.scenario !== "function") throw new Error("load needs a scenario function, or a script");
-        return host("load.run", Object.assign(common, { users: common.users ?? 1, args: plainArgs(o.args),
+        // users is 1 by default, or with a rate or stages the most they need (the host's ScenarioSettings)
+        return host("load.run", Object.assign(common, { args: plainArgs(o.args),
             setup: sourceOf(o.setup, "setup"), scenario: sourceOf(o.scenario, "scenario"), teardown: sourceOf(o.teardown, "teardown") }));
     });
 
@@ -161,7 +163,8 @@
             const scenarios = loadState.order.map((name) => {
                 const s = loadState.scenarios[name];
                 return { name, users: s.users ?? null, rampUp: s.rampUp ?? null, duration: s.duration ?? null,
-                    iterations: s.iterations ?? null, think: s.think ?? null, pause: s.pause ?? null, newSession: !!s.newSession };
+                    iterations: s.iterations ?? null, think: s.think ?? null, pause: s.pause ?? null, newSession: !!s.newSession,
+                    rate: s.rate ?? null, stages: s.stages ?? null };
             });
             return {
                 plan: { title: p.title ?? null, description: p.description ?? null, uses: p.uses || ["http"], params,
@@ -213,17 +216,21 @@
             timeout: o.timeout == null ? null : Number(o.timeout) });
     });
     // A load user: setup once, run(iteration) until the duration ends, its iterations are done or the load stops, then
-    // teardown. With newSession each iteration starts on a fresh `http`.
+    // teardown. Before each iteration the scenario's schedule may hold the user (load.next): above a staged target, or
+    // until a rate's next start. With newSession each iteration starts on a fresh `http`.
     const runUser = (spec, setup, run, teardown) => {
-        host("thread.begin", { load: spec.load, scenario: spec.scenario, user: spec.user, pause: spec.pause ?? null });
+        host("thread.begin", { load: spec.load, scenario: spec.scenario, user: spec.user, pause: spec.pause ?? null,
+            token: config.threadToken ?? null });
         let iteration = 0;
         try {
             // the ramp ends on any stop, and a user stopped before its start runs neither setup nor teardown
             if (host("load.ramp", { until: spec.startAt }).stop) return iteration;
             if (setup) setup();
             let stop = host("load.timed", { on: true }).stop;
+            // a plain closed scenario is not asked before each iteration until its target is set live (load.iterated)
+            let gated = spec.gated !== false;
             const more = () => !stop && (spec.iterations == null || iteration < spec.iterations) && (spec.endAt == null || Date.now() < spec.endAt);
-            while (more()) {
+            while (more() && (!gated || host("load.next", { iteration }).go)) {
                 if (spec.newSession) {
                     const old = g.http;
                     define("http", newSession());
@@ -235,7 +242,7 @@
                     host("load.error", { message: messageOf(e), iteration });
                 }
                 iteration++;
-                stop = host("load.iterated", { iteration }).stop;
+                ({ stop, gated } = host("load.iterated", { iteration }));
                 if (spec.think && more()) host("load.pause", { pause: spec.think, until: spec.endAt });
             }
             host("load.timed", { on: false });

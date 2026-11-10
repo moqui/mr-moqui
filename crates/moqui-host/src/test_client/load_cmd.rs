@@ -36,8 +36,8 @@ use serde_json::{json, Map, Value};
 use super::http::Server;
 use super::load;
 use super::{camel_case, check_server, http_client, new_host, ClientArgs, DEFAULT_SERVER};
-use crate::load_runner::results;
 use crate::load_runner::scripts::scripts_in;
+use crate::load_runner::{compare, results};
 use crate::test_cmd::{component_dir_named, component_name};
 
 /// How often a running load prints its line.
@@ -70,6 +70,8 @@ pub struct LoadArgs {
     pub ramp_up: Option<f64>,
     pub duration: Option<f64>,
     pub iterations: Option<u64>,
+    /// `--rate N`: iterations started per second, with `users` the most at once (plans/LoadRunner.md L6).
+    pub rate: Option<f64>,
     /// `--scenario name`: run only this scenario, and the settings above are its.
     pub scenario: Option<String>,
     pub label: Option<String>,
@@ -145,6 +147,13 @@ pub fn parse_load_args(args: &[String]) -> Result<LoadArgs, Error> {
                 parsed.duration = Some(seconds);
             }
             "--iterations" => parsed.iterations = Some(whole_option("--iterations", &value("--iterations")?)?),
+            "--rate" => {
+                let rate = number_option("--rate", &value("--rate")?)?;
+                if rate <= 0.0 {
+                    return Err(Error::new("--rate is more than 0 iterations a second"));
+                }
+                parsed.rate = Some(rate);
+            }
             "--scenario" => parsed.scenario = Some(value("--scenario")?),
             "--label" => parsed.label = Some(value("--label")?),
             "--compare" => {
@@ -457,8 +466,8 @@ pub fn run(args: &LoadArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> {
     verdict(&stats)
 }
 
-/// The settings `--users`, `--ramp-up`, `--duration` and `--iterations` give: every scenario's, or with `--scenario`
-/// that one's alone, which then is the only one run.
+/// The settings `--users`, `--ramp-up`, `--duration`, `--iterations` and `--rate` give: every scenario's, or with
+/// `--scenario` that one's alone, which then is the only one run.
 fn overrides(args: &LoadArgs) -> Value {
     let mut settings = Map::new();
     if let Some(users) = args.users {
@@ -472,6 +481,9 @@ fn overrides(args: &LoadArgs) -> Value {
     }
     if let Some(count) = args.iterations {
         settings.insert("iterations".into(), json!(count));
+    }
+    if let Some(rate) = args.rate {
+        settings.insert("rate".into(), json!(rate));
     }
     match &args.scenario {
         Some(name) => json!({ "scenarios": { name.clone(): settings } }),
@@ -652,7 +664,12 @@ fn list(host: &Arc<dyn SpecHost>, target: &Target, print: &mut dyn FnMut(&str)) 
         print(&format!("    uses: {}", plan.uses().join(", ")));
         for (name, defaults) in &plan.scenarios {
             let mut line = format!("    scenario {name}:");
-            for (key, label) in [("users", "users"), ("iterations", "iterations"), ("duration", "s")] {
+            for (key, label) in [
+                ("users", "users"),
+                ("rate", "iterations/s"),
+                ("iterations", "iterations"),
+                ("duration", "s"),
+            ] {
                 if let Some(value) = defaults.get(key).filter(|value| !value.is_null()) {
                     let _ = write!(line, " {value} {label}");
                 }
@@ -692,12 +709,6 @@ fn list(host: &Arc<dyn SpecHost>, target: &Target, print: &mut dyn FnMut(&str)) 
 }
 
 /// A result's value at `path` (`latency.p95`, `names.<name>.count`), as a number.
-fn at(result: &Value, path: &[&str]) -> Option<f64> {
-    path.iter()
-        .try_fold(result, |value, key| value.get(*key))
-        .and_then(Value::as_f64)
-}
-
 fn shown(value: Option<f64>) -> String {
     match value {
         None => "-".to_string(),
@@ -727,76 +738,37 @@ fn compare(files: &[PathBuf], print: &mut dyn FnMut(&str)) -> Result<(), Error> 
         let target = run.get("target").and_then(Value::as_str).unwrap_or("");
         print(format!("[{}] {}  {target}  {label}", index + 1, file.display()).trim_end());
     }
-    let mut rows: Vec<(String, Vec<&str>)> = [
-        ("requests", vec!["requests"]),
-        ("per second", vec!["rps"]),
-        ("errors", vec!["errors"]),
-        ("error rate", vec!["errorRate"]),
-        ("p50 ms", vec!["latency", "p50"]),
-        ("p95 ms", vec!["latency", "p95"]),
-        ("p99 ms", vec!["latency", "p99"]),
-        ("max ms", vec!["latency", "max"]),
-    ]
-    .into_iter()
-    .map(|(label, path)| (label.to_string(), path))
-    .collect();
-    // the names in each result's own order (nameOrder: a JSON object keeps none), the first result's first
-    let mut names: Vec<String> = Vec::new();
-    for result in &loaded {
-        let ordered = result
-            .get("nameOrder")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str);
-        let rest = result
-            .get("names")
-            .and_then(Value::as_object)
-            .into_iter()
-            .flatten()
-            .map(|(name, _)| name.as_str());
-        for name in ordered.chain(rest) {
-            if !names.iter().any(|known| known == name) {
-                names.push(name.to_string());
-            }
-        }
-    }
-    let mut table: Vec<(String, Vec<Option<f64>>)> = Vec::new();
-    for (label, path) in rows.drain(..) {
-        table.push((label, loaded.iter().map(|result| at(result, &path)).collect()));
-    }
-    for name in &names {
-        for (metric, label) in [
-            ("count", "count"),
-            ("p50", "p50 ms"),
-            ("p95", "p95 ms"),
-            ("p99", "p99 ms"),
-            ("errors", "errors"),
-        ] {
-            let values = loaded
-                .iter()
-                .map(|result| at(result, &["names", name, metric]))
-                .collect();
-            table.push((format!("{name} {label}"), values));
-        }
-    }
+    // the rows of compare#LoadRuns (load_runner/compare.rs), labelled for the terminal
+    let label = |metric: &'static str| match metric {
+        "rps" => "per second",
+        "errorRate" => "error rate",
+        "p50" => "p50 ms",
+        "p95" => "p95 ms",
+        "p99" => "p99 ms",
+        other => other,
+    };
+    let table: Vec<(String, compare::Row)> = compare::rows(&loaded)
+        .into_iter()
+        .map(|row| {
+            let text = match &row.name {
+                Some(name) => format!("{name} {}", label(row.metric)),
+                None => label(row.metric).to_string(),
+            };
+            (text, row)
+        })
+        .collect();
     let width = table.iter().map(|(label, _)| label.chars().count()).max().unwrap_or(0);
     let mut header = format!("{:<width$}", "");
     for index in 0..loaded.len() {
         let _ = write!(header, "  {:>22}", format!("[{}]", index + 1));
     }
     print(header.trim_end());
-    for (label, values) in table {
+    for (label, row) in table {
         let mut line = format!("{label:<width$}");
-        let first = values.first().copied().flatten();
-        for (index, value) in values.iter().enumerate() {
+        for (value, change) in row.values.iter().zip(&row.changes) {
             let mut cell = shown(*value);
-            if index > 0 {
-                if let (Some(first), Some(value)) = (first, value) {
-                    if first != 0.0 {
-                        let _ = write!(cell, " ({:+.1}%)", (value - first) / first * 100.0);
-                    }
-                }
+            if let Some(change) = change {
+                let _ = write!(cell, " ({change:+.1}%)");
             }
             let _ = write!(line, "  {cell:>22}");
         }

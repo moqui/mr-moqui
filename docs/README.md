@@ -76,6 +76,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [Comms.md](tools/Comms.md) | BasicComms: the Inbox, Compose, chat and the mail settings, and how an app adds to them |
 | [Component-Deploy.md](tools/Component-Deploy.md) | Viewing the merged conf with each value's file and editing a conf file (System › Conf), reloading the conf on a running server (SIGHUP, the dev watcher), what changes live and what waits for a restart, and loading or deploying a component from git without a restart (System › Components) |
 | [Database.md](tools/Database.md) | The Tools app's Data, SQL, Schema, ETL and Database sections: the data grid, SQL runs, schema plans and jobs, ETL mappings, external databases, the conf settings and the permissions |
+| [Load-Runner.md](tools/Load-Runner.md) | Load scripts of virtual users over HTTP or this server's services: writing one, running it from Tools › Load or `moqui test-load`, reading and comparing results, and what a run may reach |
 | [Monitoring.md](tools/Monitoring.md) | Telemetry, OTLP in and out, the Monitor and Dashboards apps, and reports |
 
 ## security

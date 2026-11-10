@@ -1457,6 +1457,7 @@
         <load-entity location="component://framework/entity/TestEntities.xml"/>
         <load-entity location="component://framework/entity/LlmEntities.xml"/>
         <load-entity location="component://framework/entity/AgentEntities.xml"/>
+        <load-entity location="component://framework/entity/AgentEvalEntities.xml"/>
         <load-entity location="component://framework/entity/ChatEntities.xml"/>
         <load-entity location="component://framework/entity/CallEntities.xml"/>
         <load-entity location="component://framework/entity/VoiceEntities.xml"/>
@@ -1468,6 +1469,7 @@
         <load-data location="component://framework/data/GeoCountryData.xml"/>
         <load-data location="component://framework/data/SecurityTypeData.xml"/>
         <load-data location="component://framework/data/AgentTypeData.xml"/>
+        <load-data location="component://framework/data/AgentEvalData.xml"/>
         <load-data location="component://framework/data/DevToolsSecurityData.xml"/>
         <load-data location="component://framework/data/UnitData.xml"/>
         <load-data location="component://framework/data/MoquiSetupData.xml"/>

@@ -112,14 +112,19 @@ pub(crate) fn summary(
         .scenarios
         .iter()
         .map(|counts| {
-            let value = json!({ "users": counts.users, "iterations": counts.iterations, "errors": counts.errors });
+            let mut value = json!({ "users": counts.users, "iterations": counts.iterations, "errors": counts.errors });
+            if counts.rate {
+                value["dropped"] = json!(counts.dropped);
+            }
             (counts.name.clone(), value)
         })
         .collect();
+    let dropped: u64 = shared.scenarios.iter().map(|counts| counts.dropped).sum();
     let mut out = Map::new();
     out.insert("users".into(), json!(users));
     out.insert("duration".into(), json!(rounded(seconds, 3)));
     out.insert("iterations".into(), json!(shared.iterations));
+    out.insert("dropped".into(), json!(dropped));
     out.insert("requests".into(), json!(requests));
     out.insert("errors".into(), json!(shared.errors));
     out.insert("errorRate".into(), json!(rounded(error_rate, 4)));
@@ -320,6 +325,11 @@ pub(crate) fn table(stats: &Value, order: &[String]) -> String {
         stats.get("rps").and_then(Value::as_f64).unwrap_or(0.0),
         grouped(number("errors"))
     );
+    if number("dropped") > 0 {
+        // the line's end, so that what reads its start is not moved
+        out.pop();
+        let _ = writeln!(out, ", {} dropped", grouped(number("dropped")));
+    }
     let width = order.iter().map(|name| name.chars().count()).max().unwrap_or(0).max(4);
     let _ = writeln!(
         out,

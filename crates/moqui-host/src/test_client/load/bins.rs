@@ -13,7 +13,7 @@
  */
 
 //! A load's time series (plans/LoadRunner.md section 5): one bin a second from the run's start, with its active users,
-//! requests, errors, mean, p50, p95, p99 and max, computed from that second's samples when it closes, after which they
+//! requests, errors, the scheduled starts dropped in it (a rate scenario's), mean, p50, p95, p99 and max, computed from that second's samples when it closes, after which they
 //! are dropped. Past [`BIN_CAP`] bins, neighbours merge and the bin length doubles. Per name, [`Series`] keeps count,
 //! errors and mean in bins of 10 seconds, merged the same way.
 
@@ -44,6 +44,8 @@ pub(crate) struct Bin {
     pub(crate) users: u64,
     pub(crate) requests: u64,
     pub(crate) errors: u64,
+    /// A rate scenario's scheduled starts of this bin that were dropped.
+    pub(crate) dropped: u64,
     pub(crate) sum: u64,
     pub(crate) p50: u64,
     pub(crate) p95: u64,
@@ -67,6 +69,7 @@ impl Bin {
             users: open.users,
             requests: open.micros.len() as u64,
             errors: open.errors,
+            dropped: open.dropped,
             sum: open.micros.iter().sum(),
             p50: nearest_rank(&open.micros, 50.0),
             p95: nearest_rank(&open.micros, 95.0),
@@ -90,6 +93,7 @@ impl Bin {
             users: self.users.max(other.users),
             requests,
             errors: self.errors + other.errors,
+            dropped: self.dropped + other.dropped,
             sum: self.sum + other.sum,
             p50: weighted(self.p50, other.p50),
             p95: weighted(self.p95, other.p95),
@@ -106,7 +110,7 @@ impl Bin {
             self.sum as f64 / self.requests as f64
         };
         json!({
-            "t": t, "users": self.users, "requests": self.requests, "errors": self.errors, "mean": ms(mean),
+            "t": t, "users": self.users, "requests": self.requests, "errors": self.errors, "dropped": self.dropped, "mean": ms(mean),
             "p50": ms(self.p50 as f64), "p95": ms(self.p95 as f64), "p99": ms(self.p99 as f64), "max": ms(self.max as f64),
         })
     }
@@ -117,6 +121,7 @@ impl Bin {
 struct Open {
     micros: Vec<u64>,
     errors: u64,
+    dropped: u64,
     users: u64,
 }
 
@@ -163,6 +168,17 @@ impl Bins {
         let open = self.open.entry(second).or_default();
         open.micros.push(micros);
         open.errors += u64::from(error);
+    }
+
+    /// A scheduled start of `second` dropped.
+    pub(crate) fn add_dropped(&mut self, second: u64) {
+        if second < self.closed_through {
+            if let Some(bin) = self.closed.get_mut((second / self.seconds) as usize) {
+                bin.dropped += 1;
+            }
+            return;
+        }
+        self.open.entry(second).or_default().dropped += 1;
     }
 
     /// The active users at `second`: the bin keeps the most seen.

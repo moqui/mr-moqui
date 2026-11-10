@@ -54,7 +54,7 @@ pub use values::{value_items, value_map};
 
 use crate::context::{Error, ErrorKind};
 use crate::script::engine::EntryKind;
-pub use crate::script::run::DeadlineGuard;
+pub use crate::script::run::{interrupt_thread_on, limit_thread_scripts, thread_interrupted, DeadlineGuard};
 pub(crate) use crate::script::run::STACK;
 #[cfg(test)]
 use crate::script::run::{script_limit_for, stack_budget, NESTED_STACK, REQUEST_SCRIPT_STACK, SCRIPT_LIMIT};

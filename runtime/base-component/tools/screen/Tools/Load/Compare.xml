@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Two to four finished runs side by side (compare#LoadRuns, plans/LoadRunner.md §8, Report): the runs as columns,
+    the summary rows, then each name's count, p50, p95, p99 and errors, each with its change in percent
+    against the first run. runIds is the runs' ids, comma separated, so a comparison is a link to keep. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Compare" default-menu-include="false">
+
+    <parameter name="runIds"/>
+
+    <transition name="runDetail"><default-response url="../Run"/></transition>
+
+    <actions>
+        <script><![CDATA[
+            const ids = [].concat(context.runIds || []).flatMap((value) => String(value).split(',')).map((id) => id.trim()).filter(Boolean)
+            const lib = ec.resource.script('component://tools/template/LoadRuns.js')
+            const compared = lib.call('compare#LoadRuns', {runIds: ids})
+            compareError = compared.error
+            const runs = compared.out.runs || []
+            runCount = runs.length
+            const time = (value) => value == null || value === '' ? '' : ec.l10n.format(basicConvert(String(value), 'Timestamp'), 'yyyy-MM-dd HH:mm')
+            // each run's column: its label, else when it started
+            runColumns = [0, 1, 2, 3].map((index) => {
+                const run = runs[index] || {}
+                return {runId: String(run.runId || ''), title: String(run.label || time(run.start) || run.runId || ''),
+                    caption: [String(run.script || '').replace(/^.*\//, '').replace(/\.load\.js$/, ''), time(run.start), run.status ? String(run.status) : ''].filter(Boolean).join(' · ')}
+            })
+            const metrics = {requests: 'Requests', rps: 'Per second', errors: 'Errors', errorRate: 'Error rate', p50: 'p50 (ms)', p95: 'p95 (ms)',
+                p99: 'p99 (ms)', count: 'Count'}
+            const number = lib.number
+            const shown = (metric, value) => number(value) == null ? '' : metric == 'errorRate' ? ec.l10n.format(number(value) * 100, '#,##0.##') + '%'
+                : ec.l10n.format(number(value), metric == 'requests' || metric == 'count' || metric == 'errors' ? '#,##0' : '#,##0.##')
+            const change = (value) => number(value) == null ? '' : ' (' + (number(value) > 0 ? '+' : '') + ec.l10n.format(number(value), '#,##0.#') + '%)'
+            let lastGroup = null
+            compareRows = (compared.out.rows || []).map((row, index) => {
+                const group = row.section == 'summary' ? 'Summary' : String(row.name || '')
+                const out = {key: String(index), group: group == lastGroup ? '' : group, metric: metrics[row.metric] || String(row.metric || '')}
+                lastGroup = group
+                const values = row.values || [], changes = row.changes || []
+                for (let i = 0; i < 4; i++) out['value' + i] = shown(row.metric, values[i]) + (i > 0 ? change(changes[i]) : '')
+                return out
+            })
+        ]]></script>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Compare load runs"/>
+            <box-toolbar>
+                <link url="../Runs" text="Runs" icon="history"/>
+            </box-toolbar>
+            <box-body>
+                <section name="NotCompared" condition="compareError || runCount &lt; 2"><widgets>
+                    <label text="${compareError || 'Select two to four finished runs in Runs to compare them.'}" type="p" style="text-negative"/>
+                    <link url="../Runs" text="Runs"/>
+                </widgets><fail-widgets>
+                    <label text="The change in brackets is against the first run. Times in milliseconds." type="p" style="m-muted"/>
+                    <container-row>
+                        <section-iterate name="RunHeads" list="runColumns.slice(0, runCount)" entry="column"><widgets>
+                            <row-col md="3">
+                                <link url="runDetail" text="${column.title}" link-type="anchor" parameter-map="{runId: column.runId}"/>
+                                <label text="${column.caption}" type="p" style="text-caption m-muted"/>
+                            </row-col>
+                        </widgets></section-iterate>
+                    </container-row>
+                    <form-list name="CompareRows" list="compareRows" skip-form="true" paginate="false" show-csv-button="true">
+                        <field name="group"><default-field title="Name"><display/></default-field></field>
+                        <field name="metric"><default-field title=""><display/></default-field></field>
+                        <field name="value0" align="right"><default-field title="${runColumns[0].title}"><display/></default-field></field>
+                        <field name="value1" align="right"><default-field title="${runColumns[1].title}"><display/></default-field></field>
+                        <field name="value2" align="right" hide="runCount &lt; 3"><default-field title="${runColumns[2].title}"><display/></default-field></field>
+                        <field name="value3" align="right" hide="runCount &lt; 4"><default-field title="${runColumns[3].title}"><display/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="group"/><field-ref name="metric"/></column>
+                            <column><field-ref name="value0"/><field-ref name="value1"/></column>
+                        </columns>
+                    </form-list>
+                </fail-widgets></section>
+            </box-body>
+        </container-box>
+    </widgets>
+</screen>

@@ -18,6 +18,7 @@
             <subscreens-item name="Sql" menu-include="false" location="component://demo/screen/Disabled.xml"/>
             <subscreens-item name="SqlTui" menu-include="false" location="component://demo/screen/Disabled.xml"/>
             <subscreens-item name="SqlDownload" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="Load" menu-include="false" location="component://demo/screen/Disabled.xml"/>
         </screen>
         <screen location="component://tools/screen/Tools/Data.xml">
             <subscreens-item name="Load" menu-include="false" location="component://demo/screen/Disabled.xml"/>
@@ -32,7 +33,6 @@
         </screen>
         <screen location="component://tools/screen/Tools/Service.xml">
             <subscreens-item name="ServiceRun" menu-include="false" location="component://demo/screen/Disabled.xml"/>
-            <subscreens-item name="ServiceLoadRunner" menu-include="false" location="component://demo/screen/Disabled.xml"/>
         </screen>
     </screen-facade>
 

@@ -59,7 +59,9 @@ pub use runtime::{
 pub use runtime::{eval_named_value, install_spec_global, js_error, value_items, value_map};
 // a thread whose scripts the host does not trust with the server's functions (a load run's users)
 pub(crate) use runtime::host_call_allowed;
-pub use runtime::{restrict_host_calls, HostCallsLifted};
+pub use runtime::{
+    interrupt_thread_on, limit_thread_scripts, restrict_host_calls, thread_interrupted, HostCallsLifted,
+};
 
 #[cfg(test)]
 mod tests {

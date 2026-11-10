@@ -145,7 +145,7 @@ build, with no features of its own.
 | `sso` | host | OIDC and OAuth 2 logins (`org.moqui.sso.AuthServices`) | | yes | yes |
 | `print` | host | Network printing over IPP (`moqui-cups`) | | yes | yes |
 | `tui` | host | `moqui tui`, the terminal client of the `tui` render mode, on Revue ([TUI](ui/TUI.md)), and with `ssh` the SSH `apps` command; in lite too, for a quick terminal loop while developing and testing. Alone (`cargo build -p moqui-host --no-default-features --features tui`) it is the client of a running server, `moqui tui --server <url>`, with no database driver or HTTP server in the build | yes | yes | yes |
-| `test-client` | host | `moqui test-client`: a component's `test/client` specs against a running server, over HTTP, raw TCP or TLS, WebSocket and headless Chromium, with a load runner ([Client-Testing](dev/Client-Testing.md)); it opens no database and binds no listener of its own, so any package can test any server. Its `--serve` starts `moqui test --serve`, which needs `embedded-postgres` | yes | yes | yes |
+| `test-client` | host | `moqui test-client`: a component's `test/client` specs against a running server, over HTTP, raw TCP or TLS, WebSocket and headless Chromium, with a load runner ([Client-Testing](dev/Client-Testing.md)), and `moqui test-load`, a component's `test/load` scripts ([Load-Runner](tools/Load-Runner.md)), and the server side of Tools › Load; the two commands open no database and bind no listener of their own, so any package can test any server. Its `--serve` starts `moqui test --serve`, which needs `embedded-postgres` | yes | yes | yes |
 | `inbound-smtp` | host | The SMTP listener for hosted and shared mail accounts behind the edge gateway ([Mail-Inbound](interfaces/Mail-Inbound.md); includes `imap`); it starts only when `smtp_listen_port` is set | | yes | yes |
 | `rtc` | host (`moqui-rtc`) | Calls: the media socket and its SFU on str0m, and the call signaling on `/notws` ([WebRTC](interfaces/WebRTC.md)); the media socket starts only when `rtc_media_port` is set, and the call services run in every build (without it they refuse with `mediaUnavailable`). In Debug too | | yes | yes |
 | `speech-local` | host | Local speech to text for call captions (Whisper on candle, [WebRTC](interfaces/WebRTC.md#captions)): not built yet, so off in every package; with or without it `call_captions_provider=local` answers "not built in". Captions go through the `llm` feature's `transcribe` model meanwhile | | | |
@@ -487,7 +487,7 @@ the tasks, and `./moq help <task>` describes one. Task names match by partial pa
 ./moq load                     # all data types; ./moq load seed seed-initial install
 ./moq test mr-mantle           # run a component's JavaScript specs; extra args go to moqui test (--spec, --db snapshot)
 ./moq test-client framework    # a component's test/client specs against the running server (docs/dev/Client-Testing.md)
-./moq test-load mr-marble --script OrderToCash   # a load script against the running server (plans/LoadRunner.md)
+./moq test-load mr-marble --script OrderToCash   # a load script against the running server (docs/tools/Load-Runner.md)
 ./moq test-apps                # the application tests: the specs of runtime/component, no cargo
 ./moq test-framework           # the framework tests: cargo, moq, the specs of base-component and dev-component
 ./moq test-all                 # the whole regression suite: test-framework, then test-apps
@@ -613,7 +613,8 @@ The specs of `runtime/component/mr-mantle/test` are the largest set, ported from
 
 Tests from outside the server, over HTTP, WebSocket and headless Chromium, with a load runner, are the specs of a
 component's `test/client/`, which `moqui test-client` runs against a running server:
-[Client-Testing](dev/Client-Testing.md).
+[Client-Testing](dev/Client-Testing.md). Load scripts are a component's `test/load/*.load.js`, which `moqui
+test-load` and Tools › Load run: [Load-Runner](tools/Load-Runner.md).
 
 ### Running
 

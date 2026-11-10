@@ -1,0 +1,330 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One load run, served by Run.xml in the qvue render mode: the run from ../runStatus (runView of
+    template/LoadRuns.js), asked again every 2 seconds while it runs and not after. Every text from a
+    result (names, labels, error messages, the script's title) is bound as text. -->
+<template><div class="q-pa-sm m-load-run">
+    <q-card v-if="!loaded" flat bordered class="q-pa-md text-caption">Loading</q-card>
+    <q-card v-else-if="!run.found" flat bordered class="q-pa-md" id="LoadRunMissing">
+        <div class="text-h6">Not available</div>
+        <p class="q-mt-sm">{{run.error || 'This run is not on this server.'}}</p>
+        <q-btn flat no-caps color="primary" icon="arrow_back" label="Runs" @click="go('Runs')"></q-btn>
+    </q-card>
+    <template v-else>
+        <q-card flat bordered class="q-mb-sm m-record-header" id="LoadRunHeader">
+            <q-card-section class="row items-start q-col-gutter-x-md q-col-gutter-y-sm">
+                <div class="col-12 col-md m-record-title">
+                    <div class="text-h5">{{run.scriptTitle || run.script}}<span v-if="run.label"> · {{run.label}}</span></div>
+                    <div class="text-caption" :class="mutedClass">{{run.runId}} · {{targetText}}<span v-if="run.insecure"> · invalid certificates accepted</span></div>
+                </div>
+                <div class="col-12 col-md-auto m-record-status">
+                    <q-chip dense square class="q-ma-none m-tonal" :class="'text-' + statusColor" id="LoadRunStatus">{{statusText}}</q-chip>
+                </div>
+            </q-card-section>
+            <q-separator inset></q-separator>
+            <q-card-section class="row items-center q-col-gutter-sm m-record-foot">
+                <div class="col-12 col-md text-caption">
+                    <span>Started {{when(run.start)}}</span><span v-if="run.end"> · ended {{when(run.end)}}</span>
+                    <span v-if="run.user"> · by {{run.user}}</span><span v-if="run.imported"> · imported<span v-if="run.importedUser">, run by {{run.importedUser}}</span></span>
+                    <span v-if="run.stopReason"> · {{stopReasonText}}</span>
+                </div>
+                <div class="col-12 col-md-auto row items-center q-gutter-sm m-record-actions">
+                    <template v-if="run.running">
+                        <q-btn unelevated no-caps color="primary" icon="stop_circle" label="Stop" :disable="acting || run.stopping" @click="stop(false)"></q-btn>
+                        <q-btn outline no-caps color="negative" icon="stop" label="Stop now" :disable="acting" @click="stop(true)"></q-btn>
+                    </template>
+                    <template v-else>
+                        <q-btn unelevated no-caps color="primary" icon="replay" label="Run again" @click="go('NewRun', 'runId=' + encodeURIComponent(run.runId))"></q-btn>
+                        <q-btn-dropdown flat no-caps icon="more_horiz" label="More">
+                            <q-list>
+                                <q-item clickable v-close-popup tag="a" :href="loadPath + '/downloadResult?runId=' + encodeURIComponent(run.runId)">
+                                    <q-item-section avatar><q-icon name="download"></q-icon></q-item-section><q-item-section>Download result</q-item-section></q-item>
+                                <q-item clickable v-close-popup @click="remove" class="text-negative">
+                                    <q-item-section avatar><q-icon name="delete"></q-icon></q-item-section><q-item-section>Delete</q-item-section></q-item>
+                            </q-list>
+                        </q-btn-dropdown>
+                    </template>
+                </div>
+            </q-card-section>
+        </q-card>
+
+        <q-banner v-if="stalled" dense rounded class="m-tonal text-warning q-mb-sm" id="LoadRunStalled">
+            Updates stopped: the server did not answer. The numbers are as they last were.
+            <template v-slot:action><q-btn flat no-caps color="primary" icon="refresh" label="Refresh" @click="refresh"></q-btn></template>
+        </q-banner>
+        <div class="row q-col-gutter-sm q-mb-sm" id="LoadRunCards">
+            <div v-for="card in cards" :key="card.title" class="col-6 col-sm-4 col-md">
+                <q-card flat bordered class="full-height"><q-card-section class="q-pa-sm">
+                    <div class="text-caption" :class="mutedClass">{{card.title}}</div>
+                    <div class="text-h6">{{card.value}}</div>
+                    <div v-if="card.caption" class="text-caption" :class="mutedClass">{{card.caption}}</div>
+                </q-card-section></q-card>
+            </div>
+        </div>
+
+        <q-card v-if="run.running && run.targets && run.targets.length" flat bordered class="q-mb-sm" id="LoadRunTargets">
+            <q-card-section>
+                <div class="text-subtitle1">Scenarios</div>
+                <div class="text-caption q-mb-sm" :class="mutedClass">Change a scenario's users, or a rate scenario's starts per second, from now on.</div>
+                <div v-for="target in run.targets" :key="target.name" class="row q-col-gutter-sm items-center q-mb-xs">
+                    <div class="col-12 col-md-3 text-weight-medium">{{target.name}}
+                        <span class="text-caption" :class="mutedClass">· now {{target.rate != null ? number(target.rate) + ' per second, at most ' + count(target.users) + ' users' : count(target.users) + ' users'}}</span></div>
+                    <!-- a rate scenario's rate and its most users at once, each applied on its own: the service takes one per call -->
+                    <template v-if="edits[target.name] && target.rate != null">
+                        <div class="col-6 col-md-2"><q-input v-model.number="edits[target.name].rate" type="number" min="0" step="any" dense outlined
+                                label="Per second" :name="'rate_' + target.name"></q-input></div>
+                        <div class="col-6 col-md-auto"><q-btn outline no-caps color="primary" label="Apply" :disable="acting || run.stopping"
+                                @click="applyTarget(target, 'rate')"></q-btn></div>
+                    </template>
+                    <template v-if="edits[target.name]">
+                        <div class="col-6 col-md-2"><q-input v-model.number="edits[target.name].users" type="number" min="1" dense outlined
+                                :label="target.rate != null ? 'Most users' : 'Users'" :name="'users_' + target.name"></q-input></div>
+                        <div class="col-6 col-md-auto"><q-btn outline no-caps color="primary" label="Apply" :disable="acting || run.stopping"
+                                @click="applyTarget(target, 'users')"></q-btn></div>
+                    </template>
+                </div>
+            </q-card-section>
+        </q-card>
+
+        <div v-if="run.series.t.length" class="row q-col-gutter-sm q-mb-sm">
+            <div class="col-12 col-lg-4"><q-card flat bordered><q-card-section>
+                <div class="text-subtitle2">Requests and errors per second</div>
+                <m-chart height="220px" :config="chartRates"></m-chart>
+            </q-card-section></q-card></div>
+            <div class="col-12 col-lg-4"><q-card flat bordered><q-card-section>
+                <div class="text-subtitle2">Response time (ms)</div>
+                <m-chart height="220px" :config="chartLatency"></m-chart>
+            </q-card-section></q-card></div>
+            <div class="col-12 col-lg-4"><q-card flat bordered><q-card-section>
+                <div class="text-subtitle2">Active users</div>
+                <m-chart height="220px" :config="chartUsers"></m-chart>
+            </q-card-section></q-card></div>
+        </div>
+
+        <q-card flat bordered class="q-mb-sm">
+            <q-card-section class="q-pb-none"><div class="text-subtitle1">By name</div></q-card-section>
+            <q-card-section>
+                <q-markup-table flat dense separator="horizontal" class="m-load-names" id="LoadRunNames">
+                    <thead><tr>
+                        <th class="text-left">Name</th><th class="text-left gt-xs">Kind</th><th class="text-right">Count</th><th class="text-right">Errors</th>
+                        <th class="text-right gt-sm">Mean</th><th class="text-right">p50</th><th class="text-right gt-sm">p90</th><th class="text-right">p95</th>
+                        <th class="text-right gt-xs">p99</th><th class="text-right gt-sm">Max</th><th class="text-left gt-sm">Outcomes</th>
+                    </tr></thead>
+                    <tbody>
+                        <tr v-for="row in run.names" :key="row.name">
+                            <td class="text-left" style="white-space:normal;word-break:break-word">{{row.name}}</td><td class="text-left gt-xs">{{row.kind}}</td>
+                            <td class="text-right">{{count(row.count)}}</td><td class="text-right" :class="row.errors ? 'text-negative' : ''">{{count(row.errors)}}</td>
+                            <td class="text-right gt-sm">{{ms(row.mean)}}</td><td class="text-right">{{ms(row.p50)}}</td><td class="text-right gt-sm">{{ms(row.p90)}}</td>
+                            <td class="text-right">{{ms(row.p95)}}</td><td class="text-right gt-xs">{{ms(row.p99)}}</td><td class="text-right gt-sm">{{ms(row.max)}}</td>
+                            <td class="text-left gt-sm">{{row.outcomes}}</td>
+                        </tr>
+                        <tr v-if="!run.names.length"><td colspan="11" class="text-caption">No requests yet.</td></tr>
+                    </tbody>
+                </q-markup-table>
+                <div class="text-caption q-mt-xs" :class="mutedClass">Times in milliseconds; the percentiles are within 1.6% of the exact ones.</div>
+            </q-card-section>
+        </q-card>
+
+        <q-card v-if="run.thresholds.length" flat bordered class="q-mb-sm">
+            <q-card-section>
+                <div class="text-subtitle1">Thresholds: {{run.passed ? 'passed' : 'broken'}}</div>
+                <div v-for="(limit, index) in run.thresholds" :key="index" class="text-body2" :class="limit.passed ? '' : 'text-negative'">
+                    {{limit.name ? limit.name + ' ' : ''}}{{limit.metric}}: {{limit.value == null ? 'no value' : number(limit.value)}} against {{number(limit.limit)}}
+                </div>
+            </q-card-section>
+        </q-card>
+
+        <q-card v-if="run.errorSamples.length" flat bordered class="q-mb-sm" id="LoadRunErrors">
+            <q-card-section>
+                <div class="text-subtitle1">First errors</div>
+                <q-list dense separator>
+                    <q-item v-for="(sample, index) in run.errorSamples" :key="index">
+                        <q-item-section>
+                            <q-item-label style="white-space:pre-wrap;word-break:break-word">{{sample.message}}</q-item-label>
+                            <q-item-label caption>{{[sample.name, sample.status, sample.scenario, sample.user !== '' ? 'user ' + sample.user : ''].filter(Boolean).join(' · ')}}</q-item-label>
+                        </q-item-section>
+                    </q-item>
+                </q-list>
+            </q-card-section>
+        </q-card>
+
+        <div class="row q-col-gutter-sm">
+            <div class="col-12 col-md-6"><q-card flat bordered><q-card-section>
+                <div class="text-subtitle1">Generator</div>
+                <div class="text-body2">{{generatorText}}</div>
+                <div v-if="run.generator" class="text-caption" :class="mutedClass">
+                    {{run.generator.cores}} cores<span v-if="run.generator.cpu != null"> · CPU {{percent(run.generator.cpu)}} of the machine</span><span v-if="run.generator.scriptShare != null"> · scripts {{percent(run.generator.scriptShare)}} of the users' time</span>
+                </div>
+            </q-card-section></q-card></div>
+            <div v-if="run.server" class="col-12 col-md-6"><q-card flat bordered id="LoadRunServer"><q-card-section>
+                <div class="text-subtitle1">This server</div>
+                <div class="text-body2">CPU load {{number(run.server.load)}}<span v-if="run.server.processors"> on {{run.server.processors}} processors</span><span v-if="run.server.loadPercent != null"> · busy {{number(run.server.loadPercent)}}%</span></div>
+                <div class="text-caption" :class="mutedClass">Memory {{run.server.memoryUsed}} MiB<span v-if="run.server.threads != null"> · {{run.server.threads}} threads</span></div>
+            </q-card-section></q-card></div>
+        </div>
+    </template>
+</div></template>
+
+<script>
+module.exports = {
+    inject: { mScreen: { default: null } },
+    data() {
+        return { run: { found: false, series: { t: [] }, names: [], errorSamples: [], thresholds: [], totals: {} }, loaded: false, acting: false, timer: null,
+            failures: 0, stalled: false, edits: {} };
+    },
+    computed: {
+        runId() { return String(((this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}).runId || ''); },
+        loadPath() {
+            const path = this.mScreen && this.mScreen.path ? this.mScreen.path : this.$root.basePath + '/' + this.$root.currentPathList.join('/');
+            return path.split('/').slice(0, -1).join('/');
+        },
+        mutedClass() { return this.$q.dark.isActive ? 'text-grey-5' : 'text-grey-7'; },
+        statusText() {
+            if (this.run.running && this.run.stopping) return 'Stopping';
+            return { running: 'Running', completed: 'Completed', stopped: 'Stopped', failed: 'Failed' }[this.run.status] || this.run.status || '';
+        },
+        statusColor() { return { running: 'primary', completed: 'positive', stopped: 'warning', failed: 'negative' }[this.run.status] || 'grey-7'; },
+        stopReasonText() {
+            return { 'stop-now': 'stopped at once', stop: 'stopped after the iterations under way', timeout: 'stopped at its time limit' }[this.run.stopReason]
+                || this.run.stopReason;
+        },
+        targetText() {
+            const kinds = { service: "this server's services", this: 'this server over HTTP', url: 'another server' };
+            return (kinds[this.run.targetKind] || 'target') + (this.run.target && this.run.targetKind !== 'service' ? ' ' + this.run.target : '');
+        },
+        generatorText() {
+            // a run started here runs on threads of this server; an imported one names where it ran
+            const where = this.run.generator ? this.run.generator.where : 'in-target';
+            return where === 'in-target' ? 'Threads in this server' : where === 'in-server' ? 'Threads in this server, against another server'
+                : where === 'same-machine' ? 'The moqui command, on the machine it ran on' : where;
+        },
+        cards() {
+            const totals = this.run.totals || {};
+            return [
+                { title: 'Active users', value: this.count(totals.activeUsers), caption: 'of ' + this.count(totals.users) },
+                { title: 'Requests', value: this.count(totals.requests), caption: this.count(totals.iterations) + ' iterations' },
+                { title: 'Per second', value: this.number(totals.rps), caption: this.seconds(totals.duration) },
+                { title: 'Errors', value: this.count(totals.errors), caption: this.percent(totals.errorRate) },
+                // a rate scenario's starts no user was free to take
+                ...(this.run.hasRate ? [{ title: 'Dropped', value: this.count(totals.dropped || 0), caption: 'starts no user took' }] : []),
+                { title: 'p50', value: this.ms(totals.p50) + ' ms' },
+                { title: 'p95', value: this.ms(totals.p95) + ' ms' },
+                { title: 'p99', value: this.ms(totals.p99) + ' ms' }
+            ];
+        },
+        labels() { return this.run.series.t.map((t) => t + 's'); },
+        chartRates() {
+            const sets = [['Requests', this.run.series.rps, '#1976d2'], ['Errors', this.run.series.eps, '#c62828']];
+            if (this.run.hasRate) sets.push(['Dropped', this.run.series.dropped || [], '#ef6c00']);
+            return this.lineChart(sets);
+        },
+        chartLatency() {
+            return this.lineChart([['p50', this.run.series.p50, '#26a69a'], ['p95', this.run.series.p95, '#1976d2'], ['p99', this.run.series.p99, '#9c27b0']]);
+        },
+        chartUsers() { return this.lineChart([['Users', this.run.series.users, '#ef6c00']]); }
+    },
+    methods: {
+        go(screen, search) { this.$root.setUrl(this.loadPath + '/' + screen + (search ? '?' + search : '')); },
+        lineChart(sets) {
+            return { type: 'line', data: { labels: this.labels, datasets: sets.map(([label, data, color]) => ({ label, data, borderColor: color,
+                backgroundColor: color, fill: false, tension: 0, pointRadius: 0 })) },
+                options: { maintainAspectRatio: false, animation: false, plugins: { legend: { display: sets.length > 1 } },
+                    scales: { y: { beginAtZero: true } } } };
+        },
+        when(value) { if (!value) return ''; const date = new Date(/^[0-9]+$/.test(String(value)) ? Number(value) : value);
+            return isNaN(date.getTime()) ? String(value) : date.toLocaleString(); },
+        count(value) { return value == null ? '' : Number(value).toLocaleString(); },
+        number(value) { return value == null ? '' : Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 }); },
+        ms(value) { return value == null ? '' : Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 }); },
+        percent(value) { return value == null ? '' : (Number(value) * 100).toLocaleString(undefined, { maximumFractionDigits: 2 }) + '%'; },
+        seconds(value) { return value == null ? '' : 'over ' + Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' s'; },
+        load() {
+            const first = !this.loaded;
+            return moqui.request(this.loadPath + '/runStatus', { params: { runId: this.runId, withTitle: first ? 'true' : 'false' } }).then((result) => {
+                const json = result.json || {};
+                // a run that was running and is not answered now: asked again, as for a failed request
+                if (!json.found && !first && this.run.running) { this.failed(); return; }
+                this.loaded = true;
+                this.failures = 0;
+                this.stalled = false;
+                if (!json.found) { this.run = Object.assign({}, this.run, { found: false, error: json.errors }); this.stopPolling(); return; }
+                // the title is read once, with the page
+                this.run = Object.assign({}, json, { scriptTitle: first ? json.scriptTitle : this.run.scriptTitle });
+                // each scenario's inputs follow its target (changed here or from elsewhere) while the user has not changed
+                // them; base is the target an input was last filled from
+                const edits = Object.assign({}, this.edits);
+                for (const target of this.run.targets || []) {
+                    const edit = edits[target.name];
+                    if (!edit) { edits[target.name] = { users: target.users, rate: target.rate, baseUsers: target.users, baseRate: target.rate }; continue; }
+                    const next = Object.assign({}, edit, { baseUsers: target.users, baseRate: target.rate });
+                    if (edit.users === edit.baseUsers) next.users = target.users;
+                    if (edit.rate === edit.baseRate) next.rate = target.rate;
+                    edits[target.name] = next;
+                }
+                this.edits = edits;
+                if (this.run.running) this.poll(); else this.stopPolling();
+            }, (err) => {
+                if (!this.loaded) { this.loaded = true; this.stopPolling(); moqui.handleAjaxError(err); return; }
+                this.failed();
+            });
+        },
+        // a poll that failed while the run runs: again after 4, 8, 16 and 30 seconds, then "Updates stopped" with Refresh
+        failed() {
+            this.failures++;
+            if (this.failures > 4) { this.stalled = true; this.stopPolling(); return; }
+            this.poll(Math.min(30000, 2000 * Math.pow(2, this.failures)));
+        },
+        // what: users (a closed scenario's users, a rate scenario's most at once) or rate
+        applyTarget(target, what) {
+            const edit = this.edits[target.name] || {};
+            const params = what === 'rate' ? { scenario: target.name, rate: edit.rate } : { scenario: target.name, users: edit.users };
+            this.post('updateUsers', params).then((json) => {
+                if (!json) return;
+                moqui.notifyMessages(target.name + ': ' + (what === 'rate' ? edit.rate + ' per second' : (target.rate != null ? 'at most ' : '') + edit.users + ' users')
+                    + ' from now on');
+                this.edits = Object.assign({}, this.edits, { [target.name]: null });
+                this.stopPolling();
+                this.load();
+            });
+        },
+        refresh() { this.failures = 0; this.stalled = false; this.stopPolling(); this.load(); },
+        poll(wait) { if (!this.timer && !this.unmounted) this.timer = setTimeout(() => { this.timer = null; this.load(); }, wait || 2000); },
+        stopPolling() { if (this.timer) { clearTimeout(this.timer); this.timer = null; } },
+        post(name, params) {
+            this.acting = true;
+            return moqui.request(this.loadPath + '/' + name, { method: 'POST', params: Object.assign({ runId: this.run.runId }, params) }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) { moqui.notifyMessages(null, json.errors); return null; }
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); return null; }).finally(() => { this.acting = false; });
+        },
+        stop(now) {
+            const send = () => this.post('stopRun', { now: now ? 'true' : 'false' }).then((json) => { if (json) { this.stopPolling(); this.load(); } });
+            if (!now) { send(); return; }
+            this.$q.dialog({ title: 'Stop now', message: 'Stop run ' + this.run.runId + ' before each user\'s next request? Iterations under way end as they are.',
+                cancel: true, persistent: true, ok: { label: 'Stop now', color: 'negative', unelevated: true, noCaps: true } }).onOk(send);
+        },
+        remove() {
+            this.$q.dialog({ title: 'Delete the run', message: 'Delete run ' + this.run.runId + (this.run.label ? ' (' + this.run.label + ')' : '')
+                + ' and its result file? This cannot be undone.', cancel: true, persistent: true,
+                ok: { label: 'Delete', color: 'negative', unelevated: true, noCaps: true } }).onOk(() => this.post('deleteRun').then((json) => {
+                if (json && json.deleted) { moqui.notifyMessages('Run ' + this.run.runId + ' deleted'); this.go('Runs'); }
+                else if (json) moqui.notifyMessages(null, 'Run ' + this.run.runId + ' was not found to delete');
+            }));
+        }
+    },
+    mounted() { this.load(); },
+    beforeUnmount() { this.unmounted = true; this.stopPolling(); }
+};
+</script>

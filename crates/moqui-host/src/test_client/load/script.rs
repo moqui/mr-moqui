@@ -25,12 +25,14 @@ use moqui_devkit::testkit::{run_script_on_thread, ScriptFile, ScriptThread, Spec
 use serde_json::{json, Map, Value};
 
 use super::pace::{Pause, MAX_SECONDS};
+use super::schedule::{Profile, Schedule, Stage, MAX_RATE, MAX_STAGES};
 use super::MAX_USERS;
 
 /// The settings a scenario runs with.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ScenarioSettings {
     pub(crate) name: String,
+    /// The users; with `stages` or a `rate`, the most at once ([`super::schedule`]).
     pub(crate) users: u64,
     /// Seconds over which the users start, evenly.
     pub(crate) ramp_up: f64,
@@ -44,26 +46,108 @@ pub(crate) struct ScenarioSettings {
     pub(crate) pause: Option<Pause>,
     /// Each iteration starts with a fresh `http` session.
     pub(crate) new_session: bool,
+    /// Iterations started per second: an open model, where `iterations` is the scenario's starts in all.
+    pub(crate) rate: Option<f64>,
+    /// The target over time: users, or with `rate_stages` iterations started per second.
+    pub(crate) stages: Vec<Stage>,
+    /// The stages are rates (`{ duration, rate }`), so the scenario is a rate scenario.
+    pub(crate) rate_stages: bool,
+}
+
+/// `stages`: `[{ duration, users }]` or `[{ duration, rate }]`, all of one kind; and whether they are rates.
+fn parse_stages(value: &Value, who: &str) -> Result<(Vec<Stage>, bool), String> {
+    let items = match value {
+        Value::Null => return Ok((Vec::new(), false)),
+        Value::Array(items) if !items.is_empty() && items.len() <= MAX_STAGES => items,
+        other => {
+            return Err(format!(
+            "{who}: stages is a list of 1 to {MAX_STAGES} {{ duration, users }} or {{ duration, rate }}, not {other}"
+        ))
+        }
+    };
+    let mut stages = Vec::new();
+    let mut rates = None;
+    for item in items {
+        let duration = item
+            .get("duration")
+            .and_then(Value::as_f64)
+            .filter(|seconds| *seconds > 0.0);
+        let users = item.get("users").and_then(Value::as_f64);
+        let rate = item.get("rate").and_then(Value::as_f64);
+        let (duration, target, is_rate) = match (duration, users, rate) {
+            (Some(duration), Some(users), None)
+                if (0.0..=MAX_USERS as f64).contains(&users) && users.fract() == 0.0 =>
+            {
+                (duration, users, false)
+            }
+            (Some(duration), None, Some(rate)) if (0.0..=MAX_RATE).contains(&rate) => (duration, rate, true),
+            _ => {
+                return Err(format!(
+                    "{who}: a stage is {{ duration (seconds), users (0 to {MAX_USERS}) }} or {{ duration, rate (0 to {MAX_RATE} a second) }}, not {item}"
+                ))
+            }
+        };
+        if *rates.get_or_insert(is_rate) != is_rate {
+            return Err(format!("{who}: stages are all users or all rates"));
+        }
+        stages.push(Stage {
+            duration: duration.min(MAX_SECONDS),
+            target,
+        });
+    }
+    Ok((stages, rates.unwrap_or(false)))
 }
 
 impl ScenarioSettings {
-    /// The settings in `value` (`users`, `rampUp`, `duration`, `iterations`, `think`, `pause`, `newSession`). `who`
-    /// starts an error: `load` or `load: scenario <name>`.
+    /// The settings in `value` (`users`, `rampUp`, `duration`, `iterations`, `think`, `pause`, `newSession`, `rate`,
+    /// `stages`). `who` starts an error: `load` or `load: scenario <name>`.
     ///
     /// # Errors
     ///
     /// When a setting is out of its range, or there is neither a duration nor iterations.
     pub(crate) fn from_json(name: &str, value: &Value, who: &str) -> Result<ScenarioSettings, String> {
         let field = |key: &str| value.get(key).unwrap_or(&Value::Null);
-        let users = field("users").as_f64().unwrap_or(1.0);
+        let rate = match field("rate") {
+            Value::Null => None,
+            given => match given.as_f64() {
+                Some(rate) if rate > 0.0 && rate <= MAX_RATE => Some(rate),
+                _ => {
+                    return Err(format!(
+                        "{who}: rate is iterations a second, more than 0 and at most {MAX_RATE}, not {given}"
+                    ))
+                }
+            },
+        };
+        let (stages, rate_stages) = parse_stages(field("stages"), who)?;
+        if rate.is_some() && !stages.is_empty() {
+            return Err(format!(
+                "{who}: give rate or stages, not both (stages of {{ duration, rate }} make a rate scenario)"
+            ));
+        }
+        // with stages or a rate, users is the most at once: by default the largest stage's, or the highest rate
+        let most = stages
+            .iter()
+            .map(|stage| stage.target)
+            .fold(rate.unwrap_or(0.0), f64::max)
+            .ceil()
+            .clamp(1.0, MAX_USERS as f64);
+        let default_users = if rate.is_some() || !stages.is_empty() {
+            most
+        } else {
+            1.0
+        };
+        let users = field("users").as_f64().unwrap_or(default_users);
         if !((1.0..=MAX_USERS as f64).contains(&users) && users.fract() == 0.0) {
             return Err(format!(
                 "{who}: users is a whole number from 1 to {MAX_USERS}, not {users}"
             ));
         }
+        // stages with no duration given last as long as they do
+        let staged = (!stages.is_empty()).then(|| stages.iter().map(|stage| stage.duration).sum::<f64>());
         let duration = field("duration")
             .as_f64()
             .filter(|seconds| *seconds > 0.0)
+            .or(staged)
             .map(|seconds| seconds.min(MAX_SECONDS));
         let iterations = field("iterations")
             .as_f64()
@@ -81,20 +165,87 @@ impl ScenarioSettings {
             think: Pause::parse(field("think"), &format!("{who}: think"))?,
             pause: Pause::parse(field("pause"), &format!("{who}: pause"))?,
             new_session: field("newSession").as_bool().unwrap_or(false),
+            rate,
+            stages,
+            rate_stages,
         })
+    }
+
+    /// Iterations started per second, rather than users that loop.
+    pub(crate) fn is_rate(&self) -> bool {
+        self.rate.is_some() || self.rate_stages
+    }
+
+    /// A closed scenario with no stages: its users start along `rampUp`, and loop.
+    pub(crate) fn is_plain(&self) -> bool {
+        !self.is_rate() && self.stages.is_empty()
+    }
+
+    /// The scenario's schedule ([`super::schedule`]). A rate scenario with no stages ramps its rate over `rampUp`.
+    pub(crate) fn schedule(&self) -> Schedule {
+        if self.is_rate() {
+            let rate = self.rate.unwrap_or(0.0);
+            let profile = if !self.stages.is_empty() {
+                Profile::stages(&self.stages)
+            } else if self.ramp_up > 0.0 {
+                Profile::stages(&[Stage {
+                    duration: self.ramp_up,
+                    target: rate,
+                }])
+            } else {
+                Profile::constant(rate)
+            };
+            Schedule::rate(profile, self.users, self.duration, self.iterations)
+        } else if self.stages.is_empty() {
+            Schedule::closed(Profile::constant(self.users as f64), self.users, self.duration)
+        } else {
+            Schedule::closed(Profile::stages(&self.stages), self.users, self.duration)
+        }
+    }
+
+    /// The users started with the load: all of a plain or rate scenario's, a staged one's as its first stage has them.
+    pub(crate) fn initial_users(&self) -> u64 {
+        if self.is_rate() || self.stages.is_empty() {
+            self.users
+        } else {
+            self.schedule().threads_wanted(0.0)
+        }
     }
 
     pub(crate) fn to_json(&self) -> Value {
         json!({
             "users": self.users, "rampUp": self.ramp_up, "duration": self.duration, "iterations": self.iterations,
             "think": self.think.as_ref().map(Pause::to_json), "pause": self.pause.as_ref().map(Pause::to_json),
-            "newSession": self.new_session,
+            "newSession": self.new_session, "rate": self.rate, "stages": self.stages_json(),
         })
     }
 
-    /// Seconds before its users are told to stop: its duration and ramp and 120, or 600 with only iterations.
+    fn stages_json(&self) -> Value {
+        if self.stages.is_empty() {
+            return Value::Null;
+        }
+        let key = if self.rate_stages { "rate" } else { "users" };
+        let stages: Vec<Value> = self
+            .stages
+            .iter()
+            .map(|stage| json!({ "duration": stage.duration, key: stage.target }))
+            .collect();
+        Value::Array(stages)
+    }
+
+    /// Seconds before its users are told to stop: its duration and ramp and 120; with only iterations, a rate
+    /// scenario's time of its last start and 120, else 600.
     pub(crate) fn timeout(&self) -> f64 {
-        self.duration.map_or(600.0, |seconds| seconds + self.ramp_up + 120.0)
+        if let Some(seconds) = self.duration {
+            return seconds + self.ramp_up + 120.0;
+        }
+        match self.iterations.filter(|_| self.is_rate()) {
+            Some(total) => self
+                .schedule()
+                .time_of_start(total.saturating_sub(1))
+                .map_or(600.0, |last| last.min(MAX_SECONDS) + 120.0),
+            None => 600.0,
+        }
     }
 }
 
@@ -307,7 +458,7 @@ fn read_plan_with(
 }
 
 /// The settings a run overrides.
-const SETTINGS: [&str; 7] = [
+const SETTINGS: [&str; 9] = [
     "users",
     "rampUp",
     "duration",
@@ -315,7 +466,17 @@ const SETTINGS: [&str; 7] = [
     "think",
     "pause",
     "newSession",
+    "rate",
+    "stages",
 ];
+
+/// Whether `stages` are rates (`{ duration, rate }`), not users.
+fn rate_stages(stages: Option<&Value>) -> bool {
+    stages
+        .and_then(Value::as_array)
+        .and_then(|stages| stages.first())
+        .is_some_and(|stage| stage.get("rate").is_some())
+}
 
 /// The settings a run of `plan` uses: each scenario's defaults, with the run's `users`, `rampUp`, `duration`,
 /// `iterations`, `think` and `pause` over them, and `scenarios.<name>` over those. With `scenarios`, only the
@@ -378,6 +539,34 @@ pub(crate) fn settings(plan: &Plan, run: &Value) -> Result<Vec<ScenarioSettings>
             }
             if given("iterations") && !given("duration") {
                 merged.remove("duration");
+            }
+            // a run's rate replaces the script's stages (of users or rates), and its stages the script's rate; a rate
+            // that makes a closed scenario a rate one drops its iterations (each user's, not the starts in all); its
+            // stages give the length, unless it gives a duration or iterations too
+            let closed = merged.get("rate").is_none_or(Value::is_null) && !rate_stages(merged.get("stages"));
+            if given("rate") && !given("iterations") && closed {
+                merged.remove("iterations");
+            }
+            if given("rate") && !given("stages") {
+                // the stages' length stays the scenario's, unless it has a duration
+                let length: f64 = merged
+                    .remove("stages")
+                    .as_ref()
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|stage| stage.get("duration").and_then(Value::as_f64))
+                    .sum();
+                if length > 0.0 && merged.get("duration").is_none_or(Value::is_null) {
+                    merged.insert("duration".to_string(), json!(length));
+                }
+            }
+            if given("stages") && !given("rate") {
+                merged.remove("rate");
+            }
+            if given("stages") && !given("duration") && !given("iterations") {
+                merged.remove("duration");
+                merged.remove("iterations");
             }
             for key in SETTINGS {
                 match over.get(key) {

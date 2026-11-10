@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Agent evals (AgentEvalEntities.xml), in AgentEval.js. MONITOR_EVAL edits datasets and scores runs; MONITOR_EVAL_RUN
+    starts and cancels experiments. A model call is refused in a transaction, so services that may score are
+    transaction="ignore". -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="add" noun="DatasetItem" allow-remote="false">
+        <in-parameters><parameter name="datasetId" required="true"/><parameter name="inputText" required="true" allow-html="any"/>
+            <parameter name="groundTruth" allow-html="any"/><parameter name="metadataJson"/></in-parameters>
+        <out-parameters><parameter name="itemId"/><parameter name="versionNum" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('addItem',context))</script></actions>
+    </service>
+    <service verb="update" noun="DatasetItem" allow-remote="false">
+        <description>Ends the item at a new version and adds its replacement, so experiments of older versions keep theirs.</description>
+        <in-parameters><parameter name="itemId" required="true"/><parameter name="inputText" allow-html="any"/>
+            <parameter name="groundTruth" allow-html="any"/><parameter name="metadataJson"/></in-parameters>
+        <out-parameters><parameter name="itemId"/><parameter name="versionNum" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('updateItem',context))</script></actions>
+    </service>
+    <service verb="remove" noun="DatasetItem" allow-remote="false">
+        <in-parameters><parameter name="itemId" required="true"/></in-parameters>
+        <out-parameters><parameter name="versionNum" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('removeItem',context))</script></actions>
+    </service>
+    <service verb="save" noun="RunAsDatasetItem" allow-remote="false">
+        <description>A dataset item from an agent run: the run's user message is the input; groundTruth is given, or the
+            run's reply when useOutput is Y.</description>
+        <in-parameters><parameter name="runId" required="true"/><parameter name="datasetId" required="true"/>
+            <parameter name="groundTruth" allow-html="any"/><parameter name="useOutput"/></in-parameters>
+        <out-parameters><parameter name="itemId"/><parameter name="versionNum" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('saveRun',context))</script></actions>
+    </service>
+    <service verb="score" noun="Run" allow-remote="false" transaction="ignore">
+        <description>Scores an agent run with scorerId, or with the scorers attached to its agent (source AgssTrace).</description>
+        <in-parameters><parameter name="runId" required="true"/><parameter name="scorerId"/><parameter name="groundTruth" allow-html="any"/></in-parameters>
+        <out-parameters><parameter name="scoredCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('scoreRun',context))</script></actions>
+    </service>
+    <service verb="record" noun="ReviewScore" allow-remote="false">
+        <description>A person's score, 0 to 1, of a run or an experiment result (source AgssReview).</description>
+        <in-parameters><parameter name="scorerId" required="true"/><parameter name="score" type="BigDecimal" required="true"/>
+            <parameter name="runId"/><parameter name="resultId"/><parameter name="reason"/></in-parameters>
+        <out-parameters><parameter name="scoreId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('review',context))</script></actions>
+    </service>
+    <service verb="start" noun="Experiment" allow-remote="false" transaction="ignore">
+        <description>Runs the current version of a dataset through agentId (default the dataset's agent; each item and
+            trial an AgentRun on the job surface as the current user, so the agent must serve job and the user needs
+            AgentAdmin) or serviceName (called with input and metadata; its output parameter is the output). At most 200
+            items × trials. advance#Experiments reads and scores the results.</description>
+        <in-parameters><parameter name="datasetId" required="true"/><parameter name="agentId"/><parameter name="serviceName"/>
+            <parameter name="trials" type="Integer"/><parameter name="experimentName"/><parameter name="notes"/></in-parameters>
+        <out-parameters><parameter name="experimentId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('start',context))</script></actions>
+    </service>
+    <service verb="advance" noun="Experiments" allow-remote="false" transaction="ignore">
+        <description>For each running experiment (or experimentId): reads the runs that ended, calls service targets, scores
+            the outputs with the dataset's scorers, and ends the experiment when every result is done. A job each minute.</description>
+        <in-parameters><parameter name="experimentId"/></in-parameters>
+        <out-parameters><parameter name="experimentCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('advance',context))</script></actions>
+    </service>
+    <service verb="cancel" noun="Experiment" allow-remote="false">
+        <in-parameters><parameter name="experimentId" required="true"/></in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('cancel',context))</script></actions>
+    </service>
+    <service verb="score" noun="LiveRuns" allow-remote="false" transaction="ignore">
+        <description>Scores a samplingRate share of the completed runs of each agent a scorer is attached to (source
+            AgssLive). A job each five minutes.</description>
+        <out-parameters><parameter name="scoredCount" type="Integer"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('live',context))</script></actions>
+    </service>
+
+    <!-- Built-in service scorers. A scorer service takes these in-parameters and returns score (0 to 1) and reason. -->
+    <service verb="score" noun="ExactMatch" allow-remote="false">
+        <in-parameters><parameter name="input" allow-html="any"/><parameter name="output" allow-html="any"/><parameter name="groundTruth" allow-html="any"/>
+            <parameter name="runId"/><parameter name="metadata" type="Map"/><parameter name="config" type="Map"/></in-parameters>
+        <out-parameters><parameter name="score" type="BigDecimal"/><parameter name="reason"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('exactMatch',context))</script></actions>
+    </service>
+    <service verb="score" noun="Contains" allow-remote="false">
+        <description>The share of phrases (config.terms, else the lines of groundTruth) the output contains.</description>
+        <in-parameters><parameter name="input" allow-html="any"/><parameter name="output" allow-html="any"/><parameter name="groundTruth" allow-html="any"/>
+            <parameter name="runId"/><parameter name="metadata" type="Map"/><parameter name="config" type="Map"/></in-parameters>
+        <out-parameters><parameter name="score" type="BigDecimal"/><parameter name="reason"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('contains',context))</script></actions>
+    </service>
+    <service verb="score" noun="CalledTool" allow-remote="false">
+        <description>The share of tools (config.tools, else the lines of groundTruth) the run called; with none named, 1
+            when it called any.</description>
+        <in-parameters><parameter name="input" allow-html="any"/><parameter name="output" allow-html="any"/><parameter name="groundTruth" allow-html="any"/>
+            <parameter name="runId"/><parameter name="metadata" type="Map"/><parameter name="config" type="Map"/></in-parameters>
+        <out-parameters><parameter name="score" type="BigDecimal"/><parameter name="reason"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('calledTool',context))</script></actions>
+    </service>
+</services>

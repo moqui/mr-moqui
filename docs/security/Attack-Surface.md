@@ -282,8 +282,8 @@ Tools' SQL, Service Run, Data Load, Data Snapshots, and `qzSign` are designed pr
 | `Tools/Database/*`, `Tools/Schema/*` (cancel or end a session, DDL and maintenance jobs, stats resets) | `DATABASE_ADMIN` (`ADMIN_ADV`). A job is only a plan the server made; no service takes job statement text |
 | `db=ext:…` on any database service, and the connection services | `DATABASE_EXTERNAL` (`ADMIN_ADV`), and not a production instance; the refusal is one vague "Not available" |
 | ETL (`org.moqui.dev.EtlServices`) | All actions on the Tools app, checked again as the user on the worker; `GROOVY_SHELL_WEB` for a mapping with an `expression`; `SQL_RUNNER_WEB` for a SQL source; files only from the user's uploads, `dbresource://moqui/etl/` and `runtime://import/` (any `dbresource://` with `DATABASE_ADMIN`) |
-| `Tools/Service/ServiceLoadRunner.xml` | `LOAD_RUNNER` |
-| `Tools/dashboard.xml` | shows SQL and service load runner links only with their respective permissions |
+| `Tools/Load.xml`, `Tools/Load/*` (load scripts, a run's form, runs, a run, compare; start, stop, a live change of a scenario's users or rate within `load_runner_max_users`, delete, import, download) | `LOAD_RUNNER` (sealed, `ADMIN_ADV`) and all actions on the Tools app, checked by every `org.moqui.dev.LoadServices` service whatever calls it. Without `LOAD_RUNNER` the Tools menu entry is disabled (`Tools.xml` `disable-when`) and `Load.xml` shows Not available. A run names a script by location, only a `test/load/*.load.js` file of a loaded component; no screen takes script text. A run's script and target are never taken from a result file: Run again and an import resolve and check them anew. See [Load runs](#load-runs) |
+| `Tools/dashboard.xml` | shows the SQL and Load testing boxes only with `SQL_RUNNER_WEB` and `LOAD_RUNNER` |
 | `System/Llm.xml` | `AgentAdmin`, or the screen returns an error. The comment says every screen under it needs `AgentAdmin`. |
 | `System/Security/UserAccount/UserAccountDetail.xml` | `ADMIN_LOGIN_AS` for login-as, and a different username |
 
@@ -301,6 +301,31 @@ The Tools database sections ([Database](../tools/Database.md), `crates/moqui-too
 - **No dummy parents in restricted entities.** A load with dummy foreign keys fails rather than create one.
 - **External databases** keep the password encrypted, never return it, and clear it when the host, port, user, type or
   TLS settings change. An empty `sslMode` is `verify-full` for a host that is not loopback.
+
+### Load runs
+
+Tools › Load runs a load script on threads of the server (`crates/moqui-host/src/load_runner`, plans/LoadRunner.md
+§10; the guide is [Load-Runner](../tools/Load-Runner.md)):
+
+- **Targets.** A run reaches this server (its own https URL, and its http URL only on a loopback host), loopback, and
+  the URL prefixes of the `load_runner_targets` property; a dev instance reaches any URL. Plain `http` to another
+  machine is refused unless `load_runner_targets` names it, since a login crosses in the clear; a prefix carries its
+  scheme, and is matched on the path a request is sent to after `..` and `.` segments are resolved (`targets.rs`).
+  `insecure` (an invalid certificate accepted) is a run setting shown on the run.
+- **In-process service calls.** A script whose plan uses `service` calls this server's services through
+  `service.call` as the user who started the run, with authorization required and the tarpit off for the run's
+  contexts; a service that user is not authorized for is counted as an error and not run (D10; Java ran them as
+  anonymous with authorization off). A load script's `service.call` goes straight to the service facade, so a
+  service's `allow-remote="false"` does not refuse it: allow-remote is about calls from outside the server (REST,
+  JSON-RPC), and this call runs in process as the user who started the run, with authorization required, the way the
+  user's own screens call services. A script's user threads have no `ec` and none of the server's own functions.
+- **Secrets and files.** A `secret` param is held in memory for the run, never in the result, the snapshot or a log
+  line, and is asked again on Run again. The terminal form names its field `password_<name>`, so a refused form's
+  parameters, which the session keeps for the form shown again, leave it out. Run again of an imported run fills only
+  the target kind, not the file's URL, params or settings. A run is read, deleted and imported only by its `runId`, a directory name
+  under `runtime/tmp/test-load/`; an import is checked to be a result (16 MiB at most) before it is kept.
+- **Limits.** One running load per instance (`load_runner_max_runs`) and 1,000 users a run (`load_runner_max_users`).
+- **Demo.** The demo lock-down replaces `Tools/Load` with its Disabled screen.
 
 ### Component deploy and conf reload
 
@@ -878,7 +903,7 @@ A public demo breaks one rule above on purpose: it loads the demo users, and any
 that login reaches:
 
 - Tools' SQL, Data Load, Export and Snapshots, Database Speed Test, Activity, Queries and Connections, Service Run
-  and Service Load Runner are replaced by a screen that says they are disabled. Activity and Queries show every
+  and Load testing (`Tools/Load`) are replaced by a screen that says they are disabled. Activity and Queries show every
   session's statements. Plans, jobs, maintenance and resets are refused by the VIEW-only authorization and the missing
   `DATABASE_ADMIN`.
 - `ADMIN` is VIEW-only on Tools, System, Monitor, `/moqui`, EntitySync and SystemMessage receive, `/resources` (so refused: `run` is not a view verb), git repositories,

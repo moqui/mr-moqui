@@ -30,9 +30,11 @@ use moqui_lib::json::{from_json, to_json};
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 use serde_json::json;
 
+pub(crate) mod compare;
 pub(crate) mod results;
 pub(crate) mod run;
 pub(crate) mod scripts;
+pub(crate) mod server;
 pub(crate) mod service_call;
 pub(crate) mod targets;
 
@@ -47,7 +49,8 @@ moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["test-client"],
         register_services,
-        before_shutdown: |_| run::stop_all(),
+        after_boot: run::booted,
+        before_shutdown: run::stop_all,
         ..moqui_core::extension::Extension::EMPTY
     }
 }
@@ -56,6 +59,7 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     moqui_core::rust_service!(map, find_load_scripts)?;
     moqui_core::rust_service!(map, start_load_run)?;
     moqui_core::rust_service!(map, stop_load_run)?;
+    moqui_core::rust_service!(map, update_load_run_users)?;
     moqui_core::rust_service!(map, get_load_run_status)?;
     moqui_core::rust_service!(map, find_load_runs)?;
     moqui_core::rust_service!(map, get_load_run_result)?;
@@ -220,6 +224,7 @@ fn start_load_run(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) 
         .map(|(_, dir)| dir.clone())
         .unwrap_or_default();
     let user = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
+    let user_id = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
     let ask = run::Ask {
         script,
         component_dir,
@@ -230,6 +235,7 @@ fn start_load_run(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) 
         label: text(parameters, "label"),
         insecure: matches!(parameters.get("insecure"), Some(Value::Bool(true))),
         user,
+        user_id,
     };
     match run::start(&factory, ask) {
         Ok(id) => Ok(BTreeMap::from([("runId".to_string(), Value::String(id))])),
@@ -260,6 +266,57 @@ fn stop_load_run(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -
     none()
 }
 
+/// `update#LoadRunUsers` (plans/LoadRunner.md L6): a running scenario's users or rate from now on, within
+/// `load_runner_max_users` for the run in all.
+fn update_load_run_users(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    if !may_run_loads() {
+        return none();
+    }
+    let Some(id) = run_id(parameters) else {
+        return none();
+    };
+    let given = |key: &str| {
+        parameters
+            .get(key)
+            .filter(|value| !is_empty(value))
+            .map(|value| to_plain_string(value).trim().parse::<f64>().ok())
+    };
+    let target = match (given("users"), given("rate")) {
+        (Some(Some(users)), None) if users >= 0.0 && users.fract() == 0.0 => {
+            crate::test_client::load::Target::Users(users as u64)
+        }
+        (None, Some(Some(rate))) if rate.is_finite() => crate::test_client::load::Target::Rate(rate),
+        (Some(_), None) => {
+            add_error("users must be a whole number from 0");
+            return none();
+        }
+        (None, Some(_)) => {
+            add_error("rate must be a number of iterations a second");
+            return none();
+        }
+        _ => {
+            add_error("Give users or rate, one of them");
+            return none();
+        }
+    };
+    let Some(active) = run::find(&id) else {
+        add_error(format!("Load run {id} is not running on this server"));
+        return none();
+    };
+    let scenario = text(parameters, "scenario");
+    // checked and set under the load's lock, against the users already started too
+    let limit = u64::try_from(targets::max_users()).unwrap_or(u64::MAX);
+    if let Err(message) = active.load.set_target(&scenario, target, limit) {
+        let over = message.starts_with("the load may have at most");
+        add_error(if over {
+            format!("{message} (load_runner_max_users)")
+        } else {
+            message
+        });
+    }
+    none()
+}
+
 fn get_load_run_status(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     if !may_run_loads() {
         return none();
@@ -273,7 +330,10 @@ fn get_load_run_status(parameters: &BTreeMap<String, Value>, _facade: &EntityFac
         run::wait_for_end(&id, Duration::from_secs_f64(wait.min(MAX_WAIT_SECONDS)));
     }
     if let Some(active) = run::find(&id) {
-        let snapshot = active.load.snapshot();
+        let mut snapshot = active.load.snapshot();
+        if let Some(server) = active.server_json() {
+            snapshot["server"] = server;
+        }
         let summary = active.summary(&snapshot);
         return Ok(BTreeMap::from([
             ("runId".to_string(), Value::String(id)),
@@ -414,11 +474,61 @@ fn import_load_run_result(parameters: &BTreeMap<String, Value>, _facade: &Entity
     }
 }
 
-fn compare_load_runs(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+/// The most runs `compare#LoadRuns` takes at once.
+const MAX_COMPARED: usize = 4;
+
+fn compare_load_runs(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     if !may_run_loads() {
         return none();
     }
-    // plans/LoadRunner.md L5
-    add_error("Comparing load runs in the server is not available yet in this build");
-    none()
+    let ids: Vec<String> = match parameters.get("runIds") {
+        Some(Value::List(ids)) => ids.iter().map(to_plain_string).collect(),
+        Some(Value::String(text)) => text.split(',').map(|id| id.trim().to_string()).collect(),
+        _ => Vec::new(),
+    };
+    if !(2..=MAX_COMPARED).contains(&ids.len()) {
+        add_error(format!(
+            "Compare takes 2 to {MAX_COMPARED} load runs, not {}",
+            ids.len()
+        ));
+        return none();
+    }
+    let root = results::root(&*factory()?);
+    let mut loaded = Vec::new();
+    for id in &ids {
+        if !results::valid_run_id(id) {
+            add_error(format!("{id} is not a load run id"));
+            return none();
+        }
+        if run::find(id).is_some() {
+            add_error(format!(
+                "Load run {id} is still running; compare it once it has finished"
+            ));
+            return none();
+        }
+        match results::read_result(&root, id) {
+            Ok(Some(result)) => loaded.push(result),
+            Ok(None) => {
+                add_error(format!("No finished load run {id} on this server"));
+                return none();
+            }
+            Err(message) => {
+                add_error(message);
+                return none();
+            }
+        }
+    }
+    let runs = ids
+        .iter()
+        .zip(&loaded)
+        .map(|(id, result)| from_json(&results::summary(id, result)))
+        .collect();
+    let rows = compare::rows(&loaded)
+        .iter()
+        .map(|row| from_json(&row.to_json()))
+        .collect();
+    Ok(BTreeMap::from([
+        ("runs".to_string(), Value::List(runs)),
+        ("rows".to_string(), Value::List(rows)),
+    ]))
 }

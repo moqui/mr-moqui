@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- One experiment: each item and trial with its output, run and scores. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Experiment" default-menu-include="false">
+    <parameter name="experimentId" required="true"/>
+    <transition name="advanceNow" method="post">
+        <service-call name="org.moqui.agent.AgentEvalServices.advance#Experiments" in-map="{experimentId}"/>
+        <default-response url="."><parameter name="experimentId"/></default-response>
+    </transition>
+    <transition name="cancelExperiment" method="post">
+        <service-call name="org.moqui.agent.AgentEvalServices.cancel#Experiment" in-map="{experimentId}"/>
+        <default-response url="."><parameter name="experimentId"/></default-response>
+    </transition>
+    <transition name="reviewResult" method="post">
+        <service-call name="org.moqui.agent.AgentEvalServices.record#ReviewScore" in-map="{resultId, scorerId, score, reason}"/>
+        <default-response url="."><parameter name="experimentId"/></default-response>
+    </transition>
+    <transition name="compare"><default-response url="../Compare"/></transition>
+    <transition name="datasetDetail"><default-response url="../DatasetDetail"/></transition>
+    <transition name="runs"><default-response url="../Runs"/></transition>
+    <actions>
+        <entity-find-one entity-name="moqui.agent.AgentExperiment" value-field="experiment"/>
+        <script><![CDATA[
+            if (!experiment) { ec.message.addError(ec.l10n.localize('Experiment not found')); return }
+            canEdit = ec.user.hasPermission('MONITOR_EVAL'); canRun = ec.user.hasPermission('MONITOR_EVAL_RUN')
+            const num = v => v == null ? null : v.toNumber ? v.toNumber() : Number(v)
+            const find = (n, c) => Array.from(ec.entity.find(n).condition(c).disableAuthz().list())
+            const items = {}; for (const i of find('moqui.agent.AgentDatasetItem', {datasetId: experiment.datasetId})) items[i.itemId] = i
+            const scorers = {}; for (const s of find('moqui.agent.AgentScorer', {})) scorers[s.scorerId] = s
+            humanScorers = Object.values(scorers).filter(s => s.scorerTypeEnumId === 'AgstHuman').map(s => ({value: s.scorerId, label: s.scorerName || s.scorerId}))
+            const byResult = {}; for (const s of find('moqui.agent.AgentScore', {experimentId})) (byResult[s.resultId] = byResult[s.resultId] || []).push(s)
+            const clip = (t, n) => { t = String(t || ''); return t.length > n ? t.slice(0, n) + '…' : t }
+            resultRows = find('moqui.agent.AgentExperimentResult', {experimentId}).sort((a, b) => String(a.itemId).localeCompare(String(b.itemId)) || num(a.trialNum) - num(b.trialNum)).map(r => {
+                const item = items[r.itemId] || {}, scores = byResult[r.resultId] || []
+                return Object.assign(r.getMap(), {input: clip(item.inputText, 300), expected: clip(item.groundTruth, 300), output: clip(r.outputText || r.errorText, 600),
+                    scores: scores.map(s => (scorers[s.scorerId]?.scorerName || s.scorerId) + ': ' + (s.score == null ? 'error ' + clip(s.errorText, 80) : num(s.score).toFixed(2) + (s.passed === 'Y' ? ' ✓' : ' ✗') + (s.reason ? ' — ' + clip(s.reason, 160) : ''))).join('\n')})
+            })
+            const scorerStats = {}
+            for (const s of find('moqui.agent.AgentScore', {experimentId})) { if (s.score == null) continue; const st = scorerStats[s.scorerId] = scorerStats[s.scorerId] || {n: 0, sum: 0, pass: 0}; st.n++; st.sum += num(s.score); if (s.passed === 'Y') st.pass++ }
+            scorerRows = Object.entries(scorerStats).map(([id, st]) => ({scorerName: scorers[id]?.scorerName || id, count: st.n, mean: (st.sum / st.n).toFixed(2), pass: Math.round(st.pass / st.n * 100) + '%'}))
+            summary = (experiment.experimentName || experimentId) + ' · ' + (experiment.agentId || experiment.serviceName) + ' · dataset ' + experiment.datasetId + ' v' + experiment.datasetVersion + ' · ' + (ec.entity.find('moqui.basic.StatusItem').condition({statusId: experiment.statusId}).disableAuthz().one()?.description || experiment.statusId)
+                + ' · ' + ((experiment.doneCount || 0) + (experiment.failedCount || 0)) + '/' + (experiment.resultCount || 0) + ' done'
+                + (experiment.meanScore == null ? '' : ' · mean ' + num(experiment.meanScore).toFixed(2) + ' · passed ' + Math.round(num(experiment.passRate) * 100) + '%')
+                + (experiment.cost == null ? '' : ' · cost ' + num(experiment.cost).toFixed(4))
+            running = experiment.statusId === 'EvRunning'
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="${summary || ''}" type="h5"/>
+        <label condition="experiment?.notes" text="${experiment.notes}" type="p"/>
+        <container style="q-gutter-sm">
+            <link url="compare" text="Compare with another" link-type="anchor"><parameter name="baseId" from="experimentId"/></link>
+            <link url="datasetDetail" text="Dataset" link-type="anchor"><parameter name="datasetId" from="experiment?.datasetId"/></link>
+            <link condition="running" url="advanceNow" text="Check now" link-type="hidden-form"><parameter name="experimentId"/></link>
+            <link condition="running &amp;&amp; canRun" url="cancelExperiment" text="Cancel" link-type="hidden-form" confirmation="Cancel this experiment? Runs already started go on."><parameter name="experimentId"/></link>
+        </container>
+        <label text="By scorer" type="h6"/>
+        <form-list name="ScorerSummary" list="scorerRows" skip-form="true">
+            <field name="scorerName"><default-field title="Scorer"><display/></default-field></field>
+            <field name="count"><default-field title="Scores"><display/></default-field></field>
+            <field name="mean"><default-field title="Mean"><display/></default-field></field>
+            <field name="pass"><default-field title="Passed"><display/></default-field></field>
+        </form-list>
+        <label text="Results" type="h6"/>
+        <form-list name="Results" list="resultRows" skip-form="true">
+            <field name="itemId"><default-field title="Item"><display/></default-field></field>
+            <field name="trialNum"><default-field title="Trial"><display/></default-field></field>
+            <field name="statusId"><default-field title="Status"><display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+            <field name="input"><default-field><display/></default-field></field>
+            <field name="expected"><default-field><display/></default-field></field>
+            <field name="output"><default-field><display/></default-field></field>
+            <field name="scores"><default-field><display/></default-field></field>
+            <field name="runId"><default-field title="Run"><link condition="runId" url="runs" text="${runId}" link-type="anchor"><parameter name="runId"/></link></default-field></field>
+        </form-list>
+        <section name="ReviewSection" condition="canEdit &amp;&amp; humanScorers.length"><widgets>
+            <label text="Review a result" type="h6"/>
+            <form-single name="ReviewResult" transition="reviewResult">
+                <field name="experimentId"><default-field><hidden/></default-field></field>
+                <field name="resultId"><default-field title="Result"><drop-down><list-options list="resultRows" key="${resultId}" text="${itemId} #${trialNum}"/></drop-down></default-field></field>
+                <field name="scorerId"><default-field title="Scorer"><drop-down><list-options list="humanScorers" key="${value}" text="${label}"/></drop-down></default-field></field>
+                <field name="score"><default-field title="Score (0 to 1)"><text-line size="4"/></default-field></field>
+                <field name="reason"><default-field><text-area rows="3" cols="60"/></default-field></field>
+                <field name="submitButton"><default-field title=""><submit text="Save score"/></default-field></field>
+            </form-single>
+        </widgets></section>
+    </widgets>
+</screen>

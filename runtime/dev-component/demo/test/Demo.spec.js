@@ -32,7 +32,7 @@ const stubbed = [
     ["component://tools/screen/Tools.xml", "Database/Queries"],
     ["component://tools/screen/Tools.xml", "Database/Connections"],
     ["component://tools/screen/Tools.xml", "Service/ServiceRun"],
-    ["component://tools/screen/Tools.xml", "Service/ServiceLoadRunner"],
+    ["component://tools/screen/Tools.xml", "Load"],
 ]
 const viewOnlyAuthz = [
     "TOOLS_APP_ADMIN", "SYSTEM_APP_ADMIN", "MOQUI_API_ADMIN", "EntitySyncServicesADMIN", "SystemMessageServicesADMIN",
@@ -94,13 +94,14 @@ feature("the Tools, Data, Database and Service menus leave the stubs out", {
         const service = menu("Service")
         tools.includes(`"Schema"`)
         !tools.includes(`"SQL"`)
+        !tools.includes(`"Load testing"`)
         data.includes(`"Grid"`)
         !["Load", "Export", "Snapshots"].some((title) => data.includes(`"${title}"`))
         database.includes(`"Overview"`)
         !["Speed Test", "Activity", "Queries"].some((title) => database.includes(`"${title}"`))
         ![tools, data, database].some((text) => text.includes(`"Disabled"`))
         service.includes(`"Service Reference"`)
-        !["Service Run", "Service Load Runner"].some((title) => service.includes(`"${title}"`))
+        !service.includes(`"Service Run"`)
     },
 })
 

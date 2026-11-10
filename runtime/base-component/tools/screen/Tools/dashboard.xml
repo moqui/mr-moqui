@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- the permission checks run here, so a server-static template reads flags from the screen package -->
     <actions>
-        <set field="canServiceLoadRunner" from="ec.user.hasPermission('LOAD_RUNNER')"/>
+        <set field="canLoadRunner" from="ec.user.hasPermission('LOAD_RUNNER')"/>
         <set field="canSql" from="ec.user.hasPermission('SQL_RUNNER_WEB')"/>
         <!-- Database › Connections, when the server offers external databases to this user -->
         <script><![CDATA[
@@ -81,10 +81,16 @@ along with this software (see the LICENSE.md file). If not, see
                 <container-box><box-header title="Services and diagnostics"/><box-body>
                     <label text="Inspect service inputs and results, run a service, and see status flows and artifact use." type="p" style="m-muted"/>
                     <link url="../Service" text="Services"/>
-                    <link url="../Service/ServiceLoadRunner" text="Service load runner" condition="canServiceLoadRunner"/>
                     <link url="../StatusFlows" text="Status flows"/>
                     <link url="../ArtifactStats" text="Artifact statistics"/>
                 </box-body></container-box>
+                <section name="LoadSection" condition="canLoadRunner"><widgets>
+                    <container-box><box-header title="Load testing"/><box-body>
+                        <label text="Run a component's load scripts against this server or another, follow a run as it goes, and compare runs." type="p" style="m-muted"/>
+                        <link url="../Load/Scripts" text="Load scripts"/>
+                        <link url="../Load/Runs" text="Runs"/>
+                    </box-body></container-box>
+                </widgets></section>
             </row-col>
             <row-col md="4">
             <section name="RestApiSection"><actions>

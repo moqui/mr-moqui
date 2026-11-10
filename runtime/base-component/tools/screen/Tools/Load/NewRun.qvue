@@ -1,0 +1,153 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- A run of a load script, served by NewRun.xml in the qvue render mode: the plan from ../planForm (planForm of
+    template/LoadRuns.js), the target, the params by kind, each scenario's settings, a label, and Start, which posts to
+    ../startRun and opens the run's page. Every text from the script is bound as text. -->
+<template><div class="q-pa-sm m-load-new-run">
+    <q-card v-if="!loaded" flat bordered class="q-pa-md text-caption">Loading</q-card>
+    <template v-else-if="!plan.found">
+        <q-card flat bordered class="q-pa-md">
+            <div class="text-h6">Not available</div>
+            <p class="q-mt-sm text-negative">{{plan.error}}</p>
+            <q-btn flat no-caps color="primary" icon="arrow_back" label="Load scripts" @click="go('Scripts')"></q-btn>
+        </q-card>
+    </template>
+    <template v-else>
+        <q-card flat bordered class="q-mb-sm m-record-header">
+            <q-card-section>
+                <div class="text-h5" id="NewRunTitle">{{plan.title}}</div>
+                <div class="text-caption" :class="mutedClass">{{plan.componentName}} · {{plan.scriptLocation}}</div>
+                <div v-if="plan.description" class="q-mt-xs">{{plan.description}}</div>
+                <div v-if="plan.fromRunId && plan.imported" class="q-mt-xs text-caption" id="NewRunImported">Run {{plan.fromRunId}} was imported from another machine: only its target kind is filled in.</div>
+                <div v-else-if="plan.fromRunId" class="q-mt-xs text-caption">Filled from run {{plan.fromRunId}}<span v-if="hasSecret">; enter the passwords again</span>.</div>
+            </q-card-section>
+        </q-card>
+
+        <q-card flat bordered class="q-mb-sm">
+            <q-card-section>
+                <div class="text-subtitle1 q-mb-xs">Target</div>
+                <q-option-group v-model="targetKind" :options="targetOptions" type="radio" dense inline></q-option-group>
+                <div v-if="targetKind === 'url'" class="row q-col-gutter-sm q-mt-xs items-center">
+                    <div class="col-12 col-md-8"><q-input v-model="targetUrl" dense outlined label="Server URL" placeholder="https://test.example.com" name="targetUrl"></q-input></div>
+                    <div class="col-12 col-md-4"><q-checkbox v-model="insecure" dense label="Accept an invalid certificate"></q-checkbox></div>
+                </div>
+            </q-card-section>
+        </q-card>
+
+        <q-card v-if="params.length" flat bordered class="q-mb-sm">
+            <q-card-section>
+                <div class="text-subtitle1 q-mb-xs">Parameters</div>
+                <div class="row q-col-gutter-sm">
+                    <div v-for="param in params" :key="param.name" class="col-12 col-md-6">
+                        <q-select v-if="param.kind === 'options'" v-model="param.value" :options="param.options" dense outlined
+                                :label="param.name" :hint="param.description" :name="'p_' + param.name"></q-select>
+                        <q-toggle v-else-if="param.kind === 'boolean'" v-model="param.value" :label="param.name + (param.description ? ': ' + param.description : '')"></q-toggle>
+                        <q-input v-else v-model="param.value" dense outlined :label="param.name + (param.required ? ' *' : '')" :hint="param.description"
+                                :type="param.kind === 'password' ? 'password' : param.kind === 'number' ? 'number' : 'text'" :name="'p_' + param.name"
+                                :autocomplete="param.kind === 'password' ? 'new-password' : 'off'"></q-input>
+                    </div>
+                </div>
+            </q-card-section>
+        </q-card>
+
+        <q-card flat bordered class="q-mb-sm">
+            <q-card-section>
+                <div class="text-subtitle1 q-mb-xs">Scenarios</div>
+                <div class="text-caption q-mb-sm" :class="mutedClass">Times are in seconds. Leave a value empty for the script's own.</div>
+                <div v-for="scenario in scenarios" :key="scenario.name" class="row q-col-gutter-sm items-center q-mb-xs">
+                    <div class="col-12 col-md-2 text-weight-medium">{{scenario.name}}</div>
+                    <div class="col-6 col-md-2"><q-input v-model.number="scenario.users" type="number" min="1" dense outlined label="Users" :name="'s_' + scenario.name + '_users'"></q-input></div>
+                    <div class="col-6 col-md-2"><q-input v-model.number="scenario.rampUp" type="number" min="0" dense outlined label="Ramp up" :name="'s_' + scenario.name + '_rampUp'"></q-input></div>
+                    <div class="col-6 col-md-2"><q-input v-model.number="scenario.duration" type="number" min="0" dense outlined label="Duration" :name="'s_' + scenario.name + '_duration'"></q-input></div>
+                    <div class="col-6 col-md-2"><q-input v-model.number="scenario.iterations" type="number" min="0" dense outlined label="Iterations" :name="'s_' + scenario.name + '_iterations'"></q-input></div>
+                </div>
+                <div v-if="!scenarios.length" class="text-caption">This script has no scenarios.</div>
+            </q-card-section>
+        </q-card>
+
+        <q-card flat bordered>
+            <q-card-section class="row q-col-gutter-sm items-center">
+                <div class="col-12 col-md-6"><q-input v-model="label" dense outlined label="Label" hint="Shown in the runs, such as the build or the server" name="label"></q-input></div>
+                <div class="col-12 col-md-6 row justify-end q-gutter-sm">
+                    <q-btn flat no-caps label="Cancel" @click="go('Scripts')"></q-btn>
+                    <q-btn unelevated no-caps color="primary" icon="play_arrow" label="Start" :loading="starting" :disable="!scenarios.length" @click="start"></q-btn>
+                </div>
+            </q-card-section>
+        </q-card>
+    </template>
+</div></template>
+
+<script>
+module.exports = {
+    inject: { mScreen: { default: null } },
+    data() {
+        return { plan: {}, loaded: false, targetKind: 'this', targetUrl: '', insecure: false, label: '', params: [], scenarios: [], starting: false };
+    },
+    computed: {
+        // Tools/Load: where the JSON transitions and the other screens are
+        loadPath() {
+            const path = this.mScreen && this.mScreen.path ? this.mScreen.path : this.$root.basePath + '/' + this.$root.currentPathList.join('/');
+            return path.split('/').slice(0, -1).join('/');
+        },
+        mutedClass() { return this.$q.dark.isActive ? 'text-grey-5' : 'text-grey-7'; },
+        hasSecret() { return this.params.some((param) => param.kind === 'password'); },
+        targetOptions() {
+            const labels = { service: "This server's services, called in process", this: 'This server over HTTP', url: 'Another server' };
+            return (this.plan.targets || []).map((kind) => ({ value: kind, label: labels[kind] || kind }));
+        }
+    },
+    methods: {
+        load() {
+            const query = (this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {};
+            moqui.request(this.loadPath + '/planForm', { params: { scriptLocation: query.scriptLocation || '', runId: query.runId || '' } }).then((result) => {
+                const plan = result.json || {};
+                this.plan = plan;
+                this.targetKind = plan.targetKind || 'this';
+                this.targetUrl = plan.targetUrl || '';
+                this.insecure = !!plan.insecure;
+                this.label = plan.label || '';
+                this.params = (plan.params || []).map((param) => Object.assign({}, param));
+                this.scenarios = (plan.scenarios || []).map((scenario) => Object.assign({}, scenario));
+                this.loaded = true;
+            }, (err) => { this.plan = { found: false, error: 'The script could not be read' }; this.loaded = true; moqui.handleAjaxError(err); });
+        },
+        go(screen, search) { this.$root.setUrl(this.loadPath + '/' + screen + (search ? '?' + search : '')); },
+        start() {
+            const parameters = {};
+            for (const param of this.params) {
+                if (param.value === '' || param.value == null) continue;
+                parameters[param.name] = param.value;
+            }
+            const scenarios = {};
+            for (const scenario of this.scenarios) {
+                const settings = {};
+                for (const key of ['users', 'rampUp', 'duration', 'iterations']) {
+                    if (scenario[key] !== '' && scenario[key] != null) settings[key] = scenario[key];
+                }
+                // what the form does not show, kept from the run (rate, stages)
+                scenarios[scenario.name] = Object.assign({}, scenario.carried || {}, settings);
+            }
+            this.starting = true;
+            moqui.request(this.loadPath + '/startRun', { method: 'POST', params: { scriptLocation: this.plan.scriptLocation, targetKind: this.targetKind,
+                targetUrl: this.targetKind === 'url' ? this.targetUrl : '', insecure: this.targetKind === 'url' && this.insecure ? 'true' : 'false',
+                label: this.label, parametersJson: JSON.stringify(parameters), scenariosJson: JSON.stringify(scenarios) } }).then((result) => {
+                const json = result.json || {};
+                if (json.errors || !json.runId) { moqui.notifyMessages(null, json.errors || 'The run did not start'); return; }
+                this.go('Run', 'runId=' + encodeURIComponent(json.runId));
+            }, (err) => moqui.handleAjaxError(err)).finally(() => { this.starting = false; });
+        }
+    },
+    mounted() { this.load(); }
+};
+</script>
