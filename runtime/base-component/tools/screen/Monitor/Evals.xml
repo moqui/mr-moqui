@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Agent evals: experiments run a dataset through an agent and score each output; scorers can also score a sample of an
+    agent's live runs. Entities in AgentEvalEntities.xml, services org.moqui.agent.AgentEvalServices. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Evals" default-menu-index="19">
+    <subscreens default-item="Experiments"/>
+    <widgets><subscreens-panel id="evals-panel" type="tab"/></widgets>
+</screen>

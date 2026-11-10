@@ -232,11 +232,41 @@ Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/
 | Recovery | The emergency stop, the recovery policies and adapters (changed with `MONITOR_RECOVER_ADMIN`), and the newest actions |
 | Settings | Logging and telemetry settings with their on-disk values, changed for a while with `MONITOR_SETTINGS` ([below](#changing-settings-for-a-while)) |
 | Replays | With `MONITOR_REPLAY`: session replays by user and visit, newest first; ReplayDetail plays one (rrweb's Replayer, with play, pause and seek; the terminal client lists its page and traces) and links the traces its page touched. The Visit screen links a visit's replays |
+| Evals | Agent evals ([below](#agent-evals)): experiments, datasets, scorers, and recent runs with their scores |
 
 The Monitor screens built on Dashboards screens run the Explore and Dashboard transitions themselves, so trace, user,
 export, inspect and tail links work for a user with `MONITOR_APP`; Log context and Compare are mounted under Monitor
 for the same reason. The System app's Visit screens list a visit's
 requests from the request spans, and a job run links to its trace and its logs.
+
+## Agent evals
+
+Monitor › Evals tests an agent against fixed cases and scores what it does. The entities are in
+`framework/entity/AgentEvalEntities.xml`, the services in `org.moqui.agent.AgentEvalServices` (`AgentEval.js`), and
+the seed data (types, the built-in scorers, the jobs and the permissions) in `framework/data/AgentEvalData.xml`.
+
+- **Scorers** (`AgentScorer`) give an output a score from 0 to 1 and a reason, with a pass threshold. A *service*
+  scorer is a service with `input`, `output`, `groundTruth`, `runId`, `metadata` and `config` in and `score` and
+  `reason` out; Matches expected, Contains (the expected output's lines are phrases) and Called tool (its lines are
+  tool names, checked against `AgentToolCall`) are built in. A *judge* scorer asks a model to grade by its rubric,
+  with the model bound to the `eval-judge` feature (System › LLM) or `config.model`. A *human* scorer is scored by a
+  person.
+- **Datasets** (`AgentDataset`, `AgentDatasetItem`) are cases: an input, an expected output and metadata. Each change
+  raises the dataset's version and keeps the old items, so an experiment's version stays as it ran. Runs › Save as a
+  dataset item turns a real run into a case.
+- **Experiments** (`AgentExperiment`, `AgentExperimentResult`) run each item, once per trial, through an agent (an
+  `AgentRun` on the job surface as the user who starts it, through `ec.llm.startRun`: the agent must serve `job`
+  and the user needs `AgentAdmin`) or a service (`input` and `metadata` in, `output` out). The job
+  `advance_AgentExperiments_frequent` (each minute) reads the runs that ended, scores them with the scorers attached
+  to the dataset, and ends the experiment with its mean score and pass rate. At most 200 items × trials. Compare
+  shows two experiments of a dataset item by item, worst change first.
+- **Live scoring**: a scorer attached to an agent with a sampling rate scores that share of its completed runs
+  (chosen by a hash of the run ID), from `score_AgentLiveRuns_frequent` each five minutes.
+- **Scores** (`AgentScore`) say where they came from: an experiment, a live sample, a run scored from Runs, or a
+  person's review. A scorer that fails stores a score row with its error, and the other scorers and items go on.
+
+Scores are database rows, not telemetry: they are not on the OTel spans, and an experiment's runs are not linked to
+their traces.
 
 ## The Dashboards app
 
@@ -592,8 +622,9 @@ ends. The services are `org.moqui.monitor.MonitorServices.list#RuntimeSettings`,
   `moqui.report.audit` target, so they show in Monitor Logs.
 - Regressions and incidents need `MONITOR_INCIDENT`; approving, refusing, completing, cancelling and reverting
   recovery actions `MONITOR_RECOVER`; policies, adapters and the emergency stop `MONITOR_RECOVER_ADMIN`. ADMIN holds
-  all three. Changing runtime settings needs `MONITOR_SETTINGS`. Their views and changes are logged on the
-  `moqui.monitor.audit` target.
+  all three. Changing runtime settings needs `MONITOR_SETTINGS`. Editing eval datasets and scorers and scoring runs
+  needs `MONITOR_EVAL`; starting and cancelling experiments, which start agent runs that cost money,
+  `MONITOR_EVAL_RUN`. Their views and changes are logged on the `moqui.monitor.audit` target.
 
 ## Capacity and loss
 
