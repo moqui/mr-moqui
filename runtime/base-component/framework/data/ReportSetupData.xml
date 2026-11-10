@@ -9,4 +9,8 @@
     <moqui.basic.EnumerationType enumTypeId="ReportScopePolicy" description="Business dataset scope policy (a row-filter service)"/>
     <moqui.basic.Enumeration enumId="ReportUserGroups" enumTypeId="ReportScopePolicy"
             enumCode="org.moqui.report.ReportServices.get#UserGroupRowFilter" description="the viewer's user groups"/>
+    <!-- Business annotation sources (crates/moqui-report/src/annotations.rs; BOSS impl-insights P6): each a dataset (enumCode) over
+        the annotations that a domain component registers and scopes with its own row filter; a dashboard over business data
+        shows the business events of each source its viewer may read -->
+    <moqui.basic.EnumerationType enumTypeId="ReportAnnotationSource" description="Business annotation source (a dataset over the annotations)"/>
 </entity-facade-xml>

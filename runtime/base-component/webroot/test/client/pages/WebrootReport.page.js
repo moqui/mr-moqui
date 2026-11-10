@@ -969,19 +969,25 @@ test('a dashboard mounted under another app links its screens, offers no screen 
     const target=document.createElement('div');document.body.appendChild(target);
     const navigate=report.navigate,request=moqui.request,visited=[],posts=[];
     report.navigate=href=>visited.push(href);moqui.request=async(url,options)=>{posts.push({url,options});return {ok:true,json:{panelId:'orders-copy'}};};
-    const appLinks={definition:'/apps/Insights/DashboardEditor',panel:'/apps/Insights/PanelDetail',explore:'/apps/Insights/ReportBuilder/Explore',dashboard:'/apps/Insights/Dashboard',alertRule:null};
+    const appLinks={definition:'/apps/Insights/DashboardEditor',panel:'/apps/Insights/PanelDetail',explore:'/apps/Insights/ReportBuilder/Explore',dashboard:'/apps/Insights/Dashboard',alertRule:null,drill:'/apps/Insights/Drill'};
     const panel={title:'Orders',visualization:'timeSeries',queries:[{datasetId:'orders',aggregations:[{id:'time',type:'date_histogram',role:'x-axis'},{id:'n',type:'sum',role:'metric'}]}]};
     const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{dashboardId:'store',panelId:'orders',panel,appLinks,editable:true,range:{from:'2026-01-01T00:00:00Z',thru:'2026-01-02T00:00:00Z'},
         frame:{fields:[{name:'time',type:'time',values:[1000]},{name:'n',type:'number',values:[2]}]}});
     try {
         app.mount(target);await Vue.nextTick();
         const toggle=target.querySelector('button[aria-label="Panel menu for Orders"]');toggle.click();await Vue.nextTick();
-        assert.deepEqual(Array.from(target.querySelectorAll('[role="menuitem"]')).map(node=>node.textContent),['View','Edit','Share','Explore','Inspect','Duplicate','Remove']);
+        assert.deepEqual(Array.from(target.querySelectorAll('[role="menuitem"]')).map(node=>node.textContent),['View','Edit','Share','Explore','Inspect','Drill','Duplicate','Remove']);
         reportButton(target,'Edit').click();assert.equal(visited[0],report.appPath('/apps/Insights/DashboardEditor?definitionId=store&panelId=orders'));
         toggle.click();await Vue.nextTick();reportButton(target,'Explore').click();
         assert.equal(new URL(visited[1],location.href).pathname,report.appPath('/apps/Insights/ReportBuilder/Explore'));
         toggle.click();await Vue.nextTick();reportButton(target,'Duplicate').click();await new Promise(resolve=>setTimeout(resolve,0));
         assert.equal(posts[0].url,'/apps/Insights/Dashboard/duplicatePanel');
+        // Drill opens the app's drill screen with the panel and the range; the server reads the saved panel again, so no query goes
+        toggle.click();await Vue.nextTick();reportButton(target,'Drill').click();
+        const drill=new URL(visited[visited.length-1],location.href);
+        assert.equal(drill.pathname,report.appPath('/apps/Insights/Drill'));
+        assert.equal(drill.searchParams.get('definitionId')+' '+drill.searchParams.get('panelId')+' '+drill.searchParams.get('from'),'store orders 2026-01-01T00:00:00Z');
+        assert.equal(drill.searchParams.has('datasetId') || drill.searchParams.has('query'),false);
     } finally {app.unmount();target.remove();report.navigate=navigate;moqui.request=request;}
     // A panel over a dataset the viewer may not read: not available, never "no data".
     const denied=document.createElement('div');document.body.appendChild(denied);

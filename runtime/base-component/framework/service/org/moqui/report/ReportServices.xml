@@ -17,8 +17,46 @@
         <in-parameters><parameter name="definitionId"/></in-parameters><out-parameters><parameter name="evaluated" type="Integer"/><parameter name="failed" type="Integer"/><parameter name="notices" type="List"/></out-parameters>
     </service>
     <service verb="create" noun="Annotation" type="rust" location="moqui_core::report::create_annotation">
-        <in-parameters><parameter name="time"/><parameter name="timeEnd"/><parameter name="source"/><parameter name="text" required="true"/><parameter name="tags" type="List"/><parameter name="scope"/><parameter name="serviceName"/><parameter name="instanceId"/><parameter name="dashboardId"/><parameter name="panelId"/><parameter name="version"/><parameter name="revision"/></in-parameters>
+        <description>A change marker on the time series (source deploy, config, release or user: MONITOR_INGEST or the
+            monitor_annotations dataset's create), or a business event (source business; docs/tools/Monitoring.md "Business
+            events"): a domain's event with its name, time, organization, type (event) and the record behind it (recordType,
+            recordId) or a link on this server, and no amount. A business event needs the artifact
+            org.moqui.report.annotation.business (create), which its owning service passes by writing with authorization off
+            after its commit; MONITOR_INGEST does not write one. With an eventKey the event keeps one marker, written again
+            in place.</description>
+        <in-parameters>
+            <parameter name="time"/><parameter name="timeEnd"/><parameter name="source"/><parameter name="text" required="true"/><parameter name="tags" type="List"/><parameter name="scope"/><parameter name="serviceName"/><parameter name="instanceId"/><parameter name="dashboardId"/><parameter name="panelId"/><parameter name="version"/><parameter name="revision"/>
+            <parameter name="organizationPartyId"/><parameter name="event"/><parameter name="recordType"/><parameter name="recordId"/>
+            <parameter name="link"/><parameter name="eventKey"/>
+        </in-parameters>
         <out-parameters><parameter name="annotationId"/><parameter name="annotation" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="Drill" type="rust" location="moqui_core::report::get_drill">
+        <description>From a value of a saved panel to its breakdown and records (crates/moqui-report/src/drill.rs;
+            docs/tools/Monitoring.md "Drill"). The request names a definition the viewer reads (a dashboard with panelId, or
+            a library panel), one of the panel's queries (queryReference, its index) and the buckets chosen (selectedBuckets:
+            field, value as the panel showed them); never a query, entity or service. The engine runs the panel as its
+            dashboard does (variables fill the saved variables only; each dataset's admission and row filter apply), takes
+            each bucket's predicate from its own result (an Other or missing bucket keeps its exact predicate), and answers
+            the saved query narrowed by them: selected, the panel's own frames (panelFrames), dimensions, an optional breakdown by one of the dataset's
+            dimensions, and a page of records with columns, total and bounded. A viewer who reads the dataset's aggregates
+            and not its records (rows restricted) gets rowsAvailable false with rowsReason and no record; a panel the viewer
+            cannot read answers available false with its reason.</description>
+        <in-parameters>
+            <parameter name="definitionId" required="true"/><parameter name="panelId"/><parameter name="queryReference"/>
+            <parameter name="range" type="Map"/><parameter name="from"/><parameter name="thru"/>
+            <parameter name="variables" type="Map"/><parameter name="selectedBuckets" type="List"/>
+            <parameter name="breakdownDimension"/><parameter name="pageIndex" type="Integer"/><parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="available" type="Boolean"/><parameter name="reason"/><parameter name="definitionId"/><parameter name="panelId"/>
+            <parameter name="title"/><parameter name="datasetId"/><parameter name="queryReference" type="Integer"/><parameter name="range" type="Map"/>
+            <parameter name="selected" type="List"/><parameter name="panelFrames" type="List"/><parameter name="dimensions" type="List"/><parameter name="breakdown" type="Map"/>
+            <parameter name="rows" type="List"/><parameter name="rowsAvailable" type="Boolean"/><parameter name="rowsReason"/>
+            <parameter name="columns" type="List"/><parameter name="total" type="Long"/><parameter name="totalRelation"/>
+            <parameter name="pageIndex" type="Integer"/><parameter name="pageSize" type="Integer"/><parameter name="bounded" type="Boolean"/>
+            <parameter name="notices" type="List"/>
+        </out-parameters>
     </service>
     <service verb="list" noun="Datasets" type="rust" location="moqui_core::report::list_datasets">
         <out-parameters><parameter name="datasets" type="List"/></out-parameters>

@@ -1000,7 +1000,7 @@ fn selection_line(frame: &Value, panel: &Value, state: &ComponentState) -> Line 
     )]
 }
 /// The path of a report screen where the app that renders the dashboard mounts it: `appLinks` (Dashboard.xml, on a
-/// dashboard or a standalone panel) maps `definition`, `panel`, `explore`, `alertRule` and `dashboard` to server paths,
+/// dashboard or a standalone panel) maps `definition`, `panel`, `explore`, `alertRule`, `dashboard` and `drill` to server paths,
 /// and a link the app leaves out or sets to null is not offered (None). Without `appLinks` it is Tools' Dashboards
 /// screen (`tools`).
 fn app_link(owner: &Value, key: &str, tools: &str) -> Option<String> {
@@ -1150,6 +1150,9 @@ fn panel_menu(dashboard: &Value, panel: &Value) -> Vec<(&'static str, &'static s
         items.push(("explore", "Explore"));
     }
     items.push(("inspect", "Inspect"));
+    if drill_link(dashboard).is_some() {
+        items.push(("drill", "Drill"));
+    }
     if dashboard["editable"] == true && app_link(dashboard, "dashboard", "Dashboard").is_some() {
         items.push(("duplicate", "Duplicate"));
         items.push(("remove", "Remove"));
@@ -1165,6 +1168,12 @@ fn panel_menu(dashboard: &Value, panel: &Value) -> Vec<(&'static str, &'static s
         items.push(("alert", "New alert rule"));
     }
     items
+}
+
+/// The drill screen of the app that mounts the dashboard (`appLinks.drill`): Tools mounts none, so there is no fallback.
+fn drill_link(dashboard: &Value) -> Option<String> {
+    dashboard["appLinks"].as_object()?;
+    app_link(dashboard, "drill", "")
 }
 
 /// Explore over the panel's first query, with its filters and the dashboard's filters on the same dataset, and the range.
@@ -1229,6 +1238,25 @@ fn panel_menu_act(item: &str, dashboard: &Value, id: &str, panel: &Value, state:
             dashboard_url(dashboard, "", Some(id), None)
         ))],
         "explore" => explore_url(dashboard, panel).map_or_else(Vec::new, |url| vec![Act::Follow(url)]),
+        "drill" => drill_link(dashboard).map_or_else(Vec::new, |drill| {
+            let mut url = format!(
+                "{drill}?definitionId={}&panelId={}",
+                encoded(definition),
+                encoded(source)
+            );
+            for key in ["from", "thru"] {
+                if let Some(value) = dashboard["absoluteTime"][key].as_str() {
+                    url.push_str(&format!("&{key}={}", encoded(value)));
+                }
+            }
+            if dashboard["variableValues"].is_object() {
+                url.push_str(&format!(
+                    "&variablesJson={}",
+                    encoded(&dashboard["variableValues"].to_string())
+                ));
+            }
+            vec![Act::Follow(url)]
+        }),
         "inspect" => {
             state.closed.insert("__report_inspector".into());
             state.local["inspectionRequest"] = Value::Bool(true);
