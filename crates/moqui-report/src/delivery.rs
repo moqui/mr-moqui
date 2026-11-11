@@ -45,38 +45,38 @@ pub(crate) const OCCURRENCE: &str = "moqui.report.ReportOccurrence";
 pub(crate) const DELIVERY: &str = "moqui.report.ReportRecipientDelivery";
 const ACCOUNT: &str = "moqui.security.UserAccount";
 const MEMBER: &str = "moqui.security.UserGroupMember";
-const DEFINITION: &str = "moqui.report.Definition";
+pub(crate) const DEFINITION: &str = "moqui.report.Definition";
 const REFERENCE: &str = "moqui.report.DefinitionReference";
 /// The artifact a user needs to deliver to anyone but themselves.
-const GROUP_ARTIFACT: &str = "org.moqui.report.delivery.group";
+pub(crate) const GROUP_ARTIFACT: &str = "org.moqui.report.delivery.group";
 const STORE_SERVICE: &str = "org.moqui.report.ReportServices.store#Schedule";
 const OWNER_PERMISSION: &str = "REPORT_OWNER_CHANGE";
-const ADMIN_PERMISSION: &str = "ADMIN_TRANSFER_VIEW";
+pub(crate) const ADMIN_PERMISSION: &str = "ADMIN_TRANSFER_VIEW";
 const CEILING_KEY: &str = "report.groupRecipientCeiling";
 const DEFAULT_CAP: i64 = 50;
 const DEFAULT_CEILING: i64 = 200;
 const DEFAULT_TEMPLATE: &str = "DASHBOARD_REPORT";
 
-const PENDING: &str = "RptDlvPending";
+pub(crate) const PENDING: &str = "RptDlvPending";
 const SENDING: &str = "RptDlvSending";
-const SENT: &str = "RptDlvSent";
-const SKIPPED: &str = "RptDlvSkipped";
-const FAILED: &str = "RptDlvFailed";
+pub(crate) const SENT: &str = "RptDlvSent";
+pub(crate) const SKIPPED: &str = "RptDlvSkipped";
+pub(crate) const FAILED: &str = "RptDlvFailed";
 const UNCERTAIN: &str = "RptDlvUncertain";
 const RUNNING: &str = "RptOccRunning";
 
-fn text<'a>(p: &'a Parameters, k: &str) -> &'a str {
+pub(crate) fn text<'a>(p: &'a Parameters, k: &str) -> &'a str {
     p.get(k).and_then(Value::as_str).unwrap_or("")
 }
-fn field<'a>(row: &'a EntityValue, name: &str) -> &'a str {
+pub(crate) fn field<'a>(row: &'a EntityValue, name: &str) -> &'a str {
     row.get(name).and_then(Value::as_str).unwrap_or("")
 }
-fn number(value: Option<&Value>) -> Option<i64> {
+pub(crate) fn number(value: Option<&Value>) -> Option<i64> {
     value
         .filter(|value| !value.is_null())
         .and_then(|value| moqui_lib::object::to_plain_string(value).parse::<i64>().ok())
 }
-fn millis(row: &EntityValue, name: &str) -> Json {
+pub(crate) fn millis(row: &EntityValue, name: &str) -> Json {
     row.get(name)
         .and_then(moqui_core::user::value_millis)
         .map_or(Json::Null, Json::from)
@@ -99,20 +99,20 @@ fn ids(p: &Parameters, k: &str) -> Vec<String> {
     out.dedup();
     out
 }
-fn flag(p: &Parameters, k: &str) -> Option<bool> {
+pub(crate) fn flag(p: &Parameters, k: &str) -> Option<bool> {
     p.get(k)
         .filter(|value| !value.is_null())
         .map(|value| matches!(value, Value::Bool(true)) || matches!(value.as_str(), Some("true" | "Y")))
 }
-fn viewer() -> Result<String, Error> {
+pub(crate) fn viewer() -> Result<String, Error> {
     moqui_core::user::current_user_id()?
         .filter(|user| !user.is_empty())
         .ok_or_else(|| fail("report delivery requires an authenticated viewer"))
 }
-fn entity(ec: &ExecutionContext) -> Result<EntityFacade, Error> {
+pub(crate) fn entity(ec: &ExecutionContext) -> Result<EntityFacade, Error> {
     ec.factory().entity().ok_or_else(|| fail("entity facade unavailable"))
 }
-fn out(value: Json) -> Parameters {
+pub(crate) fn out(value: Json) -> Parameters {
     match moqui_lib::json::from_json(&value) {
         Value::Map(map) => map.into_iter().collect(),
         _ => Parameters::new(),
@@ -120,7 +120,11 @@ fn out(value: Json) -> Parameters {
 }
 /// A write of delivery evidence in a transaction of its own, with authorization off: the rows are the engine's, and a
 /// run's own transaction is suspended while it sends.
-fn write<T>(ec: &ExecutionContext, facade: &EntityFacade, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
+pub(crate) fn write<T>(
+    ec: &ExecutionContext,
+    facade: &EntityFacade,
+    body: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
     let tx = facade.transactions_for(DELIVERY)?;
     tx.run(TransactionAttribute::ForceNew, None, || {
         let _authz = ec.disable_authz();
@@ -185,7 +189,7 @@ pub(crate) struct Recipient {
 
 /// The named users and the members in date of the named groups, one entry a user, in user id order. An id that names
 /// no account is left out and logged.
-fn expand(
+pub(crate) fn expand(
     ec: &ExecutionContext,
     facade: &EntityFacade,
     users: &[String],
@@ -374,7 +378,21 @@ fn walk(
         datasets.insert(id.to_owned());
         return;
     }
+    if definition["type"] == "alert" {
+        rule_defaults(&definition["body"]["query"], datasets);
+    }
     collect(&definition["body"], read, seen, datasets, unread);
+}
+/// The dataset an alert rule's query reads when it names none (alert.rs `approved_labels`: the telemetry metrics), for each
+/// leaf of a compound query.
+fn rule_defaults(query: &Json, datasets: &mut BTreeSet<String>) {
+    if let Some(queries) = query["queries"].as_array() {
+        for query in queries {
+            rule_defaults(query, datasets);
+        }
+    } else if query.is_object() && !query["datasetId"].is_string() {
+        datasets.insert("otel_metrics".to_owned());
+    }
 }
 fn collect(
     value: &Json,
@@ -521,7 +539,7 @@ pub(crate) fn scope_as(ec: &ExecutionContext, username: &str, definition_id: &st
 }
 
 /// Whether `username` holds an artifact by their own grants, asked in a context of their own.
-fn holds_as(ec: &ExecutionContext, username: &str, artifact: &str, action: &str) -> bool {
+pub(crate) fn holds_as(ec: &ExecutionContext, username: &str, artifact: &str, action: &str) -> bool {
     let context = ec.factory().new_context();
     let _entered = context.enter();
     moqui_core::user::internal_login_user(username).is_ok()
@@ -550,6 +568,16 @@ pub(crate) fn reads_business(ec: &ExecutionContext, definition_id: &str) -> bool
         .any(|id| read(id).is_some_and(|definition| viewer_scoped(&definition["body"])))
 }
 
+/// [`reads_business`] for an alert rule's body as it is about to be saved, or as its stored row holds it (alert_delivery.rs).
+pub(crate) fn body_reads_business(ec: &ExecutionContext, body: &Json) -> bool {
+    let (mut seen, mut datasets, mut unread) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+    let read = |id: &str| definitions::read_unchecked(ec, id).ok().flatten();
+    collect(body, &read, &mut seen, &mut datasets, &mut unread);
+    datasets
+        .iter()
+        .any(|id| read(id).is_some_and(|definition| viewer_scoped(&definition["body"])))
+}
+
 /// A schedule held to owner equivalence: one `store#Schedule` saved, or any whose definition reads a business dataset or
 /// another whose rows depend on the viewer.
 pub(crate) fn business(ec: &ExecutionContext, schedule: &EntityValue) -> bool {
@@ -558,7 +586,7 @@ pub(crate) fn business(ec: &ExecutionContext, schedule: &EntityValue) -> bool {
 
 /// The reason a recipient may not be sent the owner's result, or "" when they may. A code, never the other user's
 /// grants.
-fn judge(
+pub(crate) fn judge(
     ec: &ExecutionContext,
     definition_id: &str,
     owner: &Account,
@@ -590,7 +618,7 @@ fn judge(
     }
 }
 
-fn reason_text(code: &str) -> &'static str {
+pub(crate) fn reason_text(code: &str) -> &'static str {
     match code {
         "" => "",
         "scope-differs" => "Their access to this report's data differs from the owner's",
@@ -637,34 +665,34 @@ pub(crate) fn caps(requested: Option<i64>) -> (i64, i64) {
     (requested.unwrap_or(DEFAULT_CAP).clamp(1, ceiling), ceiling)
 }
 
-struct Verdict {
-    recipient: Recipient,
-    reason: &'static str,
+pub(crate) struct Verdict {
+    pub recipient: Recipient,
+    pub reason: &'static str,
 }
 impl Verdict {
     /// What refuses a save: a scope that differs or cannot be compared, and a named user who cannot be sent to. A group's
     /// member without an address or an active account is skipped at each run instead, as members come and go.
-    fn blocking(&self) -> bool {
+    pub(crate) fn blocking(&self) -> bool {
         match self.reason {
             "" => false,
             "inactive" | "no-address" => self.recipient.explicit,
             _ => true,
         }
     }
-    fn json(&self) -> Json {
+    pub(crate) fn json(&self) -> Json {
         json!({"userId": self.recipient.account.user_id, "username": self.recipient.account.username,
             "userFullName": self.recipient.account.name, "viaGroupIds": self.recipient.via,
             "eligible": self.reason.is_empty(), "blocking": self.blocking(), "reasonCode": self.reason,
             "reason": reason_text(self.reason)})
     }
 }
-struct Audience {
-    verdicts: Vec<Verdict>,
-    users: Vec<String>,
-    groups: Vec<String>,
-    mode: &'static str,
-    cap: i64,
-    ceiling: i64,
+pub(crate) struct Audience {
+    pub verdicts: Vec<Verdict>,
+    pub users: Vec<String>,
+    pub groups: Vec<String>,
+    pub mode: &'static str,
+    pub cap: i64,
+    pub ceiling: i64,
 }
 
 /// A definition a schedule may name: a dashboard or a report the viewer reads.
@@ -678,7 +706,7 @@ fn schedulable(ec: &ExecutionContext, definition_id: &str) -> Result<Json, Error
 
 /// The audience of a definition for an owner: each recipient's verdict, the mode the recipients make, and the cap.
 /// Recipients other than the owner need the caller to hold the group-delivery artifact.
-fn audience(
+pub(crate) fn audience(
     ec: &ExecutionContext,
     owner: &Account,
     definition_id: &str,
@@ -723,7 +751,10 @@ fn check_audience(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
     let now = moqui_core::user::now_millis();
     let owner = account(ec, &facade, &viewer()?, now)?.ok_or_else(|| fail("the viewer has no account"))?;
     let definition_id = text(p, "definitionId");
-    schedulable(ec, definition_id)?;
+    // a dashboard or report a schedule would send, or an alert rule whose state its audience is told (alert_delivery.rs)
+    if definitions::read(ec, definition_id)?["type"] != "alert" {
+        schedulable(ec, definition_id)?;
+    }
     let audience = audience(
         ec,
         &owner,
@@ -747,16 +778,17 @@ fn check_audience(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
 }
 
 /// The refusal of a save or a resume when a recipient may not be sent the owner's result, or the audience is over the cap.
-fn refuse(audience: &Audience) -> Result<(), Error> {
+/// `needs_address` is false where no channel is email (an alert told in the app alone), so a missing address refuses nothing.
+pub(crate) fn refuse(audience: &Audience, what: &str, needs_address: bool) -> Result<(), Error> {
     let refused: Vec<String> = audience
         .verdicts
         .iter()
-        .filter(|verdict| verdict.blocking())
+        .filter(|verdict| verdict.blocking() && (needs_address || verdict.reason != "no-address"))
         .map(|verdict| format!("{} ({})", verdict.recipient.account.name, verdict.reason))
         .collect();
     if !refused.is_empty() {
         return Err(fail(format!(
-            "RECIPIENT_REFUSED: the schedule's result may not go to {}",
+            "RECIPIENT_REFUSED: the {what}'s result may not go to {}",
             refused.join(", ")
         )));
     }
@@ -786,14 +818,18 @@ pub(crate) fn check_resume(ec: &ExecutionContext, schedule: &EntityValue) -> Res
     let owner = account(ec, &facade, field(schedule, "reportOwnerId"), now)?
         .ok_or_else(|| fail("report owner no longer exists"))?;
     let (users, groups) = schedule_recipients(ec, &facade, schedule)?;
-    refuse(&audience(
-        ec,
-        &owner,
-        field(schedule, "reportDefinitionId"),
-        &users,
-        &groups,
-        number(schedule.get("recipientCap")),
-    )?)
+    refuse(
+        &audience(
+            ec,
+            &owner,
+            field(schedule, "reportDefinitionId"),
+            &users,
+            &groups,
+            number(schedule.get("recipientCap")),
+        )?,
+        "schedule",
+        true,
+    )
 }
 
 /// `store#Schedule`.
@@ -848,7 +884,7 @@ fn store_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
     let paused = flag(p, "paused").unwrap_or_else(|| existing.as_ref().is_some_and(|row| field(row, "paused") == "Y"));
     // a paused schedule may be saved with a recipient to be fixed; an active one only once every recipient passes
     if !paused {
-        refuse(&audience)?;
+        refuse(&audience, "schedule", true)?;
     }
     let template = or_existing("emailTemplateId", "emailTemplateId");
     let _authz = ec.disable_authz();
@@ -1787,7 +1823,7 @@ fn reconcile_recipient(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameter
 // ===== ownership: the lifecycle participant =====
 
 /// The viewer acting on `user_id`'s schedules: their own, or another's with the owner-change permission.
-fn owner_authority(user_id: &str) -> Result<String, Error> {
+pub(crate) fn owner_authority(user_id: &str) -> Result<String, Error> {
     let viewer = viewer()?;
     if viewer != user_id && !moqui_core::user::has_permission(OWNER_PERMISSION)? {
         return Err(fail(format!(

@@ -36,7 +36,7 @@
 const lib = ec.resource.script("component://framework/service/org/moqui/admin/ConfigurationLib.js")
 const access = ec.resource.script("component://framework/service/org/moqui/admin/Access.js").lib
 const identity = ec.resource.script("component://framework/service/org/moqui/admin/Identity.js")
-const {find, one, rows, map, iso, ms, stamp, text, refused} = lib
+const {find, one, rows, map, iso, ms, stamp, text, refused, plainText, urlText, enumValue, write} = lib
 
 const FLOW = "moqui.security.sso.AuthFlow"
 const FIELD_MAP = "moqui.security.sso.AuthFlowFieldMap"
@@ -380,32 +380,6 @@ function findIdentityProviders(p) {
 }
 
 // ===== store#IdentityProvider =====
-const controls = /[\u0000-\u001f\u007f]/
-function plainText(value, what, maxLength = 255) {
-    const found = text(value)
-    if (controls.test(found) || found.includes("${")) throw new Error(what + " may not hold control characters or ${")
-    if (found.length > maxLength) throw new Error(what + " is longer than " + maxLength + " characters")
-    return found
-}
-// An https URL with a host and no credentials or fragment; http only for this machine on an instance that is not
-// production (a provider run beside a development server), so a production server is never pointed at its own ports.
-function urlText(value, what) {
-    const found = plainText(value, what)
-    if (!found) return ""
-    const parts = /^(https?):\/\/([^\/?#@\s]+)(\/[^\s#]*)?(\?[^\s#]*)?$/.exec(found)
-    if (!parts) throw new Error(what + " is not an http(s) URL with a host and no credentials or fragment")
-    const host = parts[2].replace(/:\d+$/, "").toLowerCase()
-    const local = ["localhost", "127.0.0.1", "[::1]"].includes(host)
-    if (parts[1] === "http" && (!local || text(System.getProperty("instance_purpose")) === "production"))
-        throw new Error(what + " must be https")
-    return found
-}
-function enumValue(value, enumTypeId, what) {
-    const found = text(value)
-    if (found && !one("moqui.basic.Enumeration", {enumId: found, enumTypeId}))
-        throw new Error(what + " is not one of its options")
-    return found
-}
 // The type row's fields a save gives, validated: {field: value}, only those that differ from the stored row.
 function configurationChanges(p, type, sub) {
     const changes = {}
@@ -454,12 +428,6 @@ function roleMapRows(list) {
 }
 const sameRows = (a, b, keys) =>
     a.length === b.length && a.every((row, index) => keys.every(key => text(row[key]) === text(b[index][key])))
-function write(entityName, fields, create) {
-    const value = ec.entity.makeValue(entityName)
-    value.setFields(fields, true, null, null)
-    if (create) value.create()
-    else value.update()
-}
 const auditedFields = [
     "disabled",
     "accountLinkEnumId",

@@ -247,6 +247,17 @@ fn references(value: &Json, out: &mut BTreeSet<String>) {
 
 /// Save a definition read from a synced git file, as the sync's user.
 pub(super) fn save_pulled(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Error> {
+    // A pulled business alert rule that is not already active here notifies nobody until its owner activates it, as a
+    // copy and an import (alert_delivery.rs): a file does not start delivery.
+    if definition["type"] == "alert" {
+        let active =
+            read_unchecked(ec, text(definition, "id", ""))?.is_some_and(|stored| stored["body"]["paused"] != true);
+        if !active {
+            let mut definition = definition.clone();
+            super::alert_delivery::prepare_copy(ec, &mut definition["body"]);
+            return save(ec, &definition, note);
+        }
+    }
     save(ec, definition, note)
 }
 /// Save a definition as the viewer, with the owner, reference and dataset-save checks of `save#Definition`: a business
@@ -331,6 +342,50 @@ fn save(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Er
     save_definition_as(ec, definition, note, false)
 }
 
+/// The engine's own revision of a saved definition, whoever asks: an alert rule paused for its owner's sake or handed to a
+/// new owner (alert_delivery.rs). `change` edits the body and may name a new owner; the row gains a version with `note`
+/// by `actor`. Never a caller's edit: the caller's authority is checked by the operation that calls this.
+pub(super) fn engine_revise(
+    ec: &ExecutionContext,
+    id: &str,
+    note: &str,
+    actor: &str,
+    change: impl FnOnce(&mut Json) -> Option<String>,
+) -> Result<Json, Error> {
+    let facade = entity(ec)?;
+    let _storage = ec.disable_authz();
+    let mut row = facade
+        .find(ENTITY)?
+        .eq("definitionId", Value::string(id))
+        .for_update(true)
+        .one()?
+        .ok_or_else(|| fail(format!("report definition {id} does not exist")))?;
+    let mut definition = row_json(&row)?;
+    let new_owner = change(&mut definition["body"]);
+    let version = definition["version"].as_i64().unwrap_or(0) + 1;
+    row.set("bodyJson", Value::String(definition["body"].to_string()));
+    row.set("versionNumber", Value::I64(version));
+    if let Some(owner) = new_owner {
+        row.set("ownerId", Value::String(owner));
+    }
+    row.update(&facade)?;
+    let mut history = facade.make_value(VERSION)?;
+    let snapshot = json!({"title":definition["title"],"type":definition["type"],"body":definition["body"],
+        "userGroupId":definition["userGroupId"]});
+    for (name, value) in [
+        ("definitionId", Value::string(id)),
+        ("versionNumber", Value::I64(version)),
+        ("bodyJson", Value::String(snapshot.to_string())),
+        ("note", Value::string(note)),
+        ("changedBy", Value::string(actor)),
+        ("changedDate", moqui_core::user::now_value()),
+    ] {
+        history.set(name, value);
+    }
+    history.create(&facade)?;
+    row_json(&row)
+}
+
 /// `owned`: a business dataset's own operation (business.rs), which decides its admission; any other save of a business dataset
 /// whose body changed returns it to review.
 fn save_definition_as(ec: &ExecutionContext, definition: &Json, note: &str, owned: bool) -> Result<Json, Error> {
@@ -380,7 +435,9 @@ fn save_definition_as(ec: &ExecutionContext, definition: &Json, note: &str, owne
             }
         }
     }
-    let body = definition.get("body").cloned().unwrap_or_else(|| json!({}));
+    let mut body = definition.get("body").cloned().unwrap_or_else(|| json!({}));
+    // a business alert rule (alert_delivery.rs): its audience in place of contact points, the delivery mode the server's
+    let business_rule = kind == "alert" && super::alert_delivery::prepare(ec, &mut body)?;
     let serialized = serde_json::to_string(&body).map_err(fail)?;
     if serialized.len() > 2_000_000 {
         return Err(fail("report definition exceeds two megabytes"));
@@ -426,7 +483,7 @@ fn save_definition_as(ec: &ExecutionContext, definition: &Json, note: &str, owne
     }
     // Owner, group, reference and dataset-admin checks above run with the viewer's rights.
     // Only this storage operation bypasses entity auth; no broad CRUD grant is exposed.
-    let _storage = ec.disable_authz();
+    let storage = ec.disable_authz();
     let creating = existing.is_none();
     let mut row = existing.unwrap_or(facade.make_value(ENTITY)?);
     for (name, value) in [
@@ -488,6 +545,11 @@ fn save_definition_as(ec: &ExecutionContext, definition: &Json, note: &str, owne
         row.create(&facade)?;
     }
     let saved = row_json(&row)?;
+    drop(storage);
+    if business_rule {
+        // each recipient against the rule as it is now written, with the viewer's own rights; a refusal rolls the save back
+        super::alert_delivery::check_saved(ec, &saved)?;
+    }
     super::git_sync::after_save(ec, &saved);
     Ok(saved)
 }
@@ -623,6 +685,9 @@ pub fn copy_definition(
     if params["title"].is_string() {
         definition["title"] = params["title"].clone();
     }
+    if definition["type"] == "alert" {
+        super::alert_delivery::prepare_copy(ec, &mut definition["body"]);
+    }
     Ok(output(json!({"definition":save(ec,&definition,"Saved as copy")?})))
 }
 pub fn versions_definition(
@@ -728,6 +793,7 @@ pub(super) fn delete(ec: &ExecutionContext, id: &str) -> Result<Json, Error> {
         REFERENCE,
         "moqui.report.AlertInstance",
         "moqui.report.AlertNotification",
+        "moqui.report.AlertRecipientDelivery",
         "moqui.report.AlertRuleLock",
     ] {
         facade
@@ -841,6 +907,10 @@ pub fn import_definitions(
                 map.remove("version");
             }
             remap(&mut d["body"], &ids);
+            if d["type"] == "alert" {
+                // an imported business rule notifies nobody until its owner activates it
+                super::alert_delivery::prepare_copy(ec, &mut d["body"]);
+            }
             d
         })
         .collect();

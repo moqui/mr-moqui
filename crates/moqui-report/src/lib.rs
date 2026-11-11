@@ -18,6 +18,7 @@ moqui_core::extension::submit! {
             recovery::register(registry)?;
             settings::register(registry)?;
             delivery::register(registry)?;
+            alert_delivery::register(registry)?;
             schedule::register(registry)
         },
         after_boot: |factory| {
@@ -36,6 +37,7 @@ moqui_core::extension::submit! {
 }
 
 pub mod alert;
+pub mod alert_delivery;
 pub mod annotations;
 pub mod browser;
 pub mod business;
@@ -3129,6 +3131,7 @@ mod tests {
         crate::settings::register(&mut registry).unwrap();
         crate::schedule::register(&mut registry).unwrap();
         crate::delivery::register(&mut registry).unwrap();
+        crate::alert_delivery::register(&mut registry).unwrap();
         let registered = registry.service_locations();
         let dir = moqui_core::context::framework_dir().join("service/org/moqui");
         let mut named = Vec::new();
@@ -3143,6 +3146,7 @@ mod tests {
                             "moqui_core::report::",
                             "moqui_core::report_schedule::",
                             "moqui_core::report_delivery::",
+                            "moqui_core::report_alert::",
                             "moqui_core::monitor::",
                         ]
                         .iter()

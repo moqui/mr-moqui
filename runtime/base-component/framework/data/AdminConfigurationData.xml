@@ -164,4 +164,24 @@ along with this software (see the LICENSE.md file). If not, see
             description="How long the sign-in of a desktop or mobile app lasts" valueTypeEnumId="IsvText"
             confAttribute="user-facade/login-key/@device-expire-hours" sequenceNum="2230"
             operatorNote="Set device-expire-hours on user-facade login-key in the runtime conf and reload the conf"/>
+
+    <!-- The connection services (impl-admin P11) for every signed-in user: each checks ADMIN_CONNECTION_VIEW to read and
+        ADMIN_CONNECTION_MANAGE to change or test. Inheritable, so a kind's adapter service and the native services a test
+        calls (test#EmailServer, print#Document) run as it; no group is authorized to call an adapter service directly. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminConnectionServices" description="Admin connection services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminConnectionServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ConfigurationServices\.(find#Connections|get#Connection|store#Connection|test#Connection|find#ConnectionConsumers)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminConnectionServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminConnectionServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- The framework's connection kinds (moqui.server.ConnectionAdapter; design-admin §14): no service, their definitions
+        are ConfigurationConnections.js. A component seeds its own kinds with their adapter service. -->
+    <moqui.server.ConnectionAdapter adapterKey="remote" title="Remote system" adapterGroup="integration" creatable="Y" sequenceNum="40"
+            description="A system that messages are sent to and received from (SystemMessageRemote)"/>
+    <moqui.server.ConnectionAdapter adapterKey="mailOAuth" title="Mail sign-in provider" adapterGroup="integration" creatable="N" sequenceNum="50"
+            description="The OAuth client mail accounts sign in with at a provider (EmailOAuthProvider)"/>
+    <moqui.server.ConnectionAdapter adapterKey="printer" title="Network printer" adapterGroup="integration" creatable="Y" sequenceNum="60"
+            description="A printer on a print server (NetworkPrinter)"/>
+    <moqui.server.ConnectionAdapter adapterKey="relay" title="Mail relay" adapterGroup="mail" creatable="Y" sequenceNum="10"
+            description="An outgoing mail server no mail account owns (EmailServer)"/>
 </entity-facade-xml>

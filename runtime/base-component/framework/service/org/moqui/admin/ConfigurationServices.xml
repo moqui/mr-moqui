@@ -318,4 +318,172 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationProviders.js').execute('testIdentityProvider', context))</script></actions>
     </service>
+
+    <!-- ========== Connections and mail relays (ConfigurationConnections.js; impl-admin P11) ========== -->
+    <!-- One list, detail, save and test over the native connection records, each kind through its registered adapter
+        (moqui.server.ConnectionAdapter): the framework's remote (SystemMessageRemote), relay (an EmailServer no EmailAccount
+        owns), mailOAuth (EmailOAuthProvider) and printer (NetworkPrinter); a component's kinds through its adapter service
+        (Mantle's payment, shipping and tax gateways). Reading needs ADMIN_CONNECTION_VIEW, a change or a test
+        ADMIN_CONNECTION_MANAGE. A secret is write-only; a change of an endpoint clears the secrets not entered again and
+        disables the connection until a test of it passes (design-admin §8.1). -->
+
+    <service verb="find" noun="Connections" allow-remote="false">
+        <description>The connections of the registered kinds: each with its kind (adapterKey, adapterTitle), key, name,
+            provider, endpoint summary (a host, never a path or a credential), whether it is enabled, its state (ready,
+            untested, needsTest: disabled until a test passes, disabled, incomplete, readOnly) and its last test; narrowed by
+            kind, group (integration: the Connections list; mail: the mail relays), text, state (enabled, disabled,
+            attention) and, for kinds permitted per organization, the organization; a page at a time. adapterList is the
+            kinds, each with whether one is started here. An EmailServer a mail account owns is never listed. Needs
+            ADMIN_CONNECTION_VIEW.</description>
+        <in-parameters>
+            <parameter name="adapterKey"/>
+            <parameter name="adapterGroup"/>
+            <parameter name="text"/>
+            <parameter name="state"><description>enabled, disabled or attention</description></parameter>
+            <parameter name="organizationPartyId"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="50"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="connectionList" type="List"/>
+            <parameter name="connectionListCount" type="Integer"/>
+            <parameter name="adapterList" type="List"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationConnections.js').execute('findConnections', context))</script></actions>
+    </service>
+    <service verb="get" noun="Connection" allow-remote="false">
+        <description>One connection (connection; null when it is not available, as an EmailServer a mail account owns never
+            is): what find#Connections lists, its fields (fieldList: each a name, label, kind, value, options, whether it is
+            an endpoint field, help), its secrets as whether each is set, never a value (secretList), what it lacks
+            (problem), why it is not changed here (readOnlyReason), its test mark and the checks of its last test
+            (checkList: a host, a status, a kind of failure; never a response body), whether the server may reach it on the
+            private network, what its kind adds (a payment gateway's organizations) and its revision. Needs
+            ADMIN_CONNECTION_VIEW.</description>
+        <in-parameters>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="connectionKey" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="connection" type="Map"/>
+            <parameter name="adapter" type="Map"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationConnections.js').execute('getConnection', context))</script></actions>
+    </service>
+    <service verb="store" noun="Connection" allow-remote="false">
+        <description>A new connection of a kind that is started here (no connectionKey; values.connectionId its id where the
+            kind takes one; saved disabled), or changes of one at the revision read (expectedRevision as get#Connection
+            gives it): values holds the kind's fields and secrets by name, and only those given change, each validated by
+            its kind; a name the kind does not declare is ignored, and an executable name is never one. Refused, with the
+            reason and nothing written: a stale revision (STALE_REVISION); an EmailServer a mail account owns
+            (ACCOUNT_OWNED); a connection of a transport or sign-in that is not changed here (READ_ONLY); a kind that is not
+            started here (NOT_CREATABLE) or an id in use (KEY_IN_USE); enabling one that lacks something (INCOMPLETE) or has
+            no passing test of its configuration as it is (TEST_REQUIRED); the kind's own refusals (a relay that signs in
+            without TLS: INSECURE_TRANSPORT; a gateway's validation). A change of an endpoint field (a host, port, URL,
+            user or kind of sign-in) needs the secrets entered again in the same save, else the stored ones are cleared
+            (secretCleared); either way the connection is saved disabled and its test mark cleared, and a passing
+            test#Connection enables it (design-admin §8.1). On a production instance a connection started or repointed
+            here reaches no loopback, private or link-local address (the record's allowPrivateNetwork N, which its sender
+            enforces and this service never sets back). The audit log keeps before and after, a secret as replaced or
+            cleared, never its value. Needs ADMIN_CONNECTION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="connectionKey"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="values" type="Map" allow-html="any"><description>The kind's fields and write-only secrets by
+                name; each is validated by its kind</description></parameter>
+            <parameter name="enabled"><description>true to enable, false to disable</description></parameter>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="connectionKey"/>
+            <parameter name="revision"/>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="secretCleared" type="Boolean"/>
+            <parameter name="testRequired" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationConnections.js').execute('storeConnection', context))</script></actions>
+    </service>
+    <service verb="test" noun="Connection" allow-remote="false" transaction-timeout="120">
+        <description>The explicit test of a connection as it is configured now, enabled or not (checkList, each ok or failed
+            with its text): its configuration is complete, then the kind's own check: a remote's address answers one
+            request with no credentials and no body (HEAD, ten seconds, the status only); a relay connects and signs in
+            (org.moqui.mail.EmailServices.test#EmailServer), and with testKind send one fixed message goes to the caller's
+            own address; a printer takes a fixed test page (org.moqui.impl.PrintServices.print#Document); a mail sign-in
+            provider is checked for its client without a request. Nothing is sent while the configuration is incomplete
+            or a secret an endpoint change cleared has not been entered again, and nothing to a loopback, private or
+            link-local address for a connection that may not use the private network. A text names a host, a status code
+            or a kind of failure, never a secret, a response body or the remote's own words. A pass is marked for the
+            configuration it ran against and enables a connection that waited for it (enabledByTest); a failure clears the
+            mark and leaves the connection as it was. An EmailServer a mail account owns is refused (ACCOUNT_OWNED). Needs
+            ADMIN_CONNECTION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="connectionKey" required="true"/>
+            <parameter name="testKind"><description>send: a relay's named test message after its connection test</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="passed" type="Boolean"/>
+            <parameter name="checkList" type="List"/>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="enabledByTest" type="Boolean"/>
+            <parameter name="testedDate"/>
+            <parameter name="connectionKey"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationConnections.js').execute('testConnection', context))</script></actions>
+    </service>
+    <service verb="find" noun="ConnectionConsumers" allow-remote="false">
+        <description>Where a connection is used (consumerList: each an ownerName, recordType, recordId, recordName, use and
+            state): the kind's own answer (the messages of a remote, the templates of a relay, a printer's jobs), then that
+            of each registered provider (moqui.server.ConnectionConsumerProvider: the owner of records that name it), which
+            answers only what the caller may see there. Counts and names, never a message, an address or a credential.
+            Needs ADMIN_CONNECTION_VIEW.</description>
+        <in-parameters>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="connectionKey" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="consumerList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationConnections.js').execute('findConnectionConsumers', context))</script></actions>
+    </service>
+    <service verb="run" noun="ConnectionAdapter" type="interface">
+        <description>What a component's connection adapter implements (moqui.server.ConnectionAdapter.adapterServiceName):
+            one operation of its kind, list, get, store, test or consumers, answered as result with what the operation of
+            the framework's own kinds answers (connectionList; connection; store#Connection's and test#Connection's
+            out-parameters; consumerList). It is called by the services above only, checks ADMIN_CONNECTION_VIEW or
+            ADMIN_CONNECTION_MANAGE itself with its own domain rules, and is built with the engine of
+            ConfigurationConnections.js (lib.engine), so the endpoint-change rule, the write-only secrets and the test
+            mark are the same for every kind. No group is authorized to call it directly.</description>
+        <in-parameters>
+            <parameter name="operation" required="true"/>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="connectionKey"/>
+            <parameter name="values" type="Map" allow-html="any"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="enabled"/>
+            <parameter name="reason"/>
+            <parameter name="testKind"/>
+            <parameter name="organizationPartyId"/>
+        </in-parameters>
+        <out-parameters><parameter name="result" type="Map"/></out-parameters>
+    </service>
+    <service verb="find" noun="AdapterConsumers" type="interface">
+        <description>What a connection consumer provider implements (moqui.server.ConnectionConsumerProvider.serviceName):
+            the records of its owner that use the connection, as find#ConnectionConsumers lists them, only those the caller
+            may see there. A consumer with ownsConnection true is a record of another kind whose connection this is (a
+            gateway's remote): the connection is then read only as its own kind and changed through that record's kind,
+            whose rules hold on every path; that answer is not narrowed by what the caller may see.</description>
+        <in-parameters>
+            <parameter name="adapterKey" required="true"/>
+            <parameter name="connectionKey" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="consumerList" type="List"/></out-parameters>
+    </service>
 </services>

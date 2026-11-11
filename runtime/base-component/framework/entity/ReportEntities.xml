@@ -150,6 +150,9 @@
         <!-- Consecutive successful evaluations without this series; at the rule's pruneAfterMissing (default 10) it is removed.
             Repeat delivery is per notification group, in AlertNotification.lastSent. -->
         <field name="missingCount" type="number-integer"/>
+        <!-- The reading the state came from at the last evaluation, read through get#AlertState by the rule's owner and, for a
+            business rule, a recipient whose scope is the owner's. -->
+        <field name="lastValue" type="number-float"/>
         <relationship type="one" related="moqui.report.Definition"/>
     </entity>
     <entity entity-name="AlertRuleLock" package="moqui.report" use="transactional" cache="never">
@@ -164,5 +167,30 @@
         <field name="firstPending" type="date-time"/><field name="lastSent" type="date-time"/>
         <field name="stateHash" type="id-long"/><field name="lastSentHash" type="id-long"/><field name="payloadJson" type="text-very-long"/>
         <relationship type="one" related="moqui.report.Definition"/>
+    </entity>
+    <entity entity-name="AlertRecipientDelivery" package="moqui.report" use="transactional" cache="never">
+        <description>One recipient's last outcome for one notification group of a business alert rule on one channel
+            (crates/moqui-report/src/alert_delivery.rs), unique by rule, channel, group and recipient: sent, skipped or failed,
+            with a safe reason code (scope-differs, not-shared, inactive, external, no-address, over-cap, owner-unauthorized,
+            transport-failure), the state told (its name, never a value or a series label) and stateHash, the state a
+            recipient was told, so a retry of a failed recipient tells nobody twice. scopeHash is the fingerprint it was
+            sent under.</description>
+        <field name="deliveryId" type="id" is-pk="true"/>
+        <field name="definitionId" type="id-long"/>
+        <field name="channel" type="text-short"><description>notification or email</description></field>
+        <field name="groupId" type="id-long"/>
+        <field name="userId" type="id"/>
+        <field name="stateHash" type="id-long"/>
+        <field name="alertState" type="text-short"/>
+        <field name="statusId" type="id"/>
+        <field name="reasonCode" type="text-short"/>
+        <field name="scopeHash" type="text-medium"/>
+        <field name="attemptCount" type="number-integer"/>
+        <field name="attemptDate" type="date-time"/>
+        <relationship type="one" related="moqui.report.Definition"/>
+        <relationship type="one" related="moqui.security.UserAccount"/>
+        <relationship type="one" title="ReportDelivery" related="moqui.basic.StatusItem"/>
+        <index name="ALERT_DLV_UNIQUE" unique="true"><index-field name="definitionId"/><index-field name="channel"/><index-field name="groupId"/><index-field name="userId"/></index>
+        <index name="ALERT_DLV_USER"><index-field name="userId"/><index-field name="attemptDate"/></index>
     </entity>
 </entities>

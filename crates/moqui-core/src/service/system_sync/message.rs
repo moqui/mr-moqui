@@ -84,6 +84,14 @@ pub(super) fn send_rest(
         ));
         return Ok(BTreeMap::new());
     };
+    // A remote an administrator disabled, or whose endpoint changed and has not passed a test since
+    // (org.moqui.admin.ConfigurationServices store#Connection), is sent nothing.
+    if field(&remote, "disabled") == "Y" {
+        add_error(format!(
+            "System message {message_id} remote {remote_id} is disabled until a test of it passes, not sending."
+        ));
+        return Ok(BTreeMap::new());
+    }
 
     let url = {
         let _frame = crate::script::ContextFrame::push();
@@ -102,7 +110,13 @@ pub(super) fn send_rest(
         .unwrap_or_else(|| "text/plain".to_string());
     let body = field(&message, "messageText");
     let mut headers = vec![("content-type".to_string(), content_type)];
-    let auth = field(&remote, "messageAuthEnumId");
+    // How a message sent is signed in or signed: sendAuthEnumId when the remote has one ("if send and receive auth
+    // mechanisms are different"), else messageAuthEnumId, which is also how a received message is verified. A remote
+    // started in Admin (org.moqui.admin.ConfigurationServices) keeps the two apart, so choosing how it sends never
+    // opens how it receives.
+    let auth = Some(field(&remote, "sendAuthEnumId"))
+        .filter(|auth| !auth.is_empty())
+        .unwrap_or_else(|| field(&remote, "messageAuthEnumId"));
     match auth.as_str() {
         "" | "SmatLogin" => {
             let credentials = format!("{}:{}", field(&remote, "username"), field(&remote, "password"));
@@ -113,7 +127,10 @@ pub(super) fn send_rest(
         }
         "SmatHmacSha256" | "SmatHmacSha256Timestamp" | "SmatHmacSha512" => {
             let header_name = field(&remote, "authHeaderName");
-            let secret = field(&remote, "sharedSecret");
+            // sendSharedSecret when the secret for sending differs from the one received messages are verified by
+            let secret = Some(field(&remote, "sendSharedSecret"))
+                .filter(|secret| !secret.is_empty())
+                .unwrap_or_else(|| field(&remote, "sharedSecret"));
             if header_name.is_empty() || secret.is_empty() {
                 add_error(format!(
                     "Send REST HMAC for remote {remote_id} needs authHeaderName and sharedSecret"
@@ -152,7 +169,8 @@ pub(super) fn send_rest(
         headers,
         body: Some(body),
         timeout: None,
-        deny_internal: false,
+        // a remote that may not use the private network (a delegated administrator's on a production instance)
+        deny_internal: field(&remote, "allowPrivateNetwork") == "N",
     })?;
     let status = response.status;
     if !(200..300).contains(&status) {
