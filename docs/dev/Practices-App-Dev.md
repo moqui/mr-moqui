@@ -73,7 +73,7 @@ Each component is its own git repository. Commit in each repository that a chang
 | --- | --- |
 | `./moq run` | Start the server on the dev conf. |
 | `./moq test <component> [--spec S] [--feature F]` | Server specs on a fresh database ([Testing](../Build-Test.md#component-specs)). |
-| `./moq test-client <component> --serve -- --spec S` | Client specs against a started server ([Client-Testing](Client-Testing.md)). |
+| `./moq test-client <component> --serve -- --spec S` | Client specs against a started server ([JS-Test-Client](JS-Test-Client.md)). |
 | `./moq test-apps` | The regression suite of every app component, before a commit ([The two suites](../Build-Test.md#the-two-suites)). |
 | `./moq accept <component> [--spec S]` | The acceptance suite (`acceptance/`), only when asked or when you add or change an acceptance test. |
 | `target/release/moqui lint --screens [report-file]` | Screen expression lint. The argument is the report's **output** file, not a screen to check: passing a screen path overwrites that screen. |
@@ -96,7 +96,7 @@ Each component is its own git repository. Commit in each repository that a chang
 - **Products notes:** `runtime/component/mr-boss/docs/ProductsSharedScreens.md` (shared mounts and the shared
   context) and `ProductsImplementation.md`.
 - **Framework guides in `docs/`:** [Services](../logic/Services.md) (errors, transactions, probe calls), [Testing](../Build-Test.md#component-specs),
-  [Client-Testing](Client-Testing.md), [TUI](../ui/TUI.md), [Moqui-Java-Migration](Moqui-Java-Migration.md) (with the
+  [JS-Test-Client](JS-Test-Client.md), [TUI](../ui/TUI.md), [Moqui-Java-Migration](Moqui-Java-Migration.md) (with the
   deliberate differences listed in [Parity-Diffs](../../plans/Parity-Diffs.md)), [Native-Components](Native-Components.md),
   [Web-Scripts](../interfaces/Web-Scripts.md).
 - **Schemas:** `runtime/base-component/framework/xsd/xml-screen-3.xsd`, `xml-form-3.xsd`, `service-definition-3.xsd`,
@@ -131,7 +131,8 @@ Each component is its own git repository. Commit in each repository that a chang
   group can reach.
 - **Restricted values stay on the server.** A service leaves out of its answer what the user may not read (costs,
   supplier prices, margins); nothing is fetched and then hidden by the screen. Declare a service's out-parameters:
-  declared ones are the only ones returned (none declared returns everything, internal helpers included).
+  an XML-action or script service returns only the declared ones, read by name
+  ([JS-Service-Scripts](JS-Service-Scripts.md#results)).
 - **Compare reason codes, not message text.** A policy that refuses returns a code (`denied(reason, message)` in
   `mantle/product/PricePolicy.js`), and callers test the code. Matching on an error's wording breaks when the wording
   changes. A new policy module starts with codes, as Accounting's `AccountingPolicy.js` does through
@@ -143,6 +144,11 @@ Each component is its own git repository. Commit in each repository that a chang
   specs.
 
 ## 4. Services and scripts
+
+References: [JS-Service-Scripts](JS-Service-Scripts.md) (what a service body sees and returns),
+[JS-XML-Actions](JS-XML-Actions.md) (actions and expressions as JavaScript), [JS-Core-API](JS-Core-API.md) (`ec.*`),
+[JS-Globals](JS-Globals.md) (decimals, dates, the helper objects) and
+[JS-Framework-Services](JS-Framework-Services.md) (the services the framework ships).
 
 ### Definitions
 
@@ -269,6 +275,9 @@ to Rust:
   history stays readable.
 
 ## 5. Screens
+
+References: [JS-Screen-Scripts](JS-Screen-Scripts.md) (actions, transitions and widget expressions) and
+[JS-Templates-Macros](JS-Templates-Macros.md) (render modes and `sri`).
 
 ### Structure
 
@@ -508,5 +517,5 @@ write one for a business rule you add or change (its result and its refusals) an
     in `actions` (report options, a record's link parameters);
   - Prettier with the repository's config shows no change.
 - The design and implementation records updated: what was built, the commits, the findings, and what is left for later.
-  Commands in a record name no machine's paths (`/Applications/...`, `/tmp/...`): point to [Testing](Testing.md) for
+  Commands in a record name no machine's paths (`/Applications/...`, `/tmp/...`): point to [Build-Test](../Build-Test.md) for
   the Chromium setting, and to a report file of the reader's choosing.

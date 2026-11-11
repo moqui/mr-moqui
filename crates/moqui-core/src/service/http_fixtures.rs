@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The HTTP fixtures, for specs (no Java counterpart; docs/Build-Test.md, "HTTP fixtures"). While a spec has
+//! The HTTP fixtures, for specs (no Java counterpart; docs/dev/JS-Testkit.md, "HTTP fixtures"). While a spec has
 //! `ec.factory.getTool('HttpFixtures')` enabled, every outbound HTTP request of the process, with or without an
 //! execution context (`ec.service.rest()` `call()` and `send()`, `remote-rest` services, `http` locations), is answered by the first
 //! fixture it matches, in the order they were added, and recorded; one that matches none fails as a transport error

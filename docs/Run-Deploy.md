@@ -357,7 +357,7 @@ reported has no level.
 | `moqui save-db <cluster-dir> <dump-file>` | `pg_dump` of an embedded cluster, usually `runtime/db/embedded` |
 | `moqui load-save <cluster-dir> <dump-file>` | `pg_restore` into an embedded cluster; stop the server first |
 | `moqui tui [--path P] [--user U]` | The apps in this terminal, on this runtime; `--server URL` reaches a running server instead ([TUI](ui/TUI.md)) |
-| `moqui test`, `moqui test-client` | Component specs ([Testing](Build-Test.md#component-specs), [Client-Testing](dev/Client-Testing.md)) |
+| `moqui test`, `moqui test-client` | Component specs ([Testing](Build-Test.md#component-specs), [JS-Test-Client](dev/JS-Test-Client.md)) |
 | `moqui test-load` | A component's load script against a running server ([Load-Runner](tools/Load-Runner.md)) |
 | `moqui lint`, `check`, `refs`, `types`, `lsp` | Checks and tools for developers |
 | `moqui version` | The version, package and features of this binary |

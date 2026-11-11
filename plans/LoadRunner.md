@@ -34,7 +34,7 @@ it is one in-memory runner per server:
 It can only call services in the same server, has no scenario of several steps, keeps no history, and needs the
 `SERVICE_LOAD_RUNNER` permission (sealed, on `ADMIN_ADV`).
 
-**`load(opts)` in `moqui test-client`** ([Client-Testing, Load and parallel](../docs/dev/Client-Testing.md#load-and-parallel);
+**`load(opts)` in `moqui test-client`** ([JS-Test-Client, Load and parallel](../docs/dev/JS-Test-Client.md#load-and-parallel);
 `crates/moqui-host/src/test_client/load.rs`, `prelude.js`, `mod.rs` `run_load`) already runs virtual users from
 outside a server. Each user is a thread with its own script engine and HTTP session (cookie jar and session token).
 It has `users`, `duration`, `iterations`, `rampUp`, `think`, and `setup`, `scenario` and `teardown` functions. Each
@@ -221,7 +221,7 @@ omission). Iterations that could not start for lack of a free user are counted a
 no user has taken it by the time of the start after it (one interval late, and at least 25 ms), or when the scenario
 ends with it due. Each iteration of a rate scenario is also a `<scenario> iteration` step sample from its scheduled
 start. The semantics of stages and of a live change (`Load::set_target`, `update#LoadRunUsers`) are in
-`test_client/load/schedule.rs` and [Load-Runner](../docs/tools/Load-Runner.md#rates-and-stages).
+`test_client/load/schedule.rs` and [JS-Test-Load](../docs/dev/JS-Test-Load.md#rates-and-stages).
 
 ## 6. Kinds of load
 
@@ -535,7 +535,7 @@ either suite, since no suite starts a Java server.
 
 - `docs/tools/Load-Runner.md`, new: writing a script, the API added, running from Tools and from the command, reading
   a result, comparing, the tarpit and generator notes, what is approximate.
-- [Client-Testing](../docs/dev/Client-Testing.md): the Load section points to it, and gains `load({ script })`,
+- [JS-Test-Client](../docs/dev/JS-Test-Client.md): the Load section points to it, and gains `load({ script })`,
   `step`, `pause`, `urlParam`, the bins and the approximate percentiles.
 - [Build-Test](../docs/Build-Test.md) and the `moq` help: `test-load`.
 - `runtime/base-component/tools/README.md`: the `Load/` row, `test/load/`; mr-marble's README: its script.
@@ -547,7 +547,7 @@ either suite, since no suite starts a Java server.
 ## 16. Risks and open questions
 
 1. **The generator's own ceiling.** A user is a thread with an interpreted script engine (about 1 MB and 7 ms to
-   start, [Client-Testing](../docs/dev/Client-Testing.md#load-and-parallel)). A few hundred users a process is the
+   start, [JS-Test-Client](../docs/dev/JS-Test-Client.md#load-and-parallel)). A few hundred users a process is the
    scale. [Performance](Performance.md)'s target of 100,000 a second is far past what scripted users generate from
    one process; that target stays with the speed tests and a native driver. L1 measures the ceiling (requests a
    second per core for a script of one request against a fixture that answers at once) and the guide states it; the
@@ -579,7 +579,7 @@ either suite, since no suite starts a Java server.
 
 **What the build settled** (L1 to L6):
 
-- 1: the ceiling was not measured; Client-Testing gives the scale (a few hundred users a process) and the `generator`
+- 1: the ceiling was not measured; JS-Test-Client gives the scale (a few hundred users a process) and the `generator`
   block's `cpu` and `scriptShare` show a run at it. Still to measure.
 - 2: a run from Tools against this server is `in-target`, with a `generator.note` and the server samples; one
   against another server is `in-server`, since the generator is this server's process and not the target's.

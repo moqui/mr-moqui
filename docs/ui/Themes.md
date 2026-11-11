@@ -76,7 +76,8 @@ by the digest of its base64 text) is read and served as before.
 Anything else, `.liquid` included, is refused. Ids and names are letters, digits, `-` and `_`. A JSON object with a key
 given twice is an error. Without `order` a template has at most one section.
 
-Templates are the fancy dialect (`${}`, `<#if>`, `<#list>`, `<#assign>`) with HTML escaping, in the locked renderer.
+Templates are the fancy dialect (`${}`, `<#if>`, `<#list>`, `<#assign>`) with HTML escaping, in the locked renderer
+([JS-Fancy-Templates](../dev/JS-Fancy-Templates.md#locked-templates)).
 What a template sees:
 
 - the caller's view (design-shop §12.3's contract), with `settings` (the global settings), `components` (placeholders

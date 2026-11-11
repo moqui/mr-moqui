@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui test-client --video` (docs/dev/Client-Testing.md): a video of each spec, from the CDP screencast of its
+//! `moqui test-client --video` (docs/dev/JS-Test-Client.md): a video of each spec, from the CDP screencast of its
 //! pages, and the timeline of its features on the same clock.
 //!
 //! The clock is Unix seconds from the start of the spec: a frame's time is its `metadata.timestamp` (when it was

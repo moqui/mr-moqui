@@ -6,8 +6,9 @@ Load in a running server, the `moqui test-load` command, and a client spec's `lo
 request in a histogram per name and in one-second bins, so a run of any length keeps bounded memory and has a time
 series, and a finished run is a JSON result file that Tools lists, compares and imports. Tools › Load replaces Java's
 Service Load Runner screen. The design is [plans/LoadRunner.md](../../plans/LoadRunner.md); this guide says what was
-built. The harness the users run on (sessions, `http`, `files`, `assert`, the `load(opts)` options) is
-[Client-Testing](../dev/Client-Testing.md#load-and-parallel).
+built: running a script from Tools and from the command, reading a result, and the security of a run in a server.
+Writing a script is in [JS-Test-Load](../dev/JS-Test-Load.md), and the harness the users run on (sessions, `http`,
+`files`, `assert`, the `load(opts)` options) in [JS-Test-Client](../dev/JS-Test-Client.md#load-and-parallel).
 
 The code:
 
@@ -37,101 +38,20 @@ The code:
 
 ## Writing a script
 
-A script is `<component>/test/load/<Name>.load.js`. Its top level calls `plan({...})` once and `scenario(name, {...})`
-once for each group of users. The file is evaluated once to read the plan, and once whole in each user's engine, so
-constants and helpers at its top level work in every scenario. The top level makes no request: one there throws "a
-load script makes no request at its top level". `moqui test` and `moqui test-client` run only `*.spec.js`
-files, so neither runs a `.load.js`.
+A script is `<component>/test/load/<Name>.load.js`: `plan({...})` once, for its title, the kinds of load it makes,
+its params and thresholds, and `scenario(name, {...})` once for each group of users, with `run(user, iteration)`
+and its users, duration, iterations, pauses, rate or stages. The API is in [JS-Test-Load](../dev/JS-Test-Load.md):
 
-```js
-plan({
-    title: "Order to cash",
-    description: "A sales order through Marble ERP's screens",
-    uses: ["http"],
-    params: {
-        appPath: { default: "/apps/marble", description: "The app's mount" },
-        user: { default: "john.doe", description: "The account every virtual user logs in as" },
-        password: { default: "moqui", secret: true, description: "Its password" },
-        pdf: { default: true, description: "Get the order as PDF" },
-    },
-    thresholds: { errorRate: 0, names: { "create order": { p95: 500 } } },
-})
+- [`plan(options)`](../dev/JS-Test-Load.md#planoptions) and [`params`](../dev/JS-Test-Load.md#params), with how a
+  value is resolved from the run, the environment and its default;
+- [`scenario(name, options)`](../dev/JS-Test-Load.md#scenarioname-options);
+- [rates and stages](../dev/JS-Test-Load.md#rates-and-stages), with dropped starts and coordinated omission;
+- [the globals](../dev/JS-Test-Load.md#globals): `step`, `pause`, `fail`, `service.call`, `response.urlParam`, and
+  those of a client spec;
+- [requests, names and errors](../dev/JS-Test-Load.md#requests-names-and-errors).
 
-const app = params.appPath.replace(/\/+$/, "")          // once per user, in its own engine
-
-scenario("sales", {
-    users: 10, rampUp: 1, iterations: 5, pause: { gaussian: [200, 50] }, newSession: true,
-    run(user, iteration) {
-        step("order to cash", () => {
-            http.post("/Login/login", { form: { username: params.user, password: params.password }, name: "login" })
-            const created = http.post(app + "/Order/FindOrder/createOrder",
-                { form: { customerPartyId: "CustJqp" }, follow: true, name: "create order" })
-            const orderId = created.urlParam("orderId")
-            if (!orderId) fail(`create order: no orderId in ${created.url}`)
-            // ...
-        })
-    },
-})
-```
-
-**`plan(options)`**
-
-| Option | |
-| --- | --- |
-| `title`, `description` | Shown in the script list and on a run |
-| `uses` | The kinds of load the script makes: `"http"` (the default) and `"service"`. A run that cannot make one is refused: `service` needs a run in the server with the service target, `http` a target URL |
-| `params` | `{ name: { default, description, options, secret, required } }`, or `{ name: defaultValue }`. A value is of its default's type (text, number, true or false) and is refused when it is not one; `options` is a closed list; `required` with no default must be given. The resolved values are the global `params`. When the plan declares params, a run that gives one it does not declare is refused |
-| `thresholds` | Limits the run is checked against at its end: `errorRate`, and in milliseconds `min`, `mean`, `p50`, `p90`, `p95`, `p99`, `max`, over every request or under `names: { "<name>": {...} }` for one name. An unknown metric is refused before the users start, and a name with no samples breaks its limits |
-
-**`scenario(name, options)`** is a group of users that start together with the other scenarios, each with its own ramp
-and its users numbered from 0.
-
-| Option | |
-| --- | --- |
-| `users`, `rampUp`, `duration`, `iterations`, `think` | As in [`load(opts)`](../dev/Client-Testing.md#load-and-parallel). These are defaults that a run overrides |
-| `pause` | A wait before each request, not timed: milliseconds, `[min, max]` (uniform) or `{ gaussian: [mean, deviation] }` (JMeter's Gaussian Random Timer, clamped at 0) |
-| `newSession` | `true` starts each iteration on a fresh `http` session, with no cookies or token (JMeter's "clear cookies each iteration") |
-| `rate`, `stages` | An arrival rate, and the target over time ([Rates and stages](#rates-and-stages)) |
-| `setup(user)`, `run(user, iteration)`, `teardown(user)` | `setup` once per user before the timed part, `run` repeated, `teardown` after. `this` in each is an object of the user's own, kept across its iterations |
-
-**The globals** a script adds to the harness's (`http`, `session`, `ws`, `files`, `sleep`, `log`, `params`, `server`)
-are `step`, `pause`, `fail`, `response.urlParam` and `service.call`
-([Client-Testing, Load and parallel](../dev/Client-Testing.md#load-and-parallel)). All but `service` work in any
-client spec too; `service.call` runs only in a run from Tools ([Security](#security)).
-
-A request is named by its `name` option, else by its method and path. Give the same names on two servers and Compare
-lines them up: OrderToCash names each step of the walk the same on MR Moqui and on Java.
-
-**Files.** `files.read` and `files.list` stay inside the script's component, so a script reads its data
-(`test/load/data/customers.csv`) from there.
-
-**State.** Values do not cross between users: each has its own engine. Keep a user's state in `this` or in variables
-at the top of the file, which each user has its own copy of.
-
-### Rates and stages
-
-Without `rate` a scenario is closed: each user waits for its answer before its next request, so a slow server lowers
-the load on itself.
-
-- **Stages of users.** `stages: [{ duration, users }]` ramps the target users linearly within each stage, from the
-  stage before's target (the first from 0), and holds the last one's until `duration` when that is longer. User `u`
-  (from 0) starts an iteration only while `u` is under the target; a user above it finishes its iteration and waits,
-  untimed and not counted as active. `users` is the most (by default the largest stage's). `rampUp` is not used with
-  stages: the first stage is the ramp.
-- **An arrival rate.** `rate` is iterations started per second, and `users` the most that run at once (by default the
-  highest rate rounded up, which assumes an iteration takes a second or less). `stages: [{ duration, rate }]` changes
-  the rate over time the same way (not with `rate`). Starts are on a schedule from when the scenario's first user is
-  ready, and a free user takes the next one once it is due. With `rate`, `iterations` is the scenario's starts in all.
-- **Dropped starts.** A start no user has taken by the time of the next one (or 25 ms after its own, if that is later),
-  or still due when the scenario ends, is dropped: it does not run, and the result counts it under `dropped`.
-
-**Coordinated omission.** In a closed model a server that stalls for a second stalls its users too, so the requests
-they would have sent in that second are never sent and never timed, and the percentiles look better than what a user
-saw. With a rate the schedule keeps going while the server stalls. A request is still timed from its send, but the
-first `step` of an iteration is timed from its scheduled start when it started late, and each iteration is also a
-sample `<scenario> iteration` (kind `step`) timed from its scheduled start, pauses left out. The wait for a free user
-shows in those two, and starts that no user could take show as `dropped`. Read a rate run's latency from the
-`<scenario> iteration` row and the dropped count, not from the request rows alone.
+A scenario's settings are defaults. A run overrides them: the New run form in Tools, the options of the command
+below, or the settings of a client spec's `load({ script })`.
 
 ## Running from Tools › Load
 
@@ -245,7 +165,7 @@ result. A second Ctrl-C ends at once, with no result.
 
 From a client spec, `load({ script: "test/load/OrderToCash.load.js", params, scenarios: { sales: { users: 2,
 iterations: 1 } } })` runs a script of the spec's component and returns the result
-([Client-Testing](../dev/Client-Testing.md#load-and-parallel)), so an acceptance spec checks that a script still walks
+([JS-Test-Client](../dev/JS-Test-Client.md#load-and-parallel)), so an acceptance spec checks that a script still walks
 its flow (`mr-marble/acceptance/client/OrderToCash.spec.js`).
 
 ## Reading a result
@@ -310,7 +230,7 @@ every other one is dropped. A run against another server has none: the target's 
   in-process service calls; its HTTP requests meet the target's tarpits like any other. A wall of 429s in a name's
   outcomes is the usual sign.
 - **The generator's ceiling.** A user is a thread with an interpreted script engine
-  ([Client-Testing](../dev/Client-Testing.md#load-and-parallel) gives its size and the scale of users a process). A script that does much work between requests (large regular
+  ([JS-Test-Client](../dev/JS-Test-Client.md#load-and-parallel) gives its size and the scale of users a process). A script that does much work between requests (large regular
   expressions over each page) reaches the ceiling sooner; the generator block shows it. Past it, run several
   `moqui test-load` processes; their results are not merged, and Compare shows them side by side.
 - **Capacity from another machine.** A run from Tools shares the server's CPUs and, for services, its process. That

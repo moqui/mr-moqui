@@ -791,7 +791,7 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
     {
         moqui_lib::env::set_property("instance_purpose", "dev");
     }
-    // a spec may answer outbound HTTP with fixtures (docs/Build-Test.md, "HTTP fixtures"), only in a test run
+    // a spec may answer outbound HTTP with fixtures (docs/dev/JS-Testkit.md, "HTTP fixtures"), only in a test run
     moqui_core::service::http_fixtures::allow();
     let mode = database_mode(&args, &components)?;
     let started = Instant::now();

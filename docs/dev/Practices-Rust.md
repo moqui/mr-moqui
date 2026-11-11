@@ -131,7 +131,7 @@ a reader (or an agent) loading the code does not load its tests too.
   `common::serial` fail without it. A server's boot writes process-wide properties, so two in one process would share
   them; a test that only loads data with no property takes `common::shared` in the test binary's process.
 - JavaScript specs (`*.spec.js`) run under `moqui test` and `moqui test-client`, not Node ([Testing](../Build-Test.md#component-specs),
-  [Client-Testing](Client-Testing.md)).
+  [JS-Test-Client](JS-Test-Client.md)).
 
 ## 4. Working on Rust code
 

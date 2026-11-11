@@ -113,7 +113,7 @@ These are server-side proofs, not client specs: framework specs (`./moq test fra
 | A load-wrap on a worker runs as the user: an ADMIN not in `ADMIN_ADV` cannot load an `ADMIN_ADV` membership, and `runAsUser` restores the caller's authorization state | `LoadWrap` (tools) |
 | A database job is cancelled through its recorded backend, leaves an invalid index, and its rerun drops and builds it again | `a_concurrent_index_job_runs_is_cancelled_through_the_backend_and_runs_again` (`crates/moqui-host/tests/it/database_jobs.rs`) |
 
-HMAC signing in the client is `hmac.sha256Base64` and `hmac.sha256Timestamp` ([Client-Testing](../dev/Client-Testing.md)). They match `SmatHmacSha256` and `SmatHmacSha256Timestamp`.
+HMAC signing in the client is `hmac.sha256Base64` and `hmac.sha256Timestamp` ([JS-Test-Client](../dev/JS-Test-Client.md)). They match `SmatHmacSha256` and `SmatHmacSha256Timestamp`.
 
 ### Not applicable
 
