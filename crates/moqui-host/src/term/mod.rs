@@ -36,6 +36,7 @@ use tokio::sync::watch;
 
 pub(crate) mod access;
 mod apps;
+mod attention;
 #[cfg(feature = "devtools")]
 pub(crate) mod audit;
 #[cfg(all(feature = "devtools", unix))]
@@ -46,6 +47,8 @@ pub(crate) mod held;
 pub(crate) mod hold;
 #[cfg(all(feature = "devtools", unix))]
 pub(crate) mod host;
+#[cfg(feature = "devtools")]
+mod notice;
 pub(crate) mod registry;
 mod ring;
 mod services;

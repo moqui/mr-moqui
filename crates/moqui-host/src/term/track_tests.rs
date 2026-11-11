@@ -65,15 +65,19 @@ fn progress_marks_and_a_programs_status_are_read() {
     assert_eq!(tracker.feed(b"\x1b]9;4;0;0\x07").progress, Some(None));
     let changes = tracker.feed(b"\x1b]133;A\x07$ \x1b]133;B\x07");
     assert_eq!(changes.marks, vec!['A', 'B']);
-    assert_eq!(changes.status.as_deref(), Some("idle"));
+    assert_eq!(changes.status, None, "a prompt alone says nothing of a command");
     assert_eq!(tracker.feed(b"\x1b]133;C\x07").status.as_deref(), Some("working"));
     let changes = tracker.feed(b"\x1b]133;D;2\x07");
     assert_eq!(
         (changes.status.as_deref(), changes.exit_status),
         (Some("error"), Some(2))
     );
+    let changes = tracker.feed(b"\x1b]133;D;0\x07\x1b]133;A\x07");
+    assert_eq!(changes.status.as_deref(), Some("done"), "the prompt after keeps done");
+    assert!(!changes.program);
     let changes = tracker.feed(b"\x1b]7501;state=blocked;kind=permission\x07");
     assert_eq!(changes.status.as_deref(), Some("blocked"));
+    assert!(changes.program);
     assert_eq!(changes.status_text.as_deref(), Some("permission"));
     assert_eq!(
         tracker.feed(b"\x1b]7501;working;progress=10\x07").progress,

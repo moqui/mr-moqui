@@ -80,6 +80,8 @@ pub(crate) struct Changes {
     pub notify: Option<(String, String)>,
     /// The program's status (OSC 7501, or from OSC 133): idle, working, done, blocked, error.
     pub status: Option<String>,
+    /// The status is the program's own word (OSC 7501), which outranks every other source (§11.1).
+    pub program: bool,
     /// Text with the status: a blocked program's kind, an error.
     pub status_text: Option<String>,
     /// Progress in percent; `Some(None)` when it was cleared.
@@ -310,7 +312,8 @@ impl Tracker {
                 if let Some(mark) = parts.next().and_then(|mark| mark.chars().next()) {
                     changes.marks.push(mark);
                     match mark {
-                        'A' => changes.status = Some("idle".to_string()),
+                        // a prompt after a command keeps the command's done or error on the dot
+                        'A' if !matches!(changes.status.as_deref(), Some("done" | "error")) => {}
                         'C' => changes.status = Some("working".to_string()),
                         'D' => {
                             let exit = parts.next().and_then(|code| code.trim().parse::<i32>().ok());
@@ -336,6 +339,7 @@ impl Tracker {
                     let state = value.to_ascii_lowercase();
                     if matches!(state.as_str(), "idle" | "working" | "done" | "blocked" | "error") {
                         changes.status = Some(state);
+                        changes.program = true;
                     }
                 }
                 "kind" | "reason" | "message" | "text" => changes.status_text = Some(clean(value)),

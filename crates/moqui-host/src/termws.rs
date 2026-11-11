@@ -273,6 +273,12 @@ fn parse_attach(text: &str) -> Option<(u16, u16, Option<u64>)> {
     Some((dimension("cols", 20)?, dimension("rows", 10)?, have))
 }
 
+/// Whether the page looks at the session: `{"type":"view","visible":true}`.
+fn parse_view(text: &str) -> Option<bool> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    (value.get("type")?.as_str()? == "view").then(|| value.get("visible")?.as_bool())?
+}
+
 /// An acknowledgement: `{"type":"ack","count":N}`.
 fn parse_ack(text: &str) -> Option<u64> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
@@ -406,6 +412,8 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
                 Some(Ok(Message::Text(text))) => {
                     if let Some(count) = parse_ack(&text) {
                         kept.ack(client, count).await;
+                    } else if let Some(visible) = parse_view(&text) {
+                        kept.view(client, visible).await;
                     } else if let Some((cols, rows)) = parse_resize(&text) {
                         kept.resize(client, cols, rows).await;
                     }
@@ -567,7 +575,7 @@ async fn run_ephemeral(mut socket: WebSocket, opened: Opened, mut shutdown: toki
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_ack, parse_attach, parse_resize, session_of};
+    use super::{parse_ack, parse_attach, parse_resize, parse_view, session_of};
 
     #[test]
     fn a_resize_is_read_and_bounded() {
@@ -601,6 +609,7 @@ mod tests {
         assert_eq!(parse_attach(r#"{"type":"ack","count":1}"#), None);
         assert_eq!(parse_ack(r#"{"type":"ack","count":100000}"#), Some(100_000));
         assert_eq!(parse_ack(r#"{"type":"attach","count":1}"#), None);
+        assert_eq!(parse_view(r#"{"type":"view","visible":false}"#), Some(false));
     }
 
     #[test]

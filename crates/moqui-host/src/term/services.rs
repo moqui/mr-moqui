@@ -385,7 +385,13 @@ fn update_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &Entit
     let Some(session) = Registry::of(&factory).find(&text(parameters, "sessionId"), &username) else {
         return refuse("notFound", "No such terminal session");
     };
-    session.rename(text(parameters, "title").trim());
+    if parameters.contains_key("title") {
+        session.rename(text(parameters, "title").trim());
+    }
+    let notify = text(parameters, "notify");
+    if !notify.is_empty() {
+        session.set_notify(&notify);
+    }
     answer("session", &session.to_json())
 }
 

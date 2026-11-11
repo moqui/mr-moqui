@@ -1221,9 +1221,9 @@
             command-line="${terminal_command_line}" host-sessions="${terminal_host_sessions}" remote="${terminal_remote}"
             remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
             host-directory="">
-        <host-profile name="shell" title="Shell"/>
-        <host-profile name="bash" title="bash" command="bash" login="true"/>
-        <host-profile name="zsh" title="zsh" command="zsh" login="true"/>
+        <host-profile name="shell" title="Shell" integration="true"/>
+        <host-profile name="bash" title="bash" command="bash" login="true" integration="true"/>
+        <host-profile name="zsh" title="zsh" command="zsh" login="true" integration="true"/>
     </terminal>
 
     <!--
@@ -1527,6 +1527,7 @@
         <load-data location="component://framework/data/SftpDemoData.xml"/>
         <load-data location="component://framework/data/AdminConfigurationData.xml"/>
         <load-data location="component://framework/data/AdminAuditData.xml"/>
+        <load-data location="component://framework/data/TerminalTypeData.xml"/>
         <load-data location="component://framework/data/TerminalSetupData.xml"/>
     </entity-facade>
     <database-list>

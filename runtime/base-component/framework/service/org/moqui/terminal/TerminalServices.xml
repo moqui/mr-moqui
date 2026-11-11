@@ -58,10 +58,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="update" noun="TerminalSession" type="rust" location="moqui_host::term::services::update_terminal_session"
             allow-remote="false" transaction="ignore">
         <description>Name a session: title, the user's own name for it; empty gives the title back to its program (OSC 0
-            and 2).</description>
+            and 2). notify: whether it notifies, default (the user's settings), all or off.</description>
         <in-parameters>
             <parameter name="sessionId" required="true"/>
             <parameter name="title"/>
+            <parameter name="notify"/>
         </in-parameters>
         <out-parameters>
             <parameter name="session" type="Map"/>

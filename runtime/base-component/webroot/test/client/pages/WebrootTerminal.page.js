@@ -260,3 +260,32 @@ test("a floating terminal takes the session's element, stays out of Assist's rea
         body.remove()
     }
 })
+
+test("prompts the shell marks are places to jump to in the scrollback", async () => {
+    const store = moqui.terminal
+    const key = "marks-" + (++made)
+    const screen = document.createElement("div")
+    screen.style.cssText = "width:800px;height:200px"
+    document.body.appendChild(screen)
+    try {
+        store.create(key, { kind: "host", connect: false, send: () => {} })
+        store.attach(key, screen)
+        const term = store.session(key).term
+        let text = ""
+        for (let n = 0; n < 3; n++) {
+            text += "\u001b]133;A\u0007$ cmd " + n + "\r\n"
+            for (let line = 0; line < 40; line++) text += "output " + n + "." + line + "\r\n"
+        }
+        await write(term, text)
+        assert.equal(store.session(key).prompts.length, 3, "a marker for each prompt")
+        term.scrollToBottom()
+        assert.ok(store.jumpPrompt(key, true))
+        const line = term.buffer.active.viewportY
+        assert.ok(term.buffer.active.getLine(line).translateToString(true).startsWith("$ cmd 2"), "the last prompt")
+        assert.ok(store.jumpPrompt(key, true))
+        assert.ok(term.buffer.active.getLine(term.buffer.active.viewportY).translateToString(true).startsWith("$ cmd 1"))
+    } finally {
+        store.end(key)
+        screen.remove()
+    }
+})

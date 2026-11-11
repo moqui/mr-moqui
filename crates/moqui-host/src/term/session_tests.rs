@@ -65,6 +65,8 @@ fn session(kind: Kind, replay: usize, detached_for: Duration) -> (Arc<Registry>,
         slot: None,
         on_end: None,
         held: false,
+        agent: false,
+        attend: None,
     };
     let session = spawn(&registry, spec, program_value);
     (

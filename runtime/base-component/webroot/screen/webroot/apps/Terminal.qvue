@@ -65,6 +65,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <q-item-section side>
                         <div class="row no-wrap">
                             <q-btn v-if="terminalState.sessions[id].state !== 'ended'" flat dense round size="sm" icon="sym_o_tab" :aria-label="labels.showHere" @click="showHere(id)"><q-tooltip>{{labels.showHere}}</q-tooltip></q-btn>
+                            <q-btn flat dense round size="sm" :icon="notifyIcon(id)" :aria-label="labels.notify" @click="cycleNotify(id)"><q-tooltip>{{labels.notify}}: {{notifyLabel(id)}}</q-tooltip></q-btn>
                             <q-btn flat dense round size="sm" icon="sym_o_edit" :aria-label="labels.rename" @click="renameSession(id)"><q-tooltip>{{labels.rename}}</q-tooltip></q-btn>
                             <q-btn v-if="terminalState.sessions[id].state !== 'ended'" flat dense round size="sm" icon="sym_o_power_settings_new" :aria-label="labels.end" @click="endSession(id)"><q-tooltip>{{labels.end}}</q-tooltip></q-btn>
                             <q-btn v-else flat dense round size="sm" icon="sym_o_delete" :aria-label="labels.forget" @click="forgetSession(id)"><q-tooltip>{{labels.forget}}</q-tooltip></q-btn>
@@ -85,8 +86,17 @@ along with this software (see the LICENSE.md file). If not, see
             <q-input dense outlined v-model="draft.fontFamily" :label="labels.fontFamily" :hint="labels.fontFamilyHint"></q-input>
             <q-input dense outlined type="number" v-model.number="draft.scrollback" :label="labels.scrollback" :min="0" :max="100000"></q-input>
             <q-select dense outlined emit-value map-options v-model="draft.opensFirst" :options="firstChoices" :label="labels.opensFirst"></q-select>
+            <q-select dense outlined emit-value map-options v-model="draft.bell" :options="bellChoices" :label="labels.bell"></q-select>
             <q-toggle v-model="draft.copyOnSelect" :label="labels.copyOnSelect"></q-toggle>
             <q-toggle v-model="draft.pasteProtection" :label="labels.pasteProtection"></q-toggle>
+        </q-card-section>
+        <q-card-section class="q-pt-none" id="TerminalNotify">
+            <div class="text-subtitle2">{{labels.notifications}}</div>
+            <div class="text-caption m-terminal-muted">{{labels.notificationsHint}}</div>
+            <q-toggle v-model="draft.notifyBlocked" :label="labels.notifyBlocked"></q-toggle>
+            <q-toggle v-model="draft.notifyDone" :label="labels.notifyDone"></q-toggle>
+            <q-toggle v-model="draft.notifyBell" :label="labels.notifyBell"></q-toggle>
+            <q-input dense outlined type="number" v-model.number="draft.notifyLongCommandSeconds" :min="0" :label="labels.notifyLong" :hint="labels.notifyLongHint"></q-input>
         </q-card-section>
         <q-card-section v-if="canHost" class="q-pt-none" id="TerminalProfiles">
             <div class="text-subtitle2">{{labels.profiles}}</div>
@@ -139,11 +149,21 @@ module.exports = {
                 profiles: localize("Your programs"), profilesHint: localize("Programs the New menu opens on the server, such as an agent or a log; the command must be on the server's PATH."),
                 profileName: localize("Name"), profileCommand: localize("Command"), profileArgs: localize("Arguments"),
                 profileDirectory: localize("Directory"), profileAgent: localize("Agent"), remove: localize("Remove"),
-                addProfile: localize("Add a program") } };
+                addProfile: localize("Add a program"), notify: localize("Notifications"),
+                notifyDefault: localize("as in Settings"), notifyAll: localize("always"), notifyOff: localize("off"),
+                bell: localize("Bell"), bellVisual: localize("A flash"), bellSound: localize("A sound"), bellNone: localize("Nothing"),
+                notifications: localize("Notifications"), notificationsHint: localize("For a session you are not looking at, on this device and your others."),
+                notifyBlocked: localize("When a session waits for you"), notifyDone: localize("When a session is done"),
+                notifyBell: localize("When a session rings the bell"), notifyLong: localize("When a command runs longer than (seconds)"),
+                notifyLongHint: localize("0 for never; needs the shell integration"),
+                previousPrompt: localize("Previous prompt"), nextPrompt: localize("Next prompt") } };
     },
     computed: {
         options() { return this.terminalState.options || { kinds: ["apps"], profiles: [] }; },
         canHost() { return (this.options.kinds || []).includes("host"); },
+        bellChoices() {
+            return [{ label: this.labels.bellVisual, value: "visual" }, { label: this.labels.bellSound, value: "sound" }, { label: this.labels.bellNone, value: "none" }];
+        },
         canFloat() { return !this.solo && !this.narrow && !!(moqui.floats && moqui.floats.canFloat && moqui.floats.canFloat()); },
         narrow() { return !!(this.$q && this.$q.screen && this.$q.screen.width < 600); },
         zoomedPane() { const tab = this.tab(); return tab ? tab.zoom || "" : ""; },
@@ -177,6 +197,9 @@ module.exports = {
         this.offKeys = moqui.keymap && moqui.keymap.registerScope ? moqui.keymap.registerScope("terminal", this.keyBindings()) : null;
         if (this.solo) { this.openSolo(); return; }
         moqui.terminal.workspace = this;
+        // a notification's link names the session to show
+        const linked = new URLSearchParams(window.location.search).get("session");
+        if (linked) this.terminalState.pendingShow = linked;
         this.restore();
     },
     beforeUnmount() {
@@ -415,6 +438,15 @@ module.exports = {
             });
         },
         forgetSession(id) { this.store().forget(id); },
+        notifyIcon(id) {
+            const notify = (this.terminalState.sessions[id] || {}).notify || "default";
+            return notify === "off" ? "sym_o_notifications_off" : notify === "all" ? "sym_o_notifications_active" : "sym_o_notifications";
+        },
+        notifyLabel(id) {
+            const notify = (this.terminalState.sessions[id] || {}).notify || "default";
+            return notify === "off" ? this.labels.notifyOff : notify === "all" ? this.labels.notifyAll : this.labels.notifyDefault;
+        },
+        cycleNotify(id) { this.store().cycleNotify(id).catch((err) => this.notify(err)); },
         // ---- settings ----
         openSettings() {
             this.draft = Object.assign({}, this.store().state.settings);
@@ -450,6 +482,8 @@ module.exports = {
                 { keys: "Ctrl+Shift+ArrowRight", action: "terminalNextPane", label: localize("Next pane"), run: () => this.moveFocus(true) },
                 { keys: "Ctrl+Shift+ArrowLeft", action: "terminalPreviousPane", label: localize("Previous pane"), run: () => this.moveFocus(false) },
                 { keys: "Ctrl+Shift+F", action: "terminalFind", label: localize("Find in the terminal"), run: () => { const pane = this.focusedSession(); if (pane) this.store().openSearch(pane); } },
+                { keys: "Ctrl+Shift+ArrowUp", action: "terminalPreviousPrompt", label: localize("Previous prompt"), run: () => { const key = this.focusedSession(); if (key) this.store().jumpPrompt(key, true); } },
+                { keys: "Ctrl+Shift+ArrowDown", action: "terminalNextPrompt", label: localize("Next prompt"), run: () => { const key = this.focusedSession(); if (key) this.store().jumpPrompt(key, false); } },
                 { keys: "Ctrl+Shift+G", action: "terminalLeave", label: localize("Leave the terminal"), run: () => { const canvas = document.getElementById("m-canvas"); if (canvas) { canvas.setAttribute("tabindex", "-1"); canvas.focus(); } } }
             ];
         }

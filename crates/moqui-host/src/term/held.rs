@@ -297,6 +297,7 @@ impl Holder {
                     cwd: text("cwd"),
                     cols: 80,
                     rows: 24,
+                    agent: false,
                     program: earlier_program(path.clone(), id),
                 },
             );
@@ -371,6 +372,7 @@ impl Holder {
                             cwd: text("cwd"),
                             cols: size("cols", 80),
                             rows: size("rows", 24),
+                            agent: meta.get("agent").and_then(serde_json::Value::as_bool).unwrap_or(false),
                             program,
                         },
                     );

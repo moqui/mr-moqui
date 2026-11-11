@@ -711,3 +711,107 @@ fn a_host_session_outlives_a_restart_of_the_server() {
     page.call("close", Some(serde_json::json!({"sessionId": id})));
     assert!(read_messages_until(&mut back, "never").is_err());
 }
+
+/// Attention (plans/Terminal-Fancy.md §11): bash with the shell integration says when a command runs and how it ended,
+/// and a session that asks for its user while the page does not look at it sends a TerminalAttention notification.
+#[test]
+fn a_session_says_its_status_and_notifies_when_nobody_looks() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let helper = helper_property();
+    let gate = crate::common::start_with_conf_properties(
+        "termws-attention",
+        None,
+        r#"<terminal><host-profile name="plain" command="sh"/>
+            <host-profile name="ib" command="bash" integration="true"/></terminal>"#,
+        &[("instance_purpose", "dev"), (helper.0, &helper.1)],
+    );
+    let page = Page::signed_in(gate.server.address(), "john.doe");
+    gate.server.factory().flush_sessions().unwrap();
+    let capture = moqui_core::notify::capture::NotificationCapture::of(gate.server.factory());
+    capture.enable().unwrap();
+
+    if crate::termws::on_path("bash") {
+        let opened = page.call("open", Some(serde_json::json!({"kind": "host", "profileName": "ib"})));
+        let id = opened["sessionId"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{opened}"))
+            .to_string();
+        let mut socket = page.attach(&id, None);
+        read_messages_until(&mut socket, "\x1b]133;A").unwrap();
+        socket.send(Message::Binary(b"false\r".to_vec().into())).unwrap();
+        let (texts, bytes) = read_messages_until(&mut socket, "\x1b]133;D;1").unwrap();
+        assert!(
+            String::from_utf8_lossy(&bytes).contains("\x1b]133;C"),
+            "the command's start is marked"
+        );
+        let mut states = texts;
+        while !states.iter().any(|text| text.contains(r#""status":"error""#)) {
+            states.extend(read_messages_until(&mut socket, "\x1b]133;A").unwrap().0);
+        }
+        page.call("close", Some(serde_json::json!({"sessionId": id})));
+    }
+
+    let opened = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain"})),
+    );
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+    let mut socket = page.attach(&id, None);
+    socket
+        .send(Message::Text(r#"{"type":"view","visible":false}"#.into()))
+        .unwrap();
+    socket
+        .send(Message::Binary(
+            b"printf '\\033]7501;state=blocked;kind=permission\\007'\r"
+                .to_vec()
+                .into(),
+        ))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let sent = capture.messages(Some("TerminalAttention"));
+        if let Some(message) = sent.first() {
+            let text = moqui_lib::json::to_json(message).to_string();
+            assert!(text.contains("is waiting") && text.contains(&id), "{text}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "no TerminalAttention notification");
+        let _ = socket.read();
+    }
+    let listed = page.call("sessions", None);
+    let session = listed["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|session| session["id"] == id.as_str())
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        (session["status"].clone(), session["unseen"].clone()),
+        (serde_json::json!("blocked"), serde_json::json!(true))
+    );
+    // looking at it again clears unseen
+    socket
+        .send(Message::Text(r#"{"type":"view","visible":true}"#.into()))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while page.call("sessions", None)["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|session| session["unseen"] == true)
+    {
+        assert!(Instant::now() < deadline, "still unseen");
+        let _ = socket.read();
+    }
+}
+
+/// Whether `program` is on the PATH.
+pub fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
+}

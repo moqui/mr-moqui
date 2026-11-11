@@ -153,6 +153,8 @@ impl Registry {
             slot: None,
             on_end: None,
             held: false,
+            agent: false,
+            attend: None,
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -258,6 +260,8 @@ impl Registry {
             slot: Some(slot),
             on_end: spec.on_end,
             held: false,
+            agent: false,
+            attend: Some(super::notice::hook(factory)),
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -280,7 +284,7 @@ impl Registry {
     /// program on a pty. The caller checked who may and from where.
     pub fn open_host(
         self: &Arc<Self>,
-        factory: &ExecutionContextFactory,
+        factory: &Arc<ExecutionContextFactory>,
         spec: HostSpec,
     ) -> Result<Arc<Session>, String> {
         let slot = super::host::HostSessions::of(factory).take(&spec.username)?;
@@ -310,6 +314,7 @@ impl Registry {
                 "username": spec.username, "profile": spec.profile.name, "kind": "host",
                 "title": if spec.title.is_empty() { spec.profile.title.clone() } else { spec.title.clone() },
                 "cwd": spec.launch.directory.to_string_lossy(), "cols": spec.launch.cols, "rows": spec.launch.rows,
+                "agent": spec.profile.agent,
             });
             let (holder, id, launch, replay) = (Arc::clone(&holder), spec.id.clone(), spec.launch.clone(), self.replay);
             match crate::edge::block_on(async move { holder.open(&id, &launch, replay, meta).await }) {
@@ -340,6 +345,8 @@ impl Registry {
             slot: Some(slot),
             on_end: spec.on_end,
             held: in_holder,
+            agent: spec.profile.agent,
+            attend: Some(super::notice::hook(factory)),
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -362,6 +369,8 @@ impl Registry {
             replay: self.replay,
             slot,
             held: true,
+            agent: adopted.agent,
+            attend: Some(super::notice::hook(factory)),
         };
         session::spawn(self, spec, adopted.program);
     }
@@ -386,6 +395,7 @@ pub(crate) struct Adopted {
     pub cwd: String,
     pub cols: u16,
     pub rows: u16,
+    pub agent: bool,
     pub program: Program,
 }
 

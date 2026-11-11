@@ -321,6 +321,63 @@ pub(crate) fn environment(of: &EnvFor<'_>) -> Vec<(String, String)> {
     env.into_iter().collect()
 }
 
+/// The shell integration scripts (§11.2), written under the runtime's `tmp` when a session uses them.
+const BASH_INTEGRATION: &str = include_str!("integration/moqui.bash");
+const ZSH_INTEGRATION: &str = include_str!("integration/zshenv");
+
+/// Which shell `program` is, for its integration: bash or zsh, else none. macOS's own `/bin/bash` (3.2) is left alone,
+/// as Ghostty leaves it.
+fn integrated_shell(program: &str) -> Option<&'static str> {
+    let name = Path::new(program).file_name()?.to_string_lossy();
+    match name.as_ref() {
+        "bash" if !(cfg!(target_os = "macos") && program == "/bin/bash") => Some("bash"),
+        "zsh" => Some("zsh"),
+        _ => None,
+    }
+}
+
+/// Start the shell of `launch` with its integration: bash in POSIX mode with `ENV` naming the script (which reads the
+/// user's startup files as a login shell would, when it is one), zsh with `ZDOTDIR` naming the script's directory (the
+/// user's own `ZDOTDIR` kept in `MOQUI_ZDOTDIR`). A script that cannot be written leaves the shell as it was.
+fn integrate(launch: &mut Launch, runtime: &Path) {
+    let Some(shell) = launch.argv.first().and_then(|program| integrated_shell(program)) else {
+        return;
+    };
+    let dir = runtime.join("tmp").join("term-integration");
+    let (file, text) = match shell {
+        "bash" => (dir.join("moqui.bash"), BASH_INTEGRATION),
+        _ => (dir.join("zsh").join(".zshenv"), ZSH_INTEGRATION),
+    };
+    let written = file
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::write(&file, text));
+    if let Err(err) = written {
+        tracing::warn!(
+            "the terminal's shell integration was not written to {}: {err}",
+            file.display()
+        );
+        return;
+    }
+    let mut set = |name: &str, value: String| {
+        launch.env.retain(|(key, _)| key != name);
+        launch.env.push((name.to_string(), value));
+    };
+    if shell == "bash" {
+        set("ENV", file.to_string_lossy().into_owned());
+        if launch.arg0.take().is_some() {
+            // a login shell in POSIX mode would read the profile itself, then ENV: the script reads it instead
+            set("MOQUI_SHELL_LOGIN", "1".to_string());
+        }
+        launch.argv.insert(1, "--posix".to_string());
+    } else {
+        if let Some(own) = std::env::var_os("ZDOTDIR") {
+            set("MOQUI_ZDOTDIR", own.to_string_lossy().into_owned());
+        }
+        set("ZDOTDIR", dir.join("zsh").to_string_lossy().into_owned());
+    }
+}
+
 /// What a host program is started with.
 #[derive(Clone)]
 pub(crate) struct Launch {
@@ -361,14 +418,18 @@ impl Launch {
             username,
             profile,
         });
-        Self {
+        let mut launch = Self {
             argv,
             arg0,
             directory,
             env,
             cols: size.0,
             rows: size.1,
+        };
+        if profile.integration {
+            integrate(&mut launch, runtime);
         }
+        launch
     }
 
     /// The command line for the audit and the log.

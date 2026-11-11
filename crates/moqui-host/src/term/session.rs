@@ -34,6 +34,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 
+use super::attention::{Attention, Status};
 use super::registry::Registry;
 use super::ring::Ring;
 use super::track::Tracker;
@@ -140,6 +141,11 @@ enum Command {
         client: u64,
         count: u64,
     },
+    /// Whether the client's page is looking at the session (§11.1): shown, in a page the user sees.
+    View {
+        client: u64,
+        visible: bool,
+    },
     End {
         reason: String,
     },
@@ -169,6 +175,8 @@ pub(crate) struct Info {
     pub progress: Option<u8>,
     /// Set when attention was wanted and nobody has looked since (§11.1).
     pub unseen: bool,
+    /// Whether this session notifies: default (the user's settings), all, or off.
+    pub notify: String,
 }
 
 /// A kept session: found in the [`Registry`] by its id, only by its own user.
@@ -186,6 +194,23 @@ pub(crate) struct Session {
     commands: mpsc::Sender<Command>,
     input: mpsc::Sender<Vec<u8>>,
     next_client: AtomicU64,
+    /// The user typed since the pump last looked.
+    typed: std::sync::atomic::AtomicBool,
+}
+
+/// What a session that wants its user while nobody looks tells (§11.1): the notification's sender.
+pub(crate) type Attend = std::sync::Arc<dyn Fn(Notice) + Send + Sync>;
+
+/// A session's attention, for its user. Only a build with command and host sessions sends one.
+#[cfg_attr(not(feature = "devtools"), allow(dead_code))]
+pub(crate) struct Notice {
+    pub id: String,
+    pub username: String,
+    pub title: String,
+    pub cwd: String,
+    /// The session's own notify setting.
+    pub notify: String,
+    pub attention: Attention,
 }
 
 /// What [`spawn`] needs beside the program.
@@ -208,6 +233,10 @@ pub(crate) struct Spec {
     pub on_end: Option<Box<dyn FnOnce(u32, String) + Send>>,
     /// The holder runs its program: the server's stop lets go of it rather than ending it.
     pub held: bool,
+    /// An agent's session: its quiet output reads as done (§11.1).
+    pub agent: bool,
+    /// What an attention is told to; none for a session that notifies nothing (the apps).
+    pub attend: Option<Attend>,
 }
 
 pub(crate) fn now_millis() -> i64 {
@@ -264,7 +293,22 @@ impl Session {
 
     /// The client's input, to the program; false when the program no longer reads.
     pub async fn write(&self, bytes: Vec<u8>) -> bool {
+        self.typed.store(true, Ordering::Relaxed);
         self.input.send(bytes).await.is_ok()
+    }
+
+    /// Whether the client's page looks at the session now.
+    pub async fn view(&self, client: u64, visible: bool) {
+        let _ = self.commands.send(Command::View { client, visible }).await;
+    }
+
+    /// The session's own notify setting: default, all or off.
+    pub fn set_notify(&self, notify: &str) {
+        let notify = match notify {
+            "all" | "off" => notify,
+            _ => "default",
+        };
+        lock(&self.info).notify = notify.to_string();
     }
 
     /// Let go of a held session, which the holder keeps: the server is stopping.
@@ -302,6 +346,7 @@ impl Session {
             "statusText": info.status_text,
             "progress": info.progress,
             "unseen": info.unseen,
+            "notify": info.notify,
             "started": self.started,
             "lastOutput": info.last_output,
         })
@@ -324,11 +369,13 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
             cwd: spec.cwd.clone(),
             cols: spec.cols,
             rows: spec.rows,
+            notify: "default".to_string(),
             ..Info::default()
         }),
         commands,
         input,
         next_client: AtomicU64::new(1),
+        typed: std::sync::atomic::AtomicBool::new(false),
     });
     registry.insert(Arc::clone(&session));
     let pump = Pump {
@@ -343,6 +390,8 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         detached_for: spec.detached_for,
         _slot: spec.slot,
         on_end: spec.on_end,
+        status: Status::for_agent(spec.agent),
+        attend: spec.attend,
     };
     crate::edge::handle().spawn(pump.run(program, commands_in, input_in));
     session
@@ -359,6 +408,8 @@ struct Client {
     last_ack: Instant,
     /// Its output is not read until it catches up.
     paused: bool,
+    /// Its page looks at the session (§11.1): it says so, and is taken to until it says not.
+    visible: bool,
 }
 
 impl Client {
@@ -381,6 +432,8 @@ struct Pump {
     detached_for: Duration,
     _slot: Option<SessionSlot>,
     on_end: Option<Box<dyn FnOnce(u32, String) + Send>>,
+    status: Status,
+    attend: Option<Attend>,
 }
 
 /// Write the client's input to the program until the session ends it or the program stops reading.
@@ -430,6 +483,8 @@ impl Pump {
         let mut hung_up: Option<Instant> = None;
         let mut reason: Option<String> = None;
         let mut released = false;
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             let paused = self.client.as_ref().is_some_and(|client| client.paused);
             let ack_deadline = self
@@ -488,6 +543,7 @@ impl Pump {
                     hung_up = Some(Instant::now());
                     self.hang_up(&mut program, &mut stop_input);
                 }
+                _ = tick.tick() => self.tick(),
                 () = tokio::time::sleep_until(ack_deadline), if paused => {
                     tracing::info!("{label}: its window acknowledged nothing for {ACK_WAIT:?}; let go");
                     self.let_go("the window stopped answering");
@@ -559,13 +615,81 @@ impl Pump {
                 info.cwd.clone_from(cwd);
             }
         });
-        if changes.any() {
-            if let Some(client) = &self.client {
-                let _ = client.out.try_send(Out::Text(self.state_message()));
-            }
+        let (status_changed, attention) = self.status.output(&changes, std::time::Instant::now());
+        if let Some(progress) = changes.progress {
+            self.session.update_info(|info| info.progress = progress);
+        }
+        if status_changed {
+            self.publish_status();
+        }
+        if let Some(attention) = attention {
+            self.attend(attention);
+        }
+        if changes.any() || status_changed {
+            self.send_state();
         }
         if self.client.is_some() {
             self.pending.extend_from_slice(bytes);
+        }
+    }
+
+    fn send_state(&self) {
+        if let Some(client) = &self.client {
+            let _ = client.out.try_send(Out::Text(self.state_message()));
+        }
+    }
+
+    fn publish_status(&self) {
+        let (status, text) = (self.status.status.clone(), self.status.text.clone());
+        self.session.update_info(|info| {
+            info.status = status;
+            info.status_text = text;
+        });
+    }
+
+    /// Whether the user looks at the session now.
+    fn looking(&self) -> bool {
+        self.client.as_ref().is_some_and(|client| client.visible)
+    }
+
+    /// The session wants its user: unseen, and told when nobody looks.
+    fn attend(&mut self, attention: Attention) {
+        if self.looking() {
+            return;
+        }
+        self.session.update_info(|info| info.unseen = true);
+        let Some(attend) = &self.attend else {
+            return;
+        };
+        let info = self.session.info();
+        attend(Notice {
+            id: self.session.id.clone(),
+            username: self.session.username.clone(),
+            title: info.title,
+            cwd: info.cwd,
+            notify: info.notify,
+            attention,
+        });
+    }
+
+    /// Each second: typing answers a bell, and quiet output ends working.
+    fn tick(&mut self) {
+        let mut changed = false;
+        if self.session.typed.swap(false, Ordering::Relaxed) {
+            changed |= self.status.input();
+            if self.session.info().unseen {
+                self.session.update_info(|info| info.unseen = false);
+                changed = true;
+            }
+        }
+        let (quiet, attention) = self.status.tick(std::time::Instant::now());
+        changed |= quiet;
+        if changed {
+            self.publish_status();
+            self.send_state();
+        }
+        if let Some(attention) = attention {
+            self.attend(attention);
         }
     }
 
@@ -646,6 +770,15 @@ impl Pump {
                     }
                 }
             }
+            Command::View { client, visible } => {
+                if let Some(current) = self.client.as_mut().filter(|current| current.id == client) {
+                    current.visible = visible;
+                    if visible && self.session.info().unseen {
+                        self.session.update_info(|info| info.unseen = false);
+                        self.send_state();
+                    }
+                }
+            }
             Command::End { .. } | Command::Release => {}
         }
     }
@@ -681,6 +814,7 @@ impl Pump {
             acked: from,
             last_ack: Instant::now(),
             paused: false,
+            visible: true,
         });
         if let Some(client) = self.client.as_mut() {
             client.paused = client.behind() > HIGH_WATER;
@@ -731,6 +865,7 @@ impl Pump {
             "status": info.status,
             "statusText": info.status_text,
             "progress": info.progress,
+            "unseen": info.unseen,
         })
         .to_string()
     }

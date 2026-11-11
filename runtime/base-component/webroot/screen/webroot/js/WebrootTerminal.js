@@ -55,7 +55,8 @@
     // A refusal of an attach to a command line or a shell, as the socket's close reason (crates/moqui-host/src/termws.rs).
     const REFUSALS = { reauthRequired: "Confirm it is you to open this terminal from here.", notAvailable: "This terminal is not available here." };
     const SETTINGS_PREFERENCE = "TERMINAL_CONFIG";
-    const DEFAULT_SETTINGS = { fontSize: 14, fontFamily: "", scrollback: 5000, copyOnSelect: false, pasteProtection: true, opensFirst: "" };
+    const DEFAULT_SETTINGS = { fontSize: 14, fontFamily: "", scrollback: 5000, copyOnSelect: false, pasteProtection: true, opensFirst: "", bell: "visual",
+        notifyBlocked: true, notifyDone: false, notifyBell: false, notifyLongCommandSeconds: 0 };
 
     function readSettings() {
         const prefs = (moqui.config && moqui.config.preferences) || {};
@@ -217,6 +218,8 @@
                 session.received = session.drawn = session.acked = Number(message.from) || 0;
             }
             if (info) Object.assign(info, { title: message.title, cwd: message.cwd, attached: true });
+            session.visibleSent = null;
+            reportView(session);
         } else if (message.type === "state") {
             if (info) {
                 info.title = message.title;
@@ -224,9 +227,77 @@
                 info.status = message.status;
                 info.statusText = message.statusText;
                 info.progress = message.progress;
+                if (message.unseen !== undefined) info.unseen = message.unseen;
             }
         } else if (message.type === "ended") {
             if (info) Object.assign(info, { state: "ended", exitStatus: message.status, reason: message.reason });
+        }
+    }
+
+    // Whether the user sees the session (§11.1): shown in a view, in a page they look at, not in a hidden or minimized
+    // window. The server tells nobody of what the user sees.
+    function seen(session) {
+        const doc = root.document;
+        if (!doc || doc.visibilityState === "hidden" || !session.el.isConnected) return false;
+        return !(session.el.closest && session.el.closest(".m-float--hidden"));
+    }
+
+    function reportView(session) {
+        if (!session.attached) return;
+        const visible = seen(session);
+        if (session.visibleSent === visible) return;
+        session.visibleSent = visible;
+        control(session, { type: "view", visible });
+        const info = state.sessions[session.key];
+        if (visible && info) info.unseen = false;
+    }
+
+    function reportViews() {
+        for (const session of sessions.values()) reportView(session);
+    }
+
+    let viewWatch = null;
+    function watchViews() {
+        if (viewWatch || !root.document) return;
+        root.document.addEventListener("visibilitychange", reportViews);
+        // a window minimized or hidden changes no event of the page's own: looked at each 2 s
+        viewWatch = root.setInterval(reportViews, 2000);
+    }
+
+    // A prompt's place in the scrollback (OSC 133;A, §11.2), for jumping between prompts: xterm.js passes over the
+    // sequence, so the page marks the line.
+    function onMark(session, data) {
+        if (String(data).charAt(0) !== "A") return false;
+        const marker = session.term.registerMarker(0);
+        if (marker) {
+            session.prompts.push(marker);
+            marker.onDispose(() => {
+                session.prompts = session.prompts.filter((other) => other !== marker);
+            });
+        }
+        return false;
+    }
+
+    // The bell (§9.6): a flash of the terminal, a sound, or nothing.
+    let bellAudio = null;
+    function onBell(session) {
+        const bell = state.settings.bell || "visual";
+        if (bell === "visual") {
+            session.el.classList.add("m-terminal-bell");
+            root.setTimeout(() => session.el.classList.remove("m-terminal-bell"), 150);
+        } else if (bell === "sound" && root.AudioContext) {
+            try {
+                bellAudio = bellAudio || new root.AudioContext();
+                const tone = bellAudio.createOscillator();
+                const gain = bellAudio.createGain();
+                gain.gain.value = 0.05;
+                tone.frequency.value = 880;
+                tone.connect(gain).connect(bellAudio.destination);
+                tone.start();
+                tone.stop(bellAudio.currentTime + 0.08);
+            } catch (e) {
+                /* no sound */
+            }
         }
     }
 
@@ -456,8 +527,11 @@
             );
             const fitAddon = new root.FitAddon.FitAddon();
             term.loadAddon(fitAddon);
-            const session = { key, kind, term, fit: fitAddon, el, socket: null, received: 0, drawn: 0, acked: 0, opened: false, shown: Date.now(), retries: 0 };
+            const session = { key, kind, term, fit: fitAddon, el, socket: null, received: 0, drawn: 0, acked: 0, opened: false, shown: Date.now(), retries: 0, prompts: [] };
             sessions.set(key, session);
+            term.parser.registerOscHandler(133, (data) => onMark(session, data));
+            term.onBell(() => onBell(session));
+            watchViews();
             // wide characters and emoji at their width, plain URLs as links, and search (§9.4)
             if (root.Unicode11Addon) {
                 term.loadAddon(new root.Unicode11Addon.Unicode11Addon());
@@ -535,6 +609,7 @@
             }
             fit(session);
             attach(session);
+            reportView(session);
         },
 
         // Take the session's element out of `container`, if it is there; nothing is disposed.
@@ -543,7 +618,32 @@
             if (session && session.el.parentNode && (!container || session.el.parentNode === container)) {
                 session.shown = Date.now();
                 session.el.parentNode.removeChild(session.el);
+                reportView(session);
             }
+        },
+
+        // Scroll to the prompt before (or after) the top of the view (§11.2).
+        jumpPrompt(key, back) {
+            const session = sessions.get(key);
+            if (!session || !session.prompts.length) return false;
+            const top = session.term.buffer.active.viewportY;
+            const lines = session.prompts.map((marker) => marker.line).filter((line) => line >= 0).sort((a, b) => a - b);
+            const target = back ? lines.filter((line) => line < top).pop() : lines.find((line) => line > top);
+            if (target === undefined) {
+                if (!back) session.term.scrollToBottom();
+                return false;
+            }
+            session.term.scrollToLine(target);
+            return true;
+        },
+
+        // A session's own notify setting, cycled: default (the user's settings), all, off.
+        cycleNotify(id) {
+            const info = state.sessions[id];
+            const next = { default: "all", all: "off", off: "default" }[(info && info.notify) || "default"];
+            return request("rename", { sessionId: id, notify: next }).then((out) => {
+                if (out.session && state.sessions[id]) Object.assign(state.sessions[id], out.session);
+            });
         },
 
         focus(key) {
@@ -716,8 +816,11 @@
         // ---- floating terminals ----
 
         // The shell's start: the float kind, the quick terminal's key, and the floating terminals of the last visit back.
-        startShell() {
+        startShell(vm) {
             registerFloat();
+            // a session that wants its user (a notification of the TerminalAttention topic): the list and the header count
+            if (vm && vm.notificationClient && !terminal.attentionOff)
+                terminal.attentionOff = vm.notificationClient.registerListener("TerminalAttention", () => terminal.refresh().catch(() => {}));
             if (moqui.keymap && moqui.keymap.registerScope && !terminal.keysOff)
                 terminal.keysOff = moqui.keymap.registerScope("global", [
                     { keys: "Ctrl+`", action: "terminalToggle", label: t("Show or hide the quick terminal"), run: () => terminal.toggleQuick() }
