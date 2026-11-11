@@ -265,7 +265,7 @@ fn handle(
     }
     // A registered shared device (user/device.rs): its request runs as its display account, only within its route
     // group, and the web session never holds that identity. A device that is no more is refused here, whatever it asks.
-    let device = match user::device::begin_request(request) {
+    let mut device = match user::device::begin_request(request) {
         Ok(user::device::DeviceRequest::None) => None,
         Ok(user::device::DeviceRequest::Active(device)) => Some(device),
         Ok(user::device::DeviceRequest::Refused(refusal)) => {
@@ -305,9 +305,6 @@ fn handle(
         &merged
     };
     let _web = web::install(parameters.clone());
-    if let Some(cookie) = device.as_ref().and_then(|device| device.set_cookie.clone()) {
-        web::add_header("Set-Cookie", cookie);
-    }
     if let Some(sink) = sink {
         web::stream::offer(sink);
     }
@@ -397,6 +394,18 @@ fn handle(
         )?;
         response
     };
+    // a device's daily new secret goes on a response that reaches its browser with the header (this one, not streamed,
+    // not one a shared cache may keep), else it is not made: a browser that misses it is stopped as a copy (user/device.rs)
+    if let Some(device) = device.as_mut().filter(|_| !is_public(&response)) {
+        match device.rotate() {
+            Ok(Some(cookie)) => response.headers.push(("Set-Cookie".to_string(), cookie)),
+            Ok(None) => {}
+            Err(err) => tracing::error!(
+                "Shared device {}: its secret was not replaced: {err}",
+                device.scope().device_id
+            ),
+        }
+    }
     not_modified(request, &mut response);
     // the preferences this request set, for the page to apply at once (docs/ui/Qvt-Client.md, Preferences)
     let changed = web::take_changed_preferences();
@@ -583,6 +592,10 @@ fn dispatch_request(
             .iter()
             .any(|route| route.screen_location == root)
         {
+            // a token route is in no route group: a shared device's request does not reach its token check
+            if let Some(scope) = user::device::current_scope() {
+                return Ok(web::json_error_of(&user::device::refused_route(&scope)));
+            }
             return token_route::dispatch(
                 factory,
                 request,

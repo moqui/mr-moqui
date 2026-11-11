@@ -68,3 +68,16 @@ feature("a forged or revoked device cookie is refused and removed (#name)", {
         res.cookie("moqui.device") != null && res.cookie("moqui.device").maxAge == 0
     },
 })
+
+feature("a device's daily new secret reaches its browser on any answer it may keep, a refusal too", {
+    when() {
+        const res = session().get("/apps/ScreenTree", { headers: { Cookie: "moqui.device=SEC_DEV_ROTATE." + REVOKED_SECRET } })
+        const renewed = res.cookie("moqui.device")
+        return { res, renewed, next: renewed && session().get("/apps/AppList", { headers: { Cookie: "moqui.device=" + renewed.value } }) }
+    },
+    then({ res, renewed, next }) {
+        res.status == 403
+        renewed != null && renewed.httpOnly && renewed.value.startsWith("SEC_DEV_ROTATE.") && !renewed.value.endsWith(REVOKED_SECRET)
+        next.status == 200
+    },
+})

@@ -210,13 +210,16 @@ fn a_replaced_secret_presented_after_its_grace_stops_the_device() {
     let first = cookie_of_header(&redeem(&code, "", "", false).unwrap().unwrap().set_cookie);
     let now = now_millis();
     set_device(&facade, &[("rotatedDate", stamp_value(now - ROTATE_MILLIS - MINUTE))]);
+    // due, but a request whose response cannot carry the new secret (an error, a streamed or cacheable answer) makes none
+    drop(active(&first).unwrap());
+    assert!(text(&device(&facade), "previousHash").is_empty());
     let second = {
-        let guard = active(&first).unwrap();
-        cookie_of_header(guard.set_cookie.as_deref().expect("a new secret"))
+        let mut guard = active(&first).unwrap();
+        cookie_of_header(&guard.rotate().unwrap().expect("a new secret"))
     };
     assert_ne!(first, second);
     assert!(
-        active(&first).is_some_and(|guard| guard.set_cookie.is_none()),
+        active(&first).is_some_and(|mut guard| guard.rotate().unwrap().is_none()),
         "the grace"
     );
     assert!(active(&second).is_some());
@@ -300,6 +303,13 @@ fn a_display_account_never_signs_in_and_must_stay_fit_for_its_device() {
 
     set_device(&facade, &[("ipAllowed", Value::string("10.0.*.*"))]);
     assert_eq!(refusal(&cookie), Some(Refusal::Address));
+    assert!(
+        matches!(
+            begin_with_cookie(&cookie, "", "", false).unwrap(),
+            DeviceRequest::Refused(Refusal::Address)
+        ),
+        "an address that is not known matches no pattern"
+    );
     set_device(&facade, &[("ipAllowed", Value::Null)]);
 
     let mut account = facade

@@ -396,6 +396,10 @@ feature("the shared device fixtures", {
             device("SEC_DEV_REVOKED", { deviceName: "Security test revoked wall", credentialHash: DEVICE_SECRET_HASH,
                 redeemedDate: new Date(now).toISOString(), rotatedDate: new Date(now).toISOString(),
                 revokedDate: new Date(now).toISOString(), stopReason: "revoked" })
+            // a device whose secret is a day old: its next request replaces it
+            device("SEC_DEV_ROTATE", { deviceName: "Security test rotating wall", credentialHash: DEVICE_SECRET_HASH,
+                redeemedDate: new Date(now).toISOString(), rotatedDate: new Date(now - day - 60000).toISOString(),
+                lastSeenDate: new Date(now).toISOString() })
             return {
                 pending: one("moqui.security.DeviceCredential", { deviceId: "SEC_DEV_1" }),
                 revoked: one("moqui.security.DeviceCredential", { deviceId: "SEC_DEV_REVOKED" }),

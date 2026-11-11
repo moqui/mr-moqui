@@ -123,13 +123,55 @@ pub enum DeviceRequest {
 #[must_use = "dropping the guard ends the device's request"]
 pub struct DeviceGuard {
     scope: Arc<DeviceScope>,
-    /// The cookie of a secret this request rotated to, for the response.
-    pub set_cookie: Option<String>,
+    /// The daily replacement of the secret, when it is due: made only by [`DeviceGuard::rotate`], once the response
+    /// that will carry the new cookie is known.
+    rotation: Option<Rotation>,
+}
+
+/// A replacement of a device's secret that is due ([`ROTATE_MILLIS`]).
+struct Rotation {
+    device_id: String,
+    /// The hash the browser's secret has now: the write holds only while it is still the stored one.
+    current: String,
+    max_age_seconds: i64,
+    https: bool,
 }
 
 impl DeviceGuard {
     pub fn scope(&self) -> &Arc<DeviceScope> {
         &self.scope
+    }
+
+    /// Replace the device's secret when its day is up, and the `Set-Cookie` header of the new one: called only for a
+    /// response that will reach the browser with the header (not one already streaming, not one a shared cache may
+    /// keep), since a browser that never gets the new secret is stopped as a copy once the grace ends. `None` when no
+    /// replacement is due, or another request of the device made it first (that one's response carries the cookie).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the random source fails or the device cannot be written.
+    pub fn rotate(&mut self) -> Result<Option<String>, Error> {
+        let Some(rotation) = self.rotation.take() else {
+            return Ok(None);
+        };
+        let _authz = without_authz();
+        let facade = entity_facade()?;
+        let secret = super::factor::random_string(SECRET_LENGTH)?;
+        let fields = vec![
+            ("credentialHash", Value::string(secret_hash(&secret)?)),
+            ("previousHash", Value::string(&rotation.current)),
+            ("rotatedDate", stamp_value(now_millis())),
+        ];
+        let guard = Condition::equals("credentialHash", Value::string(&rotation.current));
+        if write_device(&facade, &rotation.device_id, Some(guard), fields)? == 0 {
+            return Ok(None);
+        }
+        Ok(Some(format_cookie(
+            &rotation.device_id,
+            &secret,
+            rotation.max_age_seconds,
+            rotation.https,
+        )))
     }
 }
 
@@ -398,8 +440,10 @@ fn note_refusal(facade: &EntityFacade, device: &EntityValue, summary: &str) {
     let recent = facade
         .find(AUDIT_LOG)
         .and_then(|find| {
+            // the whole of ENTAUDLOG_FLD1PK (entity, field, display account), then the device
             find.eq("changedEntityName", Value::string(USER_ACCOUNT))
                 .eq("changedFieldName", Value::string("deviceRefused"))
+                .eq("pkPrimaryValue", Value::string(text(device, "displayUserId")))
                 .eq("pkSecondaryValue", Value::string(&device_id))
                 .condition(Condition::greater("changedDate", stamp_value(now - 10 * MINUTE)))
                 .use_cache(false)
@@ -502,7 +546,8 @@ pub fn begin_with_cookie(cookie: &str, client_ip: &str, agent: &str, https: bool
         return Ok(DeviceRequest::Refused(Refusal::Stopped));
     }
     let allowed = text(&device, "ipAllowed");
-    if !allowed.is_empty() && !client_ip.is_empty() && !crate::web::ip_matches(&allowed, client_ip) {
+    // an address that is not known matches no pattern: a device held to addresses fails closed
+    if !allowed.is_empty() && !crate::web::ip_matches(&allowed, client_ip) {
         note_refusal(
             &facade,
             &device,
@@ -542,25 +587,17 @@ pub fn begin_with_cookie(cookie: &str, client_ip: &str, agent: &str, https: bool
             tracing::warn!(device_id = %device_id, "shared device: last seen not written: {err}");
         }
     }
-    // a new secret each day, for the browser that holds the current one
-    let mut set_cookie = None;
-    if is_current && now - rotated > ROTATE_MILLIS {
-        let secret = super::factor::random_string(SECRET_LENGTH)?;
-        let fields = vec![
-            ("credentialHash", Value::string(secret_hash(&secret)?)),
-            ("previousHash", Value::string(&current)),
-            ("rotatedDate", stamp_value(now)),
-        ];
-        let guard = Condition::equals("credentialHash", Value::string(&current));
-        // another request of the device may have replaced it first: that one's response carries the cookie
-        if write_device(&facade, device_id, Some(guard), fields)? > 0 {
-            let left = millis(&device, "expireDate").map_or(ROTATE_MILLIS * 400, |expire| expire - now);
-            set_cookie = Some(format_cookie(device_id, &secret, left / 1000, https));
-        }
-    }
+    // a new secret each day, for the browser that holds the current one, made when the response is known
+    // (DeviceGuard::rotate)
+    let rotation = (is_current && now - rotated > ROTATE_MILLIS).then(|| Rotation {
+        device_id: device_id.to_string(),
+        current: current.clone(),
+        max_age_seconds: millis(&device, "expireDate").map_or(ROTATE_MILLIS * 400, |expire| expire - now) / 1000,
+        https,
+    });
     let scope = Arc::new(scope);
     session::enter_device(&user_id, &username, Arc::clone(&scope));
-    Ok(DeviceRequest::Active(DeviceGuard { scope, set_cookie }))
+    Ok(DeviceRequest::Active(DeviceGuard { scope, rotation }))
 }
 
 /// What [`redeem`] answered.

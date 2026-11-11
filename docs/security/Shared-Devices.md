@@ -69,7 +69,7 @@ with the cookie among its headers):
 3. `api_key` and `login_key` headers, Basic credentials and `authUsername` are not read, and no login succeeds during the
    request.
 4. The route gate (`check_route`, before anything of the target runs) refuses every screen, transition, REST and service
-   path and script servlet that the route group does not admit, with 403. Admitted: the route group's members, `/Device`
+   path, token route and script servlet that the route group does not admit, with 403. Admitted: the route group's members, `/Device`
    itself (it says what the browser is registered as), and static files that need no sign-in. What is admitted is then
    authorized as the display account in the usual way, so a route group does not widen what that account may read.
 5. The registration's fixed parameter replaces whatever the request sent under that name.
@@ -84,12 +84,15 @@ Nothing binds a cookie to hardware, so "tied to one browser" means this, and no 
 
 - The secret exists only in the cookie of the browser that redeemed the code, is not readable by script and is sent
   only on same-site requests over https.
-- The secret is replaced once a day by the first request that presents the current one. The secret before it works for
+- The secret is replaced once a day by the first request that presents the current one and whose answer can carry the
+  new cookie: any answer the server builds whole, a refusal or an error included, but not one already streaming nor
+  one a shared cache may keep (`Cache-Control: public`); otherwise the next request does it. The secret before it works for
   ten more minutes (requests under way). After that, a request presenting it can only come from a copy: the device is
   stopped (`stopReason` `copied`), for the copy and the original alike, with a `deviceStopped` audit row, and is
   registered again. A copy taken and used within one day of the copying is not detected by this; the address and client
   shown in the device list, and `ipAllowed`, are what limit it.
-- `ipAllowed` holds a device to an address pattern, as `UserAccount.ipAllowed`.
+- `ipAllowed` holds a device to an address pattern, as `UserAccount.ipAllowed`, against the client address the server
+  trusts (`client_ip`, the configured proxy header); a request with no known address is refused.
 - If the browser loses the response that carried a new secret, it keeps the old one and is stopped after the grace: a
   device that stops this way is registered again.
 
