@@ -9935,7 +9935,7 @@
                 this.notifyHistoryList = [{ message, type, time, link, icon }].concat(this.notifyHistoryList).slice(0, 25);
             },
             setPreference(key, value) {
-                moqui.request(this.appRootPath + "/apps/setPreference", { method: "POST", params: { moquiSessionToken: this.moquiSessionToken, preferenceKey: key, preferenceValue: value } })
+                return moqui.request(this.appRootPath + "/apps/setPreference", { method: "POST", params: { moquiSessionToken: this.moquiSessionToken, preferenceKey: key, preferenceValue: value } })
                     .catch(moqui.handleAjaxError);
             },
             // Logout ends this browser's Web Push subscription first, so the next user of the device gets none of this

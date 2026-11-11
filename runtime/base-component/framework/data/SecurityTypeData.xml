@@ -173,6 +173,11 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="SSH_SFTP" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="SSH_SHELL" description="SSH: admin command shell; on a dev instance also the browser terminal's moqui> command line"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="SSH_SHELL" fromDate="0"/>
+    <!-- Programs on the server's operating system in the browser terminal and at the moqui> prompt (sh), on a dev instance
+        only (plans/Terminal-Fancy.md D6): they run as the server's OS user, with its files, keys and processes, so it goes
+        only to people trusted with that account. Sealed: only a holder grants it. -->
+    <moqui.security.UserPermission userPermissionId="TERMINAL_HOST" description="Terminal: programs on the server's operating system, on a dev instance"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="TERMINAL_HOST" fromDate="0"/>
     <!-- The terminal client (plans/archive/Screen-TUI-Impl.md 4.2, 4.4) needs no permission: every user gets the apps over SSH
         and in the browser terminal, every screen is still checked as the user, and files are not downloaded. SSH_SHELL
         adds the admin shell's prompt before them, for a login by key or password at the SSH level, and on a dev instance

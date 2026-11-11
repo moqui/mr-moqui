@@ -86,6 +86,22 @@ along with this software (see the LICENSE.md file). If not, see
             <q-input dense outlined v-model="draft.fontFamily" :label="labels.fontFamily" :hint="labels.fontFamilyHint"></q-input>
             <q-input dense outlined type="number" v-model.number="draft.scrollback" :label="labels.scrollback" :min="0" :max="100000"></q-input>
             <q-select dense outlined emit-value map-options v-model="draft.opensFirst" :options="firstChoices" :label="labels.opensFirst"></q-select>
+            <q-toggle v-model="draft.copyOnSelect" :label="labels.copyOnSelect"></q-toggle>
+            <q-toggle v-model="draft.pasteProtection" :label="labels.pasteProtection"></q-toggle>
+        </q-card-section>
+        <q-card-section v-if="canHost" class="q-pt-none" id="TerminalProfiles">
+            <div class="text-subtitle2">{{labels.profiles}}</div>
+            <div class="text-caption m-terminal-muted q-mb-sm">{{labels.profilesHint}}</div>
+            <div v-for="(profile, index) in profileDraft" :key="index" class="row q-col-gutter-xs items-center q-mb-xs">
+                <q-input dense outlined class="col-3" v-model="profile.name" :label="labels.profileName"></q-input>
+                <q-input dense outlined class="col-3" v-model="profile.command" :label="labels.profileCommand"></q-input>
+                <q-input dense outlined class="col" v-model="profile.args" :label="labels.profileArgs"></q-input>
+                <q-input dense outlined class="col-12" v-model="profile.directory" :label="labels.profileDirectory"></q-input>
+                <q-toggle dense v-model="profile.agent" :label="labels.profileAgent"></q-toggle>
+                <q-space></q-space>
+                <q-btn flat dense round size="sm" icon="sym_o_delete" :aria-label="labels.remove" @click="profileDraft.splice(index, 1)"></q-btn>
+            </div>
+            <q-btn flat dense no-caps icon="sym_o_add" :label="labels.addProfile" @click="profileDraft.push({ name: '', command: '', args: '', directory: '', agent: false })"></q-btn>
         </q-card-section>
         <q-card-actions align="right">
             <q-btn flat no-caps :label="labels.cancel" v-close-popup></q-btn>
@@ -106,7 +122,7 @@ module.exports = {
     data() {
         const store = moqui.terminal;
         return { height: 400, ready: !!store, terminalState: store ? store.state : { sessions: {}, order: [] },
-            tabs: [], active: "", focusedPane: "", listOpen: false, settingsOpen: false, draft: {}, failed: "",
+            tabs: [], active: "", focusedPane: "", listOpen: false, settingsOpen: false, draft: {}, profileDraft: [], failed: "",
             labels: { notLoaded: localize("The terminal could not load."), new: localize("New"), sessions: localize("Sessions"),
                 settings: localize("Settings"), closeTab: localize("Close tab"), showHere: localize("Show here"),
                 rename: localize("Rename"), end: localize("End session"), forget: localize("Remove from the list"),
@@ -116,10 +132,16 @@ module.exports = {
                 scrollback: localize("Scrollback lines"), opensFirst: localize("Opens first"), cancel: localize("Cancel"),
                 save: localize("Save"), here: localize("Here"), shownNowhere: localize("Shown nowhere"),
                 elsewhere: localize("Open in another window"), ended: localize("Ended"), renamePrompt: localize("Name this session"),
-                endConfirm: localize("End this session? Its program stops."), default: localize("The default") } };
+                endConfirm: localize("End this session? Its program stops."), default: localize("The default"),
+                copyOnSelect: localize("Copy on select"), pasteProtection: localize("Ask before pasting several lines into a shell"),
+                profiles: localize("Your programs"), profilesHint: localize("Programs the New menu opens on the server, such as an agent or a log; the command must be on the server's PATH."),
+                profileName: localize("Name"), profileCommand: localize("Command"), profileArgs: localize("Arguments"),
+                profileDirectory: localize("Directory"), profileAgent: localize("Agent"), remove: localize("Remove"),
+                addProfile: localize("Add a program") } };
     },
     computed: {
         options() { return this.terminalState.options || { kinds: ["apps"], profiles: [] }; },
+        canHost() { return (this.options.kinds || []).includes("host"); },
         canFloat() { return !!(moqui.floats && moqui.floats.canFloat && moqui.floats.canFloat()); },
         zoomedPane() { const tab = this.tab(); return tab ? tab.zoom || "" : ""; },
         newChoices() {
@@ -198,6 +220,11 @@ module.exports = {
         },
         // ---- the layout ----
         save() {
+            // a pane keeps its session's title and directory, so a session the server ended can start again there
+            for (const tab of this.tabs) for (const pane of this.tree().panes(tab.root)) {
+                const info = this.terminalState.sessions[pane.session];
+                if (info && !pane.gone) { pane.title = info.title || pane.title; pane.cwd = info.cwd || pane.cwd; }
+            }
             try { localStorage.setItem(storageKey(), JSON.stringify({ tabs: this.tabs, active: this.active })); } catch (e) { /* storage refused */ }
         },
         restore() {
@@ -208,7 +235,12 @@ module.exports = {
                 const tabs = [];
                 for (const tab of (kept && kept.tabs) || []) {
                     let node = tab.root;
-                    for (const pane of this.tree().panes(tab.root)) if (!live(pane.session)) node = this.tree().remove(node, pane.id);
+                    for (const pane of this.tree().panes(tab.root)) {
+                        if (live(pane.session)) continue;
+                        // a host session the server ended (its restart): Start again opens its profile in its directory (§7.5)
+                        if (pane.kind === "host" && !this.terminalState.sessions[pane.session]) pane.gone = true;
+                        else node = this.tree().remove(node, pane.id);
+                    }
                     if (!node) continue;
                     const focus = this.tree().find(node, tab.focus) ? tab.focus : this.tree().panes(node)[0].id;
                     tabs.push({ id: tab.id, root: node, focus, zoom: tab.zoom && this.tree().find(node, tab.zoom) ? tab.zoom : "" });
@@ -231,9 +263,13 @@ module.exports = {
             if (!this.tabs.length) this.failed = message;
         },
         // a new session of `kind` in a new tab
+        // what opens a pane's session again
+        about(kind, profile, info) {
+            return { kind: kind || "apps", profile: profile || "", title: (info && info.title) || "", cwd: (info && info.cwd) || "" };
+        },
         newSession(kind, profile) {
             this.store().open(kind, { profileName: profile }).then((id) => {
-                const pane = this.tree().pane(id);
+                const pane = this.tree().pane(id, this.about(kind, profile, this.terminalState.sessions[id]));
                 const tab = { id: "t" + pane.id, root: pane, focus: pane.id, zoom: "" };
                 this.tabs.push(tab);
                 this.active = tab.id;
@@ -263,7 +299,7 @@ module.exports = {
             if (!pane) return;
             const info = this.terminalState.sessions[pane.session] || {};
             this.store().open(info.kind || "apps", { profileName: info.profile }).then((id) => {
-                tab.root = this.tree().split(tab.root, paneId, dir, id);
+                tab.root = this.tree().split(tab.root, paneId, dir, id, this.about(info.kind, info.profile, this.terminalState.sessions[id]));
                 tab.zoom = "";
                 const added = this.tree().panes(tab.root).find((other) => other.session === id);
                 if (added) this.focusPane(added.id);
@@ -301,12 +337,28 @@ module.exports = {
             if (!pane) return;
             this.store().close(pane.session).then(() => { this.closePane(paneId); this.store().forget(pane.session); }, (err) => this.notify(err));
         },
+        // a host session the server ended, opened again with its profile's resume arguments in its directory
+        startAgain(paneId) {
+            const tab = this.tab();
+            const pane = tab && this.tree().find(tab.root, paneId);
+            if (!pane) return;
+            this.store().open("host", { profileName: pane.profile, directory: pane.cwd, resume: true }).then((id) => {
+                Object.assign(pane, { session: id, gone: false });
+                this.focusPane(pane.id);
+                this.save();
+            }, (err) => this.notify(err));
+        },
         floatPane(paneId) {
             const tab = this.tab();
             const pane = tab && this.tree().find(tab.root, paneId);
             if (!pane || !moqui.terminal.float) return;
             moqui.terminal.float(pane.session);
             this.closePane(paneId);
+        },
+        focusedSession() {
+            const tab = this.tab();
+            const pane = tab && this.tree().find(tab.root, tab.focus);
+            return pane && !pane.gone ? pane.session : null;
         },
         moveFocus(forward) {
             const tab = this.tab();
@@ -320,7 +372,8 @@ module.exports = {
                 if (pane) { this.active = tab.id; this.focusPane(pane.id); return; }
             }
             if (moqui.terminal.dock) moqui.terminal.dock(id, true);
-            const pane = this.tree().pane(id);
+            const info = this.terminalState.sessions[id] || {};
+            const pane = this.tree().pane(id, this.about(info.kind, info.profile, info));
             const tab = { id: "t" + pane.id, root: pane, focus: pane.id, zoom: "" };
             this.tabs.push(tab);
             this.active = tab.id;
@@ -341,8 +394,28 @@ module.exports = {
         },
         forgetSession(id) { this.store().forget(id); },
         // ---- settings ----
-        openSettings() { this.draft = Object.assign({}, this.store().state.settings); this.settingsOpen = true; },
-        saveSettings() { this.store().saveSettings(this.draft); },
+        openSettings() {
+            this.draft = Object.assign({}, this.store().state.settings);
+            let own = [];
+            try { own = JSON.parse((moqui.config && moqui.config.preferences && moqui.config.preferences.TERMINAL_PROFILES) || "[]"); } catch (e) { own = []; }
+            this.profileDraft = (Array.isArray(own) ? own : []).map((profile) => ({ name: profile.name || "", command: profile.command || "",
+                args: Array.isArray(profile.args) ? profile.args.join(" ") : profile.args || "", directory: profile.directory || "", agent: !!profile.agent }));
+            this.settingsOpen = true;
+        },
+        saveSettings() {
+            this.store().saveSettings(this.draft);
+            if (!this.canHost) return;
+            const own = this.profileDraft.filter((profile) => profile.name.trim() && profile.command.trim()).map((profile) => ({
+                name: profile.name.trim(), command: profile.command.trim(), args: profile.args.trim(), directory: profile.directory.trim(), agent: profile.agent }));
+            const vm = moqui.webrootVue || {};
+            const text = JSON.stringify(own);
+            if (moqui.config && moqui.config.preferences) moqui.config.preferences.TERMINAL_PROFILES = text;
+            if (vm.setPreference) Promise.resolve(vm.setPreference("TERMINAL_PROFILES", text)).then(() => {
+                // the New menu lists the profiles the server resolves
+                this.terminalState.options = null;
+                this.store().refresh();
+            });
+        },
         // the terminal's own keys (§9.5): Ctrl+Shift chords, which xterm.js passes over, rebindable as moqui.keymap actions;
         // none of them is a key a browser keeps for itself (Ctrl+Shift+N, T, W and Tab are)
         keyBindings() {
@@ -354,6 +427,7 @@ module.exports = {
                 { keys: "Ctrl+Shift+Z", action: "terminalZoom", label: localize("Zoom pane"), run: () => this.zoomPane(this.focusedPane) },
                 { keys: "Ctrl+Shift+ArrowRight", action: "terminalNextPane", label: localize("Next pane"), run: () => this.moveFocus(true) },
                 { keys: "Ctrl+Shift+ArrowLeft", action: "terminalPreviousPane", label: localize("Previous pane"), run: () => this.moveFocus(false) },
+                { keys: "Ctrl+Shift+F", action: "terminalFind", label: localize("Find in the terminal"), run: () => { const pane = this.focusedSession(); if (pane) this.store().openSearch(pane); } },
                 { keys: "Ctrl+Shift+G", action: "terminalLeave", label: localize("Leave the terminal"), run: () => { const canvas = document.getElementById("m-canvas"); if (canvas) { canvas.setAttribute("tabindex", "-1"); canvas.focus(); } } }
             ];
         }

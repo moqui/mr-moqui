@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <transition name="open" method="post" begin-transaction="false" authz-action="view">
-        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'open#TerminalSession', names: ['kind', 'profileName', 'directory', 'title', 'cols', 'rows']})</script></actions>
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'open#TerminalSession', names: ['kind', 'profileName', 'directory', 'title', 'cols', 'rows', 'resume']})</script></actions>
         <default-response type="none"/>
     </transition>
     <transition name="rename" method="post" begin-transaction="false" authz-action="view">

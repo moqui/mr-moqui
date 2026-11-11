@@ -119,6 +119,25 @@ fn permitted(permission: &str) -> bool {
     moqui_core::user::has_permission(permission).unwrap_or(false)
 }
 
+/// The host profiles the signed-in user may open: name, title, own (theirs, not the conf's) and agent.
+#[cfg(all(feature = "devtools", unix))]
+fn host_profiles(factory: &ExecutionContextFactory) -> Vec<serde_json::Value> {
+    let own = moqui_core::user::get_preference(super::host::PROFILES_PREFERENCE)
+        .ok()
+        .flatten();
+    super::host::available(&factory.conf_text(), own.as_deref())
+        .iter()
+        .map(
+            |profile| json!({"name": profile.name, "title": profile.title, "own": profile.own, "agent": profile.agent}),
+        )
+        .collect()
+}
+
+#[cfg(not(all(feature = "devtools", unix)))]
+fn host_profiles(_factory: &ExecutionContextFactory) -> Vec<serde_json::Value> {
+    Vec::new()
+}
+
 /// `get#TerminalOptions`: the kinds this user may open from here, and the limits.
 fn get_terminal_options(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     let _username = match username() {
@@ -128,13 +147,16 @@ fn get_terminal_options(_parameters: &BTreeMap<String, Value>, _facade: &EntityF
     let factory = factory()?;
     let registry = Registry::of(&factory);
     let facts = Facts::of_current_request().listing();
-    let kinds: Vec<&str> = access::offered(access::Switches::of(&factory), &facts, &permitted)
-        .into_iter()
-        .map(Kind::as_str)
-        .collect();
+    let offered = access::offered(access::Switches::of(&factory), &facts, &permitted);
+    let profiles = if offered.contains(&Kind::Host) {
+        host_profiles(&factory)
+    } else {
+        Vec::new()
+    };
+    let kinds: Vec<&str> = offered.into_iter().map(Kind::as_str).collect();
     let options = json!({
         "kinds": kinds,
-        "profiles": [],
+        "profiles": profiles,
         "maxSessions": terminal_number(&factory, "max-sessions", DEFAULT_MAX),
         "maxSessionsPerUser": terminal_number(&factory, "max-sessions-per-user", DEFAULT_MAX_PER_USER),
         "detachSeconds": registry.detach.as_secs(),
@@ -188,6 +210,22 @@ fn open_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityF
         Kind::Apps => registry.open_apps(&factory, &username, &title, cols, rows),
         #[cfg(feature = "devtools")]
         Kind::Command => open_command(&factory, &registry, &username, &title, cols, rows, &facts),
+        #[cfg(all(feature = "devtools", unix))]
+        Kind::Host => {
+            let opening = HostOpening {
+                profile: &text(parameters, "profileName"),
+                directory: &text(parameters, "directory"),
+                resume: text(parameters, "resume") == "true",
+                title: &title,
+                size: (cols, rows),
+            };
+            match open_host(&factory, &registry, &username, &opening, &facts) {
+                Ok(session) => Ok(session),
+                Err(HostRefusal::NoProfile) => return refuse(NOT_AVAILABLE, "No such terminal profile"),
+                Err(HostRefusal::Refused(reason)) => Err(reason),
+            }
+        }
+        #[allow(unreachable_patterns)]
         _ => return refuse(NOT_AVAILABLE, "That terminal is not available here"),
     };
     match opened {
@@ -223,6 +261,7 @@ fn open_command(
         cols,
         rows,
         on_end: Some(super::audit::on_end(Arc::downgrade(factory), id.clone())),
+        facts: facts.clone(),
     };
     let session = registry.open_command(factory, spec)?;
     super::audit::record_open(&super::audit::Opened {
@@ -232,6 +271,78 @@ fn open_command(
         profile: "",
         command_line: "",
         directory: "",
+        facts,
+    });
+    Ok(session)
+}
+
+#[cfg(all(feature = "devtools", unix))]
+struct HostOpening<'a> {
+    profile: &'a str,
+    directory: &'a str,
+    resume: bool,
+    title: &'a str,
+    size: (u16, u16),
+}
+
+#[cfg(all(feature = "devtools", unix))]
+enum HostRefusal {
+    NoProfile,
+    Refused(String),
+}
+
+/// A program on the server's operating system, with its audit row.
+#[cfg(all(feature = "devtools", unix))]
+fn open_host(
+    factory: &Arc<ExecutionContextFactory>,
+    registry: &Arc<Registry>,
+    username: &str,
+    opening: &HostOpening<'_>,
+    facts: &Facts,
+) -> Result<Arc<super::session::Session>, HostRefusal> {
+    let name = if opening.profile.is_empty() {
+        super::host::SHELL_PROFILE
+    } else {
+        opening.profile
+    };
+    let own = moqui_core::user::get_preference(super::host::PROFILES_PREFERENCE)
+        .ok()
+        .flatten();
+    let Some(profile) = super::host::available(&factory.conf_text(), own.as_deref())
+        .into_iter()
+        .find(|profile| profile.name == name)
+    else {
+        return Err(HostRefusal::NoProfile);
+    };
+    let id = super::registry::new_id().map_err(HostRefusal::Refused)?;
+    let directory = Some(opening.directory).filter(|directory| !directory.is_empty());
+    let launch = super::host::Launch::of(
+        factory,
+        &profile,
+        &id,
+        username,
+        directory,
+        opening.resume,
+        opening.size,
+    );
+    let command_line = launch.command_line();
+    let directory = launch.directory.to_string_lossy().into_owned();
+    let spec = super::registry::HostSpec {
+        id: id.clone(),
+        username: username.to_string(),
+        title: opening.title.to_string(),
+        profile: profile.clone(),
+        launch,
+        on_end: Some(super::audit::on_end(Arc::downgrade(factory), id.clone())),
+    };
+    let session = registry.open_host(factory, spec).map_err(HostRefusal::Refused)?;
+    super::audit::record_open(&super::audit::Opened {
+        id: &id,
+        username,
+        kind: Kind::Host,
+        profile: &profile.name,
+        command_line: &command_line,
+        directory: &directory,
         facts,
     });
     Ok(session)

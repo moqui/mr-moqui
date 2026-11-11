@@ -173,6 +173,8 @@ pub(crate) struct CommandSpec {
     pub cols: u16,
     pub rows: u16,
     pub on_end: Option<Box<dyn FnOnce(u32, String) + Send>>,
+    /// Where it was opened from, which `sh` at it is checked by.
+    pub facts: super::access::Facts,
 }
 
 #[cfg(feature = "devtools")]
@@ -200,12 +202,22 @@ impl Registry {
             admission: Admission::Counted,
             redraw: Some(Arc::clone(&redraw)),
         };
+        #[cfg(unix)]
+        let host = Some(crate::command::host::HostAccess {
+            factory: Arc::downgrade(factory),
+            username: spec.username.clone(),
+            size: size.subscribe(),
+            facts: spec.facts.clone(),
+            session_id: spec.id.clone(),
+        });
+        #[cfg(not(unix))]
+        let host = ();
         let (ours, theirs) = tokio::io::duplex(PIPE);
         let (output, input) = tokio::io::split(ours);
         let weak = Arc::downgrade(factory);
         let username = spec.username.clone();
         let running = crate::edge::handle()
-            .spawn(async move { crate::command::interactive(theirs, &weak, &username, true, Ok(apps)).await });
+            .spawn(async move { crate::command::interactive(theirs, &weak, &username, true, Ok(apps), host).await });
         let program = Program {
             output: Box::pin(output),
             input: Box::pin(input),
@@ -236,6 +248,53 @@ impl Registry {
             cwd: String::new(),
             cols: spec.cols,
             rows: spec.rows,
+            detached_for: self.host_detach,
+            replay: self.replay,
+            slot: Some(slot),
+            on_end: spec.on_end,
+        };
+        Ok(session::spawn(self, spec, program))
+    }
+}
+
+/// What a host session is opened with.
+#[cfg(all(feature = "devtools", unix))]
+pub(crate) struct HostSpec {
+    pub id: String,
+    pub username: String,
+    pub profile: super::host::Profile,
+    pub launch: super::host::Launch,
+    pub title: String,
+    pub on_end: Option<Box<dyn FnOnce(u32, String) + Send>>,
+}
+
+#[cfg(all(feature = "devtools", unix))]
+impl Registry {
+    /// Open a program on the server's operating system for `username` (§7): its place in the host limits, then the
+    /// program on a pty. The caller checked who may and from where.
+    pub fn open_host(
+        self: &Arc<Self>,
+        factory: &ExecutionContextFactory,
+        spec: HostSpec,
+    ) -> Result<Arc<Session>, String> {
+        let slot = super::host::HostSessions::of(factory).take(&spec.username)?;
+        let program = spec
+            .launch
+            .start()
+            .map_err(|err| format!("{} did not start: {err}", spec.launch.command_line()))?;
+        let spec = Spec {
+            id: spec.id,
+            username: spec.username,
+            kind: Kind::Host,
+            title: if spec.title.is_empty() {
+                spec.profile.title.clone()
+            } else {
+                spec.title
+            },
+            profile: spec.profile.name,
+            cwd: spec.launch.directory.to_string_lossy().into_owned(),
+            cols: spec.launch.cols,
+            rows: spec.launch.rows,
             detached_for: self.host_detach,
             replay: self.replay,
             slot: Some(slot),

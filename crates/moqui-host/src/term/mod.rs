@@ -37,7 +37,11 @@ use tokio::sync::watch;
 pub(crate) mod access;
 mod apps;
 #[cfg(feature = "devtools")]
-mod audit;
+pub(crate) mod audit;
+#[cfg(all(feature = "devtools", unix))]
+pub(crate) mod exec;
+#[cfg(all(feature = "devtools", unix))]
+pub(crate) mod host;
 pub(crate) mod registry;
 mod ring;
 mod services;
@@ -103,6 +107,8 @@ fn terminal_number(factory: &ExecutionContextFactory, name: &str, default: usize
 pub(crate) struct Sessions {
     max: usize,
     max_per_user: usize,
+    /// The conf attributes the limits come from, for a refusal's reason.
+    names: (&'static str, &'static str),
     live: Mutex<HashMap<String, usize>>,
 }
 
@@ -121,7 +127,17 @@ impl Sessions {
         Self {
             max,
             max_per_user,
+            names: ("max-sessions", "max-sessions-per-user"),
             live: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The limits of host sessions, named for their own attributes.
+    #[cfg(all(feature = "devtools", unix))]
+    pub fn for_hosts(max: usize, max_per_user: usize) -> Self {
+        Self {
+            names: ("host-max-sessions", "host-max-sessions-per-user"),
+            ..Self::new(max, max_per_user)
         }
     }
 
@@ -130,8 +146,8 @@ impl Sessions {
         let mut live = lock(&self.live);
         if live.values().sum::<usize>() >= self.max {
             return Err(format!(
-                "{} terminal sessions are open (terminal max-sessions)",
-                self.max
+                "{} terminal sessions are open (terminal {})",
+                self.max, self.names.0
             ));
         }
         self.full_for(&live, username)?;
@@ -145,8 +161,8 @@ impl Sessions {
     fn full_for(&self, live: &HashMap<String, usize>, username: &str) -> Result<(), String> {
         if !username.is_empty() && live.get(username).copied().unwrap_or(0) >= self.max_per_user {
             return Err(format!(
-                "you have {} terminal sessions open (terminal max-sessions-per-user)",
-                self.max_per_user
+                "you have {} terminal sessions open (terminal {})",
+                self.max_per_user, self.names.1
             ));
         }
         Ok(())

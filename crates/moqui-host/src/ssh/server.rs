@@ -639,6 +639,23 @@ impl Connection {
         }
     }
 
+    /// `sh` on `channel` (plans/Terminal-Fancy.md §6): a pty, and a build with host sessions; who may and from where
+    /// is asked when it is typed, by the peer's address.
+    #[cfg(all(feature = "devtools", feature = "tui", unix))]
+    fn host_access(&self, channel: ChannelId, username: &str) -> crate::command::HostCommand {
+        let pty = self.ptys.get(&channel)?;
+        Some(crate::command::host::HostAccess {
+            factory: std::sync::Weak::clone(&self.shared.factory),
+            username: username.to_string(),
+            size: pty.size.subscribe(),
+            facts: crate::term::access::Facts::over_ssh(self.peer.ip()),
+            session_id: format!("ssh-{}", self.peer),
+        })
+    }
+
+    #[cfg(not(all(feature = "devtools", feature = "tui", unix)))]
+    fn host_access(&self, _channel: ChannelId, _username: &str) -> crate::command::HostCommand {}
+
     /// `apps` on `channel`: a pty, and a build with the client. It runs as the user logged in, or with the login
     /// dialog first, once per connection.
     fn apps_access(&mut self, channel: ChannelId) -> AppsAccess {
@@ -1096,8 +1113,9 @@ impl russh::server::Handler for Connection {
             });
             return Ok(());
         }
+        let host = self.host_access(channel, &username);
         tokio::spawn(async move {
-            let status = interactive(open.into_stream(), &factory, &username, pty, access).await;
+            let status = interactive(open.into_stream(), &factory, &username, pty, access, host).await;
             let _ = handle.exit_status_request(channel, status).await;
             let _ = handle.eof(channel).await;
             let _ = handle.close(channel).await;

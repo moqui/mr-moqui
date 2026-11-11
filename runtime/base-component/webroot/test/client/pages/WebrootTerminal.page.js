@@ -192,3 +192,39 @@ test("the terminal's components and the Terminal screen compile", async () => {
     compile("Terminal.qvue", screen.template)
     for (const id of ["TerminalNew", "TerminalSessionsToggle", "TerminalSettingsOpen", "TerminalSessions"]) assert.ok(screen.template.includes('id="' + id + '"'), id)
 })
+
+test("several lines pasted into a shell ask first, unless its program takes a bracketed paste", async () => {
+    const store = moqui.terminal
+    const key = "paste-" + (++made)
+    const sent = []
+    const screen = document.createElement("div")
+    screen.style.cssText = "width:800px;height:320px"
+    document.body.appendChild(screen)
+    const asked = []
+    const quasar = window.Quasar
+    window.Quasar = { Dialog: { create(options) { asked.push(options); const chain = { onOk(fn) { chain.ok = fn; return chain }, onDismiss() { return chain } }; asked.chain = chain; return chain } } }
+    try {
+        store.create(key, { kind: "host", connect: false, send: bytes => sent.push(new TextDecoder().decode(bytes)) })
+        store.attach(key, screen)
+        store.paste(key, "one line")
+        assert.equal(sent.join(""), "one line", "one line goes straight in")
+        store.paste(key, "rm -rf build\nmake")
+        assert.equal(asked.length, 1, "several lines ask")
+        assert.ok(!sent.join("").includes("make"), "nothing pasted before the answer")
+        asked.chain.ok()
+        assert.ok(sent.join("").includes("rm -rf build\rmake"), sent.join(""))
+        // the program asked for bracketed paste: it takes the lines as one paste, so nothing is asked
+        await write(store.session(key).term, "\u001b[?2004h")
+        store.paste(key, "a\nb")
+        assert.equal(asked.length, 1)
+        assert.ok(sent.join("").includes("\u001b[200~a\rb\u001b[201~"), JSON.stringify(sent))
+        // the addons: wide characters at their width, and search
+        assert.equal(store.session(key).term.unicode.activeVersion, "11")
+        await write(store.session(key).term, "\r\nfind the needle here\r\n")
+        assert.ok(store.find(key, "needle"), "found in the buffer")
+    } finally {
+        window.Quasar = quasar
+        store.end(key)
+        screen.remove()
+    }
+})

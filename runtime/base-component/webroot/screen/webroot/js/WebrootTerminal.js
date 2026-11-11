@@ -88,7 +88,7 @@
     let dark = null;
 
     function view(key) {
-        if (!state.views[key]) state.views[key] = { closed: false, reason: "", failed: "", taken: false, reauth: false, reconnecting: false };
+        if (!state.views[key]) state.views[key] = { closed: false, reason: "", failed: "", taken: false, reauth: false, reconnecting: false, searching: false };
         return state.views[key];
     }
 
@@ -255,9 +255,14 @@
         loadLibs() {
             if (!libs) {
                 moqui.loadStylesheet("/libs/xterm/xterm.css");
+                // the addons that only add (search, plain URLs as links, wide characters) do not stop a terminal that lacks them
+                const optional = (src, check) => moqui.loadScript(src, null, check).catch(() => null);
                 libs = Promise.all([
                     moqui.loadScript("/libs/xterm/xterm.js", null, () => !!root.Terminal),
-                    moqui.loadScript("/libs/xterm/addon-fit.js", null, () => !!root.FitAddon)
+                    moqui.loadScript("/libs/xterm/addon-fit.js", null, () => !!root.FitAddon),
+                    optional("/libs/xterm/addon-search.js", () => !!root.SearchAddon),
+                    optional("/libs/xterm/addon-web-links.js", () => !!root.WebLinksAddon),
+                    optional("/libs/xterm/addon-unicode11.js", () => !!root.Unicode11Addon)
                 ]).catch((err) => {
                     libs = null;
                     throw err;
@@ -290,6 +295,7 @@
             const opts = options || {};
             const body = { kind: kind || "apps", cols: opts.cols || 100, rows: opts.rows || 30 };
             for (const name of ["profileName", "directory", "title"]) if (opts[name]) body[name] = opts[name];
+            if (opts.resume) body.resume = "true";
             return withReauth(() => request("open", body)).then((out) => {
                 const session = out.session || { id: out.sessionId, kind: body.kind };
                 state.sessions[session.id] = session;
@@ -371,7 +377,9 @@
                         // Muted text, frame titles and application theme overrides still need to be readable on this background.
                         minimumContrastRatio: 4.5,
                         theme: isDark() ? THEMES.dark : THEMES.light,
-                        linkHandler: { activate: openLink }
+                        linkHandler: { activate: openLink },
+                        // the unicode11 addon's widths are a proposed API
+                        allowProposedApi: true
                     },
                     termOptions(kind)
                 )
@@ -380,8 +388,44 @@
             term.loadAddon(fitAddon);
             const session = { key, kind, term, fit: fitAddon, el, socket: null, received: 0, drawn: 0, acked: 0, opened: false, shown: Date.now(), retries: 0 };
             sessions.set(key, session);
+            // wide characters and emoji at their width, plain URLs as links, and search (§9.4)
+            if (root.Unicode11Addon) {
+                term.loadAddon(new root.Unicode11Addon.Unicode11Addon());
+                term.unicode.activeVersion = "11";
+            }
+            if (root.WebLinksAddon) term.loadAddon(new root.WebLinksAddon.WebLinksAddon(openLink));
+            if (root.SearchAddon) {
+                session.search = new root.SearchAddon.SearchAddon();
+                term.loadAddon(session.search);
+            }
             term.parser.registerOscHandler(52, onCopy);
-            term.attachCustomKeyEventHandler((event) => !isOwnKey(event));
+            term.attachCustomKeyEventHandler((event) => {
+                // copy and paste (§9.5): Ctrl+Shift+C copies a selection, Ctrl+Shift+V pastes; the program gets neither
+                if (event.type === "keydown" && event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey) {
+                    const letter = String(event.key || "").toLowerCase();
+                    if (letter === "c") {
+                        if (term.hasSelection()) copyText(term.getSelection());
+                        return false;
+                    }
+                    if (letter === "v") {
+                        terminal.pasteFromClipboard(key);
+                        return false;
+                    }
+                }
+                return !isOwnKey(event);
+            });
+            // copy on select, where the clipboard takes it without asking (§9.5)
+            term.onSelectionChange(() => {
+                if (state.settings.copyOnSelect && term.hasSelection() && root.navigator && root.navigator.clipboard && root.isSecureContext)
+                    root.navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+            });
+            // a paste goes through paste protection first
+            el.addEventListener("paste", (event) => {
+                const text = event.clipboardData && event.clipboardData.getData("text/plain");
+                event.preventDefault();
+                event.stopPropagation();
+                if (text) terminal.paste(key, text);
+            }, true);
             const encoder = new TextEncoder();
             const out = opts.send || ((bytes) => send(session, bytes));
             term.onData((data) => out(encoder.encode(data)));
@@ -434,6 +478,70 @@
 
         focus(key) {
             const session = sessions.get(key);
+            if (session) session.term.focus();
+        },
+
+        // Paste `text` into the session. Several lines into a host session whose program has not asked for bracketed
+        // paste (a shell would run each line) ask first, unless the user turned paste protection off (§9.5).
+        paste(key, text) {
+            const session = sessions.get(key);
+            if (!session) return;
+            const lines = String(text).split(/\r\n|\r|\n/);
+            const risky = session.kind === "host" && state.settings.pasteProtection && lines.length > 1 && !session.term.modes.bracketedPasteMode;
+            if (!risky) {
+                session.term.paste(text);
+                return;
+            }
+            const vm = shellVm();
+            const dialog = vm.$q && vm.$q.dialog ? vm.$q.dialog.bind(vm.$q) : root.Quasar && root.Quasar.Dialog ? root.Quasar.Dialog.create.bind(root.Quasar.Dialog) : null;
+            if (!dialog) {
+                session.term.paste(text);
+                return;
+            }
+            const shown = lines.slice(0, 6).join("\n") + (lines.length > 6 ? "\n…" : "");
+            dialog({ title: t("Paste several lines?"), message: t("The program may run each line as a command:") + "\n\n" + shown,
+                style: "white-space: pre-wrap", cancel: true, ok: { label: t("Paste"), color: "primary", unelevated: true } })
+                .onOk(() => session.term.paste(text))
+                .onDismiss(() => session.term.focus());
+        },
+
+        pasteFromClipboard(key) {
+            if (!root.navigator || !root.navigator.clipboard || !root.navigator.clipboard.readText) return;
+            root.navigator.clipboard.readText().then((text) => { if (text) terminal.paste(key, text); }, () => {});
+        },
+
+        // The find bar of the session's views.
+        openSearch(key) {
+            view(key).searching = true;
+        },
+
+        copySelection(key) {
+            const session = sessions.get(key);
+            if (session && session.term.hasSelection()) copyText(session.term.getSelection());
+        },
+
+        selectAll(key) {
+            const session = sessions.get(key);
+            if (session) session.term.selectAll();
+        },
+
+        // Clear what scrolled off the screen.
+        clearScrollback(key) {
+            const session = sessions.get(key);
+            if (session) session.term.clear();
+        },
+
+        // Find `text` in the session's scrollback, after (or before, `back`) the last match.
+        find(key, text, back) {
+            const session = sessions.get(key);
+            if (!session || !session.search || !text) return false;
+            const options = { caseSensitive: false, decorations: { matchOverviewRuler: "#888888", activeMatchColorOverviewRuler: "#ffaa00", activeMatchBackground: "#ffaa0080" } };
+            return back ? session.search.findPrevious(text, options) : session.search.findNext(text, options);
+        },
+
+        endFind(key) {
+            const session = sessions.get(key);
+            if (session && session.search) session.search.clearDecorations();
             if (session) session.term.focus();
         },
 
@@ -541,8 +649,9 @@
     let lastId = 0;
     const nodeId = () => "n" + Date.now().toString(36) + (++lastId).toString(36);
     const tree = {
-        pane(session) {
-            return { pane: true, id: nodeId(), session };
+        // a pane showing `session`; `about` keeps what opens it again (kind, profile, cwd) for Start again (§7.5)
+        pane(session, about) {
+            return Object.assign({ pane: true, id: nodeId(), session }, about || {});
         },
         // the panes of `node`, in order
         panes(node) {
@@ -553,13 +662,13 @@
             return tree.panes(node).find((pane) => pane.id === id) || null;
         },
         // `node` with the pane `id` split in `dir`: the pane and a new one showing `session`, beside or below it
-        split(node, id, dir, session) {
+        split(node, id, dir, session, about) {
             if (!node) return null;
             if (node.pane) {
                 if (node.id !== id) return node;
-                return { split: true, id: nodeId(), dir, ratio: 0.5, a: node, b: tree.pane(session) };
+                return { split: true, id: nodeId(), dir, ratio: 0.5, a: node, b: tree.pane(session, about) };
             }
-            return Object.assign({}, node, { a: tree.split(node.a, id, dir, session), b: tree.split(node.b, id, dir, session) });
+            return Object.assign({}, node, { a: tree.split(node.a, id, dir, session, about), b: tree.split(node.b, id, dir, session, about) });
         },
         // `node` without the pane `id`; its sibling takes the split's place. Null when it was the last pane.
         remove(node, id) {
@@ -595,7 +704,10 @@
         props: { sessionKey: { type: String, required: true }, kind: { type: String, default: "" } },
         emits: ["focused"],
         data() {
-            return { views: state.views, labels: { reconnect: t("Reconnect"), takeBack: t("Take it back"), confirm: t("Confirm it is you"), reconnecting: t("Connecting again…") } };
+            return { views: state.views, query: "", found: true,
+                labels: { reconnect: t("Reconnect"), takeBack: t("Take it back"), confirm: t("Confirm it is you"), reconnecting: t("Connecting again…"),
+                    find: t("Find"), previous: t("Previous match"), next: t("Next match"), close: t("Close"), copy: t("Copy"),
+                    paste: t("Paste"), selectAll: t("Select all"), clear: t("Clear scrollback") } };
         },
         computed: {
             shown() {
@@ -603,15 +715,6 @@
             },
             dark() {
                 return this.$q.dark.isActive;
-            }
-        },
-        watch: {
-            dark(value) {
-                terminal.setDark(value);
-            },
-            sessionKey(key, before) {
-                terminal.detach(before, this.$refs.screen);
-                this.show();
             }
         },
         mounted() {
@@ -636,15 +739,55 @@
                 terminal.focus(this.sessionKey);
                 this.$emit("focused");
             },
+            find(back) {
+                this.found = terminal.find(this.sessionKey, this.query, back) !== false;
+            },
+            closeSearch() {
+                if (this.views[this.sessionKey]) this.views[this.sessionKey].searching = false;
+                terminal.endFind(this.sessionKey);
+            },
+            menu(action) {
+                const key = this.sessionKey;
+                if (action === "copy") terminal.copySelection(key);
+                else if (action === "paste") terminal.pasteFromClipboard(key);
+                else if (action === "selectAll") terminal.selectAll(key);
+                else if (action === "find") terminal.openSearch(key);
+                else if (action === "clear") terminal.clearScrollback(key);
+            },
             reconnect() {
                 // a remote attach to a command line or a shell wants a recent sign-in first (§8.2)
                 if (this.shown.reauth && moqui.reauth) moqui.reauth.confirm().then(() => terminal.connect(this.sessionKey), () => {});
                 else terminal.connect(this.sessionKey);
             }
         },
+        watch: {
+            dark(value) {
+                terminal.setDark(value);
+            },
+            sessionKey(key, before) {
+                terminal.detach(before, this.$refs.screen);
+                this.show();
+            },
+            "shown.searching"(on) {
+                if (on) this.$nextTick(() => this.$refs.search && this.$refs.search.focus());
+            }
+        },
         template:
             '<div class="m-terminal-view column no-wrap fit" @focusin="$emit(\'focused\')">' +
+            '<div v-if="shown.searching" class="m-terminal-search row items-center no-wrap q-px-xs q-gutter-xs">' +
+            '<q-input ref="search" dense borderless v-model="query" :placeholder="labels.find" class="col" :error="!found" hide-bottom-space ' +
+            '@update:model-value="find(false)" @keydown.enter.prevent="find($event.shiftKey)" @keydown.esc.prevent.stop="closeSearch"></q-input>' +
+            '<q-btn flat dense round size="sm" icon="sym_o_keyboard_arrow_up" :aria-label="labels.previous" @click="find(true)"></q-btn>' +
+            '<q-btn flat dense round size="sm" icon="sym_o_keyboard_arrow_down" :aria-label="labels.next" @click="find(false)"></q-btn>' +
+            '<q-btn flat dense round size="sm" icon="sym_o_close" :aria-label="labels.close" @click="closeSearch"></q-btn></div>' +
             '<div ref="screen" class="m-terminal-host col" style="min-height: 0; overflow: hidden" @click="focus"></div>' +
+            '<q-menu context-menu touch-position auto-close><q-list dense style="min-width: 160px">' +
+            '<q-item clickable @click="menu(\'copy\')"><q-item-section>{{labels.copy}}</q-item-section><q-item-section side class="text-caption">Ctrl+Shift+C</q-item-section></q-item>' +
+            '<q-item clickable @click="menu(\'paste\')"><q-item-section>{{labels.paste}}</q-item-section><q-item-section side class="text-caption">Ctrl+Shift+V</q-item-section></q-item>' +
+            '<q-item clickable @click="menu(\'selectAll\')"><q-item-section>{{labels.selectAll}}</q-item-section></q-item>' +
+            '<q-item clickable @click="menu(\'find\')"><q-item-section>{{labels.find}}</q-item-section><q-item-section side class="text-caption">Ctrl+Shift+F</q-item-section></q-item>' +
+            '<q-item clickable @click="menu(\'clear\')"><q-item-section>{{labels.clear}}</q-item-section></q-item>' +
+            "</q-list></q-menu>" +
             '<div v-if="shown.reconnecting" class="m-terminal-closed row items-center no-wrap q-pa-xs q-gutter-sm text-caption">' +
             '<q-spinner size="1em"></q-spinner><span>{{labels.reconnecting}}</span></div>' +
             '<div v-else-if="shown.closed" class="m-terminal-closed row items-center no-wrap q-pa-sm q-gutter-sm" id="TerminalClosed">' +
@@ -662,10 +805,12 @@
         inject: ["workspace"],
         data() {
             return { sessions: state.sessions, labels: { splitRight: t("Split right"), splitDown: t("Split down"), zoom: t("Zoom"),
-                unzoom: t("Restore"), close: t("Close pane"), end: t("End session"), float: t("Float") } };
+                unzoom: t("Restore"), close: t("Close pane"), end: t("End session"), float: t("Float"),
+                gone: t("This session ended with the server."), startAgain: t("Start again") } };
         },
         computed: {
             info() {
+                if (this.node.gone) return { title: this.node.title || this.node.profile, cwd: this.node.cwd, state: "ended" };
                 return (this.node.pane && this.sessions[this.node.session]) || {};
             },
             focused() {
@@ -710,7 +855,10 @@
             '<q-btn flat dense round size="sm" icon="sym_o_close" :aria-label="labels.close" @click.stop="workspace.closePane(node.id)"><q-tooltip>{{labels.close}}</q-tooltip></q-btn>' +
             '<q-btn flat dense round size="sm" icon="sym_o_power_settings_new" :aria-label="labels.end" @click.stop="workspace.endPane(node.id)"><q-tooltip>{{labels.end}}</q-tooltip></q-btn>' +
             "</div>" +
-            '<m-terminal-view class="col" style="min-height: 0" :session-key="node.session" @focused="workspace.focusPane(node.id)"></m-terminal-view>' +
+            '<div v-if="node.gone" class="col column flex-center q-pa-md text-center m-terminal-muted">' +
+            '<div>{{labels.gone}}</div>' +
+            '<q-btn unelevated no-caps color="primary" class="q-mt-sm" :label="labels.startAgain" @click="workspace.startAgain(node.id)"></q-btn></div>' +
+            '<m-terminal-view v-else class="col" style="min-height: 0" :session-key="node.session" @focused="workspace.focusPane(node.id)"></m-terminal-view>' +
             "</div>" +
             '<div v-else class="m-terminal-split no-wrap" :class="node.dir === \'row\' ? \'row\' : \'column\'">' +
             '<m-terminal-node :node="node.a" :style="{ flex: node.ratio + \' 1 0\' }" style="min-width: 0; min-height: 0"></m-terminal-node>' +

@@ -73,6 +73,8 @@ pub(crate) struct Facts {
     /// The client's address, for the audit.
     #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
     pub client_ip: String,
+    /// An SSH connection: no origin to check, and encrypted.
+    pub ssh: bool,
 }
 
 /// Whether `host` names this machine: `localhost`, a name under `.localhost`, or a loopback address.
@@ -107,6 +109,19 @@ impl Facts {
             site: request_site(https, false, header("host"), None, None),
             origin: header("origin").map(str::to_string),
             client_ip,
+            ssh: false,
+        }
+    }
+
+    /// The facts of an SSH connection from `peer`.
+    #[cfg_attr(not(all(feature = "ssh", feature = "devtools", unix)), allow(dead_code))]
+    pub fn over_ssh(peer: IpAddr) -> Self {
+        Self {
+            peer: Some(peer),
+            https: true,
+            client_ip: peer.to_string(),
+            ssh: true,
+            ..Self::default()
         }
     }
 
@@ -154,6 +169,16 @@ impl Facts {
             return Place::Local;
         }
         let loopback_peer = self.peer.is_some_and(|peer| peer.to_canonical().is_loopback());
+        if self.ssh {
+            return if loopback_peer {
+                Place::Local
+            } else {
+                Place::Remote {
+                    secure: true,
+                    via_edge: false,
+                }
+            };
+        }
         let loopback_site = self.site.as_ref().is_some_and(|site| is_loopback_host(&site.host));
         if loopback_peer && !self.forwarded && self.via == RequestVia::Direct && self.own_origin() && loopback_site {
             return Place::Local;
@@ -264,7 +289,7 @@ pub(crate) fn check(
         return Err(Refusal::NotAvailable);
     }
     // the server's own origin only, whatever allow-origins says (§8.3); the node in process has its own
-    if facts.via != RequestVia::InProcess && !facts.own_origin() {
+    if !facts.ssh && facts.via != RequestVia::InProcess && !facts.own_origin() {
         return Err(Refusal::NotAvailable);
     }
     match facts.place() {

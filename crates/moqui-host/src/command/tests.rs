@@ -19,10 +19,17 @@ use super::{interactive, MAX_LINE};
 #[tokio::test]
 async fn an_overlong_shell_line_or_js_block_is_refused() {
     let (client, server) = tokio::io::duplex(64 * 1024);
-    let shell =
-        tokio::spawn(
-            async move { interactive(server, &std::sync::Weak::new(), "tester", false, Err("no apps")).await },
-        );
+    let shell = tokio::spawn(async move {
+        interactive(
+            server,
+            &std::sync::Weak::new(),
+            "tester",
+            false,
+            Err("no apps"),
+            Default::default(),
+        )
+        .await
+    });
     let (mut reader, mut writer) = tokio::io::split(client);
     let send = tokio::spawn(async move {
         writer.write_all(&vec![b'a'; MAX_LINE + 10]).await.unwrap();

@@ -528,3 +528,123 @@ fn the_command_line_opens_on_a_dev_instance_for_a_user_with_ssh_shell() {
         "no such terminal session"
     );
 }
+
+/// The browser terminal's `term-exec` helper, for the host sessions of these tests: the server runs this test binary
+/// with this test's name (`terminal_exec_helper`), and with the program in its environment this becomes it. Run on
+/// its own, it does nothing.
+#[test]
+fn term_exec_helper() {
+    if std::env::var_os("MOQUI_TERM_EXEC").is_some() {
+        let status = moqui_host::terminal_helper(&["term-exec".to_string()]).unwrap_or(127);
+        std::process::exit(status);
+    }
+}
+
+/// The `terminal_exec_helper` property that runs [`term_exec_helper`].
+pub fn helper_property() -> (&'static str, String) {
+    let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
+    let command = serde_json::json!([
+        exe,
+        "termws::term_exec_helper",
+        "--exact",
+        "--quiet",
+        "--nocapture",
+        "--test-threads",
+        "1"
+    ]);
+    ("terminal_exec_helper", command.to_string())
+}
+
+/// A host session (plans/Terminal-Fancy.md §7): a program on a pty for a user with TERMINAL_HOST on a dev instance,
+/// refused to one without; it echoes, takes the window's size, replays its output to a window that comes back, and
+/// ends with its exit status.
+#[test]
+fn a_host_session_runs_a_program_on_a_pty() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let helper = helper_property();
+    let gate = crate::common::start_with_conf_properties(
+        "termws-host",
+        Some(PLAIN_USER),
+        r#"<terminal><host-profile name="plain" title="Plain sh" command="sh"/></terminal>"#,
+        &[("instance_purpose", "dev"), (helper.0, &helper.1)],
+    );
+    let address = gate.server.address();
+    let page = Page::signed_in(address, "john.doe");
+    let plain = Page::signed_in(address, "plain.user");
+    gate.server.factory().flush_sessions().unwrap();
+
+    let options = page.call("options", None);
+    let profiles = options["options"]["profiles"].as_array().unwrap();
+    assert!(profiles.iter().any(|profile| profile["name"] == "plain"), "{options}");
+    let refused = plain.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain"})),
+    );
+    assert_eq!(refused["reasonCode"], "notAvailable", "{refused}");
+
+    let opened = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain", "cols": 100, "rows": 30})),
+    );
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+    let mut socket = page.attach(&id, None);
+    socket
+        .send(Message::Binary(b"echo hi-$((1+2))\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut socket, "hi-3").unwrap();
+    socket.send(Message::Binary(b"stty size\r".to_vec().into())).unwrap();
+    read_messages_until(&mut socket, "30 100").unwrap();
+    let resize = serde_json::json!({"type": "resize", "cols": 120, "rows": 40});
+    socket.send(Message::Text(resize.to_string().into())).unwrap();
+    socket.send(Message::Binary(b"stty size\r".to_vec().into())).unwrap();
+    read_messages_until(&mut socket, "40 120").unwrap();
+    drop(socket);
+
+    // a window that comes back with nothing drawn gets the output again
+    let mut back = page.attach(&id, None);
+    let (texts, _) = read_messages_until(&mut back, "hi-3").unwrap();
+    assert!(
+        texts[0].contains(r#""reset":true"#) && texts[0].contains(r#""kind":"host""#),
+        "{texts:?}"
+    );
+    back.send(Message::Binary(b"exit 3\r".to_vec().into())).unwrap();
+    let mut ended = Vec::new();
+    let reason = loop {
+        match back.read() {
+            Ok(Message::Text(text)) => ended.push(text.to_string()),
+            Ok(Message::Close(frame)) => break frame.map(|frame| frame.reason.to_string()).unwrap_or_default(),
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(err))
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(err) => panic!("{err}"),
+        }
+    };
+    assert!(reason.contains("status 3"), "{reason}");
+    assert!(
+        ended
+            .iter()
+            .any(|text| text.contains(r#""type":"ended""#) && text.contains(r#""status":3"#)),
+        "{ended:?}"
+    );
+    // an ended host session stays listed, with its status
+    let listed = page.call("sessions", None);
+    let session = listed["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|session| session["id"] == id.as_str())
+        .cloned();
+    assert_eq!(
+        session.map(|session| session["exitStatus"].clone()),
+        Some(serde_json::json!(3)),
+        "{listed}"
+    );
+}

@@ -21,8 +21,65 @@ use std::sync::Weak;
 use moqui_core::context::ExecutionContextFactory;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[cfg(all(feature = "devtools", feature = "tui", unix))]
+pub(crate) mod host;
 pub(crate) mod line;
 pub(crate) mod shell;
+
+/// What `sh`, `profiles` and `sessions` need at a prompt: a build with host sessions and a transport that offers them.
+#[cfg(all(feature = "devtools", feature = "tui", unix))]
+pub(crate) type HostCommand = Option<host::HostAccess>;
+#[cfg(not(all(feature = "devtools", feature = "tui", unix)))]
+pub(crate) type HostCommand = ();
+
+/// `sh`, `profiles` or `sessions`, when `text` is one: what it printed. `None` for any other line.
+#[cfg(all(feature = "devtools", feature = "tui", unix))]
+async fn host_command<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    stream: &mut S,
+    text: &str,
+    host: &mut HostCommand,
+    factory: &Weak<ExecutionContextFactory>,
+    username: &str,
+    newline: &str,
+) -> Option<String> {
+    let (command, rest) = text.trim().split_once(char::is_whitespace).unwrap_or((text.trim(), ""));
+    match command {
+        "sessions" => Some(host::sessions(factory, username)),
+        "profiles" | "sh" => {
+            let Some(access) = host.as_mut() else {
+                return Some(format!("{command}: not available here"));
+            };
+            if command == "profiles" {
+                return Some(host::profiles(access).await);
+            }
+            let _ = stream.write_all(PASTE_OFF).await;
+            let status = host::run(stream, access, rest.trim(), newline).await;
+            // the program's title (OSC 2) is the prompt's again
+            let _ = stream.write_all(b"\x1b]2;moqui>\x07").await;
+            let _ = stream.write_all(PASTE_ON).await;
+            Some(if status == 0 {
+                String::new()
+            } else {
+                format!("sh: exited {status}")
+            })
+        }
+        _ => None,
+    }
+}
+
+/// `sh`, `profiles` or `sessions`: not in a build without host sessions.
+#[cfg(not(all(feature = "devtools", feature = "tui", unix)))]
+async fn host_command<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    _stream: &mut S,
+    text: &str,
+    _host: &mut HostCommand,
+    _factory: &Weak<ExecutionContextFactory>,
+    _username: &str,
+    _newline: &str,
+) -> Option<String> {
+    let command = text.split_whitespace().next().unwrap_or_default();
+    matches!(command, "sh" | "profiles" | "sessions").then(|| format!("{command}: not available in this build"))
+}
 
 /// The longest command line, and the longest `js` block.
 const MAX_LINE: usize = 1024 * 1024;
@@ -111,7 +168,12 @@ async fn save_history(factory: &Weak<ExecutionContextFactory>, username: &str, h
 }
 
 /// The choices for the word being completed in `before` (the line up to the cursor).
-async fn choices(factory: &Weak<ExecutionContextFactory>, username: &str, before: &str) -> (String, Vec<String>) {
+async fn choices(
+    factory: &Weak<ExecutionContextFactory>,
+    username: &str,
+    host: &HostCommand,
+    before: &str,
+) -> (String, Vec<String>) {
     let words: Vec<&str> = before.split_whitespace().collect();
     let word = if before.ends_with(char::is_whitespace) {
         String::new()
@@ -139,7 +201,7 @@ async fn choices(factory: &Weak<ExecutionContextFactory>, username: &str, before
             .await
             .unwrap_or_default()
         }
-        (1, Some("sh")) => sh_profiles(factory, username).await,
+        (1, Some("sh")) => sh_profiles(host).await,
         _ => Vec::new(),
     };
     let matching = all.into_iter().filter(|choice| choice.starts_with(&word)).collect();
@@ -147,7 +209,16 @@ async fn choices(factory: &Weak<ExecutionContextFactory>, username: &str, before
 }
 
 /// The host profiles `sh` may run, for completion.
-async fn sh_profiles(_factory: &Weak<ExecutionContextFactory>, _username: &str) -> Vec<String> {
+#[cfg(all(feature = "devtools", feature = "tui", unix))]
+async fn sh_profiles(host: &HostCommand) -> Vec<String> {
+    match host {
+        Some(access) => host::profile_names(access).await,
+        None => Vec::new(),
+    }
+}
+
+#[cfg(not(all(feature = "devtools", feature = "tui", unix)))]
+async fn sh_profiles(_host: &HostCommand) -> Vec<String> {
     Vec::new()
 }
 
@@ -157,8 +228,9 @@ async fn complete<S: tokio::io::AsyncWrite + Unpin>(
     editor: &mut line::LineEditor,
     factory: &Weak<ExecutionContextFactory>,
     username: &str,
+    host: &HostCommand,
 ) -> std::io::Result<()> {
-    let (word, choices) = choices(factory, username, &editor.before_cursor()).await;
+    let (word, choices) = choices(factory, username, host, &editor.before_cursor()).await;
     let mut out = Vec::new();
     match choices.as_slice() {
         [] => {}
@@ -197,6 +269,7 @@ pub(crate) async fn interactive<S: tokio::io::AsyncRead + tokio::io::AsyncWrite 
     username: &str,
     pty: bool,
     apps: AppsAccess,
+    mut host: HostCommand,
 ) -> u32 {
     let newline = if pty { "\r\n" } else { "\n" };
     let history = if pty {
@@ -256,7 +329,11 @@ pub(crate) async fn interactive<S: tokio::io::AsyncRead + tokio::io::AsyncWrite 
                     return 0;
                 }
                 line::Edit::Complete => {
-                    if pty && complete(&mut stream, &mut editor, factory, username).await.is_err() {
+                    if pty
+                        && complete(&mut stream, &mut editor, factory, username, &host)
+                            .await
+                            .is_err()
+                    {
                         return 1;
                     }
                     continue;
@@ -317,6 +394,11 @@ pub(crate) async fn interactive<S: tokio::io::AsyncRead + tokio::io::AsyncWrite 
                 let _ = stream.write_all(if pty { PASTE_OFF } else { b"" }).await;
                 run_apps(&mut stream, access, newline).await;
                 let _ = stream.write_all(paste_on).await;
+            } else if let Some(printed) = host_command(&mut stream, &text, &mut host, factory, username, newline).await
+            {
+                if write_outcome(&mut stream, &printed, newline).await.is_err() {
+                    return 1;
+                }
             } else {
                 let outcome = shell::run(factory, username, &text).await;
                 if outcome.exit {
