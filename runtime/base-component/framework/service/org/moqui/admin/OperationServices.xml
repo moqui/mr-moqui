@@ -30,14 +30,16 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The send outcomes of the instance's stored outgoing mail (EmailMessage: Ready, Sent, Bounced or
             Cancelled; never a draft, a scheduled message or received mail), newest first, a page at a time
             (outcomeList, outcomeCount). Each: the message's id, status, state (retryable: not sent; permanent: refused;
-            bounced; uncertain: it may have been sent; sending; sent; cancelled) with its text, the outcome the mail
-            service kept, the time, the number of recipients, the error with every address struck out, its mail server,
+            bounced; uncertain: it may have been sent; settled: a person reported what became of an uncertain send, with
+            settlement delivered or notDelivered, its text, settledByUserId, settledByName, settledDate and settledReason;
+            sending; sent: only what a send of it succeeded in, never a settlement; cancelled) with its text, the outcome the
+            mail service kept, the time, the number of recipients, the error with every address struck out, its mail server,
             template and binding (account: a mail account's message; instance: the instance's own), its owner (ownerKind
             mailAccount, registered with the owner's key, title, reference and state, or mailService), what may be done
             here (retryEligible, reconcileEligible, abandonEligible, each only with ADMIN_OPERATION_MANAGE), the next step
             in words and the revision an action names. Never a subject, body, header, address or attachment: no parameter
-            returns one. Narrowed by state (attention, the default: Ready and Bounced; retryable, permanent, uncertain,
-            bounced, sent, all), mail server, template, binding, one message and dates (by default the last defaultDays
+            returns one. Narrowed by state (attention, the default: Ready and Bounced that nobody settled; retryable,
+            permanent, uncertain, bounced, settled, sent, all), mail server, template, binding, one message and dates (by default the last defaultDays
             days). An owner that could not be asked is named in unansweredOwnerList, and nothing of the instance's own is
             then offered a retry. Needs ADMIN_OPERATION_VIEW; with ADMIN_CONNECTION_VIEW alone, only the instance's own mail
             is read (instanceOnly), never a mail account's message.</description>
@@ -66,12 +68,14 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMail.js').execute('findMailOutcomes', context))</script></actions>
     </service>
     <service verb="retry" noun="MailOutcome" allow-remote="false" transaction-timeout="300">
-        <description>Send again a message that is known not sent (retryable, permanent or bounced), through its owner, at
+        <description>Send again a message that is known not sent (retryable, permanent or bounced) or that a person
+            settled as not delivered, through its owner, at
             the revision read. A message of the mail service's own (no mail account, no registered owner) is claimed first
             and then sent by org.moqui.mail.EmailServices.send#EmailMessage: the same stored message, never a new one. A
             registered owner's message is retried by that owner's own service when it offers one (OWNER_RETRIES when it
-            does not). Refused, with the reason: a message that may have been sent (RECONCILE_REQUIRED: it is reconciled,
-            never sent again from here), one in a mail account's Outbox (OWNER_ONLY: its sender's), one already sent or
+            does not). The claim clears a settlement, and the send's own result is then the message's state. Refused, with
+            the reason: a message that may have been sent and that nobody settled (RECONCILE_REQUIRED), one settled as
+            delivered (SETTLED), one in a mail account's Outbox (OWNER_ONLY: its sender's), one already sent or
             cancelled (NOT_FAILED), one being sent (IN_PROGRESS), a stale revision (STALE_REVISION), an owner that could
             not be asked (OWNER_UNAVAILABLE) and a send that fails again (SEND_FAILED, with the new state). With an
             operationKey a repeat answers the first result (repeated) and sends nothing. Needs
@@ -95,18 +99,22 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMail.js').execute('retryMailOutcome', context))</script></actions>
     </service>
     <service verb="reconcile" noun="MailOutcome" allow-remote="false">
-        <description>What a person found out about a message whose send is uncertain, with the reason (required, kept in
-            the audit log), at the revision read: sent (the mail server's own log shows it went: the message is marked
-            Sent), notSent (it is then known not sent and may be retried) or abandon (a failed or uncertain message of the
-            mail service's own is closed, Cancelled, and not offered again). Nothing is sent. A registered owner's
-            message is reconciled by that owner's own service, which checks the owner's permission (OWNER_RECONCILES when
-            it offers none); a mail account's message is its sender's (OWNER_ONLY). Refused too for a message that is not
-            uncertain (NOT_UNCERTAIN, for sent and notSent), one sent or cancelled (NOT_FAILED), a stale revision and an
+        <description>What a person concluded about a message whose send is uncertain, with the reason (required), at the
+            revision read: delivered (the mail server's own log shows it went) or notDelivered. Either is recorded as the
+            message's settlement (EmailMessage sendSettlement with who, when and the reason, and an audit log row), apart
+            from its sent state: the status and sendOutcome stay what the transport left, the message is never marked
+            Sent, and it is then listed as settled, out of what needs attention. One settled as notDelivered may be sent
+            again (retry#MailOutcome). A settled message is not settled again (ALREADY_SETTLED). abandon closes a failed
+            or uncertain message of the mail service's own (Cancelled: not offered again). Nothing is sent. A registered
+            owner's message is reconciled by that owner's own service first, which checks the owner's permission
+            (OWNER_RECONCILES when it offers none), and the settlement is then recorded here the same way; a mail
+            account's message is its sender's (OWNER_ONLY). Refused too for a message that is not uncertain
+            (NOT_UNCERTAIN, for delivered and notDelivered), one sent or cancelled (NOT_FAILED), a stale revision and an
             owner that could not be asked. With an operationKey a repeat answers the first result. Needs
             ADMIN_OPERATION_MANAGE.</description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
-            <parameter name="resolution" required="true"><description>sent, notSent or abandon</description></parameter>
+            <parameter name="resolution" required="true"><description>delivered, notDelivered or abandon</description></parameter>
             <parameter name="expectedRevision" required="true"/>
             <parameter name="reason" required="true"/>
             <parameter name="operationKey"/>
@@ -118,6 +126,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="resolution"/>
             <parameter name="state"/>
             <parameter name="revision"/>
+            <parameter name="settlement"/>
+            <parameter name="settlementText"/>
+            <parameter name="settledByUserId"/>
+            <parameter name="settledDate"/>
             <parameter name="repeated" type="Boolean"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMail.js').execute('reconcileMailOutcome', context))</script></actions>
@@ -126,7 +138,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal to retry#MailOutcome (in no group's grant; it checks ADMIN_OPERATION_MANAGE itself): in a
             transaction of its own, the message locked and, while it is still at the revision read and still known not
             sent, marked uncertain with the claim's time, so a second request and a server that stops part way both find
-            it held. With release the claim's time is cleared.</description>
+            it held; a settlement as not delivered is cleared with it. With release the claim's time is cleared.</description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
             <parameter name="expectedRevision"/>

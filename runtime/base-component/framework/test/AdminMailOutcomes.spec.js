@@ -1,9 +1,11 @@
 // The mail queue, org.moqui.admin.OperationServices (mr-boss plan/impl-admin.md P12; design-admin §9 MailQueue, §15.3 "Unknown
 // provider outcome"): a failed send is listed with its recipient count, owner and next step and never its subject, body or
 // an address; a message known not sent is sent again as the same stored message, once for its operation key; a message that
-// may have been sent is reconciled and never sent from here; a mail account's message is its sender's; and while a
-// registered owner cannot be asked, nothing is retried. Mail is captured (no connection), but for one server that has no
-// address.
+// may have been sent is settled and never sent from here, and its settlement (reported delivered, or not delivered) is kept
+// apart from its sent state: the message is never marked Sent by a person, is listed as settled and not as needing
+// attention or as sent, and one reported not delivered may then be sent again, whose result is the transport's; a mail
+// account's message is its sender's; and while a registered owner cannot be asked, nothing is retried. Mail is captured (no
+// connection), but for one server that has no address.
 // Run: ./moq test framework --spec AdminMailOutcomes
 const O = "org.moqui.admin.OperationServices."
 const MESSAGE = "moqui.basic.email.EmailMessage"
@@ -225,112 +227,182 @@ feature("a failed send is listed with its owner, its recipient count and no subj
     }
 })
 
-feature("a message known not sent is sent again as itself, once; one that may have been sent is reconciled, never sent", {
-    when() {
-        const out = {before: count()}
-        capture.clear()
-        as(users.manage, () => {
-            out.offered = row(ids.retry)
-            out.stale = invoke(O + "retry#MailOutcome", {emailMessageId: ids.retry, expectedRevision: "1"})
-            out.uncertain = retry(ids.uncertain)
-            out.lost = retry(ids.lost)
-            out.account = retry(ids.account)
-            out.accountSettle = reconcile(ids.account, "sent")
-            out.resetRow = row(ids.reset)
-            out.reset = retry(ids.reset)
-            out.refusedSends = capture.count()
-            out.retried = retry(ids.retry, {operationKey: "spec-mq-1"})
-            out.sends = capture.count()
-            // the same request again: the first answer, and nothing sent
-            out.repeated = invoke(O + "retry#MailOutcome", {
-                emailMessageId: ids.retry,
-                expectedRevision: "stale",
-                operationKey: "spec-mq-1"
+feature(
+    "a message known not sent is sent again as itself, once; one that may have been sent is settled apart, never marked sent",
+    {
+        when() {
+            const out = {before: count()}
+            capture.clear()
+            as(users.manage, () => {
+                out.offered = row(ids.retry)
+                out.stale = invoke(O + "retry#MailOutcome", {emailMessageId: ids.retry, expectedRevision: "1"})
+                out.uncertain = retry(ids.uncertain)
+                out.lost = retry(ids.lost)
+                out.account = retry(ids.account)
+                out.accountSettle = reconcile(ids.account, "delivered")
+                out.resetRow = row(ids.reset)
+                out.reset = retry(ids.reset)
+                out.refusedSends = capture.count()
+                out.retried = retry(ids.retry, {operationKey: "spec-mq-1"})
+                out.sends = capture.count()
+                // the same request again: the first answer, and nothing sent
+                out.repeated = invoke(O + "retry#MailOutcome", {
+                    emailMessageId: ids.retry,
+                    expectedRevision: "stale",
+                    operationKey: "spec-mq-1"
+                })
+                out.otherKey = invoke(O + "retry#MailOutcome", {
+                    emailMessageId: ids.closed,
+                    expectedRevision: "x",
+                    operationKey: "spec-mq-1"
+                })
+                out.again = retry(ids.retry)
+                out.sendsAfter = capture.count()
+                // a server that is not reached: the message stays known not sent
+                capture.disable()
+                out.down = retry(ids.down)
+                capture.enable()
+                out.downRow = row(ids.down)
+                // the settlement: a person's word with the reason, kept apart from the sent state; nothing is sent
+                out.noReason = invoke(O + "reconcile#MailOutcome", {
+                    emailMessageId: ids.uncertain,
+                    resolution: "delivered",
+                    expectedRevision: revision(ids.uncertain)
+                })
+                out.oldWord = reconcile(ids.uncertain, "sent")
+                out.notUncertain = reconcile(ids.closed, "delivered")
+                out.wentOut = reconcile(ids.uncertain, "delivered", {operationKey: "spec-mq-settle"})
+                // one settlement for a send: its key answers the first result, a second is refused, and it is not sent again
+                out.settledRepeat = invoke(O + "reconcile#MailOutcome", {
+                    emailMessageId: ids.uncertain,
+                    resolution: "delivered",
+                    reason: "Again",
+                    expectedRevision: "stale",
+                    operationKey: "spec-mq-settle"
+                })
+                out.settledAgain = reconcile(ids.uncertain, "notDelivered")
+                out.settledRetry = retry(ids.uncertain)
+                out.notSent = reconcile(ids.lost, "notDelivered")
+                out.lostRow = row(ids.lost)
+                out.lostStored = stored(ids.lost)
+                // a settled message is in no list of what needs attention, is uncertain or was sent
+                const listed = state =>
+                    invoke(O + "find#MailOutcomes", {state, emailServerId: "SPEC_MQ_SMTP"})
+                        .outcomeList.map(found => found.emailMessageId)
+                        .sort()
+                        .join()
+                out.lists = {
+                    attention: listed("attention"),
+                    uncertain: listed("uncertain"),
+                    settled: listed("settled"),
+                    sent: listed("sent")
+                }
+                out.sendsSettled = capture.count()
+                // reported not delivered is the person's decision: it may be sent again, and the send's result is the state
+                out.lostRetried = retry(ids.lost)
+                out.abandoned = reconcile(ids.closed, "abandon")
+                out.sendsEnd = capture.count()
             })
-            out.otherKey = invoke(O + "retry#MailOutcome", {
-                emailMessageId: ids.closed,
-                expectedRevision: "x",
-                operationKey: "spec-mq-1"
-            })
-            out.again = retry(ids.retry)
-            out.sendsAfter = capture.count()
-            // a server that is not reached: the message stays known not sent
-            capture.disable()
-            out.down = retry(ids.down)
-            capture.enable()
-            out.downRow = row(ids.down)
-            // reconciliation: by a person's word, with the reason; nothing is sent
-            out.noReason = invoke(O + "reconcile#MailOutcome", {
-                emailMessageId: ids.uncertain,
-                resolution: "sent",
-                expectedRevision: revision(ids.uncertain)
-            })
-            out.notUncertain = reconcile(ids.closed, "sent")
-            out.wentOut = reconcile(ids.uncertain, "sent")
-            out.notSent = reconcile(ids.lost, "notSent")
-            out.lostRow = row(ids.lost)
-            out.abandoned = reconcile(ids.closed, "abandon")
-            out.sendsEnd = capture.count()
-        })
-        out.after = count()
-        out.retriedRow = stored(ids.retry)
-        out.uncertainRow = stored(ids.uncertain)
-        out.closedRow = stored(ids.closed)
-        out.accountRow = stored(ids.account)
-        out.statusAudit = audit("statusId", ids.uncertain)
-        out.outcomeAudit = audit("sendOutcome", ids.lost)
-        context.out = out
-    },
-    then() {
-        const out = context.out
-        out.offered.retryEligible === true
-        out.offered.reconcileEligible === false
-        out.stale.reasonCode === "STALE_REVISION"
-        out.uncertain.applied === false
-        out.uncertain.reasonCode === "RECONCILE_REQUIRED"
-        out.lost.reasonCode === "RECONCILE_REQUIRED"
-        out.account.reasonCode === "OWNER_ONLY"
-        out.accountSettle.reasonCode === "OWNER_ONLY"
-        // sign-in mail is never sent again from here, only closed
-        out.resetRow.retryEligible === false
-        out.resetRow.abandonEligible === true
-        out.reset.reasonCode === "SIGN_IN_MAIL"
-        out.refusedSends === 0
-        out.retried.applied === true
-        out.retried.sent === true
-        out.retried.state === "sent"
-        out.sends === 1
-        out.retriedRow.statusId === "ES_SENT"
-        out.retriedRow.sendOutcome == null
-        out.retriedRow.sendClaimDate == null
-        out.repeated.applied === true
-        out.repeated.repeated === true
-        out.otherKey.error.includes("was used for another operation")
-        out.again.reasonCode === "NOT_FAILED"
-        out.sendsAfter === 1
-        // no second message was made by any of it
-        out.after === out.before
-        out.down.applied === false
-        out.down.reasonCode === "SEND_FAILED"
-        out.downRow.state === "retryable"
-        out.downRow.retryEligible === true
-        out.noReason.error !== ""
-        out.notUncertain.reasonCode === "NOT_UNCERTAIN"
-        out.wentOut.applied === true
-        out.wentOut.state === "sent"
-        out.uncertainRow.statusId === "ES_SENT"
-        out.statusAudit.some(found => found.changeReason === "The relay's log" && found.newValueText === "ES_SENT")
-        out.notSent.applied === true
-        out.lostRow.state === "retryable"
-        out.lostRow.retryEligible === true
-        out.outcomeAudit.length === 1
-        out.outcomeAudit[0].changedByUserId === users.manage
-        out.abandoned.applied === true
-        out.closedRow.statusId === "ES_CANCELLED"
-        out.accountRow.statusId === "ES_READY"
-        out.sendsEnd === 1
+            out.after = count()
+            out.retriedRow = stored(ids.retry)
+            out.uncertainRow = stored(ids.uncertain)
+            out.uncertainRowListed = as(users.view, () => row(ids.uncertain))
+            out.lostAfter = stored(ids.lost)
+            out.closedRow = stored(ids.closed)
+            out.accountRow = stored(ids.account)
+            out.statusAudit = audit("statusId", ids.uncertain)
+            out.settlementAudit = audit("sendSettlement", ids.uncertain)
+            out.lostAudit = audit("sendSettlement", ids.lost)
+            context.out = out
+        },
+        then() {
+            const out = context.out
+            out.offered.retryEligible === true
+            out.offered.reconcileEligible === false
+            out.stale.reasonCode === "STALE_REVISION"
+            out.uncertain.applied === false
+            out.uncertain.reasonCode === "RECONCILE_REQUIRED"
+            out.lost.reasonCode === "RECONCILE_REQUIRED"
+            out.account.reasonCode === "OWNER_ONLY"
+            out.accountSettle.reasonCode === "OWNER_ONLY"
+            // sign-in mail is never sent again from here, only closed
+            out.resetRow.retryEligible === false
+            out.resetRow.abandonEligible === true
+            out.reset.reasonCode === "SIGN_IN_MAIL"
+            out.refusedSends === 0
+            out.retried.applied === true
+            out.retried.sent === true
+            out.retried.state === "sent"
+            out.sends === 1
+            out.retriedRow.statusId === "ES_SENT"
+            out.retriedRow.sendOutcome == null
+            out.retriedRow.sendClaimDate == null
+            out.repeated.applied === true
+            out.repeated.repeated === true
+            out.otherKey.error.includes("was used for another operation")
+            out.again.reasonCode === "NOT_FAILED"
+            out.sendsAfter === 1
+            // no second message was made by any of it
+            out.after === out.before
+            out.down.applied === false
+            out.down.reasonCode === "SEND_FAILED"
+            out.downRow.state === "retryable"
+            out.downRow.retryEligible === true
+            out.noReason.error !== ""
+            out.oldWord.error.includes("delivered, notDelivered or abandon")
+            out.notUncertain.reasonCode === "NOT_UNCERTAIN"
+            out.wentOut.applied === true
+            out.wentOut.state === "settled"
+            out.wentOut.settlement === "delivered"
+            // the message is as the transport left it: not Sent, its outcome uncertain, and no status change in the audit log
+            out.uncertainRow.statusId === "ES_READY"
+            out.uncertainRow.sendOutcome === "uncertain"
+            out.uncertainRow.sentDate == null
+            !out.statusAudit.some(found => found.newValueText === "ES_SENT")
+            // the settlement apart: what was concluded, who, when and why
+            out.uncertainRow.sendSettlement === "delivered"
+            out.uncertainRow.sendSettledByUserId === users.manage
+            out.uncertainRow.sendSettledDate != null
+            out.uncertainRow.sendSettledReason === "The relay's log"
+            out.settlementAudit.length === 1
+            out.settlementAudit[0].changeReason === "The relay's log"
+            out.settlementAudit[0].newValueText === "delivered"
+            out.settlementAudit[0].changedByUserId === users.manage
+            out.uncertainRowListed.state === "settled"
+            out.uncertainRowListed.stateText === "Settled: reported delivered"
+            out.uncertainRowListed.settledByName === "Spec mail queue manage"
+            out.uncertainRowListed.settledDate != null
+            out.uncertainRowListed.outcome === "uncertain"
+            out.settledRepeat.applied === true
+            out.settledRepeat.repeated === true
+            out.settledAgain.reasonCode === "ALREADY_SETTLED"
+            out.settledRetry.reasonCode === "SETTLED"
+            out.notSent.applied === true
+            out.lostRow.state === "settled"
+            out.lostRow.settlement === "notDelivered"
+            out.lostRow.retryEligible === true
+            out.lostRow.reconcileEligible === false
+            out.lostStored.statusId === "ES_READY"
+            out.lostStored.sendOutcome == null
+            !out.lists.attention.split(",").some(id => [ids.uncertain, ids.lost].includes(id))
+            out.lists.uncertain === ""
+            out.lists.settled === [ids.lost, ids.uncertain].sort().join()
+            out.lists.sent === [ids.retry, ids.sent].sort().join()
+            out.sendsSettled === 1
+            // sent again through the claim: Sent by the transport's result, and the settlement of the send before is cleared
+            out.lostRetried.applied === true
+            out.lostRetried.state === "sent"
+            out.lostAfter.statusId === "ES_SENT"
+            out.lostAfter.sendSettlement == null
+            out.lostAfter.sendSettledByUserId == null
+            out.lostAudit.map(found => found.newValueText || "").join() === "notDelivered,"
+            out.abandoned.applied === true
+            out.closedRow.statusId === "ES_CANCELLED"
+            out.accountRow.statusId === "ES_READY"
+            out.sendsEnd === 2
+        }
     }
-})
+)
 
 feature("while a registered owner cannot be asked, nothing is retried or settled", {
     when() {
