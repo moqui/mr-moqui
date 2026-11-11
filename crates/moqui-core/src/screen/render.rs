@@ -244,9 +244,9 @@ impl ScreenRender {
         }
         let request = Arc::new(request);
         // a screen test's render with a device cookie among its headers is that device's request, checked as a served
-        // one is (user/device.rs): its display account, its route group, the parameter its registration fixed
-        let _device = match self
-            .as_request
+        // one is (user/device.rs): its display account, its route group, the parameter its registration fixed. Not again
+        // inside a device's request, whose guard would then end the outer one's scope with its own.
+        let _device = match (self.as_request && user::device::current_scope().is_none())
             .then(|| user::device::begin_request(&request))
             .transpose()?
         {
