@@ -734,51 +734,10 @@ impl std::future::Future for Lookup {
 /// The addresses of `host`, or an error when any is internal: one internal address among public ones could still be
 /// the one connected to.
 fn resolve_public(host: &str) -> LookupResult {
-    use std::net::ToSocketAddrs;
-
-    let addresses: Vec<std::net::SocketAddr> = (host, 0).to_socket_addrs()?.collect();
-    if addresses.iter().any(|address| internal_address(address.ip())) {
-        return Err(format!("{host} is an internal address and is not allowed here").into());
-    }
-    Ok(Box::new(addresses.into_iter()))
+    Ok(Box::new(crate::net::public_addresses(host, 0)?.into_iter()))
 }
 
-/// Whether `address` is loopback, private, link-local, shared (CGNAT), unspecified or otherwise not public, also
-/// inside IPv6: what [`RestClient::deny_internal_addresses`] refuses.
-pub fn internal_address(address: std::net::IpAddr) -> bool {
-    match address {
-        std::net::IpAddr::V4(v4) => {
-            let octets = v4.octets();
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_multicast()
-                // "this network" 0.0.0.0/8, and shared address space (CGNAT) 100.64.0.0/10
-                || octets[0] == 0
-                || (octets[0] == 100 && (octets[1] & 0xc0) == 64)
-                // reserved 240.0.0.0/4, the broadcast address among them
-                || octets[0] >= 240
-        }
-        std::net::IpAddr::V6(v6) => {
-            let segments = v6.segments();
-            let embedded = || {
-                let [.., a, b, c, d] = v6.octets();
-                internal_address(std::net::IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d)))
-            };
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                // unique local fc00::/7 and link local fe80::/10
-                || (segments[0] & 0xfe00) == 0xfc00
-                || (segments[0] & 0xffc0) == 0xfe80
-                // IPv4-mapped ::ffff:0:0/96 and IPv4-compatible ::/96
-                || (segments[..5] == [0; 5] && matches!(segments[5], 0 | 0xffff) && embedded())
-                // NAT64: the well-known 64:ff9b::/96 by the address inside, the local-use 64:ff9b:1::/48 whole
-                || (segments[..6] == [0x64, 0xff9b, 0, 0, 0, 0] && embedded())
-                || segments[..3] == [0x64, 0xff9b, 1]
-        }
-    }
-}
+pub use crate::net::internal_address;
 
 fn has_content_type(headers: &[(String, String)]) -> bool {
     headers

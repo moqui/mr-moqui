@@ -726,6 +726,15 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="oauthSignInDate" type="date-time"><description>When the user last signed in with the provider</description></field>
         <field name="edgePriorSmtpHost" type="text-medium"><description>The smtpHost the Edge Node wizard's Apply replaced
             with edge: (none: when there was none), put back when the node unpairs (plans/Edge-Node.md §5.7)</description></field>
+        <field name="disabled" type="text-indicator" enable-audit-log="update"><description>Y: nothing is sent through the
+            server (the SMTP transport refuses it); test#EmailServer still tries it. Set by an administrator, or by
+            org.moqui.admin.ConfigurationServices.store#Connection when the host, port or sign-in of a relay changed, until
+            a test of it passes (mr-boss plan/design-admin.md §8.1)</description></field>
+        <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="update"><description>N: SMTP connects to no
+            loopback, private or link-local address for this server (looked up once and connected to at the address
+            found). store#Connection saves N for a relay a delegated administrator started or repointed on a production
+            instance and never changes it back: an instance administrator allows a relay on the instance's own
+            network. Empty or Y: as before.</description></field>
         <relationship type="one" title="EmailAuthType" related="moqui.basic.Enumeration" short-alias="authType">
             <key-map field-name="authTypeEnumId"/></relationship>
         <relationship type="one" title="EmailOAuthProvider" related="moqui.basic.Enumeration" short-alias="oauthProvider">
@@ -1293,6 +1302,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="printerName" type="text-medium"><description>Leave empty to use default printer on print server</description></field>
         <field name="description" type="text-medium"/>
         <field name="location" type="text-medium"/>
+        <field name="disabled" type="text-indicator" enable-audit-log="update"><description>Y: no job is sent to the
+            printer but the test print of org.moqui.admin.ConfigurationServices.test#Connection. Set by an administrator,
+            or by store#Connection when the server or printer name changed, until a test print passes</description></field>
+        <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="update"><description>N: the print
+            client sends nothing to a loopback, private or link-local address for this printer. store#Connection saves N
+            for a printer a delegated administrator started or repointed on a production instance and never changes it
+            back: an instance administrator allows a printer on the instance's own network, where most are. Empty or Y:
+            as before.</description></field>
     </entity>
     <entity entity-name="PrintJob" package="moqui.basic.print" use="nontransactional" short-alias="printJobs" cache="never">
         <field name="printJobId" type="id" is-pk="true"/>
