@@ -242,9 +242,10 @@
                 if (!body) return;
                 if (def.focus && def.focus(f.key, body) !== false) return;
                 if (body.contains(root.document.activeElement)) return;
+                // without scrolling: the content stays where its reader left it
                 const first = body.querySelector(FOCUSABLE);
-                if (first && first.focus) first.focus();
-                else { body.setAttribute("tabindex", "-1"); body.focus(); }
+                if (first && first.focus) first.focus({ preventScroll: true });
+                else { body.setAttribute("tabindex", "-1"); body.focus({ preventScroll: true }); }
             }, 0);
         },
         // The header button of a floated piece of content (§10.5, §10.6): a hidden or minimized window shows, one under another
@@ -626,6 +627,8 @@
             domId() { return floats.domId(this.float.id); },
             bodyId() { return floats.bodyId(this.float.id); },
             top() { return floats.isTop(this.float); },
+            // hidden or minimized: kept laid out but invisible (visibility, not display), so the content keeps its scroll
+            shown() { return floats.shown(this.float); },
             frame() {
                 const f = this.float;
                 const rect = f.maximized ? this.s.area : f;
@@ -675,7 +678,8 @@
         mounted() { floats.bodyReady(this.float.id, true); },
         beforeUnmount() { floats.bodyReady(this.float.id, false); },
         template:
-            '<section v-show="!float.hidden && !float.minimized" class="m-float column no-wrap" :class="{\'m-float--top\': top, \'m-float--max\': float.maximized}" :style="frame"' +
+            '<section class="m-float column no-wrap" :class="{\'m-float--top\': top, \'m-float--max\': float.maximized, \'m-float--hidden\': !shown}" :style="frame"' +
+                    ' :aria-hidden="shown ? undefined : \'true\'"' +
                     ' role="dialog" aria-modal="false" :aria-label="title" :id="domId" :data-float-kind="float.kind" :data-float-key="float.key" @pointerdown.capture="raise">' +
                 '<div class="m-float-bar row items-center no-wrap" tabindex="0" role="group" :aria-label="title + \': \' + labels.moveKeys" data-float-bar' +
                         ' @pointerdown="startMove" @dblclick="toggleMax" @keydown="onBarKey">' +

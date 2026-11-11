@@ -399,7 +399,15 @@ the tab's content until the new one is there (`m-dynamic-container.reload`). Whi
 minutes (`/shellCounts`) and the open tab reloaded. **A tab's screen that refreshes itself**: when the component the tab loaded has a
 `shellRefresh()` method, the tray calls it instead of mounting the screen again (`m-dynamic-container.shellRefresh`), so what it shows stays (an
 open chat room, a half-typed text); a `.qvue` tray screen that listens to the chat store refreshes its lists there. A tab's screen loads in its
-best client mode, so a `STRT_TRAY_*` value names a `.qvue` screen without the extension.
+best client mode, so a `STRT_TRAY_*` value names a `.qvue` screen without the extension. **Undock** (`#m-tray-undock`, in
+the strip; not below 600 px nor on a handheld screen) makes the current tab a float of kind `tray` (400 by 560, its label
+and count badge) and takes it out of the strip; each tab floats on its own, and the root's `trayFloating` and
+`trayDockedTabs` say which. The tab's body is held in a teleport, so its screen is the same instance (a chat's draft stays)
+and its scroll is put back. Dock puts it back and opens the tray on it; Close puts it back in the strip and leaves the tray
+as it was. The header's Today, Chat and Notifications buttons show, raise or hide a floated tab's window in place of the
+tray; with every tab floated the tray has nothing to open. A floated tab reloads as a docked one (`shellCounts`, its
+topics, `reloadTrayTab`); Esc still closes the tray and never a float; its links still open in the page. Which tabs float
+is kept with the float places and comes back at a load; the tray's open state stays in `sessionStorage`.
 
 **Palette** (`m-shell-palette`, id `m-palette`): a `q-dialog` at the top, Ctrl+K or Cmd+K anywhere but in a rich-text editor (which keeps
 Ctrl+K). Groups (`moqui.shellPalette.groups`): Recent (the screens of this page before the current one) before any text; then Screens (the
@@ -451,6 +459,10 @@ shell, so its components are precompiled; its tests are `test/client/WebrootFloa
   `wasFloated(kind, key)` and opens itself with `{restore: true}`.
 - **Small screens**: below 600 px, and on a `density="handheld"` screen, nothing floats: `open` answers false,
   `canFloat()` is false (an owner hides its Undock button), and what floats docks, closed.
+- **Assist's reach** (§10.7): `floats.reach()` is the ids of the shown bodies of a kind with `inReach`, which the root adds
+  to `assistReach`. An element with `data-assist-self` is never in reach, wherever it is.
+- **The kinds of this version**: `assist` (the Assist drawer's body, [Assist](../ai/Assist.md#the-drawer)) and `tray` (a
+  tab of the tray, above); the Terminal adds `terminal`.
 
 ## Preferences
 

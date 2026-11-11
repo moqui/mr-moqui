@@ -88,7 +88,7 @@
     // a trusted reference of the run whose URL is exactly href, if its references are loaded
     constitution.knownReference = (runId, href) => (runLists[runId] || [])
         .find((ref) => ref.trusted === "Y" && (ref.url === href || constitution.href(ref.url) === href)) || null;
-    // the one dialog of the chat's reference links (m-shell-assist draws it)
+    // the one dialog of the chat's reference links (m-assist-body draws it, in the drawer or a float)
     let chat = null;
     constitution.chatDialog = () => chat || (chat = constitution.dialogState());
     // a reference URL for the browser: a path on this server under the app's root, an https URL as it is

@@ -235,6 +235,8 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
     border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.12); overflow:hidden; min-width:0; min-height:0; }
 .body--dark .m-float { box-shadow:0 8px 24px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.4); }
 .m-float.m-float--max { border-radius:0; }
+/* hidden or minimized: still laid out, so what it holds keeps its scroll; not seen, not focusable, not read */
+.m-float.m-float--hidden { visibility:hidden; pointer-events:none; }
 .m-float-bar { flex:none; min-height:34px; padding:0 2px 0 8px; gap:2px; cursor:grab; user-select:none; touch-action:none;
     background:color-mix(in srgb, var(--m-text) 4%, var(--m-panel-bg)); border-bottom:1px solid var(--m-divider); }
 .m-float--top .m-float-bar { background:color-mix(in srgb, var(--q-primary) 10%, var(--m-panel-bg)); }
@@ -1042,7 +1044,7 @@ body.m-radius-round :is(.q-card, .q-menu, .q-table__card, .m-record-header, .m-b
 body.m-radius-round :is(.q-btn:not(.q-btn--round), .q-field--outlined .q-field__control) { border-radius:8px; }
 
 /* Assist (js/WebrootAssist.js): the right drawer, its thread and cards, and the marks it leaves on the page while it follows */
-.m-assist .m-assist-body { position:relative; }
+.m-assist-body { position:relative; }
 .m-assist-resize { position:absolute; left:-3px; top:0; bottom:0; width:6px; cursor:col-resize; z-index:2; }
 .m-assist-resize:hover { background:color-mix(in srgb, var(--q-primary) 30%, transparent); }
 .m-assist-header { min-height:44px; }

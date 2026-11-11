@@ -216,7 +216,9 @@ test("tile, cascade, column at the right and minimize all; a chip shows its wind
     assert.equal(floats.isTop(floats.get(c)), true, "the last on top");
     floats.arrange("minimizeAll");
     await settle();
-    assert.equal(win(a).style.display, "none");
+    // not drawn, but laid out still, so what it holds keeps its scroll
+    assert.equal(getComputedStyle(win(a)).visibility, "hidden");
+    assert.equal(win(a).getAttribute("aria-hidden"), "true");
     const chips = Array.from(document.querySelectorAll("[data-float-chip]"));
     assert.deepEqual(chips.map((chip) => chip.getAttribute("data-float-chip")), [a, b, c]);
     chips[1].click();

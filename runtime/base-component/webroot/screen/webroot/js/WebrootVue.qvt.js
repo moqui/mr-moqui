@@ -9047,35 +9047,51 @@
     // The tray panel (design §1.4): one panel at the right of the canvas, 400 px from 600 px and the full width below, with a tab
     // for each tray screen the theme names. A tab is an m-dynamic-container loaded on its first opening and kept (v-show), so
     // its state lasts across navigation; the root keeps the open state, the tab and each tab's scroll position.
+    // Undocked (plans/Terminal-Fancy.md §10.6, D17) a tab is a float of kind tray on its own: its body is held in a teleport that
+    // targets the float's body while it floats ($root.trayFloatTarget) and is off while docked, so the tab's screen is the same
+    // instance in both places (a chat's draft stays); it leaves the strip, and the tray shows only the docked tabs.
     component("m-shell-tray", {
         name: "mShellTray",
         // the containers and scroll elements of the tabs, by key, from the function refs: not reactive
         data() { return { containers: markRaw({}), bodies: markRaw({}) }; },
+        computed: {
+            // the floated tabs whose window has its body, as text: a change is a move
+            moved() { return this.$root.trayTabs.filter((tab) => this.$root.trayFloatTarget(tab.key)).map((tab) => tab.key).join(","); },
+            // Undock is offered where something may float (not below 600 px nor on a handheld screen)
+            canFloat() { return !!(moqui.floats && moqui.floats.canFloat()); }
+        },
         template:
-            '<q-page-sticky v-if="$root.trayMounted" v-show="$root.trayOpen" position="right" expand class="m-tray-sticky">' +
+            '<q-page-sticky v-if="$root.trayMounted" v-show="$root.trayOpen && $root.trayDockedTabs.length" position="right" expand class="m-tray-sticky">' +
                 '<q-card id="m-tray" flat bordered square class="m-tray column no-wrap">' +
                     '<div class="row items-center no-wrap q-pl-xs">' +
                         '<q-tabs :model-value="$root.trayTab" @update:model-value="$root.openTray($event)" dense no-caps inline-label narrow-indicator align="left"' +
                                 ' class="col text-grey-7" active-color="primary" indicator-color="primary">' +
-                            '<q-tab v-for="tab in $root.trayTabs" :key="tab.key" :name="tab.key" :icon="tab.icon" :label="tab.label">' +
+                            '<q-tab v-for="tab in $root.trayDockedTabs" :key="tab.key" :name="tab.key" :icon="tab.icon" :label="tab.label">' +
                                 '<q-badge v-if="$root.countOf(tab.key)" color="negative" rounded floating>{{$root.countText(tab.key)}}</q-badge></q-tab>' +
                         '</q-tabs>' +
+                        '<q-btn v-if="canFloat" flat round dense icon="sym_o_picture_in_picture_alt" id="m-tray-undock" :aria-label="$root.labels.undockTab" @click="$root.undockTrayTab($root.trayTab)">' +
+                            '<q-tooltip>{{$root.labels.undockTab}}</q-tooltip></q-btn>' +
                         '<q-btn flat round dense icon="sym_o_close" :aria-label="$root.labels.closeTray" @click="$root.closeTray()"><q-tooltip>{{$root.labels.closeTray}}</q-tooltip></q-btn>' +
                     '</div>' +
                     '<q-separator></q-separator>' +
-                    '<div v-for="tab in $root.trayTabs" :key="tab.key" v-show="$root.trayTab === tab.key" :ref="(el) => { bodies[tab.key] = el; }"' +
-                            ' class="col scroll q-pa-sm m-tray-body" @scroll="onScroll(tab.key, $event)">' +
-                        '<m-dynamic-container v-if="$root.trayLoaded[tab.key]" :ref="(vm) => { containers[tab.key] = vm; }" :id="\'m-tray-\' + tab.key" :url="tab.loadUrl"></m-dynamic-container>' +
-                    '</div>' +
+                    '<template v-for="tab in $root.trayTabs" :key="tab.key">' +
+                        '<teleport :to="$root.trayFloatTarget(tab.key) || \'body\'" :disabled="!$root.trayFloatTarget(tab.key)">' +
+                            '<div v-show="$root.trayTab === tab.key || $root.trayFloating[tab.key]" :ref="(el) => { bodies[tab.key] = el; }"' +
+                                    ' class="col scroll q-pa-sm m-tray-body" :data-tray-tab="tab.key" @scroll="onScroll(tab.key, $event)">' +
+                                '<m-dynamic-container v-if="$root.trayLoaded[tab.key]" :ref="(vm) => { containers[tab.key] = vm; }" :id="\'m-tray-\' + tab.key" :url="tab.loadUrl"></m-dynamic-container>' +
+                            '</div>' +
+                        '</teleport>' +
+                    '</template>' +
                 '</q-card>' +
             '</q-page-sticky>',
         methods: {
             onScroll(key, event) { this.$root.keepTrayScroll(key, event.target.scrollTop); },
-            // the tab's last scroll position, once it shows again (a hidden element loses it)
+            // the tab's last scroll position, once it shows again (a hidden element loses it, and so does one moved to or from a
+            // float); taken now, as the move may report a scroll of 0
             restoreScroll(key) {
+                const top = this.$root.trayScroll[key];
                 this.$nextTick(() => {
                     const body = this.bodies[key];
-                    const top = this.$root.trayScroll[key];
                     if (body && top) body.scrollTop = top;
                 });
             },
@@ -9088,7 +9104,12 @@
         },
         watch: {
             "$root.trayTab"(key) { if (key) this.restoreScroll(key); },
-            "$root.trayOpen"(open) { if (open && this.$root.trayTab) this.restoreScroll(this.$root.trayTab); }
+            "$root.trayOpen"(open) { if (open && this.$root.trayTab) this.restoreScroll(this.$root.trayTab); },
+            // a tab moved into a float or back: its scroll put back
+            moved(now, before) {
+                const was = before ? before.split(",") : [], is = now ? now.split(",") : [];
+                was.filter((key) => key && is.indexOf(key) < 0).concat(is.filter((key) => key && was.indexOf(key) < 0)).forEach((key) => this.restoreScroll(key));
+            }
         },
         mounted() { this.$root.shellTray = this; },
         unmounted() { if (this.$root.shellTray === this) this.$root.shellTray = null; }
@@ -9354,7 +9375,7 @@
         "        <template v-for=\"counter in headerCounters\" :key=\"counter.key\">\n" +
         "        <q-separator v-if=\"counter.dividerBefore\" vertical inset class=\"q-mx-xs m-header-divider\"></q-separator>\n" +
         "        <q-btn flat round dense :id=\"'m-counter-' + counter.key\" :icon=\"counter.icon\" :aria-label=\"counter.label\"\n" +
-        "                :class=\"{'text-primary': counter.tray && trayOpen && (counter.any || trayTab === counter.key)}\" @click=\"counter.tray ? toggleTray(counter.any ? null : counter.key) : setUrl(counter.url)\">\n" +
+        "                :class=\"{'text-primary': counter.tray && ((trayOpen && (counter.any || trayTab === counter.key)) || trayFloatShown(counter.key))}\" @click=\"counter.tray ? toggleTray(counter.any ? null : counter.key) : setUrl(counter.url)\">\n" +
         "            <q-badge v-if=\"counterCount(counter)\" floating rounded color=\"negative\">{{counterText(counter)}}</q-badge>\n" +
         "            <span v-if=\"counter.key === 'chat' && myPresence\" class=\"m-avatar-presence m-shell-presence\" :class=\"'m-presence-' + myPresence\"></span>\n" +
         "            <q-tooltip>{{counter.label}}</q-tooltip>\n" +
@@ -9515,7 +9536,7 @@
 
     // The text of the suite shell when the page's labels (qapps.xml, localized there) do not have it.
     qvt.shellLabels = { terminal: "Terminal UI", menu: "Menu", applications: "Applications", allApplications: "All applications", search: "Search", quickCreate: "Create",
-        quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", dialer: "Dialer", trayNotifications: "Alerts", trayDialer: "Call", missedCalls: "Missed calls", close: "Close", closeTray: "Close tray",
+        quickCreateFirst: "Create in this app", today: "Today", chat: "Chat", mail: "Mail", messages: "Messages", notifications: "Notifications", dialer: "Dialer", trayNotifications: "Alerts", trayDialer: "Call", missedCalls: "Missed calls", close: "Close", closeTray: "Close tray", undockTab: "Undock this tab",
         closeTopmost: "Close the dialog, menu or panel", keyboardShortcuts: "Keyboard shortcuts", keysEverywhere: "Everywhere", recent: "Recent",
         screens: "Screens", savedFinds: "Saved finds", actions: "Actions", more: "More", noResults: "Nothing found",
         paletteHint: "Search screens, records and actions", paletteEmpty: "Type to search screens, records, people and actions",
@@ -9715,7 +9736,12 @@
             pollShellCounts() {
                 if (this.notificationClient && this.notificationClient.isOpen()) return;
                 this.loadShellCounts();
-                if (this.trayOpen) this.reloadTrayTab(this.trayTab);
+                this.reloadShownTrayTabs();
+            },
+            // the tabs in view: the tray's open tab and every floated one (a floated tab refreshes as a docked one, §10.6)
+            reloadShownTrayTabs() {
+                const keys = (this.trayOpen && !this.trayFloating[this.trayTab] ? [this.trayTab] : []).concat(Object.keys(this.trayFloating));
+                keys.forEach((key) => this.reloadTrayTab(key));
             },
             // A message of the notification socket: shellCounts sets the badges and reloads the open tab; todayItems, a chatRoom:
             // topic, notifications and the apps' notification-topic providers reload their tab. A chat signal (typing, read) does
@@ -9727,7 +9753,7 @@
                     let counts = jsonObj.message;
                     if (moqui.isString(counts)) { try { counts = JSON.parse(counts); } catch (err) { counts = null; } }
                     if (moqui.isPlainObject(counts)) this.shellCounts = counts;
-                    if (this.trayOpen) this.reloadTrayTab(this.trayTab);
+                    this.reloadShownTrayTabs();
                 } else if (topic === "todayItems") this.reloadTrayTab("today");
                 else if (topic.indexOf("chatRoom:") === 0) { if (!moqui.chat || moqui.chat.trayReloads(jsonObj)) this.reloadTrayTab("chat"); }
                 else if (topic === "notifications" || this.shellNotificationTopics.indexOf(topic) >= 0) this.reloadTrayTab("notifications");
@@ -9753,6 +9779,9 @@
             openPalette() { this.paletteOpen = true; },
             openTray(key) {
                 if (!this.trayTabs.some((tab) => tab.key === key)) return;
+                // a floated tab: its window shows and is raised in place of the tray (§10.6)
+                const float = this.trayFloating[key] ? moqui.floats.find("tray", key) : null;
+                if (float) { moqui.floats.focus(float.id); return; }
                 this.trayTab = key;
                 this.trayLoaded[key] = true;
                 this.trayMounted = true;
@@ -9761,13 +9790,52 @@
             },
             closeTray() { this.trayOpen = false; this.saveTray(); },
             // key null: the one tray button of a phone header, which closes the tray, or opens it on its last tab (else the first)
+            // A floated tab's button shows, raises or hides its window; with every tab floated the tray has nothing to open.
             toggleTray(key) {
                 if (key === null || key === undefined) {
+                    const docked = this.trayDockedTabs;
                     if (this.trayOpen) this.closeTray();
-                    else this.openTray(this.trayTabs.some((tab) => tab.key === this.trayTab) ? this.trayTab : (this.trayTabs[0] || {}).key);
+                    else if (docked.length) this.openTray(docked.some((tab) => tab.key === this.trayTab) ? this.trayTab : docked[0].key);
                     return;
                 }
+                if (this.trayFloating[key]) { moqui.floats.toggle("tray", key); return; }
                 if (this.trayOpen && this.trayTab === key) this.closeTray(); else this.openTray(key);
+            },
+            // a header button's tab floating and in view
+            trayFloatShown(key) {
+                const float = key && this.trayFloating[key] ? moqui.floats.find("tray", key) : null;
+                return !!float && moqui.floats.shown(float);
+            },
+            // the float body a tab's teleport targets, while it floats and the body is mounted (moqui.floats.target)
+            trayFloatTarget(key) { return this.trayFloating[key] ? moqui.floats.target("tray", key) : null; },
+            // Undock (§10.6): the tab becomes a float, 400 by 560 at the right to start, with the tab's label and its count, and
+            // leaves the strip; the tray, when it was open on it, closes. restore: at a load, as it was. Answers whether it floats.
+            undockTrayTab(key, restore) {
+                const floats = this.trayFloatKind();
+                if (!floats || !floats.canFloat() || !this.trayTabs.some((tab) => tab.key === key)) return false;
+                this.trayLoaded[key] = true;
+                this.trayMounted = true;
+                if (!floats.open("tray", key, { restore: !!restore })) return false;
+                if (this.trayTab === key) {
+                    const next = this.trayDockedTabs[0];
+                    this.trayTab = next ? next.key : "";
+                    this.trayOpen = false;
+                }
+                this.saveTray();
+                return true;
+            },
+            // The float kind of the tray's tabs: in Assist's reach (a floated Chat is read as the docked one, D18); Dock puts the tab
+            // back and opens the tray on it, Close puts it back in the strip and leaves the tray as it was.
+            trayFloatKind() {
+                const floats = moqui.floats;
+                if (!floats) return null;
+                const tabOf = (key) => this.trayTabs.find((tab) => tab.key === key) || {};
+                if (!floats.kinds.tray || floats.kinds.tray.owner !== this) floats.register("tray", { owner: this, inReach: true, place: "right",
+                    defaultSize: { w: 400, h: 560 }, minSize: { w: 280, h: 240 },
+                    title: (key) => tabOf(key).label || key, icon: (key) => tabOf(key).icon,
+                    badge: (key) => (this.countOf(key) ? this.countText(key) : ""),
+                    dock: (shown, key) => { if (shown) this.openTray(key); else this.saveTray(); } });
+                return floats;
             },
             reloadTrayTab(key) { if (key && this.trayLoaded[key] && this.shellTray) this.shellTray.reload(key); },
             keepTrayScroll(key, top) {
@@ -9779,11 +9847,13 @@
             saveTray() {
                 try { root.sessionStorage.setItem("moqui.shell.tray", JSON.stringify({ open: this.trayOpen, tab: this.trayTab, scroll: this.trayScroll })); } catch (err) { /* no storage */ }
             },
+            // the tabs that floated come back floated (localStorage, per device, §10.9); then the tray's own state (sessionStorage)
             restoreTray() {
                 let saved = null;
                 try { saved = JSON.parse(root.sessionStorage.getItem("moqui.shell.tray") || "null"); } catch (err) { saved = null; }
-                if (!moqui.isPlainObject(saved) || !saved.tab || !this.trayTabs.some((tab) => tab.key === saved.tab)) return;
-                if (moqui.isPlainObject(saved.scroll)) this.trayScroll = Object.assign({}, saved.scroll);
+                if (moqui.isPlainObject(saved) && moqui.isPlainObject(saved.scroll)) this.trayScroll = Object.assign({}, saved.scroll);
+                if (moqui.floats) this.trayTabs.forEach((tab) => { if (moqui.floats.wasFloated("tray", tab.key)) this.undockTrayTab(tab.key, true); });
+                if (!moqui.isPlainObject(saved) || !saved.tab || !this.trayDockedTabs.some((tab) => tab.key === saved.tab)) return;
                 if (saved.open) this.openTray(saved.tab);
                 else this.trayTab = saved.tab;
             },
@@ -10104,8 +10174,11 @@
             },
             // The ids of the elements Assist may reach (IronStone design §1.1): the canvas, the tray panel while it is there and the
             // quick-create dialog while it is open; not the header, the drawer or the palette.
+            // A float is in reach only when its kind says so (plans/Terminal-Fancy.md §10.7, D18): a floated tray tab's body is, a
+            // floated Assist is not; whatever carries data-assist-self (Assist's body, a terminal) never is, wherever it is.
             assistReach() {
-                return ["m-canvas"].concat(this.trayMounted && this.trayOpen ? ["m-tray"] : [], this.quickCreateShow ? ["m-quick-create"] : []);
+                return ["m-canvas"].concat(this.trayMounted && this.trayOpen && this.trayDockedTabs.length ? ["m-tray"] : [], this.quickCreateShow ? ["m-quick-create"] : [],
+                    moqui.floats ? moqui.floats.reach() : []);
             },
 
             // ---- the suite shell ----
@@ -10163,6 +10236,13 @@
                     { key: "dialer", icon: "sym_o_dialpad", label: labels.trayDialer, title: labels.dialer, url: values.trayDialer }]
                     .filter((tab) => tab.url).map((tab) => Object.assign(tab, { loadUrl: this.shellLoadPath(tab.url) }));
             },
+            // the tabs that float, by key (moqui.floats, kept with the float places), and the ones left in the tray's strip
+            trayFloating() {
+                const out = {};
+                if (moqui.floats) moqui.floats.state.floats.forEach((float) => { if (float.kind === "tray") out[float.key] = true; });
+                return out;
+            },
+            trayDockedTabs() { return this.trayTabs.filter((tab) => !this.trayFloating[tab.key]); },
             // the header's count buttons in their order: the ones that open the tray, in the tray's tab order (Today, Chat, Notifications),
             // then the links to screens (Mail and Messages, Missed calls), each when its theme value is set; `counts` are the shellCounts
             // keys of its badge, and the first link after a tray button has dividerBefore (a separator between the two kinds). Below

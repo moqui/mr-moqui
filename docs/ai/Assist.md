@@ -607,7 +607,8 @@ calls `moqui.assist.start(root)` once mounted, which reads `bootstrap` (the butt
 count, and reopens the tab's conversation of before a reload (`sessionStorage`), or the one `?assist=<conversationId>` names.
 
 **The components.** `m-assist-button` (rightmost in the header, the waiting count as its badge) and `m-shell-assist`, one
-right `q-drawer` of the shell's layout, mounted on first open and kept: nothing is reparented or teleported. It is
+right `q-drawer` of the shell's layout, mounted on first open and kept; what is in it is `m-assist-body`, held in a
+teleport that is off while docked (Undocked, below). It is
 `persistent`: an overlay `q-drawer` hides itself on every navigation and on Esc, and this one follows the agent across pages
 (it closes by Close, Mod+J and a second Esc). 420 px by
 default, 320–720 by the handle on its left edge (kept as `localStorage` `ASSIST_WIDTH`), the full width below 600 px; it
@@ -615,6 +616,22 @@ pushes the page from 1440 px and overlays it below. Inside: the header (agent pi
 a new conversation; the tier unless the agent fixes it; New, History, Tasks with the badge, a menu with Follow on this
 page, Close), the status line, "Following in another tab" with Follow here, the chips, then `m-assist-thread`,
 `m-assist-card`s and `m-assist-composer`, or `m-assist-history` or `m-assist-tasks`.
+
+**Undocked** (plans/Terminal-Fancy.md §10.5, the floats of [Qvt-Client](../ui/Qvt-Client.md#floats)). Undock
+(`#m-assist-undock`, beside Close; not below 600 px nor on a handheld screen) shuts the drawer and shows the body in a
+float of kind `assist`, 420 by 640 at the right to start. The body is one instance in both places: the teleport moves it,
+so a run, the draft and the panes stay, and the thread's scroll is put back after the move. The float's Dock puts it back
+and opens the drawer, its Close puts it back shut, and the body's own Close is the float's Close while floated. The header
+button and Mod+J show and hide whichever form is current (`assist.shown()`, `openDrawer` shows a float too; a hidden float
+is still a float); the first Esc gives the keys to the page in both, the second closes the drawer or hides the float. The
+width handle and `ASSIST_WIDTH` are the drawer's. Shut, the drawer pushes nothing, so a canvas has the page's whole width.
+Follow, approvals, the hand-off and the tasks badge read the store and the page and do not change. Whether it floats is
+kept with the float places in `localStorage`; at a load (after `bootstrap`) it floats again, shown or hidden as it was.
+
+**Its reach** (§10.7, D18). The float layer is outside `#m-canvas`, so a float is in `assistReach` only when its kind
+says so: a floated tray tab's body is, a floated Assist is not. Assist's body carries `data-assist-self="assist"`, and an
+element with `data-assist-self` (a terminal's has `"terminal"`) is never in reach, docked or floated, whatever
+`assistReach` lists: `gatherForms` and `openDialogs` leave out what is inside one.
 
 **The store** is a pure reducer of one conversation (`assist.emptyState`):
 
@@ -663,8 +680,9 @@ and the conversation when it is this tab's and the tab does not stream that run 
   `<field>_<row>`; else the form whose qvt id is `domId` (several with it, as a static render repeats the bare name: the
   `occurrence`-th); else by name, the name or `<name>_<n>` (a merged render appends the section entry index), the
   `occurrence`-th within the scope (a dialog's forms for `dialog`, the page's before the dialogs' otherwise); a list's find
-  form is `<list>_header`. Refused: a form outside `assistReach` (the canvas, the open tray, the quick-create dialog, and the
-  screen dialogs; never the header, the drawer or the palette), a hidden, password or file field, a secret name, a field the
+  form is `<list>_header`. Refused: a form outside `assistReach` (the canvas, the open tray, a floated tray tab, the
+  quick-create dialog, and the screen dialogs; never the header, the palette, or anything marked `data-assist-self`: the
+  drawer's body wherever it is, and a terminal), a hidden, password or file field, a secret name, a field the
   form does not have. A fill sets the form's value (dependent fields follow), outlines the field with an "Assist" tag until
   it is focused or for 8 s, and is announced in a polite region; a form still mounting after a navigation is looked for
   again for 3 s. `ui.dialog` opens or closes a container dialog by its id.
@@ -726,11 +744,12 @@ again. No card has a keyboard accelerator.
 **The shell's hooks** (in `WebrootVue.qvt.js`): `moqui.onFormAnswer`; `qvt.registerLate`; the palette's last group "Ask
 Assist ‘…’" (a `?` first is that row alone, Shift+Enter asks), which opens the drawer and sends the text; palette rows that
 keep `recordEntity` and `recordId`; Mod+J opens the drawer and focuses the composer (from inside the drawer it closes),
-Mod+. stops the run, Esc in the drawer returns focus to the page and a second Esc closes it (`moqui.keymap` actions
-`assist` and `assistStop`).
+Mod+. stops the run, Esc in the drawer (or its float) returns focus to the page and a second Esc closes it, or hides the
+float (`moqui.keymap` actions `assist` and `assistStop`).
 
 **For the browser smokes** the drawer has stable hooks: `#m-assist-button` (badge `[data-assist-badge]`),
-`#m-assist-drawer`, `#m-assist-input` (the composer's textarea), `#m-assist-send`, `#m-assist-stop`, `#m-assist-new`,
+`#m-assist-drawer` (the body is in it while docked; floated it is in `#m-float-body-assist`), `#m-assist-undock`,
+`#m-assist-input` (the composer's textarea), `#m-assist-send`, `#m-assist-stop`, `#m-assist-new`,
 `#m-assist-history`, `#m-assist-tasks`, `#m-assist-status`, `#m-assist-elsewhere`, `#m-assist-follow-here`,
 `#m-assist-chips`, `#m-assist-thread` (rows `[data-assist-item=user|assistant|step|done|queued|note|reasoning]`, a step's
 `data-tool` and `data-status`, a local message's `data-assist-local`; an assistant row's text is its `.m-assist-markdown`), cards `[data-assist-card=approval|question|handoff]`
