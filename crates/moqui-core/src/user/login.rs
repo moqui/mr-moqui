@@ -140,6 +140,11 @@ fn check_password_login(username: &str, password: &str) -> Result<bool, Error> {
             password::burn_verify(password);
             return Err(err);
         }
+        // a display account has no sign-in of its own, whatever password someone gave it (user/device.rs)
+        if is_display_account(&account) {
+            password::burn_verify(password);
+            return Err(Error::new(INVALID_LOGIN));
+        }
         let left = policy::max_failures() + 1 - field_i64(&account, "successiveFailedLogins").unwrap_or(0);
         let user_id = text_field(&account, "userId");
         if let Some(checking) = LoginCheck::enter(&user_id, left) {
@@ -401,7 +406,7 @@ pub fn internal_login_user(username: &str) -> Result<(), Error> {
     let finishes_factor = !username.is_empty()
         && session::session_attribute_flag(AUTHC_FACTOR_REQUIRED)
         && session::session_attribute(PRE_AUTHC_USERNAME).as_deref() == Some(username);
-    internal_login(username).1?;
+    internal_login(username, false).1?;
     if finishes_factor {
         if let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) {
             note_recent_auth(&user_id);
@@ -410,8 +415,26 @@ pub fn internal_login_user(username: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// [`internal_login_user`] for work a request of the user queued and a worker now runs as them (an async service call, a
+/// job run): the one login a display account passes ([`is_display_account`]), since a device's request may queue work
+/// as any request does. It signs nobody in: there is no client, and the worker's context ends with the work.
+///
+/// # Errors
+///
+/// Returns an error when the account is unknown, disabled, terminated, or needs a password change.
+pub fn internal_login_queued_user(username: &str) -> Result<(), Error> {
+    internal_login(username, true).1
+}
+
+/// Whether the account is a display account (`UserAccount.displayAccount`, shared devices): it stands for no person
+/// and nothing signs it in. Only a device credential runs as it, for one request at a time (`user/device.rs`).
+pub(crate) fn is_display_account(account: &EntityValue) -> bool {
+    text_field(account, "displayAccount") == "Y"
+}
+
 /// [`internal_login_user`], with the user id of the account once it passed the gate (None before), for the login history.
-fn internal_login(username: &str) -> (Option<String>, Result<(), Error>) {
+/// `queued` is [`internal_login_queued_user`]'s.
+fn internal_login(username: &str, queued: bool) -> (Option<String>, Result<(), Error>) {
     if username.is_empty() {
         return (None, Err(Error::new("No username specified")));
     }
@@ -433,6 +456,11 @@ fn internal_login(username: &str) -> (Option<String>, Result<(), Error>) {
     if let Err(err) = gate_account(&facade, &account, now) {
         return (None, Err(err));
     }
+    // a display account is never signed in: not by a key, an app password, an SSH key, an identity provider, a second
+    // factor or Login as, which all end here
+    if is_display_account(&account) && !queued {
+        return (None, Err(Error::new(INVALID_LOGIN)));
+    }
     let user_id = Some(text_field(&account, "userId")).filter(|id| !id.is_empty());
     let result = post_password(&account, now).and_then(|()| finish_login(&facade, &account, None, false));
     (user_id, result)
@@ -441,7 +469,7 @@ fn internal_login(username: &str) -> (Option<String>, Result<(), Error>) {
 /// [`internal_login`] for a key, app password or identity provider login, recorded in the login history when the
 /// account is known.
 fn recorded_login(username: &str) -> Result<(), Error> {
-    let (user_id, result) = internal_login(username);
+    let (user_id, result) = internal_login(username, false);
     if let Some(user_id) = user_id {
         save_history(&user_id, result.is_ok());
     }
@@ -1212,6 +1240,10 @@ fn finish_login(facade: &EntityFacade, account: &EntityValue, plain: Option<&str
     let username = text_field(account, "username");
     if user_id.is_empty() || username.is_empty() {
         return Err(Error::new(INVALID_LOGIN));
+    }
+    // a shared device's request never becomes a signed-in session, as anyone (user/device.rs)
+    if session::device_scope().is_some() {
+        return Err(Error::new("A shared device does not sign in"));
     }
     // After the second-factor check, as Java `loginPostPassword`: a code login reaches here through
     // `internal_login_user`, which checks the address too.

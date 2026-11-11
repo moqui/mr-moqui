@@ -111,7 +111,7 @@ fn routes(factory: &ExecutionContextFactory) -> Arc<Routes> {
                 };
                 let reserved = [
                     "apps", "qapps", "rest", "rpc", "status", "error", "health", "metrics", "fop", "js", "css", "libs",
-                    "images", "Login", "sso", "notws",
+                    "images", "Login", "sso", "notws", "Device",
                 ];
                 if reserved.contains(&name.as_str()) || name.contains('/') {
                     tracing::error!(route = %name, "token-route name is a framework path; left out");

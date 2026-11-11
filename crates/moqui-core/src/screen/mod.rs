@@ -263,11 +263,41 @@ fn handle(
         stamp_http_log(&mut response);
         return Ok(response);
     }
+    // A registered shared device (user/device.rs): its request runs as its display account, only within its route
+    // group, and the web session never holds that identity. A device that is no more is refused here, whatever it asks.
+    let mut device = match user::device::begin_request(request) {
+        Ok(user::device::DeviceRequest::None) => None,
+        Ok(user::device::DeviceRequest::Active(device)) => Some(device),
+        Ok(user::device::DeviceRequest::Refused(refusal)) => {
+            let mut response = web::json_error(403, refusal.message());
+            if refusal.ends_cookie() {
+                response
+                    .headers
+                    .push(("Set-Cookie".to_string(), user::device::expired_cookie(request.https)));
+            }
+            stamp_http_log(&mut response);
+            // a refused request carries no session cookie: one made for it now is never seen again
+            if presented.as_deref() != Some(guard.session_id().as_str()) {
+                user::session::discard_bound_session();
+            }
+            return Ok(response);
+        }
+        Err(err) => {
+            let mut response = web::json_error_of(&err);
+            stamp_http_log(&mut response);
+            if presented.as_deref() != Some(guard.session_id().as_str()) {
+                user::session::discard_bound_session();
+            }
+            return Ok(response);
+        }
+    };
     // What the last response saved for this request sits under the request's own parameters.
     let saved = user::session::take_saved_parameters();
     let error_parameters = user::session::take_error_parameters();
     let merged;
-    let parameters = if saved.is_empty() {
+    // the parameter a device's registration fixed (a wall display's playlist) is the request's, whatever was sent
+    let fixed = device.as_ref().and_then(|device| device.scope().parameter.clone());
+    let parameters = if saved.is_empty() && fixed.is_none() {
         parameters
     } else {
         let mut all: BTreeMap<String, Value> = saved
@@ -275,6 +305,9 @@ fn handle(
             .map(|(name, value)| (name, Value::String(value)))
             .collect();
         all.extend(parameters.iter().map(|(name, value)| (name.clone(), value.clone())));
+        if let Some((name, value)) = fixed {
+            all.insert(name, Value::String(value));
+        }
         merged = all;
         &merged
     };
@@ -288,7 +321,11 @@ fn handle(
     web::set_request_info(request);
     web::set_request_locale(request.header("accept-language"));
     web::set_request(Arc::clone(request), body);
-    let (login_error, header_authenticated) = authenticate(request, parameters)?;
+    // a device's request reads no key, Basic credentials or login parameters: its credential is its only authority
+    let (login_error, header_authenticated) = match &device {
+        Some(_) => (None, false),
+        None => authenticate(request, parameters)?,
+    };
     // A session that did not come with the request was made for it, and its token was never sent to the client.
     let new_session = presented.as_deref() != Some(guard.session_id().as_str());
     let scripts = factory.webapp_scripts();
@@ -343,6 +380,7 @@ fn handle(
             tracing::error!("Error ending the session work of a request whose response was sent: {err}");
         }
         web::stream::finish();
+        drop(device);
         drop(guard);
         return outcome;
     }
@@ -363,6 +401,18 @@ fn handle(
         )?;
         response
     };
+    // a device's daily new secret goes on a response that reaches its browser with the header (this one, not streamed,
+    // not one a shared cache may keep), else it is not made: a browser that misses it is stopped as a copy (user/device.rs)
+    if let Some(device) = device.as_mut().filter(|_| !is_public(&response)) {
+        match device.rotate() {
+            Ok(Some(cookie)) => response.headers.push(("Set-Cookie".to_string(), cookie)),
+            Ok(None) => {}
+            Err(err) => tracing::error!(
+                "Shared device {}: its secret was not replaced: {err}",
+                device.scope().device_id
+            ),
+        }
+    }
     not_modified(request, &mut response);
     // the preferences this request set, for the page to apply at once (docs/ui/Qvt-Client.md, Preferences)
     let changed = web::take_changed_preferences();
@@ -372,6 +422,7 @@ fn handle(
             .push(("X-Moqui-Preferences".to_string(), web::preferences_header(&changed)));
     }
     stamp_http_log(&mut response);
+    drop(device);
     drop(guard);
     Ok(response)
 }
@@ -475,6 +526,10 @@ fn serve_servlet(
             )
         }
         Handler::Script(location) => {
+            // a script servlet is in no route group: a shared device's request never runs one
+            if let Some(scope) = user::device::current_scope() {
+                return Ok(web::json_error_of(&user::device::refused_route(&scope)));
+            }
             // a script's writer commits as a servlet's does: when its buffer fills, or at `flushBuffer`
             web::stream::arm(ScreenFacade::of(factory).conf().stream_threshold);
             match crate::script::invoke_web_handler(location, "servlet", found.servlet.data()) {
@@ -544,6 +599,10 @@ fn dispatch_request(
             .iter()
             .any(|route| route.screen_location == root)
         {
+            // a token route is in no route group: a shared device's request does not reach its token check
+            if let Some(scope) = user::device::current_scope() {
+                return Ok(web::json_error_of(&user::device::refused_route(&scope)));
+            }
             return token_route::dispatch(
                 factory,
                 request,

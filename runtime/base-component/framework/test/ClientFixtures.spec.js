@@ -366,3 +366,51 @@ feature("the security proof fixtures", {
         row.schema != null
     },
 })
+
+// The shared-device proofs (test/client/SecurityDevice; docs/security/Shared-Devices.md): a display account, a route group
+// whose allow-list is the app list alone, a registration whose code the client spec redeems (made again on every run, since
+// a code works once), and a revoked device with a known secret. The code and the secret are test values: only their hashes
+// are stored, as a real registration's.
+const DEVICE_CODE = "secd-evic-ecod-e234-5678"
+// hash_login_key("sec-device-fixed-secret-of-43-characters-00"): SHA-256 hex, as a device's secret is kept
+const DEVICE_SECRET_HASH = "898ad2b307e79bd16c94f6fcba41f328fc150d49ff721c1e08b8951a7785f1cc"
+feature("the shared device fixtures", {
+    when() {
+        ec.artifactExecution.disableAuthz()
+        try {
+            const day = 86400000
+            ensure("moqui.security.UserAccount", { userId: "SEC_DEV_WALL" },
+                { username: "sec.device.wall", userFullName: "Security test wall", displayAccount: "Y" })
+            ensure("moqui.security.ArtifactGroup", { artifactGroupId: "SEC_DEV_SCREENS" }, { description: "Security test wall screens" })
+            ensureMember("SEC_DEV_SCREENS", "component://webroot/screen/webroot/apps/AppList.xml", "AT_XML_SCREEN", "N")
+            ensure("moqui.security.DeviceRouteGroup", { routeGroupId: "SEC_DEV_WALLS" },
+                { description: "Security test walls", artifactGroupId: "SEC_DEV_SCREENS", homePath: "/apps/AppList" })
+            ec.entity.find("moqui.security.DeviceCredential").condition("displayUserId", "SEC_DEV_WALL").deleteAll()
+            const now = Date.now()
+            const device = (deviceId, fields) => ensure("moqui.security.DeviceCredential", { deviceId }, Object.assign({
+                routeGroupId: "SEC_DEV_WALLS", displayUserId: "SEC_DEV_WALL", registeredDate: new Date(now).toISOString(),
+                expireDate: new Date(now + 365 * day).toISOString(),
+            }, fields))
+            device("SEC_DEV_1", { deviceName: "Security test wall", registrationCodeHash: ec.user.singleUseCodeHash(DEVICE_CODE.replace(/-/g, "")),
+                codeExpireDate: new Date(now + day).toISOString() })
+            device("SEC_DEV_REVOKED", { deviceName: "Security test revoked wall", credentialHash: DEVICE_SECRET_HASH,
+                redeemedDate: new Date(now).toISOString(), rotatedDate: new Date(now).toISOString(),
+                revokedDate: new Date(now).toISOString(), stopReason: "revoked" })
+            // a device whose secret is a day old: its next request replaces it
+            device("SEC_DEV_ROTATE", { deviceName: "Security test rotating wall", credentialHash: DEVICE_SECRET_HASH,
+                redeemedDate: new Date(now).toISOString(), rotatedDate: new Date(now - day - 60000).toISOString(),
+                lastSeenDate: new Date(now).toISOString() })
+            return {
+                pending: one("moqui.security.DeviceCredential", { deviceId: "SEC_DEV_1" }),
+                revoked: one("moqui.security.DeviceCredential", { deviceId: "SEC_DEV_REVOKED" }),
+            }
+        } finally {
+            ec.artifactExecution.enableAuthz()
+        }
+    },
+    then({ pending, revoked }) {
+        pending.redeemedDate == null && pending.registrationCodeHash != null
+        !String(pending.registrationCodeHash).includes("secdevic")
+        revoked.revokedDate != null
+    },
+})

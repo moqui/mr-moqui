@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Shared devices (mr-boss plan/design-admin.md §6 Devices, §14, §17.2; design-crosscut CX-DEVICE; impl-admin P18;
+    docs/security/Shared-Devices.md): a browser registered to open one route group as a display account, with no person
+    signed in. The credential and its checks are the framework's (crates/moqui-core/src/user/device.rs); these register, list
+    and revoke devices and redeem a registration code. No dependency on Mantle or an app: the framework knows no
+    organization, so a caller that scopes identities checks the display account first. ALL_USERS may call them
+    (data/SecurityTypeData.xml AdminDeviceServices): each refuses without ADMIN_ACCESS_VIEW or ADMIN_ACCESS_MANAGE.
+    redeem#Device and get#DeviceStatus are the public device page's, for a browser with nobody signed in. The bodies are
+    Devices.js. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="find" noun="RouteGroups" allow-remote="false">
+        <description>The route groups a device may be registered for (moqui.security.DeviceRouteGroup, each owner's seed data):
+            its description and owner, the parameter a registration fixes (a wall display's playlist) and its default idle
+            timeout and lifetime. A row naming a missing artifact group is logged by name and left out. Needs
+            ADMIN_ACCESS_VIEW.</description>
+        <out-parameters><parameter name="routeGroupList" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Devices.js').execute('findRouteGroups', context))</script></actions>
+    </service>
+    <service verb="find" noun="Devices" allow-remote="false">
+        <description>The registered devices, newest first: name, route group and its fixed parameter, display account, site,
+            who registered it and when, when and from which address it was last seen (a client summary, never the user
+            agent), and its state (pending, codeExpired, active, stopped, revoked) with the reason; never a code, a secret or
+            a hash. Ended ones (revoked, stopped, a code not entered in time) only with includeEnded or a state. With
+            displayUserIdList (the accounts in a caller's identity scope) only those accounts' devices are listed and the
+            others counted (otherCount), never named. Needs ADMIN_ACCESS_VIEW.</description>
+        <in-parameters>
+            <parameter name="deviceId"/>
+            <parameter name="routeGroupId"/>
+            <parameter name="facilityId"/>
+            <parameter name="displayUserId"/>
+            <parameter name="parameterValue"/>
+            <parameter name="state"/>
+            <parameter name="text"/>
+            <parameter name="seenSinceDays" type="Integer"/>
+            <parameter name="includeEnded" type="Boolean" default="false"/>
+            <parameter name="displayUserIdList" type="List"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="deviceList" type="List"/>
+            <parameter name="deviceCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="activeCount" type="Integer"/>
+            <parameter name="otherCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Devices.js').execute('findDevices', context))</script></actions>
+    </service>
+    <service verb="register" noun="Device" allow-remote="false">
+        <description>Registers one device for a registered route group, to run as a display account: the registration code is
+            returned once (registrationCode, about 99 bits, good once within codeMinutes: 15 by default, 5 to 60) and kept
+            only as its hash; it is entered on the device, whose browser then holds the credential. Refused, as a reason,
+            for an unregistered route group, a missing required parameter, an account that is not a display account fit for
+            a device (displayAccount Y, no password or external identity, not disabled, in no privileged group, holding no
+            sealed permission) or one in a group the registrar could not assign (AccessServices' delegation rules). The
+            device stops when not seen for idleTimeoutMinutes (the route group's default, a week; 5 to 43200) or after
+            lifetimeDays (365; at most 730), and may be held to ipAllowed. A retry with the same operationKey answers the
+            first registration without a code. The registration is evidence in the audit log. The framework knows no
+            organization: the caller scopes the display account. Needs ADMIN_ACCESS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="deviceName" required="true"/>
+            <parameter name="routeGroupId" required="true"/>
+            <parameter name="displayUserId" required="true"/>
+            <parameter name="parameterValue"/>
+            <parameter name="facilityId"/>
+            <parameter name="ipAllowed"/>
+            <parameter name="idleTimeoutMinutes" type="Integer"/>
+            <parameter name="lifetimeDays" type="Integer"/>
+            <parameter name="codeMinutes" type="Integer"/>
+            <parameter name="issueCode" type="Boolean" default="true"><description>False for a screen: the registration is
+                made without a code, and issue#DeviceCode makes it at the render that shows it, so no request, session or
+                message carries it from the write to the page</description></parameter>
+            <parameter name="operationKey"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="deviceId"/>
+            <parameter name="registrationCode"><description>Shown once; never stored, logged or listed</description></parameter>
+            <parameter name="codeExpireDate" type="Long"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Devices.js').execute('registerDevice', context))</script></actions>
+    </service>
+    <service verb="issue" noun="DeviceCode" allow-remote="false">
+        <description>The registration code of a device registered without one (register#Device with issueCode false), made
+            as it is shown: once, to the administrator who registered the device, within fifteen minutes of the
+            registration, and kept only as its hash. Refused, as a reason, for another administrator's registration, a
+            device already in use or ended, a code already shown, or a registration left too long. Showing it is evidence
+            in the audit log. Needs ADMIN_ACCESS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="deviceId" required="true"/>
+            <parameter name="codeMinutes" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="deviceId"/>
+            <parameter name="deviceName"/>
+            <parameter name="registrationCode"><description>Shown once; never stored, logged or listed</description></parameter>
+            <parameter name="codeExpireDate" type="Long"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Devices.js').execute('issueDeviceCode', context))</script></actions>
+    </service>
+    <service verb="revoke" noun="Device" allow-remote="false">
+        <description>Revokes a device at once, on every server: every request of a device reads its registration, so its next
+            one is refused and its cookie removed, and no web session holds its identity to end beside it. A revoked device
+            stays revoked (it is registered again for a new code); revoking it again answers the first revocation, so no
+            revision is asked for. Evidence in the audit log with the reason. Needs ADMIN_ACCESS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="deviceId" required="true"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="deviceId"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Devices.js').execute('revokeDevice', context))</script></actions>
+    </service>
+    <service verb="redeem" noun="Device" authenticate="anonymous-all" allow-remote="false">
+        <description>Makes the browser of the request under way the device of a registration code: once, before the code
+            expires. The device's cookie goes on the response (HttpOnly, SameSite=Strict, Secure on https) and is given to
+            no script; any user signed in on the browser's session is signed out. A code that is unknown, used, expired or
+            revoked gets one answer, is counted by the web protection (which slows and blocks an address that guesses)
+            and, when it was a registration's, leaves evidence in the audit log. homePath is the route group's own.</description>
+        <in-parameters><parameter name="code" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="redeemed" type="Boolean"/>
+            <parameter name="reason"/>
+            <parameter name="homePath"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Devices.js').execute('redeemDevice', context))</script></actions>
+    </service>
+    <service verb="get" noun="DeviceStatus" authenticate="anonymous-view" allow-remote="false">
+        <description>What the browser of the request under way is registered as, for the device page: its name and the path
+            its route group opens at; nothing else of the registration.</description>
+        <out-parameters>
+            <parameter name="registered" type="Boolean"/>
+            <parameter name="deviceName"/>
+            <parameter name="homePath"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Devices.js').execute('deviceStatus', context))</script></actions>
+    </service>
+</services>

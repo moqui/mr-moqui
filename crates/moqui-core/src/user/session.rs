@@ -273,6 +273,18 @@ pub(crate) struct Memory {
     factory: Option<Arc<ExecutionContextFactory>>,
     dirty_columns: BTreeSet<Column>,
     dirty_json: BTreeSet<String>,
+    /// A shared device's request ([`super::device`]): the display account is this context's user for the request, and
+    /// what the web session itself holds is kept here, so nothing of the device's identity is ever stored in it.
+    device: Option<DeviceHold>,
+}
+
+/// The identity of the bound web session under a device's request, and what the device may open.
+#[derive(Clone)]
+struct DeviceHold {
+    scope: Arc<super::device::DeviceScope>,
+    user_id: Option<String>,
+    username: Option<String>,
+    anonymous: bool,
 }
 
 impl Memory {
@@ -1330,6 +1342,12 @@ pub(crate) fn set_visit(visit_id: &str, visitor_id: &str) {
 /// cached authorization data go, so a later login cannot reuse them.
 pub fn clear_login() {
     with_session(|session| {
+        // under a device's request the web session's own user signs out; the request stays a device's, with no user
+        if let Some(hold) = session.device.as_mut() {
+            hold.user_id = None;
+            hold.username = None;
+            hold.anonymous = false;
+        }
         session.user_id = None;
         session.username = None;
         session.anonymous = false;
@@ -1337,6 +1355,47 @@ pub fn clear_login() {
         session.authz = AuthzCache::default();
         mark_column(session, Column::UserId);
     });
+}
+
+/// Make a shared device's display account this context's user for the request under way ([`super::device`]): the
+/// user, the username and fresh authorization data, and nothing else. The bound web session keeps the identity it had
+/// (none, for a device's browser): no column is marked, and [`thread_view`] stores the held identity, so no session
+/// row, live session or socket ever carries the display account. [`leave_device`] ends it.
+pub(crate) fn enter_device(user_id: &str, username: &str, scope: Arc<super::device::DeviceScope>) {
+    with_session(|session| {
+        let hold = match session.device.take() {
+            // entered twice in one request: the session's own identity is the one first held
+            Some(hold) => DeviceHold { scope, ..hold },
+            None => DeviceHold {
+                scope,
+                user_id: session.user_id.clone(),
+                username: session.username.clone(),
+                anonymous: session.anonymous,
+            },
+        };
+        session.device = Some(hold);
+        session.user_id = Some(user_id.to_string());
+        session.username = Some(username.to_string());
+        session.anonymous = false;
+        session.authz = AuthzCache::default();
+    });
+}
+
+/// End [`enter_device`]: the context's user is the web session's own again.
+pub(crate) fn leave_device() {
+    with_session(|session| {
+        if let Some(hold) = session.device.take() {
+            session.user_id = hold.user_id;
+            session.username = hold.username;
+            session.anonymous = hold.anonymous;
+            session.authz = AuthzCache::default();
+        }
+    });
+}
+
+/// What the device whose request this is may open, when the request is a shared device's.
+pub(crate) fn device_scope() -> Option<Arc<super::device::DeviceScope>> {
+    with_session(|session| session.device.as_ref().map(|hold| Arc::clone(&hold.scope)))
 }
 
 /// Who is logged in on this context, with what a login changes beside the user, for [`restore_identity`].
@@ -2548,17 +2607,23 @@ fn bound_factory() -> Option<Arc<ExecutionContextFactory>> {
 }
 
 fn thread_view(session: &mut Memory) -> ThreadView {
+    // a device's request runs as its display account, which the web session never holds: what is stored is the
+    // session's own identity, whatever asks for the view and whenever
+    let (user_id, username, anonymous) = match &session.device {
+        Some(hold) => (hold.user_id.clone(), hold.username.clone(), hold.anonymous),
+        None => (session.user_id.clone(), session.username.clone(), session.anonymous),
+    };
     ThreadView {
         bound_id: session.bound_id.clone(),
         factory: session.factory.clone(),
-        user_id: session.user_id.clone(),
-        username: session.username.clone(),
+        user_id,
+        username,
         visit_id: session.visit_id.clone(),
         visitor_id: session.visitor_id.clone(),
         locale: session.locale.clone(),
         time_zone: session.time_zone.clone(),
         csrf_token: session.csrf_token.clone(),
-        anonymous: session.anonymous,
+        anonymous,
         attributes: session.attributes.clone(),
         dirty_columns: session.dirty_columns.clone(),
         dirty_json: session.dirty_json.clone(),

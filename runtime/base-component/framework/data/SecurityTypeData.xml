@@ -191,4 +191,14 @@ along with this software (see the LICENSE.md file). If not, see
             artifactGroupId="GitRepositories" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     <moqui.security.UserPermission userPermissionId="LOAD_RUNNER" description="Tools: Load testing (run load scripts against this or an allowed server)"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="LOAD_RUNNER" fromDate="0"/>
+    <!-- Admin P18 (mr-boss plan/impl-admin.md P18; docs/security/Shared-Devices.md): the shared-device services,
+        org.moqui.admin.DeviceServices, for every signed-in user: find#RouteGroups and find#Devices check ADMIN_ACCESS_VIEW
+        and register#Device, issue#DeviceCode and revoke#Device ADMIN_ACCESS_MANAGE themselves; inheritable, so their own reads and writes are
+        authorized as them. redeem#Device and get#DeviceStatus are the public device page's and need no grant. A device's
+        own requests reach none of these: its route group is its allow-list (crates/moqui-core/src/user/device.rs). -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminDeviceServices" description="Admin shared-device services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminDeviceServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.DeviceServices\.(find#RouteGroups|find#Devices|register#Device|issue#DeviceCode|revoke#Device)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminDeviceServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminDeviceServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

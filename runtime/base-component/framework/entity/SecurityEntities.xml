@@ -287,6 +287,11 @@ along with this software (see the LICENSE.md file). If not, see
                 dot separated segments each segment may be number, '*' for wildcard, or '-' separate number range (like '0-31');
                 IPv6 is an exact match after canonicalization.</description>
         </field>
+        <field name="displayAccount" type="text-indicator" enable-audit-log="true"><description>Y for a display account
+            (shared devices, mr-boss plan/design-crosscut.md CX-DEVICE): the account a registered device's requests run
+            as. It stands for no person and has no sign-in of its own: a password, key, app password, SSH key, identity
+            provider, reset or Login as never signs it in (crates/moqui-core/src/user/login.rs), and only a device
+            credential (DeviceCredential) runs as it, within its route group.</description></field>
         <relationship type="one" title="Currency" related="moqui.basic.Uom" short-alias="currencyUom">
             <key-map field-name="currencyUomId"/></relationship>
         <relationship type="many" related="moqui.security.UserGroupMember" short-alias="groups">
@@ -461,6 +466,78 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
         <index name="USER_APP_PW_HASH" unique="true"><index-field name="passwordHash"/></index>
         <index name="USER_APP_PW_USER"><index-field name="userId"/></index>
+    </entity>
+    <!-- Shared devices (mr-boss plan/design-crosscut.md CX-DEVICE, design-admin §6 Devices; impl-admin P18;
+        docs/security/Shared-Devices.md): a browser registered to open one route group as a display account. -->
+    <entity entity-name="DeviceRouteGroup" package="moqui.security" use="configuration" cache="true">
+        <description>A route group a shared device may be registered for: seed data of the app that owns the screens
+            (a trusted component definition). artifactGroupId is the allow-list of a device's requests, read as an
+            artifact group's members are and granting nothing by itself: a screen member (AT_XML_SCREEN) admits that
+            screen's render, and with inheritAuthz Y its transitions and the screens below it; a transition member
+            (AT_XML_SCREEN_TRANS, location/name) admits that transition. Everything else is refused to a device, and
+            what is admitted is still authorized as the display account. A row naming a missing artifact group is
+            logged by name when read and left out.</description>
+        <field name="routeGroupId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerName" type="text-short"><description>The owning app, as its capability rows name it</description></field>
+        <field name="artifactGroupId" type="id"/>
+        <field name="homePath" type="text-medium"><description>The path a device opens once registered, within the
+            route group; never taken from a request</description></field>
+        <field name="parameterName" type="text-short"><description>The one request parameter a registration fixes for
+            the device (a wall display's playlist): every request of the device carries the registered value under
+            this name, whatever the browser sends</description></field>
+        <field name="parameterTitle" type="text-short"/>
+        <field name="parameterRequired" type="text-indicator"/>
+        <field name="defaultIdleMinutes" type="number-integer"><description>The idle timeout of a new registration:
+            a device not seen for longer stops and is registered again. 10080 (a week) when empty.</description></field>
+        <field name="defaultLifetimeDays" type="number-integer"><description>How long a registration lasts at most;
+            365 when empty, never more than 730</description></field>
+        <field name="disabled" type="text-indicator"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <relationship type="one-nofk" related="moqui.security.ArtifactGroup" short-alias="artifactGroup"/>
+    </entity>
+    <entity entity-name="DeviceCredential" package="moqui.security" use="transactional" cache="never">
+        <description>A registered shared device: one browser that may open one route group as a display account. The
+            registration code is shown once to the registrar and kept only as registrationCodeHash; redeeming it once,
+            before codeExpireDate, gives that browser the device cookie, whose secret is kept only as credentialHash
+            (previousHash for ten minutes after a rotation). The credential names no person. It stops when revoked,
+            past expireDate, not seen for idleTimeoutMinutes, used from an address outside ipAllowed, or when its
+            earlier secret is presented after the rotation's grace (a copy of the cookie is in use: stopReason
+            copied); a stopped device is registered again.</description>
+        <field name="deviceId" type="id" is-pk="true"/>
+        <field name="deviceName" type="text-medium" enable-audit-log="update"/>
+        <field name="routeGroupId" type="id"/>
+        <field name="parameterValue" type="text-medium"/>
+        <field name="displayUserId" type="id"/>
+        <field name="facilityId" type="id"><description>The site the device is at, the owner's record (a Mantle
+            Facility where Mantle is installed); no foreign key</description></field>
+        <field name="ipAllowed" type="text-medium" enable-audit-log="update"><description>When set the device works only from a
+            matching address, as UserAccount.ipAllowed</description></field>
+        <field name="idleTimeoutMinutes" type="number-integer"/>
+        <field name="registrationCodeHash" type="text-medium"/>
+        <field name="codeExpireDate" type="date-time"/>
+        <field name="redeemedDate" type="date-time"/>
+        <field name="redeemedAddress" type="text-medium"/>
+        <field name="credentialHash" type="text-medium"/>
+        <field name="previousHash" type="text-medium"/>
+        <field name="rotatedDate" type="date-time"/>
+        <field name="registeredByUserId" type="id"/>
+        <field name="registeredDate" type="date-time"/>
+        <field name="expireDate" type="date-time"/>
+        <field name="lastSeenDate" type="date-time"><description>Written at most once a minute</description></field>
+        <field name="lastSeenAddress" type="text-medium"/>
+        <field name="lastSeenAgent" type="text-medium"/>
+        <field name="revokedDate" type="date-time"/>
+        <field name="revokedByUserId" type="id"/>
+        <field name="stoppedDate" type="date-time"/>
+        <field name="stopReason" type="text-short"><description>revoked, expired, idle, copied, address, account</description></field>
+        <field name="operationKey" type="text-medium"/>
+        <relationship type="one-nofk" related="moqui.security.DeviceRouteGroup" short-alias="routeGroup"/>
+        <relationship type="one-nofk" title="Display" related="moqui.security.UserAccount" short-alias="displayUser">
+            <key-map field-name="displayUserId" related="userId"/></relationship>
+        <index name="DEVICE_CRED_CODE" unique="true"><index-field name="registrationCodeHash"/></index>
+        <index name="DEVICE_CRED_USER"><index-field name="displayUserId"/></index>
+        <index name="DEVICE_CRED_OPKEY"><index-field name="operationKey"/></index>
     </entity>
     <entity entity-name="UserSshKey" package="moqui.security" use="configuration" cache="never">
         <description>A public key a user logs in with on the built-in SSH server (ssh_port). The key is matched by its

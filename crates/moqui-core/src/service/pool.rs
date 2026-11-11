@@ -1176,7 +1176,7 @@ fn invoke(
     let ctx = factory.new_context();
     let _entered = ctx.enter();
     if let Some(user_name) = user_name {
-        crate::user::internal_login_user(user_name)?;
+        crate::user::internal_login_queued_user(user_name)?;
     }
     ctx.set_agent_origin(origin.cloned());
     // As Java's `AsyncServiceInfo`: authorization was checked as the caller before the call was queued.
@@ -1208,7 +1208,7 @@ fn call_now(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap
         let ctx = factory.new_context();
         let _entered = ctx.enter();
         if let Some(user_name) = user_name.as_deref() {
-            crate::user::internal_login_user(user_name)?;
+            crate::user::internal_login_queued_user(user_name)?;
         }
         ctx.set_agent_origin(origin);
         super::call::sync_with(name, parameters, &options)
@@ -1504,7 +1504,7 @@ fn run_rules(job: RulesJob, own_cleanup: bool) {
         // As a job's user: a user that cannot be logged in is logged, and the rules still run, as before they carried
         // the caller.
         if let Some(user_name) = user_name.as_deref() {
-            if let Err(err) = crate::user::internal_login_user(user_name) {
+            if let Err(err) = crate::user::internal_login_queued_user(user_name) {
                 tracing::warn!(service = %rules.service, when = %rules.when, error = %err, "could not log in the user of tx rules");
             }
         }
