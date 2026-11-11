@@ -77,7 +77,7 @@ grpc = ["telemetry", "opentelemetry-proto/gen-tonic"]
 default = ["http", "cluster-tls", "image", "xlsx", "web-push", "backup-s3"]
 # remote-rest services, http resource locations, and the OpenSearch backend (blocking reqwest).
 http = ["moqui-lib/http"]
-# The S3 mirror of the embedded database backup (service/backup_s3.rs): archives encrypted to an age recipient.
+# The S3 transport and the age encryption of the embedded database backup mirror (service/backup_store.rs).
 backup-s3 = ["http", "moqui-lib/s3"]
 # Web Push to subscribed browsers (org.moqui.ui.NotificationServices.send#WebPush), over blocking HTTP.
 web-push = ["http", "dep:p256", "dep:hkdf", "dep:aes-gcm"]

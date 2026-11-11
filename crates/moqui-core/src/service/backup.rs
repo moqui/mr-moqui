@@ -13,8 +13,10 @@
  */
 
 //! `backup#EmbeddedDatabase`. The host takes the local archive. This service mirrors it over SFTP when
-//! the named [`SystemMessageRemote`](https://moqui.org) has a `sendUrl`, or encrypted to S3 when that is `s3://bucket`
-//! (`backup_s3.rs`).
+//! the named [`SystemMessageRemote`](https://moqui.org) has a `sendUrl`. Two flags shape the mirror: `mirrorTransport`
+//! (`sftp` or `s3`, by default `s3` for an `s3://bucket` sendUrl) and `mirrorEncrypt` (each archive sealed to the age
+//! recipient `mirrorRecipient`). S3, and SFTP encrypted, send each archive as one object (`backup_store.rs`); SFTP
+//! plain copies files and directories as they are.
 //!
 //! Two properties let a deployment set the backup up without editing its job row (plans/archive/PostgresBackup.md):
 //! `embedded_db_backup_dir` is the archive directory when the call names no `backupDir`, and
@@ -84,7 +86,7 @@ pub(super) fn backup_embedded_database(
     let mirrored = if remote_id.is_empty() {
         "N".to_string()
     } else {
-        match mirror(facade, &remote_id, &outcome) {
+        match mirror_options(parameters).and_then(|options| mirror(facade, &remote_id, &options, &outcome)) {
             Ok(flag) => flag,
             Err(err) => {
                 outcome.errors.push(err.to_string());
@@ -169,7 +171,50 @@ pub(crate) fn apply_schedule_property(facade: &EntityFacade) {
     }
 }
 
-fn mirror(facade: &EntityFacade, remote_id: &str, outcome: &backup::BackupOutcome) -> Result<String, LibError> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Transport {
+    Sftp,
+    S3,
+}
+
+/// How the archives are mirrored: the transport (none: by the sendUrl), and the age recipient when encrypted.
+#[derive(Debug, PartialEq, Eq)]
+struct MirrorOptions {
+    transport: Option<Transport>,
+    recipient: Option<String>,
+}
+
+fn mirror_options(parameters: &BTreeMap<String, Value>) -> Result<MirrorOptions, LibError> {
+    let transport = match param_text(parameters, "mirrorTransport")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "" => None,
+        "sftp" => Some(Transport::Sftp),
+        "s3" => Some(Transport::S3),
+        other => return Err(LibError::new(format!("mirrorTransport is {other:?}; it is sftp or s3"))),
+    };
+    let recipient = param_text(parameters, "mirrorRecipient").trim().to_string();
+    let recipient = if flag_param(parameters, "mirrorEncrypt") {
+        if recipient.is_empty() {
+            return Err(LibError::new(
+                "mirrorEncrypt is on and mirrorRecipient is empty; set it to an age recipient (age1...)",
+            ));
+        }
+        Some(recipient)
+    } else {
+        None
+    };
+    Ok(MirrorOptions { transport, recipient })
+}
+
+fn mirror(
+    facade: &EntityFacade,
+    remote_id: &str,
+    options: &MirrorOptions,
+    outcome: &backup::BackupOutcome,
+) -> Result<String, LibError> {
     let Some(remote) = find_one(facade, REMOTE, "systemMessageRemoteId", remote_id)? else {
         return Err(LibError::new(format!("no SystemMessageRemote with id {remote_id}")));
     };
@@ -178,16 +223,20 @@ fn mirror(facade: &EntityFacade, remote_id: &str, outcome: &backup::BackupOutcom
         tracing::info!("embedded database backup mirror is off, SystemMessageRemote {remote_id} has no sendUrl");
         return Ok("N".to_string());
     }
-    if send_url.starts_with("s3://") {
+    let transport = options.transport.unwrap_or(if send_url.starts_with("s3://") {
+        Transport::S3
+    } else {
+        Transport::Sftp
+    });
+    if transport == Transport::S3 {
         let send_path = send_path(facade, &remote, remote_id)?;
-        let s3 = super::backup_s3::S3Remote {
+        let s3 = super::backup_store::S3Remote {
             send_url: &send_url,
             access_key: &field(&remote, "username"),
             secret_key: &field(&remote, "password"),
-            recipient: &field(&remote, "publicKey"),
             prefix: &send_path,
         };
-        return super::backup_s3::mirror_s3(&s3, outcome);
+        return super::backup_store::mirror_s3(&s3, options.recipient.as_deref(), outcome);
     }
     if field(&remote, "username").is_empty() {
         return Err(LibError::new(format!(
@@ -212,7 +261,10 @@ fn mirror(facade: &EntityFacade, remote_id: &str, outcome: &backup::BackupOutcom
         client.preserve_attributes(false);
     }
     client.connect()?;
-    let mirrored = mirror_with(&mut client, &send_path, outcome);
+    let mirrored = match &options.recipient {
+        Some(recipient) => super::backup_store::mirror_sftp_encrypted(&mut client, &send_path, recipient, outcome),
+        None => mirror_with(&mut client, &send_path, outcome),
+    };
     client.close();
     mirrored
 }

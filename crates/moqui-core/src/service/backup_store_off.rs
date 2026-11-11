@@ -12,24 +12,37 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Stands in for `backup_s3.rs` in a build without the `backup-s3` feature.
+//! Stands in for `backup_store.rs` in a build without the `backup-s3` feature.
 
 use moqui_lib::error::Error as LibError;
 
 use crate::backup::BackupOutcome;
+use crate::sftp::SftpClient;
 
-// the same fields as backup_s3.rs, which reads them
+const OFF: &str = "this build has no S3 or encrypted backup mirror (the backup-s3 feature is off)";
+
+// the same fields as backup_store.rs, which reads them
 #[allow(dead_code)]
 pub(super) struct S3Remote<'a> {
     pub send_url: &'a str,
     pub access_key: &'a str,
     pub secret_key: &'a str,
-    pub recipient: &'a str,
     pub prefix: &'a str,
 }
 
-pub(super) fn mirror_s3(_remote: &S3Remote<'_>, _outcome: &BackupOutcome) -> Result<String, LibError> {
-    Err(LibError::new(
-        "this build has no S3 backup mirror (the backup-s3 feature is off)",
-    ))
+pub(super) fn mirror_s3(
+    _remote: &S3Remote<'_>,
+    _recipient: Option<&str>,
+    _outcome: &BackupOutcome,
+) -> Result<String, LibError> {
+    Err(LibError::new(OFF))
+}
+
+pub(super) fn mirror_sftp_encrypted(
+    _client: &mut SftpClient,
+    _dir: &str,
+    _recipient: &str,
+    _outcome: &BackupOutcome,
+) -> Result<String, LibError> {
+    Err(LibError::new(OFF))
 }
