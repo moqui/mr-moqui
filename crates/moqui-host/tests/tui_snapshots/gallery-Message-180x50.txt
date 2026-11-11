@@ -19,8 +19,8 @@
    ▶ Message             │ │ References                                                              │
      Views               │ │ 1. Read more                                                            │
      Handheld            │ └─────────────────────────────────────────────────────────────────────────┘
+     Nav cards           │
  ▾ Home                  │
-                         │
                          │
                          │
                          │

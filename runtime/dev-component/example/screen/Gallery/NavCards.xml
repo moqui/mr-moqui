@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     is no link, a card and a child link left out by their conditions, and a card per row of a list. Every link goes to
     another gallery screen. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Nav cards" default-menu-include="false" menu-image="sym_o_dashboard_customize" menu-image-type="icon">
+        default-menu-title="Nav cards" default-menu-index="19" menu-image="sym_o_dashboard_customize" menu-image-type="icon">
 
     <actions>
         <set field="showSecret" from="false"/>

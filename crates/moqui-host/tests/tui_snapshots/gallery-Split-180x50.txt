@@ -19,8 +19,8 @@
      Message             │   Antarctica             AQ
      Views               │   Antigua And Barbuda    AG
      Handheld            │   Argentina              AR
- ▾ Home                  │   Armenia                AM
-                         │   Aruba                  AW
+     Nav cards           │   Armenia                AM
+ ▾ Home                  │   Aruba                  AW
                          │   Australia              AU
                          │   Austria                AT
                          │   Azerbaijan             AZ

@@ -19,8 +19,8 @@
      Message             │                                                                                                                        Clone
      Views               │   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type   Email Type Child          System <stamp> Open
      Handheld            │                                                                                                                        Clone
- ▾ Home                  │   [ ] EMT_EMAIL_VERIFY             Email Address Verification        Email Type Plain                 <stamp> Open
-                         │                                                                                                                        Clone
+     Nav cards           │   [ ] EMT_EMAIL_VERIFY             Email Address Verification        Email Type Plain                 <stamp> Open
+ ▾ Home                  │                                                                                                                        Clone
                          │   [ ] EMT_EMAIL_AUTHC_FACTOR_SENT  Email Authentication Code Sent    Email Type Child          System <stamp> Open
                          │                                                                                                                        Clone
                          │   [ ] EMT_NOTIFICATION             Notification                      Email Type Child          System <stamp> Open

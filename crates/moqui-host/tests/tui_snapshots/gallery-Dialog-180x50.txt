@@ -19,8 +19,8 @@
      Message             │                                                                             │   ENTCO_NOT_IN      not-in         NOT_IN      [ Edit… ] [ View… ]       │
      Views               │                                                                             │   ENTCO_NOT_LIKE    not-like       NOT_LIKE    [ Edit… ] [ View… ]       │
      Handheld            │                                                                             │   Rows 1–14 of 14 · Page 1/1                                             │
- ▾ Home                  │                                                                             └──────────────────────────────────────────────────────────────────────────┘
-                         │
+     Nav cards           │                                                                             └──────────────────────────────────────────────────────────────────────────┘
+ ▾ Home                  │
                          │
                          │
                          │
