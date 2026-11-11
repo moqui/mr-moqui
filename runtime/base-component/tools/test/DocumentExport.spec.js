@@ -26,9 +26,9 @@ feature("an included DocumentExport.json does not write to a file; Tools' export
         const dataDocumentId = ec.entity.find("moqui.entity.document.DataDocument").disableAuthz().list()[0].dataDocumentId
         const path = ec.factory.getRuntimePath() + "/tmp/" + fileName
         remove()
-        // as a report screen could post it: through System's ViewDataDocument, which includes the transition
-        const included = ec.screen.makeTest().rootScreen("component://tools/screen/System.xml")
-            .render("DataDocument/Edit/ViewDataDocument/DocumentExport.json", { dataDocumentIds: dataDocumentId, output: "file", path },
+        // as a report screen could post it: through Documents' ViewDataDocument, which includes the transition
+        const included = ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml")
+            .render("Data/Documents/Edit/ViewDataDocument/DocumentExport.json", { dataDocumentIds: dataDocumentId, output: "file", path },
                 "post")
         const includedWrote = written()
         ec.message.clearErrors()
