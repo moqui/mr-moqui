@@ -29,6 +29,12 @@ Design, status and review documents for MR Moqui. User guides for built features
 **Dev tools**
 - [design-dev-aide.md](design-dev-aide.md): Dev AIDE, the assisted IDE at `/qapps/dev`: workspace, editor, git, live reload, the artifact index and browser, the entity modeler, service writer and screen builder, and the dev agent.
 
+- [Terminal-Fancy.md](Terminal-Fancy.md): the Terminal screen as the terminal form of the development environment: many
+  sessions with tabs and splits that outlive a page, the `moqui>` command line in the browser and shells on the server's
+  operating system (bash, zsh, any program on a pty) behind permissions on a dev instance, floating panels as a layer of
+  the shell (terminals, and the Assist drawer and the tray's tabs undocked) that stay across screens, attention from
+  agents' sessions, and the Desktop and Mobile apps and the edge node as ways in. Research and plan; nothing built.
+
 - [LoadRunner.md](LoadRunner.md): a general load runner in place of the Tools app's Service Load Runner screen: load scripts in JavaScript on the `moqui test-client` harness, kept in a component's `test/load/` and run from Tools › Load, from `moqui test-load` or from a client spec, against services in process or any server over HTTP, with runs kept as result files and compared; the first script is order to cash on Moqui Java and MR Moqui. Research and plan; nothing built.
 
 **Maps**
