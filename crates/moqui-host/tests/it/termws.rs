@@ -529,15 +529,20 @@ fn the_command_line_opens_on_a_dev_instance_for_a_user_with_ssh_shell() {
     );
 }
 
-/// The browser terminal's `term-exec` helper, for the host sessions of these tests: the server runs this test binary
-/// with this test's name (`terminal_exec_helper`), and with the program in its environment this becomes it. Run on
-/// its own, it does nothing.
+/// The browser terminal's helpers, for the host sessions of these tests: the server runs this test binary with this
+/// test's name (`terminal_exec_helper`), and with the program in its environment this becomes it (`term-exec`), or with
+/// a holder's directory the holder (`term-hold`). Run on its own, it does nothing.
 #[test]
 fn term_exec_helper() {
-    if std::env::var_os("MOQUI_TERM_EXEC").is_some() {
-        let status = moqui_host::terminal_helper(&["term-exec".to_string()]).unwrap_or(127);
-        std::process::exit(status);
-    }
+    let mode = if std::env::var_os("MOQUI_TERM_EXEC").is_some() {
+        "term-exec"
+    } else if std::env::var_os("MOQUI_TERM_HOLD").is_some() {
+        "term-hold"
+    } else {
+        return;
+    };
+    let status = moqui_host::terminal_helper(&[mode.to_string()]).unwrap_or(127);
+    std::process::exit(status);
 }
 
 /// The `terminal_exec_helper` property that runs [`term_exec_helper`].
@@ -647,4 +652,62 @@ fn a_host_session_runs_a_program_on_a_pty() {
         Some(serde_json::json!(3)),
         "{listed}"
     );
+}
+
+/// The holder (plans/Terminal-Fancy.md §7.5): a host session's program runs on through a restart of the server, and the
+/// next window gets its output again and goes on with it.
+#[test]
+fn a_host_session_outlives_a_restart_of_the_server() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let helper = helper_property();
+    let gate = crate::common::start_with_conf_properties(
+        "termws-hold",
+        None,
+        r#"<terminal><host-profile name="plain" command="sh"/></terminal>"#,
+        &[("instance_purpose", "dev"), (helper.0, &helper.1)],
+    );
+    let page = Page::signed_in(gate.server.address(), "john.doe");
+    gate.server.factory().flush_sessions().unwrap();
+    let options = page.call("options", None);
+    let opened = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "host", "profileName": "plain"})),
+    );
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened} {options}"))
+        .to_string();
+    let mut socket = page.attach(&id, None);
+    socket
+        .send(Message::Binary(
+            b"marker=before-$((40+2)); echo $marker\r".to_vec().into(),
+        ))
+        .unwrap();
+    read_messages_until(&mut socket, "before-42").unwrap();
+    assert_eq!(page.call("options", None)["options"]["hostSessionsOutliveServer"], true);
+
+    let gate = gate.restart();
+    drop(socket);
+    let page = Page::signed_in(gate.server.address(), "john.doe");
+    gate.server.factory().flush_sessions().unwrap();
+    let listed = page.call("sessions", None);
+    assert!(
+        listed["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|session| session["id"] == id.as_str()),
+        "the session is listed again after the restart: {listed}"
+    );
+    let mut back = page.attach(&id, None);
+    let (texts, _) = read_messages_until(&mut back, "before-42").unwrap();
+    assert!(texts[0].contains(r#""reset":true"#), "{texts:?}");
+    // the same shell: its variable is still set
+    back.send(Message::Binary(b"echo still-$marker\r".to_vec().into()))
+        .unwrap();
+    read_messages_until(&mut back, "still-before-42").unwrap();
+    page.call("close", Some(serde_json::json!({"sessionId": id})));
+    assert!(read_messages_until(&mut back, "never").is_err());
 }

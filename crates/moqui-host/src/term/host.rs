@@ -322,6 +322,7 @@ pub(crate) fn environment(of: &EnvFor<'_>) -> Vec<(String, String)> {
 }
 
 /// What a host program is started with.
+#[derive(Clone)]
 pub(crate) struct Launch {
     pub argv: Vec<String>,
     pub arg0: Option<String>,
@@ -378,7 +379,9 @@ impl Launch {
     /// Start it on a pty, as a session's program.
     pub fn start(&self) -> std::io::Result<Program> {
         let _runtime = crate::edge::handle().enter();
+        let helper = exec::helper("term-exec")?;
         let started = exec::start(
+            &helper,
             &self.argv,
             self.arg0.as_deref(),
             &self.directory,

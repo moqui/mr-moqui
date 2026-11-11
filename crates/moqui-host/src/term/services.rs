@@ -138,6 +138,16 @@ fn host_profiles(_factory: &ExecutionContextFactory) -> Vec<serde_json::Value> {
     Vec::new()
 }
 
+#[cfg(all(feature = "devtools", unix))]
+fn host_outlives(factory: &ExecutionContextFactory) -> bool {
+    super::held::Holder::of(factory).in_use()
+}
+
+#[cfg(not(all(feature = "devtools", unix)))]
+fn host_outlives(_factory: &ExecutionContextFactory) -> bool {
+    false
+}
+
 /// `get#TerminalOptions`: the kinds this user may open from here, and the limits.
 fn get_terminal_options(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     let _username = match username() {
@@ -160,11 +170,27 @@ fn get_terminal_options(_parameters: &BTreeMap<String, Value>, _facade: &EntityF
         "maxSessions": terminal_number(&factory, "max-sessions", DEFAULT_MAX),
         "maxSessionsPerUser": terminal_number(&factory, "max-sessions-per-user", DEFAULT_MAX_PER_USER),
         "detachSeconds": registry.detach.as_secs(),
-        // a host session ends with the server until the holder keeps it (§7.5)
-        "hostSessionsOutliveServer": false,
+        // a host session outlives the server while the holder keeps it (§7.5)
+        "hostSessionsOutliveServer": host_outlives(&factory),
     });
     answer("options", &options)
 }
+
+/// The host sessions the holder kept from the server before, listed again on the first look after a start (§7.5).
+#[cfg(all(feature = "devtools", unix))]
+pub(crate) fn adopt_held(factory: &Arc<ExecutionContextFactory>) {
+    let holder = super::held::Holder::of(factory);
+    if holder.adopted() {
+        return;
+    }
+    let weak = Arc::downgrade(factory);
+    if let Err(err) = crate::edge::block_on(async move { holder.adopt(weak).await }) {
+        tracing::error!("the terminal holder's sessions were not taken back: {}", err.message());
+    }
+}
+
+#[cfg(not(all(feature = "devtools", unix)))]
+pub(crate) fn adopt_held(_factory: &Arc<ExecutionContextFactory>) {}
 
 /// `find#TerminalSessions`: the user's sessions, oldest first.
 fn find_terminal_sessions(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
@@ -173,6 +199,7 @@ fn find_terminal_sessions(_parameters: &BTreeMap<String, Value>, _facade: &Entit
         Err(refused) => return refused,
     };
     let factory = factory()?;
+    adopt_held(&factory);
     let sessions: Vec<serde_json::Value> = Registry::of(&factory)
         .list(&username)
         .iter()

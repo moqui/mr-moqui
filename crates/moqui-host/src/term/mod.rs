@@ -41,6 +41,10 @@ pub(crate) mod audit;
 #[cfg(all(feature = "devtools", unix))]
 pub(crate) mod exec;
 #[cfg(all(feature = "devtools", unix))]
+pub(crate) mod held;
+#[cfg(all(feature = "devtools", unix))]
+pub(crate) mod hold;
+#[cfg(all(feature = "devtools", unix))]
 pub(crate) mod host;
 pub(crate) mod registry;
 mod ring;

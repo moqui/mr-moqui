@@ -324,6 +324,12 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
     } = opened;
     let id = session.unwrap_or_default();
     let label = format!("browser terminal {id} of {username}");
+    // a session the holder kept from the server before is found once it is taken back
+    #[cfg(all(feature = "devtools", unix))]
+    if Registry::of(&factory).find(&id, &username).is_none() {
+        let holder = crate::term::held::Holder::of(&factory);
+        holder.adopt(Arc::downgrade(&factory)).await;
+    }
     // Another user's id answers as one that does not exist.
     let Some(kept) = Registry::of(&factory).find(&id, &username) else {
         close(&mut socket, "no such terminal session").await;

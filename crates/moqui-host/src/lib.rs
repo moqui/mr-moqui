@@ -619,12 +619,15 @@ pub fn main() {
 
 /// The browser terminal's helper modes (plans/Terminal-Fancy.md §7.2): when the first argument names one, run it and
 /// answer its exit status, else `None`. `term-exec` becomes the program of a host session on its pty, and answers only
-/// when it could not. Every binary that hosts a server calls this before anything else: [`main`], and the Desktop
-/// app's, whose node in process starts its own executable. It takes no conf and starts no runtime.
+/// when it could not; `term-hold` is the holder of host sessions (`term::hold`), which outlives the server. Every
+/// binary that hosts a server calls this before anything else: [`main`], and the Desktop app's, whose node in process
+/// starts its own executable. It takes no conf and starts no runtime.
 pub fn terminal_helper(args: &[String]) -> Option<i32> {
     match args.first().map(String::as_str) {
         #[cfg(all(feature = "tui", feature = "devtools", unix))]
         Some("term-exec") => Some(term::exec::term_exec()),
+        #[cfg(all(feature = "tui", feature = "devtools", unix))]
+        Some("term-hold") => Some(term::hold::term_hold()),
         _ => None,
     }
 }

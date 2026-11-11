@@ -143,6 +143,8 @@ enum Command {
     End {
         reason: String,
     },
+    /// Let go of a held session without ending it: the server is stopping, and the holder keeps it (§7.5).
+    Release,
 }
 
 /// What the session list shows of a session.
@@ -178,6 +180,8 @@ pub(crate) struct Session {
     pub profile: String,
     /// Millis it started.
     pub started: i64,
+    /// The holder runs its program (§7.5).
+    pub held: bool,
     info: Mutex<Info>,
     commands: mpsc::Sender<Command>,
     input: mpsc::Sender<Vec<u8>>,
@@ -202,6 +206,8 @@ pub(crate) struct Spec {
     pub slot: Option<SessionSlot>,
     /// Called once the session ended, with its exit status and the reason (the audit row's end).
     pub on_end: Option<Box<dyn FnOnce(u32, String) + Send>>,
+    /// The holder runs its program: the server's stop lets go of it rather than ending it.
+    pub held: bool,
 }
 
 pub(crate) fn now_millis() -> i64 {
@@ -261,6 +267,11 @@ impl Session {
         self.input.send(bytes).await.is_ok()
     }
 
+    /// Let go of a held session, which the holder keeps: the server is stopping.
+    pub fn release(&self) {
+        let _ = self.commands.try_send(Command::Release);
+    }
+
     /// End the session: its program is asked to end, and killed when it has not.
     pub fn end(&self, reason: &str) {
         let _ = self.commands.try_send(Command::End {
@@ -307,6 +318,7 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         kind: spec.kind,
         profile: spec.profile.clone(),
         started: now_millis(),
+        held: spec.held,
         info: Mutex::new(Info {
             title: spec.title.clone(),
             cwd: spec.cwd.clone(),
@@ -417,6 +429,7 @@ impl Pump {
         // When the program was asked to end, and why.
         let mut hung_up: Option<Instant> = None;
         let mut reason: Option<String> = None;
+        let mut released = false;
         loop {
             let paused = self.client.as_ref().is_some_and(|client| client.paused);
             let ack_deadline = self
@@ -451,6 +464,10 @@ impl Pump {
                             self.hang_up(&mut program, &mut stop_input);
                         }
                     }
+                    Some(Command::Release) => {
+                        released = true;
+                        break;
+                    }
                     Some(command) => {
                         self.command(command, &mut program);
                         if self.client.is_none() {
@@ -484,6 +501,17 @@ impl Pump {
             }
         }
         self.flush();
+        if released {
+            // the holder keeps the program; this server only lets go of it
+            tracing::info!("{label}: let go to the terminal holder");
+            if let Some(client) = self.client.take() {
+                let _ = client.out.try_send(Out::Close("the server is stopping".to_string()));
+            }
+            if let Some(registry) = self.registry.upgrade() {
+                registry.remove(&self.session.id);
+            }
+            return;
+        }
         if let Some(stop) = stop_input.take() {
             let _ = stop.send(());
         }
@@ -618,7 +646,7 @@ impl Pump {
                     }
                 }
             }
-            Command::End { .. } => {}
+            Command::End { .. } | Command::Release => {}
         }
     }
 

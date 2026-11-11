@@ -140,8 +140,9 @@ fn open_master() -> io::Result<OwnedFd> {
     Ok(master)
 }
 
-/// The helper's command line: `terminal_exec_helper` (a JSON list), else this binary and `term-exec`.
-fn helper() -> io::Result<(String, Vec<String>)> {
+/// The command line of a helper mode of this binary, `term-exec` or `term-hold`: `terminal_exec_helper` (a JSON list;
+/// the mode is told by the environment, [`EXEC_ENV`] or `MOQUI_TERM_HOLD`), else this binary and the mode.
+pub(crate) fn helper(mode: &str) -> io::Result<(String, Vec<String>)> {
     let configured = moqui_lib::env::get_prop_or_env(HELPER_PROPERTY);
     if !configured.is_empty() {
         let list: Vec<String> = serde_json::from_str(&configured)
@@ -151,12 +152,15 @@ fn helper() -> io::Result<(String, Vec<String>)> {
         }
     }
     let exe = std::env::current_exe()?;
-    Ok((exe.to_string_lossy().into_owned(), vec!["term-exec".to_string()]))
+    Ok((exe.to_string_lossy().into_owned(), vec![mode.to_string()]))
 }
 
-/// Start `argv` (with `arg0` as its own name) in `directory` with exactly `env`, on a new pty of `cols` by `rows`.
-/// Must be called in the edge runtime's context (`crate::edge::handle().enter()`), which reads the master.
+/// Start `argv` (with `arg0` as its own name) in `directory` with exactly `env`, on a new pty of `cols` by `rows`,
+/// through `helper` (`term-exec`'s command line, [`helper`]). Must be called in a runtime's context, which reads the
+/// master.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn start(
+    helper: &(String, Vec<String>),
     argv: &[String],
     arg0: Option<&str>,
     directory: &Path,
@@ -177,11 +181,10 @@ pub(crate) fn start(
         arg0: arg0.map(str::to_string),
     }
     .to_json();
-    let (helper, helper_args) = helper()?;
     let child = {
-        let mut command = std::process::Command::new(helper);
+        let mut command = std::process::Command::new(&helper.0);
         command
-            .args(helper_args)
+            .args(&helper.1)
             .env_clear()
             .envs(env.iter().map(|(name, value)| (name, value)))
             .env(EXEC_ENV, spec)
@@ -249,6 +252,13 @@ impl AsyncRead for PtyReader {
 
 /// The master written as the program's input.
 pub(crate) struct PtyWriter(Arc<AsyncFd<OwnedFd>>);
+
+impl PtyWriter {
+    /// Another writer of the same master.
+    pub fn of(master: &Arc<AsyncFd<OwnedFd>>) -> Self {
+        Self(Arc::clone(master))
+    }
+}
 
 impl AsyncWrite for PtyWriter {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {

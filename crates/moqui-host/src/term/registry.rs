@@ -95,11 +95,15 @@ impl Registry {
         sessions
     }
 
-    /// The server is stopping: every session ends.
+    /// The server is stopping: every session ends, but one the holder runs, which is let go to it (§7.5).
     pub fn end_all(&self) {
         let sessions: Vec<Arc<Session>> = lock(&self.live).values().cloned().collect();
         for session in sessions {
-            session.end("the server is stopping");
+            if session.held {
+                session.release();
+            } else {
+                session.end("the server is stopping");
+            }
         }
     }
 
@@ -148,6 +152,7 @@ impl Registry {
             replay: 0,
             slot: None,
             on_end: None,
+            held: false,
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -252,6 +257,7 @@ impl Registry {
             replay: self.replay,
             slot: Some(slot),
             on_end: spec.on_end,
+            held: false,
         };
         Ok(session::spawn(self, spec, program))
     }
@@ -278,10 +284,44 @@ impl Registry {
         spec: HostSpec,
     ) -> Result<Arc<Session>, String> {
         let slot = super::host::HostSessions::of(factory).take(&spec.username)?;
-        let program = spec
-            .launch
-            .start()
-            .map_err(|err| format!("{} did not start: {err}", spec.launch.command_line()))?;
+        // in the holder, so it outlives the server (§7.5); in the server when no holder starts
+        let holder = super::held::Holder::of(factory);
+        let in_holder = holder.in_use() && {
+            let holder = Arc::clone(&holder);
+            match crate::edge::block_on(async move { holder.ensure().await }) {
+                Ok(Ok(())) => true,
+                Ok(Err(err)) => {
+                    tracing::error!("no terminal holder, so host sessions end with the server: {err}");
+                    holder_give_up(factory);
+                    false
+                }
+                Err(err) => {
+                    tracing::error!(
+                        "no terminal holder, so host sessions end with the server: {}",
+                        err.message()
+                    );
+                    holder_give_up(factory);
+                    false
+                }
+            }
+        };
+        let program = if in_holder {
+            let meta = serde_json::json!({
+                "username": spec.username, "profile": spec.profile.name, "kind": "host",
+                "title": if spec.title.is_empty() { spec.profile.title.clone() } else { spec.title.clone() },
+                "cwd": spec.launch.directory.to_string_lossy(), "cols": spec.launch.cols, "rows": spec.launch.rows,
+            });
+            let (holder, id, launch, replay) = (Arc::clone(&holder), spec.id.clone(), spec.launch.clone(), self.replay);
+            match crate::edge::block_on(async move { holder.open(&id, &launch, replay, meta).await }) {
+                Ok(Ok(program)) => program,
+                Ok(Err(err)) => return Err(err.to_string()),
+                Err(err) => return Err(err.message().to_string()),
+            }
+        } else {
+            spec.launch
+                .start()
+                .map_err(|err| format!("{} did not start: {err}", spec.launch.command_line()))?
+        };
         let spec = Spec {
             id: spec.id,
             username: spec.username,
@@ -299,9 +339,54 @@ impl Registry {
             replay: self.replay,
             slot: Some(slot),
             on_end: spec.on_end,
+            held: in_holder,
         };
         Ok(session::spawn(self, spec, program))
     }
+
+    /// List again a host session the holder kept from the server before (§7.5), for its user.
+    pub fn adopt_host(self: &Arc<Self>, factory: &Arc<ExecutionContextFactory>, adopted: Adopted) {
+        // its place in the limits, when there is one: it is running either way
+        let slot = super::host::HostSessions::of(factory).take(&adopted.username).ok();
+        let spec = Spec {
+            on_end: Some(super::audit::on_end(Arc::downgrade(factory), adopted.id.clone())),
+            id: adopted.id,
+            username: adopted.username,
+            kind: Kind::Host,
+            profile: adopted.profile,
+            title: adopted.title,
+            cwd: adopted.cwd,
+            cols: adopted.cols,
+            rows: adopted.rows,
+            detached_for: self.host_detach,
+            replay: self.replay,
+            slot,
+            held: true,
+        };
+        session::spawn(self, spec, adopted.program);
+    }
+
+    pub fn contains(&self, id: &str) -> bool {
+        lock(&self.live).contains_key(id)
+    }
+}
+
+#[cfg(all(feature = "devtools", unix))]
+fn holder_give_up(factory: &ExecutionContextFactory) {
+    super::held::Holder::of(factory).give_up();
+}
+
+/// A host session taken back from the holder.
+#[cfg(all(feature = "devtools", unix))]
+pub(crate) struct Adopted {
+    pub id: String,
+    pub username: String,
+    pub profile: String,
+    pub title: String,
+    pub cwd: String,
+    pub cols: u16,
+    pub rows: u16,
+    pub program: Program,
 }
 
 /// A new session id: 22 URL-safe characters, 132 random bits.
