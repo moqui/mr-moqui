@@ -207,6 +207,7 @@ fn forwarded(
                 secure: https,
                 https,
                 exporter: None,
+                via: moqui_core::web::RequestVia::Edge,
             };
             Ok(crate::http::serve_request(app, request, &peer))
         }

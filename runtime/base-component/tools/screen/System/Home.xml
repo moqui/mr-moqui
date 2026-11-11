@@ -317,7 +317,8 @@ along with this software (see the LICENSE.md file). If not, see
                 featured('Conf', '', L('Settings and the file each came from')),
                 featured('Components', '', L('What is loaded; deploy and update')),
 
-                entry(server, 'Cache'), entry(server, 'ThreadList'), entry(server, 'ServiceJob/JobRuns', L('Job history'), 'sym_o_history'),
+                entry(server, 'Cache'), entry(server, 'ThreadList'), entry(server, 'TerminalSessions', '', 'sym_o_terminal'),
+                entry(server, 'ServiceJob/JobRuns', L('Job history'), 'sym_o_history'),
                 entry(server, 'Print/Printer', '', 'sym_o_print'), entry(server, 'Print/PrintJob', '', 'sym_o_receipt_long'), entry(server, 'Instance'),
 
                 entry(monitor, 'Monitor/Services'), entry(monitor, 'Monitor/Traces'), entry(monitor, 'Monitor/Logs'), entry(monitor, 'Monitor/Errors'),

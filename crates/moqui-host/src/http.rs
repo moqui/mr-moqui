@@ -602,6 +602,7 @@ async fn serve(
                 closing,
                 exporter: None,
                 hold: Some(hold),
+                via: moqui_core::web::RequestVia::Direct,
             };
             match tls {
                 None => run_connection(stream, false, Http::One, serving).await,
@@ -963,6 +964,7 @@ async fn dispatch_screen(
     let mut web = WebRequest::new(parts.method.as_str(), parts.uri.path());
     web.https = over_tls || forwarded_https(&parts.headers, peer.ip(), state.guard.conf().addressing());
     web.peer_ip = peer.ip().to_string();
+    web.via = parts.extensions.get::<moqui_core::web::RequestVia>().copied().unwrap_or_default();
     web.headers = header_map(&parts.headers);
     web.query = moqui_core::web::form_pairs(parts.uri.query().unwrap_or(""));
     web.raw_query = parts.uri.query().map(str::to_string);

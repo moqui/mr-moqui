@@ -1103,3 +1103,59 @@ fn the_login_dialog_lets_in_a_client_with_no_key() {
     })
     .unwrap();
 }
+
+/// `sh` at the SSH prompt (plans/Terminal-Fancy.md §6): a program on the server's operating system for a user with
+/// SSH_SHELL and TERMINAL_HOST on a dev instance, from this machine; the prompt comes back when it ends. A user with
+/// SSH_SHELL alone is refused it.
+#[cfg(all(feature = "tui", feature = "devtools"))]
+#[test]
+fn sh_at_the_ssh_prompt_runs_a_host_program() {
+    if !crate::common::own_process() {
+        return;
+    }
+    use apps::{connect, read_until, send, text};
+
+    let seed = base64::engine::general_purpose::STANDARD.encode(HOST_SEED);
+    let helper = crate::termws::helper_property();
+    let gate = crate::common::start_with_conf_properties(
+        "ssh_sh",
+        Some(APPS_DATA),
+        r#"<terminal><host-profile name="plain" command="sh"/></terminal>"#,
+        &[
+            ("ssh_port", "0"),
+            ("ssh_host_key", &seed),
+            ("instance_purpose", "dev"),
+            (helper.0, &helper.1),
+        ],
+    );
+    let address = gate.server.ssh_address().expect("the SSH server listens");
+    moqui_host::edge::block_on(async move {
+        let handle = connect(address, "john.doe", "moqui").await.expect("john.doe logs in");
+        let mut channel = apps::pty(&handle, 100, 40).await;
+        channel.request_shell(true).await.unwrap();
+        let mut seen = Vec::new();
+        read_until(&mut channel, &mut seen, "moqui> ", false).await.unwrap();
+        send(&channel, b"sh plain\r").await;
+        send(&channel, b"echo x-$((2*3))\r").await;
+        read_until(&mut channel, &mut seen, "x-6", false).await.unwrap();
+        let before = seen.len();
+        send(&channel, b"exit\r").await;
+        let mut after = seen.split_off(before);
+        // raw: the title the prompt sets again is an OSC that text() does not read past
+        read_until(&mut channel, &mut after, "moqui> ", true).await.unwrap();
+
+        let handle = connect(address, "shell.only", "moqui")
+            .await
+            .expect("shell.only logs in");
+        let mut channel = apps::pty(&handle, 100, 40).await;
+        channel.request_shell(true).await.unwrap();
+        let mut seen = Vec::new();
+        read_until(&mut channel, &mut seen, "moqui> ", false).await.unwrap();
+        send(&channel, b"sh plain\r").await;
+        read_until(&mut channel, &mut seen, "not available here", false)
+            .await
+            .unwrap();
+        assert!(!text(&seen).contains("x-6"));
+    })
+    .unwrap();
+}

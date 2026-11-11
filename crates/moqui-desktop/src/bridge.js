@@ -94,13 +94,14 @@
             const bytes = new Uint8Array(raw.length);
             for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
             if (this.onmessage) this.onmessage({ type: "message", data: bytes.buffer });
-        } else this.ended(event.kind === "revoked" ? 1008 : 1006);
+        } else this.ended(event.kind === "revoked" ? 1008 : 1006, event.reason);
     };
-    HostSocket.prototype.ended = function (code) {
+    // the reason of a close the server gave (the terminal's: "opened elsewhere"), as a browser socket's close event has it
+    HostSocket.prototype.ended = function (code, reason) {
         if (this.readyState === 3) return;
         this.readyState = 3;
         if (this.id !== null) { delete sockets[this.id]; ended.add(this.id); invoke("socket_close", { id: this.id }); }
-        if (this.onclose) this.onclose({ type: "close", code, wasClean: code === 1000 });
+        if (this.onclose) this.onclose({ type: "close", code: reason ? 1000 : code, reason: reason || "", wasClean: code === 1000 || !!reason });
     };
     HostSocket.prototype.send = function (data) {
         if (this.readyState !== 1 || this.id === null) throw new Error("The socket is not open");

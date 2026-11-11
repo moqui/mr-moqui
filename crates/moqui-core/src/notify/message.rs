@@ -1056,7 +1056,9 @@ pub(crate) fn service_job_error(
     let mut note = NotificationMessage::new();
     note.topic("ServiceJobError")
         .notification_type("danger")
-        .title(format!("Job Error {job_name} [{job_run_id}] {errors}"))
+        // The title is a template expanded as a script: the job's name and its errors (which may quote stored or
+        // entered text) are taken from the message by name, so nothing in them runs.
+        .title(format!("Job Error ${{jobName}} [{job_run_id}] ${{errors}}"))
         .message_map(message)
         .user_ids(user_ids.iter().cloned())
         .send()

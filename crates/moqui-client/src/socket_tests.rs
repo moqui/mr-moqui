@@ -26,6 +26,10 @@ fn a_page_opens_only_the_servers_sockets() {
         socket_url("http://localhost:8080/moqui", "/callws?x=1").unwrap(),
         "ws://localhost:8080/moqui/callws?x=1"
     );
+    assert_eq!(
+        socket_url("https://dev.example.com", "/termws?session=abc").unwrap(),
+        "wss://dev.example.com:443/termws?session=abc"
+    );
     for path in ["/apps/x", "notws", "/notws/../apps", "/notws#x", "//evil/notws"] {
         assert!(socket_url("https://erp.example.com", path).is_err(), "{path}");
     }
@@ -101,4 +105,62 @@ fn frames_pass_both_ways_and_a_revoked_key_ends_the_socket() {
     assert_eq!(key, "the-key");
     assert_eq!(first, "subscribe:ALL");
     assert!(heard.recv_timeout(Duration::from_millis(300)).is_err());
+}
+
+/// The terminal's socket (plans/Terminal-Fancy.md §12): binary frames both ways, every frame the page sent kept, and a
+/// close heard with its reason and not connected again, since the page attaches again itself.
+#[test]
+fn the_terminals_socket_carries_bytes_and_ends_with_its_reason() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (tcp, _) = listener.accept().unwrap();
+        let mut socket = tungstenite::accept(tcp).unwrap();
+        let mut typed = Vec::new();
+        while typed.len() < 300 {
+            if let tungstenite::Message::Binary(bytes) = socket.read().unwrap() {
+                typed.extend_from_slice(&bytes);
+            }
+        }
+        socket
+            .send(tungstenite::Message::Binary(vec![0x1b, b'[', b'H'].into()))
+            .unwrap();
+        socket
+            .close(Some(tungstenite::protocol::CloseFrame {
+                code: tungstenite::protocol::frame::coding::CloseCode::Normal,
+                reason: "opened elsewhere".into(),
+            }))
+            .unwrap();
+        let _ = socket.flush();
+        while socket.read().is_ok() {}
+        // nothing connects again
+        listener.set_nonblocking(true).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        (typed, listener.accept().is_err())
+    });
+    let (sent, heard) = mpsc::channel();
+    let socket = open(
+        &format!("http://127.0.0.1:{port}"),
+        "the-key",
+        "/termws?session=abc",
+        Box::new(move |event| {
+            let _ = sent.send(event);
+        }),
+    )
+    .unwrap();
+    // more than the queue's limit of a text socket, before it opens: none is dropped
+    for _ in 0..300 {
+        socket.send_binary(vec![b'x']);
+    }
+    let wait = Duration::from_secs(5);
+    assert_eq!(heard.recv_timeout(wait).unwrap(), Event::Open);
+    assert_eq!(heard.recv_timeout(wait).unwrap(), Event::Binary(vec![0x1b, b'[', b'H']));
+    assert_eq!(
+        heard.recv_timeout(wait).unwrap(),
+        Event::Ended("opened elsewhere".to_string())
+    );
+    let (typed, no_second) = server.join().unwrap();
+    assert_eq!(typed, vec![b'x'; 300]);
+    assert!(no_second, "the host does not connect the terminal again");
+    assert!(heard.recv_timeout(Duration::from_millis(200)).is_err());
 }

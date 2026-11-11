@@ -21,9 +21,10 @@ feature("the tray fits its layout when a scrollbar reduces the available width",
             <script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
             <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
             const app=Vue.createApp({data(){return {trayMounted:true,trayOpen:true,trayTab:'today',trayLoaded:{},trayScroll:{},shellTray:null,
-                trayTabs:[{key:'today',label:'Today',icon:'sym_o_today'}],labels:{closeTray:'Close tray'}};},
+                trayTabs:[{key:'today',label:'Today',icon:'sym_o_today'}],trayFloating:{},labels:{closeTray:'Close tray'}};},
+                computed:{trayDockedTabs(){return this.trayTabs;}},
                 methods:{countOf(){return 0;},countText(){return '';},openTray(key){this.trayTab=key;this.trayOpen=true;},
-                    closeTray(){this.trayOpen=false;},keepTrayScroll(){}}});
+                    closeTray(){this.trayOpen=false;},keepTrayScroll(){},trayFloatTarget(){return null;}}});
             app.use(Quasar);app.config.globalProperties.moqui=moqui;
             app.component('m-shell-tray',moqui.qvt.components['m-shell-tray']);window.trayApp=app.mount('#app');
             window.trayGeometry=()=>{const canvas=document.querySelector('.q-page-container').getBoundingClientRect();

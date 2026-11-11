@@ -325,6 +325,23 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     licenseFiles: ['LICENSE'],
   },
   {
+    // The terminal's search, plain URLs as links, and wide characters and emoji at the right width
+    // (plans/Terminal-Fancy.md §9.4). Pinned Nov 11, 2026, the releases that go with xterm.js 6.0.0.
+    id: 'xterm-addon-search', name: '@xterm/addon-search', npm: '@xterm/addon-search', version: '0.16.0', license: 'MIT',
+    copy: [['lib/addon-search.js', 'xterm/addon-search.js']],
+    licenseFiles: ['LICENSE'],
+  },
+  {
+    id: 'xterm-addon-web-links', name: '@xterm/addon-web-links', npm: '@xterm/addon-web-links', version: '0.12.0', license: 'MIT',
+    copy: [['lib/addon-web-links.js', 'xterm/addon-web-links.js']],
+    licenseFiles: ['LICENSE'],
+  },
+  {
+    id: 'xterm-addon-unicode11', name: '@xterm/addon-unicode11', npm: '@xterm/addon-unicode11', version: '0.9.0', license: 'MIT',
+    copy: [['lib/addon-unicode11.js', 'xterm/addon-unicode11.js']],
+    licenseFiles: ['LICENSE'],
+  },
+  {
     id: 'vue', name: 'Vue', npm: 'vue', version: '3.5.44', license: 'MIT',
     copy: [
       ['dist/vue.global.prod.js', 'vue/vue.global.prod.js'],

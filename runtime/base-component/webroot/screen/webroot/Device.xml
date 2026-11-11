@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The page a shared device's browser enters its registration code on (/Device; docs/security/Shared-Devices.md,
+    crates/moqui-core/src/user/device.rs): nobody is signed in. The code is good once and for minutes; redeeming it puts the
+    device cookie on the response and sends the browser to its route group's own path. It is the one screen outside its
+    route group a registered device may open, where it says what the browser is registered as. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-include="false" require-authentication="false" history="false">
+
+    <transition name="redeem">
+        <parameter name="code"/>
+        <actions>
+            <service-call name="org.moqui.admin.DeviceServices.redeem#Device" in-map="{code:code}" out-map="redeemOut"/>
+            <set field="redeemed" from="!!redeemOut?.redeemed"/>
+            <set field="homePath" from="redeemOut?.homePath || '/Device'"/>
+            <if condition="!redeemed"><script>ec.message.addError(redeemOut?.reason || 'That code is not valid')</script></if>
+        </actions>
+        <conditional-response url="${homePath}" url-type="plain"><condition><expression>redeemed</expression></condition></conditional-response>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <service-call name="org.moqui.admin.DeviceServices.get#DeviceStatus" out-map="deviceStatus"/>
+        <set field="headerMessageList" from="ec.message.messages"/>
+        <set field="headerErrorList" from="ec.message.errors"/>
+    </actions>
+
+    <widgets>
+        <container-panel id="apps-container">
+            <panel-header>
+                <container id="header-logo"><label text="Register this device" type="h1"/></container>
+            </panel-header>
+            <panel-center>
+                <section-iterate name="headerMessages" list="headerMessageList" entry="message">
+                    <widgets><container style="message"><label text="${message}"/></container></widgets>
+                </section-iterate>
+                <section-iterate name="headerErrors" list="headerErrorList" entry="errorMessage">
+                    <widgets><container style="message error"><label text="${errorMessage}"/></container></widgets>
+                </section-iterate>
+                <section name="Registered" condition="deviceStatus?.registered"><widgets>
+                    <container id="device-registered">
+                        <label text="This browser is registered as ${deviceStatus.deviceName}." type="p"/>
+                        <link url="${deviceStatus.homePath}" url-type="plain" text="Open the display" condition="deviceStatus.homePath"/>
+                    </container>
+                </widgets><fail-widgets>
+                    <container id="login-box">
+                        <label text="Enter the registration code an administrator was shown for this device. It works once, for a few minutes." type="p"/>
+                        <form-single name="RedeemDevice" transition="redeem">
+                            <field name="code"><default-field title="Registration code"><text-line size="30"/></default-field></field>
+                            <field name="submitButton"><default-field title="Register"><submit/></default-field></field>
+                        </form-single>
+                    </container>
+                </fail-widgets></section>
+            </panel-center>
+        </container-panel>
+    </widgets>
+</screen>

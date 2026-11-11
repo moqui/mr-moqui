@@ -13,7 +13,8 @@
  */
 
 //! The commands of a page's sockets, all of them the server's (plans/Mobile-Desktop.md §4 "One transport seam"): the
-//! page's `moquiDesktop.socket` names a path only (`/notws` or `/callws`), which the host opens on the server of the
+//! page's `moquiDesktop.socket` names a path only (`/notws`, `/callws` or the terminal's `/termws`, whose frames are
+//! binary, in base64 between the page and the host), which the host opens on the server of the
 //! page's account with its key and bridges (`moqui_client::bridge`); frames come back as
 //! `window.__moquiSocketEvent(id, event)` (`ClientHost::socket_event`). The mobile app's; the desktop app has its own,
 //! which also holds the node's in process with its binary terminal frames.
@@ -36,7 +37,7 @@ pub fn socket_open(app: AppHandle, webview: Webview, path: String) -> Result<u64
     moqui_client::bridge::open_remote(&state.core, &state.host, webview.label(), &path)
 }
 
-/// Send a text frame on one of the page's sockets; the server's sockets take no binary frames from a page.
+/// Send a frame on one of the page's sockets: `text`, or with `binary` its bytes in base64 (the terminal's).
 #[tauri::command]
 pub fn socket_send(
     app: AppHandle,
@@ -48,10 +49,12 @@ pub fn socket_send(
     if text.len() > FRAME_MAX {
         return Err("The frame is too long".to_string());
     }
-    if binary == Some(true) {
-        return Err("A server's socket takes text frames only".to_string());
-    }
-    state(&app)?.core.sockets().send(webview.label(), id, text, None)
+    let bytes = if binary == Some(true) {
+        Some(moqui_client::bridge::decode_binary(&text)?)
+    } else {
+        None
+    };
+    state(&app)?.core.sockets().send(webview.label(), id, text, bytes)
 }
 
 /// Close one of the page's sockets.

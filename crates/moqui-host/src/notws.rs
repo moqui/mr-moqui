@@ -352,7 +352,7 @@ pub(crate) fn key_user(
 }
 
 /// On a request worker: log in with `key`; the user, and whether the attempt counts as an authentication failure.
-fn key_login(key: &str) -> Result<(Option<String>, bool), CoreError> {
+pub(crate) fn key_login(key: &str) -> Result<(Option<String>, bool), CoreError> {
     let login = moqui_core::user::login_user_key(key);
     let failed = moqui_core::web::take_auth_failure();
     let user = if login.is_ok() {

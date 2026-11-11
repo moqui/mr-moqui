@@ -48,7 +48,8 @@ const PASS: &str = "pass.localhost";
 /// The local node's web protection: on, with one range denied, so a client the edge node names is seen to be refused.
 const LOCAL_CONF: &str = r#"<webapp-list><webapp name="webroot"><web-protection enabled="true">
     <client-rule name="edge-test" action="deny" cidr="203.0.113.0/24"/>
-</web-protection></webapp></webapp-list>"#;
+</web-protection></webapp></webapp-list>
+<terminal remote="true"/>"#;
 /// The edge node believes X-Forwarded-For from loopback, so the test can play clients at other addresses.
 const EDGE_CONF: &str = r#"<webapp-list><webapp name="webroot" client-ip-header="X-Forwarded-For" trusted-proxies="127.0.0.1"/></webapp-list>"#;
 
@@ -369,6 +370,8 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
             ("webapp_https_listen_port", &local_port_text),
             ("ssh_port", "0"),
             ("ssh_host_key", &host_key),
+            // the terminal's command line, through the edge node (plans/Terminal-Fancy.md §12)
+            ("instance_purpose", "dev"),
         ],
         &[("cert/default.crt", &local_cert), ("cert/default.key", &local_key)],
     );
@@ -440,16 +443,20 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
     );
 
     // the local node links, and its down connection serves its own app
-    let mut config = LocalConfig::new(&url, &paired.key, &paired.pin, "local-w");
-    config.backoff = Backoff {
-        first: Duration::from_millis(100),
-        max: Duration::from_millis(500),
+    let make_config = || {
+        let mut config = LocalConfig::new(&url, &paired.key, &paired.pin, "local-w");
+        config.backoff = Backoff {
+            first: Duration::from_millis(100),
+            max: Duration::from_millis(500),
+        };
+        config.connect_timeout = Duration::from_secs(3);
+        config.web = local_web(local.server.factory());
+        config
     };
-    config.connect_timeout = Duration::from_secs(3);
-    config.web = local_web(local.server.factory());
+    let config = make_config();
     assert!(config.web.is_some(), "the local server's app");
     let (_shutdown, shutdown) = watch::channel(false);
-    let dialer = Dialer::start(config, rt.handle(), shutdown, None).unwrap();
+    let mut dialer = Dialer::start(config, rt.handle(), shutdown, None).unwrap();
     wait_status(&dialer, Duration::from_secs(10), "link up", |status| {
         status.state == LinkState::Linked
     });
@@ -510,6 +517,61 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
             head.to_ascii_lowercase().contains("www-authenticate: basic"),
             "{host}: {head}"
         );
+    }
+
+    // the terminal through the edge node in both modes (plans/Terminal-Fancy.md §12, P8): a command line opened by the
+    // device key with a ticket, its window dropped with the link, and the window back once the link is, going on from
+    // what it drew with nothing repeated
+    let mut kept = Vec::new();
+    for host in [TERM, PASS] {
+        let ticket = terminal_call(
+            &rt,
+            &tls,
+            edge_port,
+            host,
+            &login_key,
+            "confirm",
+            r#"{"password":"moqui"}"#,
+        )["ticket"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{host}: no ticket"))
+            .to_string();
+        let body = format!(r#"{{"kind":"command","ticket":"{ticket}"}}"#);
+        let opened = terminal_call(&rt, &tls, edge_port, host, &login_key, "open", &body);
+        let id = opened["sessionId"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{host}: {opened}"))
+            .to_string();
+        let socket = TerminalSocket {
+            host,
+            key: &login_key,
+            id: &id,
+            ticket: &ticket,
+        };
+        let (attached, drawn) = rt.block_on(socket.attach(&tls, edge_port, None, "moqui> ", None));
+        assert!(attached.contains(r#""kind":"command""#), "{host}: {attached}");
+        kept.push((host, id, ticket, drawn));
+    }
+    dialer.stop();
+    wait_until(Duration::from_secs(5), "the link down", || !down(&edge, "local-w"));
+    let (_shutdown, shutdown) = watch::channel(false);
+    dialer = Dialer::start(make_config(), rt.handle(), shutdown, None).unwrap();
+    wait_status(&dialer, Duration::from_secs(10), "link up again", |status| {
+        status.state == LinkState::Linked
+    });
+    wait_until(Duration::from_secs(5), "the down connection again", || {
+        down(&edge, "local-w")
+    });
+    for (host, id, ticket, drawn) in &kept {
+        let socket = TerminalSocket {
+            host,
+            key: &login_key,
+            id,
+            ticket,
+        };
+        let (attached, _) =
+            rt.block_on(socket.attach(&tls, edge_port, Some(*drawn), "user john.doe", Some(b"status\r")));
+        assert!(attached.contains(r#""reset":false"#), "{host}: {attached}");
     }
 
     // terminate: the local node sees the client the edge node believed, in web protection and in its visit
@@ -677,6 +739,86 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
     let (status, _, _) = https(&rt, &tls, edge_port, TERM, &request("GET", "/Login", TERM, &[]));
     assert_eq!(status, 200, "the edge node's own login page");
     drop(edge);
+}
+
+/// A JSON transition of the local node's Terminal screen through the edge node, signed in by the device's key.
+fn terminal_call(
+    rt: &tokio::runtime::Runtime,
+    tls: &Arc<rustls::ClientConfig>,
+    port: u16,
+    host: &str,
+    key: &str,
+    name: &str,
+    body: &str,
+) -> serde_json::Value {
+    let request = format!(
+        "POST /apps/Terminal/{name} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nlogin_key: {key}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let (status, head, text) = https(rt, tls, port, host, &request);
+    assert_eq!(status, 200, "{host} {name}: {head} {text}");
+    // a body sent in chunks: the JSON is between its first { and its last }
+    let json = text
+        .find('{')
+        .and_then(|start| text.rfind('}').map(|end| &text[start..=end]))
+        .unwrap_or("{}");
+    serde_json::from_str(json).unwrap_or_else(|err| panic!("{host} {name}: {err}: {text}"))
+}
+
+/// The terminal's socket through the edge node, signed in by the device's key.
+struct TerminalSocket<'a> {
+    host: &'a str,
+    key: &'a str,
+    id: &'a str,
+    ticket: &'a str,
+}
+
+impl TerminalSocket<'_> {
+    /// Attach as a window that drew `have`, send `input`, and read until `want`: the `attached` message and the bytes
+    /// drawn (from the window's count on).
+    async fn attach(
+        &self,
+        tls: &Arc<rustls::ClientConfig>,
+        port: u16,
+        have: Option<u64>,
+        want: &str,
+        input: Option<&[u8]>,
+    ) -> (String, u64) {
+        use futures_util::{SinkExt as _, StreamExt as _};
+        use tokio_tungstenite::tungstenite::Message;
+        let stream = browser(tls, port, self.host).await.unwrap();
+        let uri = format!("wss://{}/termws?session={}&ticket={}", self.host, self.id, self.ticket);
+        let request = tokio_tungstenite::tungstenite::ClientRequestBuilder::new(uri.parse().unwrap())
+            .with_header("login_key", self.key);
+        let (mut socket, _) = tokio_tungstenite::client_async(request, stream).await.unwrap();
+        let attach = serde_json::json!({"type": "attach", "cols": 100, "rows": 30, "have": have});
+        socket.send(Message::Text(attach.to_string().into())).await.unwrap();
+        if let Some(input) = input {
+            socket.send(Message::Binary(input.to_vec().into())).await.unwrap();
+        }
+        let mut attached = String::new();
+        let mut seen = Vec::new();
+        while !String::from_utf8_lossy(&seen).contains(want) {
+            let next = tokio::time::timeout(Duration::from_secs(10), socket.next()).await;
+            match next {
+                Ok(Some(Ok(Message::Text(text)))) if attached.is_empty() => attached = text.to_string(),
+                Ok(Some(Ok(Message::Binary(bytes)))) => seen.extend_from_slice(&bytes),
+                Ok(Some(Ok(Message::Close(frame)))) => panic!("{}: closed {frame:?}", self.host),
+                Ok(Some(Ok(_))) => {}
+                other => panic!(
+                    "{}: {want:?} never came ({other:?}): {}",
+                    self.host,
+                    String::from_utf8_lossy(&seen)
+                ),
+            }
+        }
+        let from: u64 = serde_json::from_str::<serde_json::Value>(&attached)
+            .ok()
+            .and_then(|value| value["from"].as_u64())
+            .unwrap_or(0);
+        (attached, from + seen.len() as u64)
+    }
 }
 
 /// The local node's visits from `client`.

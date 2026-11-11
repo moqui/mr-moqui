@@ -24,7 +24,9 @@ Each installed client is a device with its own login key. The host keeps the key
   (`key_period`), renewed when less than a third is left (`renew_due`, `/qapps/renewClientDevice`).
 - `proxy`: a page's request forwarded to the same path on the server with the key. Only plain request headers pass;
   cookies are dropped from the answer and a redirect to the server is pointed back at the app scheme.
-- `socket`: `/notws` and `/callws` held by the host for a page, connecting again after a drop with jittered waits
+- `socket`: `/notws`, `/callws` and the terminal's `/termws` held by the host for a page, connecting again after a
+  drop with jittered waits; `/termws` carries binary frames, keeps every frame the page sent, and is never connected
+  again by the host (its page attaches again with how far it got)
   (`moqui_lib::reconnect`), but not after a close for authentication.
 - `cache`: the shell's settings, apps and counts as MD3 kept them in files, moved once into the account's store.
 - `store`: an account's data for offline use, one SQLite file per account (`data/<account>.db`, owner-only, WAL,

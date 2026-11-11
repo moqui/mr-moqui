@@ -162,6 +162,9 @@ along with this software (see the LICENSE.md file). If not, see
         footer_scripts.add('/js/MoquiL10n.js')
         // the chat store and the account menu's status (moqui.chat), before the client, which registers its components
         footer_scripts.add('/js/WebrootChat.js')
+        // floats: the windows over the shell that Assist, the tray's tabs and the terminal undock into (moqui.floats,
+        // plans/Terminal-Fancy.md §10), before the client, which registers its components, and before Assist, which floats
+        footer_scripts.add('/js/WebrootFloats.js')
         // Assist: the drawer, its store, transport and follow (moqui.assist), before the client, which registers its components
         footer_scripts.add('/js/WebrootAssist.js')
         // the Constitution's reading view, reference dialog and the drawer's Rules pane (moqui.constitution)
@@ -181,6 +184,8 @@ along with this software (see the LICENSE.md file). If not, see
         if (ec.user.userId) footer_scripts.add('/js/WebrootCrypto.js')
         // end-to-end encrypted calls (moqui.callKeys): the call-key protocol; its SFrame worker loads only in such a call
         if (ec.user.userId) footer_scripts.add('/js/WebrootCallKeys.js')
+        // the browser terminal's store and views (moqui.terminal), when this server serves its socket
+        if (ec.user.userId && System.getProperty('webapp_terminal_endpoint')) footer_scripts.add('/js/WebrootTerminal.js')
         // the render functions of the components, precompiled from their templates; WebrootVue.qvt.js applies them when it starts
         footer_scripts.add('/js/WebrootVue.qvt.render.js')
         footer_scripts.add('/js/WebrootVue.qvt.js')

@@ -1653,10 +1653,48 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:element>
 
     <xs:element name="terminal">
-        <xs:annotation><xs:documentation>The terminal client's sessions, over SSH and in the browser together.</xs:documentation></xs:annotation>
+        <xs:annotation><xs:documentation>The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8):
+            the apps for every user, and on a dev instance the moqui> command line and programs on the server's operating
+            system (host sessions) for a user with the permission.</xs:documentation></xs:annotation>
         <xs:complexType>
-            <xs:attribute name="max-sessions" type="non-neg-int-expandable" default="16"><xs:annotation><xs:documentation>The most sessions at once.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="max-sessions-per-user" type="non-neg-int-expandable" default="4"><xs:annotation><xs:documentation>The most sessions of one user; a session in its login dialog counts toward max-sessions only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:sequence>
+                <xs:element minOccurs="0" maxOccurs="unbounded" ref="host-profile"/>
+            </xs:sequence>
+            <xs:attribute name="max-sessions" type="non-neg-int-expandable" default="16"><xs:annotation><xs:documentation>The most apps and command sessions at once.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-sessions-per-user" type="non-neg-int-expandable" default="4"><xs:annotation><xs:documentation>The most apps and command sessions of one user; a session in its login dialog counts toward max-sessions only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="detach-seconds" type="non-neg-int-expandable" default="120"><xs:annotation><xs:documentation>A kept apps session with no window this long ends.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="replay-kb" type="non-neg-int-expandable" default="2048"><xs:annotation><xs:documentation>The output a command or host session keeps for a window that comes back.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="command-line" type="xs:string" default="dev"><xs:annotation><xs:documentation>The moqui> command line in the browser: dev (on a dev instance), false (off), or empty (on for any purpose).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="host-sessions" type="xs:string" default="dev"><xs:annotation><xs:documentation>Programs on the server's operating system: dev (on a dev instance), false (off), or empty (on for any purpose).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="remote" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Command and host sessions from anywhere but the server's own machine, over a secure request with a recent sign-in.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="remote-reauth-minutes" type="non-neg-int-expandable" default="60"><xs:annotation><xs:documentation>How recent the sign-in of a remote command or host session must be.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="host-max-sessions" type="non-neg-int-expandable" default="32"><xs:annotation><xs:documentation>The most host sessions at once.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="host-max-sessions-per-user" type="non-neg-int-expandable" default="16"><xs:annotation><xs:documentation>The most host sessions of one user.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="host-detach-hours" type="non-neg-int-expandable" default="72"><xs:annotation><xs:documentation>A command or host session with no window this long ends.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="host-directory" type="xs:string"><xs:annotation><xs:documentation>Where a host session starts when its profile names no directory; else the directory above the runtime.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="host-profile">
+        <xs:annotation><xs:documentation>A program a host session runs: never a shell string, an argv. One whose command is not on the
+            PATH is not offered. With no command, the server user's shell, as a login shell.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element minOccurs="0" maxOccurs="unbounded" name="env">
+                    <xs:complexType>
+                        <xs:attribute name="name" type="xs:string" use="required"/>
+                        <xs:attribute name="value" type="xs:string"/>
+                    </xs:complexType>
+                </xs:element>
+            </xs:sequence>
+            <xs:attribute name="name" type="xs:string" use="required"/>
+            <xs:attribute name="title" type="xs:string"/>
+            <xs:attribute name="command" type="xs:string"/>
+            <xs:attribute name="args" type="xs:string"><xs:annotation><xs:documentation>The arguments, separated by spaces; a JSON array of strings for one with spaces in it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="resume-args" type="xs:string"><xs:annotation><xs:documentation>The arguments in place of args when a session the server ended is started again (an agent's --resume).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="directory" type="xs:string"/>
+            <xs:attribute name="login" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Start the command as a login shell.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="integration" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Start bash or zsh with the shell integration script (prompt marks, the directory).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="agent" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>A coding agent: quiet output reads as done.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

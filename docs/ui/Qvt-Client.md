@@ -399,7 +399,15 @@ the tab's content until the new one is there (`m-dynamic-container.reload`). Whi
 minutes (`/shellCounts`) and the open tab reloaded. **A tab's screen that refreshes itself**: when the component the tab loaded has a
 `shellRefresh()` method, the tray calls it instead of mounting the screen again (`m-dynamic-container.shellRefresh`), so what it shows stays (an
 open chat room, a half-typed text); a `.qvue` tray screen that listens to the chat store refreshes its lists there. A tab's screen loads in its
-best client mode, so a `STRT_TRAY_*` value names a `.qvue` screen without the extension.
+best client mode, so a `STRT_TRAY_*` value names a `.qvue` screen without the extension. **Undock** (`#m-tray-undock`, in
+the strip; not below 600 px nor on a handheld screen) makes the current tab a float of kind `tray` (400 by 560, its label
+and count badge) and takes it out of the strip; each tab floats on its own, and the root's `trayFloating` and
+`trayDockedTabs` say which. The tab's body is held in a teleport, so its screen is the same instance (a chat's draft stays)
+and its scroll is put back. Dock puts it back and opens the tray on it; Close puts it back in the strip and leaves the tray
+as it was. The header's Today, Chat and Notifications buttons show, raise or hide a floated tab's window in place of the
+tray; with every tab floated the tray has nothing to open. A floated tab reloads as a docked one (`shellCounts`, its
+topics, `reloadTrayTab`); Esc still closes the tray and never a float; its links still open in the page. Which tabs float
+is kept with the float places and comes back at a load; the tray's open state stays in `sessionStorage`.
 
 **Palette** (`m-shell-palette`, id `m-palette`): a `q-dialog` at the top, Ctrl+K or Cmd+K anywhere but in a rich-text editor (which keeps
 Ctrl+K). Groups (`moqui.shellPalette.groups`): Recent (the screens of this page before the current one) before any text; then Screens (the
@@ -415,6 +423,63 @@ types; while a dialog is open single keys wait. The shell's own: Mod+K the palet
 closes those), `?` the overlay of the keys on now, `c` the current app's first `+` kind. The apps' `keymap` providers: an empty or `global`
 scope everywhere, another while its app is the current one. The `KEYMAP` user preference (`config.preferences`) changes keys:
 `{"global": {"palette": "Mod+P", "g c": "g x"}}`, by scope, the binding's `action` or else its keys.
+
+## Floats
+
+Windows over the shell that are not dialogs: not modal, several at once, moved and resized by mouse, touch, pen and keys
+(`js/WebrootFloats.js`, plans/Terminal-Fancy.md §10). It loads before `WebrootVue.qvt.js` in `qapps.xml` and the desktop
+shell, so its components are precompiled; its tests are `test/client/WebrootFloats.spec.js`.
+
+- **The layer** (`m-float-layer`, in the root after `q-layout`, outside `#m-canvas`): fixed over the page, the header and the
+  docked drawers (z-index 2050), below the call's ring bar, an overlay drawer, dialogs, menus and notices. It draws the windows
+  the store lists and holds no content. At its bottom left a strip has the Arrange button (Tile, Cascade, Column at the
+  right, Minimize all, and a kind's Gather) and a chip for each minimized window. The Arrange items are `moqui.keymap` actions
+  `floatsTile`, `floatsCascade`, `floatsColumn` and `floatsMinimizeAll` with no keys; `KEYMAP` gives them some.
+- **A window** (`m-float`, `role="dialog"`, `aria-modal="false"`, labelled by its title): a title bar with the kind's icon or
+  status dot, the title, a count badge, then Minimize, Maximize, Dock and Close. The bar drags it (pointer capture); at an
+  edge it snaps to that half, near a corner to that quarter, with an outline before the drop; a double click maximizes and
+  restores; with the bar focused the arrow keys move it and Shift with them resizes it. Eight grips resize it, down to the
+  kind's minimum. A press raises it; a click on the bar gives the content the keys. Esc is the content's, never the window's.
+  The windows keep below the header (`#top`) and inside the viewport when it is resized. **Dock** puts the content back and
+  shows it there; **Close** puts it back and does not show it: closing a float ends nothing.
+- **A kind** is what floats: `moqui.floats.register(kind, {title, icon, badge, dot, defaultSize: {w, h}, minSize: {w, h},
+  place: "right" | "center", dock(shown, key, float), inReach, focus(key, bodyEl), gatherLabel, actions})`. `actions`
+  (a list, or a function of the key) are buttons of the kind's own on the title bar before Minimize: `{id, icon, label,
+  run(key, float)}` (a terminal's Pop out and End session). `title`, `icon`,
+  `badge` and `dot` are values or functions of the key, read at each render. `open(kind, key, {title, rect, restore})`
+  answers the window's id (`kind:key`), or false; `close(id)`, `dock(id)`, `hide(id)` (still a float, drawn nowhere),
+  `show(id)`, `focus(id)`, `minimize(id)`, `maximize(id)`, `toggle(kind, key)` (shows a hidden or minimized window,
+  raises one under another, hides the top one), `arrange(mode, kind)`; `state.floats` is reactive (id, kind, key, x, y,
+  w, h, z, minimized, maximized, hidden).
+- **Content comes to the window** (D17): the owner keeps its component where it is and moves its element into the body,
+  `<teleport :to="floats.target(kind, key) || 'body'" :disabled="!floats.target(kind, key)">`. `target` answers the body's
+  selector only once the body is mounted, so the teleport never names an element that is not there. Content that is an
+  element of its own (a terminal) takes `await floats.whenReady(kind, key)`, the body element or null. A moved element
+  loses its scroll position; the owner puts it back.
+- **Kept**: places, sizes, the order, minimized, maximized, hidden and which (kind, key) float, in `localStorage` under
+  `moqui.scopedKey("moqui.floats")`, per device (D13), with the last place of a docked one. At a load a kind asks
+  `wasFloated(kind, key)` and opens itself with `{restore: true}`.
+- **Small screens**: below 600 px, and on a `density="handheld"` screen, nothing floats: `open` answers false,
+  `canFloat()` is false (an owner hides its Undock button), and what floats docks, closed.
+- **Assist's reach** (§10.7): `floats.reach()` is the ids of the shown bodies of a kind with `inReach`, which the root adds
+  to `assistReach`. An element with `data-assist-self` is never in reach, wherever it is.
+- **The kinds of this version**: `assist` (the Assist drawer's body, [Assist](../ai/Assist.md#the-drawer)), `tray` (a
+  tab of the tray, above) and `terminal` (below).
+
+## The terminal store
+
+`js/WebrootTerminal.js`, loaded for a signed-in user when the server serves `/termws`, holds `moqui.terminal`
+([Terminal](Terminal.md)): the user's sessions as the server lists them (`state.sessions`, `state.order`, reactive), the
+options they may open, their settings, and per session, not reactive, its xterm.js instance, socket and element. A
+view (`m-terminal-view`: a pane of the Terminal screen, or a floating window's body) moves the session's element into
+itself when mounted and out when unmounted without disposing it, so one terminal moves between places and nothing
+reconnects; past 12 live terminals the one shown longest ago is let go and replays when shown again. `open(kind,
+{profileName, directory, resume})`, `close(id)`, `rename(id, title)`, `refresh()`, `float(id)`, `unfloat(id)`,
+`toggleQuick()`, `showInScreen(id)`, `jumpPrompt(key, back)`, `find(key, text, back)`, `paste(key, text)`. It registers
+the `terminal` float kind, the quick terminal's key (Ctrl+\`), the header's `m-terminal-button`, the terminal's
+command palette actions (`moqui.shellPalette.registerActions`, rows with `run()`), and a listener of the
+`TerminalAttention` topic; at a load it restores floating terminals only in a browser that has had one. Its spec is
+`test/client/WebrootTerminal.spec.js`.
 
 ## Preferences
 

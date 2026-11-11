@@ -14,7 +14,8 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Repositories (plans/design-dev-aide.md 4.7): every root as ./moq git-status lists it, with Fetch all and Pull all (root
     by root; one that fails is reported and the others go on; a pull reloads what it changed and says when it broke a
     site extension); Get a component through ./moq component-get, Clone a URL into the component directory, and a site
-    component from Home. A change to the set of components needs a restart. A list, so the terminal reaches it. -->
+    component from Home. A change to the set of components needs a restart. A list, so the terminal reaches it. Terminal
+    opens a shell on the server in the root's directory (the browser terminal's host session, for a user who may). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Repositories" default-menu-index="3">
 
@@ -67,6 +68,10 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="changes"><default-field title="Changes"><display text="${changes == null ? '' : changes}"/></default-field></field>
             <field name="lastFetch"><default-field title="Last fetch"><display text="${lastFetch ? new Date(lastFetch * 1000).toISOString().slice(0, 16).replace('T', ' ') : ''}"/></default-field></field>
             <field name="path"><default-field title="Path"><display/></default-field></field>
+            <!-- a shell on the server in the root's directory (plans/Terminal-Fancy.md §7.1, P9), for a user who may open one -->
+            <field name="terminal"><default-field title="">
+                <link url="/qapps/Terminal" url-type="plain" text="Terminal" link-type="anchor" icon="sym_o_terminal"
+                        parameter-map="{openHost: 'shell', directory: path}" tooltip="Open a terminal here"/></default-field></field>
         </form-list>
 
         <section name="LoadSection" condition="full &amp;&amp; loadName"><widgets>

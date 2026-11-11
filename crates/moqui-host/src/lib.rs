@@ -117,12 +117,16 @@ pub mod usage;
     feature = "inbound-smtp",
     feature = "xmpp",
     feature = "edge",
-    feature = "sip"
+    feature = "sip",
+    all(feature = "devtools", feature = "tui")
 ))]
 mod worker;
 
 mod cluster_edge;
 mod cluster_notify;
+// The `moqui>` command line: SSH's admin shell, and the browser terminal's on a dev instance (devtools).
+#[cfg(any(feature = "ssh", all(feature = "devtools", feature = "tui")))]
+mod command;
 mod tls_pin;
 
 #[cfg(feature = "axum")]
@@ -595,7 +599,11 @@ pub fn load_save(
 /// (`use my_component as _;`) so its `submit_component!` entry is kept.
 pub fn main() {
     process_started();
-    match dispatch(std::env::args().skip(1)) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(status) = terminal_helper(&args) {
+        std::process::exit(status);
+    }
+    match dispatch(args) {
         Ok(Some(line)) => println!("{line}"),
         Ok(None) => {}
         Err(err) => {
@@ -606,6 +614,21 @@ pub fn main() {
             }
             std::process::exit(1);
         }
+    }
+}
+
+/// The browser terminal's helper modes (plans/Terminal-Fancy.md §7.2): when the first argument names one, run it and
+/// answer its exit status, else `None`. `term-exec` becomes the program of a host session on its pty, and answers only
+/// when it could not; `term-hold` is the holder of host sessions (`term::hold`), which outlives the server. Every
+/// binary that hosts a server calls this before anything else: [`main`], and the Desktop app's, whose node in process
+/// starts its own executable. It takes no conf and starts no runtime.
+pub fn terminal_helper(args: &[String]) -> Option<i32> {
+    match args.first().map(String::as_str) {
+        #[cfg(all(feature = "tui", feature = "devtools", unix))]
+        Some("term-exec") => Some(term::exec::term_exec()),
+        #[cfg(all(feature = "tui", feature = "devtools", unix))]
+        Some("term-hold") => Some(term::hold::term_hold()),
+        _ => None,
     }
 }
 
