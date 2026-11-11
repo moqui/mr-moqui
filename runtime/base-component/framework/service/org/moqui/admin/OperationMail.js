@@ -227,10 +227,13 @@ function described(message, claim, unanswered, canManage, templates, userNames =
         // the settlement, apart from the outcome: what a person reported, who and when; null on every other state
         settlement: settlement || null,
         settlementText: settlement ? settlements[settlement].text : null,
-        settledByUserId: settlement ? message.sendSettledByUserId || null : null,
-        settledByName: settlement ? userNames.get(message.sendSettledByUserId) || message.sendSettledByUserId || null : null,
-        settledDate: settlement ? iso(message.sendSettledDate) : null,
-        settledReason: settlement ? text(message.sendSettledReason) || null : null,
+        // a mail account's message is never settled here, so settlement fields found on one were written by something
+        // else: its row answers the state only, never a person or a reason
+        settledByUserId: settlement && !account ? message.sendSettledByUserId || null : null,
+        settledByName:
+            settlement && !account ? userNames.get(message.sendSettledByUserId) || message.sendSettledByUserId || null : null,
+        settledDate: settlement && !account ? iso(message.sendSettledDate) : null,
+        settledReason: settlement && !account ? text(message.sendSettledReason) || null : null,
         outcome:
             state === "sent" || state === "cancelled"
                 ? null
