@@ -924,6 +924,8 @@ fn end_frame_write(facade: &EntityFacade, token: u64, full_name: &str) {
         }
         writes
     });
+    // the generations again: a definition or index read while the frame was open saw the rows as they were before it
+    note_screen_config(facade, full_name);
     note_feed_definition(facade, full_name);
     note_localized(facade, full_name);
     // The writes again, now that other threads may have read and cached the rows as they were before the end: one
@@ -1353,8 +1355,9 @@ pub(crate) fn note_db_read(tx: &TransactionManager) {
 }
 
 /// Counts writes to the screen configuration entities (`SubscreensItem`, `SubscreensDefault`), here or from a cluster
-/// peer, so a screen definition read before the last one is loaded again. Kept with the facade: the rows are its
-/// database's, and another facade's writes do not make these screens stale. Reading it takes no lock.
+/// peer, so a screen definition read before the last one is loaded again. A write inside a transaction counts again at
+/// its commit or rollback, so what was read from another frame while it was open is read again. Kept with the facade:
+/// the rows are its database's, and another facade's writes do not make these screens stale. Reading it takes no lock.
 pub fn screen_config_generation(facade: &EntityFacade) -> u64 {
     facade.inner.screen_config_generation.load(AtomicOrdering::Acquire)
 }

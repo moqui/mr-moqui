@@ -743,8 +743,11 @@ the command until then.
     `moqui.screen.SubscreensItem` rows `subscreen:<screen>#<name>@row` of `db:moqui.screen.SubscreensItem`, each with
     its `subscreens-item` reference to the screen it mounts (a row of a user group is `@row:<userGroupId>`, an item of
     its own that a row of every user wins over); both are read at each build, so `/apps/...` and `..` from an app's
-    root walk them. A conf changed while the server runs is read at the next build. A project's index (a directory read
-    on its own, `MemoryIndex::of_files`) has no conf mounts: its `/apps/...` paths stay unresolved;
+    root walk them. While the server runs, each conf reload that changes the screens (the watcher, `reload#Conf`,
+    System › Conf, a pull, a component load, SIGHUP) reads the mounts again, and a `SubscreensItem` row written (the
+    entity's screen configuration generation moved) reads the rows again at the next use of the index or the end of an
+    update; when they changed, the paths are walked again as for a file. A project's index (a directory read on its
+    own, `MemoryIndex::of_files`) reads the mounts of its components' own `MoquiConf.xml`s, merged in component order;
   - a screen's default subscreen (its `subscreens@default-item`, the conf's `default-subscreen`, a row's `makeDefault`)
     is a `screen-path` reference from the screen with `refType` `default-item`, and each `conditional-default` one
     with `refType` `conditional-default`: a path that ends at the screen goes on through it;

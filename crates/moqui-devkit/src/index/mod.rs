@@ -31,13 +31,13 @@ pub mod rows;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use moqui_db::sql::Condition;
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, try_lock};
 use serde::Serialize;
 
 pub use self::extract::{ArtifactRow, BindingRow, FileIndex, FileInfo, RefRow, ToKind};
@@ -295,6 +295,28 @@ pub fn synthetic(files: &[Located], dir: &Path, factor: usize) -> Result<Vec<Loc
     Ok(copies)
 }
 
+/// The directory of each component `files` are in, in the order they first come: a file's path less its path in the
+/// component. A file whose path does not end so (a copy written elsewhere) names none.
+fn component_roots(files: &[Located]) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for file in files {
+        let Some((_, relative)) = file
+            .location
+            .strip_prefix("component://")
+            .and_then(|rest| rest.split_once('/'))
+        else {
+            continue;
+        };
+        let Some(root) = file.path.ancestors().nth(relative.split('/').count()) else {
+            continue;
+        };
+        if root.join(relative) == file.path && !roots.iter().any(|known| known == root) {
+            roots.push(root.to_path_buf());
+        }
+    }
+    roots
+}
+
 /// Whether a resource location names something that exists.
 fn location_exists(factory: &ExecutionContextFactory, location: &str) -> bool {
     factory
@@ -417,10 +439,30 @@ impl MemoryIndex {
         index
     }
 
-    /// Read `files`.
+    /// Read `files`, with the screen mounts of their components, so a path through `/apps/...` walks them as a server's
+    /// index does: when `factory` loaded every component the files are in (a project booted on its own runtime), the
+    /// mounts of its merged conf, which boot merged with the runtime conf; else (a plain directory read on its own)
+    /// those of the components' own `MoquiConf.xml`s ([`rows::directory_mounts`]).
     #[must_use]
     pub fn of_files(factory: &ExecutionContextFactory, files: &[Located]) -> Self {
         let mut index = Self::default();
+        let roots = component_roots(files);
+        let loaded = factory.components();
+        let all_loaded = !roots.is_empty()
+            && roots.iter().all(|root| {
+                let root = canonical(root);
+                loaded.iter().any(|component| canonical(&component.location) == root)
+            });
+        let mounts = if all_loaded {
+            Some(rows::conf_mounts(
+                &moqui_core::screen::ScreenFacade::of(factory).conf().screens,
+            ))
+        } else {
+            rows::directory_mounts(&roots)
+        };
+        if let Some(mounts) = mounts {
+            index.take(mounts.path.clone(), mounts.path, mounts.hash, mounts.index);
+        }
         index.read_files(factory, files);
         index
     }
@@ -900,6 +942,16 @@ struct IndexState {
     stamp: Mutex<Option<IndexStamp>>,
     /// Moved on each time the rows change, so a stamp made of rows read before a change is not kept.
     generation: AtomicU64,
+    /// The entity facade's screen configuration generation ([`moqui_core::entity::screen_config_generation`]) when the
+    /// `SubscreensItem` rows were last read: when it moves, they are read again ([`source_changes`]).
+    screen_rows: AtomicU64,
+    /// A conf reload changed the screens while a build or update held the lock: the conf's mounts are read before it
+    /// lets go, or at the next use.
+    conf_pending: AtomicBool,
+    /// How many builds ran ([`builds`]).
+    builds: AtomicU64,
+    /// When a refresh of the sources last logged its failure, in epoch milliseconds: at most once a minute.
+    logged_at: AtomicI64,
 }
 
 impl IndexState {
@@ -954,11 +1006,29 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
     }
 }
 
-/// Keep the index current with each reload, once per factory.
-fn listen(factory: &ExecutionContextFactory) {
+/// Keep the index current with each reload, once per factory: the files a reload read, and the conf's screen mounts
+/// after each conf reload that changed the screens (every way the conf is reloaded: the watcher, `reload#Conf`,
+/// System › Conf, a pull, a component load, SIGHUP).
+fn listen(factory: &Arc<ExecutionContextFactory>) {
     if state(factory).listening.swap(true, Ordering::SeqCst) {
         return;
     }
+    let weak = Arc::downgrade(factory);
+    moqui_core::context::conf_reload::on_apply(
+        factory,
+        moqui_core::context::conf_reload::catalog::Group::Screens,
+        move |_| {
+            let Some(factory) = weak.upgrade() else {
+                return;
+            };
+            if factory.is_shutting_down() {
+                return;
+            }
+            // never waits on a build or update, which would hold the reload up: one that holds the lock reads them
+            state(&factory).conf_pending.store(true, Ordering::SeqCst);
+            refresh(&factory);
+        },
+    );
     super::reload::on_reload(factory, |factory, report| {
         if factory.is_shutting_down() || !state(factory).built.load(Ordering::SeqCst) {
             return;
@@ -982,6 +1052,11 @@ pub fn ensure(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
         ));
     }
     if state(factory).built.load(Ordering::SeqCst) {
+        // a conf reload left for later, or a SubscreensItem row written since the rows were read: read again before
+        // the query, unless a build or update has the lock (it reads them before it lets go)
+        if state(factory).conf_pending.load(Ordering::SeqCst) || screen_rows_moved(factory) {
+            refresh(factory);
+        }
         return Ok(());
     }
     listen(factory);
@@ -1077,12 +1152,15 @@ pub fn build_files(
 ) -> Result<BuildReport, Error> {
     let state = state(factory);
     let _running = lock(&state.running);
+    state.builds.fetch_add(1, Ordering::SeqCst);
     let started = std::time::Instant::now();
     let entered = factory.new_context();
     let _enter = entered.enter();
     let _authz = entered.disable_authz();
     let _lifted = fence::lift();
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
+    // before the SubscreensItem rows are read: a write while they are read moves it again
+    let screen_rows = moqui_core::entity::screen_config_generation(&facade);
     // what the rows hold: each file's hash, and the ids for resolving
     let mut hashes: HashMap<String, String> = HashMap::new();
     for row in facade
@@ -1149,16 +1227,7 @@ pub fn build_files(
             report.unchanged += 1;
             continue;
         }
-        changes.push(Change::Read {
-            file: Located {
-                path: PathBuf::from(&source.path),
-                component: String::new(),
-                location: source.path,
-                kind: ArtifactKind::Other,
-            },
-            hash: source.hash,
-            index: source.index,
-        });
+        changes.push(source_change(source));
     }
     for path in hashes
         .keys()
@@ -1172,6 +1241,7 @@ pub fn build_files(
         // not marked built: what the build did not write is read again at the next start, by its file's hash
         return Ok(report);
     }
+    state.screen_rows.store(screen_rows, Ordering::SeqCst);
     state.built.store(true, Ordering::SeqCst);
     report.millis = started.elapsed().as_millis();
     tracing::info!(
@@ -1185,7 +1255,14 @@ pub fn build_files(
         report.artifacts,
         report.refs
     );
+    refresh_locked(factory, &facade, &state);
     Ok(report)
+}
+
+/// How many builds ran on this factory since it started (a full one, or one reading only the files changed).
+#[must_use]
+pub fn builds(factory: &ExecutionContextFactory) -> u64 {
+    state(factory).builds.load(Ordering::SeqCst)
 }
 
 /// Read `paths` again (each reload's files), replacing their rows; a path gone removes its rows.
@@ -1219,6 +1296,7 @@ pub fn update_files(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) -
         ..BuildReport::default()
     };
     apply(factory, &facade, &state, changes, &mut report)?;
+    refresh_locked(factory, &facade, &state);
     report.millis = started.elapsed().as_millis();
     Ok(report)
 }
@@ -1243,8 +1321,179 @@ pub fn update_located(factory: &Arc<ExecutionContextFactory>, files: &[Located])
         ..BuildReport::default()
     };
     apply(factory, &facade, &state, changes, &mut report)?;
+    refresh_locked(factory, &facade, &state);
     report.millis = started.elapsed().as_millis();
     Ok(report)
+}
+
+/// Read again the sources that changed when no build or update holds the index's lock (a conf reload's hook, a query):
+/// one that holds it reads them before it lets go ([`refresh_locked`]), so nothing waits behind it.
+fn refresh(factory: &Arc<ExecutionContextFactory>) {
+    let state = state(factory);
+    let Some(_running) = try_lock(&state.running) else {
+        return;
+    };
+    let entered = factory.new_context();
+    let _enter = entered.enter();
+    let _authz = entered.disable_authz();
+    let _lifted = fence::lift();
+    let Some(facade) = factory.entity() else {
+        return;
+    };
+    refresh_locked(factory, &facade, &state);
+}
+
+/// With the index's lock held: read again the conf's mounts when a conf reload is pending, and the `SubscreensItem`
+/// rows when one was written; what fails is left to be tried again at the next use, its failure logged at most once a
+/// minute.
+fn refresh_locked(factory: &ExecutionContextFactory, facade: &EntityFacade, state: &IndexState) {
+    let conf = state.conf_pending.swap(false, Ordering::SeqCst);
+    if let Err(err) = update_sources(factory, facade, state, conf) {
+        if conf {
+            state.conf_pending.store(true, Ordering::SeqCst);
+        }
+        log_throttled(
+            state,
+            &format!("Artifact index: the update of the conf mounts and SubscreensItem rows failed: {err}"),
+        );
+    }
+}
+
+/// With the index's lock held: replace the rows of the sources that changed ([`source_changes`]; with `conf`, the
+/// conf's screen mounts too); a mount added, moved or removed walks the screen paths again (`apply`). Nothing before
+/// the first build, which reads them all.
+fn update_sources(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    state: &IndexState,
+    conf: bool,
+) -> Result<BuildReport, Error> {
+    if !state.built.load(Ordering::SeqCst) || factory.is_shutting_down() {
+        return Ok(BuildReport::default());
+    }
+    let started = std::time::Instant::now();
+    let (changes, taken) = source_changes(factory, facade, state, conf);
+    let mut report = BuildReport {
+        files: changes.len(),
+        ..BuildReport::default()
+    };
+    if let Err(err) = apply(factory, facade, state, changes, &mut report) {
+        restore_screen_rows(state, taken);
+        return Err(err);
+    }
+    report.millis = started.elapsed().as_millis();
+    Ok(report)
+}
+
+/// Log `message` as an error unless one was logged in the last minute.
+fn log_throttled(state: &IndexState, message: &str) {
+    let now = now_millis();
+    let last = state.logged_at.load(Ordering::SeqCst);
+    if now - last >= 60_000
+        && state
+            .logged_at
+            .compare_exchange(last, now, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    {
+        tracing::error!("{message}");
+    }
+}
+
+/// Whether a `SubscreensItem` row was written since the index read them (a check of a counter, no lock).
+fn screen_rows_moved(factory: &ExecutionContextFactory) -> bool {
+    factory.entity().is_some_and(|facade| {
+        moqui_core::entity::screen_config_generation(&facade) != state(factory).screen_rows.load(Ordering::SeqCst)
+    })
+}
+
+/// The generation a refresh took in place of the one before it (old, new): put back when the refresh failed, so the
+/// next use tries again (not when another write moved it meanwhile).
+type Taken = Option<(u64, u64)>;
+
+fn restore_screen_rows(state: &IndexState, taken: Taken) {
+    if let Some((old, new)) = taken {
+        let _ = state
+            .screen_rows
+            .compare_exchange(new, old, Ordering::SeqCst, Ordering::SeqCst);
+    }
+}
+
+/// The sources whose rows are no longer what the index holds: with `conf`, the conf's screen mounts now
+/// ([`rows::conf_mounts`], read after a conf reload), and the `SubscreensItem` rows when one was written since they
+/// were read, with the generation taken for them. Each is compared with the hash of its pseudo file's row, so one that
+/// did not change writes nothing.
+fn source_changes(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    state: &IndexState,
+    conf: bool,
+) -> (Vec<Change>, Taken) {
+    let mut sources = Vec::new();
+    if conf {
+        sources.push(rows::conf_mounts(
+            &moqui_core::screen::ScreenFacade::of(factory).conf().screens,
+        ));
+    }
+    // taken before the rows are read: a write while they are read moves it again
+    let generation = moqui_core::entity::screen_config_generation(facade);
+    let old = state.screen_rows.swap(generation, Ordering::SeqCst);
+    let mut taken = None;
+    if old != generation {
+        match rows::read_entity(facade, rows::SUBSCREENS_ITEM) {
+            Ok(source) => {
+                sources.push(source);
+                taken = Some((old, generation));
+            }
+            Err(err) => {
+                restore_screen_rows(state, Some((old, generation)));
+                log_throttled(
+                    state,
+                    &format!("Artifact index: the SubscreensItem rows were not read: {err}"),
+                );
+            }
+        }
+    }
+    let mut changes = Vec::new();
+    for source in sources {
+        let stored = match stored_hash(facade, &source.path) {
+            Ok(hash) => hash,
+            Err(err) => {
+                // written again: its rows are replaced whole, so a write of the same rows changes nothing
+                tracing::error!("Artifact index: the hash of {} was not read: {err}", source.path);
+                None
+            }
+        };
+        if stored.as_deref() != Some(source.hash.as_str()) {
+            changes.push(source_change(source));
+        }
+    }
+    (changes, taken)
+}
+
+/// The hash the rows hold for the file or pseudo file `path`; none when it has no row.
+fn stored_hash(facade: &EntityFacade, path: &str) -> Result<Option<String>, Error> {
+    Ok(facade
+        .find(FILE)?
+        .eq("filePath", Value::string(path))
+        .select_field("fileHash")
+        .list()?
+        .values()
+        .first()
+        .map(|row| text(row, "fileHash")))
+}
+
+/// The change that writes the rows of `source`, a pseudo file of no component.
+fn source_change(source: rows::RowSource) -> Change {
+    Change::Read {
+        file: Located {
+            path: PathBuf::from(&source.path),
+            component: String::new(),
+            location: source.path,
+            kind: ArtifactKind::Other,
+        },
+        hash: source.hash,
+        index: source.index,
+    }
 }
 
 fn read_change(factory: &ExecutionContextFactory, file: &Located) -> Option<Change> {

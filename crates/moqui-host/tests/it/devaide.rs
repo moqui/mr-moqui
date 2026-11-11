@@ -580,6 +580,10 @@ fn up_save(service: &str) -> String {
         r#"<screen><transition name="save"><service-call name="{service}"/><default-response url="."/></transition></screen>"#
     )
 }
+/// Paths through mounts of the apps root that the conf and a `SubscreensItem` row add while the server runs.
+const APPS_LINKS: &str = r#"<screen><widgets>
+    <link url="/apps/UpApp/Detail" text="By the conf"/><link url="/apps/UpRow/Detail" text="By a row"/>
+</widgets></screen>"#;
 const SITE_MOUNTS: &str = r#"<moqui-conf><screen-facade>
     <screen location="component://upstream-app/screen/UpApp.xml">
         <subscreens-item name="Mounted" location="component://upstream-app/screen/Elsewhere/Two.xml"/>
@@ -657,6 +661,7 @@ fn the_index_follows_reloads_and_extensions() {
             &up_save("mysite.Things.get#Outer"),
         ),
         ("component/my-site/MoquiConf.xml", SITE_MOUNTS),
+        ("component/upstream-app/screen/Elsewhere/Apps.xml", APPS_LINKS),
     ];
     let gate = start_with_files_and_links(
         "dev-aide-index",
@@ -938,6 +943,92 @@ fn the_index_follows_reloads_and_extensions() {
         .collect();
     assert_eq!(to_thing.len(), 1, "{used}");
     assert!(to_thing[0]["calls"].as_i64().unwrap() >= 1, "{used}");
+
+    // a mount the conf adds while the server runs: the conf reload (by any way it comes) walks the paths through it at
+    // once, with no build; then a SubscreensItem row written through the entity facade, read again at the next query
+    let apps_paths = || {
+        let out = call(
+            &factory,
+            "john.doe",
+            &format!("{DT}get#ArtifactRefs"),
+            &[
+                (
+                    "artifactId",
+                    "screen:component://upstream-app/screen/Elsewhere/Apps.xml",
+                ),
+                ("direction", "out"),
+            ],
+        )
+        .unwrap();
+        let refs = json(&out, "refs");
+        let mut found: Vec<(String, String)> = refs
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["toKind"] == "screen-path")
+            .map(|r| {
+                (
+                    r["toName"].as_str().unwrap().to_string(),
+                    r["toId"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect();
+        found.sort();
+        found
+    };
+    assert_eq!(
+        apps_paths(),
+        walked(&[("/apps/UpApp/Detail", ""), ("/apps/UpRow/Detail", "")])
+    );
+    let builds = moqui_devkit::index::builds(&factory);
+    std::fs::write(
+        gate.runtime.join("component/my-site/MoquiConf.xml"),
+        SITE_MOUNTS.replace(
+            "</screen-facade>",
+            r#"<screen location="component://webroot/screen/webroot/apps.xml">
+        <subscreens-item name="UpApp" location="component://upstream-app/screen/UpApp.xml"/>
+    </screen></screen-facade>"#,
+        ),
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let conf = moqui_core::context::conf_reload::apply(&factory).unwrap();
+    eprintln!(
+        "artifact index: conf reload with the mounts' update in {} ms",
+        started.elapsed().as_millis()
+    );
+    assert!(conf.applied > 0, "{:?}", conf.changes);
+    assert_eq!(
+        apps_paths(),
+        walked(&[("/apps/UpApp/Detail", "UpApp/Detail.xml"), ("/apps/UpRow/Detail", "")])
+    );
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let mut row = facade.make_value("moqui.screen.SubscreensItem").unwrap();
+        row.set(
+            "screenLocation",
+            Value::string("component://webroot/screen/webroot/apps.xml"),
+        );
+        row.set("subscreenName", Value::string("UpRow"));
+        row.set("userGroupId", Value::string("ALL_USERS"));
+        row.set(
+            "subscreenLocation",
+            Value::string("component://upstream-app/screen/UpApp.xml"),
+        );
+        row.create(&facade).unwrap();
+    }
+    assert_eq!(
+        apps_paths(),
+        walked(&[
+            ("/apps/UpApp/Detail", "UpApp/Detail.xml"),
+            ("/apps/UpRow/Detail", "UpApp/Detail.xml")
+        ])
+    );
+    // the conf's and the row's updates, not a build
+    assert_eq!(moqui_devkit::index::builds(&factory), builds);
 }
 
 const AUTO_ENTITIES: &str = r#"<entities>
