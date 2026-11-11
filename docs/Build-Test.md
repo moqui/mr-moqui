@@ -1,8 +1,10 @@
 # Build and Test
 
 How to build MR Moqui from source, the build packages and their features, the `./moq` tasks, the Rust tests and lints,
-and the component specs that `moqui test` runs. Running and deploying are in [Run-Deploy](Run-Deploy.md), and the specs
-that test a running server from outside are in [Client-Testing](dev/Client-Testing.md).
+and running the component specs of `moqui test`. Running and deploying are in [Run-Deploy](Run-Deploy.md). The
+JavaScript test APIs are in [JS-Testkit](dev/JS-Testkit.md) (the server specs of `moqui test`),
+[JS-Test-Client](dev/JS-Test-Client.md) (the specs that test a running server from outside) and
+[JS-Test-Load](dev/JS-Test-Load.md) (load scripts).
 
 - [Build](#build): [Windows](#windows), [native code and C libraries](#native-code-and-c-libraries)
 - [Packages](#packages): [features](#features), [profiles](#profiles), the [embedded Postgres
@@ -10,10 +12,8 @@ that test a running server from outside are in [Client-Testing](dev/Client-Testi
   [desktop app](#desktop-app), the [Android app](#android-app)
 - [The moq script](#the-moq-script)
 - [Rust tests and lints](#rust-tests-and-lints)
-- [Component specs](#component-specs): [running](#running), [a spec file](#a-spec-file),
-  [conditions](#conditions), [helpers](#helpers), [mail](#mail), [HTTP fixtures](#http-fixtures),
-  [notifications](#notifications), [agent evaluation](#agent-evaluation), [porting a Spock spec](#porting-a-spock-spec),
-  [pitfalls](#pitfalls)
+- [Component specs](#component-specs): [running](#running), [files and order](#files-and-order),
+  [a spec file](#a-spec-file) (the API is in [JS-Testkit](dev/JS-Testkit.md)), [agent evaluation](#agent-evaluation)
 
 ## Build
 
@@ -145,7 +145,7 @@ build, with no features of its own.
 | `sso` | host | OIDC and OAuth 2 logins (`org.moqui.sso.AuthServices`) | | yes | yes |
 | `print` | host | Network printing over IPP (`moqui-cups`) | | yes | yes |
 | `tui` | host | `moqui tui`, the terminal client of the `tui` render mode, on Revue ([TUI](ui/TUI.md)), and with `ssh` the SSH `apps` command; in lite too, for a quick terminal loop while developing and testing. Alone (`cargo build -p moqui-host --no-default-features --features tui`) it is the client of a running server, `moqui tui --server <url>`, with no database driver or HTTP server in the build | yes | yes | yes |
-| `test-client` | host | `moqui test-client`: a component's `test/client` specs against a running server, over HTTP, raw TCP or TLS, WebSocket and headless Chromium, with a load runner ([Client-Testing](dev/Client-Testing.md)), and `moqui test-load`, a component's `test/load` scripts ([Load-Runner](tools/Load-Runner.md)), and the server side of Tools › Load; the two commands open no database and bind no listener of their own, so any package can test any server. Its `--serve` starts `moqui test --serve`, which needs `embedded-postgres` | yes | yes | yes |
+| `test-client` | host | `moqui test-client`: a component's `test/client` specs against a running server, over HTTP, raw TCP or TLS, WebSocket and headless Chromium, with a load runner ([JS-Test-Client](dev/JS-Test-Client.md)), and `moqui test-load`, a component's `test/load` scripts ([Load-Runner](tools/Load-Runner.md)), and the server side of Tools › Load; the two commands open no database and bind no listener of their own, so any package can test any server. Its `--serve` starts `moqui test --serve`, which needs `embedded-postgres` | yes | yes | yes |
 | `inbound-smtp` | host | The SMTP listener for hosted and shared mail accounts behind the edge gateway ([Mail-Inbound](interfaces/Mail-Inbound.md); includes `imap`); it starts only when `smtp_listen_port` is set | | yes | yes |
 | `rtc` | host (`moqui-rtc`) | Calls: the media socket and its SFU on str0m, and the call signaling on `/notws` ([WebRTC](interfaces/WebRTC.md)); the media socket starts only when `rtc_media_port` is set, and the call services run in every build (without it they refuse with `mediaUnavailable`). In Debug too | | yes | yes |
 | `speech-local` | host | Local speech to text for call captions (Whisper on candle, [WebRTC](interfaces/WebRTC.md#captions)): not built yet, so off in every package; with or without it `call_captions_provider=local` answers "not built in". Captions go through the `llm` feature's `transcribe` model meanwhile | | | |
@@ -486,7 +486,7 @@ the tasks, and `./moq help <task>` describes one. Task names match by partial pa
 ./moq run lint --screens       # moqui's own commands, with the same conf
 ./moq load                     # all data types; ./moq load seed seed-initial install
 ./moq test mr-mantle           # run a component's JavaScript specs; extra args go to moqui test (--spec, --db snapshot)
-./moq test-client framework    # a component's test/client specs against the running server (docs/dev/Client-Testing.md)
+./moq test-client framework    # a component's test/client specs against the running server (docs/dev/JS-Test-Client.md)
 ./moq test-load mr-marble --script OrderToCash   # a load script against the running server (docs/tools/Load-Runner.md)
 ./moq test-apps                # the application tests: the specs of runtime/component, no cargo
 ./moq test-framework           # the framework tests: cargo, moq, the specs of base-component and dev-component
@@ -606,15 +606,17 @@ width or in a theme only what changes there.
 the component's services, on a database loaded with every data type, with Spock's conveniences: spec and feature
 setup and cleanup, ordered features with shared state, `given`/`when`/`then`/`expect` blocks whose conditions fail with
 the values of their parts, `where` tables, a suite order, data checks, pinned sequence ids, a pinned clock, screen and
-REST renders, and features that run on several threads.
+REST renders, and features that run on several threads. This section is how to run them, their files and order; the
+API a spec is written with is in [JS-Testkit](dev/JS-Testkit.md).
 
 The specs of `runtime/component/mr-mantle/test` are the largest set, ported from the Java mantle-usl's Spock specs; its
 `README.md` maps Groovy to spec files line by line. The design record is `plans/archive/TestHarness.md`.
 
 Tests from outside the server, over HTTP, WebSocket and headless Chromium, with a load runner, are the specs of a
 component's `test/client/`, which `moqui test-client` runs against a running server:
-[Client-Testing](dev/Client-Testing.md). Load scripts are a component's `test/load/*.load.js`, which `moqui
-test-load` and Tools › Load run: [Load-Runner](tools/Load-Runner.md).
+[JS-Test-Client](dev/JS-Test-Client.md). Load scripts are a component's `test/load/*.load.js`, which `moqui
+test-load` and Tools › Load run: [JS-Test-Load](dev/JS-Test-Load.md) for writing one,
+[Load-Runner](tools/Load-Runner.md) for running it and reading its result.
 
 ### Running
 
@@ -634,7 +636,7 @@ With no component, every component that has `test/*.spec.js` runs, in load order
 another) waits for it, with the specs after it in its `suite.js` chain, and the rest keep their places. A `dependsOn`
 cycle fails the run before any spec runs. So a spec's name need not sort after its fixture's: name the fixture in
 `dependsOn`. `moqui test-client` orders its specs the same way, its components after their `component.xml`
-`depends-on` ([Client-Testing](dev/Client-Testing.md#files-and-order)). A run with no `--spec` leaves out each fixture spec that a served client suite of its component names in `server.specs` (`test/client/suite.js`,
+`depends-on` ([JS-Test-Client](dev/JS-Test-Client.md#files-and-order)). A run with no `--spec` leaves out each fixture spec that a served client suite of its component names in `server.specs` (`test/client/suite.js`,
 `acceptance/client/suite.js`), unless a spec that runs depends on it: `moqui test-client --serve` runs it on its
 server, so a plain run would make the same data twice. `./moq test --debug` uses the debug
 binary.
@@ -650,7 +652,7 @@ binary.
 | `--db existing` | The runtime's embedded database as it is. The specs change its data |
 | `--db none` | Boot the factory and skip Postgres, so `ec.resource` works and the entity facade stays unset. A build without `embedded-postgres` can run this. Every selected spec must set `database: false`; one that does not is named and the run stops before boot. When every selected spec sets it, and the run is not `--serve`, `--agents`, `--skills`, or `--coverage`, this is the default |
 | `--junit dir` | `TEST-<component>.<Spec>.xml` per spec |
-| `--serve [address]` | When the specs pass, serve the scratch database on the address (`127.0.0.1:0`, a free port, by default; or a port alone) until Ctrl-C, SIGTERM, or the end of standard input when it is a pipe; then remove the scratch runtime unless `--keep`. With `--db existing` it serves the runtime's own database, for a runtime whose cluster was put in place beforehand (a copy of a loaded, stopped cluster in `db/embedded` starts in a fraction of a second, where a load or `--db snapshot` restore takes seconds to minutes); with no specs to run (each component named has none) the server starts at once, with no test factory booted before it. Not with `--db none`. For client specs ([Client-Testing](dev/Client-Testing.md#--serve)) or a person |
+| `--serve [address]` | When the specs pass, serve the scratch database on the address (`127.0.0.1:0`, a free port, by default; or a port alone) until Ctrl-C, SIGTERM, or the end of standard input when it is a pipe; then remove the scratch runtime unless `--keep`. With `--db existing` it serves the runtime's own database, for a runtime whose cluster was put in place beforehand (a copy of a loaded, stopped cluster in `db/embedded` starts in a fraction of a second, where a load or `--db snapshot` restore takes seconds to minutes); with no specs to run (each component named has none) the server starts at once, with no test factory booted before it. Not with `--db none`. For client specs ([JS-Test-Client](dev/JS-Test-Client.md#--serve)) or a person |
 | `--ready-file path` | With `--serve`: write the server's URL here once it listens |
 | `--coverage`, `--coverage-report file` | The services of the components' `service/*.xml` that no spec called, with the total; the report adds call counts |
 | `--log-level level` | Console level, `warn` by default. Everything goes to `runtime/log/moqui.log`, whose path the run prints |
@@ -670,219 +672,23 @@ or mount. `test/client/` holds client specs and `test/agent/` agent tasks, which
 
 ### A spec file
 
-```js
-const effectiveTime = Date.now()
-let cartOrderId                                     // shared between features (Spock's @Shared)
+The API a spec is written with is in [JS-Testkit](dev/JS-Testkit.md):
 
-spec({
-    dependsOn: ["OrderProcureToPayBasicFlow"],      // run first, and added when this spec is picked with --spec
-    tempSequences: { start: 55500, banks: { "mantle.order.OrderHeader": 10 } },   // reset after cleanupSpec
-    setupSpec() { ec.user.setEffectiveTime(effectiveTime) },                      // reset after the spec
-    setup() { ec.artifactExecution.disableAuthz() },
-    cleanup() { ec.artifactExecution.enableAuthz() },
-})
+- [`spec({...})`](dev/JS-Testkit.md#spec) and [`feature(name, {...})`](dev/JS-Testkit.md#featurename-) with their
+  fields, the blocks and `ctx`, [`where` rows](dev/JS-Testkit.md#where-rows), and what is
+  [skipped or ignored](dev/JS-Testkit.md#skipped-and-ignored);
+- [conditions](dev/JS-Testkit.md#conditions): every expression statement of `then` and `expect` is one, compared
+  as Groovy does, and [`assert`](dev/JS-Testkit.md#assert) for the places the rewrite does not reach;
+- [the helpers](dev/JS-Testkit.md#helpers): `call`, `checkData`, `login`, `screenTest`, `parallel`, `uploadedFile`,
+  `setProperty`, `withProperty`, `log`, `skip`, `dec`, `sum`, `runInContext`, and
+  [the context stack](dev/JS-Testkit.md#the-context-stack);
+- [specs with `database: false`](dev/JS-Testkit.md#specs-with-database-false);
+- <a id="http-fixtures"></a>the capture tools: [mail](dev/JS-Testkit.md#mail),
+  [HTTP fixtures](dev/JS-Testkit.md#http-fixtures) and [notifications](dev/JS-Testkit.md#notifications);
+- [agent specs](dev/JS-Testkit.md#agent-specs), [porting a Spock spec](dev/JS-Testkit.md#porting-a-spock-spec) and
+  [pitfalls](dev/JS-Testkit.md#pitfalls).
 
-feature("create Sales Order", {
-    when() {
-        login("joe@public.com")
-        const priceMap = call("mantle.product.PriceServices.get#ProductPrice", { productId: "DEMO_1_1" })
-        cartOrderId = call("mantle.order.OrderServices.add#OrderProductQuantity", { productId: "DEMO_1_1", quantity: 1 }).orderId
-        const dataCheckErrors = checkData(`<entity-facade-xml>
-            <mantle.order.OrderHeader orderId="${cartOrderId}" entryDate="${effectiveTime}" grandTotal="200.68"/>
-        </entity-facade-xml>`)
-        return { priceMap, dataCheckErrors }         // what then() reads
-    },
-    then({ priceMap, dataCheckErrors }) {
-        priceMap.price == 16.99
-        dataCheckErrors.length == 0
-    },
-})
-
-feature("call the REST API (#requestMethod, #screenPath)", {
-    where: [
-        { requestMethod: "post", screenPath: "s1/mantle/orders/55800/place", containsTextList: ['"statusChanged" : true'] },
-    ],
-    expect({ requestMethod, screenPath, containsTextList }) {
-        const str = screenTest("rest").render(screenPath, null, requestMethod)
-        containsTextList.every((text) => str.assertContains(text))
-    },
-})
-```
-
-#### `spec({...})`
-
-Once per file:
-
-- `dependsOn`: the specs that run before this one in any run, and that `--spec` adds when it picks this one, from its
-  own component or, where that has none of the name, another component. A spec that reads another spec's data names it
-  here, rather than relying on file names or load order.
-- `requires`: build features the spec needs, such as `["git"]` (`moqui version` lists a binary's; see
-  [Packages](#packages)). In a binary without one of them the spec is reported as skipped, not run.
-- `database: false`: the spec does not use the entity facade. `ec.entity`, `call`, and `screenTest` throw, and the
-  error names `database: false`, even when the run opened a database. `ec.resource` stays. A run of only such specs
-  uses `--db none` (see the option above). `checkData` uses the entity facade, so it fails in one of these specs.
-  The screen template specs `ScreenHtml`, `ScreenQvt`, `DatePeriod` and `FieldTitle` are this kind: they read the
-  template modules with `ec.resource.getLocationText` and evaluate them with `runInContext(source, sandbox)`.
-- `stepwise`: after a failed feature, skip the rest (Spock's `@Stepwise`). Off by default.
-- `tempSequences: { start, banks }`: sequenced ids from `start`, with the bank size for each entity, set before
-  `setupSpec` and reset after `cleanupSpec`.
-- `allowMessageErrors`, and `timeout` in seconds per block.
-- `setupSpec`, `cleanupSpec`, `setup` and `cleanup`, as in Spock. Cleanups always run. These get no `ctx`.
-
-#### `feature(name, {...})`
-
-A statement at the top level of the file; features run in the order they are written.
-
-- Blocks: `given`, then `when` with `then`, or `expect` alone, and `cleanup`, which always runs. Each block gets `ctx`:
-  the fields of the `where` row and what the earlier blocks returned.
-- `where`: an array of row objects, or a function that returns one. Each row is its own case, and `#field` in the name is
-  the row's value.
-- `ignore: "reason"`, `timeout`, `allowMessageErrors`.
-- `requires: ["git"]`: build features the feature needs, as on `spec()`; in a binary without one it is reported as
-  skipped. A `where` row may have its own `requires`, for a row that needs a feature the others do not.
-- A case that does not say `requires`, and fails only because the binary reports that a tool is not built in
-  (`git is not built into this host`, `scheme git is not supported`, and the same messages for the other tools), is
-  skipped the same way. A stepwise file that is entirely about that tool says so on `spec()`, so its later features
-  are not started without their setup. So is a case that fails only because PDF is not available, on a machine with
-  no Chromium (`./moq chromium-download`, or `moqui_chromium_path`); the skip reason is that message.
-- A feature with `then` and no `when`, or a block name that is not one of these, is an error when the file loads.
-
-### Conditions
-
-Each expression statement directly in `then` or `expect` is a condition, as in a Spock `then:` block. A false one fails
-the feature and shows the value of each part:
-
-```
-Condition not satisfied:
-
-priceMap.price == 16.99
-|        |     |
-|        16.98 false
-{"price":"16.98","priceUomId":"USD"}
-```
-
-- `==`, `!=`, `<`, `<=`, `>` and `>=` compare as Groovy does: decimals, numbers and number text by value
-  (`16.990 == 16.99`), and lists and maps by their items. `===` stays strict.
-- `!x` and a bare value use Groovy truth: an empty list, map or string, and zero, are false.
-- An assignment is not a condition, and a call that returns `undefined` passes.
-- Inside an `if`, a loop or a callback, use `assert(condition, message)`.
-- A feature also fails when it leaves errors in `ec.message`, unless `allowMessageErrors` is set. Messages are cleared
-  between features.
-
-The source is rewritten for this before it runs (`crates/moqui-devkit/src/testkit/rewrite.rs`), with no new lines, so error
-line numbers are the file's. A `then` or `expect` the rewrite cannot see, such as a feature object built in a helper
-function, is refused when the file loads rather than run with conditions that cannot fail. Use `where` rows instead.
-
-### Helpers
-
-`ec` is the full script `ec`, as in a service. The spec engine adds:
-
-| Helper | |
-|---|---|
-| `call(name, params)` | A service call. It throws, naming the service and its `ec.message` errors, where `ec.service.sync()` would return null |
-| `checkData(xml)` | `ec.entity.makeDataLoader().xmlText(xml).check()`: the messages of what did not match, each logged |
-| `login(username, password = "moqui")`, `logout()` | `login` throws when the login fails |
-| `screenTest(baseScreenPath)` | `ec.screen.makeTest().baseScreenPath(...)`. `render(path, params, method)` gives `output`, `errorMessages`, `status`, `renderTime`, `headers` (the response's, and `header(name)` by name in any case) and `assertContains(text)`; `renderMode("html-print")` and the other builder methods set the mode and root screen, `header(name, value)` a request header of every render, and `clientModes("qvue,qjs")` the `X-Moqui-Client-Modes` header `moqui.loadComponent` sends, so a spec checks the best client mode (`render("Gallery/QuickTask.qvt").header("X-Moqui-Qvt") == "qvue"`). As Java's `ScreenTestImpl`, a test render is not counted against tarpits |
-| `parallel(n, fn, args, opts)` | Run `fn(threadNum, args)` on `n` threads, each with its own `ec`, and return the results. `opts`: `transaction` (default true), `timeout` (default 120 s) |
-| `uploadedFile(fileName, text, contentType = "text/plain")` | The `FileItem` that services taking an upload expect |
-| `setProperty(name, value)`, `withProperty(name, value, fn)` | A process property, as a conf property would set it (`System.getProperty` and `get_prop_or_env` read it); `null` clears it. `setProperty` holds for the rest of the spec, for a policy switch its features share such as `call_recording_enabled`; `withProperty` only while `fn` runs, then puts the value back, for one feature such as `call_captions_enabled` off. Every property a spec changed, by either, is put back as it was after `cleanupSpec`, and when the spec ends without reaching it |
-| `assert(condition, message)` | A condition outside the top level of a block |
-| `sum(list, field)`, `dec(value)` | A decimal sum of a field, and a value as a decimal |
-| `log` | `ec.logger` |
-
-`ec.user.setEffectiveTime(millis)` pins the clock for `ec.user.nowTimestamp`, date filters with no date, and the
-`fromDate` defaults; the runner clears it after the spec. `ec.entity.tempSetSequencedIdPrimary` and
-`tempResetSequencedIdPrimary` are what `tempSequences` calls.
-
-### Mail
-
-A spec checks a send that goes, with no mail server, through the mail capture: while it is on, `send#EmailMessage`,
-and so `send#EmailTemplate` and the mail client's `send#Draft`, does all of a real send (the `EmailMessage` row, its
-`ES_SENT` status and `sentDate`, the mail client's Sent folder) except connect, and keeps the message in memory. The
-`EmailServer` must still have an SMTP host, as for a real send (an empty one sends nothing); it is never connected. A
-spec turns it on for itself, and the conf property `mail_capture_sends=true` turns it on for a whole run
-(`mail_capture_sends=true ./moq test ...`) or a server that must not send mail; it is off otherwise, so a spec that
-checks a send that cannot connect sees one. `send#Draft` called in a transaction (as `send#Compose` calls it) only
-claims the message there and sends once that commits, on a service worker: such a spec waits for the message's status
-before it reads the capture. The tool reads and clears what was captured:
-
-```js
-const capture = ec.factory.getTool("MailCapture")
-spec({ setupSpec() { capture.enable() }, cleanupSpec() { capture.reset() } })
-// in a feature
-capture.clear()
-const sent = call("org.moqui.mail.EmailClientServices.send#Draft", { emailMessageId: draftId })
-capture.last().toList            // ["customer@example.com"]
-```
-
-| Method | |
-|---|---|
-| `getMessages()` | The captured messages, oldest first, each `{subject, fromAddress, fromName, toList, ccList, bccList, replyToList, body, bodyText, messageId, inReplyTo, references, attachmentNames, headers, capturedDate}` (the 500 most recent; `headers` the added header fields, such as a list email's List-Unsubscribe, name to value) |
-| `last()`, `count()`, `clear()` | The newest one (or null), how many, and forget them |
-| `enable()`, `disable()`, `reset()` | Capture on or off for this server whatever the property says, and back to the property; reset it when the spec ends, as the switch outlives the spec |
-| `isEnabled()` | Whether a send now is captured |
-
-The capture is a tool of the framework (`moqui_core::service::mail_capture`, in `MoquiDefaultConf.xml`).
-
-### HTTP fixtures
-
-A spec exercises a provider adapter (a payment, shipping or EDI gateway) through its production code with no network:
-while the HTTP fixtures are enabled, every outbound HTTP request of the run's server (`ec.service.rest()` `call()` and
-`send()`, `remote-rest` services, `http` locations) is answered by the first fixture it matches, in the order added, and
-recorded. A request that matches none fails as a transport error naming it, so nothing goes out. The adapter keeps its
-endpoint from its gateway configuration (a sandbox URL), and the fixture matches that URL; the adapter has no test branch.
-
-```js
-const http = ec.factory.getTool("HttpFixtures")
-spec({ setupSpec() { http.enable() }, cleanupSpec() { http.reset() } })
-// in a feature: an answer once, then a lost answer (the request went out, its answer did not come back)
-http.add({ method: "POST", url: "https://apitest.example.com/v1/charges", status: 200, contentType: "application/json",
-    body: JSON.stringify({ id: "ch_1" }), times: 1 })
-http.add({ url: "https://apitest.example.com/v1/*", error: "operation timed out" })
-// ... call the Mantle service that calls the adapter, then
-http.requests()[0].headers["Idempotency-Key"]
-```
-
-| Method | |
-|---|---|
-| `add({method, url, bodyContains, status, body, headers, contentType, error, times})` | A fixture. `url` is exact, or a prefix when it ends with `*`; `method` and `bodyContains` narrow it; `status` is 200 by default; `error` fails the call as a transport error after recording it; `times` is how many requests it answers (absent or 0, any number) |
-| `requests()`, `last()`, `count()` | The recorded requests, oldest first, each `{method, url, headers, body, fixture, at}`, `fixture` the index of the fixture that answered or -1 (the 500 most recent). The values of Authorization, Proxy-Authorization, Cookie and `*Api-Key` headers are `[redacted]` |
-| `enable()`, `disable()`, `isEnabled()` | Answer and record; off by default. `enable()` is refused outside a `moqui test` run |
-| `allowNetwork(urlPrefixes)` | Let requests to these URL prefixes go to the network while the fixtures are off (see below); an empty list closes it again |
-| `clear()`, `reset()` | Forget the fixtures and requests; `reset()` also disables and forgets `allowNetwork`. Reset when the spec ends, as the switch outlives the spec |
-
-The fixtures are a tool of the framework (`moqui_core::service::http_fixtures`, in `MoquiDefaultConf.xml`), on the
-transport under `moqui_core::outbound`. They are process-wide, so while they are on a request sent with no execution
-context (a worker thread's) is answered or refused too, and only the `moqui test` runner allows enabling them.
-
-A `moqui test` run is closed to the network while the fixtures are off too: a request to anything but a loopback address
-(localhost, `*.localhost`, 127.0.0.0/8, ::1) fails as a transport error naming its redacted URL, with a warning in the
-log. A spec's gateway records outlive it, and a later spec's job over them (a details poll) would otherwise send their
-spec credentials to a provider's sandbox. A spec that needs a real host opens it with `allowNetwork`, and resets after.
-
-### Notifications
-
-A `moqui test` run has no notification socket, and what is sent only to someone listening (the shell counts of
-`org.moqui.ui.ShellServices.publish#ShellCounts`) is not sent at all. A spec that checks those notifications turns on
-the notification capture, which listens on the notification topic as the server's socket does and keeps each message in
-memory:
-
-```js
-const capture = ec.factory.getTool("NotificationCapture")
-capture.enable()
-try {
-    // ... what publishes, then (the shell counts go after the commit, on a thread of the server) wait for them
-    capture.getMessages("shellCounts").filter((row) => row.userIds.includes(userId)).length
-} finally { capture.disable(); capture.clear() }
-```
-
-| Method | |
-|---|---|
-| `getMessages(topic?)` | The captured messages, oldest first, all or of one topic, each `{topic, subTopic, userIds, title, link, message, capturedDate}` (the 500 most recent) |
-| `last(topic?)`, `count(topic?)`, `clear()` | The newest one (or null), how many, and forget them |
-| `enable()`, `disable()`, `isEnabled()` | Listen or stop; disable it when the spec ends, as the listener outlives the spec |
-
-The capture is a tool of the framework (`moqui_core::notify::capture`, in `MoquiDefaultConf.xml`).
+Client specs are in [JS-Test-Client](dev/JS-Test-Client.md) and load scripts in [JS-Test-Load](dev/JS-Test-Load.md).
 
 ### Agent evaluation
 
@@ -913,54 +719,9 @@ in LM Studio at `http://127.0.0.1:1234`): copy it into the runtime's conf, or se
 
 #### A task file
 
-```js
-agentSpec({
-    agent: "assist",             // the agent (AgentDefinition), assist by default
-    surface: "drawer",           // drawer (default), chat, tui or job
-    user: "john.doe",            // the user the tasks run as, unless a task names its own
-    setup() { ec.artifactExecution.disableAuthz() },
-    cleanup() { ec.artifactExecution.enableAuthz() },
-    tasks: [
-        {
-            name: "multi-step with approval",
-            start: "/apps/system/Home",              // the page the user is on; also { path, parameters, title }
-            say: "Change the description of the user group AGENT_EVAL_GROUP to Renamed.",
-            setup() { /* rows the task needs, with ec and the spec helpers */ },
-            cleanup() { /* remove them */ },
-            approvals: ["approve"],                  // scripted answers: "approve", { edit: {...} }, { reject: "why" }
-            expect: {
-                path: "/apps/system/Security/UserGroup/UserGroupDetail",
-                parameters: { userGroupId: "AGENT_EVAL_GROUP" },
-                held: { transition: "updateUserGroup", text: /Renamed/, status: "executed" },
-                answer: /saved/i,
-            },
-            verify(run) { assert(run.calls.length <= 6, "too many calls") },
-        },
-    ],
-})
-```
-
-A task has `say` (one message, or an array of messages) or `turns`, `[{ say, expect }]` with checks per turn, and
-`answers`, the answers to the agent's questions in order. Each turn is a run in one conversation, sent with the
-`<context>` tail the drawer sends (the time and the page). The checks are deterministic; an LLM judge is not built:
-
-| Check | |
-|---|---|
-| `path`, `parameters`, `values` | The screen session's path, its parameters, and form values (`{Form: {field: value}}`, or `{field: value}` in any form) when the turn or task ends |
-| `answer`, `answerNot` | Patterns the final answer matches, or must not |
-| `called`, `notCalled` | Tools called: a name, or `{tool, args, result, error}` with `args` matched in part |
-| `results` | `{tool, result}`: some result of the tool matches |
-| `held`, `noWrite` | The approvals the run asked for (a number, or a match of `{tool, transition, text, status, channel}`: `text` is the summary and the changes, `Label: current → proposed`; `status` what became of it, such as executed, rejected or expired); no approval and no write tool call |
-| `maxWrongCalls`, `maxToolCalls`, `questions`, `state` | Limits on failed calls and on calls, the questions asked, the run's end state |
-| `noInvented` | The answer links nothing no tool returned (no `invented_reference`) |
-| `verify(run)` | A function over what the run did (`answer`, `calls`, `held`, `questions`, `screen`, `turns`); `assert` fails it |
-
-A value in a check is a string (equal), a `RegExp`, `null` (empty), or an object or array matched in part. A run that
-does not end Completed fails its task. A write pauses the run for its approval, and the task's `approvals` answer them
-in order as the user would in the drawer: `"approve"`; `{ reject: "feedback" }`, which the agent reads as its next task;
-or `{ edit: { field: value } }`, Edit in screen: the write goes to its screen and the harness saves the form there as
-the user, the values (by field name or label) over the proposed ones, so the agent reads the user's own save. A run
-that waits for an approval the task has no answer for fails it.
+A task file calls `agentSpec({...})` with its agent, surface, user and tasks; each task has what the user says, the
+scripted approvals and answers, and its checks. The fields and the checks are in
+[JS-Testkit, Agent specs](dev/JS-Testkit.md#agent-specs).
 
 #### Transcripts, measures and baselines
 
@@ -997,47 +758,3 @@ environment, nightly and before a phase closes; the design's `--live` is `--llm-
 `moqui test dev-aide --agents --llm-profile <profile> --runs 3 --min-pass 0.8`, a pass being the checks of the task: the
 files proposed and written are the expected ones and check clean. Copy a passing run's transcript into the replay set to
 keep it.
-
-### Porting a Spock spec
-
-How a Moqui Java Spock specification maps to a spec file, as used to port mr-mantle's flows:
-
-| Spock / Groovy | spec file |
-|---|---|
-| `class X extends Specification` | `X.spec.js` with `spec({...})` |
-| `@Shared String cartOrderId` | `let cartOrderId` at the top of the file |
-| `def setupSpec()`, `setup()`, `cleanup()`, `cleanupSpec()` | the same names in `spec({...})` |
-| `ec.entity.tempSetSequencedIdPrimary(name, 55500, 10)` in setupSpec, reset in cleanupSpec | `tempSequences: { start: 55500, banks: { name: 10 } }` |
-| `ec.user.setEffectiveTime(new Timestamp(effectiveTime))` | `ec.user.setEffectiveTime(effectiveTime)` |
-| `def "create Sales Order"() { when: ... then: ... }` | `feature("create Sales Order", { when() {...}, then(ctx) {...} })` |
-| a local of `when:` read in `then:` | returned from `when()`, destructured in `then({ ... })` |
-| `expect:` / `where:` table / `@Unroll` | `expect(row) {...}`, `where: [{...}, ...]`, `#field` in the name |
-| `ec.service.sync().name(n).parameters([a:1]).call()` | `call(n, { a: 1 })` |
-| `"""<entity-facade-xml>...${x}...</entity-facade-xml>"""` with `makeDataLoader().xmlText(..).check()` | `` checkData(`<entity-facade-xml>...${x}...`) `` |
-| `dataCheckErrors.size() == 0` | `dataCheckErrors.length == 0` |
-| `ec.user.loginUser("john.doe", "moqui")` | `login("john.doe")` |
-| `logger.info(...)` | `log.info(...)` |
-| `new Timestamp(effectiveTime)`, `"${effectiveTime}"` in data | `effectiveTime` (time stamps are epoch millis text in scripts and data) |
-| `new Date(effectiveTime + n)` | `new Date(effectiveTime + n)` (converts to a time stamp) |
-| `list.sum { it.availableToPromiseTotal }` | `sum(list, "availableToPromiseTotal")` |
-| `a + b` on BigDecimal | `dec(a).add(b)`; `.subtract`, `.multiply`, `.negate()`, `.compare()` |
-| `Thread.start {}` with a `CountDownLatch` | `parallel(5, (threadNum, args) => {...}, { effectiveTime })` |
-| `ec.screen.makeTest().baseScreenPath("rest")` | `screenTest("rest")` |
-| `for (x in list) assert ...` | `for (const x of list) assert(...)` |
-
-### Pitfalls
-
-- Outside a `then` or `expect` block, a line that starts with `[`, `(`, `/` or a template literal continues the line
-  before it, since JavaScript inserts no semicolon there: `x = 1` then a line `[a, b].forEach(f)` is one expression.
-  Start such a line with `;`, or put the list in a variable. In a `then` or `expect` block each line is its own
-  condition, as in Spock: the rewrite ends the line before such a line when it ended an expression, so
-  `/^Today · \d+$/.test(label)` on its own line is a regular expression, not a division.
-- Decimals from services are objects: `+`, `<` and `Number()` on them throw outside a condition. Use their methods
-  (`add`, `subtract`, `multiply`, `negate`, `compare`), or `dec`.
-- `parallel` runs its function from its source text on other threads, so it cannot use the spec's variables. Pass what it
-  needs in `args`, which is copied as JSON, and return values JSON can hold.
-- Time stamps reach scripts and data as epoch millis text: write `entryDate="${effectiveTime}"`, and
-  `new Date(effectiveTime + n)` converts to a time stamp.
-- A data-dependent service on a product another spec uses can see that spec's inventory and reservations when it runs
-  after it; give a new spec its own stock or its own product.
-- Generic JavaScript linters report `no-unused-expressions` in `then` and `expect`; those expressions are the conditions.

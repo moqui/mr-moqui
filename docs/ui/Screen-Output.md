@@ -72,7 +72,8 @@ written:
 
 ## Templates
 
-A screen's `text` element (a `.fancy` file or `<text template="true">`) writes its output as it renders
+The template dialect is in [JS-Fancy-Templates](../dev/JS-Fancy-Templates.md), and `sri` in
+[JS-Templates-Macros](../dev/JS-Templates-Macros.md#the-sri-global). A screen's `text` element (a `.fancy` file or `<text template="true">`) writes its output as it renders
 (`sri.renderText`, `sri.writeInlineText`). A template's text and a screen it renders keep their order:
 `<div>${sri.renderSubscreen()}</div>` writes the `div`, then the subscreen, then `</div>`. An interpolation that names
 `sri.` runs between the text before it and the text after it. Rendered for its value (`sri.renderTextValue`,

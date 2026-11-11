@@ -1413,7 +1413,7 @@ lint (0 parse failures). The full gate result is under Batch 14, which was gated
   slices changes. The suite now measures about 40.7 s; with the user's agreement the webroot client budget is 44 s,
   and basic-comms client is 7 s for its measured 6.6 s.
 - `./moq accept` ran only acceptance client suites that declare a server; one that declares none (offline specs) was
-  never run. It now runs those with `--offline --acceptance` (help and docs/dev/Client-Testing.md updated).
+  never run. It now runs those with `--offline --acceptance` (help and docs/dev/JS-Test-Client.md updated).
   `./moq accept webroot`: ThemeLayout 3/3.
 - macOS routes only 127.0.0.1. The three moqui-sip tests of separate source addresses, upstream's HL-032 cluster-edge
   share test and the HL-032 sub-checks of the SSH integration test say they are skipped there; on Linux a failure to

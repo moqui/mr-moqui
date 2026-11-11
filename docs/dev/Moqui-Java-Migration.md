@@ -11,6 +11,9 @@ locations. The rest is documented elsewhere:
   record in [ConvertProcess](../../plans/archive/ConvertProcess.md) and the Marble one in
   [MarbleERPMigration](../../plans/archive/MarbleERPMigration.md). Each converted component keeps its own
   `MIGRATION-STATUS.md`.
+- The JavaScript API a ported script calls, with what differs from Java's and what is not available:
+  [JS-Core-API](JS-Core-API.md#differences-from-moqui-java) for `ec.*` and [JS-Globals](JS-Globals.md) for the helper
+  classes; the Groovy idioms that do not carry over: [JS-XML-Actions](JS-XML-Actions.md#groovy-that-does-not-carry-over).
 - A component's native Rust code, which takes the place of a Gradle build and jars: [Native-Components](Native-Components.md).
 - `./moq` in place of the Gradle tasks: the root [README](../../README.md#build-test-and-run).
 

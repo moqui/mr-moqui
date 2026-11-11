@@ -430,6 +430,21 @@ pub fn format_currency(
     fraction_digits: Option<usize>,
     hide_symbol: bool,
 ) -> Result<String, Error> {
+    format_currency_in(amount, uom_id, fraction_digits, hide_symbol, None)
+}
+
+/// [`format_currency`] in the locale given (`en_US`, `de`), else the session's.
+///
+/// # Errors
+///
+/// Returns an error for an amount that is not a number.
+pub fn format_currency_in(
+    amount: &Value,
+    uom_id: Option<&str>,
+    fraction_digits: Option<usize>,
+    hide_symbol: bool,
+    in_locale: Option<&str>,
+) -> Result<String, Error> {
     if amount.is_null() || amount.as_str().is_some_and(str::is_empty) {
         return Ok(String::new());
     }
@@ -438,7 +453,10 @@ pub fn format_currency(
     let info = currency_info(uom_id);
     let digits = fraction_digits.or(info.fraction_digits).unwrap_or(2);
     let symbol = if hide_symbol { "" } else { info.symbol.as_str() };
-    Ok(format::format_currency(number, symbol, digits, &locale()))
+    let in_locale = in_locale
+        .filter(|text| !text.trim().is_empty())
+        .map_or_else(locale, |text| text.trim().replace('-', "_"));
+    Ok(format::format_currency(number, symbol, digits, &in_locale))
 }
 
 /// A time stamp in the session time zone from the usual forms (epoch milliseconds, ISO, `yyyy-MM-dd HH:mm:ss`). None
@@ -450,18 +468,34 @@ pub fn parse_timestamp(input: &str) -> Option<Value> {
 /// `ec.l10n.parseTimestamp(input, format)`: by the Java pattern first, in the session time zone unless the text has an
 /// offset, then the usual forms, as Java's L10nFacade.
 pub fn parse_timestamp_format(input: &str, format: Option<&str>) -> Option<Value> {
+    parse_timestamp_format_in(input, format, None)
+}
+
+/// [`parse_timestamp_format`] with text that names no offset read in `zone`, else the session time zone (Java's
+/// `parseTimestamp(input, format, locale, timeZone)`).
+pub fn parse_timestamp_format_in(input: &str, format: Option<&str>, zone: Option<&TimeZone>) -> Option<Value> {
     if input.trim().is_empty() {
         return None;
     }
+    let session_zone;
+    let zone = match zone {
+        Some(zone) => zone,
+        None => {
+            session_zone = time_zone();
+            &session_zone
+        }
+    };
     if let Some(pattern) = format.filter(|pattern| !pattern.is_empty()) {
-        if let Some(stamp) = moqui_lib::datefmt::parse(input, pattern).and_then(|parsed| parsed_timestamp(&parsed)) {
+        if let Some(stamp) =
+            moqui_lib::datefmt::parse(input, pattern).and_then(|parsed| parsed_timestamp(&parsed, zone))
+        {
             return Some(Value::Timestamp(stamp));
         }
     }
-    parse_timestamp(input)
+    moqui_lib::object::parse_timestamp(input, zone).map(Value::Timestamp)
 }
 
-fn parsed_timestamp(parsed: &moqui_lib::datefmt::ParsedDate) -> Option<jiff::Timestamp> {
+fn parsed_timestamp(parsed: &moqui_lib::datefmt::ParsedDate, zone: &TimeZone) -> Option<jiff::Timestamp> {
     let nanos = parsed.millisecond.unwrap_or(0).checked_mul(1_000_000)?;
     let civil = jiff::civil::DateTime::new(
         parsed.year.unwrap_or(1970),
@@ -475,7 +509,7 @@ fn parsed_timestamp(parsed: &moqui_lib::datefmt::ParsedDate) -> Option<jiff::Tim
     .ok()?;
     match parsed.offset_seconds {
         Some(seconds) => jiff::tz::Offset::from_seconds(seconds).ok()?.to_timestamp(civil).ok(),
-        None => civil.to_zoned(time_zone()).ok().map(|zoned| zoned.timestamp()),
+        None => civil.to_zoned(zone.clone()).ok().map(|zoned| zoned.timestamp()),
     }
 }
 

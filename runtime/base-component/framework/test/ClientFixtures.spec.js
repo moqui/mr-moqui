@@ -58,10 +58,10 @@ const ensureMember = (artifactGroupId, artifactName, artifactTypeEnumId, nameIsP
 // A new transaction, as Java's resetLockAccount: the unlock has to commit even when the caller's transaction is gone.
 const updateAccount = (parameters) => {
     ec.message.clearErrors()
-    const before = ec.message.errors || 0
+    const before = ec.message.errors.length
     const out = ec.service.sync().name("update#moqui.security.UserAccount").parameters(parameters)
         .disableAuthz().requireNewTransaction(true).call()
-    if ((ec.message.errors || 0) > before || out == null) {
+    if (ec.message.errors.length > before || out == null) {
         const errors = ec.message.getErrorsString()
         throw new Error(`update#UserAccount failed${errors ? ": " + errors : ""}`)
     }

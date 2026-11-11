@@ -1,10 +1,16 @@
 # Testing a server from outside with `moqui test-client`
 
-`moqui test-client` runs the JavaScript spec files in a component's `test/client/` directory against a server that is
-already running. The specs have the format of `moqui test` ([Testing](../Build-Test.md#component-specs)): `spec`, `feature`, the blocks,
-`where` rows, conditions that fail with the values of their parts, `suite.js`, the console report and JUnit. They reach
-the server only from outside: HTTP sessions with cookies and the session token, raw requests over TCP or TLS,
-WebSocket, headless Chromium, and a load runner of virtual users.
+`moqui test-client` (`./moq test-client`) runs the JavaScript spec files in a component's `test/client/` directory
+against a server that is already running. The specs have the format of `moqui test`
+([JS-Testkit](JS-Testkit.md)): `spec`, `feature`, the blocks, `where` rows, conditions that fail with the values of
+their parts, `suite.js`, the console report and JUnit. They reach the server only from outside: HTTP sessions with
+cookies and the session token, raw requests over TCP or TLS, WebSocket, headless Chromium, and a load runner of
+virtual users.
+
+The other JavaScript test APIs are [JS-Testkit](JS-Testkit.md), the server specs of `moqui test`, which run inside
+the server's process with `ec`, and [JS-Test-Load](JS-Test-Load.md), the load scripts of `moqui test-load` and
+Tools › Load. Building, the two suites, the regression budget and the commands are in
+[Build-Test](../Build-Test.md#component-specs).
 
 It is a pure client. It opens no database, starts no execution context, reads no conf and no `runtime/.env`, opens no
 `runtime/log/moqui.log`, and binds no listener of its own; the only port is the one Chromium opens on loopback for
@@ -70,7 +76,7 @@ the end:
 
 ```
 SecurityAuthn > A07 a POST runs with the session token and stores nothing without it (csrf: false)  PASSED (0.04s)
-BrowserSmoke > /apps/SimpleScreens/Order/OrderDetail?orderId=55401 shows Picker Bot 2000  FAILED (3.12s)
+BrowserSmoke > "/apps/SimpleScreens/Order/OrderDetail?orderId=55401" shows "Picker Bot 2000"  FAILED (3.12s)
 LoadBasic > mixed reads and writes  PASSED (10.31s)
     4 users, 10.0 s: 2,412 requests, 241.2/s, 0 errors
     name                count  errors    p50    p95    p99    max
@@ -164,10 +170,23 @@ Chromium's pages load at `https://moqui.test`. Nothing listens: the browser asks
 `hmac`, `files`, `sleep` and `log` stay available. The webroot and dev-aide offline specs are not part of the framework
 security suite.
 
-`browser.runInPage({ scripts, styles, test })` is called at the top of an offline spec, not inside a feature. It opens
-a fresh page, loads `scripts` and `styles` in order, then the `test` file. That file keeps `test(name, fn)`, and each
-one is a case. The spec itself is the container, not an extra passing case. With no Chromium the cases are skipped,
-and `--fail-on-skip` makes that a failure.
+`browser.runInPage({ scripts, styles, test })` is called at the top of an offline spec, not inside a feature, where
+it throws; in a spec that is not `server: false` it fails. It opens a fresh page, loads `styles` and then `scripts`,
+each in order, then the `test` file, all paths on `https://moqui.test`. That file calls `test(name, fn)`, and each
+one is a case; `--feature` picks them by name. The spec itself is the container, not an extra passing case. With no
+Chromium the cases are skipped, and `--fail-on-skip` makes that a failure.
+
+The test file runs in the page, not in the spec's engine, so it has the page's globals and these:
+
+| In the page | |
+|---|---|
+| `test(name, fn)` | A case. `fn` may return a promise, which is awaited. The cases run in the order written |
+| `assert` and its methods | The same `assert` as a spec's ([JS-Testkit](JS-Testkit.md#assert)). `assert.rejects` returns a promise there: return or await it |
+| `harness.frame(scripts, globals)` | A promise of the window of a new same-origin iframe: `globals` are set on it, then each script loads in order. For code that must load into a clean global |
+| `harness.allowProblems()` | Page problems until this test finishes do not fail it |
+
+The spec's `timeout` is what the whole file may take, `--timeout` otherwise. A test that does not finish fails by
+name.
 
 ## Files and order
 
@@ -184,9 +203,12 @@ A process spec, `<component>/test/client/process/<businessProcessId>.spec.js`, t
 (Chisel's Process Story Diff records it with `--video`). It runs only when named: by `--spec <businessProcessId>` with
 its component, or by its file path. A whole-component run leaves it out. It can `dependsOn` the component's other specs.
 
-`spec({...})` and `feature(name, {...})` take what they take in `moqui test` (`dependsOn`, `requires`, `stepwise`,
-`timeout`, `slow`, the setup and cleanup blocks, `where`, `ignore`), with `allowPageProblems` in place of
-`allowMessageErrors`: there is no `ec.message` to check. A regression client spec over 15 seconds fails the run: move
+`spec({...})` and `feature(name, {...})` take what they take in `moqui test`
+([JS-Testkit](JS-Testkit.md#spec)): `dependsOn`, `requires`, `stepwise`, `timeout`, the setup and cleanup blocks,
+`given`, `when`, `then`, `expect`, `where`, `ignore`. Two fields are the client's: `server: false` on `spec()`
+makes an offline spec ([`--offline`](#--offline)), and `allowPageProblems` takes the place of `allowMessageErrors`,
+since there is no `ec.message` to check. `tempSequences` and `database: false` are for server specs: a client spec
+has no `ec` for them. A regression client spec over 15 seconds fails the run: move
 it to `acceptance/client/` or delete it ([The two suites](../Build-Test.md#the-two-suites)). An acceptance client spec
 is `<component>/acceptance/client/<Name>.spec.js`, with `acceptance/client/suite.js` for its order and server. A
 suite.js that declares no server holds offline specs (`server: false`), which `./moq accept` runs with `--offline`
@@ -225,23 +247,29 @@ Every call blocks until it is done; there is no `await`. Conditions are plain va
 | `params` | The `--param` values and `MOQUI_TEST_*` variables, as text |
 | `http` | The current session: the spec's default, or in `load` and `parallel` the thread's own |
 | `session(opts)` | A new session with its own cookie jar and token. `opts.headers` go on each of its requests; `opts.user` (and `opts.password`, `moqui` by default) logs it in |
-| `login(user, password = "moqui")`, `logout()` | On `http` |
+| `login(user, password = "moqui")`, `logout()` | `http.login` and `http.logout` |
+| `hmac` | `sha256Base64` and `sha256Timestamp`, the System Message signers ([HTTP](#http)) |
 | `ws` | WebSocket |
-| `browser` | Headless Chromium |
+| `browser` | Headless Chromium: `newPage(opts)`, and `runInPage(opts)` at the top of an offline spec |
 | `load(opts)`, `parallel(n, fn, args, opts)` | Virtual users, and threads |
+| `step(name, fn)`, `pause(spec)`, `fail(message)`, `service.call(...)` | The load globals ([Load and parallel](#load-and-parallel)) |
 | `files.list(dir, regex)`, `files.read(path)` | Read-only, within the spec's own component directory. `list` gives every file under `dir` with its path relative to the component (`test/client/Http.spec.js`), filtered by the pattern when given. A path with `..`, an absolute path, or a link out of the component is refused |
 | `skip(reason)` | Skip the feature, or in `setupSpec` the spec |
-| `waitUntil(fn, { timeout, interval })` | Call `fn` until it is truthy and return its value; else throw with the last value. `timeout` in seconds (`--timeout` by default), `interval` in milliseconds (100) |
+| `waitUntil(fn, { timeout, interval })` | Call `fn` until its value is true by the truth of a condition (an empty list or text is false) and return that value; else throw with the last value. `timeout` in seconds (`--timeout` by default), `interval` in milliseconds (100) |
 | `sleep(ms)` | Pause |
-| `assert`, `dec`, `sum` | As in server specs |
-| `log.trace`, `debug`, `info`, `warn`, `error` | To the console at that level |
+| `assert` and its methods, `dec`, `sum` | As in server specs ([JS-Testkit](JS-Testkit.md#assert)) |
+| `log.trace`, `debug`, `info`, `warn`, `error` | One message to the console at that level; a value that is not text is shown as a condition's part is |
 
-There is no process or shell API.
+There is no process or shell API. The server's helpers are not there: `ec` throws when read, and `call`,
+`checkData`, `screenTest` and `uploadedFile` throw when called, each naming what to use instead (`http.post` on the
+service's REST path, `http.get` on `/rest/e1/...`, `http.get` on the screen path or `browser`, `http.post` with
+`multipart`). `plan` and `scenario` are a load script's ([JS-Test-Load](JS-Test-Load.md)) and throw in a spec. A
+response and a session are objects the calls return; their classes are not global names.
 
 ### HTTP
 
 `http.get(path, opts)`, `post`, `put`, `patch`, `delete`, `options`, `head`, and `request(method, path, opts)`, on
-`http` or any session. A path is relative to `server.url`; a full URL is taken as it is.
+`http` or any session. A path is relative to `server.url`; a full URL is taken as it is. Each returns a response.
 
 | Request option | |
 |---|---|
@@ -269,20 +297,23 @@ The response has `status`, `ok` (2xx), `url` (the last one, after redirects), `l
 - `cookies`, each `Set-Cookie` parsed (`name`, `value`, `domain`, `path`, `maxAge`, `expires`, `secure`, `httpOnly`,
   `sameSite`), and `cookie(name)`;
 - `magic`: the first four bytes as text when printable, such as `%PDF` or `PK`, else as hex;
+- `urlParam(name)`: a query parameter of `url`, else of `location` (a redirect not followed), decoded, or null;
 - `assertContains(text)`, `assertNotContains(text)`: true, or a failure with the start of the body;
 - `save(name)`: the body into the output directory, a plain file name; the path. The last 32 bodies are kept for it.
 
-A session also has `cookies()` (the jar: `name`, `value`, `domain`, `path`, `expires`, `secure`, `httpOnly`,
-`sameSite`), `clearCookies()` and `token()`. The jar keeps cookies by name, domain and path, with expiry, and sends
+A session also has `raw(text, opts)` ([Raw requests](#raw-requests)), `login(user, password)`, `logout()`,
+`formLogin(user, password, opts)` (below), `cookies()` (the jar: `name`, `value`, `domain`, `path`, `expires`,
+`secure`, `httpOnly`, `sameSite`), `clearCookies()` and `token()`, the session token or null. The jar keeps cookies by name, domain and path, with expiry, and sends
 them as a browser would.
 
 **The session token** is taken from the `moquiSessionToken` and `X-CSRF-Token` response headers, which a server sends
 when a session is new or its token changes, and from an HTML page's `<meta name="moquiSessionToken">` or a `/qapps`
 page's `moqui-config` JSON. The session sends it as `X-CSRF-Token`.
 
-**Logins.** `login(user, password)` posts `/rest/login`, the API login, which needs no session token. It throws when the
-login fails (`login of no.such.user failed: HTTP 401: ...`) or needs a second factor. `logout()` gets `/rest/logout`.
-`formLogin(user, password, { returnTo, headers })` gets `/Login` for its cookie, then posts `/Login/login` with
+**Logins.** `login(user, password)`, on `http` or any session, posts `/rest/login`, the API login, which needs no
+session token, and returns that response. The password is `moqui` when left out. It throws when the login fails
+(`login of no.such.user failed: HTTP 401: ...`) or needs a second factor (`login of <user> needs a second factor`).
+`logout()` gets `/rest/logout`. `formLogin(user, password, { returnTo, headers })` gets `/Login` for its cookie, then posts `/Login/login` with
 redirects off and returns that response, for the redirect proofs.
 
 ```js
@@ -366,7 +397,7 @@ feature.
 | `keyboard.type(text)`, `keyboard.press(key)` | `type` sends key events, one character at a time. `fill` inserts text and does not send keys |
 | `url()`, `title()`, `text()`, `html()` | The current URL, the title, `document.body.innerText`, the HTML |
 | `locator(css)`, `getByRole(role, { name, exact })`, `getByText(text, { exact })`, `getByLabel(text, { exact })` | Locators, resolved again on each use. A name or text is a substring ignoring case and spacing, the whole text with `exact`, or a regular expression |
-| `fill(css, value)`, `click(css)`, `press(key)`, `keyboard.press(key)` | Shortcuts for the locator actions; `press` goes to the focused element (`"Escape"`, `"Control+A"`) |
+| `fill(css, value, { timeout })`, `click(css, { timeout })`, `press(key)`, `keyboard.press(key)` | Shortcuts for the locator actions; `press` goes to the focused element (`"Escape"`, `"Control+A"`) |
 | `evaluate(fn, arg)` | Run in the page: a function, called with `arg` (copied as JSON), or an expression text. A promise is awaited; the answer comes back as JSON |
 | `waitFor(fn, { arg, timeout })` | Evaluate in the page until truthy; its value. Else throw with the last value, the page's problems and the start of its text |
 | `waitForURL(match, { timeout })` | Until the URL is the text (the whole URL, or its path with or without the query), matches the regular expression, or the function of it is truthy; then settle. The current URL counts, so a navigation that already happened passes |
@@ -385,7 +416,8 @@ feature.
 | `waitFor({ state, timeout })` | `visible` (the default), `hidden`, `attached` or `detached`. True; on timeout it throws with the page text and its problems |
 | `locator(css)`, `getByRole(...)`, `getByText(...)`, `getByLabel(...)` | Search within the elements found so far |
 | `first()`, `last()`, `nth(i)` | One of them; a negative `i` counts from the end |
-| `evaluate(fn, arg)` | `fn(element, arg)` in the page, on the first match |
+| `evaluate(fn, arg)` | `fn(element, arg)` in the page, on the first match. It takes a function, not an expression text |
+| `toString()` | How the locator was made, such as `page.getByRole("button", { name: /Save/ }).first()`, as failures name it |
 
 Locators are not strict: an action or a read uses the first match, in document order. Scope a locator, or check
 `count()`, where more than one element could match.
@@ -518,7 +550,7 @@ It returns the statistics, prints a table after the feature's line, and writes t
 | `users` | The number of users, 1 to 10,000; 1 by default |
 | `duration`, `iterations` | Seconds the scenario repeats for, and/or iterations per user; at least one. With both, a user stops at whichever comes first |
 | `rampUp` | Seconds over which the users start, evenly; with `rate` and no `stages`, the seconds over which the rate rises from 0 |
-| `rate` | Iterations started per second (an arrival rate, [Load-Runner](../tools/Load-Runner.md#rates-and-stages)), with `users` the most at once (by default the highest rate rounded up, which assumes an iteration takes a second or less: give more for longer ones). `iterations` is then the scenario's starts in all. Not with `stages` |
+| `rate` | Iterations started per second (an arrival rate, [JS-Test-Load](JS-Test-Load.md#rates-and-stages)), with `users` the most at once (by default the highest rate rounded up, which assumes an iteration takes a second or less: give more for longer ones). `iterations` is then the scenario's starts in all. Not with `stages` |
 | `stages` | `[{ duration, users }]`, the users over time, or `[{ duration, rate }]`, the rate over time; with no `duration`, the scenario lasts as long as its stages |
 | `think` | Between a user's iterations, not timed: milliseconds, `[min, max]` (uniform) or `{ gaussian: [mean, deviation] }` (clamped at 0) |
 | `pause` | A wait of the same forms before each request of the scenario, not timed |
@@ -533,9 +565,9 @@ It returns the statistics, prints a table after the feature's line, and writes t
 The functions run from their source text on other threads, so they cannot use the spec's variables: pass what they need
 in `args`, or put the load in a load script.
 
-**Load scripts** ([Load-Runner](../tools/Load-Runner.md#writing-a-script)). `load({ script: "test/load/Name.load.js",
+**Load scripts** ([JS-Test-Load](JS-Test-Load.md)). `load({ script: "test/load/Name.load.js",
 params, scenarios: { name: { users, iterations, ... } } })` runs a `.load.js` file of the spec's component, whose
-`plan` and `scenario` calls the guide describes. With `scenarios` (`{ name: settings }`, or `[names]`), only those
+`plan` and `scenario` calls that page describes. With `scenarios` (`{ name: settings }`, or `[names]`), only those
 named run, with their settings over the script's (null unsets one), and a name the script does not have is refused.
 `users`, `iterations`, `duration`, `rampUp`, `think`, `pause`, `rate` and `stages` beside `script` apply to every
 scenario; a `duration` given alone replaces the script's `iterations`, and `iterations` alone its `duration`; a `rate`
@@ -548,7 +580,7 @@ Globals for any spec or load script:
 
 | Global | |
 | --- | --- |
-| `step(name, fn)` | Runs `fn` and records its whole time as one sample `name` of kind `step` (a JMeter transaction controller). The requests inside still count under their own names; a step is not a request in the totals |
+| `step(name, fn)` | Runs `fn`, records its whole time as one sample `name` of kind `step` (a JMeter transaction controller), and returns what `fn` returned. The requests inside still count under their own names; a step is not a request in the totals |
 | `pause(ms \| [min, max] \| { gaussian: [mean, deviation] })` | A wait that is not timed. A stop ends it |
 | `fail(message)` | Ends the iteration as an error with the message, as a failed `assert` does |
 | `response.urlParam(name)` | A query parameter of the response's final `url`, else of its `location` (a redirect not followed); null when neither has it. A transition's redirect carries the new record's id this way |
@@ -603,7 +635,7 @@ A user's thread and engine start in about 7 ms and take about 1 MB, so a few hun
 beyond that, run several client processes. Without `rate` it is a closed model: each user waits for its answer before
 the next request.
 
-`stages` and `rate` ([Load-Runner, Rates and stages](../tools/Load-Runner.md#rates-and-stages)) give users over
+`stages` and `rate` ([JS-Test-Load, Rates and stages](JS-Test-Load.md#rates-and-stages)) give users over
 time and an arrival rate, which keeps the wait for a stalled server in the times (coordinated omission).
 
 **Tarpits.** A load against a server with the demo data is answered 429 by its tarpits. Run it against
@@ -661,5 +693,5 @@ The output directory has what the specs wrote and what failures left:
 - `test/MoquiConf.xml` merges only in `moqui test` runs (and so in `--serve`); a spec that needs it skips or fails
   against `./moq run`.
 - A spec that needs Chromium passes as skipped on a machine without one. Use `--fail-on-skip` in CI.
-- The rules of [Testing](../Build-Test.md#pitfalls) apply: a line outside `then` and `expect` that starts with `[`, `(`, `/`
+- The rules of [JS-Testkit](JS-Testkit.md#pitfalls) apply: a line outside `then` and `expect` that starts with `[`, `(`, `/`
   or a template literal continues the line before it.

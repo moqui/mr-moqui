@@ -64,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 const source = parse('sourceJson', null)
                 if (source && source.type == 'sql' && ec.web.secureRequestParameters.sourceJson == null) throw new Error('A SQL source goes in the request body')
-                out = ec.service.sync().name('org.moqui.dev.DatabaseServices.get#DataGridRows').parameters({source, columns: parse('columnsJson', []), page: Number(context.page || 1), size: Number(context.size || 100),
+                out = ec.service.sync().name('org.moqui.dev.DatabaseServices.get#DataGridRows').parameters({source, columns: parse('columnsJson', []), page: Number(context.get('page') || 1), size: Number(context.get('size') || 100),
                     sort: parse('sortJson', []), filter: parse('filterJson', [])}).call() || {}
             } catch (e) { errors = String(e.message || e) }
             if (ec.message.hasError()) errors = ec.message.errorsString

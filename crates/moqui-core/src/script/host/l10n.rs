@@ -29,7 +29,7 @@ pub(super) static L10N: HostClass = HostClass {
         method!(
             "ec.l10n",
             "formatCurrency",
-            [Value, OptValue, OptValue],
+            [Value, OptValue, OptValue, OptValue, OptValue],
             format_currency
         ),
         method!(
@@ -38,7 +38,14 @@ pub(super) static L10N: HostClass = HostClass {
             [Value, OptValue, OptValue],
             format_currency_no_symbol
         ),
-        method!("ec.l10n", "parseTimestamp", [Value, OptValue], parse_timestamp),
+        method!(
+            "ec.l10n",
+            "parseTimestamp",
+            [Value, OptValue, OptValue, OptValue],
+            parse_timestamp
+        ),
+        // Java's `parseDateTime`: the time stamp, as a Calendar has no form here
+        method!("ec.l10n", "parseDateTime", [Value, OptValue], parse_timestamp),
         method!("ec.l10n", "parseDate", [Value, OptValue], parse_date),
         method!("ec.l10n", "parseTime", [Value, OptValue], parse_time),
         method!("ec.l10n", "parseNumber", [Value, OptValue], parse_number),
@@ -144,11 +151,14 @@ fn is_date_text(text: &str) -> bool {
         && bytes[8..10].iter().all(u8::is_ascii_digit)
 }
 
+/// `formatCurrency(amount, uomId, fractionDigits, locale, hideSymbol)`: Java's forms, the locale as its name.
 fn currency(call: &Call<'_>, hide_symbol: bool) -> Result<Ret, HostError> {
     let amount = call.value_or_null(0);
     let uom = call.opt_text(1);
     let digits = call.opt_text(2).and_then(|digits| digits.parse::<usize>().ok());
-    l10n::format_currency(&amount, uom.as_deref(), digits, hide_symbol)
+    let locale = call.opt_text(3);
+    let hide_symbol = hide_symbol || call.value(4).is_some_and(super::truthy);
+    l10n::format_currency_in(&amount, uom.as_deref(), digits, hide_symbol, locale.as_deref())
         .map(Ret::from)
         .map_err(|err| failed(err.message()))
 }
@@ -165,9 +175,22 @@ fn parsed_or_null(value: Option<Value>) -> Result<Ret, HostError> {
     Ok(Ret::Value(value.unwrap_or(Value::Null)))
 }
 
+/// `parseTimestamp(input, format)` and Java's `parseTimestamp(input, format, locale, timeZone)`: text that names no
+/// offset is read in the zone named, else the session's. The locale is not used: the patterns here are numeric.
 fn parse_timestamp(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let input = to_plain_string(&call.value_or_null(0));
-    parsed_or_null(l10n::parse_timestamp_format(&input, call.opt_text(1).as_deref()))
+    let zone = match call.opt_text(3).filter(|zone| !zone.trim().is_empty()) {
+        Some(zone) => Some(
+            jiff::tz::TimeZone::get(zone.trim())
+                .map_err(|_| HostError::Context(Error::new(format!("Time zone {zone} is not known"))))?,
+        ),
+        None => None,
+    };
+    parsed_or_null(l10n::parse_timestamp_format_in(
+        &input,
+        call.opt_text(1).as_deref(),
+        zone.as_ref(),
+    ))
 }
 
 fn parse_date(call: &mut Call<'_>) -> Result<Ret, HostError> {

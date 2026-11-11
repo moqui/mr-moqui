@@ -238,7 +238,7 @@ administrator can open":
 - `LoadBasic.spec.js` (4), `WebrootRum.page.js` (2), a test fixture's `Http.spec.js` (1), `AdminOverview.spec.js` (1);
 - three Rust host tests, `agent_eval.rs`, `tools_services.rs` and `test_client.rs` (4);
 - `Tools/Database/SpeedTest.xml` (a link), the two app roots;
-- four guides: `Proof-Tests.md`, `Attack-Surface.md`, `Client-Testing.md`, `Build-Test.md`.
+- four guides: `Proof-Tests.md`, `Attack-Surface.md`, `JS-Test-Client.md`, `Build-Test.md`.
 
 Monitor's `dashboard` is on fifteen more lines in four test files; it becomes `Overview` with the move (§2.1).
 

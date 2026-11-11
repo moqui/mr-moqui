@@ -100,8 +100,26 @@ static TEMP_RESET_SEQUENCED_ID_PRIMARY: Method = method!(
 pub(crate) static FIND: HostClass = HostClass {
     name: "host:EntityFind",
     methods: &[
-        method!("EntityFind", "condition", [Value, OptValue, OptValue], None, leaf, condition),
-        method!("EntityFind", "orderBy", [Text], None, leaf, order_by),
+        method!(
+            "EntityFind",
+            "condition",
+            [Value, OptValue, OptValue],
+            None,
+            leaf,
+            condition
+        ),
+        method!("EntityFind", "orderBy", [Value], None, leaf, order_by),
+        method!(
+            "EntityFind",
+            "conditionToField",
+            [Text, Text, Text],
+            None,
+            leaf,
+            condition_to_field
+        ),
+        method!("EntityFind", "selectFields", [Value], None, leaf, select_field),
+        method!("EntityFind", "getSelectFields", [], None, leaf, get_select_fields),
+        method!("EntityFind", "getEntityName", [], None, leaf, get_find_entity_name),
         method!("EntityFind", "limit", [Value], None, leaf, limit),
         method!("EntityFind", "offset", [Value, OptValue], None, leaf, offset),
         method!(
@@ -121,7 +139,7 @@ pub(crate) static FIND: HostClass = HostClass {
         method!("EntityFind", "distinct", [Value], None, leaf, distinct),
         method!("EntityFind", "disableAuthz", [], None, leaf, disable_authz),
         method!("EntityFind", "useClone", [Value], None, leaf, use_clone),
-        method!("EntityFind", "selectField", [Text], None, leaf, select_field),
+        method!("EntityFind", "selectField", [Value], None, leaf, select_field),
         method!("EntityFind", "selectFormFields", [Text], None, leaf, select_form_fields),
         method!("EntityFind", "list", [], None, leaf, list),
         method!("EntityFind", "one", [], None, leaf, one),
@@ -163,14 +181,51 @@ pub(crate) static FIND: HostClass = HostClass {
     ],
     getters: &[],
     hidden: &[],
-    shim_js: None,
+    shim_js: Some(FIND_PROTOTYPE_JS),
     shim_members: &[],
 };
 
-/// Members of an entity list that are simplest in JavaScript: iteration, Groovy's `size()` and `isEmpty()`, and the
-/// array methods the type declarations name. Not enumerable, as the host methods are not.
-const LIST_PROTOTYPE_JS: &str = r#"(function (list) {
+/// Members of a find that are simplest in JavaScript, over the host methods.
+const FIND_PROTOTYPE_JS: &str = r#"(function (proto) {
+    const define = (name, value) => Object.defineProperty(proto, name, { value, writable: true, configurable: true });
+    // Java's searchFormInputs(inputFieldsMapName, defaultOrderBy, alwaysPaginate) and its form with
+    // defaultParameters second: the inputs are the context, or the map of that name in it
+    define("searchFormInputs", function (inputFieldsMapName, second, third, fourth) {
+        const context = globalThis.ec.context;
+        const inputs = inputFieldsMapName ? (context.get(String(inputFieldsMapName)) || {}) : context;
+        if (second !== null && typeof second === "object") return this.searchFormMap(inputs, second, null, third, fourth === true);
+        return this.searchFormMap(inputs, null, null, second, third === true);
+    });
+    // Java's listMaster(name): each row with the related records of the master definition, as plain objects
+    define("listMaster", function (name) { return Array.from(this.list(), (row) => row.getMasterValueMap(name)); });
+    // JDBC hints with no counterpart: one statement reads the rows of a list, an iterator reads as it goes. Kept so a
+    // chain that names them runs.
+    define("fetchSize", function () { return this; });
+    define("getFetchSize", function () { return null; });
+    define("maxRows", function () { return this; });
+    define("getMaxRows", function () { return null; });
+})"#;
+
+/// Members of an entity list that are simplest in JavaScript: iteration, Groovy's `size()` and `isEmpty()`, the array
+/// methods the type declarations name, and Java's `EntityList` and `List` methods. Not enumerable, as the host methods
+/// are not. `hidden.setRows` replaces the list's rows and `hidden.ofRows` makes a new list.
+///
+/// As in Java, the methods that filter or order (`filterByAnd`, `filterByCondition`, `filterByLimit`, `orderByFields`,
+/// `removeByAnd`, `sort`, `reverse`) change the list itself and return it; `findByAnd`, `cloneList` and
+/// `getPartialList` give a new list. The array methods that give a new array in JavaScript (`map`, `filter`, `slice`,
+/// `toSorted`, ...) give an array of the rows and leave the list as it was.
+const LIST_PROTOTYPE_JS: &str = r#"(function (list, hidden) {
     const define = (name, value) => Object.defineProperty(list, name, { value, writable: true, configurable: true });
+    const setRows = hidden.setRows, ofRows = hidden.ofRows;
+    const same = (left, right) => globalThis.compare(left, "equals", null, right, null, "Object") === true;
+    const matches = (row, fields) => { for (const name in fields) if (!same(row.get(name), fields[name])) return false; return true; };
+    // filterByAnd(map) and Java's filterByAnd(name, value, name, value...)
+    const fieldsOf = (args) => {
+        if (args.length === 1 && args[0] !== null && typeof args[0] === "object") return args[0];
+        const fields = {};
+        for (let i = 0; i + 1 < args.length; i += 2) fields[String(args[i])] = args[i + 1];
+        return fields;
+    };
     define(Symbol.iterator, function* () { for (let i = 0; i < this.length; i++) yield this.get(i); });
     define("size", function () { return this.length; });
     define("isEmpty", function () { return this.length === 0; });
@@ -178,14 +233,106 @@ const LIST_PROTOTYPE_JS: &str = r#"(function (list) {
     define("filter", function (callback, self) { return Array.from(this).filter(callback, self); });
     define("forEach", function (callback, self) { Array.from(this).forEach(callback, self); });
     define("toJSON", function () { return Array.from(this); });
-    // The rest of the Array prototype runs on an array copy of the rows. The rows are the same values, so a field set
-    // on one is kept in the list; a method that reorders (`sort`, `reverse`) returns the reordered copy and leaves the
-    // list as it was.
+    // The rest of the Array prototype that reads runs on an array copy of the rows. The rows are the same values, so a
+    // field set on one is kept in the list.
     for (const name of ["find", "findIndex", "findLast", "findLastIndex", "some", "every", "reduce", "reduceRight",
-            "sort", "reverse", "includes", "indexOf", "lastIndexOf", "slice", "concat", "join", "flatMap", "flat",
+            "includes", "indexOf", "lastIndexOf", "slice", "concat", "join", "flatMap", "flat",
             "entries", "keys", "values", "at", "toSorted", "toReversed"]) {
         define(name, function (...args) { return Array.prototype[name].apply(Array.from(this), args); });
     }
+    // The Array methods that change an array change the list, as they do a Java List.
+    define("sort", function (compare) { return setRows.call(this, Array.from(this).sort(compare)); });
+    define("reverse", function () { return setRows.call(this, Array.from(this).reverse()); });
+    for (const name of ["push", "pop", "shift", "unshift", "splice"]) {
+        define(name, function (...args) {
+            const rows = Array.from(this), result = Array.prototype[name].apply(rows, args);
+            setRows.call(this, rows);
+            return result;
+        });
+    }
+    // Java's List: add(value), add(index, value), addAll(values), remove(index or value), set(index, value), clear()
+    define("add", function (first, second) {
+        const rows = Array.from(this);
+        if (arguments.length >= 2) rows.splice(Number(first), 0, second); else rows.push(first);
+        setRows.call(this, rows);
+        return true;
+    });
+    define("addAll", function (values) { setRows.call(this, Array.from(this).concat(Array.from(values || []))); return true; });
+    define("remove", function (which) {
+        const rows = Array.from(this);
+        const index = typeof which === "number" ? which : rows.findIndex((row) => row.equals(which));
+        if (index < 0 || index >= rows.length) return typeof which === "number" ? null : false;
+        const [removed] = rows.splice(index, 1);
+        setRows.call(this, rows);
+        return typeof which === "number" ? removed : true;
+    });
+    define("set", function (index, value) {
+        const rows = Array.from(this), old = rows[index] ?? null;
+        rows[index] = value;
+        setRows.call(this, rows);
+        return old;
+    });
+    define("clear", function () { setRows.call(this, []); });
+    // Java's EntityList
+    define("getFirst", function () { return this.first(); });
+    define("filterByAnd", function (...args) {
+        const fields = fieldsOf(args);
+        return setRows.call(this, Array.from(this).filter((row) => matches(row, fields)));
+    });
+    define("removeByAnd", function (fields) {
+        return setRows.call(this, Array.from(this).filter((row) => !matches(row, fields || {})));
+    });
+    define("findByAnd", function (...args) {
+        const fields = fieldsOf(args);
+        return ofRows(Array.from(this).filter((row) => matches(row, fields)));
+    });
+    // filterByCondition(condition, include): the rows the condition matches, or with include false those it does not
+    define("filterByCondition", function (condition, include) {
+        const keep = include !== false;
+        return setRows.call(this, Array.from(this).filter((row) => condition.mapMatches(row) === keep));
+    });
+    // filterByLimit(offset, limit), and Java's filterByLimit(inputFieldsMapName, alwaysPaginate) over the context's
+    // pageIndex and pageSize (or those of the named map)
+    define("filterByLimit", function (first, second) {
+        let offset = first, limit = second;
+        if (first == null || typeof first === "string" || typeof first === "boolean") {
+            const always = typeof first === "boolean" ? first : second === true;
+            const inputs = typeof first === "string" && first ? (globalThis.ec.context.get(first) || {}) : globalThis.ec.context;
+            const read = (name) => typeof inputs.get === "function" ? inputs.get(name) : inputs[name];
+            const pageSize = read("pageSize"), pageIndex = read("pageIndex");
+            if (!always && pageSize == null && pageIndex == null) return this;
+            limit = Number(pageSize ?? 20);
+            offset = Number(pageIndex ?? 0) * limit;
+        }
+        offset = Number(offset ?? 0);
+        const rows = Array.from(this);
+        return setRows.call(this, limit == null ? rows.slice(offset) : rows.slice(offset, offset + Number(limit)));
+    });
+    // orderByFields(["name", "-other"]): by each field in turn, `-` for descending
+    define("orderByFields", function (fields) {
+        if (fields == null) return this;
+        const rows = Array.from(this);
+        globalThis.orderMapList(rows, typeof fields === "string" ? fields.split(",").map((field) => field.trim()) : Array.from(fields));
+        return setRows.call(this, rows);
+    });
+    define("indexMatching", function (fields) { return Array.from(this).findIndex((row) => matches(row, fields || {})); });
+    define("move", function (from, to) {
+        const rows = Array.from(this);
+        if (from === to || from < 0 || from >= rows.length) return this;
+        const [row] = rows.splice(from, 1);
+        rows.splice(to > from ? to - 1 : to, 0, row);
+        return setRows.call(this, rows);
+    });
+    define("addIfMissing", function (value) {
+        if (Array.from(this).some((row) => row.equals(value))) return this;
+        this.add(value);
+        return this;
+    });
+    define("addAllIfMissing", function (values) { for (const value of values || []) this.addIfMissing(value); return this; });
+    define("cloneList", function () { return ofRows(Array.from(this, (row) => row.cloneValue())); });
+    define("getValueMapList", function () { return Array.from(this, (row) => row.getMap()); });
+    define("getPlainValueList", function (dependentLevels) { return Array.from(this, (row) => row.getPlainValueMap(dependentLevels ?? 0)); });
+    define("getMasterValueList", function (name) { return Array.from(this, (row) => row.getMasterValueMap(name)); });
 })"#;
 
 /// An entity list (a find's `list()`), as Java's `EntityList`. A cursor over the rows is `iterator()`'s
@@ -207,14 +354,17 @@ pub(crate) static LIST: HostClass = HostClass {
         method!(
             "EntityList",
             "filterByDate",
-            [Text, Text, Value, OptBool],
+            [OptValue, OptValue, OptValue, OptBool],
             None,
             leaf,
             list_filter_by_date
         ),
     ],
     getters: &[],
-    hidden: &[],
+    hidden: &[
+        method!("EntityList", "ofRows", [Value], None, leaf, list_of_rows),
+        method!("EntityList", "setRows", [Value], None, leaf, list_set_rows),
+    ],
     shim_js: Some(LIST_PROTOTYPE_JS),
     shim_members: &[],
 };
@@ -222,9 +372,47 @@ pub(crate) static LIST: HostClass = HostClass {
 /// What `entrySet()` makes of the host method's pairs: entries with `key`, `value`, `getKey()` and `getValue()`.
 const VALUE_PROTOTYPE_JS: &str = r#"(function (proto, hidden) {
     const pairs = hidden.entryPairs;
-    Object.defineProperty(proto, "entrySet", { writable: true, configurable: true, value: function entrySet() {
+    const define = (name, value) => Object.defineProperty(proto, name, { writable: true, configurable: true, value });
+    define("entrySet", function entrySet() {
         return pairs.call(this).map(([key, value]) => ({ key, value, getKey: () => key, getValue: () => value }));
-    } });
+    });
+    // Java's names for what the host methods do
+    define("setAll", function setAll(fields) { return fields == null ? this : this.setFields(fields, true, null, null); });
+    define("store", function store() { return this.createOrUpdate(); });
+    define("getNoCheckSimple", function getNoCheckSimple(name) { return this.get(name); });
+    define("isMutable", function isMutable() { return true; });
+    define("getPrimaryKeysString", function getPrimaryKeysString() {
+        return Object.values(this.getPrimaryKeys()).map((value) => value == null ? "" : String(value)).join("::");
+    });
+    // every entry of the map equal to the value's field, compared as the host compares (a decimal by value)
+    define("mapMatches", function mapMatches(fields) {
+        for (const [name, value] of Object.entries(fields || {})) if (globalThis.compare(this.get(name), "equals", null, value, null, "Object") !== true) return false;
+        return true;
+    });
+    // Java's compareTo: by entity name, then each primary key field, then the other fields
+    define("compareTo", function compareTo(other) {
+        const order = (left, right) => left == null ? (right == null ? 0 : -1) : right == null ? 1
+            : globalThis.compare(left, "less", null, right, null, "Object") === true ? -1
+            : globalThis.compare(left, "greater", null, right, null, "Object") === true ? 1 : 0;
+        let result = order(this.getEntityName(), other.getEntityName());
+        if (result !== 0) return result;
+        const keys = Object.keys(this.getPrimaryKeys());
+        const names = keys.concat(Object.keys(this.getMap()).filter((name) => !keys.includes(name)));
+        for (const name of names) { result = order(this.get(name), other.get(name)); if (result !== 0) return result; }
+        return 0;
+    });
+    define("findRelatedCount", function findRelatedCount(relationshipName, byAndFields, useCache) {
+        return this.findRelated(relationshipName, byAndFields, null, useCache).length;
+    });
+    // Java's typed getters: the field converted, null for none
+    const typed = { getString: "String", getBoolean: "Boolean", getLong: "Long", getDouble: "Double",
+        getBigDecimal: "BigDecimal", getTimestamp: "Timestamp", getDate: "Date", getTime: "Time" };
+    for (const [name, type] of Object.entries(typed)) {
+        define(name, function (field) { const value = this.get(field); return value == null ? null : globalThis.basicConvert(value, type); });
+    }
+    define("getBytes", function getBytes(field) { return this.get(field); });
+    define("setString", function setString(field, value) { return this.set(field, value); });
+    define("setBytes", function setBytes(field, value) { return this.set(field, value); });
 })"#;
 
 /// An entity value's methods, as Java's `EntityValue`.
@@ -280,6 +468,34 @@ pub(crate) static ENTITY_VALUE: HostClass = HostClass {
             value_delete_with_related
         ),
         method!("EntityValue", "deleteRelated", [Text], value_delete_related),
+        method!("EntityValue", "isFieldSet", [Text], None, leaf, value_is_field_set),
+        method!("EntityValue", "isField", [Text], None, leaf, value_is_field),
+        method!(
+            "EntityValue",
+            "isFieldModified",
+            [Text],
+            None,
+            leaf,
+            value_is_field_modified
+        ),
+        method!("EntityValue", "isModified", [], None, leaf, value_is_modified),
+        method!(
+            "EntityValue",
+            "getOriginalDbValue",
+            [Text],
+            None,
+            leaf,
+            value_original_db_value
+        ),
+        method!(
+            "EntityValue",
+            "containsPrimaryKey",
+            [],
+            None,
+            leaf,
+            value_contains_primary_key
+        ),
+        method!("EntityValue", "getMasterValueMap", [OptValue], value_master_value_map),
     ],
     getters: &[],
     hidden: &[method!("EntityValue", "entryPairs", [], value_entry_pairs)],
@@ -557,9 +773,50 @@ fn condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
     }
 }
 
+/// Field names given as comma separated text or, as Java also takes them, a list: one comma separated text.
+fn names_text(value: &Value) -> String {
+    match value {
+        Value::List(items) => items
+            .iter()
+            .filter(|item| !item.is_null())
+            .map(moqui_lib::object::to_plain_string)
+            .collect::<Vec<_>>()
+            .join(","),
+        Value::Null => String::new(),
+        other => moqui_lib::object::to_plain_string(other),
+    }
+}
+
+/// Java's `conditionToField(field, operator, toField)`: one field against another.
+fn condition_to_field(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let (field, other) = (call.text_or_empty(0), call.text_or_empty(2));
+    let Some(op) = crate::entity::CompareOp::from_operator(&call.text_or_empty(1)) else {
+        return Err(HostError::message(format!(
+            "operator {} cannot compare two fields",
+            call.text_or_empty(1)
+        )));
+    };
+    chain(call, |find| {
+        find.condition(crate::entity::Condition::compare_fields(
+            field.as_str(),
+            op,
+            other.as_str(),
+        ))
+    })
+}
+
+/// Java's `getSelectFields()`: the fields the find selects, empty for all.
+fn get_select_fields(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(peek_find(call)?.selected_fields().to_vec().into())
+}
+
+fn get_find_entity_name(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(peek_find(call)?.entity_name().to_string().into())
+}
+
 /// Comma separated fields, each with an optional `-` for descending, `+`, or `^` for ignore case.
 fn order_by(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let fields = call.text_or_empty(0);
+    let fields = names_text(&call.value_or_null(0));
     chain(call, |mut find| {
         for part in fields.split(',') {
             find = find.order_by_text(part);
@@ -727,7 +984,7 @@ fn use_clone(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 fn select_field(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let field = call.text_or_empty(0);
+    let field = names_text(&call.value_or_null(0));
     chain(call, |find| find.select_field(&field))
 }
 
@@ -833,7 +1090,14 @@ fn find_one_xml(call: &mut Call<'_>) -> Result<Ret, HostError> {
                         Ok(entries.keys().map(|key| entity.has_field(key)).collect())
                     })
                     .map_err(lib)?;
-                Some(entries.into_iter().zip(known).filter(|(_, field)| *field).map(|(entry, _)| entry).collect())
+                Some(
+                    entries
+                        .into_iter()
+                        .zip(known)
+                        .filter(|(_, field)| *field)
+                        .map(|(entry, _)| entry)
+                        .collect(),
+                )
             }
         }
     };
@@ -992,9 +1256,10 @@ fn require_search_form_parameters(call: &mut Call<'_>) -> Result<Ret, HostError>
 
 /// A find result as scripts and the context stack hold it. Each row is its own shared cell, so a field set through
 /// `list[0]`, `get`, `for...of` or an `<iterate>` entry is kept in the list, as on a Java `List` of values. The rows are
-/// copied from the [`EntityList`] the find returned, so the entity cache's list is not changed.
+/// copied from the [`EntityList`] the find returned, so the entity cache's list is not changed. The rows can be
+/// replaced ([`Self::set_cells`]), so Java's `add`, `remove` and in-place sort change the list every holder sees.
 pub(crate) struct ScriptList {
-    cells: Vec<Arc<EntityCell>>,
+    cells: Mutex<Vec<Arc<EntityCell>>>,
 }
 
 impl ScriptList {
@@ -1008,20 +1273,33 @@ impl ScriptList {
     }
 
     pub(crate) fn of_cells(cells: Vec<Arc<EntityCell>>) -> Self {
-        Self { cells }
+        Self {
+            cells: Mutex::new(cells),
+        }
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.cells.len()
+        lock(&self.cells).len()
     }
 
-    pub(crate) fn cells(&self) -> &[Arc<EntityCell>] {
-        &self.cells
+    /// The rows, each shared with the list.
+    pub(crate) fn cells(&self) -> Vec<Arc<EntityCell>> {
+        lock(&self.cells).clone()
+    }
+
+    /// The row at `index`.
+    pub(crate) fn cell(&self, index: usize) -> Option<Arc<EntityCell>> {
+        lock(&self.cells).get(index).cloned()
+    }
+
+    /// Replace the rows.
+    pub(crate) fn set_cells(&self, cells: Vec<Arc<EntityCell>>) {
+        *lock(&self.cells) = cells;
     }
 
     /// The rows as they are now.
     pub(crate) fn values(&self) -> Vec<EntityValue> {
-        self.cells.iter().map(|cell| lock(cell).clone()).collect()
+        self.cells().iter().map(|cell| lock(cell).clone()).collect()
     }
 }
 
@@ -1037,8 +1315,8 @@ impl ListState {
 
     /// The row at `index` itself, not a copy, so a field set on it is kept in the list; null outside the rows.
     pub(crate) fn item(&self, index: usize) -> Value {
-        match self.list.cells().get(index) {
-            Some(cell) => Value::Object(HostObject::new(ListRow(Arc::clone(cell)))),
+        match self.list.cell(index) {
+            Some(cell) => Value::Object(HostObject::new(ListRow(cell))),
             None => Value::Null,
         }
     }
@@ -1082,23 +1360,30 @@ fn list_partial(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let start = usize::try_from(call.int(0).unwrap_or(0).max(0)).unwrap_or(0);
     let take = usize::try_from(call.int(1).unwrap_or(0).max(0)).unwrap_or(0);
     // The part shares the rows, as a Java sublist shares its elements.
-    let cells = list.list.cells().iter().skip(start).take(take).cloned().collect();
+    let cells = list.list.cells().into_iter().skip(start).take(take).collect();
     Ok(Ret::Value(list_of_cells(cells)))
 }
 
+/// Java's `filterByDate`: the list keeps the rows in effect at the moment (now for none) and is returned.
 fn list_filter_by_date(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let list = this_list(call)?;
-    let from_name = call.text_or_empty(0);
-    let thru_name = call.text_or_empty(1);
+    // Java's defaults for a null name
+    let name = |index: usize, default: &str| {
+        call.opt_text(index)
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| default.to_string())
+    };
+    let from_name = name(0, "fromDate");
+    let thru_name = name(1, "thruDate");
     let valid = call.value_or_null(2);
     let empty = moqui_lib::object::is_empty(&valid);
     let cells = if empty && call.bool(3).unwrap_or(false) {
-        list.list.cells().to_vec()
+        list.list.cells()
     } else {
         let valid = if empty { now_timestamp() } else { timestamp_of(&valid) };
         list.list
             .cells()
-            .iter()
+            .into_iter()
             .filter(|cell| {
                 let row = lock(cell);
                 let from = timestamp_of(row.get(&from_name).unwrap_or(&Value::Null));
@@ -1111,10 +1396,46 @@ fn list_filter_by_date(call: &mut Call<'_>) -> Result<Ret, HostError> {
                         .is_ok_and(|ordering| ordering == Ordering::Greater);
                 started && open
             })
-            .cloned()
             .collect()
     };
-    Ok(Ret::Value(list_of_cells(cells)))
+    list.list.set_cells(cells);
+    Ok(Ret::This)
+}
+
+/// The cells of an array of entity values (rows of this or another list, values a script made); anything else in it
+/// is an error.
+fn row_cells(value: Option<&Value>) -> Result<Vec<Arc<EntityCell>>, HostError> {
+    let Some(Value::List(items)) = value else {
+        return Err(HostError::message(
+            "an entity list's rows are an array of entity values",
+        ));
+    };
+    let mut cells = Vec::with_capacity(items.len());
+    for item in items {
+        let cell = match item {
+            Value::Object(object) => object
+                .downcast::<EntityCell>()
+                .or_else(|| object.downcast::<ListRow>().map(|row| Arc::clone(&row.0))),
+            _ => None,
+        };
+        let Some(cell) = cell else {
+            return Err(HostError::message("an entity list holds entity values only"));
+        };
+        cells.push(cell);
+    }
+    Ok(cells)
+}
+
+/// A new list of the rows given (the shim's `filterByAnd`, `cloneList` and the like).
+fn list_of_rows(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::Value(list_of_cells(row_cells(call.value(0))?)))
+}
+
+/// Replace this list's rows (the shim's `add`, `remove`, `sort` and the like), for every holder of the list.
+fn list_set_rows(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let list = this_list(call)?;
+    list.list.set_cells(row_cells(call.value(0))?);
+    Ok(Ret::This)
 }
 
 // the entity value
@@ -1339,7 +1660,7 @@ fn write(
     let written = snapshot(&cell);
     write(&written, &facade).map_err(lib)?;
     val(&cell).note_written(&written);
-    Ok(Ret::Undefined)
+    Ok(Ret::This)
 }
 
 /// `get(name)`: a field, or as Java's `EntityValue.get` the related value or list for a relationship name; null for any
@@ -1595,7 +1916,7 @@ fn value_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let cell = this_cell(call)?;
     let field = call.text_or_empty(0);
     entity_set_field(&cell, field, call.value_or_null(1)).map_err(HostError::Message)?;
-    Ok(Ret::Undefined)
+    Ok(Ret::This)
 }
 
 /// Which fields `setFields` sets: all, the primary key, or the others.
@@ -1652,7 +1973,7 @@ fn value_set_fields(call: &mut Call<'_>) -> Result<Ret, HostError> {
         let host = if empty { Value::Null } else { host };
         val(&cell).set(name, host);
     }
-    Ok(Ret::Undefined)
+    Ok(Ret::This)
 }
 
 /// What `setFields` reads its fields from, as the QuickJS object's `in` and property read saw it: a map's entries, an
@@ -1719,7 +2040,7 @@ fn value_delete(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let cell = this_cell(call)?;
     let facade = entity_facade()?;
     snapshot(&cell).delete(&facade).map_err(lib)?;
-    Ok(Ret::Undefined)
+    Ok(Ret::This)
 }
 
 fn value_create_or_update(call: &mut Call<'_>) -> Result<Ret, HostError> {
@@ -1746,18 +2067,87 @@ fn value_primary_keys(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::Value(Value::Map(map)))
 }
 
+/// Java's `isFieldSet`: whether the value holds the field, null or not.
+fn value_is_field_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let cell = this_cell(call)?;
+    let field = call.text_or_empty(0);
+    let set = val(&cell).fields().contains_key(field.as_str());
+    Ok(set.into())
+}
+
+/// Java's `isField`: whether the entity has a field of the name.
+fn value_is_field(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let cell = this_cell(call)?;
+    let field = call.text_or_empty(0);
+    let entity_name = val(&cell).entity_name().to_string();
+    let found = entity_facade()?
+        .with_entity(&entity_name, |entity, _, _| {
+            Ok(entity.field_names().iter().any(|name| *name == field))
+        })
+        .map_err(lib)?;
+    Ok(found.into())
+}
+
+fn value_is_field_modified(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let cell = this_cell(call)?;
+    let field = call.text_or_empty(0);
+    let modified = val(&cell).is_field_modified(&field);
+    Ok(modified.into())
+}
+
+fn value_is_modified(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let cell = this_cell(call)?;
+    let modified = val(&cell).is_modified();
+    Ok(modified.into())
+}
+
+/// Java's `getOriginalDbValue`: what the field held when the value was read or last written.
+fn value_original_db_value(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let cell = this_cell(call)?;
+    let field = call.text_or_empty(0);
+    let original = val(&cell).original_db_value(&field);
+    Ok(Ret::Value(original.unwrap_or(Value::Null)))
+}
+
+/// Java's `getMasterValueMap(name)`: the value with the related records of the master definition, as plain maps.
+fn value_master_value_map(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let cell = this_cell(call)?;
+    let facade = entity_facade()?;
+    let master = call.opt_text(0).filter(|name| !name.is_empty());
+    let value = snapshot(&cell);
+    let master = master.as_deref().unwrap_or("default");
+    Ok(Ret::Value(
+        crate::entity::query_rest::master_value(&facade, &value, master).map_err(lib)?,
+    ))
+}
+
+/// Java's `containsPrimaryKey`: whether every primary key field has a value.
+fn value_contains_primary_key(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let cell = this_cell(call)?;
+    let value = val(&cell);
+    let complete = entity_facade()?
+        .with_entity(value.entity_name(), |entity, _, _| {
+            Ok(entity
+                .pk_field_names()
+                .iter()
+                .all(|name| value.get(name).is_some_and(|field| !field.is_null())))
+        })
+        .map_err(lib)?;
+    Ok(complete.into())
+}
+
 fn value_sequenced_id_primary(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let cell = this_cell(call)?;
     let facade = entity_facade()?;
     val(&cell).set_sequenced_id_primary(&facade).map_err(lib)?;
-    Ok(Ret::Undefined)
+    Ok(Ret::This)
 }
 
 fn value_sequenced_id_secondary(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let cell = this_cell(call)?;
     let facade = entity_facade()?;
     val(&cell).set_sequenced_id_secondary(&facade).map_err(lib)?;
-    Ok(Ret::Undefined)
+    Ok(Ret::This)
 }
 
 /// Whether a `forUpdate` argument is `true` itself.

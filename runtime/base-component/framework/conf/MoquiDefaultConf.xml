@@ -576,7 +576,7 @@
              spec, send#EmailMessage keeps the message in memory instead of connecting (docs/Build-Test.md) -->
         <tool-factory class="moqui_core::service::mail_capture::MailCaptureToolFactory" init-priority="5"/>
         <!-- The HTTP fixtures for specs: while ec.factory.getTool('HttpFixtures') is enabled, outbound HTTP is answered by
-             the spec's fixtures and recorded, and nothing goes to the network (docs/Build-Test.md) -->
+             the spec's fixtures and recorded, and nothing goes to the network (docs/dev/JS-Testkit.md) -->
         <tool-factory class="moqui_core::service::http_fixtures::HttpFixturesToolFactory" init-priority="5"/>
         <!-- The notification capture for specs: ec.factory.getTool('NotificationCapture').enable() listens on the
              notification topic as the host's socket does, so the shell counts are sent, and keeps the messages -->

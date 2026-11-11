@@ -16,8 +16,9 @@
 //! ([`ContextStack`], the fork's F2) with the hooks of QuickJS's `HostContextStack` proxy (`runtime.rs`,
 //! `CONTEXT_PROXY`). `context.x` reads as a bare `x`, `context.x = v` is a bare `x = v`, `'x' in context` holds for
 //! a visible name (and `context`), `Object.keys(context)` and a spread list the visible names, and `delete context.x`
-//! removes the name from the top frame. The `Map` methods ported scripts call (`get`, `put`, `putAll`, `remove`,
-//! `containsKey`, `keySet`, `getCombinedMap`) are there for a name no frame holds. Passed to a host call, `context` is
+//! removes the name from the top frame. The methods of Java's `ContextStack` ([`METHODS`]: `get`, `put`, `putAll`,
+//! `remove`, `containsKey`, `keySet`, `size`, `push`, `pop`, ...) are there for a name no frame holds, so a context
+//! name wins over a method of the same name. `ec.context` is this same object. Passed to a host call, `context` is
 //! the combined map of the visible names, with the run's tracked values written first ([`combined_map`]).
 
 use moqui_lib::object::Value as HostValue;
@@ -31,7 +32,7 @@ use super::engine::{current, guarded, guarded_hook};
 use super::tracked::Flush;
 use crate::script::run::STACK;
 
-/// The `Map` methods of the stack, answered for a name no frame holds.
+/// The methods of the stack, answered for a name no frame holds.
 const METHODS: &[&str] = &[
     "get",
     "put",
@@ -40,6 +41,23 @@ const METHODS: &[&str] = &[
     "containsKey",
     "keySet",
     "getCombinedMap",
+    "size",
+    "isEmpty",
+    "containsValue",
+    "values",
+    "entrySet",
+    "getByString",
+    "toString",
+    // the host table's (`host/context.rs`, `host/tools.rs`)
+    "push",
+    "pop",
+    "pushContext",
+    "popContext",
+    "getRootMap",
+    "addRootMap",
+    "clear",
+    "sharedMap",
+    "getSharedMap",
 ];
 
 /// The methods, over the stack object and a direct read of a name (so `context.get('put')` reads the name `put`).
@@ -51,7 +69,17 @@ const METHODS_JS: &str = r#"(function (context, read) {
         remove: (name) => { const key = String(name); const old = read(key); delete context[key]; return old; },
         containsKey: (name) => String(name) !== "context" && String(name) in context,
         keySet: () => Object.keys(context),
-        getCombinedMap: () => { const out = {}; for (const key of Object.keys(context)) out[key] = read(key); return out; }
+        getCombinedMap: () => { const out = {}; for (const key of Object.keys(context)) out[key] = read(key); return out; },
+        size: () => Object.keys(context).length,
+        isEmpty: () => Object.keys(context).length === 0,
+        containsValue: (value) => Object.keys(context).some((key) => read(key) === value),
+        values: () => Object.keys(context).map(read),
+        entrySet: () => Object.keys(context).map((key) => {
+            const value = read(key);
+            return { key: key, value: value, getKey: () => key, getValue: () => value };
+        }),
+        getByString: (name) => read(String(name)),
+        toString: () => "ContextStack[" + Object.keys(context).join(", ") + "]"
     };
 })"#;
 

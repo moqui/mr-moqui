@@ -2090,25 +2090,25 @@ fn screen_has_error() -> bool {
     .unwrap_or(false)
 }
 
-/// The error response when there are errors, else the last conditional response that holds (Java checks them all
-/// and keeps the last), else the default response.
+/// The error response when there are errors, else the first conditional response that holds, in document order,
+/// else the default response. Java's `TransitionItem.run` checks them all and keeps the last that holds; the first is
+/// what a reader of the screen expects, and the conditions after it are not evaluated (plans/Parity-Diffs.md).
 fn pick_response(transition: &TransitionDef) -> Result<&ResponseDef, Error> {
     if screen_has_error() {
         if let Some(response) = &transition.error_response {
             return Ok(response);
         }
     }
-    let mut chosen = None;
     for response in &transition.conditional_responses {
         let holds = match &response.condition {
             Some(condition) => check_condition(condition)?,
             None => true,
         };
         if holds {
-            chosen = Some(response);
+            return Ok(response);
         }
     }
-    Ok(chosen.unwrap_or(&transition.default_response))
+    Ok(&transition.default_response)
 }
 
 /// Bind the extra path names to the transition's `path-parameter` names, then evaluate the

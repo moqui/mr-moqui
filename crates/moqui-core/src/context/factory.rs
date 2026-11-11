@@ -1472,6 +1472,11 @@ impl ExecutionContext {
         self.state.artifacts.borrow().name_string()
     }
 
+    /// Java's `getStack`: each frame of the artifact stack as (name, type, action), top first.
+    pub fn artifact_stack_frames(&self) -> Vec<(String, String, String)> {
+        self.state.artifacts.borrow().frames()
+    }
+
     /// The entity of the entity frame on top of the artifact stack, if one is, and the first other artifact below it
     /// (the query stats' artifact). Both `None` while the stack is being changed (an authorization check's own find).
     pub fn statement_artifact(&self) -> (Option<String>, Option<String>) {

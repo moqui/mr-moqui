@@ -2876,6 +2876,12 @@ fn retype(entity: &moqui_db::model::EntityDefinition, condition: &Condition) -> 
     }
 }
 
+/// Whether a row of these fields meets `condition`, as the entity cache decides it for a held row: Java's
+/// `EntityCondition.mapMatches`. A SQL fragment (`makeConditionWhere`) cannot be checked against a row in memory.
+pub fn condition_matches(condition: &Condition, fields: &FieldMap) -> bool {
+    eval_condition(condition, fields)
+}
+
 fn row_matches(condition: Option<&Condition>, fields: &FieldMap) -> bool {
     match condition {
         None => true,

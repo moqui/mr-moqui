@@ -30,6 +30,8 @@ mod facades;
 #[cfg(test)]
 mod framework_gaps_tests;
 mod helpers;
+#[cfg(test)]
+mod java_api_tests;
 mod localize;
 #[cfg(test)]
 mod metadata_tests;

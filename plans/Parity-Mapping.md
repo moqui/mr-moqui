@@ -274,28 +274,28 @@ Framework service XML with no Rust body (`BasicServices`, `UserServices`, `Serve
 |---|---|---|
 | `script/actions.rs`, `script/walker.rs`, `script/parse.rs` | `XmlActionsScriptRunner`, `actions/XmlAction.java`, `framework/template/XmlActions.groovy.ftl`. The embedded module is `runtime/base-component/framework/template/XmlActions.js`. | Port |
 | `script/runtime.rs` | QuickJS evaluation. Replaces the Groovy binding (`ContextBinding`): bare names resolve through a proxy, `ec` is a host object. `plans/archive/ContextObjects.md`. | Redesign |
-| `script/runtime/entities.rs` | Entity value, find, and list methods scripts call on `ec.entity`; the script `EntityListIterator` of `iterator()` is `script/host/list_iterator.rs`. | Port |
-| `script/runtime/services.rs` | `ec.service` call shape (`ServiceFacade` from script). | Port |
-| `script/runtime/facades.rs` | Smaller `ec` members: cache, message, logger, resource, user, web. | Port |
-| `script/runtime/ec_extra.rs` | `ec.resource.expand`, `ec.l10n`, `ec.context`, `ec.screen`, and the bare helpers `WebUtilities`, `StringUtilities`, `CollectionUtilities`, `UserSecurityChecks`. | Partial |
-| `script/runtime/ec_screen.rs` | Screen-facing `ec` members used while a screen renders. | Partial |
+| `script/host/entities.rs`, `script/host/conditions.rs` | Entity value, find, list and condition methods scripts call on `ec.entity`; the script `EntityListIterator` of `iterator()` is `script/host/list_iterator.rs`. | Port |
+| `script/host/service.rs` | `ec.service` call shape (`ServiceFacade` from script). | Port |
+| `script/host/cache.rs`, `message.rs`, `logger.rs`, `user.rs`, `ec_web.rs`, `transaction.rs`, `script/oxide/resource.rs` | Smaller `ec` members: cache, message, logger, resource, user, web, transaction. Reference: `docs/dev/JS-Core-API.md`. | Port |
+| `script/host/l10n.rs`, `context.rs`, `screen.rs`, `globals.rs`, `utilities.rs`, `script/oxide/context.rs` | `ec.l10n`, `ec.context` (the context stack), `ec.screen`, and the helpers `WebUtilities`, `StringUtilities`, `CollectionUtilities`, `ObjectUtilities`, `UserSecurityChecks`. What is not available is listed in `docs/dev/JS-Core-API.md` and `docs/dev/JS-Globals.md`. | Port |
+| `script/host/screen.rs`, `script/host/ec_web.rs` | Screen-facing `ec` members used while a screen renders. | Partial |
 | `script/runtime/decimal.rs` | `BigDecimal` call shape (`add`, `subtract`, `multiply`, `divide`, `eq`, `compare`, `isZero`). | Port |
 | `script/runtime/convert.rs` | `ObjectUtilities` / `basicConvert` coercions at the script boundary. | Port |
 | `script/runtime/values.rs` | Host `Value` to QuickJS and back. | Native |
 | `script/runtime/helpers.rs` | Bare `compare`, `basicConvert`, list order and filter. | Partial |
-| `script/runtime/conditions.rs` | XML action condition operators, including `matches`. | Port |
-| `script/runtime/compiled.rs` | Cached compiled functions. | Native |
-| `script/runtime/edi.rs` | Script entry to `EdiHandler` (`ec` EDI methods). The handler is `edi.rs`. | Port |
-| `script/runtime/notification.rs` | `NotificationMessage` from script. | Port |
-| `script/runtime/screen_host.rs` | `sri` methods the generated screen code calls. The Rust side is `screen/sri/`. | Port |
-| `script/runtime/search.rs` | `ec.search` script surface. The facade is `search/`. | Redesign |
-| `script/runtime/sftp.rs` | Script surface of `SftpClient`. | Port |
-| `script/runtime/upload.rs` | Upload handle a script reads from a multipart field. | Port |
-| `script/runtime/urls.rs` | `sri.buildUrl` / `makeUrlByType` from script. The resolver is `screen/urls.rs`. | Port |
-| `script/runtime/user_host.rs` | `ec.user` script methods beyond the ones in `facades.rs`. | Partial |
-| `script/runtime/tools_host.rs` | Tools-screen facade calls: entity and service model, screen stats, server status, SQL runner, data writer and loader builders, `ServiceCallSpecial`. | Partial |
-| `script/runtime/native_tools.rs` | `ec.factory.getTool`. `ToolFactory` for a linked component. | Native |
-| `script/runtime/error_info.rs` | Error facts a script reads. The web side is `web/error_info.rs`. | Partial |
+| `script/host/conditions.rs` | XML action condition operators, including `matches`, and the condition factory. | Port |
+| `script/oxide/compiled.rs` | Cached compiled functions. | Native |
+| `script/host/edi.rs` | Script entry to `EdiHandler` (`ec` EDI methods). The handler is `edi.rs`. | Port |
+| `script/host/notification.rs` | `NotificationMessage` from script. | Port |
+| `script/host/sri.rs` | `sri` methods the generated screen code calls. The Rust side is `screen/sri/`. | Port |
+| `script/host/search.rs` | `ec.search` script surface. The facade is `search/`. | Redesign |
+| `script/host/sftp.rs` | Script surface of `SftpClient`. | Port |
+| `script/host/upload.rs` | Upload handle a script reads from a multipart field. | Port |
+| `script/host/urls.rs` | `sri.buildUrl` / `makeUrlByType` from script. The resolver is `screen/urls.rs`. | Port |
+| `script/host/user.rs` | `ec.user` script methods. | Port |
+| `script/host/tools.rs` | Tools-screen facade calls: entity and service model, screen stats, server status, SQL runner, data writer and loader builders, `ServiceCallSpecial`. | Partial |
+| `script/host/native_tools.rs` | `ec.factory.getTool`. `ToolFactory` for a linked component. | Native |
+| `script/host/error_info.rs` | Error facts a script reads. The web side is `web/error_info.rs`. | Partial |
 | `script/template.rs` | Template renderers by extension. The fancy dialect (`if`, `list`, `assign`) replaces FreeMarker `?interpret`. `.md` goes to `moqui-lib`. `NoTemplateRenderer` is the pass-through class name a conf entry may still name. README redesign 4. | Redesign |
 | `script/bounded.rs` | Cap on the compiled-script caches. | Native |
 | `script/groovy_convert.rs` | `moqui convert --groovy`. Migration tool, not a runtime. [ConvertProcess](archive/ConvertProcess.md). | Native |

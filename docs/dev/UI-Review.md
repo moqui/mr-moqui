@@ -20,7 +20,7 @@ incremental debug binary for iteration and retain the existing release binary un
 `moqui test framework --spec ClientFixtures --db fresh --serve 127.0.0.1:8090` supplies demo data and limited-access
 fixture users in a scratch runtime; select the bootstrap runtime with `MOQUI_RUNTIME`. The fixture runner also
 reads the runtime's component configuration: naming one component selects its specs, not the only component to load.
-See [Client Testing](Client-Testing.md#--serve) for server lifecycle and fixtures.
+See [JS-Test-Client](JS-Test-Client.md#--serve) for server lifecycle and fixtures.
 
 A repeatable bootstrap, run from the repository root with the existing release binary:
 

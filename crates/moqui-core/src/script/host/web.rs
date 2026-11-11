@@ -170,6 +170,50 @@ macro_rules! web_js {
         enumerable: false, configurable: true });
     ec.web.getRequest = () => ec.web.request;
     ec.web.getResponse = () => ec.web.response;
+
+    // Java's WebFacade reads of the request, each null (or empty) outside a request
+    const reads = {
+        requestUrl: (request) => String(request.getRequestURL()),
+        pathInfo: (request) => request.getPathInfo(),
+        requestBodyText: (request) => request.bodyText(),
+        session: (request) => request.getSession()
+    };
+    for (const [name, read] of Object.entries(reads)) {
+        Object.defineProperty(ec.web, name, { get: () => { const request = ec.web.request; return request ? read(request) : null; },
+            enumerable: false, configurable: true });
+    }
+    Object.defineProperty(ec.web, "pathInfoList", { get: () => {
+        const path = ec.web.pathInfo;
+        return path ? String(path).split("/").filter((part) => part !== "") : [];
+    }, enumerable: false, configurable: true });
+    Object.defineProperty(ec.web, "requestAttributes", { get: () => {
+        const request = ec.web.request, out = {};
+        if (request) for (const name of request.getAttributeNames()) out[name] = request.getAttribute(name);
+        return out;
+    }, enumerable: false, configurable: true });
+    // Java's getFieldValidationErrors: the errors of one field, of the submit that led here and of this request
+    ec.web.getFieldValidationErrors = (fieldName) => {
+        const field = String(fieldName ?? "");
+        return (ec.web.savedValidationErrors || []).concat(ec.message.validationErrors).filter((error) => error.field === field);
+    };
+    // sendBytesResponse(bytes, contentType, inline, filename): the bytes as the response. With no content type the
+    // common label and document types are told from the first bytes, else application/octet-stream.
+    ec.web.sendBytesResponse = (bytes, contentType, inline, filename) => {
+        const out = ec.web.response;
+        if (out == null) throw new Error("sendBytesResponse needs a web request");
+        if (bytes == null) { out.sendError(404, "No content"); return; }
+        if (typeof bytes !== "string" && !(bytes instanceof Uint8Array)) bytes = new Uint8Array(bytes);
+        let type = contentType == null || contentType === "" ? null : String(contentType);
+        if (type == null && typeof bytes !== "string") {
+            const head = String.fromCharCode.apply(null, Array.from(bytes.subarray(0, 8)));
+            type = head.startsWith("%PDF") ? "application/pdf" : head.startsWith("\x89PNG") ? "image/png"
+                : head.startsWith("GIF8") ? "image/gif" : head.startsWith("\xFF\xD8") ? "image/jpeg" : null;
+        }
+        out.setContentType(type ?? (typeof bytes === "string" ? "text/plain" : "application/octet-stream"));
+        const name = filename == null || filename === "" ? "" : `; filename="${String(filename).replace(/["\\\r\n]/g, "_")}"`;
+        out.setHeader("Content-Disposition", (inline ? "inline" : "attachment") + name);
+        out.write(bytes);
+    };
 })"#
     };
 }
