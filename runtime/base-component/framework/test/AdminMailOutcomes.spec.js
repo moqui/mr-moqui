@@ -329,6 +329,9 @@ feature(
             out.statusAudit = audit("statusId", ids.uncertain)
             out.settlementAudit = audit("sendSettlement", ids.uncertain)
             out.lostAudit = audit("sendSettlement", ids.lost)
+            // what a person did from the queue, apart from the state rows every send writes (impl-admin P17)
+            out.closeAudit = audit("queueClose", ids.closed)
+            out.retryAudit = audit("queueRetry", ids.lost)
             context.out = out
         },
         then() {
@@ -417,6 +420,8 @@ feature(
                 .sort()
                 .join() === ",notDelivered"
             out.abandoned.applied === true
+            out.closeAudit.length === 1 && out.closeAudit[0].newValueText === "closed" && !!out.closeAudit[0].changeReason
+            out.retryAudit.length === 1 && ["sent", "not sent"].includes(out.retryAudit[0].newValueText)
             out.closedRow.statusId === "ES_CANCELLED"
             out.accountRow.statusId === "ES_READY"
             out.sendsEnd === 2

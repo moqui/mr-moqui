@@ -45,7 +45,8 @@ function auditReason(reason, fields) {
     ec.context.putAll(Object.fromEntries(fields.map(field => [field + "_changeReason", reason])))
 }
 // An audit row the entity's own audit log does not write: a removal (the audit log keeps no delete), or a change of a field
-// that is not audit-logged for every writer (a translation, which data files load by the thousand).
+// that is not audit-logged for every writer (a translation, which data files load by the thousand). It carries the session
+// (visit) it was made in, as the entity's own audit rows do, so org.moqui.admin.AuditServices can show what one session did.
 function auditRow(entityName, fieldName, primary, secondary, oldValue, newValue, reason, rest = null) {
     ec.service
         .sync()
@@ -60,6 +61,7 @@ function auditRow(entityName, fieldName, primary, secondary, oldValue, newValue,
             newValueText: newValue ?? null,
             changedDate: ec.user.nowTimestamp,
             changedByUserId: ec.user.userId,
+            changedInVisitId: ec.user.visitId || null,
             changeReason: reason
         })
         .disableAuthz()

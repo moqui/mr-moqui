@@ -810,4 +810,40 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="attemptCount" type="number-integer"/>
         <field name="completedDate" type="date-time"/>
     </entity>
+
+    <!-- Admin P17 (mr-boss plan/impl-admin.md P17; design-admin §12 AuditChanges, §14): what of the audit log a delegated
+        audit reader may be shown through org.moqui.admin.AuditServices -->
+    <entity entity-name="AuditProjection" package="moqui.server" use="configuration" cache="true">
+        <description>A registered projection of the audit log (moqui.entity.EntityAuditLog) for
+            org.moqui.admin.AuditServices.find#Changes: one field of one entity whose changes may be shown, and how. Its
+            owner seeds a row; a change of an entity or a field with no row is never found, listed or counted there
+            (Tools' AuditLog stays the instance administrator's). valueMode is show (the values before and after, as
+            text) or marker (only that a value was set, changed or cleared; the default for anything else); a field the
+            entity definition encrypts, or whose name reads as a secret, is a marker whatever its row says. sourceService
+            is empty for a record of the whole instance (read here, by a holder of ADMIN_AUDIT_VIEW), or the service of
+            the owner whose records belong to an organization (implementing AuditServices.find#OwnedChanges): it answers
+            only the ids of the audit rows within the caller's own scope, and a row it does not answer is not shown.
+            viewPermission, when set, is needed besides ADMIN_AUDIT_VIEW (comma separated, every one). primaryKeyKind
+            and secondaryKeyKind say what a key value is, for its name: user (an account), group (a user group), plain
+            (shown as it is) or hidden (never shown); primaryKeyTitle and secondaryKeyTitle are the words for them.
+            linkKey names the owner's place for the record, which an app resolves to a route; never a path.</description>
+        <field name="auditProjectionId" type="id" is-pk="true"/>
+        <field name="changedEntityName" type="text-medium"/>
+        <field name="changedFieldName" type="text-short"/>
+        <field name="category" type="text-short"><description>access, identity, signIn, configuration, connection,
+            operation, transfer or backup.</description></field>
+        <field name="description" type="text-medium"/>
+        <field name="valueMode" type="text-short"/>
+        <field name="sourceService" type="text-medium"/>
+        <field name="viewPermission" type="text-medium"/>
+        <field name="primaryKeyKind" type="text-short"/>
+        <field name="primaryKeyTitle" type="text-short"/>
+        <field name="secondaryKeyKind" type="text-short"/>
+        <field name="secondaryKeyTitle" type="text-short"/>
+        <field name="linkKey" type="text-short"/>
+        <field name="disabled" type="text-indicator"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <index name="AUDIT_PROJECTION_FIELD" unique="true"><index-field name="changedEntityName"/>
+            <index-field name="changedFieldName"/></index>
+    </entity>
 </entities>

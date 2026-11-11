@@ -1506,6 +1506,7 @@
         <load-data location="component://framework/data/DatabaseSetupData.xml"/>
         <load-data location="component://framework/data/SftpDemoData.xml"/>
         <load-data location="component://framework/data/AdminConfigurationData.xml"/>
+        <load-data location="component://framework/data/AdminAuditData.xml"/>
     </entity-facade>
     <database-list>
         <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>

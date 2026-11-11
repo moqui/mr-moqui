@@ -496,6 +496,8 @@ function retryMailOutcome(p) {
         // the claim is over either way; a failure the mail service kept (its outcome) stands, any other stays uncertain
         lib.callRegistered(CLAIM, {emailMessageId, release: true})
         const after = answerOf(emailMessageId)
+        // who sent it again from the queue, apart from the state rows every send of every message writes (impl-admin P17)
+        lib.auditRow(MESSAGE, "queueRetry", emailMessageId, null, row.state, failure ? "not sent" : "sent", lib.reasonText(p))
         if (failure) return refused("SEND_FAILED", "Not sent: " + safeError(failure), after)
         return Object.assign({applied: true, sent: true}, after)
     })
@@ -588,6 +590,8 @@ function reconcileMailOutcome(p) {
         lib.auditReason(reason, [resolution === "abandon" ? "statusId" : "sendSettlement"])
         locked.setFields(fields, true, null, null)
         locked.update()
+        // a person closing a message is evidence of its own (impl-admin P17): the state rows are every message's
+        if (resolution === "abandon") lib.auditRow(MESSAGE, "queueClose", emailMessageId, null, row.state, "closed", reason)
         const after = map(one(MESSAGE, {emailMessageId}))
         const answer = {applied: true, resolution, state: stateOf(after), revision: stamp(after)}
         if (resolution !== "abandon")

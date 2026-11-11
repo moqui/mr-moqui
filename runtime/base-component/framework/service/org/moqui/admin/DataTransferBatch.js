@@ -664,6 +664,21 @@ function apply(target, p) {
     if (!work.length && ["complete", "partial"].includes(batch.row.state)) return Object.assign(current, {repeated: true})
     if (!work.length) return current
     const state = finish(target, batch)
+    // each apply that took rows is a row of the audit log beside the batch (impl-admin P17), as an export is: counts only
+    ec.resource
+        .script("component://framework/service/org/moqui/admin/ConfigurationLib.js")
+        .auditRow(
+            BATCH,
+            "import",
+            batch.row.transferId,
+            target.targetId,
+            null,
+            (changedRows + " of " + work.length + " rows applied of " + (lineText(target.title, 60) || target.targetId)).slice(
+                0,
+                255
+            ),
+            null
+        )
     return Object.assign(get(target, p), {state, changedRows, attemptedCount: work.length})
 }
 // retry#ImportItems for a batch: the failed rows chosen (or every failed row, at most maxRetry), each validated again and

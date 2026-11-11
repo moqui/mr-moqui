@@ -342,7 +342,19 @@ function revokeSessions(p) {
     }
     if (byUser.size)
         ec.logger.info("Sessions ended by " + me + " for " + Array.from(byUser.keys()).join(", ") + ": " + sessionCount)
+    // another account's sessions ended by an administrator are evidence (impl-admin P17): who, whose, and how many were named
+    for (const [userId, visitIds] of byUser)
+        if (userId !== me)
+            accessEvidence(userId, "sessions", visitIds ? visitIds.length + " sessions ended" : "Every session ended", null)
     return {sessionCount, visitCount, refusedCount}
+}
+
+// An administrative action on an account that changes no audit-logged field (sessions ended, credentials revoked) is a row
+// of the audit log on the account, with who did it, the session it was done in and the reason given; never a credential.
+function accessEvidence(userId, fieldName, summary, reason) {
+    ec.resource
+        .script("component://framework/service/org/moqui/admin/ConfigurationLib.js")
+        .auditRow(ACCOUNT, fieldName, userId, null, null, summary, reason)
 }
 
 // get#AccountCredentials: an account's credentials, metadata only (never a secret, hash, verifier or factor option): the
@@ -517,6 +529,17 @@ function revokeAccountAccess(p) {
             failed.push(kind)
         }
     }
+    // the evidence of it (impl-admin P17): the kinds and how many of each, never a credential
+    accessEvidence(
+        userId,
+        "access",
+        (
+            Object.entries(counts)
+                .map(([kind, count]) => kind + ": " + count)
+                .join(", ") + (failed.length ? "; not revoked: " + failed.join(", ") : "")
+        ).slice(0, 255) || "Nothing to revoke",
+        reason || null
+    )
     ec.logger.warn(
         "Account access of " +
             account.username +
