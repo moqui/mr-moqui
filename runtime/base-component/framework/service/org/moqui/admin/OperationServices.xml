@@ -73,7 +73,8 @@ along with this software (see the LICENSE.md file). If not, see
             the revision read. A message of the mail service's own (no mail account, no registered owner) is claimed first
             and then sent by org.moqui.mail.EmailServices.send#EmailMessage: the same stored message, never a new one. A
             registered owner's message is retried by that owner's own service when it offers one (OWNER_RETRIES when it
-            does not). The claim clears a settlement, and the send's own result is then the message's state. Refused, with
+            does not). The mail service clears a settlement when the send begins, and the send's own result is then the
+            message's state. Refused, with
             the reason: a message that may have been sent and that nobody settled (RECONCILE_REQUIRED), one settled as
             delivered (SETTLED), one in a mail account's Outbox (OWNER_ONLY: its sender's), one already sent or
             cancelled (NOT_FAILED), one being sent (IN_PROGRESS), a stale revision (STALE_REVISION), an owner that could
@@ -138,7 +139,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal to retry#MailOutcome (in no group's grant; it checks ADMIN_OPERATION_MANAGE itself): in a
             transaction of its own, the message locked and, while it is still at the revision read and still known not
             sent, marked uncertain with the claim's time, so a second request and a server that stops part way both find
-            it held; a settlement as not delivered is cleared with it. With release the claim's time is cleared.</description>
+            it held; a settlement as not delivered is cleared by the mail service when the send begins, not here. With
+            release the claim's time is cleared.</description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
             <parameter name="expectedRevision"/>
