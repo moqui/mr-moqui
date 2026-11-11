@@ -22,7 +22,8 @@ const systemLocation = "component://tools/screen/System.xml"
 // Where the framework's own records open, relative to a screen of an area (System/<Area>/<Screen> and a mount's
 // <Root>/<Area>/<Screen> alike); each phase of the move adds the keys its screens link.
 const frameworkRoutes = {
-    user: {url: "../../Security/UserAccount/UserAccountDetail", idParameter: "userId"}
+    user: {url: "../../Security/UserAccount/UserAccountDetail", idParameter: "userId"},
+    systemMessage: {url: "../../SystemMessage/Message/SystemMessageDetail", idParameter: "systemMessageId"}
 }
 
 // The mount's map, or null. A value that is not a map (a request parameter under a root that set none) is a mount with

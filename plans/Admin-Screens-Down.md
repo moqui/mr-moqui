@@ -204,11 +204,47 @@ Findings:
   probe's `stack=true raw=false` pins the difference.
 - F2. A value of `adminMount` that is not a map (a request parameter under a root that set none) is a mount with nothing
   in it: no route is taken from it and nothing raw is shown, so a third mount that forgets the map fails closed.
-- F3. `tools/test/LoadRunner.spec.js` compared the status map's `MemoryUsed`, a decimal on Linux, with `==`, which asks
-  a decimal for its `valueOf` and throws; fixed to compare by identity (the one failure of the baseline run).
+- F3. `tools/test/LoadRunner.spec.js` failed in the baseline run on a decimal's `valueOf`. The fix made here (comparing
+  the status map's `MemoryUsed` by identity) did not hold; A1 has the real one.
 
 Tests: `./moq test tools` before the phase, 3.2 s of the 4 s budget; `./moq test tools --spec AdminMounts` (2 features,
 0.02 s); `./moq test mr-boss --spec AdminAccess --spec AdminJobRuns --spec AdminRegistries` (16 features);
 `cargo lint`; the typegen golden rewritten with `UPDATE_GOLDEN=1` and read. The acceptance specs
 `AdminFoundationWalk` and `AdminRegistriesWalk` changed (the Developer area and the two removed services) and are run in
 the finishing phase.
+
+### A1 Operations (Nov 11, 2026)
+
+Built: `System/Operations.xml` and its six screens, Admin's with their BOSS references gone and the instance
+administrator's parts folded in: Jobs (the scheduler's state), JobDetail (RawJob: any field of the job, any parameter, the
+users notified, a direct run; eight transitions, each with `raw()` as its condition), JobRunDetail (RawRun: the run as
+stored, and its logs in Monitor; trace and log windows around the run), JobRuns, Topics, TopicDetail. `System/ServiceJob/**`
+is deleted; `getUserList` is `template/UserChoiceTransitions.xml`. System's top-level menu is renumbered and regrouped to
+the target layout. Links, the home's catalog, `get#SystemAttention`, the job-error topic's link template, the docs and
+the cargo tests name the new paths. In mr-boss: Jobs, JobRuns and JobRunDetail are mounted by location and their files
+deleted; JobDetail, Topics and TopicDetail include the System screens and take in `saveJob`, `runJob`, `saveDefaults` and
+`saveSubscription`; the registry's job links and fix paths go to Admin › Operations (so they open to the operations
+operator, not only to ADMIN under Admin › System).
+
+Findings:
+
+- F4. The route of a failed item's system message came out disabled under BOSS's specs: they render with `Admin.xml`
+  as the root, where a `//Admin/...` path does not resolve. A mount's routes are relative to a screen of an area, as the
+  framework's own are, which holds under any root.
+- F5. The LoadRunner failure of F3 was not the `==`: a spec condition's parts are shown by their values, and a decimal
+  has no `valueOf`, so `memoryMb > 0` on a decimal threw. The comparison is now made on plain numbers and the condition
+  is one boolean.
+- F6. `tools/test/AdminOverview.spec.js` held the display rules of the old job run screen's script (outcome words from
+  the raw record). The new screen's outcome is the service's (`framework/test/AdminJobs`); the feature now holds the
+  screen's own rules: the trace and log windows and an item's link by the mount's route.
+- F7. `get#SystemAttention`'s failed-runs link carried the old list's find parameters (`hasError`, `startTime_from`);
+  it now sends `state=failed` and `fromDate`, which the new list reads.
+
+Tests: `./moq test tools` (70 features, 3.2 s of 4 s; `AdminMounts` now also posts JobDetail's `updateJob` under the
+test mount, refused for the delegate and the instance administrator, and under System, applied, a forged `adminMount`
+ignored); `./moq test mr-boss --spec AdminJobRuns --spec AdminRegistries --spec AdminAccess` (16 features; AdminJobRuns
+posts `updateJob` through Admin › Operations as the operator and as ADMIN: the job is unchanged);
+`cargo test -p moqui-llm a_plural_or_a_suffix`; the slow `cargo test -p moqui-host --test it tools_screens -- --ignored`
+(changed: it renders every System screen and the detail paths as ADMIN, so the raw parts too; 24.5 s);
+`moqui lint --screens` with no parse failure. Changed and not run: the opt-in `tui_screens` cargo test (its job walk
+now uses JobDetail's "Run directly now" and "Runs") and the acceptance `AdminJobsUsable` and `AdminRegistriesWalk`.

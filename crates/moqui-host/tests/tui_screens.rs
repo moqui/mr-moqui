@@ -411,26 +411,27 @@ fn drive_tools(link: &HostLink) {
     assert!(!tabs.iter().any(|url| url.contains("EntitySyncDetail") || url.contains("EntitySyncHistory")), "{tabs:?}");
     // Run a service job and read its run.
     let mut view = AppView::with_session(
-        Session::start("/apps/system/ServiceJob/Jobs/ServiceJobDetail?jobName=clean_ServiceJobRun_daily"),
+        Session::start("/apps/system/Operations/JobDetail?jobName=clean_ServiceJobRun_daily"),
         link.clone(),
     );
     view.run_requests();
     assert!(
-        view.session().path().ends_with("ServiceJobDetail"),
+        view.session().path().ends_with("JobDetail"),
         "{} {}",
         view.session().path(),
         view.session().message()
     );
-    let run = link_with_text(&view, "Run Job");
+    // the instance administrator's direct run (JobDetail's RawJob part)
+    let run = link_with_text(&view, "Run directly now");
     focus(&mut view, &run);
     view.on_key(&press(Key::Enter));
     view.on_key(&press(Key::Char('y')));
     assert!(!view.session().message_is_error(), "{}", view.session().message());
-    let runs = link_with_text(&view, "Job Runs");
+    let runs = link_with_text(&view, "Runs");
     focus(&mut view, &runs);
     view.on_key(&press(Key::Enter));
     assert!(
-        view.session().path().ends_with("JobRunList"),
+        view.session().path().ends_with("JobRuns"),
         "{}",
         view.session().path()
     );

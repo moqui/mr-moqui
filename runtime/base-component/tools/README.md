@@ -55,6 +55,12 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
 
 `screen/System.xml`: its screens are the files of `screen/System/`, so the file tree is the route.
 
+- **The administration areas** (menu group Administration, and Integration for those of the integrations): top-down
+  areas over the `org.moqui.admin` services, each a directory of sibling screens with relative links, which another app
+  may show under its own root ([Mounting the administration screens](#mounting-the-administration-screens)). So far:
+  **Operations** (`System/Operations/`): Jobs, a job (JobDetail), Job runs, a run (JobRunDetail), Notification topics and
+  a topic (TopicDetail). A screen's part for the instance administrator (a job's record changed directly, a run as it is
+  stored) shows only here.
 - **Monitor** (`System/Monitor.xml`, `System/Monitor/`): the telemetry screens, Overview first
   ([docs/tools/Monitoring.md](../../../docs/tools/Monitoring.md#monitor)).
 - **Configuration** (`System/Conf/`) shows the merged conf with the file each value came from (Settings), edits one
@@ -105,7 +111,7 @@ one. The map is data only, never authority:
 
 | Key | What it does |
 |---|---|
-| `routes` | `{key: {url, idParameter, parameters}}`: where a link to a record goes under the mount. The keys are the registrations' own (a recovery descriptor's or a transfer target's `ownerRoute`, a provider's `linkKey`) and the framework's (`user`, ...), which default to the System screens beside the one shown; a mount adds its apps' routes and may replace a framework one (`null` removes it). A key with no route is no link |
+| `routes` | `{key: {url, idParameter, parameters}}`: where a link to a record goes under the mount. The keys are the registrations' own (a recovery descriptor's or a transfer target's `ownerRoute`, a provider's `linkKey`) and the framework's (`user`, ...), which default to the System screens beside the one shown; a mount adds its apps' routes and may replace a framework one (`null` removes it). A route's `url` is relative to a screen of an area (`<Root>/<Area>/<Screen>`, where every such screen is shown), so it holds under any root. A key with no route is no link |
 | `hide` | The part keys the mount leaves out |
 
 `template/AdminMount.js` answers where a screen stands: `state()` gives `{mounted, raw, routes, hidden}` in a screen's

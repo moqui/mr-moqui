@@ -308,18 +308,21 @@ along with this software (see the LICENSE.md file). If not, see
             const featured = (path, title, text) => ({path, title, text, featured: true})
             const entry = (group, path, title, icon) => ({group, path, title, icon})
             const server = L('Server'), monitor = L('Monitor'), security = L('Security and history'), integration = L('Integration'),
+                administration = L('Administration'),
                 ai = L('AI'), content = L('Content')
             navOptions = {otherTitle: L('More')}
             navCatalog = [
                 featured('Monitor', '', L('Traces, logs, errors, metrics and incidents')),
                 featured('Security', L('Users and access'), L('Accounts, groups and what each may reach')),
-                featured('ServiceJob', L('Service jobs'), L('Schedules, runs and their results')),
+                featured('Operations', '', L('Jobs, their runs and notification topics')),
                 featured('Conf', '', L('Settings and the file each came from')),
                 featured('Components', '', L('What is loaded; deploy and update')),
 
                 entry(server, 'Cache'), entry(server, 'ThreadList'), entry(server, 'TerminalSessions', '', 'sym_o_terminal'),
-                entry(server, 'ServiceJob/JobRuns', L('Job history'), 'sym_o_history'),
                 entry(server, 'Print/Printer', '', 'sym_o_print'), entry(server, 'Print/PrintJob', '', 'sym_o_receipt_long'), entry(server, 'Instance'),
+
+                entry(administration, 'Operations/Jobs', '', 'sym_o_schedule'), entry(administration, 'Operations/JobRuns', '', 'sym_o_history'),
+                entry(administration, 'Operations/Topics', '', 'sym_o_notifications'),
 
                 entry(monitor, 'Monitor/Services'), entry(monitor, 'Monitor/Traces'), entry(monitor, 'Monitor/Logs'), entry(monitor, 'Monitor/Errors'),
                 entry(monitor, 'Monitor/Metrics'), entry(monitor, 'Monitor/Incidents'), entry(monitor, 'Monitor/Checks'), entry(monitor, 'Monitor/Settings'),

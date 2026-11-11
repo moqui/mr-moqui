@@ -73,8 +73,8 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
 const DETAILS: &[&str] = &[
     "/System/Cache/CacheElements?cacheName=l10n.message",
     "/System/Print/PrintJob/PrintJobDetail?printJobId=GATE_PJ",
-    "/System/ServiceJob/JobRuns/JobRunDetail?jobRunId=GATE_RUN",
-    "/System/ServiceJob/Jobs/ServiceJobDetail?jobName=clean_TelemetryData_daily",
+    "/System/Operations/JobRunDetail?jobRunId=GATE_RUN",
+    "/System/Operations/JobDetail?jobName=clean_TelemetryData_daily",
     "/System/Security/UserAccount/UserAccountDetail?userId=EX_JOHN_DOE",
     // Its render sets up a TOTP factor for the user, so it is not the user the test signs in as.
     "/System/Security/UserAccount/UserAccountDetail/VerifyTotp?userId=GATE_TOTP_USER",

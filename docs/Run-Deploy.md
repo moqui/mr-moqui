@@ -541,7 +541,7 @@ before a restore. These work on the embedded database only; an external database
 ### Backups
 
 The job `backup_EmbeddedDatabase_daily` backs up the embedded clusters while the server runs. It is paused in the seed
-data; set it running on System › Service Jobs, or with `embedded_db_backup_scheduled=true`, which each boot applies
+data; set it running on System › Operations › Jobs, or with `embedded_db_backup_scheduled=true`, which each boot applies
 (`false` pauses it). It runs daily at 02:00 and keeps 7 daily, 5 weekly and 12 monthly archives, and every yearly one,
 in `runtime/db/backup`, or the directory in `embedded_db_backup_dir`.
 

@@ -92,8 +92,8 @@ feature("a failed job run is counted, and left out for a user who may not read j
         after == Math.min(before + 1, 100)
         item.severity == "warning"
         textNamesRuns
-        item.link == "/apps/system/ServiceJob/JobRuns/JobRunList"
-        item.parameters.hasError == "Y"
+        item.link == "/apps/system/Operations/JobRuns"
+        item.parameters.state == "failed"
         // the same call for a user who may call the service and read nothing else: it answers, without the item
         limited.errors == ""
         limited.checked

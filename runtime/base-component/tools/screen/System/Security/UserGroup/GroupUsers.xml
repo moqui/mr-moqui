@@ -24,25 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="updateUserGroupMember"><service-call name="update#moqui.security.UserGroupMember"/>
         <default-response url="."/></transition>
 
-    <transition name="getUserList">
-        <actions>
-            <entity-find entity-name="moqui.security.UserAccount" list="userList" limit="20">
-                <econditions combine="or">
-                    <econdition field-name="userId" operator="like" value="%${term}%" ignore-case="true"/>
-                    <econdition field-name="username" operator="like" value="%${term}%" ignore-case="true"/>
-                    <econdition field-name="userFullName" operator="like" value="%${term}%" ignore-case="true"/>
-                </econditions>
-                <order-by field-name="username"/>
-            </entity-find>
-            <script>
-                const outList = []
-                for (const user of userList)
-                    outList.push({value: user.userId, label: `${user.username ?? ''} ${user.userFullName ?? ''} [${user.userId}]`})
-                ec.web.sendJsonResponse(outList)
-            </script>
-        </actions>
-        <default-response type="none"/>
-    </transition>
+    <transition-include name="getUserList" location="component://tools/template/UserChoiceTransitions.xml"/>
 
     <actions>
         <entity-find entity-name="moqui.security.UserGroupMember" list="ugmList">

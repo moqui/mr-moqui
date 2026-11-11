@@ -367,7 +367,7 @@ mod tests {
         let entries = vec![
             entry("Users", "System › Security", "/apps/system/Security/UserAccount"),
             entry("Status Flows", "Tools", "/apps/tools/StatusFlows"),
-            entry("Service Job Runs", "System", "/apps/system/ServiceJob/JobRuns"),
+            entry("Job runs", "System › Operations", "/apps/system/Operations/JobRuns"),
         ];
         let index = SkillIndex::default();
         // "accounts" is in no title; its stem is in the screen's name
@@ -378,7 +378,7 @@ mod tests {
         assert_eq!(rank(&entries, "statuses", &index)[0].path, "/apps/tools/StatusFlows");
         assert_eq!(
             rank(&entries, "running jobs", &index)[0].path,
-            "/apps/system/ServiceJob/JobRuns"
+            "/apps/system/Operations/JobRuns"
         );
         assert_eq!(word_forms("entries"), ["entries", "entry"]);
         assert_eq!(word_forms("boxes"), ["boxes", "box"]);

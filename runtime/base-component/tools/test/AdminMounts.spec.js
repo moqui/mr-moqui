@@ -4,7 +4,8 @@
 // delegate whose group holds an inheritable always-allow on the mount, as an app's area grant is, and for the instance
 // administrator too; with no mount they are shown to a user who opens System by their own grant, and not to one whom only
 // the stack lets through. A mount's routes replace and add to the framework's; a value that is not a map is a mount with
-// nothing in it.
+// nothing in it. A System screen's own raw transition (JobDetail's updateJob, an entity-auto update the mount's always-allow
+// would pass) is refused under a mount that mounts the screen by location, and runs under System.
 // Run: ./moq test tools --spec AdminMounts
 const mount = "component://tools/test/screen/AdminMount.xml"
 const probe = "component://tools/test/screen/AdminMount/Probe.xml"
@@ -13,6 +14,9 @@ const USERNAME = "admin.mounts.spec"
 const GROUP = "ADMIN_MOUNTS_SPEC"
 const ADMIN_USERNAME = "john.doe"
 const PREFERENCE = "AdminMountsSpec.raw"
+const system = "component://tools/screen/System.xml"
+const JOB = "moqui.service.job.ServiceJob"
+const jobName = "AdminMountsSpec_job"
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -82,6 +86,7 @@ spec({
     },
     cleanupSpec() {
         ec.message.clearErrors()
+        sys(() => ec.entity.find(JOB).condition("jobName", jobName).deleteAll())
         ec.artifactExecution.enableAuthz()
     }
 })
@@ -145,5 +150,35 @@ feature("with no mount the raw parts are shown to a user who opens System by the
         forged.output.includes("store=none")
         forgedPost.errors.includes("Condition failed for transition")
         forgedRan == false
+    }
+})
+
+feature("a System screen's raw transition is refused under a mount that mounts it by location, and runs under System", {
+    when() {
+        const description = () => sys(() => ec.entity.find(JOB).condition("jobName", jobName).one()?.description)
+        sys(() => {
+            ec.entity.find(JOB).condition("jobName", jobName).deleteAll()
+            make(JOB, {jobName, description: "before", serviceName: "org.moqui.impl.ServiceServices.clean#ServiceJobRun", paused: "Y"})
+        })
+        // the delegate's group holds the mount's inheritable always-allow, which passes a transition and its entity operation
+        ec.user.internalLoginUser(USERNAME)
+        const mounted = screen(mount, "JobDetail/updateJob", {jobName, description: "by the delegate"}, "post")
+        const afterMount = description()
+        ec.user.internalLoginUser(ADMIN_USERNAME)
+        const administratorMounted = screen(mount, "JobDetail/updateJob", {jobName, description: "by the administrator, mounted"}, "post")
+        const afterAdministratorMount = description()
+        const own = screen(system, "Operations/JobDetail/updateJob", {jobName, description: "by the administrator"}, "post")
+        // System's own root sets the mount to null, whatever a request sends
+        const forged = screen(system, "Operations/JobDetail/updateJob", {jobName, description: "past a forged mount", adminMount: "forged"}, "post")
+        return {mounted, afterMount, administratorMounted, afterAdministratorMount, own, afterOwn: description(), forged}
+    },
+    then({mounted, afterMount, administratorMounted, afterAdministratorMount, own, afterOwn, forged}) {
+        mounted.errors.includes("Condition failed for transition")
+        afterMount == "before"
+        administratorMounted.errors.includes("Condition failed for transition")
+        afterAdministratorMount == "before"
+        own.errors == ""
+        forged.errors == ""
+        afterOwn == "past a forged mount"
     }
 })

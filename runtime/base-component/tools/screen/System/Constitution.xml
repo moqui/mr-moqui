@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     ADMIN_CONSTITUTION_GLOBAL permission (the services check it); an organization's own document is edited in its
     application, which extends this screen's parts (template/ConstitutionParts.xml) for organization scope. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Constitution" default-menu-index="12" default-menu-group="AI" menu-image="sym_o_gavel" menu-image-type="icon">
+        default-menu-title="Constitution" default-menu-index="31" default-menu-group="AI" menu-image="sym_o_gavel" menu-image-type="icon">
     <always-actions>
         <set field="constitutionBuilt" from="!!ec.service.getServiceDefinition('org.moqui.admin.ConstitutionServices.get#Constitution')"/>
         <set field="canEdit" from="ec.user.hasPermission('ADMIN_CONSTITUTION_GLOBAL')"/>

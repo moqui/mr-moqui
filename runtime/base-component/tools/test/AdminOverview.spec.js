@@ -276,7 +276,7 @@ feature("thread counts and scheduler checks distinguish unavailable from zero an
     expect() {
         // Test the screens' display expressions with both available and unavailable metrics, independent of the host OS.
         const threads = ec.resource.getLocationText("component://tools/screen/System/ThreadList.xml")
-        const jobs = ec.resource.getLocationText("component://tools/screen/System/ServiceJob/Jobs/ServiceJobList.xml")
+        const jobs = ec.resource.getLocationText("component://tools/screen/System/Operations/Jobs.xml")
         const expression = (source, field) => new RegExp('<set field="' + field + '" from="([^"]+)"').exec(source)[1]
             .replace(/&amp;/g, "&").replace(/&gt;/g, ">").replace(/&lt;/g, "<")
         const stamp = ec.user.nowTimestamp
@@ -421,61 +421,48 @@ feature("service selection accepts implicit entity services and rejects missing 
 })
 
 
-feature("job run outcome and timing distinguish incomplete history and retain diagnostic windows", {
+feature("a job run's trace and log windows surround the run, and an item links by the mount's route for it", {
     expect() {
-        // The existing tools acceptance sweep owns this screen's HTML render. Check its actual display rules here.
-        const source = ec.resource.getLocationText("component://tools/screen/System/ServiceJob/JobRuns/JobRunDetail.xml")
+        // The run's outcome is the service's (framework AdminJobs); the screen's own rules are its diagnostic windows and item links.
+        const source = ec.resource.getLocationText("component://tools/screen/System/Operations/JobRunDetail.xml")
         const actions = /<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(source)[1]
-        const start = new Date("2026-11-04T18:28:00.123Z")
-        const end = new Date("2026-11-04T18:28:00.130Z")
-        const run = (overrides) => ({jobRunId: "UI_JOB", jobName: "ui.fixture", userId: "EX_JOHN_DOE",
-            startTime: start, endTime: end, hasError: "N", errors: "", runThread: 'worker "one"', ...overrides})
-        const inspect = serviceJobRun => {
-            const state = {ec, serviceJobRun, runUser: {username: "john.doe", userFullName: "John Doe"},
-                runOutcomeText: null, runOutcomeStyle: null, runOutcomeDetail: null, runElapsedText: null,
-                runStartText: null, runEndText: null, runUserText: null,
-                logFrom: null, logThru: null, traceFrom: null, traceThru: null, logQueryString: null}
+        const run = overrides => ({jobRunId: "UI_JOB", jobName: "ui.fixture", title: "UI fixture", timeZone: "UTC", state: "succeeded",
+            startTime: "2026-11-04T18:28:00.123Z", endTime: "2026-11-04T18:28:00.130Z", traceId: "abc", runThread: 'worker "one"', ...overrides})
+        const itemList = [
+            {title: "Message 1", state: "failed", recoveryKind: "SystemMessage", recoveryTargetId: "M1"},
+            {title: "Job 1", state: "failed", recoveryKind: "ServiceJob", recoveryTargetId: "job.one"},
+            {title: "Other", state: "done", recoveryKind: "Unknown", recoveryTargetId: "X"}
+        ]
+        const inspect = (found, routes) => {
+            const state = {ec, found: {run: found, parameterList: [], itemList}, recordFound: !!found, mount: {routes},
+                run: null, stateColor: null, traceOpen: null, traceParameters: null, logParameters: null, evidence: null,
+                errorLines: null, parameters: null, items: null}
             runInContext(actions, state)
             return state
         }
-        const complete = inspect(run({results: '{"removedCount":0}'}))
-        assert.equal(complete.runOutcomeText, "Completed successfully")
-        assert.equal(complete.runElapsedText, "7 ms")
-        assert.equal(complete.runStartText, ec.l10n.format(start, "yyyy-MM-dd HH:mm:ss.SSS") + " " + ec.user.timeZone)
-        assert.equal(complete.runEndText, ec.l10n.format(end, "yyyy-MM-dd HH:mm:ss.SSS") + " " + ec.user.timeZone)
-        assert(complete.runStartText.includes(".123"), "display retains millisecond precision")
-        assert.equal(complete.runUserText, "john.doe — John Doe (EX_JOHN_DOE)")
-        assert.equal(complete.serviceJobRun.results, '{"removedCount":0}')
-        assert.equal(complete.logFrom, "2026-11-04T18:28:00.123Z")
-        assert.equal(complete.logThru, "2026-11-04T18:28:01.130Z")
-        assert.equal(complete.traceFrom, "2026-11-04T18:27:00.123Z")
-        assert.equal(complete.traceThru, "2026-11-04T18:29:00.130Z")
-        assert.equal(complete.logQueryString, 'thread.name:' + JSON.stringify('worker "one"'))
-        for (const [row, outcome, duration] of [
-            [run({hasError: "Y", errors: "Fixture failure"}), "Completed with errors", "7 ms"],
-            [run({errors: "An error was recorded without a flag"}), "Completed with errors", "7 ms"],
-            [run({hasError: null}), "Finished — outcome not recorded", "7 ms"],
-            [run({endTime: null}), "Not finished", "Unavailable"],
-            [run({endTime: null, hasError: "Y"}), "Not finished", "Unavailable"],
-            [run({startTime: null, endTime: null}), "Not finished", "Unavailable"],
-            [run({endTime: "not a timestamp"}), "Completion time unavailable", "Unavailable"],
-            [run({startTime: end, endTime: start}), "Completed successfully", "Unavailable"],
-            [run({startTime: 0, endTime: 0}), "Completed successfully", "0 ms"],
-            [null, "Run unavailable", "Unavailable"]
-        ]) {
-            const state = inspect(row)
-            assert.equal(state.runOutcomeText, outcome)
-            assert.equal(state.runElapsedText, duration)
-        }
-        const unfinished = inspect(run({endTime: null}))
-        assert(unfinished.runOutcomeDetail.includes("may still be active or may have stopped"))
-        assert.equal(unfinished.runEndText, "Not recorded")
-        assert.equal(unfinished.logThru, "now")
-        assert.equal(unfinished.traceThru, "now")
-        const missing = inspect(null)
-        assert.equal(missing.logFrom, "now-1d")
-        assert.equal(missing.traceFrom, "now-7d")
-        assert.equal(missing.logQueryString, "")
+        const messageRoute = {systemMessage: {url: "//Mount/Messages/Detail", idParameter: "messageId", parameters: {tab: "recovery"}}}
+        const complete = inspect(run({}), messageRoute)
+        assert.equal(complete.traceParameters.from, "2026-11-04T18:27:00.123Z")
+        assert.equal(complete.traceParameters.thru, "2026-11-04T18:29:00.130Z")
+        assert.equal(complete.logParameters.from, "2026-11-04T18:28:00.123Z")
+        assert.equal(complete.logParameters.thru, "2026-11-04T18:28:01.130Z")
+        assert.equal(complete.logParameters.queryString, "thread.name:" + JSON.stringify('worker "one"'))
+        // an item recovered on a page of its own: a message by the mount's route with its parameters, a job beside this screen
+        assert.equal(complete.items[0].itemUrl, "//Mount/Messages/Detail")
+        assert.equal(JSON.stringify(complete.items[0].itemParameters), JSON.stringify({tab: "recovery", messageId: "M1"}))
+        assert.equal(complete.items[1].itemUrl, "../JobDetail")
+        assert.equal(complete.items[1].itemParameters.jobName, "job.one")
+        assert.equal(complete.items[2].itemUrl, "")
+        // a mount with no place for a message links none
+        assert.equal(inspect(run({}), {}).items[0].itemUrl, "")
+        // a run still going ends now; one that never started has the widest window
+        const unfinished = inspect(run({endTime: null}), {})
+        assert.equal(unfinished.traceParameters.thru, "now")
+        assert.equal(unfinished.logParameters.thru, "now")
+        const waiting = inspect(run({startTime: null, endTime: null, runThread: null}), {})
+        assert.equal(waiting.traceParameters.from, "now-7d")
+        assert.equal(waiting.logParameters.from, "now-1d")
+        assert.equal(waiting.logParameters.queryString, "")
     }
 })
 

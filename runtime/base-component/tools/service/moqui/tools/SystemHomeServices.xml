@@ -175,8 +175,8 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!mayView('moqui.service.job.ServiceJobRun')) return
                 const since = new Date(now - DAY)
                 const failed = count(ec.entity.find('moqui.service.job.ServiceJobRun').condition('hasError', 'Y').condition('startTime', '>=', since))
-                if (failed > 0) item(others, {key: 'jobRuns', severity: 'warning', count: failed, link: '/apps/system/ServiceJob/JobRuns/JobRunList',
-                    parameters: {hasError: 'Y', startTime_from: ec.l10n.format(since, 'yyyy-MM-dd HH:mm')},
+                if (failed > 0) item(others, {key: 'jobRuns', severity: 'warning', count: failed, link: '/apps/system/Operations/JobRuns',
+                    parameters: {state: 'failed', fromDate: ec.l10n.format(since, 'yyyy-MM-dd')},
                     text: failed === 1 ? say('1 job run failed in 24 hours') : say('${count} job runs failed in 24 hours', {count: counted(failed)})})
             })
             check('backup', () => {
@@ -186,9 +186,9 @@ along with this software (see the LICENSE.md file). If not, see
                 if (jobs.some((job) => job.paused !== 'Y' && job.cronExpression)) return
                 const shipped = jobs.find((job) => job.jobName === BACKUP_JOB) || jobs[0]
                 item(others, shipped
-                    ? {key: 'backup', severity: 'warning', link: '/apps/system/ServiceJob/Jobs/ServiceJobDetail', parameters: {jobName: shipped.jobName},
+                    ? {key: 'backup', severity: 'warning', link: '/apps/system/Operations/JobDetail', parameters: {jobName: shipped.jobName},
                         text: say('The embedded database has no running backup: the backup job is paused')}
-                    : {key: 'backup', severity: 'warning', link: '/apps/system/ServiceJob/Jobs',
+                    : {key: 'backup', severity: 'warning', link: '/apps/system/Operations/Jobs',
                         text: say('The embedded database has no running backup: there is no backup job')})
             })
             // In error only. A send or consume whose outcome a person settled (SystemMessage.outcomeSettlement) stays

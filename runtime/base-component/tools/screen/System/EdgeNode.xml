@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     says so. The menu cannot leave this screen out by node role, so it is listed on every node. Every call goes through
     org.moqui.edge.EdgeServices. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Edge Node" default-menu-index="15" default-menu-group="Integration" menu-image="sym_o_cloud_sync" menu-image-type="icon">
+        default-menu-title="Edge Node" default-menu-index="13" default-menu-group="Integration" menu-image="sym_o_cloud_sync" menu-image-type="icon">
     <subscreens default-item="Status"/>
     <widgets>
         <subscreens-active/>

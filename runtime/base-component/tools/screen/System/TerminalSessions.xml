@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     they show. End ends one (org.moqui.terminal.TerminalServices.end#TerminalSessionOf), and another user's is an audit row.
     The opening and the end of each command line and host session are also in the audit entity moqui.terminal.TerminalSession. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-index="8" default-menu-group="Server" default-menu-title="Terminal Sessions" menu-image="sym_o_terminal" menu-image-type="icon">
+        default-menu-index="24" default-menu-group="Server" default-menu-title="Terminal Sessions" menu-image="sym_o_terminal" menu-image-type="icon">
 
     <transition name="endSession">
         <service-call name="org.moqui.terminal.TerminalServices.end#TerminalSessionOf" in-map="{sessionId:sessionId, reason:reason}"/>

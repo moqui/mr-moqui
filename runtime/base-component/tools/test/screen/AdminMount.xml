@@ -8,6 +8,10 @@
     <always-actions>
         <set field="adminMount" from="{routes:{user:{url:'../Staff', idParameter:'staffUserId'}, storeIntegration:{url:'../Store', idParameter:'storeId', parameters:{tab:'messages'}}}, hide:['scheduler']}"/>
     </always-actions>
-    <subscreens default-item="Probe"/>
+    <subscreens default-item="Probe">
+        <!-- a System screen that has instance administrator's transitions, mounted by location: what an app must not do
+            (it includes such a screen and takes in the transitions it wants), here to show that the screen refuses them -->
+        <subscreens-item name="JobDetail" location="component://tools/screen/System/Operations/JobDetail.xml"/>
+    </subscreens>
     <widgets><subscreens-active/></widgets>
 </screen>

@@ -184,7 +184,7 @@ agent-apps hFY74uac key Right                        its account
 agent-apps hFY74uac do Add Group
 agent-apps hFY74uac set Group My Account Users
 agent-apps hFY74uac do Add                           message Saved
-agent-apps hFY74uac go /apps/system/ServiceJob/Jobs/ServiceJobDetail?jobName=clean_ServiceJobRun_daily
+agent-apps hFY74uac go /apps/system/Operations/JobDetail?jobName=clean_ServiceJobRun_daily
 agent-apps hFY74uac do Run Job                       overlay confirm "Run job now ...", choices No|Yes
 agent-apps hFY74uac do Yes                           message Done
 agent-apps hFY74uac close

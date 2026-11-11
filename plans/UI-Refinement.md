@@ -1778,13 +1778,13 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Security/UserGroup/UserGroupList.xml` | hidden menu | S03 | P |
 | `System/Security/UserGroup.xml` | Container → UserGroupList | S03 | P |
 | `System/Security.xml` | Container → UserAccount | S03 | P |
-| `System/ServiceJob/JobRuns/JobRunDetail.xml` | XML widgets | S05 | V/P: result and correlated trace inspected for successful run100205 |
-| `System/ServiceJob/JobRuns/JobRunList.xml` | hidden menu | S05 | V/P: filtered empty history→clear→all runs→detail |
-| `System/ServiceJob/JobRuns.xml` | Container → JobRunList | S05 | P |
-| `System/ServiceJob/Jobs/ServiceJobDetail.xml` | XML widgets | S05 | V/P: safe job settings and history inspected; manual-run native confirmation unverified |
-| `System/ServiceJob/Jobs/ServiceJobList.xml` | hidden menu | S05 | V/P: filter→detail; scheduler timestamp UI-032 |
-| `System/ServiceJob/Jobs.xml` | Container → ServiceJobList | S05 | P |
-| `System/ServiceJob.xml` | Container → Jobs | S05 | P |
+| `System/Operations/JobDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/JobRunDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/JobRuns.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/Jobs.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/TopicDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/Topics.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations.xml` | Container → Jobs | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
 | `System/SystemMessage/Message/SystemMessageDetail/EditMessageText.xml` | XML widgets | S06 | P |
 | `System/SystemMessage/Message/SystemMessageDetail.xml` | XML widgets | S06 | P |
 | `System/SystemMessage/Message/SystemMessageList.xml` | hidden menu | S06 | P |

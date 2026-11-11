@@ -115,7 +115,7 @@ along with this software (see the LICENSE.md file). If not, see
                 </container-row>
                 <section name="Backup" condition="isEmbedded"><widgets>
                     <label text="${!backupJob ? 'The embedded database has no backup job (backup_EmbeddedDatabase_daily is not loaded).' : backupJob.paused == 'Y' ? 'The embedded database backup job is paused: no backups are made until it is turned on. It can also run now.' : 'The embedded database is backed up by its backup job (' + (backupJob.cronExpression || 'no schedule') + '), which can also run now.'}" type="p" style="m-muted"/>
-                    <link url="//apps/system/ServiceJob/Jobs/ServiceJobDetail" text="Backup job" parameter-map="{jobName: 'backup_EmbeddedDatabase_daily'}"/>
+                    <link url="//apps/system/Operations/JobDetail" text="Backup job" parameter-map="{jobName: 'backup_EmbeddedDatabase_daily'}"/>
                 </widgets></section>
             </box-body>
         </container-box>
