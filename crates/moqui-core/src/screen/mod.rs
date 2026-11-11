@@ -276,11 +276,18 @@ fn handle(
                     .push(("Set-Cookie".to_string(), user::device::expired_cookie(request.https)));
             }
             stamp_http_log(&mut response);
+            // a refused request carries no session cookie: one made for it now is never seen again
+            if presented.as_deref() != Some(guard.session_id().as_str()) {
+                user::session::discard_bound_session();
+            }
             return Ok(response);
         }
         Err(err) => {
             let mut response = web::json_error_of(&err);
             stamp_http_log(&mut response);
+            if presented.as_deref() != Some(guard.session_id().as_str()) {
+                user::session::discard_bound_session();
+            }
             return Ok(response);
         }
     };

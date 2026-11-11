@@ -66,6 +66,7 @@ feature("a forged or revoked device cookie is refused and removed (#name)", {
         res.status == 403
         res.text.includes(text)
         res.cookie("moqui.device") != null && res.cookie("moqui.device").maxAge == 0
+        res.cookie("moqui.session") == null
     },
 })
 
