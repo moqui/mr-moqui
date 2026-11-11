@@ -328,7 +328,9 @@ feature("a run on this server keeps the server's samples and notes that its gene
         const done = result(started.runId)
         // a run of milliseconds: one sample, at its end, with no CPU share over so short a span
         done.server.samples.length >= 1
-        done.server.samples[0].memoryMb > 0
+        // the process's memory is read where the platform reports it (/proc, Linux); elsewhere the sample says so
+        const memory = ec.factory.getStatusMap().Process.MemoryUsed
+        memory == null ? done.server.samples[0].memoryMb == null : done.server.samples[0].memoryMb > 0
         done.server.samples[0].cpu == null
         done.generator.where == "in-target"
         done.generator.note.includes("server")

@@ -5,6 +5,9 @@
 // template of each). Organization documents are Mantle's (mr-mantle test/party/Constitution.spec.js).
 // Run: ./moq test tools --spec Constitution
 const ADMIN = "org.moqui.admin.ConstitutionServices"
+// a user in no group, the spec's own: the framework ships no such user (john.doe is in ADMIN)
+const OUTSIDER = "spec.constitution.outsider"
+const OUTSIDER_ID = "SPEC_CONSTITUTION_OUTSIDER"
 const systemRoot = "component://tools/screen/System.xml"
 
 function call(name, params) {
@@ -25,7 +28,19 @@ const global = () => call(`${ADMIN}.get#Constitution`, {scope: "global", include
 
 spec({
     stepwise: true,
-    setupSpec() { login("john.doe") },
+    setupSpec() {
+        login("john.doe")
+        ec.artifactExecution.disableAuthz()
+        const row = ec.entity.makeValue("moqui.security.UserAccount")
+        row.setFields({userId: OUTSIDER_ID, username: OUTSIDER, userFullName: "Spec Constitution Outsider"}, true, null, null)
+        row.create()
+        ec.artifactExecution.enableAuthz()
+    },
+    cleanupSpec() {
+        ec.artifactExecution.disableAuthz()
+        ec.entity.find("moqui.security.UserAccount").condition("userId", OUTSIDER_ID).deleteAll()
+        ec.artifactExecution.enableAuthz()
+    },
     cleanup() { login("john.doe") },
 })
 
@@ -35,7 +50,7 @@ feature("a store refuses a stale hash and a user without the sealed permission; 
         const retitled = call(`${ADMIN}.edit#ConstitutionDocument`, {documentText: before.documentText, operation: "setDocumentText",
             locale: "en", title: "Stale Rules"}).documentText
         const stale = call(`${ADMIN}.store#Constitution`, {documentText: retitled, expectedHash: "0".repeat(64)})
-        logout(); login("joe@public.com")
+        ec.user.internalLoginUser(OUTSIDER)
         const outsider = call(`${ADMIN}.store#Constitution`, {documentText: retitled, expectedHash: before.globalHash})
         const outsiderReset = call(`${ADMIN}.create#ConstitutionCustomization`, {})
         logout(); login("john.doe")

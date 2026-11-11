@@ -5,6 +5,9 @@
 // authorization off). Loading a component is checked in crates/moqui-host/tests/it/component_deploy.rs.
 // Run: ./moq test tools --spec ConfReload
 const systemRoot = "component://tools/screen/System.xml"
+// a user in no group, the spec's own: the framework ships no such user (john.doe is in ADMIN)
+const OUTSIDER = "spec.confreload.outsider"
+const OUTSIDER_ID = "SPEC_CONFRELOAD_OUTSIDER"
 
 function render(path, mode) {
     let test = ec.screen.makeTest().rootScreen(systemRoot).renderMode(mode)
@@ -18,6 +21,16 @@ function render(path, mode) {
 spec({
     setupSpec() {
         login("john.doe")
+        ec.artifactExecution.disableAuthz()
+        const row = ec.entity.makeValue("moqui.security.UserAccount")
+        row.setFields({userId: OUTSIDER_ID, username: OUTSIDER, userFullName: "Spec Conf Reload Outsider"}, true, null, null)
+        row.create()
+        ec.artifactExecution.enableAuthz()
+    },
+    cleanupSpec() {
+        ec.artifactExecution.disableAuthz()
+        ec.entity.find("moqui.security.UserAccount").condition("userId", OUTSIDER_ID).deleteAll()
+        ec.artifactExecution.enableAuthz()
     }
 })
 
@@ -92,8 +105,7 @@ feature("a staged and a deployed component show with their actions", {
 
 feature("the services need the ADMIN group", {
     when() {
-        logout()
-        login("joe@public.com")
+        ec.user.internalLoginUser(OUTSIDER)
         ec.service.sync().name("org.moqui.dev.ComponentServices.reload#Conf").disableAuthz().call()
         const errors = ec.message.getErrorsString()
         ec.message.clearErrors()
