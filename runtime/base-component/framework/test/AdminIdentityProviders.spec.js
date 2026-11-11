@@ -13,6 +13,7 @@ const OAUTH = "moqui.security.sso.OauthFlow"
 const ROLE_MAP = "moqui.security.sso.AuthFlowRoleMap"
 const flowId = "SPEC_IDP_FLOW"
 const liveFlowId = "SPEC_IDP_LIVE"
+const innerFlowId = "SPEC_IDP_INNER"
 const users = {config: "SPEC_IDP_CONFIG", access: "SPEC_IDP_ACCESS", none: "SPEC_IDP_NONE", linked: "SPEC_IDP_LINKED"}
 const groups = {
     config: "SPEC_IDP_CONFIGS",
@@ -104,7 +105,7 @@ spec({
     cleanupSpec() {
         ec.message.clearErrors()
         ec.artifactExecution.disableAuthz()
-        const flowIds = [flowId, liveFlowId]
+        const flowIds = [flowId, liveFlowId, innerFlowId]
         for (const entityName of [ROLE_MAP, "moqui.security.sso.AuthFlowFieldMap", OAUTH, "moqui.security.sso.OidcFlow", FLOW])
             ec.entity.find(entityName).condition("authFlowId", "in", flowIds).deleteAll()
         const groupIds = Object.values(groups)
@@ -240,6 +241,17 @@ feature(
             )
             // a linked account in ADMIN signs in by a provider: only an instance administrator enables one
             out.enableBeyond = store(users.access, {enabled: true})
+            // named on another provider it is not this one's to sign in (review: a provider's id is linked with its
+            // provider), so the access administrator enables this one; the account names none again for what follows
+            const linkTo = externalAuthFlowId => {
+                const row = ec.entity.makeValue("moqui.security.UserAccount")
+                row.setFields({userId: users.linked, externalAuthFlowId}, true, null, null)
+                row.update()
+            }
+            linkTo(flowId)
+            out.enableOthers = store(users.access, {enabled: true})
+            out.pathOthers = invoke("org.moqui.admin.IdentityServices.check#AdministrationPath", {proposed: {}})
+            linkTo(null)
             ec.artifactExecution.enableAuthz()
             try {
                 out.enabled = invoke(C + "store#IdentityProvider", {
@@ -254,6 +266,22 @@ feature(
             } finally {
                 ec.artifactExecution.disableAuthz()
             }
+            // a provider that may not use the private network: its test sends nothing to an internal address
+            ec.artifactExecution.disableAuthz()
+            make(FLOW, {
+                authFlowId: innerFlowId,
+                authFlowTypeEnumId: "AftOidc",
+                description: "Spec inner",
+                disabled: "Y",
+                allowPrivateNetwork: "N"
+            })
+            make("moqui.security.sso.OidcFlow", {
+                authFlowId: innerFlowId,
+                clientTypeEnumId: "OctOther",
+                clientId: "spec-client",
+                discoveryUri: "https://10.1.2.3/.well-known/openid-configuration"
+            })
+            out.inner = as(users.config, () => invoke(C + "test#IdentityProvider", {authFlowId: innerFlowId}))
             out.listed = as(users.config, () => invoke(C + "find#IdentityProviders", {}))
             out.none = as(users.none, () => invoke(C + "find#IdentityProviders", {}))
             out.answers = JSON.stringify([out.before, out.moved, out.reentered, out.tested, out.enabled, out.listed])
@@ -286,9 +314,14 @@ feature(
             out.tested.grantPreview.length == 2
             out.tested.enabled == false
             out.enableBeyond.reasonCode == "HELD_BEYOND"
+            out.enableOthers.applied == true
+            // the administrator named on a disabled provider is no path, though another provider is enabled
+            out.pathOthers.pathsBefore == out.path.pathsBefore - 1
             out.enabled.applied == true
             out.enabled.enabled == true
             out.path.pathsAfter == out.path.pathsBefore - 1
+            out.inner.passed == false
+            out.inner.checkList.some(row => row.check === "Provider" && row.text.includes("internal address"))
             out.listed.providerList.find(row => row.authFlowId === liveFlowId).readiness == "enabled"
             out.none.error.includes("ADMIN_CONNECTION_VIEW")
             !out.answers.includes(secret)

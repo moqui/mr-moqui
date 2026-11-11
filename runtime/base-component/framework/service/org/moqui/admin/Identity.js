@@ -69,13 +69,20 @@ function groupFlags(groupId, proposed, cache) {
     }
     return cache.get(groupId)
 }
-// Whether any sign-in provider is enabled once the change has disabled those it names.
+// The sign-in providers enabled once the change has disabled those it names (their ids).
 function enabledFlows(proposed = {}) {
     const disabled = new Set(Array.from(proposed.disabledFlowIds || []).map(String))
-    return rows("moqui.security.sso.AuthFlow").some(
-        row => row.disabled !== "Y" && row.inbound !== "Y" && !disabled.has(String(row.authFlowId))
+    return new Set(
+        rows("moqui.security.sso.AuthFlow")
+            .filter(row => row.disabled !== "Y" && row.inbound !== "Y" && !disabled.has(String(row.authFlowId)))
+            .map(row => String(row.authFlowId))
     )
 }
+// Whether an administrator signs in through a provider: the account carries a provider's id, and the provider it names is
+// enabled; one that names none is taken by a provider only while that is the one enabled (with several, a sign-in never
+// takes an account in a privileged group, crates/moqui-core/src/service/sso.rs).
+const providerSignIn = (account, flows) =>
+    !!account.externalUserId && (account.externalAuthFlowId ? flows.has(String(account.externalAuthFlowId)) : flows.size === 1)
 
 // Why the account is not a usable path at the moment, or null when it is.
 function unusable(userId, at, memberRows, proposed, context) {
@@ -84,7 +91,7 @@ function unusable(userId, at, memberRows, proposed, context) {
     const account = Object.assign(map(stored), (proposed.accounts || {})[userId] || {})
     if (account.disabled === "Y" && !account.disabledDateTime) return "DISABLED"
     if (account.terminateDate && ms(account.terminateDate) < at) return "TERMINATED"
-    if (!account.currentPassword && !(account.externalUserId && context.flows)) return "NO_CREDENTIAL"
+    if (!account.currentPassword && !providerSignIn(account, context.flows)) return "NO_CREDENTIAL"
     const groupIds = memberRows.filter(row => row.userId === userId && open(row, at)).map(row => row.userGroupId)
     if (!groupIds.includes(ADMIN_GROUP)) return "NOT_ADMINISTRATOR"
     groupIds.push("ALL_USERS")

@@ -29,6 +29,13 @@
 //!   (`AuthFlow.accountLinkEnumId`): `AflVerifiedEmail`, the provider's verified email address equal to the
 //!   account's; any other value, or none, links no existing account. An account in a privileged group, or in a group
 //!   that grants a sealed permission, is never linked by a sign-in: an administrator links it (`externalUserId`).
+//! - a provider's id is linked with the provider it is of (`UserAccount.externalAuthFlowId`, which the sign-in sets):
+//!   an id is unique at its provider only, so an account another provider is named on is never signed in by this one,
+//!   whatever id it asserts ([`linked_account`]). An account with an id and no provider named (linked by hand, or
+//!   before providers were told apart) is taken by the provider that first signs in with the id; with several providers
+//!   enabled, never an account in a privileged group or in a group granting a sealed permission
+//!   ([`unscoped_link_allowed`]).
+//! - a closed account (disabled for good, or ended) is refused before anything is written.
 //! - a role map or a default group never gives a membership in a privileged group or in a group that grants a sealed
 //!   permission ([`sso_may_give`]); such a row is logged and passed over.
 //! - the sync ends only memberships in the groups the flow's role maps name, and never one a sign-in may not give, so
@@ -225,11 +232,13 @@ fn load_flow_as(
             )))
         }
     };
+    let deny_internal = field(&flow, "allowPrivateNetwork") == "N";
     Ok((
         flow,
         FlowConfig {
             auth_flow_id: auth_flow_id.to_string(),
             kind,
+            deny_internal,
         },
     ))
 }
@@ -488,7 +497,14 @@ fn map_fields(
         if expression.is_empty() {
             continue;
         }
-        let value = {
+        // A plain name with no expression is the claim of that name and nothing else: never a name of the script
+        // context or of the engine (what a delegated mapping stores, `ConfigurationServices.store#IdentityProvider`).
+        let plain_claim = field(rule, "dstFieldExpression").is_empty()
+            && expression.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !expression.starts_with(|c: char| c.is_ascii_digit());
+        let value = if plain_claim {
+            attributes.get(&expression).cloned().unwrap_or(Value::Null)
+        } else {
             let _frame = crate::script::ContextFrame::push();
             for (name, value) in attributes {
                 crate::script::set_context_name(name, value.clone()).map_err(|err| LibError::new(err.message()))?;
@@ -569,40 +585,50 @@ fn sync_account_rows(
 ) -> Result<String, LibError> {
     let auth_flow_id = field(flow, "authFlowId");
     let mapped = map_fields(facade, &auth_flow_id, &profile.attributes)?;
-    let find_by = |name: &str, value: &str| -> Result<Option<EntityValue>, LibError> {
-        facade
+    let existing = match linked_account(facade, &auth_flow_id, &profile.id)? {
+        Some(account) => Some(account),
+        None => facade
             .find(ACCOUNT)?
             .disable_authz()
-            .eq(name, Value::string(value))
+            .eq("username", Value::string(username))
             .use_cache(false)
-            .one()
+            .one()?,
     };
-    let linked = if profile.id.is_empty() {
-        None
-    } else {
-        find_by("externalUserId", &profile.id)?
-    };
-    let existing = match linked {
-        Some(account) => Some(account),
-        None => find_by("username", username)?,
-    };
-    // An account found by its name alone, with no provider id of its own, is linked only by the flow's rule.
-    if let Some(account) = existing
-        .as_ref()
-        .filter(|account| field(account, "externalUserId").is_empty())
-    {
-        link_allowed(facade, flow, profile, account)?;
+    if let Some(account) = existing.as_ref() {
+        // A closed account (disabled for good, or ended) is not signed in, so it is not linked, changed or given a
+        // group either: the login would refuse it only after the sync had written.
+        if crate::user::user_account_closed(&field(account, "userId")).map_err(|err| LibError::new(err.message()))? {
+            return Err(LibError::new(format!(
+                "AuthFlow {auth_flow_id}: the account {} is disabled or ended",
+                field(account, "username")
+            )));
+        }
+        let linked_id = field(account, "externalUserId");
+        let linked_flow = field(account, "externalAuthFlowId");
+        if linked_id.is_empty() {
+            // An account found by its name alone, with no provider id of its own, is linked only by the flow's rule.
+            link_allowed(facade, flow, profile, account)?;
+        } else if linked_id != profile.id {
+            return Err(LibError::new(format!(
+                "AuthFlow {auth_flow_id}: the account {username} is linked to another user of the provider"
+            )));
+        } else if !linked_flow.is_empty() && linked_flow != auth_flow_id {
+            // found by its name: the same id, of another provider
+            return Err(LibError::new(format!(
+                "AuthFlow {auth_flow_id}: the account {username} is linked to another provider"
+            )));
+        } else if linked_flow.is_empty() {
+            unscoped_link_allowed(facade, &auth_flow_id, account)?;
+        }
     }
     let mut parameters = mapped;
     parameters.insert("externalUserId".to_string(), Value::string(&profile.id));
+    // the provider the id is of: no other provider signs the account in by it
+    if !profile.id.is_empty() {
+        parameters.insert("externalAuthFlowId".to_string(), Value::string(&auth_flow_id));
+    }
     let (user_id, username) = match existing {
         Some(account) => {
-            let linked_id = field(&account, "externalUserId");
-            if !linked_id.is_empty() && linked_id != profile.id {
-                return Err(LibError::new(format!(
-                    "AuthFlow {auth_flow_id}: the account {username} is linked to another user of the provider"
-                )));
-            }
             let user_id = field(&account, "userId");
             let username = field(&account, "username");
             parameters.insert("userId".to_string(), Value::string(&user_id));
@@ -719,6 +745,75 @@ fn sso_may_give(facade: &EntityFacade, group: &str) -> Result<bool, LibError> {
             && from.is_none_or(|from| from <= now)
             && thru.is_none_or(|thru| thru > now)
     }))
+}
+
+/// The account this provider's id is linked to. A provider's id (an OpenID `sub`) is unique at that provider only, so
+/// the link is the id with the provider it is of (`UserAccount.externalAuthFlowId`): an account another provider is
+/// named on is never found here, whatever id this provider asserts, so a second provider (one with other users, or one
+/// run or configured by somebody else) speaks only for its own accounts. An account with the id and no provider named
+/// (linked by hand, or before providers were told apart) is found when it is the only such one, and the sign-in then
+/// names this provider on it, under [`unscoped_link_allowed`].
+fn linked_account(
+    facade: &EntityFacade,
+    auth_flow_id: &str,
+    external_id: &str,
+) -> Result<Option<EntityValue>, LibError> {
+    if external_id.is_empty() {
+        return Ok(None);
+    }
+    let accounts = facade
+        .find(ACCOUNT)?
+        .disable_authz()
+        .eq("externalUserId", Value::string(external_id))
+        .use_cache(false)
+        .list()?;
+    let of = |flow_id: &str| -> Vec<&EntityValue> {
+        accounts
+            .values()
+            .iter()
+            .filter(|account| field(account, "externalAuthFlowId") == flow_id)
+            .collect()
+    };
+    match (of(auth_flow_id).as_slice(), of("").as_slice()) {
+        ([account], _) | ([], [account]) => Ok(Some((*account).clone())),
+        ([], []) => Ok(None),
+        _ => Err(LibError::new(format!(
+            "AuthFlow {auth_flow_id}: more than one account is linked to this user of the provider; an administrator \
+             names the provider on one (externalAuthFlowId)"
+        ))),
+    }
+}
+
+/// Whether this sign-in may take `account`, which carries the provider's id with no provider named, and name this
+/// provider on it: any account while this is the only enabled sign-in provider (the id can be of no other), and with
+/// several only an account in no privileged group and no group granting a sealed permission ([`sso_may_give`]). For
+/// those an administrator names the provider, so a second provider never takes an administrator's account by asserting
+/// its id.
+fn unscoped_link_allowed(facade: &EntityFacade, auth_flow_id: &str, account: &EntityValue) -> Result<(), LibError> {
+    let others = facade
+        .find("moqui.security.sso.AuthFlow")?
+        .disable_authz()
+        .use_cache(false)
+        .list()?
+        .values()
+        .iter()
+        .any(|row| {
+            field(row, "authFlowId") != auth_flow_id && field(row, "disabled") != "Y" && field(row, "inbound") != "Y"
+        });
+    if !others {
+        return Ok(());
+    }
+    for member in active_members(facade, &field(account, "userId"))? {
+        let group = field(&member, "userGroupId");
+        if !sso_may_give(facade, &group)? {
+            return Err(LibError::new(format!(
+                "AuthFlow {auth_flow_id}: the account {} is in {group}, privileged or granting a sealed permission, and \
+                 names no provider while several are enabled; an administrator names it (externalAuthFlowId)",
+                field(account, "username")
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// `AuthFlow.accountLinkEnumId`: an existing account is linked by the provider's verified email address.

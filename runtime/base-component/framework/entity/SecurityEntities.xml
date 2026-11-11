@@ -274,6 +274,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="locale" type="text-short"/>
         <field name="timeZone" type="text-short"/>
         <field name="externalUserId" type="text-medium"/>
+        <field name="externalAuthFlowId" type="id" enable-audit-log="update"><description>The sign-in provider (AuthFlow)
+            externalUserId is of: a provider's id is unique at that provider only, so only this provider signs the account
+            in by it (crates/moqui-core/src/service/sso.rs, which sets it when a sign-in makes or links the account). Empty
+            on an account linked by hand or before providers were told apart: the provider that first signs in with the id
+            is then named here, and with several providers enabled never on an account in a privileged group or in a
+            group granting a sealed permission, where an administrator names it.</description></field>
         <field name="emailAddress" type="text-medium" enable-audit-log="update">
             <description>The email address to use for forgot password emails and other system messages.</description></field>
         <field name="ipAllowed" type="text-medium" enable-audit-log="true">
@@ -797,6 +803,12 @@ along with this software (see the LICENSE.md file). If not, see
             the current one. Never the secret.</description></field>
         <field name="testedDate" type="date-time"/>
         <field name="testedByUserId" type="id"/>
+        <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="true"><description>N: no request the
+            server makes for this flow (discovery document, token, keys, user info) goes to a loopback, private or
+            link-local address, by name or written out (crates/moqui-host/src/sso.rs). Empty or Y: such an address is
+            allowed, as for a provider on the instance's own network. A provider started through
+            org.moqui.admin.ConfigurationServices.store#IdentityProvider on a production instance is saved N, and that
+            service never changes it: an instance administrator does.</description></field>
 
         <relationship type="one-nofk" related="moqui.security.sso.OauthFlow" short-alias="oauth" mutable="true">
             <key-map field-name="authFlowId"/>

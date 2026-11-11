@@ -12,6 +12,10 @@
 // - enabling needs ADMIN_ACCESS_MANAGE, a passing test of the configuration as it is now (test#IdentityProvider), role
 //   mappings that still hold, and no linked account holding access beyond the actor's (a privileged group the actor is
 //   not in, a sealed permission the actor lacks): an instance administrator enables a provider such accounts sign in by;
+// - the server reaches a provider started here at no internal address on a production instance (AuthFlow
+//   allowPrivateNetwork N, enforced by the sign-in's own client for every request of the flow, with no redirect followed):
+//   the discovery URL and the endpoints are the integration administrator's to choose, and a test answers what was found
+//   there. An instance administrator allows a provider on the instance's own network (Tools); this service never does.
 // - disabling keeps the administration path (IdentityServices: an administrator with no password signs in only through
 //   an enabled provider).
 //
@@ -182,6 +186,8 @@ function described(flow, context) {
         readiness: state,
         readinessText: readinessTexts[state],
         callbackUrl: flow.inbound === "Y" ? "" : context.root ? context.root + "/sso/callback" : "/sso/callback",
+        // whether the server may reach the provider at an internal address (an instance administrator's choice)
+        privateNetwork: flow.allowPrivateNetwork !== "N",
         sequenceNum: flow.sequenceNum ?? null,
         testedDate: iso(flow.testedDate),
         roleMapCount: context.roleCounts.get(flow.authFlowId) || 0
@@ -245,12 +251,20 @@ function groupOptions() {
         }))
         .sort((a, b) => a.label.localeCompare(b.label))
 }
-// The linked accounts (an external identity) that hold access beyond the actor's: in a privileged group the actor is not
-// in, or in a group granting a sealed permission the actor lacks. Whoever enables a provider decides who signs in as them.
-function linkedBeyond() {
+// The accounts the provider signs in (an external identity it is named on, UserAccount.externalAuthFlowId, or one that
+// names no provider yet, which the first provider to sign in with its id takes) that hold access beyond the actor's: in a
+// privileged group the actor is not in, or in a group granting a sealed permission the actor lacks. Whoever enables a
+// provider decides who signs in as them. An account another provider is named on is not this provider's: the sign-in
+// never finds it (crates/moqui-core/src/service/sso.rs).
+function linkedBeyond(authFlowId) {
     const linked = new Set(
-        Array.from(find(ACCOUNT).condition("externalUserId", "is-not-null", null).selectField("userId,externalUserId").list())
-            .filter(row => !!text(row.externalUserId))
+        Array.from(
+            find(ACCOUNT)
+                .condition("externalUserId", "is-not-null", null)
+                .selectField("userId,externalUserId,externalAuthFlowId")
+                .list()
+        )
+            .filter(row => !!text(row.externalUserId) && (!text(row.externalAuthFlowId) || row.externalAuthFlowId === authFlowId))
             .map(row => row.userId)
     )
     if (!linked.size) return 0
@@ -493,7 +507,10 @@ function storeIdentityProvider(p) {
         if (authFlowId && !/^[A-Za-z][A-Za-z0-9_]{2,39}$/.test(authFlowId))
             throw new Error("A provider id is 3 to 40 letters, digits or underscores, starting with a letter")
         if (!plainText(p.description, "The name")) throw new Error("Give the provider a name")
+        // a provider started here reaches no internal address on a production instance (the server would fetch a URL
+        // its integration administrator chose from inside the network); an instance administrator allows one (Tools)
         flow = {authFlowId, authFlowTypeEnumId: typeEnumId, disabled: "Y"}
+        if (text(System.getProperty("instance_purpose")) === "production") flow.allowPrivateNetwork = "N"
     } else {
         flow = map(stored)
         if (flow.inbound === "Y")
@@ -628,13 +645,13 @@ function storeIdentityProvider(p) {
             return refused("TEST_REQUIRED", "Test the provider as it is configured now, then enable it", {authFlowId, revision})
         const refusal = checkGroups()
         if (refusal) return refusal
-        const beyond = linkedBeyond()
+        const beyond = linkedBeyond(authFlowId)
         if (beyond)
             return refused(
                 "HELD_BEYOND",
                 beyond +
                     (beyond === 1 ? " account that signs" : " accounts that sign") +
-                    " in through a provider hold access you do not (a privileged group you are not in, or a sealed permission): an instance administrator enables this provider",
+                    " in through this provider hold access you do not (a privileged group you are not in, or a sealed permission): an instance administrator enables this provider",
                 {authFlowId, revision}
             )
         enabledAfter = true
@@ -796,7 +813,10 @@ function testIdentityProvider(p) {
                 "Provider",
                 started,
                 "A sign-in can start" + (authorizeHost ? " at " + authorizeHost : ""),
-                safeMessage(failure || result.message || "The provider could not be reached", sub, type)
+                safeMessage(failure || result.message || "The provider could not be reached", sub, type) +
+                    (/internal address/.test(failure || result.message || "")
+                        ? ": an instance administrator allows a provider on the instance's own network"
+                        : "")
             ) && passed
     }
     const tested = fingerprint(flow, sub)

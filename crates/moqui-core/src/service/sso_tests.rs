@@ -305,10 +305,12 @@ fn an_sso_sign_in_counts_from_its_auth_time() {
     let oidc = FlowConfig {
         auth_flow_id: "OIDC".into(),
         kind: FlowKind::Oidc(OidcConfig::default()),
+        deny_internal: false,
     };
     let oauth = FlowConfig {
         auth_flow_id: "OAUTH".into(),
         kind: FlowKind::Oauth(OauthConfig::default()),
+        deny_internal: false,
     };
     let now = 1_800_000_000_000_i64;
     let with_auth_time = |seconds: Option<i64>| {
@@ -487,4 +489,111 @@ fn a_sign_in_gives_and_ends_only_the_groups_its_role_maps_may() {
         .unwrap()
         .unwrap();
     assert!(groups_of(&facade, &field(&eve, "userId")).is_empty());
+}
+
+/// Admin P10 review (F-P10-2): a provider's id is linked with its provider, so a second provider never signs in the
+/// first one's account by asserting its id; a closed account is refused before anything is written; a plain mapped name
+/// is a claim and nothing else.
+#[test]
+fn a_provider_signs_in_only_the_accounts_linked_to_it_and_no_closed_one() {
+    let (facade, context) = entered();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    crate::service::load_definitions().unwrap();
+    let first = flow(&facade);
+    let mut second = seed(
+        &facade,
+        "moqui.security.sso.AuthFlow",
+        &[("authFlowId", Value::string("OTHER_FLOW"))],
+    );
+    let linked = |user_id: &str, username: &str, id: &str, flow_id: Option<&str>| {
+        let mut fields = vec![
+            ("userId", Value::string(user_id)),
+            ("username", Value::string(username)),
+            ("externalUserId", Value::string(id)),
+        ];
+        if let Some(flow_id) = flow_id {
+            fields.push(("externalAuthFlowId", Value::string(flow_id)));
+        }
+        seed(&facade, ACCOUNT, &fields);
+    };
+    let flow_of = |user_id: &str| field(&account(&facade, user_id), "externalAuthFlowId");
+    // The first provider's account: the second one asserting its id and its name is refused, and with a name of its own
+    // makes an account of its own.
+    linked("SSO_FAY", "sso.fay", "sub-1001", Some("TEST_FLOW"));
+    let err = sync_account(&facade, &second, &profile("sub-1001", "sso.fay", &[]), "sso.fay").unwrap_err();
+    assert!(
+        err.message().contains("linked to another provider"),
+        "{}",
+        err.message()
+    );
+    let username = sync_account(&facade, &second, &profile("sub-1001", "other.fay", &[]), "other.fay").unwrap();
+    assert_eq!(username, "other.fay");
+    assert_eq!(field(&account(&facade, "SSO_FAY"), "userFullName"), "");
+    // Each provider then signs in its own account by the same id.
+    assert_eq!(
+        sync_account(&facade, &first, &profile("sub-1001", "renamed", &[]), "renamed").unwrap(),
+        "sso.fay"
+    );
+    assert_eq!(
+        sync_account(&facade, &second, &profile("sub-1001", "renamed", &[]), "renamed").unwrap(),
+        "other.fay"
+    );
+    // An account with an id and no provider named: an ordinary one is taken by the provider that signs in with it; an
+    // administrator's is not while several providers are enabled, and is once this is the only one.
+    linked("SSO_GUS", "sso.gus", "sub-gus", None);
+    sync_account(&facade, &second, &profile("sub-gus", "sso.gus", &[]), "sso.gus").unwrap();
+    assert_eq!(flow_of("SSO_GUS"), "OTHER_FLOW");
+    assert!(sync_account(&facade, &first, &profile("sub-gus", "x.gus", &[]), "x.gus").unwrap() != "sso.gus");
+    linked("SSO_HAL", "sso.hal", "sub-hal", None);
+    seed(
+        &facade,
+        "moqui.security.UserGroupMember",
+        &[
+            ("userGroupId", Value::string("ADMIN")),
+            ("userId", Value::string("SSO_HAL")),
+            ("fromDate", crate::user::now_value()),
+        ],
+    );
+    let err = sync_account(&facade, &first, &profile("sub-hal", "sso.hal", &[]), "sso.hal").unwrap_err();
+    assert!(err.message().contains("names no provider"), "{}", err.message());
+    assert_eq!(flow_of("SSO_HAL"), "");
+    second.set("disabled", Value::string("Y"));
+    second.update(&facade).unwrap();
+    sync_account(&facade, &first, &profile("sub-hal", "sso.hal", &[]), "sso.hal").unwrap();
+    assert_eq!(flow_of("SSO_HAL"), "TEST_FLOW");
+    // A closed account is refused with nothing written: no name, no group.
+    seed(
+        &facade,
+        ACCOUNT,
+        &[
+            ("userId", Value::string("SSO_IDA")),
+            ("username", Value::string("sso.ida")),
+            ("externalUserId", Value::string("sub-ida")),
+            ("externalAuthFlowId", Value::string("TEST_FLOW")),
+            ("disabled", Value::string("Y")),
+        ],
+    );
+    let err = sync_account(&facade, &first, &profile("sub-ida", "sso.ida", &["a"]), "sso.ida").unwrap_err();
+    assert!(err.message().contains("disabled or ended"), "{}", err.message());
+    assert_eq!(field(&account(&facade, "SSO_IDA"), "userFullName"), "");
+    assert!(groups_of(&facade, "SSO_IDA").is_empty());
+    // A plain mapped name is the claim of that name: one the provider did not send is no value, whatever the script
+    // context or the engine has by that name.
+    for (seq, name) in [("01", "ec"), ("02", "globalThis"), ("03", "locale")] {
+        seed(
+            &facade,
+            "moqui.security.sso.AuthFlowFieldMap",
+            &[
+                ("authFlowId", Value::string("OTHER_FLOW")),
+                ("ruleSeqId", Value::string(seq)),
+                ("srcFieldName", Value::string(name)),
+                ("dstFieldName", Value::string(name)),
+            ],
+        );
+    }
+    let mut claims = BTreeMap::new();
+    claims.insert("locale".to_string(), Value::string("fr"));
+    let mapped = map_fields(&facade, "OTHER_FLOW", &claims).unwrap();
+    assert_eq!(mapped.keys().collect::<Vec<_>>(), ["locale"]);
 }
