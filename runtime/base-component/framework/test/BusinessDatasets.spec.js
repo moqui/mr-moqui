@@ -478,25 +478,55 @@ feature("an alias of a log index or of a business document needs the source's ow
             logs: save("bds-own-logs", Object.assign({indexName: "otel_logs", timeField: "timestamp"}, everyLine)),
             signal: save("bds-own-signal", Object.assign({documentType: "otel_logs", signal: "business"}, everyLine)),
             raw: save("bds-own-raw", {documentType: types.fed, timeField: "_timestamp"}),
+            // the signal with no registered scope policy bound is no way past the document's row filter either
+            unbound: save("bds-own-unbound", {documentType: types.fed, timeField: "_timestamp", signal: "business"}),
             index: save("bds-own-index", {indexName: "bds_fixture", timeField: "_timestamp"})
         }
-        // the same two written past the save (an entity write, an older row), owned by the steward
+        // the same written past the save (an entity write, an older row), owned by the steward; and a log alias shared
+        // with the steward's group by a holder of the index whose account has since been disabled for good
         sys(() => {
-            for (const [definitionId, body] of [
-                ["bds-own-stored-logs", Object.assign({indexName: "otel_logs", timeField: "timestamp"}, everyLine)],
-                ["bds-own-stored-raw", {documentType: types.fed, timeField: "_timestamp"}]
+            make("moqui.security.UserAccount", {
+                userId: "BDS_CLOSED_USER",
+                username: "bds.closed",
+                userFullName: "Datasets Closed Holder",
+                disabled: "Y"
+            })
+            make("moqui.security.UserGroupMember", {
+                userGroupId: "ADMIN",
+                userId: "BDS_CLOSED_USER",
+                fromDate: new Date(Date.now() - 60000)
+            })
+            for (const [definitionId, ownerId, body] of [
+                [
+                    "bds-own-stored-logs",
+                    "BDS_STEWARD_USER",
+                    Object.assign({indexName: "otel_logs", timeField: "timestamp"}, everyLine)
+                ],
+                ["bds-own-stored-raw", "BDS_STEWARD_USER", {documentType: types.fed, timeField: "_timestamp"}],
+                [
+                    "bds-own-stored-unbound",
+                    "BDS_STEWARD_USER",
+                    {documentType: types.fed, timeField: "_timestamp", signal: "business"}
+                ],
+                ["bds-own-closed", "BDS_CLOSED_USER", Object.assign({indexName: "otel_logs", timeField: "timestamp"}, everyLine)]
             ])
                 make("moqui.report.Definition", {
                     definitionId,
                     definitionType: "dataset",
                     title: definitionId,
+                    userGroupId: "BDS_STEWARD",
                     bodyJson: JSON.stringify(body),
-                    ownerId: "BDS_STEWARD_USER",
+                    ownerId,
                     readOnly: "N",
                     versionNumber: 1
                 })
         })
-        const stored = {logs: query("bds-own-stored-logs").error || "", raw: query("bds-own-stored-raw").error || ""}
+        const stored = {
+            logs: query("bds-own-stored-logs").error || "",
+            raw: query("bds-own-stored-raw").error || "",
+            unbound: query("bds-own-stored-unbound").error || "",
+            closed: query("bds-own-closed").error || ""
+        }
         // the system administrator holds the log index, so their alias of it is saved, and its group reads it by the alias's
         // own grant under its filter: the owner is asked for the index, not the reader
         const shared = asSteward(R + "save#Definition", {
@@ -536,9 +566,12 @@ feature("an alias of a log index or of a business document needs the source's ow
         saved.logs.includes("needs its own grant (org.moqui.report.dataset.otel_logs)")
         saved.signal.includes("needs its own grant")
         saved.raw.includes("a business dataset's document")
+        saved.unbound.includes("a business dataset's document")
         saved.index.includes("a business dataset's document")
         stored.logs.includes("neither its reader nor its owner may read")
         stored.raw.includes("a business dataset's document")
+        stored.unbound.includes("a business dataset's document")
+        stored.closed.includes("neither its reader nor its owner may read")
         shared == ""
         read == ""
         hits == 0

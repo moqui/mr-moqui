@@ -531,13 +531,18 @@ the definition is saved (`save#Definition`, a copy, a restore, an import, a git 
   The saver must hold it. A reader reads the alias when they hold it themselves, or when the definition's owner does: the
   owner is asked at each read, in a context of their own, so an alias an administrator saves and shares is a narrowed view
   for readers who do not hold the index (a registered annotation source's dataset, for one), and it stops answering when its
-  owner loses the grant or the definition is handed to an owner without it. A definition a component ships
+  owner loses the grant, when the owner's account is closed (disabled for good or past its end date, as their session and
+  schedules stop), or when the definition is handed to an owner without the grant. `transfer#DefinitionOwner` hands an alias
+  on only while the owner it leaves holds the index, so one that has stopped answering is not opened again by the grant of
+  whoever takes it; left behind, it answers a holder of the index only. A definition a component ships
   (`report/*.json`) is that component's reviewed code and is read by its own artifact, as mr-mantle's
   `mantle-business-events` is. An alias still needs a row filter in its definition, and a dataset has no field list: a
   reader of the alias reads each matching line whole.
 - **A business dataset's document** (`org.moqui.report.dataset.<document>`, update): the saver and every reader, shipped
   or saved, beside the alias's own update artifact (above). No owner's holding opens it to others: a business document is
-  read by others through an admitted dataset.
+  read by others through an admitted dataset. A definition that says `signal: "business"` with no registered scope policy as
+  its `rowFilterService` is held to this too, saved and read: the signal alone does not let its steward read the document
+  unfiltered before admission.
 
 A row written past the save (an entity write, an older row) is held to the same rule when read. The rule's unit tests are
 `alias_tests.rs`; the refusals, saved and stored, are a feature of `framework/test/BusinessDatasets.spec.js`.

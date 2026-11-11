@@ -271,12 +271,13 @@ pub(super) fn save_owned(ec: &ExecutionContext, definition: &Json, note: &str) -
     save_definition_as(ec, definition, note, true)
 }
 
-/// The documents of every business dataset, shipped or saved, whoever may read it (business.rs `check_governed`). Reads with
-/// authorization off and returns only document ids.
+/// The documents of every business dataset, shipped or saved, whoever may read it (business.rs `check_governed`): the one
+/// each names, else the document of its own id, as the engine reads it (alias.rs `target`). Reads with authorization off and
+/// returns only document ids.
 pub(super) fn business_documents(ec: &ExecutionContext) -> Result<BTreeSet<String>, Error> {
     Ok(business_datasets(ec)?
         .into_iter()
-        .filter_map(|(_, body)| body["documentType"].as_str().map(str::to_owned))
+        .map(|(id, body)| text(&body, "documentType", &id).to_owned())
         .collect())
 }
 /// Every business dataset, shipped or saved, whoever may read it, as its id and body (business.rs). Reads with authorization
