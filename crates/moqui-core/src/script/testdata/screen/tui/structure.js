@@ -38,12 +38,14 @@ $closeChildren();
 $openChildren({t:"dialog",id:$uid("D1"),title:ec.resource.expand("Open ${name}"),button:ec.resource.expand("Open ${name}")});
 $emit({t:"text",id:$uid("widgets/D1/label"),text:ec.resource.expand("in dialog")});
 $closeChildren();
-$openRender({t:"section",id:$uid("First"),name:"First"});
+if ($sink) $emit({t:"section",id:$uid("First"),name:"First",c:JSON.parse(sri.renderSectionValue("First"))});
+else { $openRender({t:"section",id:$uid("First"),name:"First"});
 sri.renderSection("First");
-$closeRender();
-$openRender({t:"section",id:$uid("Each"),name:"Each",iterate:true});
+$closeRender(); }
+if ($sink) $emit({t:"section",id:$uid("Each"),name:"Each",iterate:true,c:JSON.parse(sri.renderSectionValue("Each"))});
+else { $openRender({t:"section",id:$uid("Each"),name:"Each",iterate:true});
 sri.renderSection("Each");
-$closeRender();
+$closeRender(); }
 $openRender({t:"section",id:$uid("First"),name:"First"});
 sri.renderSectionInclude({"name":"section-include","attrs":{"name":"First"}});
 $closeRender();
