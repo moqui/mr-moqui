@@ -1,4 +1,4 @@
-// The System home's attention list (plans/Tools-Fancy.md §3.4, B5): moqui.tools.SystemHomeServices.get#SystemAttention.
+// The System home's attention list (plans/archive/Tools-Fancy.md §3.4, B5): moqui.tools.SystemHomeServices.get#SystemAttention.
 // Rule tests, no screen is rendered. The first feature calls the service on the database: a failed job run is
 // counted for an administrator, and left out for a user who may call the service but not read job runs. The second
 // runs the service's script over readings and finds of its own, since a spec cannot fill a disk: a resource at

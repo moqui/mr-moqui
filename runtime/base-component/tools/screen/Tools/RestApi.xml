@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The REST API reference (plans/Tools-Fancy.md §2.3): the service REST resources (service/*.rest.xml) and the entity
+<!-- The REST API reference (plans/archive/Tools-Fancy.md §2.3): the service REST resources (service/*.rest.xml) and the entity
     master API, each linking to its description as JSON (a resource's OpenAPI document, an entity's master schema), read
     as the signed-in user with REST_SCHEMA. There is no viewer here: on a dev instance Dev AIDE explores the services
     and entities behind them. A root resource with more than a hundred methods is listed by its child resources.

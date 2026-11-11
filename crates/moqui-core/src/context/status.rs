@@ -18,8 +18,8 @@
 //! process has none of those, so `Process` (resident and peak memory, threads, from `/proc/self/status` on Linux)
 //! stands in for `Heap`, `NonHeap`, and `JavaStats`, and `Runtime` for `JavaRuntime`. What the machine has left (CPU
 //! load, memory against its limit, the filesystems, open files, swap) is the `Resources` map, each reading with its
-//! level ([`super::resources`], plans/Tools-Fancy.md B2); `Ready` and `Draining` are what `/health` answers, and
-//! `RequestPool` the request workers.
+//! level ([`super::resources`], plans/archive/Tools-Fancy.md B2); `Ready` and `Draining` are what `/health` answers,
+//! and `RequestPool` the request workers.
 
 use indexmap::IndexMap;
 use moqui_lib::object::Value;

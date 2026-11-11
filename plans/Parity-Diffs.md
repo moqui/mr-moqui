@@ -450,3 +450,22 @@ Two fixes the load runner's screens ran into.
 | menus | `subscreens-item` `menu-include` (and a screen's `default-menu-include`) takes `true`, `false` or an expression run per request, in the context `disable-when` has; a false result leaves the item out of every menu (the menu data, the shell's apps and drawer, `sri.getMenuItems`), except the item on the request's path, and an expression that fails leaves it out and is logged. In Java it is a boolean. The `SubscreensItem` row's `menuInclude` stays a `Y`/`N` indicator | Hiding an item by a permission without a `disable-when` that leaves a dead entry (Tools › Load testing and `LOAD_RUNNER`) (`screen/definition.rs` `SubscreensItem::in_menu`, `screen/menu.rs` `included`, `xml-screen-3.xsd`) |
 | screen URL | A file under a screen named like a transition with a render-mode extension (`goUrl.text`), or like a subscreen whose `render-modes` names that mode (`NewRun.qvue` beside `NewRun.xml`), is answered by the transition or the screen (its authorization, actions and `render-mode` text); Java's `ScreenUrlInfo` finds the file first and sends it | The raw file skipped the screen's authorization and template (`screen/url.rs` `claims_mode`) |
 | static files | A screen's sources are never sent as static files: a file a `render-mode` `text` of the screen beside it (`<stem>.xml`) or above it names by `location`, every `<stem>.tui.json` beside a screen `<stem>.xml`, and the render-mode files above. `<screen>.<mode>` then renders the screen, and any other name of one is not found; Java serves them. A file no screen text reads (a public island's `.qvue`, loaded by URL) stays static | A screen's template, read raw, gave away what its screen's authorization guards (`screen/static_files.rs` `is_screen_source`, `ScreenDef::text_locations`) |
+
+## System and Tools apps (2026-11-10)
+
+Found when the Java System and Tools screens were compared with these ([Tools-Fancy](archive/Tools-Fancy.md) §11).
+
+| Area | Difference | Rationale / where documented |
+|---|---|---|
+| threads | System › Threads has no Interrupt, no lock owner or blocked and waited times, no deadlock check and no native frames of another thread, and the worker pool is not resized while running (Java's `ThreadMXBean`, `Thread.interrupt` and `setCorePoolSize`). A thread that runs a request, service or job shows what it runs instead: the artifact stack with how long each frame has run, its user and its trace | A Rust thread's frames are read from outside only through a signal handler, which needs `unsafe`; `crates/moqui-core/src/context/activity.rs`, `System/ThreadList.xml` |
+| caches | No Run GC (there is no collector), and Clear Artifact Caches does not warm the caches after: definitions load when first used | `System/Cache/CacheList.xml` |
+| search | No Re-Init of the search facade: its backends are the database's pool and a client that holds no connection | `crates/moqui-core/src/search` |
+| REST API reference | Tools › REST API links to each resource's OpenAPI document and each master entity's schema as JSON; Swagger UI is not shipped and `toolstatic` is gone. `entity.swagger`, `master.swagger` and the RAML documents stay unbuilt | Dev AIDE explores services and entities on a dev instance; `Tools/RestApi.xml` |
+| script console | No Groovy Shell screen: the SSH administration shell's `js` command runs scripts | No remote code from a browser; [Parity-Mapping](Parity-Mapping.md) |
+| file browser | System › Resources is the git repositories: the elFinder browser and editor went with Dev AIDE's workspace | Commit 79a73862 |
+| data export | Export's filter is a JavaScript object (`{statusId: 'X'}`), not a Groovy map; more than one entity as CSV to the browser is a zip written to the user's temporary place first | `Tools/Data/Export.xml`, [Database](../docs/tools/Database.md) |
+| data load | A remote (`http:`, `https:`) location is refused on every instance, where Java refuses it in production only: the loader reads local and component locations | `Tools/Data/Load.xml` |
+| SQL | Transaction control statements are refused in the SQL editor; a run is one transaction, read only or with changes confirmed | `crates/moqui-tools/src/sql.rs` |
+| schema | Liquibase changelog output is replaced by Download DDL | [Tools-Database](archive/Tools-Database.md) §2.1 |
+| artifact statistics | Monitor › Artifacts exports CSV and XLSX; the XML export of Java's Artifact Hit Summary and Bins is gone with them | [Monitoring](Monitoring.md) |
+

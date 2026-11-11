@@ -42,7 +42,7 @@ pub(crate) fn log(factory: &ExecutionContextFactory, routes: &str, listeners: bo
         role: property("node_role"),
     };
     let report = moqui_core::startup::report(factory);
-    // scripts read the same report (ec.factory.getStartupReport(), plans/Tools-Fancy.md B1)
+    // scripts read the same report (ec.factory.getStartupReport(), plans/archive/Tools-Fancy.md B1)
     report.record_ready(Ready {
         seconds: header.seconds,
         routes: routes.to_string(),

@@ -1,6 +1,6 @@
 // This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
 //
-// The entities a user opened last in Tools › Data › Grid (plans/Tools-Fancy.md B8), newest first: the user preference
+// The entities a user opened last in Tools › Data › Grid (plans/archive/Tools-Fancy.md B8), newest first: the user preference
 // `tools.recent`, a JSON list of at most twenty entity names with no name twice, as REPORT_RECENT is for dashboards.
 // The grid records a name when it opens an entity (screen/Tools/Data/Grid.xml); the Tools home lists them.
 //

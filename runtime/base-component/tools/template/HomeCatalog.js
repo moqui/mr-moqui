@@ -1,4 +1,4 @@
-// The navigation catalog of an app home (plans/Tools-Fancy.md B7), used by the sections of template/HomeParts.xml.
+// The navigation catalog of an app home (plans/archive/Tools-Fancy.md B7), used by the sections of template/HomeParts.xml.
 //
 // A home lists its entries once, in its actions, as `navCatalog`:
 //

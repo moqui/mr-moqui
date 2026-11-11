@@ -137,7 +137,7 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
     }
 })
 
-// The System home (plans/Tools-Fancy.md §3), its one render: plain XML widgets, so html alone. `moqui test` serves no
+// The System home (plans/archive/Tools-Fancy.md §3), its one render: plain XML widgets, so html alone. `moqui test` serves no
 // requests, so the runtime report has no listeners and the page says so; a server's page has a row for each.
 feature("the System home shows the instance, its listeners or their absence, and what needs attention", {
     when() {
@@ -184,7 +184,7 @@ feature("the System home shows the instance, its listeners or their absence, and
     }
 })
 
-// The Tools home (plans/Tools-Fancy.md §4), its one render: plain XML widgets, so html alone. john.doe holds the four
+// The Tools home (plans/archive/Tools-Fancy.md §4), its one render: plain XML widgets, so html alone. john.doe holds the four
 // Tools permissions; the line names each one whether or not it is held. The lists of what the user left off and of what
 // is running are hidden when empty, so they are not checked here.
 feature("the Tools home shows the instance, what the user may do, the jump row, the counters and the main tools", {

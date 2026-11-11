@@ -7889,7 +7889,7 @@
             '</component>'
     });
 
-    // The nav-card element (plans/Tools-Fancy.md B6): a q-card flat bordered with the icon in a tonal avatar, the title
+    // The nav-card element (plans/archive/Tools-Fancy.md B6): a q-card flat bordered with the icon in a tonal avatar, the title
     // (text-subtitle1, medium) and one line of text (text-caption, muted); size lg has the larger avatar. With href the title is
     // the card's link, m-link for a screen (the shell's setUrl) and a plain anchor when external, and it covers the whole card
     // (m-nav-card-link in the style sheet), so the card is one link; the default slot holds the element's child links, text

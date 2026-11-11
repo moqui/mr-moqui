@@ -2379,7 +2379,7 @@
                 sparkline: value(xn(at(n, "sparkline"))), class: xn(at(n, "style")) || null
             }) + "></m-number-card>\n");
         };
-        // A nav-card (plans/Tools-Fancy.md B6): an m-nav-card with the title and the text localized and the link as a number-card's;
+        // A nav-card (plans/archive/Tools-Fancy.md B6): an m-nav-card with the title and the text localized and the link as a number-card's;
         // its child links follow in the default slot, each a text link (st.textLinks). False, and nothing, for a false condition.
         const navCardOpen = (n) => {
             if (at(n, "condition") && !cond(at(n, "condition"))) return false;

@@ -560,7 +560,7 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 .m-number-card-link .m-number-card { transition:box-shadow 150ms ease, border-color 150ms ease, transform 150ms ease; }
 .m-number-card-link:hover .m-number-card, .m-number-card-link:focus-visible .m-number-card { border-color:var(--q-primary); }
 .m-number-card-link:focus-visible { outline:none; }
-/* nav-card (plans/Tools-Fancy.md B6): the icon in a tonal avatar (the link color over its own 12% tint, as m-tonal), the title
+/* nav-card (plans/archive/Tools-Fancy.md B6): the icon in a tonal avatar (the link color over its own 12% tint, as m-tonal), the title
    and one muted line. The title is the card's link and its ::after covers the card, so the whole card is one link; the child
    links along the bottom sit above it. A links row whose links all wrote nothing takes no room. */
 .m-nav-card { position:relative; height:100%; }

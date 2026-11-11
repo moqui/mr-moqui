@@ -825,7 +825,7 @@ mod enabled {
         (context, telemetry, memory)
     }
 
-    /// The runtime gauges (plans/Tools-Fancy.md B3) are registered once however often the host asks, and the
+    /// The runtime gauges (plans/archive/Tools-Fancy.md B3) are registered once however often the host asks, and the
     /// filesystem gauges are one series per mount point when the conf allows the attribute.
     #[test]
     fn the_runtime_gauges_are_registered_once() {

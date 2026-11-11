@@ -30,7 +30,7 @@ the test mount of the ReportMounts spec.
 | `ArtifactStats.xml` | Artifact summary: the entities, services and screens counted by package. Its totals are the Tools home's counters. (Hit performance is Monitor › Artifacts) |
 | `RestApi.xml` | REST API: the service REST resources and the entity master API, each linking to its description as JSON (a resource's OpenAPI document, an entity's master schema); `filter` narrows both lists, `api` (`service` or `entity`) shows one. There is no viewer: Dev AIDE explores them on a dev instance |
 
-**Home** (`Tools/Home.xml`, [plans/Tools-Fancy.md](../../../plans/Tools-Fancy.md) §4) reads each block in its
+**Home** (`Tools/Home.xml`, [plans/archive/Tools-Fancy.md](../../../plans/archive/Tools-Fancy.md) §4) reads each block in its
 actions:
 
 | Block | Reads |
@@ -67,7 +67,7 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
   section and manages the trusted reference origins ([docs/ai/Constitution.md](../../../docs/ai/Constitution.md)); its
   shared parts are `template/ConstitutionParts.xml`.
 
-**Home** (`System/Home.xml`, [plans/Tools-Fancy.md](../../../plans/Tools-Fancy.md) §3) answers whether the instance is
+**Home** (`System/Home.xml`, [plans/archive/Tools-Fancy.md](../../../plans/archive/Tools-Fancy.md) §3) answers whether the instance is
 healthy, what it is, what it has been doing, what is switched on, what needs an administrator and where to go. It
 writes nothing, so it works for a view-only administrator; Auto refresh (`refresh=60` in the address) reads it again
 each minute in the browser. Each block is read in its actions:
@@ -92,7 +92,7 @@ whether Dev AIDE is mounted (`devMounted`): then an entity's and a service's pag
 
 `service/moqui/tools/SystemHomeServices.xml` has `get#SystemAttention`, the one list of what needs an administrator
 (resource readings past their `resource-watch` thresholds, failed job runs, system messages in error and the like;
-[plans/Tools-Fancy.md](../../../plans/Tools-Fancy.md) §3.4). `report/` holds the shipped dashboards, library panels
+[plans/archive/Tools-Fancy.md](../../../plans/archive/Tools-Fancy.md) §3.4). `report/` holds the shipped dashboards, library panels
 and alert rule templates: the `monitor-*` dashboards of Monitor, and in the System folder `system-home`,
 `system-db-pool` and the disk, memory, CPU and certificate alert rules.
 

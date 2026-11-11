@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- What the Tools home reads that is not one call of the framework (plans/Tools-Fancy.md §4.3). -->
+<!-- What the Tools home reads that is not one call of the framework (plans/archive/Tools-Fancy.md §4.3). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="get" noun="ScreenCount" transaction="ignore">
         <description>The count of screens the Tools home shows, as Tools › Artifact summary counts them (each root

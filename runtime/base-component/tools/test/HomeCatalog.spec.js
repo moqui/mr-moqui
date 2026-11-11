@@ -1,4 +1,4 @@
-// The navigation catalog of the app homes (plans/Tools-Fancy.md B7): the rule of template/HomeCatalog.js, which the
+// The navigation catalog of the app homes (plans/archive/Tools-Fancy.md B7): the rule of template/HomeCatalog.js, which the
 // sections of template/HomeParts.xml show. Rule tests, no screen is rendered: build() is called with a catalog and the
 // menu items of a made-up app, as sri.getMenuItems would give them for a user.
 // Run: ./moq test tools --spec HomeCatalog

@@ -1185,7 +1185,7 @@ type ReadingGauge = fn(&crate::context::resources::Readings) -> Option<f64>;
 /// A filesystem gauge's value for one filesystem.
 type FilesystemGauge = fn(&crate::context::resources::Filesystem) -> Option<f64>;
 
-/// The gauges of the resource readings (`context::resources`, plans/Tools-Fancy.md B3), named after the OpenTelemetry
+/// The gauges of the resource readings (`context::resources`, plans/archive/Tools-Fancy.md B3), named after the OpenTelemetry
 /// host and process metrics where there is one. Each collection reads the kept readings, so a minute's gauges share
 /// one read; a reading the platform does not report records nothing. Shares are 0 to 1.
 const RESOURCE_GAUGES: [(&str, ReadingGauge); 10] = [

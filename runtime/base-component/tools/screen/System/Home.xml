@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The System home (plans/Tools-Fancy.md §3): is this instance healthy, what is it, what has it been doing, what is
+<!-- The System home (plans/archive/Tools-Fancy.md §3): is this instance healthy, what is it, what has it been doing, what is
     switched on, what needs an administrator, and where to go from here. Every block is read in the actions as data:
     the runtime report and the status map with its resource readings (in-process), the attention service, and the
     navigation catalog of template/HomeParts.xml. The period of the Activity strip is the `period` URL parameter;

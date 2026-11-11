@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Tools App artifacts/authz -->
     <artifactGroups artifactGroupId="TOOLS_APP" description="Tools App (via root screen)">
         <artifacts artifactName="component://tools/screen/Tools.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
-        <!-- The Tools home's count of screens (plans/Tools-Fancy.md §4.3): count#Screens runs on a worker, outside the screen -->
+        <!-- The Tools home's count of screens (plans/archive/Tools-Fancy.md §4.3): count#Screens runs on a worker, outside the screen -->
         <artifacts artifactName="moqui.tools.ToolsHomeServices.get#ScreenCount" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
         <artifacts artifactName="moqui.tools.ToolsHomeServices.count#Screens" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
         <!-- Full permissions for the ADMIN user group -->
@@ -35,7 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- System App artifacts/authz -->
     <artifactGroups artifactGroupId="SYSTEM_APP" description="System App (via root screen)">
         <artifacts artifactName="component://tools/screen/System.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
-        <!-- The System home's attention list (plans/Tools-Fancy.md B5): what it reads is the System administrator's -->
+        <!-- The System home's attention list (plans/archive/Tools-Fancy.md B5): what it reads is the System administrator's -->
         <artifacts artifactName="moqui.tools.SystemHomeServices.get#SystemAttention" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
         <artifacts artifactName="moqui.tools.SystemHomeServices.get#CounterSeries" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
         <!-- Monitor (System › Monitor): the telemetry datasets, its services and entities; the screen is under System.xml -->

@@ -17,8 +17,8 @@
 //! starting" line; its warnings and errors are still logged where they happen. The report is a factory extension, so
 //! the second factory after an empty-database load starts with an empty one.
 //!
-//! Scripts read the same report as `ec.factory.getStartupReport()` ([`script_value`], plans/Tools-Fancy.md B1): the
-//! host records the routes and the ready time when it logs ([`StartupReport::record_ready`]).
+//! Scripts read the same report as `ec.factory.getStartupReport()` ([`script_value`], plans/archive/Tools-Fancy.md
+//! B1): the host records the routes and the ready time when it logs ([`StartupReport::record_ready`]).
 
 use std::sync::{Arc, Mutex};
 

@@ -4,7 +4,7 @@
   "title": "System home",
   "body": {
     "folder": "System",
-    "description": "The activity strip of the System home (plans/Tools-Fancy.md \u00a73.3): traffic, response time, CPU and memory of this server, or of the instances chosen.",
+    "description": "The activity strip of the System home (plans/archive/Tools-Fancy.md \u00a73.3): traffic, response time, CPU and memory of this server, or of the instances chosen.",
     "variables": [
       {
         "name": "instance",

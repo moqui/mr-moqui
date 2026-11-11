@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Gallery: the nav-card element (plans/Tools-Fancy.md B6), the navigation tile of an app home and of a landing's
+<!-- Gallery: the nav-card element (plans/archive/Tools-Fancy.md B6), the navigation tile of an app home and of a landing's
     shortcuts. Both sizes in a dashboard, with and without child links, with and without an icon and a text, a card that
     is no link, a card and a child link left out by their conditions, and a card per row of a list. Every link goes to
     another gallery screen. -->

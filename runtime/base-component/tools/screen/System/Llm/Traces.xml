@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- LLM and Agents › Traces (plans/Tools-Fancy.md 2.5): Monitor › AI, the traces with model calls, mounted a second time
+<!-- LLM and Agents › Traces (plans/archive/Tools-Fancy.md 2.5): Monitor › AI, the traces with model calls, mounted a second time
     beside Calls, Runs and Evals. Monitor's screen is the owner; this one adds the menu entry and runs its transitions
     here. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"

@@ -1,5 +1,12 @@
 # System and Tools homes
 
+> Archived 2026-11-11: built, phases P1 to P6, then the gaps and most of §10 (F1 to F6). What was built and where it
+> differs from the plan is in [§11](#11-as-built); the guides are the tools
+> [README](../../runtime/base-component/tools/README.md), [Monitoring](../../docs/tools/Monitoring.md) and
+> [Database](../../docs/tools/Database.md); what is still open is in
+> [Remaining-Work](../Remaining-Work.md#system-and-tools-apps), and the deliberate differences from Java in
+> [Parity-Diffs](../Parity-Diffs.md#system-and-tools-apps-2026-11-10).
+
 Nov 10, 2026. Built, phases P1 to P6. Where the build differs from the plan below is in [§11](#11-as-built). The
 decisions taken that day are in [§9](#9-decisions); none is open.
 
@@ -15,7 +22,7 @@ or a developer opens on a new instance. This plan covers three things:
    their reader needs first, with the data and widgets that takes.
 
 Utility comes first; the look follows from showing real, live information well. Nothing here restyles Quasar or adds
-color outside the theme ([style guide](../runtime/component/mr-boss/plan/style-guide.md) §1).
+color outside the theme ([style guide](../../runtime/component/mr-boss/plan/style-guide.md) §1).
 
 Contents: [1 today](#1-what-is-there-today) · [2 app structure](#2-app-structure) · [3 System home](#3-system-home) ·
 [4 Tools home](#4-tools-home) · [5 building blocks](#5-building-blocks) · [6 modes, access, speed](#6-render-modes-access-and-speed) ·
@@ -119,7 +126,7 @@ opens to its screens. Its screens keep their names and content.
   sources (`moqui-report/src/recovery/execute.rs`, an incident link; `moqui-tui/src/components/report.rs`, the trace
   link), five Rust test files (`monitor_tui.rs`, `monitor_edge.rs`, `tools_screens.rs`, `openui_tests.rs`,
   `gap_tests.rs`), `acceptance/client/Monitoring.spec.js`, the agent test fixtures and the gallery's Record360. Each
-  changes; no alias route stays ([practices](../docs/dev/Practices-App-Dev.md) §3, one route per screen). The routes
+  changes; no alias route stays ([practices](../../docs/dev/Practices-App-Dev.md) §3, one route per screen). The routes
   written in Rust and in `WebrootReport.js` are the place to give the Monitor path one constant each.
 - **Access: `MONITOR_APP` goes.** Monitor is part of System and is granted with it.
   - The `MONITOR_APP` group and its `ADMIN` row leave `MonitoringSecurityData.xml`. Its members that are not the
@@ -478,8 +485,8 @@ Two tiers, both built from the catalog (B7), so a hidden or replaced screen has 
 | B2 | Resource readings | Rust, `context/status.rs`; conf | A `Resources` map in the status map, each reading with its level (`ok`, `warning`, `critical`, or null when not reported). **CPU**: the 1, 5 and 15-minute load (`/proc/loadavg`), the 5-minute share of the processors, and this process's CPU share between two reads (`/proc/self/stat`; `moqui-host`'s load runner has this reader, which moves here so there is one). **Memory**: the process's resident and peak, the system's total and available (`/proc/meminfo`), the limit in force (cgroup `memory.max` when set, else the total), swap. **Filesystems**: one row per filesystem under the runtime directory and those of its directories on a filesystem of their own (`db`, `log`, `tmp`, `txlog`, `opensearch`), and the system temp directory: total, available to the server's user, share used, inodes used, what is on it. From `rustix::fs::statvfs`: `rustix` is already a dependency of `moqui-core`, so this adds its `fs` feature, no crate and no `unsafe`. **Open files**: the count of `/proc/self/fd` and the soft limit of `/proc/self/limits`. The readings are kept for ten seconds, so a page, the gauges and the attention service share one read, and no thread wakes for them. Also in the status map: each data source's pool as numbers beside `detail`; `Ready` and `Draining`; the request pool. **Thresholds**: a `<resource-watch>` conf element with a warning and a critical value for each reading, the defaults of §3.4. **Platforms**: Linux has all of it; macOS the filesystems; Windows none until a reader without `unsafe` is chosen (§10) |
 | B3 | Gauges | Rust, `telemetry::register_runtime_gauges` | From B2, once a minute: system load (1 and 5 minutes, and the share of the processors), process CPU, memory (the system's available, the share of the limit; the process's is recorded today), each filesystem's share used and free bytes (one series per filesystem, its mount point allowed as the metric's attribute in the default conf), open files, service workers active and queued, request workers busy. Named after the OpenTelemetry host and process metrics where one exists. Ten or so more documents a minute in `otel_metrics`, plus one per filesystem, kept by the existing retention; on a quiet instance this is the plan's whole storage cost, and it follows `telemetry_enabled` |
 | B4 | Shipped definitions | `report/*.json`, folder System | `system-home`: four time series panels in one row, an `instance` variable. A library panel of the database pool (§2.5). Three alert rule templates over the gauges: low disk space, high memory use, high CPU load, each with the thresholds of §3.4; a template runs once copied, which gives it an owner and contact points |
-| B5 | `get#SystemAttention` | Service, `service/moqui/tools/SystemHomeServices.xml` | Returns the items of §3.4 as `{severity, text, count, link, parameters}`: the resource readings whose level is not `ok`, then the others. Each item is checked on its own: a failure logs an error naming it and the rest still come back ([AGENTS.md](../AGENTS.md), failure tolerance). Each checks the permission of what it reads and is left out without it. Counts only, each with a limit |
-| B6 | `nav-card` | XML screen element | `<nav-card title text icon link size="md|lg" condition style>` with up to three child `link`s. qvt: `m-nav-card`, a flat bordered `q-card` that is one link, the icon in a tonal avatar, the title `text-subtitle1 text-weight-medium`, the text `text-caption m-muted`, the child links as text links along the bottom. html: a card with an anchor. tui: a link node with the title and the text. text and print: "Title: text". Laid out by `dashboard`. The whole [checklist](../runtime/component/mr-boss/plan/style-guide.md#81-adding-an-xml-element-the-checklist) applies: XSD, each render mode's macro file and the qvt static mirror, the wrapper and its precompiled render, the CSS class, the goldens, a `Qvt-Client.md` row and a gallery screen |
+| B5 | `get#SystemAttention` | Service, `service/moqui/tools/SystemHomeServices.xml` | Returns the items of §3.4 as `{severity, text, count, link, parameters}`: the resource readings whose level is not `ok`, then the others. Each item is checked on its own: a failure logs an error naming it and the rest still come back ([AGENTS.md](../../AGENTS.md), failure tolerance). Each checks the permission of what it reads and is left out without it. Counts only, each with a limit |
+| B6 | `nav-card` | XML screen element | `<nav-card title text icon link size="md|lg" condition style>` with up to three child `link`s. qvt: `m-nav-card`, a flat bordered `q-card` that is one link, the icon in a tonal avatar, the title `text-subtitle1 text-weight-medium`, the text `text-caption m-muted`, the child links as text links along the bottom. html: a card with an anchor. tui: a link node with the title and the text. text and print: "Title: text". Laid out by `dashboard`. The whole [checklist](../../runtime/component/mr-boss/plan/style-guide.md#81-adding-an-xml-element-the-checklist) applies: XSD, each render mode's macro file and the qvt static mirror, the wrapper and its precompiled render, the CSS class, the goldens, a `Qvt-Client.md` row and a gallery screen |
 | B7 | Navigation catalog | Screen actions and a shared section, `template/HomeParts.xml` | Each home lists its entries once: `{group, path, text, featured, links}`. An entry names a screen that is in a menu; a screen out of the menu (a detail screen, Connections) is reached from its parent. The shared section drops an entry the menu does not show for this user (`sri.getMenuItems` of its parent, which leaves out what `menu-include` or a conf override hides and what the user may not view), takes the title and icon from the menu item, and puts menu items no entry names in a last group, so a screen a component mounts is never missing. A component adds or changes entries with a `screen-extend` `actions-extend`, as `AppList.xml`'s suites |
 | B8 | Recent entities | Screen, `Tools/Data/Grid.xml` | Opening an entity in the grid puts its name first in the user preference `tools.recent` (twenty names), as `REPORT_RECENT` does for dashboards |
 
@@ -573,14 +580,15 @@ Nothing is open.
 
 ## 10. Later
 
-Not in the phases above; each stands on its own.
+Not in the phases above; each stands on its own. Built since, except the readers for Windows and macOS and an external
+database's disk: see Filled after in [§11](#11-as-built).
 
 - **Sparklines on counters**: a `sparkline` attribute on `number-card` (a list of numbers, drawn as the stat panel
   draws its own), so a landing's counters show their last hour without a chart row.
 - **Meters in the Resources block**: a bar per row (`q-linear-progress` in the browser, block characters in the
   terminal) once the plain rows are in use.
 - **Disk and memory on Windows, memory on macOS**: a reader without `unsafe` (a crate that wraps the system call, with
-  its license and advisory check), since [the Rust practices](../docs/dev/Practices-Rust.md) add no `unsafe`.
+  its license and advisory check), since [the Rust practices](../../docs/dev/Practices-Rust.md) add no `unsafe`.
 - **Certificate expiry** of the HTTPS listener as a reading, a gauge and an attention item.
 - **The database's own disk** for an external Postgres, from the database, where its role may read it.
 - **Drawer groups**: a `menu-group` on a screen or `subscreens-item`, drawn as a caption between entries, so a long
@@ -644,8 +652,33 @@ The plan above stands as written, with these differences in the code.
 - The `activity` panel of `monitor-artifacts` charts hits only, so a service's or an entity's page shows its hits
   over seven days; the duration is in Monitor › Artifacts, which the link beside the embed opens narrowed to it.
 
-**Not built.**
+**Filled after (F1 to F6, Nov 10 and 11).** A comparison of the Java System and Tools screens with these, and of
+this plan with the code, found what was broken or left, and §10 was built except its platform readers.
 
-- The links between Tools and Dev AIDE on a dev instance (§2.3): Tools' entity and service screens do not link to
-  Dev AIDE's. Dev AIDE's entity screen links to the data grid, and the Tools home links to Dev AIDE when it is mounted.
+- **Tools, repaired.** Data › Export to the browser (it called a writer the data writer never had), its filter as a
+  JavaScript object, Upload Snapshot (a stub), and the REST API screen, which links to the JSON documents: Swagger UI
+  was never shipped and is not coming (Dev AIDE explores the APIs). A grid filter may begin with an operator
+  ([Database](../../docs/tools/Database.md)), and an entity's row opens its record. Tables filters by rows; Schema ›
+  Entities shows the view entities alone.
+- **Threads.** A thread's native frames cannot be read from another thread without `unsafe`, so `moqui-core`'s
+  `context/activity.rs` mirrors each thread's artifact stack where another thread reads it, and System › Threads
+  shows what a thread runs, for how long, its user, its trace and that stack. Interrupt, the lock columns and the
+  pool-size transition are gone.
+- **Tools and Dev AIDE** link to each other's entity and service pages when Dev AIDE is mounted. basic-comms adds
+  Voice and Chat Bridges to the System home with a `screen-extend`, and the Tools home is a clean server-static
+  template.
+- **Menu groups** (§10 drawer groups): `menu-group` on a `subscreens-item`, by default the screen's
+  `default-menu-group`, a caption in the browser's drawer and a heading in the terminal's. The `html` navigation
+  does not write it.
+- **Counters and rows** (§10): `number-card` has `sparkline` (a line in qvt, bars in tui, nothing in html), filled on
+  the System home by `get#CounterSeries`. The Resources meters and Auto refresh are `render-mode` texts and a client
+  component (`m-page-refresh`), not new XML elements; Dashboards keeps its own refresh timer.
+  `system_home_dashboard` names the home's dashboard. The Tools home shows the last Check Tables run of the process:
+  what it changed and what failed, since a check applies the differences it finds.
+- **Certificate expiry** (§10): a resource reading from the certificates in `runtime/cert`, with `resource-watch`
+  thresholds (30 and 7 days), a gauge, an attention item and an alert rule template.
+- **System messages.** A message whose outcome a person settled (Admin P13) stays Sending or Consuming, so the
+  home's count of messages in error never had it; the failed and uncertain ones together are the Admin app's.
+- **Not done here:** resource readers off Linux and an external database's disk (§10), a web script console (by
+  decision), and the items of [Remaining-Work](../Remaining-Work.md#system-and-tools-apps).
 

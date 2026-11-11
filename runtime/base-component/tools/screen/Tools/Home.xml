@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Tools home (plans/Tools-Fancy.md §4): which instance and database this is and what the user may do here, an
+<!-- The Tools home (plans/archive/Tools-Fancy.md §4): which instance and database this is and what the user may do here, an
     entity's records or a service one search away, the size of the model, the main tools, what the user was doing and
     what is running, and everything else. Every block is read in the actions as data, so the permission flags and
     the counts are in the screen package of a server-static template; the page writes nothing (the database picker

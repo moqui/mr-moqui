@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What the machine and this process have left (plans/Tools-Fancy.md B2): CPU load, memory, the filesystems the
+//! What the machine and this process have left (plans/archive/Tools-Fancy.md B2): CPU load, memory, the filesystems the
 //! instance writes to, open files and swap, each with a level from the conf's `resource-watch` thresholds. The status
 //! map carries them as `Resources` ([`super::status`]), the telemetry gauges record them each minute
 //! (`telemetry::register_runtime_gauges`) and the System home's attention list names those that are not `ok`.
@@ -108,7 +108,7 @@ impl Limits {
     }
 }
 
-/// The `resource-watch` thresholds; the defaults are those of plans/Tools-Fancy.md §3.4.
+/// The `resource-watch` thresholds; the defaults are those of plans/archive/Tools-Fancy.md §3.4.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Thresholds {
     /// Each filesystem's share of its space used.
@@ -714,7 +714,7 @@ pub(crate) fn filesystems(directories: &[(String, PathBuf)]) -> Vec<Filesystem> 
     rows.into_iter().map(|row| row.filesystem).collect()
 }
 
-/// Off Unix no filesystem is reported until a reader without `unsafe` is chosen (plans/Tools-Fancy.md §10).
+/// Off Unix no filesystem is reported until a reader without `unsafe` is chosen (plans/archive/Tools-Fancy.md §10).
 #[cfg(not(unix))]
 pub(crate) fn filesystems(_directories: &[(String, PathBuf)]) -> Vec<Filesystem> {
     Vec::new()

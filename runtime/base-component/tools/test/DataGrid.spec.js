@@ -1,7 +1,7 @@
 // The data grid's transitions (screen/Tools/Data/Grid.xml): an export download only from the user's own place, a save
 // only by POST, and the terminal render of an entity's rows (its own tui template). A SQL source in a URL is refused in
 // framework/test/client/SecurityScreens.spec.js, over HTTP.
-// Opening an entity puts it first in the user's recent entities (plans/Tools-Fancy.md B8, template/ToolsRecent.js).
+// Opening an entity puts it first in the user's recent entities (plans/archive/Tools-Fancy.md B8, template/ToolsRecent.js).
 // Run: ./moq test tools --spec DataGrid
 const tools = () => ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml")
 
