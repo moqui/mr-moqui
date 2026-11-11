@@ -335,8 +335,21 @@ fn canonical(query: &Query) -> String {
     }
 }
 
-/// The definitions a definition reaches by reference and the datasets its queries name. `read` answers a definition, or
-/// None for one that is missing or not the reader's.
+/// The definitions one walk follows, and the name it marks unread when there are more.
+const WALK_LIMIT: usize = 500;
+const BEYOND: &str = "(more definitions than are followed)";
+/// The dataset a query without a `datasetId` reads (lib.rs `execute_query_inner`): the telemetry spans for a document,
+/// service map or flame query, the telemetry metrics otherwise. Named here so a fingerprint counts it.
+fn default_dataset(query: &Json) -> &'static str {
+    match query["mode"].as_str() {
+        Some("documents" | "serviceMap" | "flame") => "otel_spans",
+        _ => "otel_metrics",
+    }
+}
+
+/// The definitions a definition reaches by reference and the datasets its queries name, a query that names none
+/// counted by the dataset it reads by default. `read` answers a definition, or None for one that is missing or not the
+/// reader's.
 fn walk(
     id: &str,
     read: &dyn Fn(&str) -> Option<Json>,
@@ -344,9 +357,15 @@ fn walk(
     datasets: &mut BTreeSet<String>,
     unread: &mut BTreeSet<String>,
 ) {
-    if seen.len() >= 500 || !seen.insert(id.to_owned()) {
+    if seen.contains(id) {
         return;
     }
+    if seen.len() >= WALK_LIMIT {
+        // more definitions than are followed: what is past the bound is not known to be read, so nobody is equivalent
+        unread.insert(BEYOND.to_owned());
+        return;
+    }
+    seen.insert(id.to_owned());
     let Some(definition) = read(id) else {
         unread.insert(id.to_owned());
         return;
@@ -372,7 +391,18 @@ fn collect(
                         datasets.insert(id.to_owned());
                     }
                     ("panelRef" | "dashboardRef" | "definitionId", Some(id)) => walk(id, read, seen, datasets, unread),
-                    _ => collect(value, read, seen, datasets, unread),
+                    _ => {
+                        // a leaf query, or a query variable, that names no dataset reads the engine's default one
+                        let defaulted = |item: &&Json| item.is_object() && !item["datasetId"].is_string();
+                        for item in value.as_array().into_iter().flatten().filter(defaulted) {
+                            if key == "queries" && !item["queries"].is_array() {
+                                datasets.insert(default_dataset(item).to_owned());
+                            } else if key == "variables" && item["kind"] == "query" {
+                                datasets.insert("otel_metrics".to_owned());
+                            }
+                        }
+                        collect(value, read, seen, datasets, unread);
+                    }
                 }
             }
         }
@@ -432,6 +462,38 @@ pub(crate) fn scope(ec: &ExecutionContext, definition_id: &str) -> Scope {
             }
         }
     }
+    // What a dashboard reads though its definition names it nowhere (lib.rs `dashboard_frames_filtered`): the change
+    // markers, and over a business dataset each registered source of business events. Each is read as the viewer and
+    // adds nothing for one who may not read it, so whether and how this user reads it is part of what they see; it is
+    // not a source the report needs, so one they may not read does not make the report denied.
+    let mut implicit = vec!["monitor_annotations".to_owned()];
+    if datasets.iter().any(|id| {
+        definitions::read_unchecked(ec, id)
+            .ok()
+            .flatten()
+            .is_some_and(|definition| crate::business::is_business(&definition["body"]))
+    }) {
+        implicit.extend(crate::annotations::source_datasets(ec));
+    }
+    implicit.sort();
+    implicit.dedup();
+    for id in implicit.iter().filter(|id| !datasets.contains(*id)) {
+        parts.push(match crate::resolve_dataset(ec, id, true) {
+            Ok(dataset) => {
+                let mut documents = match &dataset.target {
+                    moqui_core::search::Target::Documents(documents) => documents.clone(),
+                    moqui_core::search::Target::Index(index) => vec![format!("index:{index}")],
+                };
+                documents.sort();
+                format!(
+                    "markers {id} documents[{}] filter[{}]",
+                    documents.join(","),
+                    canonical(&dataset.filter)
+                )
+            }
+            Err(_) => format!("markers {id} unread"),
+        });
+    }
     let mut hash = Sha256::new();
     for part in &parts {
         hash.update(part.as_bytes());
@@ -466,18 +528,30 @@ fn holds_as(ec: &ExecutionContext, username: &str, artifact: &str, action: &str)
         && moqui_core::user::authorize_own("AT_SERVICE", artifact, action).is_ok()
 }
 
-/// Whether a report schedule's definition reads a business dataset, read whoever asks: the engine's own question, whose
-/// answer no caller sees.
+/// A dataset whose rows depend on who reads it: a business dataset, and any dataset scoped by a `rowFilterService` or by
+/// `contextFilters` (the viewer's id, groups or account), whatever its signal, such as a business events dataset over
+/// the annotations. Its owner's result is not another user's to receive unchecked.
+fn viewer_scoped(body: &Json) -> bool {
+    crate::business::is_business(body)
+        || body["rowFilterService"].is_string()
+        || body["contextFilters"]
+            .as_array()
+            .is_some_and(|filters| !filters.is_empty())
+}
+
+/// Whether a report schedule's definition reads a dataset whose rows depend on the viewer ([`viewer_scoped`]), read
+/// whoever asks: the engine's own question, whose answer no caller sees.
 pub(crate) fn reads_business(ec: &ExecutionContext, definition_id: &str) -> bool {
     let (mut seen, mut datasets, mut unread) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     let read = |id: &str| definitions::read_unchecked(ec, id).ok().flatten();
     walk(definition_id, &read, &mut seen, &mut datasets, &mut unread);
     datasets
         .iter()
-        .any(|id| read(id).is_some_and(|definition| crate::business::is_business(&definition["body"])))
+        .any(|id| read(id).is_some_and(|definition| viewer_scoped(&definition["body"])))
 }
 
-/// A schedule held to owner equivalence: one `store#Schedule` saved, or any whose definition reads a business dataset.
+/// A schedule held to owner equivalence: one `store#Schedule` saved, or any whose definition reads a business dataset or
+/// another whose rows depend on the viewer.
 pub(crate) fn business(ec: &ExecutionContext, schedule: &EntityValue) -> bool {
     !field(schedule, "deliveryMode").is_empty() || reads_business(ec, field(schedule, "reportDefinitionId"))
 }
@@ -1133,6 +1207,20 @@ pub(crate) struct Sending<'a> {
     pub mail: &'a dyn Fn(&str, &Rendered) -> Result<Parameters, Error>,
 }
 
+/// The state of a recipient's delivery in the occurrence as it stands, "" when they have none yet.
+fn standing(s: &Sending<'_>, user_id: &str) -> Result<String, Error> {
+    let _authz = s.ec.disable_authz();
+    Ok(s.facade
+        .find(DELIVERY)?
+        .use_cache(false)
+        .eq("occurrenceId", Value::string(s.occurrence_id))
+        .eq("userId", Value::string(user_id))
+        .eq("channel", Value::string("email"))
+        .one()?
+        .map(|row| field(&row, "statusId").to_owned())
+        .unwrap_or_default())
+}
+
 /// Record one recipient's state in an occurrence, creating the row or revising it.
 fn record(
     s: &Sending<'_>,
@@ -1235,6 +1323,12 @@ pub(crate) fn send_each(s: &Sending<'_>, attempted: &mut bool, renders: &mut i64
     for (position, recipient) in recipients.iter().enumerate() {
         let recipient = &recipient.account;
         if s.only.is_some_and(|only| !only.contains(&recipient.user_id)) {
+            continue;
+        }
+        // An occurrence run again (a run that died or failed before its schedule's last run time was kept, a second
+        // retry of the same delivery): one who was sent it is never sent it twice, and one whose outcome is not known
+        // waits for a person's word (reconcile#ReportRecipient). Their rows stand as they are.
+        if matches!(standing(s, &recipient.user_id)?.as_str(), SENT | UNCERTAIN) {
             continue;
         }
         considered += 1;
@@ -1925,6 +2019,53 @@ mod tests {
         );
         // a library panel the reader may not read is named, so their fingerprint differs from one who reads it
         assert_eq!(unread.into_iter().collect::<Vec<_>>(), ["private"]);
+    }
+
+    #[test]
+    fn a_query_that_names_no_dataset_counts_the_one_it_reads_and_a_walk_past_its_bound_is_unread() {
+        let board = json!({"type":"dashboard","body":{
+            "variables":[{"kind":"query","field":"service.name"},{"kind":"custom","options":["a"]}],
+            "panels":{"a":{"queries":[{"aggregations":[]},{"mode":"documents"},{"datasetId":"sales"},
+                {"queries":[{"datasetId":"stock"},{"mode":"flame"}]}]}}}});
+        let (mut seen, mut datasets, mut unread) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+        walk(
+            "board",
+            &|id| (id == "board").then(|| board.clone()),
+            &mut seen,
+            &mut datasets,
+            &mut unread,
+        );
+        assert_eq!(
+            datasets.into_iter().collect::<Vec<_>>(),
+            ["otel_metrics", "otel_spans", "sales", "stock"]
+        );
+        assert!(unread.is_empty());
+        // a chain of references longer than the walk follows: the rest is not known to be read
+        let chain = |id: &str| {
+            let next = id.parse::<usize>().ok()? + 1;
+            Some(json!({"type":"dashboard","body":{"panels":{"a":{"panelRef":next.to_string()}}}}))
+        };
+        let (mut seen, mut datasets, mut unread) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+        walk("0", &chain, &mut seen, &mut datasets, &mut unread);
+        assert_eq!(seen.len(), WALK_LIMIT);
+        assert_eq!(unread.into_iter().collect::<Vec<_>>(), [BEYOND]);
+    }
+
+    #[test]
+    fn a_dataset_whose_rows_depend_on_the_viewer_holds_its_schedule_to_the_check() {
+        assert!(viewer_scoped(&json!({"signal":"business","documentType":"Sales"})));
+        // a business events dataset over the annotations: no signal, scoped by the viewer's organizations
+        assert!(viewer_scoped(
+            &json!({"indexName":"monitor_annotations","rowFilterService":"a.b.get#Filter"})
+        ));
+        assert!(viewer_scoped(
+            &json!({"documentType":"Mine","contextFilters":[{"field":"userId","contextKey":"userId"}]})
+        ));
+        // a technical dataset: the same rows for every reader, as before
+        assert!(!viewer_scoped(
+            &json!({"indexName":"otel_logs","rowFilter":{"field":{"name":"level","op":"eq","value":"error"}},
+            "contextFilters":[]})
+        ));
     }
 
     #[test]

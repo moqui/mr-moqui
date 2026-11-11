@@ -90,11 +90,10 @@ pub fn create_annotation(
     Ok(output(json!({"annotationId":id,"annotation":annotation})))
 }
 
-/// The business events of a time range the viewer may read, for a dashboard over business data: each registered source
-/// (a `ReportAnnotationSource` enumeration whose enumCode is a dataset over the annotations) is read as the viewer, so its
-/// own artifact and its row filter (the viewer's organizations) decide what shows, and only `business` markers are taken
-/// from it whatever the dataset says. A source the viewer may not read, or one that fails, adds nothing; the others go on.
-pub(super) fn business_markers(ec: &ExecutionContext, from: &str, thru: &str) -> Vec<Json> {
+/// The datasets registered as sources of business events (each enumCode of a `ReportAnnotationSource` enumeration). A
+/// dashboard over business data reads each of them as its viewer though its definition names none, so a scope
+/// fingerprint counts them too (delivery.rs). When they cannot be read, none: logged, and the dashboard goes on.
+pub(super) fn source_datasets(ec: &ExecutionContext) -> Vec<String> {
     let sources = super::metadata(ec, || {
         ec.factory()
             .entity()
@@ -104,19 +103,27 @@ pub(super) fn business_markers(ec: &ExecutionContext, from: &str, thru: &str) ->
             .use_cache(true)
             .list()
     });
-    let sources = match sources {
-        Ok(sources) => sources,
+    match sources {
+        Ok(sources) => sources
+            .iter()
+            .filter_map(|row| row.get("enumCode").and_then(Value::as_str))
+            .filter(|dataset| !dataset.is_empty())
+            .map(str::to_owned)
+            .collect(),
         Err(error) => {
             tracing::error!(%error, "business annotation sources could not be read; continuing without them");
-            return Vec::new();
+            Vec::new()
         }
-    };
+    }
+}
+
+/// The business events of a time range the viewer may read, for a dashboard over business data: each registered source
+/// (a `ReportAnnotationSource` enumeration whose enumCode is a dataset over the annotations) is read as the viewer, so its
+/// own artifact and its row filter (the viewer's organizations) decide what shows, and only `business` markers are taken
+/// from it whatever the dataset says. A source the viewer may not read, or one that fails, adds nothing; the others go on.
+pub(super) fn business_markers(ec: &ExecutionContext, from: &str, thru: &str) -> Vec<Json> {
     let mut markers = Vec::new();
-    for dataset in sources
-        .iter()
-        .filter_map(|row| row.get("enumCode").and_then(Value::as_str))
-        .filter(|dataset| !dataset.is_empty())
-    {
+    for dataset in &source_datasets(ec) {
         let query = json!({"datasetId":dataset,"from":from,"thru":thru,"pageSize":200,
             "query":{"field":{"name":"source","op":"eq","value":BUSINESS}}});
         match super::documents(ec, &query) {

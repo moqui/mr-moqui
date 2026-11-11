@@ -529,14 +529,18 @@ A mount offers it from each panel's menu by naming its drill screen in `reportLi
 
 A schedule renders as its owner. A **business schedule** sends that result to another user only when it is what that user
 would see, and to each recipient in a message of their own. A schedule is a business one when `store#Schedule` saved it (its
-`deliveryMode` is `personal` or `group`) or when its definition reads a business dataset, whatever wrote its row: one made by
-`create#Schedule`, or by an entity write, is held to the same check at each run. A technical schedule (telemetry and other
-datasets that are not business ones) is delivered as before, in owner mode, to one address line.
+`deliveryMode` is `personal` or `group`) or when its definition reads a business dataset or any other dataset whose rows
+depend on the viewer (one with a `rowFilterService` or `contextFilters`, such as a business events dataset over the
+annotations), whatever wrote its row: one made by `create#Schedule`, or by an entity write, is held to the same check at each
+run. A technical schedule (telemetry and other datasets that give every reader the same rows) is delivered as before, in
+owner mode, to one address line.
 
 - **The scope fingerprint.** A user's fingerprint for a definition is a hash of what they read of the definition and of
   everything it references (each dashboard and library panel, read or not), the documents of each dataset they may read, each
   dataset's resolved row filter (`rowFilter`, `contextFilters` and the `rowFilterService`'s answer, in a form that does not
-  depend on the order of its values) and, for a dataset whose records are restricted, whether they hold them. It is computed in
+  depend on the order of its values) and, for a dataset whose records are restricted, whether they hold them. What a
+  dashboard reads without naming it counts too: the telemetry dataset of a query that names none, the change markers
+  (`monitor_annotations`) and, over a business dataset, each registered source of business events. It is computed in
   a context of its own signed in as that user, so a screen's inheritable grant or a disabled authorization never enters it.
   Two users are owner-equivalent when their fingerprints are equal. A policy that names the viewer's own groups
   (`ReportUserGroups`) gives users of different groups different filters, so different fingerprints; a policy that answers the
@@ -563,7 +567,8 @@ datasets that are not business ones) is delivered as before, in owner mode, to o
   with its message id, `skipped` with a safe reason (`scope-differs`, `inactive`, `no-address`, `over-cap`,
   `owner-unauthorized`, `delivery-blocked`, `schedule-changed`, `removed-audience`), `failed` (`transport-failure`,
   `source-failure`) or `uncertain` (the transport does not know whether the message was accepted). One recipient's failure
-  does not stop the others. One render serves every recipient of a locale (`renderCount`): they share the definition's
+  does not stop the others. An occurrence that runs again (a run that ended before its schedule's last run time was
+  kept) sends to nobody whose delivery is `sent` or `uncertain`. One render serves every recipient of a locale (`renderCount`): they share the definition's
   version and the fingerprint. A data export's message carries its files; a PDF's or a picture's also the dashboard inline.
 - **No row keeps a report.** An occurrence and its deliveries are evidence: who, when, which revision and version, what state
   and which reason code. `find#ReportOccurrences` lists the viewer's own schedules' occurrences as status and counters; with

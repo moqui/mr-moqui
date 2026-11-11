@@ -446,6 +446,59 @@ feature("a retry sends only the failed recipient, and an uncertain delivery wait
     }
 })
 
+feature("an occurrence run again sends to nobody who was sent it, and leaves an outcome that is not known", {
+    when() {
+        const scheduleId = String(one("moqui.screen.ScreenScheduled", {reportOwnerId: "RDA_OWNER"}).screenScheduledId)
+        // a run that ended before its last run time was kept: the schedule is due again for the same cron instant
+        const due = () =>
+            sys(() => {
+                const lock = ec.entity.find("moqui.screen.ScreenScheduledLock").condition("screenScheduledId", scheduleId).one()
+                lock.lastRunTime = null
+                lock.update()
+                return call(R + "run#ScheduledReport", {screenScheduledId: scheduleId})
+            })
+        due()
+        const occurrenceId = String(
+            one("moqui.report.ReportOccurrence", {screenScheduledId: scheduleId, occurrenceKind: "scheduled"}).occurrenceId
+        )
+        const row = userId => one("moqui.report.ReportRecipientDelivery", {occurrenceId, userId})
+        const set = (userId, statusId, reasonCode) =>
+            sys(() => {
+                const delivery = row(userId)
+                delivery.statusId = statusId
+                delivery.reasonCode = reasonCode
+                delivery.update()
+            })
+        set("RDA_FRENCH", "RptDlvFailed", "transport-failure")
+        set("RDA_EQUAL", "RptDlvUncertain", "uncertain")
+        capture.clear()
+        due()
+        return {
+            sentTo: toLists(),
+            occurrences: sys(() =>
+                ec.entity
+                    .find("moqui.report.ReportOccurrence")
+                    .condition({screenScheduledId: scheduleId, occurrenceKind: "scheduled"})
+                    .count()
+            ),
+            french: String(row("RDA_FRENCH").statusId),
+            equal: String(row("RDA_EQUAL").statusId),
+            ownerAttempts: Number(row("RDA_OWNER").attemptCount),
+            statusId: String(one("moqui.report.ReportOccurrence", {occurrenceId}).statusId)
+        }
+    },
+    then({sentTo, occurrences, french, equal, ownerAttempts, statusId}) {
+        // the same occurrence, and one message: to the recipient whose delivery had failed
+        occurrences == 1
+        sentTo == "rda.french@example.test"
+        french == "RptDlvSent"
+        ownerAttempts == 1
+        // not known is never sent again without a person's word
+        equal == "RptDlvUncertain"
+        statusId == "RptOccIncomplete"
+    }
+})
+
 feature("a disabled owner's schedule pauses until a qualified owner takes it and its recipients pass the new owner's check", {
     when() {
         const scheduleId = String(one("moqui.screen.ScreenScheduled", {reportOwnerId: "RDA_OWNER"}).screenScheduledId)
