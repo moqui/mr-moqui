@@ -100,6 +100,8 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::speech::transcribe_audio",
         "moqui_core::service::spreadsheet::load_spreadsheet_entity",
         "moqui_core::service::spreadsheet::read_spreadsheet",
+        "moqui_core::service::sign_in_policy::get_sign_in_policy_values",
+        "moqui_core::service::sso::check_flow",
         "moqui_core::service::sso::handle_callback",
         "moqui_core::service::sso::login_user",
         "moqui_core::service::sso::logout_user",
