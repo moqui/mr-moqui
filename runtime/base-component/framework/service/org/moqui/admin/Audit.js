@@ -316,12 +316,22 @@ function callChangeSource(p) {
         projection => projection.sourceService === sourceService && (!wanted.size || wanted.has(projection.auditProjectionId))
     )
     if (!sourceService || !projections.length) throw new Error("Unknown audit source " + sourceService)
+    // a registration of every other field (*) does not cover a field registered on its own: the owner is told which, unless
+    // that field's own projection is among these
+    const given = keyed(projections)
     const parameters = {
-        projectionList: projections.map(projection => ({
-            auditProjectionId: projection.auditProjectionId,
-            changedEntityName: projection.changedEntityName,
-            changedFieldName: projection.changedFieldName
-        })),
+        projectionList: projections.map(projection =>
+            Object.assign(
+                {
+                    auditProjectionId: projection.auditProjectionId,
+                    changedEntityName: projection.changedEntityName,
+                    changedFieldName: projection.changedFieldName
+                },
+                projection.wildcard
+                    ? {exceptFieldNames: projection.otherFields.filter(name => !given.has(keyOf(projection.changedEntityName, name)))}
+                    : {}
+            )
+        ),
         limit: Math.min(Math.max(Number(p.limit) || 50, 1), maxDepth)
     }
     for (const name of ["changedByUserId", "recordKey", "visitId", "fromDate", "thruDate"])

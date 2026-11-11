@@ -330,10 +330,12 @@ function revokeSessions(p) {
     }
     let sessionCount = 0
     let visitCount = 0
+    const ended = new Set()
     for (const [userId, visitIds] of byUser) {
         try {
             sessionCount += Number(UserSecurityChecks.endUserSessions(userId, visitIds))
             visitCount += visitIds ? visitIds.length : 0
+            ended.add(userId)
         } catch (error) {
             // one account's failure is named; the others' sessions still end
             ec.logger.error("Sessions of " + userId + " not ended: " + error.message)
@@ -342,9 +344,10 @@ function revokeSessions(p) {
     }
     if (byUser.size)
         ec.logger.info("Sessions ended by " + me + " for " + Array.from(byUser.keys()).join(", ") + ": " + sessionCount)
-    // another account's sessions ended by an administrator are evidence (impl-admin P17): who, whose, and how many were named
+    // another account's sessions ended by an administrator are evidence (impl-admin P17): who, whose, and how many were named;
+    // none for an account whose sessions could not be ended
     for (const [userId, visitIds] of byUser)
-        if (userId !== me)
+        if (userId !== me && ended.has(userId))
             accessEvidence(userId, "sessions", visitIds ? visitIds.length + " sessions ended" : "Every session ended", null)
     return {sessionCount, visitCount, refusedCount}
 }

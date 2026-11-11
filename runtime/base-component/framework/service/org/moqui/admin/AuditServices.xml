@@ -32,7 +32,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The contract of an owner's audit source (a projection's sourceService): the audit rows of the
             given registered projections that are within the caller's own scope, newest first. projectionList is the
             registered projections of this source the caller may read (auditProjectionId, changedEntityName,
-            changedFieldName); the owner reads only the entities it knows and checks ADMIN_AUDIT_VIEW itself. The
+            changedFieldName; when the field is *, every field of the entity but exceptFieldNames, those registered on
+            their own and not among these); the owner reads only the entities it knows and checks ADMIN_AUDIT_VIEW itself. The
             filters are the caller's (changedByUserId, recordKey matched to either key value, visitId, fromDate and
             thruDate in milliseconds, actorOnly for the rows a signed-in user made), limit the rows to answer. It answers ids only (auditIdList, of
             EntityAuditLog.auditHistorySeqId) and changeCount, how many match in the caller's scope: never a
