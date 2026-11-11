@@ -240,3 +240,176 @@ fn a_stop_closes_terminal_and_xmpp_websockets_at_once() {
     }
     assert!(stopped < Duration::from_secs(15), "the stop took {stopped:?}");
 }
+
+/// The page's session token and a JSON call of the Terminal screen's transitions, as the store makes them.
+struct Page {
+    address: SocketAddr,
+    cookie: String,
+    token: String,
+}
+
+impl Page {
+    fn signed_in(address: SocketAddr, username: &str) -> Self {
+        let cookie = crate::common::sign_in(address, username, "moqui");
+        let (status, _, html) = crate::common::exchange(
+            address,
+            &crate::common::http_request("GET", "/qapps", &[("Cookie", &cookie)], ""),
+        );
+        assert_eq!(status, 200, "{html}");
+        let token = crate::common::session_token(&html).expect("the shell carries the session token");
+        Self { address, cookie, token }
+    }
+
+    fn call(&self, name: &str, body: Option<serde_json::Value>) -> serde_json::Value {
+        let path = format!("/apps/Terminal/{name}");
+        let (status, _, text) = match body {
+            Some(mut body) => {
+                body["moquiSessionToken"] = serde_json::Value::String(self.token.clone());
+                crate::common::exchange(
+                    self.address,
+                    &crate::common::http_request(
+                        "POST",
+                        &path,
+                        &[
+                            ("Cookie", &self.cookie),
+                            ("Content-Type", "application/json"),
+                            ("X-CSRF-Token", &self.token),
+                        ],
+                        &body.to_string(),
+                    ),
+                )
+            }
+            None => crate::common::exchange(
+                self.address,
+                &crate::common::http_request("GET", &path, &[("Cookie", &self.cookie)], ""),
+            ),
+        };
+        assert_eq!(status, 200, "{name}: {text}");
+        serde_json::from_str(&text).unwrap_or_else(|err| panic!("{name}: {err}: {text}"))
+    }
+
+    /// Attach a socket to the kept session `id`, as a page that drew `have` of its bytes.
+    fn attach(&self, id: &str, have: Option<u64>) -> Ws {
+        let uri: tungstenite::http::Uri = format!("ws://{}/termws?session={id}", self.address).parse().unwrap();
+        let (mut socket, response) =
+            connect(ClientRequestBuilder::new(uri).with_header("Cookie", &self.cookie)).unwrap();
+        assert_eq!(response.status().as_u16(), 101);
+        if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
+            stream.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+        }
+        let attach = serde_json::json!({"type": "attach", "cols": 100, "rows": 30, "have": have});
+        socket.send(Message::Text(attach.to_string().into())).unwrap();
+        socket
+    }
+}
+
+/// The text messages and bytes a socket gives until `want` is in its bytes, or its close reason.
+fn read_messages_until(socket: &mut Ws, want: &str) -> Result<(Vec<String>, Vec<u8>), String> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut texts = Vec::new();
+    let mut seen = Vec::new();
+    while !seen.windows(want.len()).any(|window| window == want.as_bytes()) {
+        assert!(
+            Instant::now() < deadline,
+            "{want:?} never came: {}",
+            String::from_utf8_lossy(&seen)
+        );
+        match socket.read() {
+            Ok(Message::Binary(bytes)) => seen.extend_from_slice(&bytes),
+            Ok(Message::Text(text)) => texts.push(text.to_string()),
+            Ok(Message::Close(frame)) => return Err(frame.map(|frame| frame.reason.to_string()).unwrap_or_default()),
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(err))
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(err) => return Err(format!("read: {err}")),
+        }
+    }
+    Ok((texts, seen))
+}
+
+/// A kept apps session (plans/Terminal-Fancy.md §5): opened by the screen's transition, it outlives its socket, draws its
+/// whole screen again for the next one, is its own user's only, counts toward the limits, and ends when closed.
+#[test]
+fn a_kept_session_outlives_its_socket_and_draws_again_on_reattach() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let gate = crate::common::start_with_conf_properties(
+        "termws-kept",
+        Some(PLAIN_USER),
+        r#"<terminal max-sessions-per-user="1"/>"#,
+        &[],
+    );
+    let address = gate.server.address();
+    let page = Page::signed_in(address, "john.doe");
+    let plain = Page::signed_in(address, "plain.user");
+    gate.server.factory().flush_sessions().unwrap();
+
+    let options = page.call("options", None);
+    assert_eq!(options["options"]["kinds"][0], "apps", "{options}");
+    let opened = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "apps", "cols": 100, "rows": 30})),
+    );
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+    // the limit is the answer of the second open
+    let refused = page.call("open", Some(serde_json::json!({"kind": "apps"})));
+    assert_eq!(refused["reasonCode"], "limit", "{refused}");
+    assert!(
+        refused["errors"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("max-sessions-per-user"),
+        "{refused}"
+    );
+
+    let mut socket = page.attach(&id, None);
+    let (texts, _) = read_messages_until(&mut socket, "john.doe").unwrap();
+    assert!(
+        texts[0].contains(r#""type":"attached""#) && texts[0].contains(r#""kind":"apps""#),
+        "{texts:?}"
+    );
+    drop(socket);
+
+    // the session goes on with no window, and the next window gets its whole screen
+    let listed = page.call("sessions", None);
+    assert_eq!(listed["sessions"][0]["id"], id.as_str(), "{listed}");
+    let mut again = page.attach(&id, None);
+    let (_, bytes) = read_messages_until(&mut again, "john.doe").unwrap();
+    let screen = String::from_utf8_lossy(&bytes);
+    assert!(
+        screen.contains("\x1b[?1049h") && screen.contains("\x1b[2J"),
+        "drawn again: {screen:?}"
+    );
+
+    // another user's id answers as one that does not exist
+    let mut other = plain.attach(&id, None);
+    assert_eq!(
+        read_messages_until(&mut other, "never").unwrap_err(),
+        "no such terminal session"
+    );
+    assert!(plain.call("sessions", None)["sessions"].as_array().unwrap().is_empty());
+
+    // a second window takes the session; the first is told
+    let mut taker = page.attach(&id, None);
+    assert_eq!(
+        read_messages_until(&mut again, "never").unwrap_err(),
+        "opened elsewhere"
+    );
+    read_messages_until(&mut taker, "john.doe").unwrap();
+
+    page.call("close", Some(serde_json::json!({"sessionId": id})));
+    let reason = read_messages_until(&mut taker, "never").unwrap_err();
+    assert_eq!(reason, "the session was ended");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !page.call("sessions", None)["sessions"].as_array().unwrap().is_empty() {
+        assert!(Instant::now() < deadline, "an ended apps session is not kept");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}

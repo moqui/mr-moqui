@@ -108,3 +108,87 @@ test("a session's terminal moves to another view with its screen and nothing rec
         other.remove()
     }
 })
+
+test("a tab's layout splits, closes and moves focus as a tree of panes", async () => {
+    const tree = moqui.terminal.tree
+    const first = tree.pane("s1")
+    let root = tree.split(first, first.id, "row", "s2")
+    const second = tree.panes(root)[1]
+    root = tree.split(root, second.id, "column", "s3")
+    assert.deepEqual(tree.sessions(root), ["s1", "s2", "s3"])
+    assert.equal(tree.neighbor(root, first.id, true).session, "s2")
+    assert.equal(tree.neighbor(root, first.id, false).session, "s3", "wraps around")
+    root = tree.remove(root, second.id)
+    assert.deepEqual(tree.sessions(root), ["s1", "s3"], "its sibling takes the split's place")
+    assert.equal(tree.remove(tree.remove(root, first.id), tree.panes(root)[1].id), null, "no panes left")
+})
+
+test("a kept session attaches with what it drew, acknowledges what it draws, and resumes after a drop", async () => {
+    const store = moqui.terminal
+    const sockets = []
+    const openSocket = moqui.openSocket
+    moqui.openSocket = url => {
+        const socket = {url, readyState: 1, sent: [], send(message) { this.sent.push(message) }, close() { this.readyState = 3 }}
+        sockets.push(socket)
+        return socket
+    }
+    const screen = document.createElement("div")
+    screen.style.cssText = "width:800px;height:320px"
+    document.body.appendChild(screen)
+    const key = "kept-" + (++made)
+    try {
+        store.create(key, {kind: "command", connect: false})
+        store.connect(key)
+        store.attach(key, screen)
+        const socket = sockets[0]
+        assert.ok(socket.url.endsWith("/termws?session=" + key), socket.url)
+        socket.onopen()
+        const attach = JSON.parse(socket.sent.find(message => typeof message === "string" && message.includes('"attach"')))
+        assert.equal(attach.have, null, "a first attach has drawn nothing")
+        socket.onmessage({data: JSON.stringify({type: "attached", kind: "command", from: 0, reset: true})})
+        const chunk = new TextEncoder().encode("x".repeat(store.ACK_EVERY + 10)).buffer
+        socket.onmessage({data: chunk})
+        await write(store.session(key).term, "")
+        const ack = socket.sent.map(message => typeof message === "string" ? JSON.parse(message) : null).find(message => message && message.type === "ack")
+        assert.equal(ack && ack.count, store.ACK_EVERY + 10, "the page says what it drew")
+        // the connection drops with no reason: the page attaches again, saying how far it got
+        socket.onclose({code: 1006, reason: ""})
+        assert.ok(store.state.views[key].reconnecting)
+        await new Promise(resolve => setTimeout(resolve, 600))
+        const again = sockets[1]
+        assert.ok(again, "a second socket")
+        again.onopen()
+        const resume = JSON.parse(again.sent.find(message => typeof message === "string" && message.includes('"attach"')))
+        assert.equal(resume.have, store.ACK_EVERY + 10)
+        // taken by another window: no attach of its own, and Take it back
+        again.onclose({code: 1000, reason: "opened elsewhere"})
+        assert.ok(store.state.views[key].taken && store.state.views[key].closed)
+    } finally {
+        moqui.openSocket = openSocket
+        store.end(key)
+        screen.remove()
+    }
+})
+
+test("the terminal's own keys pass over xterm.js, and copy and paste stay its own", () => {
+    const key = (key, extra) => Object.assign({key, ctrlKey: true, shiftKey: true, altKey: false, metaKey: false}, extra)
+    assert.ok(moqui.terminal.isOwnKey(key("D")))
+    assert.ok(moqui.terminal.isOwnKey(key("Enter")))
+    assert.ok(!moqui.terminal.isOwnKey(key("C")), "copy")
+    assert.ok(!moqui.terminal.isOwnKey(key("V")), "paste")
+    assert.ok(!moqui.terminal.isOwnKey(key("d", {shiftKey: false})), "Ctrl+D is the program's")
+})
+
+test("the terminal's components and the Terminal screen compile", async () => {
+    const compiler = globalThis.VueCompilerDOM
+    const compile = (name, template) => {
+        const errors = []
+        compiler.compile(template, {mode: "function", onError: err => errors.push(err.message)})
+        assert.deepEqual(errors, [], name)
+    }
+    for (const name of ["m-terminal-view", "m-terminal-node", "m-terminal-copy"]) compile(name, moqui.qvtComponents[name].template)
+    const source = await fetch("/files/runtime/base-component/webroot/screen/webroot/apps/Terminal.qvue").then(response => response.text())
+    const screen = moqui.parseVue(source)
+    compile("Terminal.qvue", screen.template)
+    for (const id of ["TerminalNew", "TerminalSessionsToggle", "TerminalSettingsOpen", "TerminalSessions"]) assert.ok(screen.template.includes('id="' + id + '"'), id)
+})

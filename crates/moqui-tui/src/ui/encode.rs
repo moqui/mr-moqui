@@ -74,6 +74,11 @@ impl Screen {
         self.shown = None;
     }
 
+    /// The terminal shows nothing of the last frame (a client attached again): the next one is written whole.
+    pub fn invalidate(&mut self) {
+        self.shown = None;
+    }
+
     /// Draw `view` and write what changed since the last frame, as one write.
     pub fn draw<V: View>(&mut self, view: &V, out: &mut impl Write) -> io::Result<()> {
         let mut buffer = Buffer::new(self.width, self.height);

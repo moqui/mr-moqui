@@ -242,7 +242,7 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
         Who::User(username) => username.clone(),
         Who::Login { .. } => String::new(),
     };
-    let slot = match start.sessions.take(&username) {
+    let slot = match start.slot.take().map_or_else(|| start.sessions.take(&username), Ok) {
         Ok(slot) => slot,
         Err(reason) => {
             tracing::warn!("{label} refused: {reason}");
@@ -331,6 +331,7 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
     let mut note = None;
     // off once a write failed or stalled: later frames are dropped while the session ends
     let mut writing = true;
+    let redraw = start.redraw.clone();
     loop {
         tokio::select! {
             read = stream.read(&mut buffer), if reading => match read {
@@ -370,6 +371,14 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
                 // The session ended and dropped its writer.
                 None => break,
             },
+            () = async {
+                match &redraw {
+                    Some(redraw) => redraw.notified().await,
+                    None => std::future::pending().await,
+                }
+            }, if reading => {
+                let _ = events.send(SessionEvent::Reattach);
+            }
             changed = start.size.changed(), if sizing => {
                 if changed.is_ok() {
                     let (columns, rows) = *start.size.borrow_and_update();

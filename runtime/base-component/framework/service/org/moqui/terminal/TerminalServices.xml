@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <!-- The browser terminal's kept sessions (plans/Terminal-Fancy.md §5.7), in crates/moqui-host/src/term under the
+        host's tui feature. No entity holds a session: a running one is in the memory of the process that runs it, and
+        the socket (/termws?session=) attaches to it by id. Each service works on the signed-in user's own sessions,
+        whatever calls it; another user's id answers as one that does not exist. A refusal adds an error and answers
+        reasonCode: notSignedIn, notAvailable (a kind this server does not offer to this user from here, with nothing
+        that tells why), reauthRequired (sign in again first), limit (the terminal limits) or notFound. -->
+    <service verb="get" noun="TerminalOptions" type="rust" location="moqui_host::term::services::get_terminal_options"
+            allow-remote="false" transaction="ignore">
+        <description>What this user may open from here: kinds (apps; command and host on a dev instance for a user who
+            may), profiles (the host profiles that resolve to a program: name, title), the limits (maxSessions,
+            maxSessionsPerUser, detachSeconds) and hostSessionsOutliveServer.</description>
+        <out-parameters><parameter name="options" type="Map"/></out-parameters>
+    </service>
+    <service verb="find" noun="TerminalSessions" type="rust" location="moqui_host::term::services::find_terminal_sessions"
+            allow-remote="false" transaction="ignore">
+        <description>The user's sessions, oldest first: id, kind, profile, title, cwd, cols, rows, state (running or
+            ended), exitStatus and reason of an ended one, attached (a window has it now), status, statusText and
+            progress (what its program said of itself), unseen (it wanted attention and nobody has looked), started and
+            lastOutput (millis).</description>
+        <out-parameters>
+            <parameter name="sessions" type="List"><parameter name="session" type="Map"/></parameter>
+        </out-parameters>
+    </service>
+    <service verb="open" noun="TerminalSession" type="rust" location="moqui_host::term::services::open_terminal_session"
+            allow-remote="false" transaction="ignore">
+        <description>Open a session at cols by rows (20 by 10 to 500 by 500) and answer its sessionId and the session as
+            find#TerminalSessions lists it. kind is apps (the default), command or host; profileName and directory are a
+            host session's.</description>
+        <in-parameters>
+            <parameter name="kind" default-value="apps"/>
+            <parameter name="profileName"/>
+            <parameter name="directory"/>
+            <parameter name="title"/>
+            <parameter name="cols" type="Integer"/>
+            <parameter name="rows" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sessionId"/>
+            <parameter name="session" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+    <service verb="update" noun="TerminalSession" type="rust" location="moqui_host::term::services::update_terminal_session"
+            allow-remote="false" transaction="ignore">
+        <description>Name a session: title, the user's own name for it; empty gives the title back to its program (OSC 0
+            and 2).</description>
+        <in-parameters>
+            <parameter name="sessionId" required="true"/>
+            <parameter name="title"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="session" type="Map"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+    <service verb="close" noun="TerminalSession" type="rust" location="moqui_host::term::services::close_terminal_session"
+            allow-remote="false" transaction="ignore">
+        <description>End one of the user's own sessions: its program is asked to end, and a host program that has not
+            after five seconds is killed.</description>
+        <in-parameters><parameter name="sessionId" required="true"/></in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+    </service>
+</services>

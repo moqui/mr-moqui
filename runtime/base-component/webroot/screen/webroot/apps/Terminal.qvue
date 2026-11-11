@@ -11,26 +11,132 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The browser terminal, served by Terminal.xml in the qvue render mode. The session, its xterm.js and its socket are the
-    store's (moqui.terminal, js/WebrootTerminal.js, plans/Terminal-Fancy.md §9); this page shows it in an m-terminal-view
-    that fills the page below the header and follows its size. Leaving the page ends the session. -->
+<!-- The browser terminal's workspace (plans/Terminal-Fancy.md §9.3), served by Terminal.xml in the qvue render mode, in the
+    page's whole height below the header. A tab strip, each tab a tree of splits whose panes show a session
+    (m-terminal-node, m-terminal-view); the New menu opens a session in a new tab; the side list holds all of the user's
+    sessions, here, shown nowhere, or opened on another device; Settings are the user's preferences (TERMINAL_CONFIG).
+    The sessions are the server's and the store's (moqui.terminal, js/WebrootTerminal.js): leaving the page leaves them
+    running, and the layout comes back from this browser's storage. With nothing open the page opens one session: the
+    command line for a user who has it, else the apps. -->
 <template><div class="m-terminal">
-<!-- the height is on this inner element: the shell's m-subscreens-active gives the root height:100%, which wins over the
-    root's own style and, in a page with no fixed height, is only as tall as the content -->
 <div class="m-terminal-body column no-wrap" :style="{ height: height + 'px', padding: '4px 8px' }">
-    <m-terminal-view v-if="ready" class="col" style="min-height: 0" :session-key="sessionKey"></m-terminal-view>
-    <div v-else class="m-terminal-closed q-pa-sm text-negative">{{labels.notLoaded}}</div>
+    <div v-if="!ready" class="m-terminal-closed q-pa-sm text-negative">{{labels.notLoaded}}</div>
+    <template v-else>
+    <div class="m-terminal-strip row items-center no-wrap">
+        <q-tabs v-model="active" dense no-caps inline-label outside-arrows mobile-arrows align="left" class="col" style="min-width: 0">
+            <q-tab v-for="(tab, index) in tabs" :key="tab.id" :name="tab.id" :id="'m-terminal-tab-' + index">
+                <div class="row items-center no-wrap">
+                    <span class="m-terminal-dot q-mr-xs" :class="'m-terminal-dot-' + tabDot(tab)"></span>
+                    <span class="ellipsis" style="max-width: 14em">{{tabTitle(tab)}}</span>
+                    <q-btn flat dense round size="xs" icon="sym_o_close" class="q-ml-xs" :aria-label="labels.closeTab" @click.stop="closeTab(tab.id)"></q-btn>
+                </div>
+            </q-tab>
+        </q-tabs>
+        <q-btn-dropdown flat dense no-caps icon="sym_o_add" :label="labels.new" id="TerminalNew" auto-close>
+            <q-list dense style="min-width: 200px">
+                <q-item v-for="choice in newChoices" :key="choice.key" clickable @click="newSession(choice.kind, choice.profile)" :id="'TerminalNew-' + choice.key">
+                    <q-item-section avatar><q-icon :name="choice.icon"></q-icon></q-item-section>
+                    <q-item-section>{{choice.label}}</q-item-section>
+                </q-item>
+            </q-list>
+        </q-btn-dropdown>
+        <q-btn flat dense round icon="sym_o_list" :aria-label="labels.sessions" id="TerminalSessionsToggle" @click="listOpen = !listOpen"><q-tooltip>{{labels.sessions}}</q-tooltip></q-btn>
+        <q-btn flat dense round icon="sym_o_settings" :aria-label="labels.settings" id="TerminalSettingsOpen" @click="openSettings"><q-tooltip>{{labels.settings}}</q-tooltip></q-btn>
+    </div>
+    <div class="col row no-wrap" style="min-height: 0">
+        <div class="col column no-wrap" style="min-width: 0">
+            <template v-for="tab in tabs" :key="tab.id">
+                <m-terminal-node v-if="tab.id === active" class="col" style="min-height: 0" :node="tabNode(tab)"></m-terminal-node>
+            </template>
+            <div v-if="!tabs.length" class="col column flex-center text-center q-pa-lg m-terminal-muted">
+                <div>{{failed || labels.opening}}</div>
+                <q-btn v-if="failed" flat no-caps color="primary" class="q-mt-sm" :label="labels.tryAgain" @click="openFirst"></q-btn>
+            </div>
+        </div>
+        <div v-if="listOpen" class="m-terminal-list column no-wrap q-pl-sm" id="TerminalSessions">
+            <div class="text-subtitle2 q-py-xs">{{labels.sessions}}</div>
+            <q-list dense separator class="col scroll">
+                <q-item v-for="id in terminalState.order" :key="id" :id="'TerminalSession-' + id">
+                    <q-item-section avatar style="min-width: 0"><span class="m-terminal-dot" :class="'m-terminal-dot-' + dotOf(terminalState.sessions[id])"></span></q-item-section>
+                    <q-item-section>
+                        <q-item-label class="ellipsis">{{terminalState.sessions[id].title || id}}</q-item-label>
+                        <q-item-label caption class="ellipsis">{{placeOf(id)}}</q-item-label>
+                    </q-item-section>
+                    <q-item-section side>
+                        <div class="row no-wrap">
+                            <q-btn v-if="terminalState.sessions[id].state !== 'ended'" flat dense round size="sm" icon="sym_o_tab" :aria-label="labels.showHere" @click="showHere(id)"><q-tooltip>{{labels.showHere}}</q-tooltip></q-btn>
+                            <q-btn flat dense round size="sm" icon="sym_o_edit" :aria-label="labels.rename" @click="renameSession(id)"><q-tooltip>{{labels.rename}}</q-tooltip></q-btn>
+                            <q-btn v-if="terminalState.sessions[id].state !== 'ended'" flat dense round size="sm" icon="sym_o_power_settings_new" :aria-label="labels.end" @click="endSession(id)"><q-tooltip>{{labels.end}}</q-tooltip></q-btn>
+                            <q-btn v-else flat dense round size="sm" icon="sym_o_delete" :aria-label="labels.forget" @click="forgetSession(id)"><q-tooltip>{{labels.forget}}</q-tooltip></q-btn>
+                        </div>
+                    </q-item-section>
+                </q-item>
+                <q-item v-if="!terminalState.order.length"><q-item-section class="m-terminal-muted">{{labels.noSessions}}</q-item-section></q-item>
+            </q-list>
+        </div>
+    </div>
+    </template>
 </div>
 <m-terminal-copy v-if="ready"></m-terminal-copy>
+<q-dialog v-model="settingsOpen">
+    <q-card style="min-width: 320px; max-width: 92vw" id="TerminalSettings">
+        <q-card-section class="text-h6">{{labels.settings}}</q-card-section>
+        <q-card-section class="q-gutter-sm">
+            <q-input dense outlined type="number" v-model.number="draft.fontSize" :label="labels.fontSize" :min="8" :max="32"></q-input>
+            <q-input dense outlined v-model="draft.fontFamily" :label="labels.fontFamily" :hint="labels.fontFamilyHint"></q-input>
+            <q-input dense outlined type="number" v-model.number="draft.scrollback" :label="labels.scrollback" :min="0" :max="100000"></q-input>
+            <q-select dense outlined emit-value map-options v-model="draft.opensFirst" :options="firstChoices" :label="labels.opensFirst"></q-select>
+        </q-card-section>
+        <q-card-actions align="right">
+            <q-btn flat no-caps :label="labels.cancel" v-close-popup></q-btn>
+            <q-btn unelevated no-caps color="primary" :label="labels.save" id="TerminalSettingsSave" @click="saveSettings" v-close-popup></q-btn>
+        </q-card-actions>
+    </q-card>
+</q-dialog>
 </div></template>
 
 <script>
 const localize = (text) => (moqui.l10n ? moqui.l10n.localize(text) : text);
+const LAYOUT_KEY = "moqui.terminal.layout";
+const storageKey = () => (moqui.scopedKey ? moqui.scopedKey(LAYOUT_KEY) : LAYOUT_KEY);
+const KIND_ICONS = { apps: "sym_o_apps", command: "sym_o_terminal", host: "sym_o_computer" };
 
 module.exports = {
+    provide() { return { workspace: this }; },
     data() {
-        return { height: 400, sessionKey: "page", ready: !!moqui.terminal,
-            labels: { notLoaded: localize("The terminal could not load.") } };
+        const store = moqui.terminal;
+        return { height: 400, ready: !!store, terminalState: store ? store.state : { sessions: {}, order: [] },
+            tabs: [], active: "", focusedPane: "", listOpen: false, settingsOpen: false, draft: {}, failed: "",
+            labels: { notLoaded: localize("The terminal could not load."), new: localize("New"), sessions: localize("Sessions"),
+                settings: localize("Settings"), closeTab: localize("Close tab"), showHere: localize("Show here"),
+                rename: localize("Rename"), end: localize("End session"), forget: localize("Remove from the list"),
+                noSessions: localize("No sessions"), opening: localize("Opening a terminal…"), tryAgain: localize("Try again"),
+                apps: localize("Apps"), command: localize("Command line"), fontSize: localize("Font size"),
+                fontFamily: localize("Font"), fontFamilyHint: localize("A CSS font list; empty for the default"),
+                scrollback: localize("Scrollback lines"), opensFirst: localize("Opens first"), cancel: localize("Cancel"),
+                save: localize("Save"), here: localize("Here"), shownNowhere: localize("Shown nowhere"),
+                elsewhere: localize("Open in another window"), ended: localize("Ended"), renamePrompt: localize("Name this session"),
+                endConfirm: localize("End this session? Its program stops."), default: localize("The default") } };
+    },
+    computed: {
+        options() { return this.terminalState.options || { kinds: ["apps"], profiles: [] }; },
+        canFloat() { return !!(moqui.floats && moqui.floats.canFloat && moqui.floats.canFloat()); },
+        zoomedPane() { const tab = this.tab(); return tab ? tab.zoom || "" : ""; },
+        newChoices() {
+            const kinds = this.options.kinds || ["apps"];
+            const choices = [];
+            if (kinds.includes("command")) choices.push({ key: "command", kind: "command", label: this.labels.command, icon: KIND_ICONS.command });
+            choices.push({ key: "apps", kind: "apps", label: this.labels.apps, icon: KIND_ICONS.apps });
+            if (kinds.includes("host")) for (const profile of this.options.profiles || [])
+                choices.push({ key: "host-" + profile.name, kind: "host", profile: profile.name, label: profile.title || profile.name, icon: KIND_ICONS.host });
+            return choices;
+        },
+        firstChoices() {
+            return [{ label: this.labels.default, value: "" }].concat(this.newChoices.map((choice) => ({ label: choice.label, value: choice.key })));
+        }
+    },
+    watch: {
+        active() { const tab = this.tab(); if (tab) this.focusPane(tab.focus); this.save(); }
     },
     mounted() {
         // The page may still be moving into place (its transition, the breadcrumbs, the header wrapping), so the height is
@@ -42,12 +148,15 @@ module.exports = {
         const settleUntil = Date.now() + 1500;
         const settle = () => { this.fitHeight(); if (!this.disposed && Date.now() < settleUntil) requestAnimationFrame(settle); };
         settle();
+        if (!this.ready) return;
+        this.offKeys = moqui.keymap && moqui.keymap.registerScope ? moqui.keymap.registerScope("terminal", this.keyBindings()) : null;
+        this.restore();
     },
     beforeUnmount() {
         this.disposed = true;
         window.removeEventListener("resize", this.onWindowResize);
         if (this.layoutObserver) this.layoutObserver.disconnect();
-        if (moqui.terminal) moqui.terminal.end(this.sessionKey);
+        if (this.offKeys) this.offKeys();
     },
     methods: {
         // all the room from the terminal's top to the footer (fixed, as the header is), less the page's bottom padding, so the
@@ -60,6 +169,193 @@ module.exports = {
             const top = this.$el.getBoundingClientRect().top + window.scrollY;
             const height = Math.max(200, Math.floor(bottom - top - 8));
             if (height !== this.height) this.height = height;
+        },
+        store() { return moqui.terminal; },
+        tree() { return moqui.terminal.tree; },
+        tab(id) { return this.tabs.find((tab) => tab.id === (id || this.active)) || null; },
+        tabNode(tab) { return (tab.zoom && this.tree().find(tab.root, tab.zoom)) || tab.root; },
+        tabTitle(tab) {
+            const pane = this.tree().find(tab.root, tab.focus) || this.tree().panes(tab.root)[0];
+            const info = pane ? this.terminalState.sessions[pane.session] : null;
+            return (info && info.title) || this.labels.apps;
+        },
+        tabDot(tab) {
+            const dots = this.tree().sessions(tab.root).map((id) => this.dotOf(this.terminalState.sessions[id]));
+            return ["blocked", "error", "done", "working"].find((dot) => dots.includes(dot)) || dots[0] || "idle";
+        },
+        contains(node, paneId) { return !!this.tree().find(node, paneId); },
+        // the dot of a session: its program's status, or ended (§11.1)
+        dotOf(info) {
+            if (!info) return "idle";
+            if (info.state === "ended") return "ended";
+            return info.status || "idle";
+        },
+        placeOf(id) {
+            const info = this.terminalState.sessions[id] || {};
+            if (info.state === "ended") return this.labels.ended + (info.reason ? ": " + info.reason : "");
+            if (this.tabs.some((tab) => this.tree().sessions(tab.root).includes(id))) return this.labels.here;
+            return info.attached ? this.labels.elsewhere : this.labels.shownNowhere;
+        },
+        // ---- the layout ----
+        save() {
+            try { localStorage.setItem(storageKey(), JSON.stringify({ tabs: this.tabs, active: this.active })); } catch (e) { /* storage refused */ }
+        },
+        restore() {
+            let kept = null;
+            try { kept = JSON.parse(localStorage.getItem(storageKey()) || "null"); } catch (e) { kept = null; }
+            this.store().refresh().then(() => {
+                const live = (id) => { const info = this.terminalState.sessions[id]; return info && info.state !== "ended"; };
+                const tabs = [];
+                for (const tab of (kept && kept.tabs) || []) {
+                    let node = tab.root;
+                    for (const pane of this.tree().panes(tab.root)) if (!live(pane.session)) node = this.tree().remove(node, pane.id);
+                    if (!node) continue;
+                    const focus = this.tree().find(node, tab.focus) ? tab.focus : this.tree().panes(node)[0].id;
+                    tabs.push({ id: tab.id, root: node, focus, zoom: tab.zoom && this.tree().find(node, tab.zoom) ? tab.zoom : "" });
+                }
+                this.tabs = tabs;
+                this.active = tabs.some((tab) => tab.id === (kept && kept.active)) ? kept.active : tabs.length ? tabs[0].id : "";
+                if (!tabs.length) this.openFirst();
+                else this.save();
+            }, (err) => { this.failed = (err && err.errors) || this.labels.notLoaded; });
+        },
+        openFirst() {
+            this.failed = "";
+            const first = this.store().state.settings.opensFirst;
+            const choice = this.newChoices.find((choice) => choice.key === first) || this.newChoices[0];
+            this.newSession(choice.kind, choice.profile);
+        },
+        notify(err) {
+            const message = (err && err.errors) || String(err);
+            if (this.$q && this.$q.notify) this.$q.notify({ type: "negative", message, position: "top" });
+            if (!this.tabs.length) this.failed = message;
+        },
+        // a new session of `kind` in a new tab
+        newSession(kind, profile) {
+            this.store().open(kind, { profileName: profile }).then((id) => {
+                const pane = this.tree().pane(id);
+                const tab = { id: "t" + pane.id, root: pane, focus: pane.id, zoom: "" };
+                this.tabs.push(tab);
+                this.active = tab.id;
+                this.focusedPane = pane.id;
+                this.save();
+            }, (err) => this.notify(err));
+        },
+        closeTab(id) {
+            const at = this.tabs.findIndex((tab) => tab.id === id);
+            if (at < 0) return;
+            this.tabs.splice(at, 1);
+            if (this.active === id) this.active = this.tabs.length ? this.tabs[Math.max(0, at - 1)].id : "";
+            this.save();
+        },
+        focusPane(paneId) {
+            const tab = this.tab();
+            if (!tab || !this.tree().find(tab.root, paneId)) return;
+            tab.focus = paneId;
+            this.focusedPane = paneId;
+            const pane = this.tree().find(tab.root, paneId);
+            this.$nextTick(() => this.store().focus(pane.session));
+        },
+        // split the pane: a new session of the same kind beside or below it
+        splitPane(paneId, dir) {
+            const tab = this.tab();
+            const pane = tab && this.tree().find(tab.root, paneId);
+            if (!pane) return;
+            const info = this.terminalState.sessions[pane.session] || {};
+            this.store().open(info.kind || "apps", { profileName: info.profile }).then((id) => {
+                tab.root = this.tree().split(tab.root, paneId, dir, id);
+                tab.zoom = "";
+                const added = this.tree().panes(tab.root).find((other) => other.session === id);
+                if (added) this.focusPane(added.id);
+                this.save();
+            }, (err) => this.notify(err));
+        },
+        zoomPane(paneId) {
+            const tab = this.tab();
+            if (!tab) return;
+            tab.zoom = tab.zoom === paneId ? "" : paneId;
+            this.save();
+            this.$nextTick(() => this.focusPane(paneId));
+        },
+        setRatio(splitId, ratio) {
+            const tab = this.tab();
+            const set = (node) => { if (!node || node.pane) return; if (node.id === splitId) node.ratio = ratio; set(node.a); set(node.b); };
+            if (tab) set(tab.root);
+        },
+        // close the pane: its session goes on, in the side list
+        closePane(paneId) {
+            const tab = this.tab();
+            if (!tab) return;
+            const root = this.tree().remove(tab.root, paneId);
+            if (!root) { this.closeTab(tab.id); return; }
+            tab.root = root;
+            if (tab.zoom === paneId) tab.zoom = "";
+            if (!this.tree().find(root, tab.focus)) tab.focus = this.tree().panes(root)[0].id;
+            this.focusPane(tab.focus);
+            this.save();
+        },
+        // end the pane's session, and close the pane
+        endPane(paneId) {
+            const tab = this.tab();
+            const pane = tab && this.tree().find(tab.root, paneId);
+            if (!pane) return;
+            this.store().close(pane.session).then(() => { this.closePane(paneId); this.store().forget(pane.session); }, (err) => this.notify(err));
+        },
+        floatPane(paneId) {
+            const tab = this.tab();
+            const pane = tab && this.tree().find(tab.root, paneId);
+            if (!pane || !moqui.terminal.float) return;
+            moqui.terminal.float(pane.session);
+            this.closePane(paneId);
+        },
+        moveFocus(forward) {
+            const tab = this.tab();
+            const next = tab && this.tree().neighbor(tab.root, tab.focus, forward);
+            if (next) this.focusPane(next.id);
+        },
+        // ---- the side list ----
+        showHere(id) {
+            for (const tab of this.tabs) {
+                const pane = this.tree().panes(tab.root).find((other) => other.session === id);
+                if (pane) { this.active = tab.id; this.focusPane(pane.id); return; }
+            }
+            if (moqui.terminal.dock) moqui.terminal.dock(id, true);
+            const pane = this.tree().pane(id);
+            const tab = { id: "t" + pane.id, root: pane, focus: pane.id, zoom: "" };
+            this.tabs.push(tab);
+            this.active = tab.id;
+            this.save();
+        },
+        renameSession(id) {
+            const info = this.terminalState.sessions[id] || {};
+            this.$q.dialog({ title: this.labels.rename, message: this.labels.renamePrompt, prompt: { model: info.title || "", type: "text" }, cancel: true })
+                .onOk((title) => this.store().rename(id, title).catch((err) => this.notify(err)));
+        },
+        endSession(id) {
+            this.$q.dialog({ title: this.labels.end, message: this.labels.endConfirm, cancel: true }).onOk(() => {
+                this.store().close(id).then(() => {
+                    for (const tab of this.tabs.slice()) for (const pane of this.tree().panes(tab.root)) if (pane.session === id) { this.active = tab.id; this.closePane(pane.id); }
+                    this.store().forget(id);
+                }, (err) => this.notify(err));
+            });
+        },
+        forgetSession(id) { this.store().forget(id); },
+        // ---- settings ----
+        openSettings() { this.draft = Object.assign({}, this.store().state.settings); this.settingsOpen = true; },
+        saveSettings() { this.store().saveSettings(this.draft); },
+        // the terminal's own keys (§9.5): Ctrl+Shift chords, which xterm.js passes over, rebindable as moqui.keymap actions;
+        // none of them is a key a browser keeps for itself (Ctrl+Shift+N, T, W and Tab are)
+        keyBindings() {
+            return [
+                { keys: "Ctrl+Shift+Enter", action: "terminalNew", label: localize("New terminal session"), run: () => this.openFirst() },
+                { keys: "Ctrl+Shift+D", action: "terminalSplitRight", label: localize("Split right"), run: () => this.splitPane(this.focusedPane, "row") },
+                { keys: "Ctrl+Shift+E", action: "terminalSplitDown", label: localize("Split down"), run: () => this.splitPane(this.focusedPane, "column") },
+                { keys: "Ctrl+Shift+X", action: "terminalClosePane", label: localize("Close pane"), run: () => this.closePane(this.focusedPane) },
+                { keys: "Ctrl+Shift+Z", action: "terminalZoom", label: localize("Zoom pane"), run: () => this.zoomPane(this.focusedPane) },
+                { keys: "Ctrl+Shift+ArrowRight", action: "terminalNextPane", label: localize("Next pane"), run: () => this.moveFocus(true) },
+                { keys: "Ctrl+Shift+ArrowLeft", action: "terminalPreviousPane", label: localize("Previous pane"), run: () => this.moveFocus(false) },
+                { keys: "Ctrl+Shift+G", action: "terminalLeave", label: localize("Leave the terminal"), run: () => { const canvas = document.getElementById("m-canvas"); if (canvas) { canvas.setAttribute("tabindex", "-1"); canvas.focus(); } } }
+            ];
         }
     }
 };

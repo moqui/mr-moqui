@@ -21,13 +21,19 @@
 //! one, `{"type":"resize","cols":N,"rows":N}`; the session starts on the first. The server ends the socket with a close
 //! frame whose reason the page shows: a refusal (the session limits), a timeout, the user logged out, the server
 //! stopping. The HTTP session is checked again each minute, so a logout closes the terminal too.
+//!
+//! `?session=<id>` attaches to a kept session the Terminal screen opened (plans/Terminal-Fancy.md §5.3), one of the
+//! cookie's user's own: the first message is `{"type":"attach","cols","rows","have"}`, with how many of the session's
+//! bytes the page already drew, and the server answers `{"type":"attached",...}`, then the bytes, `state` changes and
+//! `ended`. The page acknowledges what it drew (`{"type":"ack","count"}`). The socket closing leaves the session; a
+//! logout closes the socket and leaves it too (D2). Input on the socket counts as use of the HTTP session.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
+use axum::extract::{RawQuery, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use moqui_core::context::{ErrorKind, ExecutionContext, ExecutionContextFactory};
@@ -37,6 +43,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::http::{plain, HttpState};
 use crate::notws::{origin_allowed, session_cookie, session_user, RequestSite};
+use crate::term::registry::Registry;
+use crate::term::session::Out;
 use crate::term::{Sessions, Start, Terminal, Who};
 
 type CoreError = moqui_core::context::Error;
@@ -57,8 +65,10 @@ pub(crate) async fn upgrade(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     site: RequestSite,
+    RawQuery(query): RawQuery,
     State(state): State<Arc<HttpState>>,
 ) -> Response {
+    let session = query.as_deref().and_then(session_of);
     if !origin_allowed(&state.factory, &headers, &site, "terminal") {
         return plain(403, "origin not allowed");
     }
@@ -95,10 +105,24 @@ pub(crate) async fn upgrade(
                 session_id,
                 user_id,
                 username,
+                session,
             },
             shutdown,
         )
     })
+}
+
+/// The `session` of the query: a kept session's id, URL-safe characters only.
+fn session_of(query: &str) -> Option<String> {
+    query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("session="))
+        .filter(|id| !id.is_empty() && id.len() <= 64)
+        .filter(|id| {
+            id.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        })
+        .map(str::to_string)
 }
 
 /// The username of `user_id`, read on the request pool with authz off.
@@ -134,6 +158,8 @@ struct Opened {
     session_id: String,
     user_id: String,
     username: String,
+    /// The kept session to attach to; none runs one that ends with the socket.
+    session: Option<String>,
 }
 
 /// A resize message: `{"type":"resize","cols":N,"rows":N}`, at least 20 by 10 and at most 500 by 500.
@@ -165,39 +191,202 @@ async fn close(socket: &mut WebSocket, reason: &str) {
     .await;
 }
 
-async fn run_socket(mut socket: WebSocket, opened: Opened, mut shutdown: tokio::sync::watch::Receiver<bool>) {
-    let Opened {
-        factory,
-        session_id,
-        user_id,
-        username,
-    } = opened;
-    let label = format!("browser terminal of {username}");
-    // The session starts at the page's first size.
-    // A stop does not wait for the page's size either: the HTTP listener's drain waits for this socket (HL-027).
-    let first = tokio::select! {
+/// An attach message: `{"type":"attach","cols","rows","have"}`, or a first `resize`, taken as an attach of a page that
+/// drew nothing.
+fn parse_attach(text: &str) -> Option<(u16, u16, Option<u64>)> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let kind = value.get("type")?.as_str()?;
+    if kind != "attach" && kind != "resize" {
+        return None;
+    }
+    let dimension = |name: &str, least: u16| {
+        let number = u16::try_from(value.get(name)?.as_u64()?).ok()?;
+        Some(number.clamp(least, 500))
+    };
+    let have = value.get("have").and_then(serde_json::Value::as_u64);
+    Some((dimension("cols", 20)?, dimension("rows", 10)?, have))
+}
+
+/// An acknowledgement: `{"type":"ack","count":N}`.
+fn parse_ack(text: &str) -> Option<u64> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    (value.get("type")?.as_str()? == "ack").then(|| value.get("count")?.as_u64())?
+}
+
+/// The page's first message within [`FIRST_SIZE_WAIT`], read by `parse`; `Err` when the server stopped first.
+async fn first_message<T>(
+    socket: &mut WebSocket,
+    shutdown: &mut tokio::sync::watch::Receiver<bool>,
+    parse: impl Fn(&str) -> Option<T>,
+) -> Result<Option<T>, ()> {
+    tokio::select! {
         first = tokio::time::timeout(FIRST_SIZE_WAIT, async {
             loop {
                 match socket.recv().await {
                     Some(Ok(Message::Text(text))) => {
-                        if let Some(size) = parse_resize(&text) {
-                            return Some(size);
+                        if let Some(first) = parse(&text) {
+                            return Some(first);
                         }
                     }
                     Some(Ok(Message::Close(_)) | Err(_)) | None => return None,
                     Some(Ok(_)) => {}
                 }
             }
-        }) => Some(first),
-        _ = shutdown.wait_for(|stopped| *stopped) => None,
-    };
-    let Some(first) = first else {
-        close(&mut socket, "the server is stopping").await;
+        }) => Ok(first.ok().flatten()),
+        _ = shutdown.wait_for(|stopped| *stopped) => Err(()),
+    }
+}
+
+async fn run_socket(socket: WebSocket, opened: Opened, shutdown: tokio::sync::watch::Receiver<bool>) {
+    if opened.session.is_some() {
+        run_attached(socket, opened, shutdown).await;
+    } else {
+        run_ephemeral(socket, opened, shutdown).await;
+    }
+}
+
+/// A socket on a kept session: attached until the page leaves, the session ends, another page takes it, the user logs
+/// out or the server stops.
+async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+    let Opened {
+        factory,
+        session_id,
+        user_id,
+        username,
+        session,
+    } = opened;
+    let id = session.unwrap_or_default();
+    let label = format!("browser terminal {id} of {username}");
+    // Another user's id answers as one that does not exist.
+    let Some(kept) = Registry::of(&factory).find(&id, &username) else {
+        close(&mut socket, "no such terminal session").await;
         return;
     };
-    let Ok(Some(first)) = first else {
-        tracing::debug!("{label}: the page sent no size");
+    let first = match first_message(&mut socket, &mut shutdown, parse_attach).await {
+        Ok(Some(first)) => first,
+        Ok(None) => {
+            tracing::debug!("{label}: the page sent no attach");
+            return;
+        }
+        Err(()) => {
+            close(&mut socket, "the server is stopping").await;
+            return;
+        }
+    };
+    let (cols, rows, have) = first;
+    let Some(attached) = kept.attach(have, cols, rows).await else {
+        close(&mut socket, "the session ended").await;
         return;
+    };
+    let client = attached.client;
+    let mut out = attached.out;
+    let mut ping = tokio::time::interval(PING_EVERY);
+    ping.tick().await;
+    let mut check = tokio::time::interval(SESSION_CHECK);
+    check.tick().await;
+    let mut typed = false;
+    let mut reason = String::new();
+    loop {
+        tokio::select! {
+            biased;
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    reason = "the server is stopping".to_string();
+                    break;
+                }
+            }
+            next = out.recv() => match next {
+                Some(Out::Bytes(bytes)) => {
+                    if !crate::notws::send_within(&mut socket, Message::Binary(bytes.into())).await {
+                        break;
+                    }
+                }
+                Some(Out::Text(text)) => {
+                    if !crate::notws::send_within(&mut socket, Message::Text(text.into())).await {
+                        break;
+                    }
+                }
+                Some(Out::Close(why)) => {
+                    reason = why;
+                    break;
+                }
+                None => {
+                    reason = "the window fell behind".to_string();
+                    break;
+                }
+            },
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Binary(bytes))) => {
+                    typed = true;
+                    if !kept.write(bytes.to_vec()).await {
+                        // the program no longer reads: its end comes through `out`
+                    }
+                }
+                Some(Ok(Message::Text(text))) => {
+                    if let Some(count) = parse_ack(&text) {
+                        kept.ack(client, count).await;
+                    } else if let Some((cols, rows)) = parse_resize(&text) {
+                        kept.resize(client, cols, rows).await;
+                    }
+                }
+                Some(Ok(Message::Ping(payload))) => {
+                    let _ = crate::notws::send_within(&mut socket, Message::Pong(payload)).await;
+                }
+                Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+                Some(Ok(_)) => {}
+            },
+            _ = ping.tick() => {
+                if !crate::notws::send_within(&mut socket, Message::Ping(Vec::new().into())).await {
+                    break;
+                }
+            }
+            _ = check.tick() => {
+                let lookup = (Arc::clone(&factory), session_id.clone());
+                let current = tokio::task::spawn_blocking(move || session_user(lookup.0, lookup.1)).await;
+                // A pool that is busy or a read that fails is not a logout; only a session with another or no user is.
+                if let Ok(Ok(current)) = current {
+                    if current.as_deref() != Some(user_id.as_str()) {
+                        tracing::info!("{label} closed: the HTTP session logged out; the session is kept");
+                        reason = "logged out".to_string();
+                        break;
+                    }
+                }
+                // Typing is use: a developer in a terminal all afternoon is not logged out for it (§5.2).
+                if std::mem::take(&mut typed) {
+                    moqui_core::user::session::note_use(&factory, &session_id);
+                }
+            }
+        }
+    }
+    kept.detach(client).await;
+    if reason.is_empty() {
+        return;
+    }
+    close(&mut socket, &reason).await;
+}
+
+/// A socket with its own session, today's terminal: the session ends with the socket.
+async fn run_ephemeral(mut socket: WebSocket, opened: Opened, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+    let Opened {
+        factory,
+        session_id,
+        user_id,
+        username,
+        ..
+    } = opened;
+    let label = format!("browser terminal of {username}");
+    // The session starts at the page's first size.
+    // A stop does not wait for the page's size either: the HTTP listener's drain waits for this socket (HL-027).
+    let first = match first_message(&mut socket, &mut shutdown, parse_resize).await {
+        Ok(Some(first)) => first,
+        Ok(None) => {
+            tracing::debug!("{label}: the page sent no size");
+            return;
+        }
+        Err(()) => {
+            close(&mut socket, "the server is stopping").await;
+            return;
+        }
     };
     let (size, sized) = tokio::sync::watch::channel(first);
     let (ours, mut theirs) = tokio::io::duplex(PIPE);
@@ -217,6 +406,8 @@ async fn run_socket(mut socket: WebSocket, opened: Opened, mut shutdown: tokio::
         label: label.clone(),
         // The user logged in over HTTP, so this session has no login dialog to check an address for.
         client_ip: String::new(),
+        slot: None,
+        redraw: None,
     };
     let session = tokio::spawn(async move { crate::term::serve(&mut theirs, &mut start).await });
     let mut buffer = vec![0u8; 64 * 1024];
@@ -295,7 +486,7 @@ async fn run_socket(mut socket: WebSocket, opened: Opened, mut shutdown: tokio::
 
 #[cfg(test)]
 mod tests {
-    use super::parse_resize;
+    use super::{parse_ack, parse_attach, parse_resize, session_of};
 
     #[test]
     fn a_resize_is_read_and_bounded() {
@@ -310,5 +501,33 @@ mod tests {
         assert_eq!(parse_resize(r#"{"type":"other","cols":80,"rows":24}"#), None);
         assert_eq!(parse_resize(r#"{"type":"resize","cols":-1,"rows":24}"#), None);
         assert_eq!(parse_resize("not json"), None);
+    }
+
+    #[test]
+    fn an_attach_names_its_size_and_what_it_drew() {
+        assert_eq!(
+            parse_attach(r#"{"type":"attach","cols":100,"rows":30,"have":4096}"#),
+            Some((100, 30, Some(4096)))
+        );
+        assert_eq!(
+            parse_attach(r#"{"type":"attach","cols":100,"rows":30,"have":null}"#),
+            Some((100, 30, None))
+        );
+        assert_eq!(
+            parse_attach(r#"{"type":"resize","cols":80,"rows":24}"#),
+            Some((80, 24, None))
+        );
+        assert_eq!(parse_attach(r#"{"type":"ack","count":1}"#), None);
+        assert_eq!(parse_ack(r#"{"type":"ack","count":100000}"#), Some(100_000));
+        assert_eq!(parse_ack(r#"{"type":"attach","count":1}"#), None);
+    }
+
+    #[test]
+    fn a_session_id_is_taken_from_the_query_only_when_it_is_plain() {
+        assert_eq!(session_of("session=abc-DEF_123").as_deref(), Some("abc-DEF_123"));
+        assert_eq!(session_of("x=1&session=abc").as_deref(), Some("abc"));
+        assert_eq!(session_of("session=a%20b"), None);
+        assert_eq!(session_of("session="), None);
+        assert_eq!(session_of("other=1"), None);
     }
 }

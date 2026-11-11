@@ -1203,9 +1203,10 @@
     <ssh-server enabled="true" port="${ssh_port}" host="${ssh_host}" host-key="${ssh_host_key}" public-host="${ssh_public_host}"
             public-port="${ssh_public_port}" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
             git-password-auth="false" login-dialog="true"/>
-    <!-- The terminal client's sessions, over SSH and in the browser together: max-sessions at once, and
-        max-sessions-per-user of them for one user; a session in its login dialog counts toward the first only. -->
-    <terminal max-sessions="16" max-sessions-per-user="4"/>
+    <!-- The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8): max-sessions apps and
+        command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
+        the first only. A kept apps session with no window ends after detach-seconds. -->
+    <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048"/>
 
     <!--
         The git server: clone, fetch and push of GitRepository repositories at <public-url>/git/<repositoryId>.git

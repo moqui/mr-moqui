@@ -12,11 +12,35 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The browser terminal (plans/archive/Screen-TUI-Impl.md 4.4): the terminal client of `moqui tui` and SSH apps, in xterm.js on the
-    /termws socket, as the signed in user. The account menu's Terminal UI opens it, for every user, while the host serves the
-    socket (the /termws endpoint of the webapp in the conf). Terminal.qvue next to this file is the page. In the terminal client itself it says so. -->
+<!-- The browser terminal (plans/archive/Screen-TUI-Impl.md 4.4, plans/Terminal-Fancy.md §9.3): the terminal client of `moqui tui`
+    and SSH apps, in xterm.js on the /termws socket, as the signed in user, in tabs and splits of sessions that outlive the page.
+    The account menu's Terminal UI opens it, for every user, while the host serves the socket (the /termws endpoint of the
+    webapp in the conf). Terminal.qvue next to this file is the page. In the terminal client itself it says so.
+    Its transitions are JSON over org.moqui.terminal.TerminalServices (TerminalWeb.js): options, sessions, open, rename and
+    close; posts need the session's token. They are view actions of this screen, which every user may see: each service
+    works on the caller's own sessions and checks what a kind needs itself. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         require-authentication="true" default-menu-title="Terminal UI" default-menu-include="false" render-modes="qvue,tui,html,qvt" server-static="qvue">
+    <transition name="options" read-only="true" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'get#TerminalOptions', names: []})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="sessions" read-only="true" begin-transaction="false">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'find#TerminalSessions', names: []})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="open" method="post" begin-transaction="false" authz-action="view">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'open#TerminalSession', names: ['kind', 'profileName', 'directory', 'title', 'cols', 'rows']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="rename" method="post" begin-transaction="false" authz-action="view">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'update#TerminalSession', names: ['sessionId', 'title']})</script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="close" method="post" begin-transaction="false" authz-action="view">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/terminal/TerminalWeb.js').execute('web', {verb: 'close#TerminalSession', names: ['sessionId']})</script></actions>
+        <default-response type="none"/>
+    </transition>
     <widgets>
         <render-mode>
             <text type="qvue" location="component://webroot/screen/webroot/apps/Terminal.qvue" template="false"/>

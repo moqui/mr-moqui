@@ -35,6 +35,11 @@ use moqui_tui::Theme;
 use tokio::sync::watch;
 
 mod apps;
+pub(crate) mod registry;
+mod ring;
+mod services;
+pub(crate) mod session;
+mod track;
 
 pub(crate) use apps::serve;
 
@@ -208,6 +213,11 @@ pub(crate) struct Start {
     pub label: String,
     /// The client's address, which a login in the dialog checks `ipAllowed` against; empty checks nothing.
     pub client_ip: String,
+    /// The place in [`Sessions`] already taken for this session (a kept session takes it when it is opened, so a
+    /// refusal is the opening's answer); `None` takes one when the session starts.
+    pub slot: Option<SessionSlot>,
+    /// Notified when a client attaches again to a kept session: the session writes its whole screen again.
+    pub redraw: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl Start {
@@ -222,6 +232,8 @@ impl Start {
             size: self.size.clone(),
             label: self.label.clone(),
             client_ip: self.client_ip.clone(),
+            slot: None,
+            redraw: None,
         }
     }
 }

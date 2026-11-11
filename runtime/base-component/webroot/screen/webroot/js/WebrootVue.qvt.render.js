@@ -9540,44 +9540,232 @@
               }, 8, ["modelValue", "onUpdate:modelValue", "onShow"]))
             }
         } },
-        "m-terminal-view": { hash: "ddc19b8", make: function (Vue) {
+        "m-terminal-node": { hash: "2c11b4a", make: function (Vue) {
+            const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, withModifiers: _withModifiers, createBlock: _createBlock, normalizeStyle: _normalizeStyle } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_space = _resolveComponent("q-space")
+              const _component_q_tooltip = _resolveComponent("q-tooltip")
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_m_terminal_view = _resolveComponent("m-terminal-view")
+              const _component_m_terminal_node = _resolveComponent("m-terminal-node")
+
+              return (_ctx.node.pane)
+                ? (_openBlock(), _createElementBlock("div", {
+                    key: 0,
+                    class: _normalizeClass(["m-terminal-pane column no-wrap", { 'm-terminal-pane-focused': _ctx.focused }]),
+                    "data-pane": _ctx.node.id
+                  }, [
+                    _createElementVNode("div", {
+                      class: "m-terminal-pane-header row items-center no-wrap q-px-xs",
+                      onClick: $event => (_ctx.workspace.focusPane(_ctx.node.id))
+                    }, [
+                      _createElementVNode("span", {
+                        class: _normalizeClass(["m-terminal-dot", 'm-terminal-dot-' + _ctx.dot]),
+                        title: _ctx.dot
+                      }, null, 10, ["title"]),
+                      _createElementVNode("span", { class: "ellipsis q-ml-xs" }, _toDisplayString(_ctx.info.title || _ctx.node.session), 1),
+                      (_ctx.info.cwd)
+                        ? (_openBlock(), _createElementBlock("span", {
+                            key: 0,
+                            class: "ellipsis q-ml-sm text-caption m-terminal-muted"
+                          }, _toDisplayString(_ctx.info.cwd), 1))
+                        : _createCommentVNode("", true),
+                      _createVNode(_component_q_space),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        round: "",
+                        size: "sm",
+                        icon: "sym_o_vertical_split",
+                        "aria-label": _ctx.labels.splitRight,
+                        onClick: _withModifiers($event => (_ctx.workspace.splitPane(_ctx.node.id, 'row')), ["stop"])
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_tooltip, null, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(_ctx.labels.splitRight), 1)
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["aria-label", "onClick"]),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        round: "",
+                        size: "sm",
+                        icon: "sym_o_horizontal_split",
+                        "aria-label": _ctx.labels.splitDown,
+                        onClick: _withModifiers($event => (_ctx.workspace.splitPane(_ctx.node.id, 'column')), ["stop"])
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_tooltip, null, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(_ctx.labels.splitDown), 1)
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["aria-label", "onClick"]),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        round: "",
+                        size: "sm",
+                        icon: _ctx.zoomed ? 'sym_o_close_fullscreen' : 'sym_o_open_in_full',
+                        "aria-label": _ctx.zoomed ? _ctx.labels.unzoom : _ctx.labels.zoom,
+                        onClick: _withModifiers($event => (_ctx.workspace.zoomPane(_ctx.node.id)), ["stop"])
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_tooltip, null, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(_ctx.zoomed ? _ctx.labels.unzoom : _ctx.labels.zoom), 1)
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["icon", "aria-label", "onClick"]),
+                      (_ctx.workspace.canFloat)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 1,
+                            flat: "",
+                            dense: "",
+                            round: "",
+                            size: "sm",
+                            icon: "sym_o_picture_in_picture",
+                            "aria-label": _ctx.labels.float,
+                            onClick: _withModifiers($event => (_ctx.workspace.floatPane(_ctx.node.id)), ["stop"])
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_tooltip, null, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(_ctx.labels.float), 1)
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }, 8, ["aria-label", "onClick"]))
+                        : _createCommentVNode("", true),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        round: "",
+                        size: "sm",
+                        icon: "sym_o_close",
+                        "aria-label": _ctx.labels.close,
+                        onClick: _withModifiers($event => (_ctx.workspace.closePane(_ctx.node.id)), ["stop"])
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_tooltip, null, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(_ctx.labels.close), 1)
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["aria-label", "onClick"]),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        round: "",
+                        size: "sm",
+                        icon: "sym_o_power_settings_new",
+                        "aria-label": _ctx.labels.end,
+                        onClick: _withModifiers($event => (_ctx.workspace.endPane(_ctx.node.id)), ["stop"])
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_tooltip, null, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(_ctx.labels.end), 1)
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["aria-label", "onClick"])
+                    ], 8, ["onClick"]),
+                    _createVNode(_component_m_terminal_view, {
+                      class: "col",
+                      style: {"min-height":"0"},
+                      "session-key": _ctx.node.session,
+                      onFocused: $event => (_ctx.workspace.focusPane(_ctx.node.id))
+                    }, null, 8, ["session-key", "onFocused"])
+                  ], 10, ["data-pane"]))
+                : (_openBlock(), _createElementBlock("div", {
+                    key: 1,
+                    class: _normalizeClass(["m-terminal-split no-wrap", _ctx.node.dir === 'row' ? 'row' : 'column'])
+                  }, [
+                    _createVNode(_component_m_terminal_node, {
+                      node: _ctx.node.a,
+                      style: _normalizeStyle([{ flex: _ctx.node.ratio + ' 1 0' }, {"min-width":"0","min-height":"0"}])
+                    }, null, 8, ["node", "style"]),
+                    _createElementVNode("div", {
+                      class: _normalizeClass(["m-terminal-divider", _ctx.node.dir === 'row' ? 'm-terminal-divider-row' : 'm-terminal-divider-column']),
+                      onPointerdown: _ctx.startDrag
+                    }, null, 42, ["onPointerdown"]),
+                    _createVNode(_component_m_terminal_node, {
+                      node: _ctx.node.b,
+                      style: _normalizeStyle([{ flex: (1 - _ctx.node.ratio) + ' 1 0' }, {"min-width":"0","min-height":"0"}])
+                    }, null, 8, ["node", "style"])
+                  ], 2))
+            }
+        } },
+        "m-terminal-view": { hash: "37302981", make: function (Vue) {
             const { createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode } = Vue
 
             return function render(_ctx, _cache) {
+              const _component_q_spinner = _resolveComponent("q-spinner")
               const _component_q_icon = _resolveComponent("q-icon")
               const _component_q_btn = _resolveComponent("q-btn")
 
-              return (_openBlock(), _createElementBlock("div", { class: "m-terminal-view column no-wrap fit" }, [
+              return (_openBlock(), _createElementBlock("div", {
+                class: "m-terminal-view column no-wrap fit",
+                onFocusin: $event => (_ctx.$emit('focused'))
+              }, [
                 _createElementVNode("div", {
                   ref: "screen",
                   class: "m-terminal-host col",
                   style: {"min-height":"0","overflow":"hidden"},
                   onClick: _ctx.focus
                 }, null, 8, ["onClick"]),
-                (_ctx.shown.closed)
+                (_ctx.shown.reconnecting)
                   ? (_openBlock(), _createElementBlock("div", {
                       key: 0,
-                      class: "m-terminal-closed row items-center no-wrap q-pa-sm q-gutter-sm",
-                      id: "TerminalClosed"
+                      class: "m-terminal-closed row items-center no-wrap q-pa-xs q-gutter-sm text-caption"
                     }, [
-                      _createVNode(_component_q_icon, { name: "sym_o_link_off" }),
-                      _createElementVNode("span", { class: "col" }, _toDisplayString(_ctx.shown.reason), 1),
-                      _createVNode(_component_q_btn, {
-                        dense: "",
-                        unelevated: "",
-                        "no-caps": "",
-                        color: "primary",
-                        label: _ctx.labels.reconnect,
-                        onClick: _ctx.reconnect
-                      }, null, 8, ["label", "onClick"])
+                      _createVNode(_component_q_spinner, { size: "1em" }),
+                      _createElementVNode("span", null, _toDisplayString(_ctx.labels.reconnecting), 1)
                     ]))
-                  : (_ctx.shown.failed)
+                  : (_ctx.shown.closed)
                     ? (_openBlock(), _createElementBlock("div", {
                         key: 1,
-                        class: "m-terminal-closed q-pa-sm text-negative"
-                      }, _toDisplayString(_ctx.shown.failed), 1))
-                    : _createCommentVNode("", true)
-              ]))
+                        class: "m-terminal-closed row items-center no-wrap q-pa-sm q-gutter-sm",
+                        id: "TerminalClosed"
+                      }, [
+                        _createVNode(_component_q_icon, { name: "sym_o_link_off" }),
+                        _createElementVNode("span", { class: "col" }, _toDisplayString(_ctx.shown.reason), 1),
+                        _createVNode(_component_q_btn, {
+                          dense: "",
+                          unelevated: "",
+                          "no-caps": "",
+                          color: "primary",
+                          label: _ctx.shown.taken ? _ctx.labels.takeBack : _ctx.labels.reconnect,
+                          onClick: _ctx.reconnect
+                        }, null, 8, ["label", "onClick"])
+                      ]))
+                    : (_ctx.shown.failed)
+                      ? (_openBlock(), _createElementBlock("div", {
+                          key: 2,
+                          class: "m-terminal-closed q-pa-sm text-negative"
+                        }, _toDisplayString(_ctx.shown.failed), 1))
+                      : _createCommentVNode("", true)
+              ], 40, ["onFocusin"]))
             }
         } },
         "m-text-area": { hash: "879c7991", make: function (Vue) {

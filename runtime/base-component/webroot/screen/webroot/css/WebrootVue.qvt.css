@@ -1140,3 +1140,21 @@ button.m-report-native.m-report-cell-filter { min-height:0; margin:0; padding:0;
 .m-report-editor-group { margin: .6rem 0; padding: .5rem; border: 1px solid var(--q-secondary); border-radius: 4px; min-width: 0; }
 .m-report-editor-layout-item { border-left: 2px solid var(--q-primary); padding: .5rem; margin: .4rem 0; }
 .m-report-cell-filter { border: 0; padding: 0; color: inherit; background: transparent; cursor: pointer; text-align: inherit; text-decoration: underline dotted; }
+/* The browser terminal's workspace (apps/Terminal.qvue, js/WebrootTerminal.js; plans/Terminal-Fancy.md §9.3) */
+.m-terminal-strip { min-height:36px; border-bottom:1px solid var(--m-border, rgba(0,0,0,.12)); }
+.m-terminal-pane { flex:1 1 0; min-width:0; min-height:0; border:1px solid transparent; border-radius:4px; }
+.m-terminal-pane-focused { border-color:color-mix(in srgb, var(--q-primary) 55%, transparent); }
+.m-terminal-pane-header { min-height:26px; font-size:.82rem; }
+.m-terminal-split { flex:1 1 0; min-width:0; min-height:0; display:flex; }
+.m-terminal-divider { flex:0 0 6px; touch-action:none; }
+.m-terminal-divider-row { cursor:col-resize; }
+.m-terminal-divider-column { cursor:row-resize; }
+.m-terminal-divider:hover { background:color-mix(in srgb, var(--q-primary) 25%, transparent); }
+.m-terminal-list { width:280px; flex:0 0 280px; border-left:1px solid var(--m-border, rgba(0,0,0,.12)); }
+.m-terminal-muted { color:var(--m-text-muted); }
+.m-terminal-dot { display:inline-block; width:8px; height:8px; border-radius:50%; flex:0 0 8px; background:var(--m-text-muted); opacity:.55; }
+.m-terminal-dot-working { background:var(--q-info); opacity:1; }
+.m-terminal-dot-blocked { background:var(--q-warning); opacity:1; }
+.m-terminal-dot-done { background:var(--q-positive); opacity:1; }
+.m-terminal-dot-error { background:var(--q-negative); opacity:1; }
+.m-terminal-dot-ended { background:transparent; border:1px solid var(--m-text-muted); }
