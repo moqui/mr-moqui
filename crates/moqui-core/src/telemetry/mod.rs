@@ -963,14 +963,10 @@ impl Telemetry {
         let _ = (name, callback);
     }
 
-    /// How many gauges the SDK holds; 0 with telemetry off.
-    #[cfg(test)]
+    /// How many gauges the SDK holds; 0 when the SDK is off.
+    #[cfg(all(test, feature = "telemetry"))]
     pub(crate) fn gauge_count(&self) -> usize {
-        #[cfg(feature = "telemetry")]
-        if let Some(sdk) = &self.sdk {
-            return sdk.gauge_count();
-        }
-        0
+        self.sdk.as_ref().map_or(0, |sdk| sdk.gauge_count())
     }
 
     /// A gauge of several series, one per attribute set the callback returns (the metric attribute allow-list
