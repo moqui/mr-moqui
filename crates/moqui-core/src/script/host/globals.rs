@@ -68,7 +68,11 @@ const GLOBALS_JS: &str = concat!(
         assertSealedGroupMembership: hidden.assertSealedGroupMembership,
         privilegedGroups: hidden.privilegedGroups,
         sealedPermissions: hidden.sealedPermissions,
-        endUserSessions: hidden.endUserSessions
+        endUserSessions: hidden.endUserSessions,
+        newDeviceCode: hidden.newDeviceCode,
+        redeemDeviceCode: hidden.redeemDeviceCode,
+        displayAccountRefusal: hidden.displayAccountRefusal,
+        currentDevice: hidden.currentDevice
     };
     collection.flattenNestedMap = hidden.flattenNestedMap;
     collection.getMapArrayListValues = hidden.getMapArrayListValues;
@@ -254,6 +258,10 @@ pub(crate) static SHIM: Shim = Shim {
         method!("UserSecurityChecks", "privilegedGroups", [], None, leaf, privileged_groups),
         method!("UserSecurityChecks", "sealedPermissions", [], None, leaf, sealed_permissions),
         method!("UserSecurityChecks", "endUserSessions", [OptValue, OptValue], None, end_user_sessions),
+        method!("UserSecurityChecks", "newDeviceCode", [], None, new_device_code),
+        method!("UserSecurityChecks", "redeemDeviceCode", [OptValue], None, redeem_device_code),
+        method!("UserSecurityChecks", "displayAccountRefusal", [OptValue], None, display_account_refusal),
+        method!("UserSecurityChecks", "currentDevice", [], None, current_device),
     ]],
 };
 
@@ -324,6 +332,69 @@ fn end_user_sessions(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let count = crate::user::end_user_sessions(&id_text(call, 0), visits.as_deref())
         .map_err(|err| HostError::Message(err.message().to_string()))?;
     Ok(Ret::from(Value::I64(i64::try_from(count).unwrap_or(i64::MAX))))
+}
+
+/// `UserSecurityChecks.newDeviceCode()`: a new shared-device registration code and the hash to store,
+/// `{code, codeHash}` (`user::device::new_registration_code`). The caller shows the code once and keeps only the hash.
+fn new_device_code(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let (code, hash) =
+        crate::user::device::new_registration_code().map_err(|err| HostError::Message(err.message().to_string()))?;
+    let mut out = moqui_lib::object::ValueMap::default();
+    out.insert("code".to_string(), Value::String(code));
+    out.insert("codeHash".to_string(), Value::String(hash));
+    Ok(Ret::from(Value::Map(out)))
+}
+
+/// `UserSecurityChecks.redeemDeviceCode(code)`: redeem a registration code for the browser of the request under way
+/// (`user::device::redeem`): `{redeemed, reasonCode, deviceId, routeGroupId}`. The device cookie goes on the response
+/// and is never given to the script. Outside a request nothing is redeemed.
+fn redeem_device_code(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let mut out = moqui_lib::object::ValueMap::default();
+    let Some(request) = crate::web::current_request() else {
+        out.insert("redeemed".to_string(), Value::Bool(false));
+        out.insert("reasonCode".to_string(), Value::string("NO_REQUEST"));
+        return Ok(Ret::from(Value::Map(out)));
+    };
+    let outcome = crate::user::device::redeem(
+        &id_text(call, 0),
+        &crate::web::client_ip(&request),
+        request.header("user-agent").unwrap_or(""),
+        request.https,
+    )
+    .map_err(|err| HostError::Message(err.message().to_string()))?;
+    match outcome {
+        Ok(redeemed) => {
+            crate::web::add_header("Set-Cookie", redeemed.set_cookie);
+            out.insert("redeemed".to_string(), Value::Bool(true));
+            out.insert("deviceId".to_string(), Value::String(redeemed.device_id));
+            out.insert("routeGroupId".to_string(), Value::String(redeemed.route_group_id));
+        }
+        Err(refusal) => {
+            out.insert("redeemed".to_string(), Value::Bool(false));
+            out.insert("reasonCode".to_string(), Value::string(refusal.code()));
+        }
+    }
+    Ok(Ret::from(Value::Map(out)))
+}
+
+/// `UserSecurityChecks.displayAccountRefusal(userId)`: why the account may not serve a shared device, or null
+/// (`user::device::display_account_refusal`).
+fn display_account_refusal(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let refusal = crate::user::device::display_account_refusal(&super::entity_facade()?, &id_text(call, 0))
+        .map_err(|err| HostError::Message(err.message().to_string()))?;
+    Ok(Ret::from(refusal.map_or(Value::Null, Value::String)))
+}
+
+/// `UserSecurityChecks.currentDevice()`: `{deviceId, routeGroupId}` when the request under way is a shared device's,
+/// else null.
+fn current_device(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let Some(scope) = crate::user::device::current_scope() else {
+        return Ok(Ret::from(Value::Null));
+    };
+    let mut out = moqui_lib::object::ValueMap::default();
+    out.insert("deviceId".to_string(), Value::string(&scope.device_id));
+    out.insert("routeGroupId".to_string(), Value::string(&scope.route_group_id));
+    Ok(Ret::from(Value::Map(out)))
 }
 
 fn value(call: &Call<'_>, index: usize) -> Value {
