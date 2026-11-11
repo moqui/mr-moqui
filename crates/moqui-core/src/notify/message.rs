@@ -70,6 +70,7 @@ pub struct NotificationMessage {
     sub_topic: Option<String>,
     user_ids: Vec<String>,
     user_group_id: Option<String>,
+    direct_only: bool,
     message_map: Option<moqui_lib::object::ValueMap>,
     message_json: Option<String>,
     title_template: Option<String>,
@@ -124,6 +125,14 @@ impl NotificationMessage {
 
     pub fn user_group_id(&mut self, user_group_id: impl Into<String>) -> &mut Self {
         self.user_group_id = Some(user_group_id.into());
+        self
+    }
+
+    /// Send to the named users and group alone: a user who subscribed to every message of the topic
+    /// (`NotificationTopicUser.allNotifications`) does not receive it. For a message whose content is only its
+    /// recipients' to read, such as a business alert's values (moqui-report alert_delivery.rs).
+    pub fn direct_only(&mut self, direct_only: bool) -> &mut Self {
+        self.direct_only = direct_only;
         self
     }
 
@@ -318,6 +327,7 @@ impl NotificationMessage {
             &self.user_ids,
             self.user_group_id.as_deref(),
             topic.as_ref(),
+            self.direct_only,
         )?;
         self.notify_user_ids = resolved.users;
         let sent = if persist {
@@ -436,6 +446,7 @@ fn resolve_users(
     explicit: &[String],
     user_group_id: Option<&str>,
     topic: Option<&EntityValue>,
+    direct_only: bool,
 ) -> Result<Resolved, Error> {
     let topic_users = facade
         .find(TOPIC_USER)?
@@ -471,7 +482,8 @@ fn resolve_users(
             }
         }
     }
-    for row in &topic_users {
+    // a direct-only message is its named recipients' alone: a subscription to the whole topic adds nobody
+    for row in topic_users.iter().filter(|_| !direct_only) {
         if yn(row, "allNotifications") == Some(true) {
             if let Some(user_id) = field_str(row, "userId") {
                 recipients.insert(user_id);

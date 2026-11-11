@@ -201,8 +201,8 @@
     <!-- Owner-equivalent delivery (crates/moqui-report/src/delivery.rs; docs/tools/Monitoring.md "Report delivery"; BOSS
         impl-insights P7, INS-06) -->
     <service verb="check" noun="ReportAudience" type="rust" location="moqui_core::report_delivery::check_audience">
-        <description>Whether each proposed recipient of a report or dashboard the viewer would own a schedule of may be sent
-            the viewer's own result: an internal, active user with an address whose scope fingerprint for the definition
+        <description>Whether each proposed recipient of a report or dashboard the viewer would own a schedule of, or of an
+            alert rule the viewer reads, may be sent the viewer's own result: an internal, active user with an address whose scope fingerprint for the definition
             equals the viewer's. The fingerprint is a hash of what the user reads of the definition and everything it
             references, the documents of each dataset they may read and each dataset's resolved row filter (rowFilter,
             contextFilters and the rowFilterService's answer). Groups are expanded to their members in date and each is
@@ -325,6 +325,67 @@
             caller gains no report data.</description>
         <in-parameters>
             <parameter name="screenScheduledId" required="true"/><parameter name="fromUserId" required="true"/>
+            <parameter name="toUserId" required="true"/><parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="transferred" type="Boolean"/><parameter name="definitionIds" type="List"/></out-parameters>
+    </service>
+    <!-- Owner-equivalent business alerts (crates/moqui-report/src/alert_delivery.rs; docs/tools/Monitoring.md "Business
+        alerts"; BOSS impl-insights P8, INS-07). A rule that names an audience, or reads a dataset whose rows depend on the
+        viewer, is saved through save#Definition with an audience in place of contact points; check#ReportAudience answers its
+        recipients as it does a schedule's. -->
+    <service verb="find" noun="AlertDeliveries" type="rust" location="moqui_core::report_alert::find_alert_deliveries">
+        <description>The last outcome of each recipient of business alert rules, as states and safe reason codes, never a
+            value or a series label: of the rules the viewer owns (one rule's with definitionId), each recipient by name;
+            with received true, the deliveries to the viewer; with administrative true, every owner's business rules for a
+            holder of ADMIN_TRANSFER_VIEW, as counters by rule (sent, skipped, failed, paused, last evaluated) without a
+            title, a series or a recipient.</description>
+        <in-parameters>
+            <parameter name="definitionId"/><parameter name="received" type="Boolean"/>
+            <parameter name="administrative" type="Boolean"/><parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="deliveries" type="List"/><parameter name="total" type="Long"/>
+            <parameter name="pageIndex" type="Integer"/><parameter name="pageSize" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="AlertState" type="rust" location="moqui_core::report_alert::get_alert_state">
+        <description>An alert rule the viewer reads with the state of each of its series (labels, state, since, last
+            evaluated, the last value). A business rule's state is its owner's reading: instances are answered to its owner,
+            and to a recipient of its audience whose scope fingerprint equals the owner's now; anyone else gets available
+            false with a reason code (not-recipient, scope-differs, not-shared, ...) and no instance. A shipped rule is a
+            template and has no state.</description>
+        <in-parameters><parameter name="definitionId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="definitionId"/><parameter name="title"/><parameter name="own" type="Boolean"/>
+            <parameter name="business" type="Boolean"/><parameter name="template" type="Boolean"/>
+            <parameter name="paused" type="Boolean"/><parameter name="pausedReason"/><parameter name="deliveryMode"/>
+            <parameter name="available" type="Boolean"/><parameter name="reasonCode"/><parameter name="reason"/>
+            <parameter name="instances" type="List"/><parameter name="lastEvaluated" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="OwnedAlertRules" type="rust" location="moqui_core::report_alert::find_owned_alert_rules">
+        <description>The alert rules userId owns, by name only (the owned-resource lookup): the viewer's own, or another
+            user's for a holder of REPORT_OWNER_CHANGE.</description>
+        <in-parameters><parameter name="userId" required="true"/></in-parameters>
+        <out-parameters><parameter name="resourceList" type="List"/></out-parameters>
+    </service>
+    <service verb="pause" noun="OwnedAlertRules" type="rust" location="moqui_core::report_alert::pause_owned_alert_rules">
+        <description>Pause every alert rule userId owns (the owned-resource pause), marked owner-disabled, until
+            transfer#AlertRuleOwner hands each to a new owner: the viewer's own, or another user's for a holder of
+            REPORT_OWNER_CHANGE. It reads no state and no value.</description>
+        <in-parameters><parameter name="userId" required="true"/><parameter name="reason"/></in-parameters>
+        <out-parameters><parameter name="pausedCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="transfer" noun="AlertRuleOwner" type="rust" location="moqui_core::report_alert::transfer_alert_rule_owner">
+        <description>Hand one alert rule (definitionId), with the shared silences and mute timings it names that fromUserId
+            owns, to toUserId (the owned-resource transfer): for fromUserId themselves or a holder of REPORT_OWNER_CHANGE.
+            Refused unless toUserId is an active internal user who may save definitions, reads the rule's sources and, for a
+            group audience, may deliver to a group (NEW_OWNER_REFUSED). The rule stays paused (transfer-pending) until the
+            new owner resumes it, which repeats the audience check against the new owner's scope; the caller gains no
+            state and no value.</description>
+        <in-parameters>
+            <parameter name="definitionId" required="true"/><parameter name="fromUserId" required="true"/>
             <parameter name="toUserId" required="true"/><parameter name="reason"/>
         </in-parameters>
         <out-parameters><parameter name="transferred" type="Boolean"/><parameter name="definitionIds" type="List"/></out-parameters>
