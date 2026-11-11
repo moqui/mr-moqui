@@ -559,7 +559,7 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="RecoveryDescriptor" package="moqui.server" use="configuration" cache="true">
         <description>A registered recovery of one kind of operational record (org.moqui.admin.OperationServices
             preview#Recovery and execute#Recovery): its owner seeds a row, and without one nothing is retried, settled or
-            cancelled from there. targetKind is the kind of record (SystemMessage; a later kind adds its own) and targetKey
+            cancelled from there. targetKind is the kind of record (SystemMessage; ServiceJob, a scheduled job, whose targetKey is the jobName and whose retry is a run outside its schedule) and targetKey
             what of that kind the row covers (for SystemMessage the systemMessageTypeId), with direction (in, out, or
             empty for both) for a message. Each action has a mode: native (the framework's own action on the record, which
             the owner hereby says is safe to repeat: the receiver or the consuming service answers the same record once),
@@ -591,6 +591,9 @@ along with this software (see the LICENSE.md file). If not, see
             an action is confirmed</description></field>
         <field name="ownerRoute" type="text-medium"><description>The owner's own place for such a record, as a key the
             application showing it resolves (never a URL)</description></field>
+        <field name="itemsService" type="text-medium"><description>For a job (targetKind ServiceJob, targetKey the
+            jobName): the owner's service answering the independent items of one run
+            (OperationServices.find#JobRunItems), which checks the owner's permission and scope itself</description></field>
         <field name="sequenceNum" type="number-integer"/>
         <field name="disabled" type="text-indicator"/>
     </entity>
@@ -609,6 +612,75 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="title" type="text-medium"/>
         <field name="description" type="text-medium"/>
         <field name="ownerApp" type="text-short"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+
+    <!-- Admin P14 (mr-boss plan/impl-admin.md P14; design-admin §10 Jobs, JobDetail, Topics and TopicDetail): what of a
+        scheduled job and of a notification topic may be changed in delegated administration -->
+    <entity entity-name="JobRegistration" package="moqui.server" use="configuration" cache="true">
+        <description>A scheduled job (moqui.service.job.ServiceJob) its owner registers for delegated administration
+            (org.moqui.admin.OperationServices.store#Job): without a row a job is read only there. The row says which of
+            the job's scheduling controls may be changed: its schedule (scheduleEditable, with minIntervalMinutes, the
+            shortest time between two runs a schedule set there may have), its pause (pauseEditable), its priority
+            (priorityEditable) and its wait after an error (retryEditable). Its parameters are changed only where a
+            JobParameterDefinition registers one, and its notification recipients only when recipientPermission names
+            the permission a recipient must hold (a job's notification carries the run's errors, parameters and
+            results). managePermission is the owner's permission an actor needs besides ADMIN_OPERATION_MANAGE. The
+            job's service, the identity it runs as, its topic, its time limits and its lock settings are the owner's
+            deployment and are never changed there. A run outside the schedule is a registered recovery
+            (RecoveryDescriptor, targetKind ServiceJob). The registration adds no right.</description>
+        <field name="jobName" type="text-short" is-pk="true"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerApp" type="text-short"/>
+        <field name="managePermission" type="text-medium"/>
+        <field name="scheduleEditable" type="text-indicator"/>
+        <field name="minIntervalMinutes" type="number-integer"><description>1 when empty</description></field>
+        <field name="pauseEditable" type="text-indicator"/>
+        <field name="priorityEditable" type="text-indicator"/>
+        <field name="retryEditable" type="text-indicator"/>
+        <field name="recipientPermission" type="text-medium"/>
+        <field name="ownerRoute" type="text-medium"><description>The owner's own place for the job's work, as a key the
+            application showing it resolves (never a URL)</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+    <entity entity-name="JobParameterDefinition" package="moqui.server" use="configuration" cache="true">
+        <description>A parameter of a registered job that is safe to change in delegated administration
+            (OperationServices.store#Job): its owner seeds a row with the type its value has (valueType integer,
+            decimal, boolean, option or text) and its bounds (minValue and maxValue of a number, optionValues comma
+            separated, maxLength of a text). A text is letters, digits, spaces and . , : _ - only: never an expression,
+            a path, a URL or an address. A parameter with no row is shown by name and never changed there; a row naming
+            a parameter the job's service does not declare is logged by name when read and left out.</description>
+        <field name="jobName" type="text-short" is-pk="true"/>
+        <field name="parameterName" type="text-short" is-pk="true"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="valueType" type="text-short"><description>integer, decimal, boolean, option or text</description></field>
+        <field name="minValue" type="number-decimal"/>
+        <field name="maxValue" type="number-decimal"/>
+        <field name="optionValues" type="text-medium"/>
+        <field name="maxLength" type="number-integer"><description>Of a text: 60 when empty, at most 255</description></field>
+        <field name="required" type="text-indicator"><description>If Y the parameter is never cleared</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+    </entity>
+    <entity entity-name="TopicRegistration" package="moqui.server" use="configuration" cache="true">
+        <description>A notification topic (moqui.security.user.NotificationTopic) its owner registers for delegated
+            administration (OperationServices.store#TopicDefaults and store#TopicSubscription): without a row a topic
+            is read only there. editableFields names, comma separated, the delivery settings that may be changed
+            (description, showAlert, alertNoAutoHide, persistOnSend, receiveNotifications, emailNotifications,
+            pushNotifications, digestDefault); a topic's title, error title and link templates, its email template,
+            its approval services, its inbox and whether it is private are never changed there.
+            subscriptionPermission is the topic's audience: the permission a user must hold for an administrator to
+            set that user's subscription, and for the subscription to be listed by name; with none, no subscription is
+            set there. Receiving every message of a topic (NotificationTopicUser.allNotifications) is never set there,
+            only ended. The registration adds no right.</description>
+        <field name="topic" type="text-medium" is-pk="true"/>
+        <field name="ownerApp" type="text-short"/>
+        <field name="purpose" type="text-medium"/>
+        <field name="editableFields" type="text-medium"/>
+        <field name="subscriptionPermission" type="text-medium"/>
         <field name="sequenceNum" type="number-integer"/>
         <field name="disabled" type="text-indicator"/>
     </entity>
