@@ -5,10 +5,11 @@
 // its always-actions, so that its transitions read it too; System's root sets it to null, so a request parameter never
 // supplies one there. The map is data only, never authority:
 //
-//     routes   {key: {url, idParameter, parameters}}: where a link to a record goes under this mount. The keys are the
-//              registrations' own (a recovery descriptor's or transfer target's ownerRoute, a provider's linkKey: "a key
-//              the application showing it resolves", framework/entity/ServerEntities.xml) and the framework's below; a
-//              mount adds its apps' and may replace the framework's (the user's page). A key with no route is no link.
+//     routes   {key: {url, idParameter, parameters, plain}}: where a link to a record goes under this mount. The keys are
+//              the registrations' own (a recovery descriptor's or transfer target's ownerRoute, a provider's linkKey: "a
+//              key the application showing it resolves", framework/entity/ServerEntities.xml) and the framework's below; a
+//              mount adds its apps' and may replace the framework's (the user's page). A route is a screen path, or with
+//              plain: true a URL used as it is (another app's page). A key with no route is no link.
 //     hide     the part keys a mount leaves out of the screens it shows
 //
 // state() answers {mounted, raw, routes, hidden} for a screen's actions. raw is whether the instance administrator's
@@ -20,10 +21,13 @@
 const systemLocation = "component://tools/screen/System.xml"
 
 // Where the framework's own records open, relative to a screen of an area (System/<Area>/<Screen> and a mount's
-// <Root>/<Area>/<Screen> alike); each phase of the move adds the keys its screens link.
+// <Root>/<Area>/<Screen> alike); each phase of the move adds the keys its screens link. The screens also ask for places
+// that are not the framework's, linked only where a mount gives the route: mailAccount (a mail account's own screens: the
+// mail queue's owner link, the protocols' home), voice (the phone system's own screens: the protocols' home) and
+// supportSummary (a readiness and support summary: the server configuration).
 const frameworkRoutes = {
     user: {url: "../../Security/UserAccount/UserAccountDetail", idParameter: "userId"},
-    systemMessage: {url: "../../SystemMessage/Message/SystemMessageDetail", idParameter: "systemMessageId"}
+    systemMessage: {url: "../../Integrations/SystemMessageDetail", idParameter: "systemMessageId"}
 }
 
 // The mount's map, or null. A value that is not a map (a request parameter under a root that set none) is a mount with
@@ -53,14 +57,21 @@ function state() {
     const hidden = Array.from((mount && mount.hide) || []).map(String)
     return {mounted: !!mount, raw: !mount && ownsSystem(), routes: routesOf(mount), hidden}
 }
-// A route's link for one record: {url, parameters} with the record's id under the route's parameter, or null when the
-// mount has no place for the key.
-function link(routes, key, id) {
+// A route's link for one record: {url, parameters, plain, href} with the record's id under the route's parameter and what
+// else the link carries (more), or null when the mount has no place for the key. A screen shows it with one of two link
+// widgets: a plain route by href (the URL with its query string, url-type="plain"), a screen path by url and parameters.
+function link(routes, key, id, more) {
     const route = key ? (routes || {})[key] : null
     if (!route) return null
     const parameters = Object.assign({}, route.parameters || {})
-    if (route.idParameter && id !== null && id !== undefined) parameters[route.idParameter] = id
-    return {url: route.url, parameters}
+    if (route.idParameter && id !== null && id !== undefined && id !== "") parameters[route.idParameter] = id
+    for (const name of Object.keys(more || {}))
+        if (more[name] !== null && more[name] !== undefined && more[name] !== "") parameters[name] = more[name]
+    const query = Object.keys(parameters)
+        .map(name => encodeURIComponent(name) + "=" + encodeURIComponent(String(parameters[name])))
+        .join("&")
+    const url = String(route.url)
+    return {url, parameters, plain: route.plain === true, href: query ? url + (url.includes("?") ? "&" : "?") + query : url}
 }
 
 ;({state, raw, link})

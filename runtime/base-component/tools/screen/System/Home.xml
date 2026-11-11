@@ -332,9 +332,10 @@ along with this software (see the LICENSE.md file). If not, see
                 entry(security, 'Security/ArtifactGroup', '', 'sym_o_key'), entry(security, 'Security/ActiveUsers', '', 'sym_o_person_check'),
                 entry(security, 'AuditLog'), entry(security, 'Visit'),
 
-                entry(integration, 'SystemMessage/Message', L('System messages'), 'sym_o_mail'),
-                entry(integration, 'SystemMessage/Remote', L('Remote systems'), 'sym_o_dns'),
-                entry(integration, 'SystemMessage/Type', L('Message types'), 'sym_o_category'),
+                entry(integration, 'Integrations/Connections', '', 'sym_o_hub'), entry(integration, 'Integrations/SystemMessages', '', 'sym_o_swap_horiz'),
+                entry(integration, 'Integrations/MessageTypes', '', 'sym_o_schema'),
+                entry(integration, 'Protocols/Home', L('Mail and protocols'), 'sym_o_lan'), entry(integration, 'Protocols/MailRelays', '', 'sym_o_outgoing_mail'),
+                entry(integration, 'Protocols/MailQueue', '', 'sym_o_outbox'), entry(integration, 'Protocols/ServerConfiguration', '', 'sym_o_dns'),
                 entry(integration, 'EntitySync'), entry(integration, 'EdgeNode'), entry(integration, 'EdgeClients'),
                 // Voice and Chat Bridges are basic-comms' screens: it adds their entries to this group (its screen-extend)
 

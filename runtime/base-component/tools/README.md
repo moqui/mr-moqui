@@ -59,8 +59,13 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
   areas over the `org.moqui.admin` services, each a directory of sibling screens with relative links, which another app
   may show under its own root ([Mounting the administration screens](#mounting-the-administration-screens)). So far:
   **Operations** (`System/Operations/`): Jobs, a job (JobDetail), Job runs, a run (JobRunDetail), Notification topics and
-  a topic (TopicDetail). A screen's part for the instance administrator (a job's record changed directly, a run as it is
-  stored) shows only here.
+  a topic (TopicDetail). **Integrations** (`System/Integrations/`): Connections and a connection (ConnectionDetail: a
+  gateway, a remote system, a mail sign-in provider, a printer), Message types and a type (MessageTypeDetail), System
+  messages and a message (SystemMessageDetail). **Mail and protocols** (`System/Protocols/`): what each protocol is doing
+  (Home), Mail relays and a relay (MailRelayDetail), the Mail queue and the Server configuration. The connection screens
+  share `template/ConnectionParts.xml`. A screen's part for the instance administrator (a job's, a remote's, a message
+  type's or a message's record changed directly, a run or a message as it is stored, every produced message sent now)
+  shows only here.
 - **Monitor** (`System/Monitor.xml`, `System/Monitor/`): the telemetry screens, Overview first
   ([docs/tools/Monitoring.md](../../../docs/tools/Monitoring.md#monitor)).
 - **Configuration** (`System/Conf/`) shows the merged conf with the file each value came from (Settings), edits one
@@ -111,15 +116,19 @@ one. The map is data only, never authority:
 
 | Key | What it does |
 |---|---|
-| `routes` | `{key: {url, idParameter, parameters}}`: where a link to a record goes under the mount. The keys are the registrations' own (a recovery descriptor's or a transfer target's `ownerRoute`, a provider's `linkKey`) and the framework's (`user`, ...), which default to the System screens beside the one shown; a mount adds its apps' routes and may replace a framework one (`null` removes it). A route's `url` is relative to a screen of an area (`<Root>/<Area>/<Screen>`, where every such screen is shown), so it holds under any root. A key with no route is no link |
+| `routes` | `{key: {url, idParameter, parameters, plain}}`: where a link to a record goes under the mount. The keys are the registrations' own (a recovery descriptor's or a transfer target's `ownerRoute`, a provider's `linkKey`), the screens' own for a place that is not the framework's (`mailAccount`, `voice`, `supportSummary`) and the framework's (`user`, `systemMessage`), which default to the System screens beside the one shown; a mount adds its apps' routes and may replace a framework one (`null` removes it). A route's `url` is a screen path relative to a screen of an area (`<Root>/<Area>/<Screen>`, where every such screen is shown), so it holds under any root; with `plain: true` it is a URL used as it is, for another app's page (`/qapps/<App>/...`). A key with no route is no link |
 | `hide` | The part keys the mount leaves out |
 
 `template/AdminMount.js` answers where a screen stands: `state()` gives `{mounted, raw, routes, hidden}` in a screen's
-actions, and `link(routes, key, id)` one record's `{url, parameters}`. `raw` is whether the instance administrator's parts
-are shown: what only System does (any field of a record, records no registration covers, artifact authorization). They
-are never shown under a mount, and with none only to a user who opens System by their own grant, asked of the user's
-own authorization records (`ec.artifactExecution.isPermittedOwn`), since an app's inheritable always-allow on its area
-answers the stack's question for everyone and passes the transitions and entity operations below it too.
+actions, and `link(routes, key, id, more)` one record's `{url, parameters, plain, href}` (`more` is what else the link
+carries; `href` is the URL with its query string). A screen shows it with two `link` widgets, one for each kind of route:
+a plain one by its `href` (`url-type="plain"`), a screen path by its `url` and `parameters`.
+
+`raw` is whether the instance administrator's parts are shown: what only System does (any field of a record, records no
+registration covers, artifact authorization). They are never shown under a mount, and with none only to a user who opens
+System by their own grant, asked of the user's own authorization records (`ec.artifactExecution.isPermittedOwn`), since an
+app's inheritable always-allow on its area answers the stack's question for everyone and passes the transitions and entity
+operations below it too.
 
 So an app reuses a System screen in one of three ways:
 
@@ -133,7 +142,9 @@ So an app reuses a System screen in one of three ways:
 
 Every transition of a raw part carries `AdminMount.js`'s `raw()` as its `condition`. No group of the app is granted a
 System screen's location: a grant there would open it under `/apps/system` too. The regression spec is
-`test/AdminMounts.spec.js`, over the test mount `test/screen/AdminMount.xml`.
+`test/AdminMounts.spec.js`, over the test mount `test/screen/AdminMount.xml`; it also reads every screen of the areas
+(its `AREAS` list, which a new area is added to) and fails on a transition that acts and neither calls only
+`org.moqui.admin` services nor carries `raw()`.
 
 ## Tests
 

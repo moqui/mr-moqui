@@ -171,10 +171,10 @@ fn a_system_message_goes_out_over_rest_comes_back_at_rest_sm_and_is_consumed(gat
     assert_eq!(text(&received, "systemMessageTypeId"), "GateSmsg", "{received}");
     assert_eq!(text(&received, "messageText"), message, "{received}");
 
-    renders(address, "/System/SystemMessage/Message/SystemMessageList.text", &john);
+    renders(address, "/System/Integrations/SystemMessages.text?state=all", &john);
     let detail = renders(
         address,
-        &format!("/System/SystemMessage/Message/SystemMessageDetail.text?systemMessageId={received_id}"),
+        &format!("/System/Integrations/SystemMessageDetail.text?systemMessageId={received_id}"),
         &john,
     );
     assert!(detail.contains(&received_id), "{detail}");

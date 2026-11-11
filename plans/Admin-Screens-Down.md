@@ -248,3 +248,60 @@ posts `updateJob` through Admin › Operations as the operator and as ADMIN: the
 (changed: it renders every System screen and the detail paths as ADMIN, so the raw parts too; 24.5 s);
 `moqui lint --screens` with no parse failure. Changed and not run: the opt-in `tui_screens` cargo test (its job walk
 now uses JobDetail's "Run directly now" and "Runs") and the acceptance `AdminJobsUsable` and `AdminRegistriesWalk`.
+
+### A2 Integrations, Mail (Nov 11, 2026)
+
+Built: `System/Integrations.xml` (Connections, ConnectionDetail, MessageTypes, MessageTypeDetail, SystemMessages,
+SystemMessageDetail) and `System/Protocols.xml`, "Mail and protocols" (Home, MailRelays, MailRelayDetail, MailQueue,
+ServerConfiguration): Admin's screens with their BOSS references gone, and `template/ConnectionParts.xml` (moved from
+mr-boss unchanged but for its header). The instance administrator's parts folded in, each transition with `raw()` as its
+condition: SystemMessages (RawMessages: send all produced, consume all received, a message typed in), SystemMessageDetail
+(RawMessage: the stored record, its text edited in the `EditMessageText` subscreen and downloaded, send, consume, reset to
+produced, send ack, reset from error, cancel, the messages it acknowledges and those split from it, status history and
+errors), MessageTypes (RawTypes: create a type), MessageTypeDetail (RawType: any field), ConnectionDetail for a remote
+system (RawRemote: any field of the `SystemMessageRemote`, its enumeration values created, updated and deleted).
+`System/SystemMessage/**` is deleted. `AdminMount.js`: a route may be a plain URL (`plain: true`, another app's page) and
+`link(routes, key, id, more)` answers `{url, parameters, plain, href}`; `systemMessage` is the new detail screen. The
+owner links of SystemMessages, SystemMessageDetail and MailQueue, the protocol rows of Home and ServerConfiguration's
+support summary go by the mount's routes (`ownerRoute` keys, `mailAccount`, `voice`, `supportSummary`). The home's catalog,
+`get#SystemAttention`, the cargo tests and the UI-Refinement inventory name the new paths. In mr-boss: MailRelays and
+MailRelayDetail are mounted by location and their files deleted; MessageTypes, MessageTypeDetail, SystemMessages,
+SystemMessageDetail, MailQueue and ServerConfiguration include the System screens and take in `saveType`,
+`recoverMessages`, `recoverMessage`, `retryOutcome`, `settleOutcome` and `runCheck`; Connections (the organization filter
+and column, by `form extends`), ConnectionDetail (the `PaymentGatewayOrganization` box) and Protocols › Home (the Comms
+links, Voice and the transport health box) are Admin's own screens around the System screens' named sections; the mount
+adds `storeIntegration` and `mailAccount` (plain) and `supportSummary`; the registry's backup-mirror fix path and the
+transports card go to Admin › Integrations. mr-marble's OrderDetail links the new message screen.
+
+Findings:
+
+- F8. `get#SystemAttention` counts every message in error, and the new list shows its last 14 days unless it is told from
+  when: the item's link sends `state=failed` and `fromDate`, the day of the oldest message it counted (as F7 did for the
+  job runs).
+- F9. `getUserList` (`template/UserChoiceTransitions.xml`, A1) searched every account with no `raw()` condition. The new
+  static rule found it once it read a `transition-include` at its source; it carries the condition now.
+- F10. Three places the screens link are not the framework's: a mail account's own screens (`mailAccount`), the phone
+  system's (`voice`) and a support summary (`supportSummary`, until A6). They have no framework route, so System shows no
+  link there; BOSS gives `mailAccount` and `supportSummary` in its mount, and its Protocols › Home sets `voice` from the
+  settings index for a viewer who opens it. basic-comms' System › Voice is not linked from System's protocol list: tools
+  does not name another component's screen, and a component cannot add a route.
+- F11. A remote system is started from Connections (the `remote` kind is `creatable`, `store#Connection`), so the raw
+  part has no "create message remote"; the old screens had no delete of a remote and none is added.
+- F12. The generic MailQueue cannot say "Mail account, in Comms": a mail account's owner reads "Mail account", linked by
+  the mount's route. Connections' heading no longer names BOSS's administrators.
+- F13. The BOSS sources had `always-actions` after the transitions (ConnectionDetail, MailRelayDetail) and `align` on a
+  `default-field` (MailQueue), both outside the XSD; the System screens and BOSS's ConnectionDetail have them in order.
+- F14. mr-boss's acceptance sweeps list Admin's screens from its own files (`AdminSpecLib.sweepScreens`), so the screens
+  A1 mounted by location had left them; the list now takes the System screens an area file mounts by location too.
+
+Tests: `./moq test tools` (71 features, 3.2 to 3.3 s of 4 s; `AdminMounts` gains the static rule over `System/{Operations,
+Integrations,Protocols}`: every transition that acts, a `transition-include` read at its source, calls only
+`org.moqui.admin` services or carries `raw()`; and a plain route's link on the probe);
+`./moq test mr-boss --spec AdminSystemMessages --spec AdminRelays --spec AdminMailQueue --spec AdminRegistries --spec
+AdminJobRuns --spec AdminAccess` (22 features; AdminSystemMessages posts `updateMessage` through Admin › Integrations as the
+operator and as ADMIN: the message is unchanged); the slow `cargo test -p moqui-host --test it tools_screens -- --ignored`
+(the new detail paths, a remote's ConnectionDetail and a relay added to its data; 23.9 s) and
+`cargo test -p moqui-host --test it system_messages_and_entity_syncs_run_over_rest` (its two renders are the new list and
+detail); `moqui lint --screens` with no parse failure and no flagged site in the new screens. Changed and not run: the
+acceptance `AdminRegistriesWalk` (the fix path) and the sweeps' screen list in `AdminSpecLib.js` (`AdminTui`,
+`AdminServerStatic`).

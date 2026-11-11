@@ -196,9 +196,12 @@ along with this software (see the LICENSE.md file). If not, see
             // may be done about each, are the Admin app's (org.moqui.admin.OperationServices.find#Messages).
             check('systemMessages', () => {
                 if (!mayView('moqui.service.message.SystemMessage')) return
-                const errors = count(ec.entity.find('moqui.service.message.SystemMessage').condition('statusId', 'SmsgError'))
+                const found = Array.from(ec.entity.find('moqui.service.message.SystemMessage').condition('statusId', 'SmsgError').limit(LIMIT).disableAuthz().list())
+                const errors = found.length
+                // the list shows its last days unless it is told from when: from the oldest of these
+                const oldest = found.map(row => Number(row.initDate)).filter(time => Number.isFinite(time) && time > 0).sort((first, second) => first - second)[0]
                 if (errors > 0) item(others, {key: 'systemMessages', severity: 'warning', count: errors,
-                    link: '/apps/system/SystemMessage/Message/SystemMessageList', parameters: {statusId: 'SmsgError'},
+                    link: '/apps/system/Integrations/SystemMessages', parameters: {state: 'failed', fromDate: oldest ? ec.l10n.format(oldest, 'yyyy-MM-dd') : null},
                     text: errors === 1 ? say('1 system message in error') : say('${count} system messages in error', {count: counted(errors)})})
             })
             check('incidents', () => {

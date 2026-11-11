@@ -1785,17 +1785,20 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Operations/TopicDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
 | `System/Operations/Topics.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
 | `System/Operations.xml` | Container → Jobs | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
-| `System/SystemMessage/Message/SystemMessageDetail/EditMessageText.xml` | XML widgets | S06 | P |
-| `System/SystemMessage/Message/SystemMessageDetail.xml` | XML widgets | S06 | P |
-| `System/SystemMessage/Message/SystemMessageList.xml` | hidden menu | S06 | P |
-| `System/SystemMessage/Message.xml` | Container → SystemMessageList | S06 | P |
-| `System/SystemMessage/Remote/MessageRemoteDetail.xml` | XML widgets | S06 | P |
-| `System/SystemMessage/Remote/MessageRemoteList.xml` | hidden menu | S06 | P |
-| `System/SystemMessage/Remote.xml` | Container → MessageRemoteList | S06 | P |
-| `System/SystemMessage/Type/MessageTypeDetail.xml` | XML widgets | S06 | P |
-| `System/SystemMessage/Type/MessageTypeList.xml` | hidden menu | S06 | P |
-| `System/SystemMessage/Type.xml` | Container → MessageTypeList | S06 | P |
-| `System/SystemMessage.xml` | Container → Message | S06 | P |
+| `System/Integrations/ConnectionDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/Connections.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/MessageTypeDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/MessageTypes.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/SystemMessageDetail/EditMessageText.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/SystemMessageDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/SystemMessages.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations.xml` | Container → Connections | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
+| `System/Protocols/Home.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols/MailQueue.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols/MailRelayDetail.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols/MailRelays.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols/ServerConfiguration.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols.xml` | Container → Home | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
 | `System/ThreadList.xml` | XML widgets | S01 | V/P: unavailable state/localized scheduler verified at 1920 light/dark and 390; Linux details pending |
 | `System/Visit/VisitDetail.xml` | hidden menu | S06 | P |
 | `System/Visit/VisitList.xml` | XML widgets | S06 | P |

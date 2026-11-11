@@ -14,6 +14,7 @@
         <set field="mount" from="adminMountLib.state()"/>
         <set field="userLink" from="adminMountLib.link(mount.routes, 'user', 'U1')"/>
         <set field="storeLink" from="adminMountLib.link(mount.routes, 'storeIntegration', 'S1')"/>
+        <set field="mailLink" from="adminMountLib.link(mount.routes, 'mailAccount', 'A 1', {view:'queue', empty:''})"/>
         <!-- what the stack answers for System here: true under any inheritable always-allow, which is why raw asks the
             user's own records -->
         <set field="stackOpensSystem" from="ec.artifactExecution.isPermitted('component://tools/screen/System.xml')"/>
@@ -22,5 +23,7 @@
         <label text="mounted=${mount.mounted} raw=${mount.raw} stack=${stackOpensSystem} hidden=${mount.hidden.join(',')}"/>
         <label text="user=${userLink ? userLink.url + ' ' + JSON.stringify(userLink.parameters) : 'none'}"/>
         <label text="store=${storeLink ? storeLink.url + ' ' + JSON.stringify(storeLink.parameters) : 'none'}"/>
+        <label text="storePlain=${storeLink ? storeLink.plain + ' ' + storeLink.href : 'none'}"/>
+        <label text="mail=${mailLink ? mailLink.plain + ' ' + mailLink.href : 'none'}"/>
     </widgets>
 </screen>

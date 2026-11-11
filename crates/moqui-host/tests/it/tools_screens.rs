@@ -40,6 +40,7 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.service.message.SystemMessageRemote systemMessageRemoteId="GateRemote" description="Gate remote"/>
     <moqui.service.message.SystemMessage systemMessageId="GATE_MSG" systemMessageTypeId="GateSmsg" statusId="SmsgProduced"
         isOutgoing="Y" messageText="{}"/>
+    <moqui.basic.email.EmailServer emailServerId="GATE_RELAY" smtpHost="smtp.gate.example.test" smtpPort="465" smtpSsl="Y"/>
     <moqui.entity.sync.EntitySync entitySyncId="GATE_SYNC" description="Gate sync" statusId="EsNotStarted" forPull="N"/>
     <moqui.resource.GitRepository repositoryId="GATE_GIT" description="Gate git" repositoryKind="db"/>
     <moqui.server.Visit visitId="GATE_VISIT" userId="EX_JOHN_DOE" clientIpAddress="127.0.0.1" fromDate="2026-01-02 03:04:05"/>
@@ -81,10 +82,11 @@ const DETAILS: &[&str] = &[
     "/System/Security/UserGroup/UserGroupDetail?userGroupId=ADMIN",
     "/System/Security/UserGroup/GroupUsers?userGroupId=ADMIN",
     "/System/Security/ArtifactGroup/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP",
-    "/System/SystemMessage/Type/MessageTypeDetail?systemMessageTypeId=GateSmsg",
-    "/System/SystemMessage/Remote/MessageRemoteDetail?systemMessageRemoteId=GateRemote",
-    "/System/SystemMessage/Message/SystemMessageDetail?systemMessageId=GATE_MSG",
-    "/System/SystemMessage/Message/SystemMessageDetail/EditMessageText?systemMessageId=GATE_MSG",
+    "/System/Integrations/MessageTypeDetail?systemMessageTypeId=GateSmsg",
+    "/System/Integrations/ConnectionDetail?adapterKey=remote&connectionKey=GateRemote",
+    "/System/Integrations/SystemMessageDetail?systemMessageId=GATE_MSG",
+    "/System/Integrations/SystemMessageDetail/EditMessageText?systemMessageId=GATE_MSG",
+    "/System/Protocols/MailRelayDetail?connectionKey=GATE_RELAY",
     "/System/EntitySync/EntitySyncDetail?entitySyncId=GATE_SYNC",
     "/System/EntitySync/EntitySyncHistory?entitySyncId=GATE_SYNC",
     "/System/Resource/GitRepositoryDetail?repositoryId=GATE_GIT",
