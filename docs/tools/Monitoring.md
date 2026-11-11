@@ -513,9 +513,39 @@ by `crates/moqui-report/src/business.rs` (BOSS impl-insights P3, INS-03):
   not grant.
 - **The document is read through its dataset.** A dataset that is not a business one (a DataDocument by its id, an `index:`
   alias, a definition without the signal) over a document some business dataset reads is opened only to a holder of that
-  dataset's update artifact (the steward of a saved one, `ADMIN`), so a view grant on such an artifact, by pattern or by mistake,
-  reaches no unfiltered rows.
+  dataset's update artifact who also holds the update artifact of the document by its own id
+  (`org.moqui.report.dataset.<document>`; `ADMIN`), so a view grant on such an artifact, by pattern or by mistake, reaches no
+  unfiltered rows, and neither does a steward's own dataset: a steward granted the datasets they name by a pattern reads a
+  business document through a business dataset and its registered policy only ([Dataset aliases](#dataset-aliases)).
 - The regression spec is `framework/test/BusinessDatasets.spec.js`.
+
+### Dataset aliases
+
+A dataset definition may read a source that has a dataset artifact of its own, under a filter the definition chooses: a
+telemetry index (`"indexName": "otel_logs"`, or the index named as its `documentType`), or a business dataset's document
+without the business signal. The alias's own artifact says nothing of the source, and an application may grant it by a name
+pattern to whoever saves datasets, so the engine asks for the source's own artifact (`crates/moqui-report/src/alias.rs`), when
+the definition is saved (`save#Definition`, a copy, a restore, an import, a git pull) and each time it is read:
+
+- **A telemetry index** (`org.moqui.report.dataset.otel_logs`, view; `SYSTEM_APP` and `REPORT_DATASETS_ADMIN` hold them).
+  The saver must hold it. A reader reads the alias when they hold it themselves, or when the definition's owner does: the
+  owner is asked at each read, in a context of their own, so an alias an administrator saves and shares is a narrowed view
+  for readers who do not hold the index (a registered annotation source's dataset, for one), and it stops answering when its
+  owner loses the grant, when the owner's account is closed (disabled for good or past its end date, as their session and
+  schedules stop), or when the definition is handed to an owner without the grant. `transfer#DefinitionOwner` hands an alias
+  on only while the owner it leaves holds the index, so one that has stopped answering is not opened again by the grant of
+  whoever takes it; left behind, it answers a holder of the index only. A definition a component ships
+  (`report/*.json`) is that component's reviewed code and is read by its own artifact, as mr-mantle's
+  `mantle-business-events` is. An alias still needs a row filter in its definition, and a dataset has no field list: a
+  reader of the alias reads each matching line whole.
+- **A business dataset's document** (`org.moqui.report.dataset.<document>`, update): the saver and every reader, shipped
+  or saved, beside the alias's own update artifact (above). No owner's holding opens it to others: a business document is
+  read by others through an admitted dataset. A definition that says `signal: "business"` with no registered scope policy as
+  its `rowFilterService` is held to this too, saved and read: the signal alone does not let its steward read the document
+  unfiltered before admission.
+
+A row written past the save (an entity write, an older row) is held to the same rule when read. The rule's unit tests are
+`alias_tests.rs`; the refusals, saved and stored, are a feature of `framework/test/BusinessDatasets.spec.js`.
 
 ### Semantic guards
 
@@ -849,6 +879,10 @@ changing needs `MONITOR_SETTINGS`, which ADMIN holds and the public demo ends. T
   DataDocument. A saved panel never widens access.
 - A business dataset is read only once admitted, and its row filter is a registered scope policy
   ([Business datasets](#business-datasets)).
+- A dataset that reads a telemetry index or a business dataset's document needs that source's own artifact, of its saver
+  and of its reader or owner, whatever grants the dataset's own name ([Dataset aliases](#dataset-aliases)). So the update
+  grant on `org.moqui.report.dataset` (saving dataset definitions) with a pattern over the saver's own dataset names is
+  not a way to the logs or past a business dataset's row filter.
 - Row filters (`rowFilter`, `contextFilters` from the signed-in identity, or a `rowFilterService`) are added by the
   server before documents, ranking, totals, aggregations and exports; a client never supplies them. Existing entity
   filters are not translated automatically: write the dataset filters an organization needs, and grant business roles

@@ -1944,7 +1944,11 @@ fn transfer_definition_owner(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Par
                 .eq("definitionId", Value::string(&next))
                 .one()?
             {
-                if field(&row, "ownerId") == from && field(&row, "readOnly") != "Y" {
+                // a telemetry alias the leaving owner does not hold the index of stays theirs (alias.rs)
+                let owned = field(&row, "ownerId") == from && field(&row, "readOnly") != "Y";
+                let goes = owned
+                    && definitions::row_json(&row).is_ok_and(|definition| crate::alias::hands_over(ec, &definition));
+                if goes {
                     row.set("ownerId", Value::string(to));
                     row.update(&facade)?;
                     moved.push(next.clone());

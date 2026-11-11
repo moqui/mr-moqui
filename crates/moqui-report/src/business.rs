@@ -109,31 +109,39 @@ pub(super) fn check_admitted(ec: &ExecutionContext, id: &str, body: &Json) -> Re
             "business dataset {id} reads its document only, not an index or a service"
         )));
     }
-    let bound = body["rowFilterService"]
-        .as_str()
-        .map_or(Ok(false), |service| registered_policy(ec, service))?;
-    if bound && admitted(admission_row(ec, id)?.as_ref()) {
+    if bound(ec, body)? && admitted(admission_row(ec, id)?.as_ref()) {
         return Ok(());
     }
     steward_of(id).map_err(|_| fail(format!("dataset {id} is not admitted")))
 }
 
+/// Whether a body's `rowFilterService` is a registered scope policy.
+fn bound(ec: &ExecutionContext, body: &Json) -> Result<bool, Error> {
+    body["rowFilterService"]
+        .as_str()
+        .map_or(Ok(false), |service| registered_policy(ec, service))
+}
+
 /// The documents business datasets read: a dataset that is not a business one (a DataDocument by its id, an `index:` alias, a
 /// definition without the signal) over one of these reads it without the admission and the row filter, so the engine opens it
-/// only to a holder of that dataset's update artifact, its steward or the system administrator (BOSS impl-insights F-P3-6).
+/// only to a holder of that dataset's update artifact (BOSS impl-insights F-P3-6) who also holds the update artifact of each
+/// such document by its own id (alias.rs): a steward's name pattern covers a dataset the steward names, not the document
+/// under it, so the system administrator reads it and a steward does not. Asked at each read and when the definition is saved.
+/// A business dataset is past this only with a registered scope policy bound: its steward reads it before admission under that
+/// policy, and one saved with no policy, or with a service that is not one, would read the document as an alias does.
 pub(super) fn check_governed(ec: &ExecutionContext, id: &str, body: &Json, documents: &[String]) -> Result<(), Error> {
-    if is_business(body) || documents.is_empty() {
+    if documents.is_empty() || (is_business(body) && bound(ec, body)?) {
         return Ok(());
     }
     let governed = definitions::business_documents(ec)?;
-    let Some(document) = documents.iter().find(|document| governed.contains(*document)) else {
-        return Ok(());
-    };
-    steward_of(id).map_err(|_| {
-        fail(format!(
-            "dataset {id} reads {document}, a business dataset's document, without its admission and row filter"
-        ))
-    })
+    for document in documents.iter().filter(|document| governed.contains(*document)) {
+        if steward_of(id).is_err() || !super::alias::governed_opens(document) {
+            return Err(fail(format!(
+                "dataset {id} reads {document}, a business dataset's document, without its admission and row filter"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// A dataset definition saved through `save#Definition` (or copied, restored, imported or pulled): a business dataset whose body
