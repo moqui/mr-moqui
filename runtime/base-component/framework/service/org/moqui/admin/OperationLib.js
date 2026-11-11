@@ -28,8 +28,9 @@ function operationKey(p) {
 }
 // Run an action once for its operation key: a repeat by the same user for the same kind and target answers the first
 // result (with repeated true) and does nothing; a key used for another operation is an error. Only an applied result is
-// kept, so a refusal can be corrected and tried again under the same key. With no key the action runs.
-function once(key, operationKind, targetKey, action) {
+// kept, so a refusal can be corrected and tried again under the same key. With no key the action runs. kept, when given,
+// makes what is stored of a result (a batch keeps a short form of its results, which must fit the column).
+function once(key, operationKind, targetKey, action, kept = result => result) {
     if (!key) return action()
     const fullKey = operationKind + ":" + key
     const earlier = one(RESULT, {operationKey: fullKey})
@@ -48,7 +49,7 @@ function once(key, operationKind, targetKey, action) {
                 targetKey,
                 userId: ec.user.userId,
                 operationDate: ec.user.nowTimestamp,
-                resultText: JSON.stringify(result)
+                resultText: JSON.stringify(kept(result))
             },
             true
         )

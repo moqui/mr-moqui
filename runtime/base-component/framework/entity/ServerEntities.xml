@@ -553,4 +553,63 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="operationDate" type="date-time"/>
         <field name="resultText" type="text-long"/>
     </entity>
+
+    <!-- Admin P13 (mr-boss plan/impl-admin.md P13; design-admin §8.1, §14 "Operational recovery"): what may be recovered
+        through org.moqui.admin.OperationServices, and which handlers a message type may be given -->
+    <entity entity-name="RecoveryDescriptor" package="moqui.server" use="configuration" cache="true">
+        <description>A registered recovery of one kind of operational record (org.moqui.admin.OperationServices
+            preview#Recovery and execute#Recovery): its owner seeds a row, and without one nothing is retried, settled or
+            cancelled from there. targetKind is the kind of record (SystemMessage; a later kind adds its own) and targetKey
+            what of that kind the row covers (for SystemMessage the systemMessageTypeId), with direction (in, out, or
+            empty for both) for a message. Each action has a mode: native (the framework's own action on the record, which
+            the owner hereby says is safe to repeat: the receiver or the consuming service answers the same record once),
+            owner (recoverService, the owner's own service, implementing OperationServices.recover#OwnedTarget, which
+            checks the owner's permission and scope itself) or empty (not offered). retryStates narrows the states a retry
+            is offered in. managePermission is the owner's permission an actor needs besides ADMIN_OPERATION_MANAGE, and
+            dataPermission the one a reader needs to be shown the record's payload. describeService, when named
+            (OperationServices.find#RecoveryTargets), answers per record what its owner would take now, whether its
+            outcome is unknown there, and whether this reader may see its diagnostics and payload. The registration adds
+            no right. A row naming a service that is not defined is logged by name when read and left out, and its
+            records are then offered nothing.</description>
+        <field name="descriptorKey" type="id" is-pk="true"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerApp" type="text-short"/>
+        <field name="targetKind" type="text-short"/>
+        <field name="targetKey" type="text-medium"/>
+        <field name="direction" type="text-short"><description>in, out or empty (both)</description></field>
+        <field name="retryMode" type="text-short"><description>native, owner or empty</description></field>
+        <field name="reconcileMode" type="text-short"><description>native, owner or empty</description></field>
+        <field name="cancelMode" type="text-short"><description>native, owner or empty</description></field>
+        <field name="retryStates" type="text-medium"><description>The states a retry is offered in, comma separated;
+            empty for the kind's own (a message: failed, retrying)</description></field>
+        <field name="managePermission" type="text-medium"/>
+        <field name="dataPermission" type="text-medium"/>
+        <field name="describeService" type="text-medium"/>
+        <field name="recoverService" type="text-medium"/>
+        <field name="idempotencyNote" type="text-medium"><description>What makes a repeat safe, in words, shown before
+            an action is confirmed</description></field>
+        <field name="ownerRoute" type="text-medium"><description>The owner's own place for such a record, as a key the
+            application showing it resolves (never a URL)</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+    <entity entity-name="MessageHandler" package="moqui.server" use="configuration" cache="true">
+        <description>A handler a message type may be given in delegated administration
+            (org.moqui.admin.ConfigurationServices.store#MessageType): the type's owner seeds a row for each service that
+            may send (handlerRole send) or consume (consume) messages of that one type. store#MessageType sets a type's
+            send or consume service only to a handler registered for that type and role, by its key, never to a service
+            name from the request; a type with no row here is not changed there at all. The service that receives a type's
+            messages is never chosen there. A row naming a service that is not defined is logged by name when read and
+            left out.</description>
+        <field name="handlerKey" type="id" is-pk="true"/>
+        <field name="systemMessageTypeId" type="id"/>
+        <field name="handlerRole" type="text-short"><description>send or consume</description></field>
+        <field name="serviceName" type="text-medium"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerApp" type="text-short"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
 </entities>
