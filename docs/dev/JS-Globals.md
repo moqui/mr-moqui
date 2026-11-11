@@ -220,7 +220,7 @@ converted to `type`; with no `type` (or `"Object"`) to the type of `field`. `for
 
 | Operator | |
 |---|---|
-| `equals`, `not-equals` | Equal by value after the conversion. Two decimals are equal only with the same scale: `10.0` is not `10.00` (use `eq`, or `less-equals` and `greater-equals`). Any operator not in this table is `equals` |
+| `equals`, `not-equals` | Equal by value after the conversion. Numbers are equal when their values are: a decimal `10.0` equals `10.00`, and a decimal `10.00` equals the whole number `10`. Any operator not in this table is `equals` |
 | `less`, `greater`, `less-equals`, `greater-equals` | Ordered. A null `field` sorts after a value. A null on the right, or two values of different types, throws |
 | `contains`, `not-contains` | The text of `field` contains the text of the right side |
 | `matches`, `not-matches` | The whole text of `field` matches the regular expression |
@@ -509,7 +509,14 @@ file.write(`dbresource://uploads/${StringUtilities.encodeAsciiFilename(file.file
 - **No Java classes.** `new java.util.Date()`, `java.util.UUID` and a static call on a Java class have no form
   here. The classes above are the ones that do, as globals with no package: `new EdiHandler(ec)`, not
   `new org.moqui.impl.util.EdiHandler(ec)`.
-- **`ObjectUtilities.compare` ignores `format`**, and its `equals` on two decimals needs the same scale.
+- **`ObjectUtilities.compare` ignores `format`.**
+
+For those who come from JavaScript: the Moqui calls compare as a business rule would, not as `===` does. `compare`
+with `equals`, and what is built on it (`filterMapList`, `CollectionUtilities.mapMatchesFields`, an entity value's
+`mapMatches`, an entity list's `filterByAnd`, `findByAnd`, `removeByAnd` and `indexMatching`, an XML `<compare>`),
+converts both sides to one type first and takes numbers by value: `"10"` and `10` are equal, a decimal `10.0` equals
+`10.00`, and two timestamps of the same moment are equal. In plain JavaScript `toDecimal("10.0") === toDecimal("10.00")`
+is false, because two decimals are two objects: compare them with `eq`, or with `compare`.
 - **`MNode.parseText` returns null** for text that does not parse, where Java throws.
 
 These Java statics are not available:

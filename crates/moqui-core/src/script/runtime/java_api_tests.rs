@@ -605,6 +605,16 @@ fn utility_classes_have_javas_statics() {
                 && CollectionUtilities.findFieldNestedMap("deep", {a: [{b: {deep: 7}}]}) === 7;
         })()"#,
     );
+    // compare takes numbers by value, so a decimal's scale does not matter, here and in what is built on it
+    holds(
+        r#"(function () {
+            const rows = [{amount: toDecimal("10.00")}, {amount: toDecimal("7.5")}];
+            filterMapList(rows, {amount: toDecimal("10.0")});
+            return compare(toDecimal("10.0"), "equals", null, toDecimal("10.00"), null, "Object") === true
+                && compare(toDecimal("10.0"), "not-equals", null, "10.00", null, "BigDecimal") === false
+                && rows.length === 1 && CollectionUtilities.mapMatchesFields({amount: toDecimal("10.00")}, {amount: 10});
+        })()"#,
+    );
     holds(
         r#"typeof WebUtilities.simpleHttpStringRequest === "function" && typeof WebUtilities.simpleHttpMapRequest === "function""#,
     );

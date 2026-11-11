@@ -81,7 +81,7 @@ Groovy's rules are applied in three places only:
 |---|---|
 | `default-value` of `set` | The default is taken when the value is false by Groovy truth: null, `""`, `false`, zero (a zero decimal too), an empty list, map or `Set`, empty bytes (`__isGroovyFalse`) |
 | `set-if-empty="false"` of `set` | The set is skipped when the value is empty as Java's `ObjectUtilities.isEmpty` has it: null, `""`, an empty list, map or `Set`. Zero and `false` are not empty (`__isEmpty`) |
-| `<compare>`, and `filter-map-list` | Java's `ObjectUtilities.compare`: both sides are converted to the `type`, or to the field's own type, and compared, so two decimals order as numbers. `equals` on decimals also compares the scale: `10.0` does not equal `"10.00"` ([JS-Globals](JS-Globals.md#converting-and-comparing)) |
+| `<compare>`, and `filter-map-list` | Java's `ObjectUtilities.compare`: both sides are converted to the `type`, or to the field's own type, and compared by value, so two decimals order as numbers and a decimal `10.0` equals `"10.00"` ([JS-Globals](JS-Globals.md#converting-and-comparing)) |
 
 Everywhere else, plain `<script>` text included, `==`, `<` and `!` are JavaScript's:
 
