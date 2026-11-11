@@ -479,6 +479,7 @@
         <option value="">use or begin</option><option>ignore</option><option>force-new</option><option>cache</option><option>force-cache</option></select></label>
       <label>timeout <input class="m-dev-cell" style="width: 4rem" :disabled="!canEdit" :value="serviceNode ? (pure.attr(serviceNode, 'transaction-timeout') || '') : ''" @change="setAttr('transaction-timeout', $event.target.value)"></label>
       <span v-if="service.implements.length">implements {{service.implements.join(', ')}}</span>
+      <a class="text-caption" :href="'/qapps/tools/Service/ServiceDetail?serviceName=' + encodeURIComponent(name)" id="DevServiceTools">Open in Tools</a>
     </div>
     <q-tabs dense align="left" no-caps v-model="section" class="m-dev-tabs">
       <q-tab name="implementation" label="Implementation"></q-tab>

@@ -50,8 +50,11 @@ along with this software (see the LICENSE.md file). If not, see
                 </container>
             </widgets></section-iterate>
         </widgets></section>
-        <section name="DatabasePicker" condition="databaseList?.length &gt; 1"><widgets>
-            <form-single name="DatabasePickerForm" transition="selectDatabase" map="context">
+        <!-- the form's map is the choice alone, set here: a server-static template has no whole context to read -->
+        <section name="DatabasePicker" condition="databaseList?.length &gt; 1"><actions>
+            <set field="databasePick" from="{db: db}"/>
+        </actions><widgets>
+            <form-single name="DatabasePickerForm" transition="selectDatabase" map="databasePick">
                 <field name="db"><default-field title="Database">
                     <drop-down>
                         <list-options list="databaseList" key="${db}" text="${label}"/>

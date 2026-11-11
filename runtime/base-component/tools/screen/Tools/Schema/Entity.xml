@@ -37,6 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="entityDefinition" from="ec.entity.getEntityDefinition(selectedEntity)"/>
         <set field="entityInfo" from="entityDefinition.entityInfo"/>
         <set field="entityNode" from="entityDefinition.getEntityNode()"/>
+        <set field="devAide" from="ec.resource.script('component://tools/template/HomeCatalog.js').devMounted(sri, ec)"/>
         <set field="fieldInfos" from="entityInfo.allFieldInfoArray"/>
         <set field="relationshipInfoList" from="entityDefinition.getRelationshipsInfo(false)"/>
         <set field="dependents" from="entityDefinition.getDependentsTree()"/>
@@ -102,6 +103,9 @@ along with this software (see the LICENSE.md file). If not, see
             <link url="find" text="Entity Find"/>
             <link url="autoFind" text="Auto Screen Find" parameter-map="{aen:selectedEntity}"/>
             <link url="checkTable" link-type="hidden-form" text="Check table" tooltip="Create the missing table, columns, indexes and foreign keys of this entity"/>
+            <!-- on a dev instance: the entity's definition in Dev AIDE, which edits it -->
+            <link url="//apps/dev/Entities/Edit" text="Edit in Dev AIDE" icon="sym_o_code_blocks" condition="devAide"
+                    parameter-map="{artifact: 'entity:' + entityDefinition.fullEntityName}"/>
         </container>
         <container><label text="Entity Detail for ${entityDefinition.getPrettyName(null, null)} (${entityDefinition.fullEntityName})" type="h3"/></container>
         <container-row>

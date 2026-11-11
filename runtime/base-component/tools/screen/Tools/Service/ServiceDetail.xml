@@ -31,6 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="inParameterNodes" from="serviceNode.first('in-parameters')?.children('parameter')"/>
         <set field="outParameterNodes" from="serviceNode.first('out-parameters')?.children('parameter')"/>
         <set field="secas" from="ec.service.secaRulesByServiceName.get(sd.serviceNameNoHash)"/>
+        <set field="devAide" from="ec.resource.script('component://tools/template/HomeCatalog.js').devMounted(sri, ec)"/>
         <script><![CDATA[
             // Monitor's numbers are shown to a reader of the telemetry only (the otel_metrics dataset, granted with System):
             // to anyone else a report-embed says "Not available", so it is left out. list#Datasets leaves out, without an
@@ -46,6 +47,9 @@ along with this software (see the LICENSE.md file). If not, see
         <container-box><box-header><label type="h5" text="${sd.serviceName}"/></box-header><box-toolbar>
             <link url="serviceReference" text="Service List"/>
             <link url="serviceRun" text="Run Service"/>
+            <!-- on a dev instance: the service in Dev AIDE, which edits it -->
+            <link url="//apps/dev/Services/Edit" text="Edit in Dev AIDE" icon="sym_o_code_blocks" condition="devAide"
+                    parameter-map="{artifact: 'service:' + sd.serviceName}"/>
         </box-toolbar><box-body>
             <label type="strong" text="${serviceNode.first('description')?.text || ''}" display-if-empty="false"/>
             <!-- <label type="p" text="${serviceNode.attributes}"/> -->

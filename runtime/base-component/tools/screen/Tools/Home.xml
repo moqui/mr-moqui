@@ -17,8 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     what is running, and everything else. Every block is read in the actions as data, so the permission flags and
     the counts are in the screen package of a server-static template; the page writes nothing (the database picker
     keeps the choice, as on the other Tools screens). The navigation is the catalog of template/HomeParts.xml. The
-    server-static report still names two things here: the picker's form (map="context", in DatabaseParts.xml) and the
-    state chip of Running and recent, whose color is a row's value in a render-mode text. -->
+    server-static report (moqui lint --screens --qvt-static) names nothing here. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-index="1" menu-image="sym_o_home" menu-image-type="icon" default-menu-title="Home">
 
@@ -337,11 +336,11 @@ along with this software (see the LICENSE.md file). If not, see
                             <field name="text"><default-field title="What">
                                 <link url="${rowLink}" text="${text}" link-type="anchor" parameter-map="rowParameters"/>
                             </default-field></field>
-                            <field name="stateText"><default-field title="State"><render-mode>
-                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateText}</q-chip>]]></text>
-                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
-                                <text type="html"><![CDATA[<span data-state>${stateText}</span>]]></text>
-                            </render-mode></default-field></field>
+                            <!-- a label with the badge classes, not a render-mode text: a server-static template binds a
+                                label's text and style over the row, and writes no text that holds a row's value -->
+                            <field name="stateText"><default-field title="State">
+                                <label text="${stateText}" type="span" style="q-badge m-tonal text-${stateColor}"/>
+                            </default-field></field>
                             <field name="timeText"><default-field title="Started"><display/></default-field></field>
                             <columns type="mobile">
                                 <column><field-ref name="text"/><field-ref name="kindText"/></column>
