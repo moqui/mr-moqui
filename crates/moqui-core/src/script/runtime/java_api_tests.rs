@@ -337,3 +337,186 @@ fn transactions_begin_commit_and_roll_back_as_in_java() {
     );
     clear_context_stack();
 }
+
+/// Three enumerations of one type.
+fn seed_enums() {
+    run_script(
+        r#"ec.entity.makeValue("moqui.basic.EnumerationType").setAll({enumTypeId: "JT", description: "Java API"}).create();
+        for (const [id, text, n] of [["JE2", "second", 2], ["JE1", "first", 1], ["JE3", "third", 3]]) {
+            ec.entity.makeValue("moqui.basic.Enumeration")
+                .setAll({enumId: id, enumTypeId: "JT", description: text}).set("sequenceNum", n).create();
+        }"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn entity_value_writes_chain_and_have_javas_methods() {
+    let context = database();
+    let _entered = context.enter();
+    seed_enums();
+    holds(
+        r#"(function () {
+            const value = ec.entity.makeValue("moqui.basic.Enumeration");
+            const chained = value.set("enumId", "JE9").setFields({enumTypeId: "JT"}, true, null, null).setAll({description: "ninth"});
+            const made = chained === value && value.create() === value && value.store() === value && value.update() === value;
+            const found = ec.entity.find("moqui.basic.Enumeration").condition("enumId", "JE9").one();
+            const unchanged = !found.isModified() && !found.isFieldModified("description");
+            found.description = "changed";
+            const changed = found.isModified() && found.isFieldModified("description")
+                && found.getOriginalDbValue("description") === "ninth";
+            const facts = found.isField("description") && !found.isField("nope") && found.isFieldSet("enumId")
+                && found.containsPrimaryKey() && !ec.entity.makeValue("moqui.basic.Enumeration").containsPrimaryKey()
+                && found.getPrimaryKeysString() === "JE9" && found.isMutable()
+                && found.mapMatches({enumTypeId: "JT", enumId: "JE9"}) && !found.mapMatches({enumTypeId: "other"})
+                && found.getString("enumId") === "JE9" && found.getNoCheckSimple("enumTypeId") === "JT";
+            const other = ec.entity.find("moqui.basic.Enumeration").condition("enumId", "JE1").one();
+            const ordered = other.compareTo(found) < 0 && found.compareTo(other) > 0 && found.compareTo(found) === 0;
+            const gone = found.delete() === found
+                && ec.entity.find("moqui.basic.Enumeration").condition("enumId", "JE9").one() == null;
+            return made && unchanged && changed && facts && ordered && gone;
+        })()"#,
+    );
+    holds(
+        r#"(function () {
+            const type = ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", "JT").one();
+            // the test entity has no master definition: the call reaches the entity facade, which says so
+            try { type.getMasterValueMap(null); } catch (err) { return String(err.message).includes("No master definition"); }
+            return false;
+        })()"#,
+    );
+    clear_context_stack();
+}
+
+#[test]
+fn entity_list_has_javas_list_methods() {
+    let context = database();
+    let _entered = context.enter();
+    seed_enums();
+    let ids = |script: &str| {
+        holds(&script.replacen(
+            "(function () {",
+            r#"(function () { const all = () => ec.entity.find("moqui.basic.Enumeration").condition("enumTypeId", "JT").orderBy("enumId").list(); const ids = (list) => Array.from(list, (row) => row.enumId).join();"#,
+            1,
+        ));
+    };
+    // the filters and orders change the list and return it, as in Java
+    ids(r#"(function () {
+        const list = all();
+        const same = list.filterByAnd({sequenceNum: 2}) === list;
+        const pairs = all().filterByAnd("description", "third", "enumTypeId", "JT");
+        const ordered = all().orderByFields(["-sequenceNum"]);
+        const removed = all().removeByAnd({enumId: "JE1"});
+        return same && ids(list) === "JE2" && ids(pairs) === "JE3" && ids(ordered) === "JE3,JE2,JE1"
+            && ids(removed) === "JE2,JE3" && ids(all().filterByLimit(1, 1)) === "JE2"
+            && ids(all().filterByDate(null, null, null)) === "JE1,JE2,JE3";
+    })()"#);
+    // a new list, the original as it was
+    ids(r#"(function () {
+        const list = all();
+        const found = list.findByAnd({enumId: "JE3"});
+        const copy = list.cloneList();
+        copy[0].description = "changed in the copy";
+        return ids(found) === "JE3" && list.length === 3 && list[0].description === "first" && copy.length === 3
+            && list.getFirst().enumId === "JE1" && list.indexMatching({enumId: "JE2"}) === 1
+            && list.getValueMapList()[2].enumId === "JE3" && list.getPlainValueList(0)[0].enumId === "JE1";
+    })()"#);
+    // Java's List changes, and the array methods that change an array
+    ids(r#"(function () {
+        const list = all();
+        const extra = ec.entity.makeValue("moqui.basic.Enumeration").setAll({enumId: "JE0", enumTypeId: "JT"});
+        list.add(extra);
+        list.add(0, extra.cloneValue().set("enumId", "JE00"));
+        const added = ids(list) === "JE00,JE1,JE2,JE3,JE0";
+        const removedRow = list.remove(0).enumId === "JE00" && list.remove(extra) === true && list.length === 3;
+        list.addIfMissing(list[0]).addIfMissing(extra);
+        const missing = list.length === 4;
+        list.move(3, 0);
+        const moved = ids(list) === "JE0,JE1,JE2,JE3";
+        list.sort((a, b) => a.enumId < b.enumId ? 1 : -1);
+        const sorted = ids(list) === "JE3,JE2,JE1,JE0";
+        list.reverse();
+        const popped = list.pop().enumId === "JE3" && list.shift().enumId === "JE0";
+        list.push(extra);
+        list.set(0, extra);
+        const set = ids(list) === "JE0,JE2,JE0";
+        list.clear();
+        return added && removedRow && missing && moved && sorted && popped && set && list.isEmpty();
+    })()"#);
+    // the helper functions that change a list work on an entity list
+    ids(r#"(function () {
+        const list = all();
+        orderMapList(list, ["-enumId"]);
+        const ordered = ids(list) === "JE3,JE2,JE1";
+        filterMapList(list, {enumId: "JE2"});
+        return ordered && ids(list) === "JE2";
+    })()"#);
+    clear_context_stack();
+}
+
+#[test]
+fn finds_conditions_and_the_entity_facade_take_javas_forms() {
+    let context = database();
+    let _entered = context.enter();
+    seed_enums();
+    let ids = |script: &str| {
+        holds(&script.replacen(
+            "(function () {",
+            r#"(function () { const cf = ec.entity.conditionFactory; const find = () => ec.entity.find("moqui.basic.Enumeration").condition("enumTypeId", "JT"); const ids = (list) => Array.from(list, (row) => row.enumId).join();"#,
+            1,
+        ));
+    };
+    // a condition joined to a condition; it was no condition at all before
+    ids(r#"(function () {
+        const one = cf.makeCondition("enumId", "equals", "JE1"), three = cf.makeCondition("enumId", "equals", "JE3");
+        const third = cf.makeCondition("description", "equals", "third");
+        const either = cf.makeCondition(one, "or", three), both = cf.makeCondition(one, "and", third);
+        return either != null && ids(find().condition(either).orderBy("enumId").list()) === "JE1,JE3"
+            && find().condition(both).list().length === 0 && find().condition(cf.makeCondition(three, "and", third)).count() === 1
+            && cf.makeCondition(one, "and", null) != null;
+    })()"#);
+    // the operator arguments of the map and list forms
+    ids(r#"(function () {
+        const notOne = cf.makeCondition({enumId: "JE1"}, "not-equals", "and");
+        const anyOf = cf.makeCondition({enumId: "JE1", description: "third"}, "equals", "or");
+        const listed = cf.makeCondition([{enumId: "JE2"}, cf.makeCondition("enumId", "equals", "JE3")], "or");
+        return ids(find().condition(notOne).orderBy("enumId").list()) === "JE2,JE3"
+            && ids(find().condition(anyOf).orderBy("enumId").list()) === "JE1,JE3"
+            && ids(find().condition(listed).orderBy("enumId").list()) === "JE2,JE3";
+    })()"#);
+    ids(r#"(function () {
+        const toField = cf.makeConditionToField("enumId", "not-equals", "enumTypeId");
+        return find().condition(toField).count() === 3 && find().conditionToField("enumId", "equals", "enumTypeId").count() === 0
+            && String(cf.getTrueCondition()) === "1 = 1" && cf.comparisonOperatorFromEnumId("ENTCO_GTR_EQ") === "greater-equals";
+    })()"#);
+    // a condition checked against a map or a value in memory
+    ids(r#"(function () {
+        const condition = cf.makeCondition(cf.makeCondition("enumTypeId", "equals", "JT"), "and", cf.makeCondition("sequenceNum", "greater", 1));
+        const row = find().condition("enumId", "JE3").one();
+        const populated = cf.makeCondition({enumId: "JE1", enumTypeId: "JT"}).populateMap({kept: true});
+        return condition.mapMatches({enumTypeId: "JT", sequenceNum: 2}) && !condition.mapMatches({enumTypeId: "JT", sequenceNum: 1})
+            && condition.mapMatches(row) && condition.mapMatchesAny({enumTypeId: "JT", sequenceNum: 0})
+            && condition.mapKeysNotContained({other: 1}) && !condition.mapKeysNotContained({sequenceNum: 1})
+            && populated.kept === true && populated.enumId === "JE1" && String(condition).includes("enumTypeId = JT")
+            && ids(find().orderBy("enumId").list().filterByCondition(condition, true)) === "JE2,JE3";
+    })()"#);
+    // lists of names, as Java takes them
+    ids(r#"(function () {
+        const ordered = find().orderBy(["-sequenceNum", "enumId"]).list();
+        const selected = find().selectFields(["enumId", "description"]);
+        return ids(ordered) === "JE3,JE2,JE1" && selected.getSelectFields().join() === "enumId,description"
+            && find().selectField("enumId,enumTypeId").getSelectFields().length === 2
+            && find().getEntityName() === "moqui.basic.Enumeration"
+            && find().fetchSize(100).maxRows(10).getFetchSize() === null;
+    })()"#);
+    ids(r#"(function () {
+        const one = ec.entity.fastFindOne("moqui.basic.Enumeration", false, true, "JE2");
+        ec.entity.createBulk([
+            ec.entity.makeValue("moqui.basic.Enumeration").setAll({enumId: "JE7", enumTypeId: "JT"}),
+            ec.entity.makeValue("moqui.basic.Enumeration").setAll({enumId: "JE8", enumTypeId: "JT"})]);
+        return one.description === "second" && ec.entity.fastFindOne("moqui.basic.Enumeration", true, false) === null
+            && find().count() === 5 && ec.entity.getEntityGroupName("moqui.basic.Enumeration") !== undefined
+            && ec.entity.getEntityGroupName("no.Such") === null;
+    })()"#);
+    clear_context_stack();
+}

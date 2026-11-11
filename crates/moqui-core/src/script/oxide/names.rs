@@ -38,15 +38,15 @@ use quickjs_oxide::engine::api::core::{
 use super::convert::{to_host, to_js, Conv};
 use super::engine::{current, guarded, guarded_hook};
 use crate::script::run::STACK;
-use crate::script::runtime::{
-    entity_field_names, entity_is_field, entity_set_field, EntityCell, EntityField,
-};
+use crate::script::runtime::{entity_field_names, entity_is_field, entity_set_field, EntityCell, EntityField};
 
 /// The names the entity value's prototype has (its methods, the host table's on both engines): a method wins over a
 /// field of the same name. A test keeps the list in step with QuickJS.
 #[allow(dead_code)] // a test keeps it in step; the route's read check (reads.rs) names it
 pub(super) const ENTITY_METHODS: &[&str] = &[
     "cloneValue",
+    "compareTo",
+    "containsPrimaryKey",
     "create",
     "createOrUpdate",
     "delete",
@@ -55,21 +55,45 @@ pub(super) const ENTITY_METHODS: &[&str] = &[
     "entrySet",
     "equals",
     "findRelated",
+    "findRelatedCount",
     "findRelatedFk",
     "findRelatedOne",
     "get",
+    "getBigDecimal",
+    "getBoolean",
+    "getBytes",
+    "getDate",
+    "getDouble",
     "getEntityName",
     "getEntityNamePretty",
+    "getLong",
     "getMap",
+    "getMasterValueMap",
+    "getNoCheckSimple",
+    "getOriginalDbValue",
     "getPlainValueMap",
     "getPrimaryKeys",
+    "getPrimaryKeysString",
+    "getString",
+    "getTime",
+    "getTimestamp",
+    "isField",
+    "isFieldModified",
+    "isFieldSet",
+    "isModified",
+    "isMutable",
+    "mapMatches",
     "refresh",
     "resolveEntityName",
     "resolveEntityNamePretty",
     "set",
+    "setAll",
+    "setBytes",
     "setFields",
     "setSequencedIdPrimary",
     "setSequencedIdSecondary",
+    "setString",
+    "store",
     "update",
 ];
 
@@ -273,15 +297,27 @@ impl ExoticClass for OpaqueValues {
         if key.as_symbol().is_some() {
             return Ok(Hook::Ordinary);
         }
-        guarded_hook(scope, |_| Err(Conv::Unsupported("a member of a host object the oxide bindings do not have yet")))
+        guarded_hook(scope, |_| {
+            Err(Conv::Unsupported(
+                "a member of a host object the oxide bindings do not have yet",
+            ))
+        })
     }
 
     fn has(&self, scope: &mut ExoticScope<'_>, _: &OpaqueTarget, _: &PropertyKey) -> JsResult<Hook<bool>> {
-        guarded_hook(scope, |_| Err(Conv::Unsupported("a member of a host object the oxide bindings do not have yet")))
+        guarded_hook(scope, |_| {
+            Err(Conv::Unsupported(
+                "a member of a host object the oxide bindings do not have yet",
+            ))
+        })
     }
 
     fn own_keys(&self, scope: &mut ExoticScope<'_>, _: &OpaqueTarget) -> JsResult<Hook<Vec<PropertyKey>>> {
-        guarded_hook(scope, |_| Err(Conv::Unsupported("a member of a host object the oxide bindings do not have yet")))
+        guarded_hook(scope, |_| {
+            Err(Conv::Unsupported(
+                "a member of a host object the oxide bindings do not have yet",
+            ))
+        })
     }
 }
 

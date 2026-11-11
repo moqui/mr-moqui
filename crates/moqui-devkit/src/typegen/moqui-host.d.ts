@@ -139,10 +139,47 @@ type MoquiFieldProperties<N extends string> = {
 };
 interface EntityValueMethods<N extends string = string> {
     get<K extends MoquiFieldName<N>>(field: K): MoquiFields<N>[K] | null;
-    set<K extends MoquiFieldName<N>>(field: K, value: MoquiFieldInput<MoquiFields<N>[K]>): void;
-    setFields(fields: MoquiMap, setIfEmpty?: boolean, namePrefix?: string | null, pks?: boolean | null): void;
-    setSequencedIdPrimary(): void;
-    setSequencedIdSecondary(): void;
+    /** The setters and writes return the value, so they chain: `makeValue(name).setAll(fields).setSequencedIdPrimary().create()`. */
+    set<K extends MoquiFieldName<N>>(field: K, value: MoquiFieldInput<MoquiFields<N>[K]>): this;
+    setFields(fields: MoquiMap, setIfEmpty?: boolean, namePrefix?: string | null, pks?: boolean | null): this;
+    /** `setFields(fields, true, null, null)`. */
+    setAll(fields: MoquiMap | null): this;
+    setString(field: string, value: string | null): this;
+    setBytes(field: string, value: unknown): this;
+    setSequencedIdPrimary(): this;
+    setSequencedIdSecondary(): this;
+    /** Whether the value holds the field, null or not. */
+    isFieldSet(field: string): boolean;
+    /** Whether the entity has a field of the name. */
+    isField(field: string): boolean;
+    /** Whether the field changed since the value was read or last written, so an update writes it. */
+    isFieldModified(field: string): boolean;
+    isModified(): boolean;
+    /** What the field held when the value was read or last written. */
+    getOriginalDbValue(field: string): unknown;
+    /** Whether every primary key field has a value. */
+    containsPrimaryKey(): boolean;
+    /** The primary key values joined by `::`. */
+    getPrimaryKeysString(): string;
+    /** Whether each entry of the map equals the value's field. */
+    mapMatches(fields: MoquiMap): boolean;
+    /** By entity name, then the primary key fields, then the others: negative, zero or positive. */
+    compareTo(other: EntityValue): number;
+    isMutable(): boolean;
+    getNoCheckSimple(field: string): unknown;
+    /** The field converted, null for none. */
+    getString(field: string): string | null;
+    getBoolean(field: string): boolean | null;
+    getLong(field: string): number | null;
+    getDouble(field: string): number | null;
+    getBigDecimal(field: string): Decimal | null;
+    getTimestamp(field: string): Timestamp | null;
+    getDate(field: string): unknown;
+    getTime(field: string): unknown;
+    getBytes(field: string): unknown;
+    /** The value with the related records of a master definition (`default` when omitted), as plain objects. */
+    getMasterValueMap(master?: string | null): MoquiMap;
+    findRelatedCount(relationship: keyof MoquiRel<N> & string, byAndFields?: MoquiMap | null, useCache?: boolean | null): number;
     /** Reads the row of the primary key again and replaces the fields. False, and unchanged, when there is no row. */
     refresh(): boolean;
     /** Each field as an entry: `{key, value, getKey(), getValue()}`. */
@@ -157,10 +194,12 @@ interface EntityValueMethods<N extends string = string> {
     getPlainValueMap(dependentLevels: number): MoquiMap;
     getEntityName(): string;
     resolveEntityName(): string;
-    create(): void;
-    createOrUpdate(): void;
-    update(): void;
-    delete(): void;
+    create(): this;
+    createOrUpdate(): this;
+    /** `createOrUpdate()`. */
+    store(): this;
+    update(): this;
+    delete(): this;
     deleteRelated(relationship: keyof MoquiRel<N> & string): void;
     /** Deletes the rows of the named `many` relationships (names or short aliases), then this value. False, with nothing deleted, when rows of another entity still reference it. */
     deleteWithRelated(relationships?: string[] | Set<string> | null): boolean;
@@ -184,19 +223,60 @@ interface EntityValueMethods<N extends string = string> {
     ): EntityValue<MoquiRelated<N, R>> | null;
 }
 
-/** An entity list host object: index, length, iterable, `map` and `filter`. */
+/**
+ * An entity list host object: index, length, iterable, the Array methods and Java's `EntityList` and `List` methods.
+ * As in Java, the methods that filter or order (`filterByAnd`, `filterByDate`, `filterByCondition`, `filterByLimit`,
+ * `orderByFields`, `removeByAnd`, `sort`, `reverse`) change the list and return it. The Array methods that give a new
+ * array (`map`, `filter`, `slice`, `toSorted`) give an array of the rows and leave the list as it was.
+ */
 interface EntityList<N extends string = string> extends Iterable<EntityValue<N>> {
     readonly [index: number]: EntityValue<N>;
     readonly length: number;
-    readonly pageIndex: number;
-    readonly pageSize: number;
-    /** The rest of the Array prototype runs on an array copy of the rows, so `sort` and `reverse` return the reordered copy and leave the list. */
+    isEmpty(): boolean;
+    first(): EntityValue<N> | null;
+    getFirst(): EntityValue<N> | null;
+    last(): EntityValue<N> | null;
+    /** `filterByAnd(fields)` or `filterByAnd(name, value, name, value...)`: the list keeps the rows that match. */
+    filterByAnd(fields: MoquiMap): this;
+    filterByAnd(...namesAndValues: unknown[]): this;
+    /** The list drops the rows that match. */
+    removeByAnd(fields: MoquiMap): this;
+    /** A new list of the rows that match. */
+    findByAnd(fields: MoquiMap): EntityList<N>;
+    findByAnd(...namesAndValues: unknown[]): EntityList<N>;
+    /** The list keeps the rows the condition matches, or with `include` false those it does not. */
+    filterByCondition(condition: EntityCondition, include?: boolean): this;
+    /** `["name", "-other"]`: by each field in turn, `-` for descending. */
+    orderByFields(fields: string[] | string | null): this;
+    indexMatching(fields: MoquiMap): number;
+    move(fromIndex: number, toIndex: number): this;
+    add(value: EntityValue<N>): boolean;
+    add(index: number, value: EntityValue<N>): boolean;
+    addAll(values: Iterable<EntityValue<N>>): boolean;
+    addIfMissing(value: EntityValue<N>): this;
+    addAllIfMissing(values: Iterable<EntityValue<N>>): this;
+    /** By index: the row removed, or null. By value: whether one was removed. */
+    remove(index: number): EntityValue<N> | null;
+    remove(value: EntityValue<N>): boolean;
+    set(index: number, value: EntityValue<N>): EntityValue<N> | null;
+    clear(): void;
+    push(...values: EntityValue<N>[]): number;
+    pop(): EntityValue<N> | undefined;
+    shift(): EntityValue<N> | undefined;
+    unshift(...values: EntityValue<N>[]): number;
+    splice(start: number, deleteCount?: number, ...values: EntityValue<N>[]): EntityValue<N>[];
+    reverse(): this;
+    /** A new list of copies of the rows. */
+    cloneList(): EntityList<N>;
+    getValueMapList(): MoquiMap[];
+    getPlainValueList(dependentLevels?: number): MoquiMap[];
+    getMasterValueList(master?: string | null): MoquiMap[];
     find(callback: (value: EntityValue<N>, index: number) => unknown): EntityValue<N> | undefined;
     findIndex(callback: (value: EntityValue<N>, index: number) => unknown): number;
     some(callback: (value: EntityValue<N>, index: number) => unknown): boolean;
     every(callback: (value: EntityValue<N>, index: number) => unknown): boolean;
     reduce<T>(callback: (accumulator: T, value: EntityValue<N>, index: number) => T, initial: T): T;
-    sort(compare?: (left: EntityValue<N>, right: EntityValue<N>) => number): EntityValue<N>[];
+    sort(compare?: (left: EntityValue<N>, right: EntityValue<N>) => number): this;
     includes(value: EntityValue<N>): boolean;
     indexOf(value: EntityValue<N>): number;
     slice(start?: number, end?: number): EntityValue<N>[];
@@ -211,8 +291,10 @@ interface EntityList<N extends string = string> extends Iterable<EntityValue<N>>
         thruField?: string | null,
         moment?: TimestampInput | null,
         ignoreIfEmpty?: boolean,
-    ): EntityList<N>;
-    filterByLimit(offset: number, limit: number): EntityList<N>;
+    ): this;
+    /** The rows from `offset`, `limit` of them; or Java's form, by the `pageIndex` and `pageSize` of the context or of the map named in it. */
+    filterByLimit(offset: number, limit: number): this;
+    filterByLimit(inputFieldsMapName: string | null, alwaysPaginate: boolean): this;
     map<T>(callback: (value: EntityValue<N>, index: number) => T): T[];
     filter(callback: (value: EntityValue<N>, index: number) => boolean): EntityValue<N>[];
 }
@@ -258,6 +340,15 @@ interface EntityCondition {
     readonly __moquiCondition: never;
     /** Compare text without regard to case. */
     ignoreCase(): EntityCondition;
+    /** Whether a map or entity value of fields meets the condition. A SQL fragment cannot be checked. */
+    mapMatches(fields: MoquiMap | EntityValue): boolean;
+    /** Whether it meets any one comparison of the condition. */
+    mapMatchesAny(fields: MoquiMap | EntityValue): boolean;
+    /** Whether the condition names none of the map's keys. */
+    mapKeysNotContained(fields: MoquiMap): boolean;
+    /** The fields the condition requires to equal a value, put in the map given (or a new one). */
+    populateMap(map?: MoquiMap | null): MoquiMap;
+    toString(): string;
 }
 
 /** A find builder. Each chain method returns the builder; a builder runs once. */
@@ -289,9 +380,23 @@ interface EntityFind<N extends string = string> {
     /** Set the fields on each row found and update the ones that change. How many were updated. */
     updateAll(fieldsToSet: MoquiMap): number;
     limit(limit: number | null): EntityFind<N>;
-    selectField(field: string): EntityFind<N>;
-    /** Comma separated fields; `-` descending, `^` case-insensitive. */
-    orderBy(fields: string): EntityFind<N>;
+    /** Comma separated fields, or a list of them. */
+    selectField(field: string | string[]): EntityFind<N>;
+    selectFields(fields: string[] | string): EntityFind<N>;
+    getSelectFields(): string[];
+    getEntityName(): string;
+    /** Comma separated fields, or a list of them; `-` descending, `^` case-insensitive. */
+    orderBy(fields: string | string[]): EntityFind<N>;
+    /** One field against another. */
+    conditionToField(field: string, operator: string, toField: string): EntityFind<N>;
+    /** `searchFormMap` over the context, or over the map named in it. */
+    searchFormInputs(inputFieldsMapName: string | null, defaultOrderBy?: string | null, alwaysPaginate?: boolean): EntityFind<N>;
+    searchFormInputs(inputFieldsMapName: string | null, defaultParameters: MoquiMap, defaultOrderBy?: string | null, alwaysPaginate?: boolean): EntityFind<N>;
+    /** Each row with the related records of a master definition, as plain objects. */
+    listMaster(master?: string | null): MoquiMap[];
+    /** JDBC hints with no counterpart here; accepted so a chain that names them runs. */
+    fetchSize(size: number | null): EntityFind<N>;
+    maxRows(rows: number | null): EntityFind<N>;
     copy(): EntityFind<N>;
     one(): EntityValue<N> | null;
     /** A plain master graph retaining nested identities; `default` when omitted. */
@@ -447,13 +552,28 @@ interface MoquiEntityFacade {
     tempResetSequencedIdPrimary(seqName: string): void;
     /** The time zone of the database timestamps: UTC. Accepted and ignored as the fourth argument of `ec.l10n.format`. */
     readonly databaseTimeZone: string;
+    /** By the primary key values in the entity's key order; null with fewer values than key fields. */
+    fastFindOne<N extends (keyof MoquiEntityMap & string) | (string & {})>(entityName: N, useCache: boolean | null, disableAuthz: boolean | null, ...pkValues: unknown[]): EntityValue<N> | null;
+    /** Each value created, in order. */
+    createBulk(values: Iterable<EntityValue>): void;
+    getEntityGroupName(entityName: string): string | null;
+    getConditionFactory(): MoquiEntityFacade["conditionFactory"];
     readonly conditionFactory: {
+        /** A condition joined to another: `makeCondition(left, "or", right)`. */
+        makeCondition(left: EntityCondition, joinOperator: string, right: EntityCondition | null): EntityCondition;
+        makeConditionToField(field: string, operator: string, toField: string): EntityCondition;
+        /** A condition every row meets. */
+        getTrueCondition(): EntityCondition;
+        /** The operator name of a `ComparisonOperator` enumeration id (`ENTCO_LESS` is `less`), or null. */
+        comparisonOperatorFromEnumId(enumId: string): string | null;
         /** The fourth argument is Java's `orNull` (or the field is null); the fifth makes the comparison ignore case. `condition.ignoreCase()` does the same. */
         makeCondition(field: string, operator: string, value: unknown, orNull?: boolean, ignoreCase?: boolean): EntityCondition;
         /** A SQL fragment used as written, as in a view entity's aliases; null for empty text. */
         makeConditionWhere(sql: string): EntityCondition | null;
-        makeCondition(conditions: EntityCondition[], joinOperator?: string): EntityCondition;
-        makeCondition(fields: MoquiMap): EntityCondition;
+        /** A map in the list is its entries compared with `mapOperator` (equals) and joined by `mapJoinOperator` (and). */
+        makeCondition(conditions: (EntityCondition | MoquiMap)[], joinOperator?: string, mapOperator?: string, mapJoinOperator?: string): EntityCondition;
+        /** The entries compared with `operator` (equals) and joined by `joinOperator` (and). */
+        makeCondition(fields: MoquiMap, operator?: string, joinOperator?: string): EntityCondition;
         makeConditionDate(
             fromField: string | null,
             thruField: string | null,

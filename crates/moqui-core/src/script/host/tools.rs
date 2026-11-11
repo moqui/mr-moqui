@@ -180,6 +180,27 @@ macro_rules! tools_js {
         });
         return ed;
     };
+    // Java's fastFindOne(entityName, useCache, disableAuthz, pkValue...): by the primary key values in the entity's
+    // key order; null when the entity has more key fields than values given
+    ec.entity.fastFindOne = function (entityName, useCache, disableAuthz, ...values) {
+        const definition = ec.entity.getEntityDefinition(entityName);
+        if (definition == null) throw new Error("No entity named " + entityName);
+        const names = definition.getPkFieldNames();
+        if (values.length === 1 && Array.isArray(values[0])) values = values[0];
+        if (values.length < names.length) return null;
+        const find = ec.entity.find(entityName);
+        names.forEach((name, index) => find.condition(name, values[index]));
+        if (useCache != null) find.useCache(useCache === true);
+        if (disableAuthz === true) find.disableAuthz();
+        return find.one();
+    };
+    // Java's getEntityGroupName(entityName): the entity's group, null for no such entity
+    ec.entity.getEntityGroupName = function (entityName) {
+        const definition = ec.entity.getEntityDefinition(entityName);
+        return definition == null ? null : (definition.groupName ?? null);
+    };
+    // Java's createBulk(values): each created, in order
+    ec.entity.createBulk = function (values) { for (const value of values || []) value.create(); };
     ec.entity.getEntityDefinition = function (entityName) {
         const info = host.entityDefinitionInfo(entityName);
         if (info == null) return null;

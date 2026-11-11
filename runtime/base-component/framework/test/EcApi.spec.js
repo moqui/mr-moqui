@@ -97,3 +97,37 @@ feature("the cache, artifact stack and logger members of Java's facades", {
         ec.factory.entity === ec.entity && typeof ec.factory.getComponentBaseLocations().framework === "string";
     }
 });
+
+feature("entity values chain, lists change in place and conditions join, as in Java", {
+    when() {
+        seen = {};
+        const cf = ec.entity.conditionFactory;
+        const authzOff = ec.artifactExecution.disableAuthz();
+        const began = ec.transaction.begin(null);
+        try {
+            ec.entity.makeValue("moqui.basic.EnumerationType").setAll({ enumTypeId: "EcApiType", description: "EcApi" }).store();
+            for (const [id, n] of [["EcApiB", 2], ["EcApiA", 1], ["EcApiC", 3]])
+                ec.entity.makeValue("moqui.basic.Enumeration").setAll({ enumId: id, enumTypeId: "EcApiType" }).set("sequenceNum", n).create();
+            const find = () => ec.entity.find("moqui.basic.Enumeration").condition("enumTypeId", "EcApiType");
+            const ids = (list) => Array.from(list, (row) => row.enumId).join();
+            const list = find().orderBy(["enumId"]).list();
+            seen.ordered = ids(list.orderByFields(["-sequenceNum"])) === "EcApiC,EcApiB,EcApiA";
+            seen.filtered = ids(list.filterByAnd({ sequenceNum: 2 })) === "EcApiB" && list.length === 1;
+            const either = cf.makeCondition(cf.makeCondition("enumId", "equals", "EcApiA"), "or", cf.makeCondition("enumId", "equals", "EcApiC"));
+            seen.joined = ids(find().condition(either).orderBy("enumId").list()) === "EcApiA,EcApiC";
+            seen.one = ec.entity.fastFindOne("moqui.basic.Enumeration", false, true, "EcApiB").sequenceNum === 2;
+            const value = find().condition("enumId", "EcApiA").one();
+            value.description = "changed";
+            seen.modified = value.isFieldModified("description") && value.getOriginalDbValue("description") == null
+                && value.containsPrimaryKey() && value.getPrimaryKeysString() === "EcApiA";
+        } finally {
+            ec.transaction.rollback(began, "EcApi spec leaves no rows", null);
+        }
+        seen.gone = ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", "EcApiType").one() == null;
+        if (!authzOff) ec.artifactExecution.enableAuthz();
+    },
+    then() {
+        seen.ordered && seen.filtered && seen.joined && seen.one && seen.modified;
+        seen.gone;
+    }
+});
