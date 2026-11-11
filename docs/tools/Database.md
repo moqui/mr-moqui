@@ -67,6 +67,20 @@ the source spec and runs the source again.
   `dbresource://moqui/database/upload/<userId>/<uploadId>/<name>`, at most 100 MB, and `clean#GridUploads` (daily)
   removes them after seven days.
 
+**Filters.** Each column's header has a filter. Plain text is "contains", case ignored, for a text column. Text
+that begins with an operator filters by it, which is how a number or date column is filtered:
+
+| Typed | Rows where the column |
+| --- | --- |
+| `=X`, `!=X` | is, or is not, X |
+| `>X`, `>=X`, `<X`, `<=X` | compares so with X |
+| `^X` | begins with X |
+| `in:A,B,C` | is one of the list |
+| `empty`, `!empty` | has no value (or an empty text), or has one |
+
+**A record.** An entity's row has Record, which opens that record's form (Data › Record) with its related records'
+links; a view's or a data document's has Related, which opens its main entity in Data › Browse.
+
 **Pages and counts.**
 
 - No source is counted on each load. While pages come back full, the last page is the current one plus one.
@@ -154,6 +168,14 @@ all actions on the Tools app. The services check both whatever calls them.
 - **The audit:** every statement writes a `DatabaseAudit` row (`DbaSql`), reads and failures included, in a
   transaction of its own. So does a refused attempt with changes. See [The audit](#the-audit).
 - **The read fence:** an agent's read tool still refuses non-queries (`fence::check_sql`).
+
+## Export and snapshots
+
+- **Export** (`Data/Export.xml`) writes entity data as XML, JSON or CSV to the browser (a download), a file or a
+  directory on the server. More than one entity as CSV to the browser is a zip with a file for each. Filter is a
+  JavaScript object of field values the records must have, such as `{statusId: 'X'}`.
+- **Snapshots** (`Data/Snapshots.xml`) exports and imports whole snapshots as zips in `runtime/db/snapshot`. Upload
+  Snapshot puts a zip there, replacing one of the same name; Download and Delete act on one.
 
 ## Schema
 

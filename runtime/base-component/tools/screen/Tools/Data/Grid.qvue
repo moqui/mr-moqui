@@ -18,7 +18,8 @@ along with this software (see the LICENSE.md file). If not, see
     each row with its stamp, in one transaction, and a refused row keeps its edits with the field errors on its cells.
     The source is an entity (entityName or selectedEntity, the other URL parameters its conditions), a saved view
     (viewId), or a SQL result the SQL screen hands over (sqlKey); DataDocument.<id> and DbViewEntity sources are read
-    only, with Related opening Data › Browse. File opens an uploaded or placed CSV or spreadsheet (its sheet and header
+    only, with Related opening Data › Browse; an entity's row has Record, its form in Data › Record. A filter's text may
+    begin with an operator (serverFilter). File opens an uploaded or placed CSV or spreadsheet (its sheet and header
     row), read only, and Load into… maps its columns to a target's fields (match#EtlFields), shows the first 200 rows
     converted (check#EtlSample), and saves the mapping, checks the whole file or loads it, over the JSON transitions of
     Tools/Etl (Etl.xml). -->
@@ -38,7 +39,8 @@ along with this software (see the LICENSE.md file). If not, see
             <q-btn flat dense no-caps icon="redo" label="Redo" :disable="!ready" @click="redo"></q-btn>
             <q-btn v-if="editable" flat dense no-caps icon="add" label="Add row" @click="addRow"></q-btn>
             <q-btn v-if="editable" flat dense no-caps icon="delete" label="Delete rows" @click="deleteRows"></q-btn>
-            <q-btn flat dense no-caps icon="filter_list" :label="filtersShown ? 'Hide filters' : 'Filters'" @click="filtersShown = !filtersShown"></q-btn>
+            <q-btn flat dense no-caps icon="filter_list" :label="filtersShown ? 'Hide filters' : 'Filters'" @click="filtersShown = !filtersShown">
+                <q-tooltip>A filter is text the column contains. Or begin it with =, !=, &gt;, &gt;=, &lt;, &lt;=, ^ (begins with) or in: (a list with commas), or type empty or !empty</q-tooltip></q-btn>
             <q-btn-dropdown flat dense no-caps icon="view_column" label="Columns">
                 <q-list dense style="max-height:60vh;overflow:auto">
                     <q-item v-for="column in columnMeta" :key="column.name" tag="label">
@@ -359,6 +361,8 @@ module.exports = {
             const vm = this;
             let rowId = 0;
             const columns = this.columnMeta.map((column) => this.tabulatorColumn(column));
+            if (this.saveEntity && (this.keyFields || []).length) columns.push({ title: '', field: '_record', headerSort: false, width: 80, formatter: () => 'Record',
+                cellClick: (e, cell) => vm.openRecord(cell.getRow().getData()) });
             if (this.related) columns.push({ title: '', field: '_related', headerSort: false, width: 90, formatter: () => 'Related', cellClick: (e, cell) => vm.openRelated(cell.getRow().getData()) });
             const layout = this.pendingLayout;
             this.grid = new window.Tabulator(element, {
@@ -400,7 +404,7 @@ module.exports = {
                     // a first page replaces every row: what was followed of the old rows goes with them
                     if (Number(params.page || 1) <= 1) vm.forgetChanges();
                     return vm.call('gridRows', vm.sourceParams({ columnsJson: JSON.stringify([]), page: params.page,
-                    size: params.size, sortJson: JSON.stringify(params.sort || []), filterJson: JSON.stringify(params.filter || []) }))
+                    size: params.size, sortJson: JSON.stringify(params.sort || []), filterJson: JSON.stringify(vm.serverFilters(params.filter)) }))
                     .then((out) => {
                         if (!out) return { last_page: 1, data: [] };
                         for (const row of out.data || []) row._rid = 'r' + (++rowId);
@@ -624,7 +628,29 @@ module.exports = {
             const search = 'aen=' + encodeURIComponent(related.entityName) + keys.map((name) => '&' + encodeURIComponent(name) + '=' + encodeURIComponent(data[name])).join('');
             this.$root.setUrl(this.siblingUrl(keys.length === (related.pkFieldNames || []).length && keys.length ? 'Browse/AutoEdit/AutoEditMaster' : 'Browse/AutoFind', search));
         },
-        currentFilters() { return this.grid ? this.grid.getHeaderFilters().map((item) => ({ field: item.field, type: 'like', value: item.value })) : []; },
+        // A header filter's text may begin with an operator: =, !=, >, >=, <, <=, ^ (begins with), in: (a list with
+        // commas), or be the word empty or !empty; any other text is "contains", case ignored. An operator with
+        // nothing after it yet is no filter, so the grid does not ask the server while it is typed.
+        serverFilter(item) {
+            const text = String(item.value == null ? '' : item.value).trim();
+            const filter = (type, value) => ({ field: item.field, type, value });
+            if (text === 'empty' || text === '!empty') return filter(text, null);
+            if (/^in:/i.test(text)) return text.length > 3 ? filter('in', text.substring(3).trim()) : null;
+            for (const operator of ['>=', '<=', '!=', '=', '>', '<']) {
+                if (text.startsWith(operator)) return text.length > operator.length ? filter(operator, text.substring(operator.length).trim()) : null;
+            }
+            if (text.startsWith('^')) return text.length > 1 ? filter('starts', text.substring(1)) : null;
+            return text ? filter('like', text) : null;
+        },
+        serverFilters(list) { return (list || []).map((item) => this.serverFilter(item)).filter((item) => item); },
+        currentFilters() { return this.grid ? this.serverFilters(this.grid.getHeaderFilters()) : []; },
+        // one record's form (Data › Record), for a row of an entity that has its whole primary key
+        openRecord(data) {
+            const keys = this.keyFields || [];
+            if (!this.saveEntity || !keys.length || keys.some((name) => data[name] == null)) return;
+            const search = 'selectedEntity=' + encodeURIComponent(this.saveEntity) + keys.map((name) => '&' + encodeURIComponent((this.saveFields || {})[name] || name) + '=' + encodeURIComponent(data[name])).join('');
+            this.$root.setUrl(this.siblingUrl('Record', search));
+        },
         currentSort() { return this.grid ? this.grid.getSorters().map((item) => ({ field: item.field, dir: item.dir })) : []; },
         countRows() {
             this.counting = true;

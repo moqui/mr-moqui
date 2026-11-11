@@ -153,4 +153,17 @@ function forScreen(sri, ec, catalog, options) {
     return build(catalog, menuOf, Object.assign({}, options || {}, {homeName}))
 }
 
-;({build, forScreen})
+// Whether the Dev AIDE app is mounted beside this one (a dev instance): an item named dev in the menu of the apps
+// root, the first name of the path. A menu that cannot be read is logged and read as not mounted.
+function devMounted(sri, ec) {
+    try {
+        const fullPath = Array.from(sri.getScreenUrlInfo().fullPathNameList || [])
+        if (!fullPath.length) return false
+        return Array.from(sri.getMenuItems("/" + fullPath[0]) || []).some(item => String(item.name) === "dev")
+    } catch (error) {
+        ec.logger.error("Home navigation: the apps menu failed: " + String(error))
+        return false
+    }
+}
+
+;({build, forScreen, devMounted})

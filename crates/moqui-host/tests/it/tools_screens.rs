@@ -464,9 +464,45 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         &["Screen Test Example"],
     );
     // The Groovy rows look for the seed phrase "Test Name A" in the browser download. This runtime has no such
-    // row; the record just created is the one the export has to carry. Browser output calls `edw.writer`, and
-    // `makeDataWriter` has `text()` instead, so that call fails. Single-file output uses `edw.file`, which exists.
-    // The transition runs actions, so the parameters go in the body.
+    // row; the record just created is the one the export has to carry. The transition runs actions, so the
+    // parameters go in the body. Browser output is the form's default: the writer's text sent as a download, and
+    // more than one entity as CSV a zip. The form's empty filter, and Java's `[:]`, are no filter.
+    let path = "/Tools/Data/Export/EntityExport";
+    for (file_type, filter) in [("XML", ""), ("JSON", "[:]"), ("CSV", "{testId: 'TEST_SCR'}")] {
+        let (status, page) = post(
+            address,
+            &john,
+            path,
+            &[
+                ("entityNames", "moqui.test.TestEntity"),
+                ("dependentLevels", "0"),
+                ("filterMap", filter),
+                ("fileType", file_type),
+                ("output", "browser"),
+            ],
+        );
+        ran(path, status, &page);
+        assert!(
+            page.contains("Screen Test Example"),
+            "{path} {file_type} to the browser has no record: {page}"
+        );
+    }
+    let (status, page) = post(
+        address,
+        &john,
+        path,
+        &[
+            ("entityNames", "moqui.test.TestEntity,moqui.basic.Enumeration"),
+            ("fileType", "CSV"),
+            ("output", "browser"),
+        ],
+    );
+    ran(path, status, &page);
+    assert!(
+        page.starts_with("PK"),
+        "{path} of two entities as CSV is not a zip: {}",
+        page.chars().take(200).collect::<String>()
+    );
     for file_type in ["JSON", "XML"] {
         let export_path = std::env::temp_dir().join(format!(
             "moqui-export-{}-{}.{}",
@@ -475,7 +511,6 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
             file_type.to_ascii_lowercase()
         ));
         let _ = std::fs::remove_file(&export_path);
-        let path = "/Tools/Data/Export/EntityExport";
         let (status, page) = post(
             address,
             &john,

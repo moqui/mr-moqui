@@ -266,7 +266,7 @@ There is no axum route for `/groovysh`, `/rpc`, `/elastic`, `/kibana`, `/htmlr`,
 
 ## Screen tree
 
-The root screen `component://webroot/screen/webroot.xml` sets `require-authentication="false"` so subscreens decide. The default subscreen item is `qapps`. There is no `vapps` item. `toolstatic` points at the tools screen of that name, which is `anonymous-view` and is the Swagger UI static mount. Schema documents are the REST transitions, which require a user and `REST_SCHEMA`.
+The root screen `component://webroot/screen/webroot.xml` sets `require-authentication="false"` so subscreens decide. The default subscreen item is `qapps`. There is no `vapps` item. Schema documents are the REST transitions, which require a user and `REST_SCHEMA`.
 
 Because the root screen does not require a user, static files served as that screen's content are reachable without a login. The shell references `/js` and `/libs`, and the root names `/favicon.ico`. A full listing of those files was not made.
 

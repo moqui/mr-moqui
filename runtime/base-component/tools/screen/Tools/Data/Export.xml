@@ -50,7 +50,16 @@ along with this software (see the LICENSE.md file). If not, see
                 if (masterName) edw.master(masterName)
                 if (fromDate) edw.fromDate(ec.l10n.parseTimestamp(fromDate, null))
                 if (thruDate) edw.thruDate(ec.l10n.parseTimestamp(thruDate, null))
-                if (filterMap) edw.filterMap(ec.resource.expression(filterMap, null))
+                // a JavaScript object of field values ({statusId: 'X'}); Java's empty Groovy map, [:], is no filter
+                const filterText = String(filterMap || '').trim()
+                if (filterText && filterText != '[:]') {
+                    const filter = ec.resource.expression('(' + filterText + ')', null)
+                    if (filter == null || typeof filter != 'object' || Array.isArray(filter)) {
+                        ec.message.addError(ec.l10n.localize("The filter is not an object of field values, such as {statusId: 'X'}"))
+                        return
+                    }
+                    edw.filterMap(filter)
+                }
                 if (orderBy) edw.orderBy([String(orderBy)])
                 edw.fileType(String(fileType))
                 if(fileType == 'CSV') edw.tableColumnNames(useTableColumnNames == 'Yes' ? true : false)
@@ -61,25 +70,35 @@ along with this software (see the LICENSE.md file). If not, see
                 } else if (context.output == "dir") {
                     edw.directory(path)
                 } else if (context.output == "browser") {
-                    // stream to ec.web.response
-                    const response = ec.web.response
-                    response.setCharacterEncoding("UTF-8")
-                    response.setHeader("Cache-Control", "no-cache, must-revalidate, private")
-
+                    // The data writer has no writer(Writer): it answers the text, which is sent as a download
+                    const stamp = ec.l10n.format(ec.user.nowTimestamp, 'yyyyMMdd_HHmm')
                     if (fileType == 'CSV' && Array.isArray(entityNames) && entityNames.length > 1) {
-                        // if trying to export more than one entity as CSV, send a .zip file instead
-                        response.setContentType('application/zip')
-                        response.setHeader("Content-Disposition", `attachment; filename="EntityExport_${ec.l10n.format(ec.user.nowTimestamp, 'yyyyMMdd_HHmm')}.zip";`)
-                        edw.zipDirectory('', response.getOutputStream())
-
+                        // more than one entity as CSV is a zip with a file for each, written to the user's own
+                        // temporary place and sent from there; the user's earlier ones are removed first (the
+                        // response reads the file after these actions, so this one stays until the next export)
+                        const place = `tmp/entity-export/${ec.user.userId}`
+                        const placeRef = ec.resource.getLocationReference('runtime://' + place)
+                        if (placeRef.getExists()) for (const earlier of placeRef.getDirectoryEntries()) {
+                            try { if (!earlier.isDirectory()) earlier.delete() }
+                            catch (error) { ec.logger.error('Entity export: could not remove ' + earlier.fileName + ': ' + String(error)) }
+                        }
+                        const within = `${place}/EntityExport_${stamp}_${Date.now()}.zip`
+                        edw.zipDirectory('', ec.factory.getRuntimePath() + '/' + within)
+                        if (!ec.message.hasError()) {
+                            if (ec.resource.getLocationReference('runtime://' + within).getExists()) {
+                                ec.web.sendResourceResponse('runtime://' + within, false, `EntityExport_${stamp}.zip`)
+                            } else {
+                                ec.message.addError(ec.l10n.localize("The export zip was not written"))
+                            }
+                        }
                     } else {
-                        if (fileType == 'JSON') response.setContentType('application/json')
-                        else if (fileType == 'CSV') response.setContentType('text/csv')
-                        else response.setContentType('text/xml')
-
-                        response.setHeader("Content-Disposition", `attachment; filename="EntityExport_${ec.l10n.format(ec.user.nowTimestamp, 'yyyyMMdd_HHmm')}.${fileType == 'JSON' ? 'json' : fileType == 'CSV' ? 'csv' : 'xml'}";`)
-                        edw.writer(response.getWriter())
+                        const text = edw.text()
+                        if (!ec.message.hasError()) ec.web.sendTextResponse(text,
+                            fileType == 'JSON' ? 'application/json' : fileType == 'CSV' ? 'text/csv' : 'text/xml',
+                            `EntityExport_${stamp}.${fileType == 'JSON' ? 'json' : fileType == 'CSV' ? 'csv' : 'xml'}`)
                     }
+                    if (ec.message.hasError()) return
+                    ec.web.response.setHeader("Cache-Control", "no-cache, must-revalidate, private")
                     noResponse = true
                 }
             ]]></script>
@@ -167,7 +186,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="fromDate"><default-field><date-time/></default-field></field>
                 <field name="thruDate"><default-field><date-time/></default-field></field>
 
-                <field name="filterMap"><default-field><text-line size="80" default-value="[:]"/></default-field></field>
+                <field name="filterMap"><default-field title="Filter" tooltip="Field values the exported records must have, as a JavaScript object: {statusId: 'X'}">
+                    <text-line size="80"/></default-field></field>
                 <field name="orderBy"><default-field><text-line size="80"/></default-field></field>
                 <field name="fileType"><default-field>
                     <radio no-current-selected-key="XML"><option key="XML"/><option key="JSON"/><option key="CSV"/></radio>

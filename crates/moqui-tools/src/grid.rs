@@ -656,6 +656,13 @@ fn wrap(sql: &str, mysql: bool, sort: &[Sort], filter: &[Filter], tail: &str) ->
                 }
                 continue;
             }
+            // no value, or an empty text
+            "empty" | "!empty" => {
+                let text_type = if mysql { "CHAR" } else { "TEXT" };
+                let not = if filter.kind == "empty" { "" } else { "NOT " };
+                clauses.push(format!("{not}({column} IS NULL OR CAST({column} AS {text_type}) = '')"));
+                continue;
+            }
             other => return Err(refusal(format!("filter type {other:?} is not one the grid takes"))),
         };
         clauses.push(format!("{column} {op} ?"));
@@ -1034,6 +1041,17 @@ fn entity_find(
                         Condition::In(name.into(), values)
                     }
                 }
+                // no value, or for a text field an empty one
+                "empty" if field.is_text() => Condition::or(vec![
+                    Condition::is_null(name),
+                    Condition::equals(name, Value::string("")),
+                ]),
+                "empty" => Condition::is_null(name),
+                "!empty" if field.is_text() => Condition::and(vec![
+                    Condition::is_not_null(name),
+                    Condition::not_equals(name, Value::string("")),
+                ]),
+                "!empty" => Condition::is_not_null(name),
                 other => return Err(refusal(format!("filter type {other:?} is not one the grid takes"))),
             }
         };
@@ -2117,6 +2135,8 @@ mod tests {
             filter("n", ">=", Value::I64(3)),
             filter("id", "in", Value::string("a, b")),
             filter("none", "in", Value::List(Vec::new())),
+            filter("note", "empty", Value::Null),
+            filter("code", "!empty", Value::Null),
         ];
         let sort = vec![Sort {
             field: "Total \"Due\"".to_string(),
@@ -2126,7 +2146,8 @@ mod tests {
         assert_eq!(
             wrapped.sql,
             "SELECT * FROM (SELECT * FROM t) q WHERE LOWER(CAST(\"description\" AS TEXT)) LIKE LOWER(?) AND \"n\" >= ? \
-             AND \"id\" IN (?, ?) AND 1 = 0 ORDER BY \"Total \"\"Due\"\"\" DESC LIMIT 11 OFFSET 0"
+             AND \"id\" IN (?, ?) AND 1 = 0 AND (\"note\" IS NULL OR CAST(\"note\" AS TEXT) = '') \
+             AND NOT (\"code\" IS NULL OR CAST(\"code\" AS TEXT) = '') ORDER BY \"Total \"\"Due\"\"\" DESC LIMIT 11 OFFSET 0"
         );
         assert_eq!(wrapped.params[0], Value::string("%50\\%\\_x%"));
         assert!(

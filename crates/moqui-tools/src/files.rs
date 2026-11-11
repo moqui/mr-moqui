@@ -433,7 +433,7 @@ pub fn file_count(spec: &FileSpec) -> Result<usize, Error> {
 
 /// Whether a cell matches one of the grid's filters: `=`, `!=`, `like` (`%` any text, case ignored), `starts`, `ends`,
 /// `<`, `<=`, `>`, `>=` (as numbers when both are, else as text), `in` (a list or comma-separated text), `keywords`
-/// (every word, case ignored).
+/// (every word, case ignored), `empty` and `!empty` (no text, or some).
 fn cell_matches(cell: Option<&Value>, kind: &str, wanted: &Value) -> bool {
     let text = cell.map(to_plain_string).unwrap_or_default();
     let lower = text.to_lowercase();
@@ -468,6 +468,8 @@ fn cell_matches(cell: Option<&Value>, kind: &str, wanted: &Value) -> bool {
             _ => want.split(',').any(|item| item.trim() == text),
         },
         "keywords" => want_lower.split_whitespace().all(|word| lower.contains(word)),
+        "empty" => text.is_empty(),
+        "!empty" => !text.is_empty(),
         _ => true,
     }
 }

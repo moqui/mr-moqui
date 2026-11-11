@@ -210,9 +210,7 @@ along with this software (see the LICENSE.md file). If not, see
             const data = L('Data'), schema = L('Schema and database'), services = L('Services and reference'), load = L('Load testing'),
                 elsewhere = L('Elsewhere')
             // Dev AIDE is linked when its app is mounted beside this one (a dev instance)
-            const fullPath = Array.from(sri.getScreenUrlInfo().fullPathNameList || [])
-            const devAide = fullPath.length > 1 && read('apps menu', () => Array.from(sri.getMenuItems('/' + fullPath.slice(0, -2).join('/')) || [])
-                .some(item => String(item.name) === 'dev'), false)
+            const devAide = ec.resource.script('component://tools/template/HomeCatalog.js').devMounted(sri, ec)
             navOptions = {otherTitle: L('More')}
             navCatalog = [
                 featured('Data/Grid', L('Data grid'), L('Find and edit records of an entity, a view, a SQL result or a file'),
@@ -304,7 +302,7 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- counters: each goes to its list -->
         <dashboard id="ToolsCounters" min-width="170">
             <number-card id="EntitiesCard" title="Entities" value="${entityCountText}" icon="sym_o_table" link="../Schema/Entities?viewOption=exclude-views"/>
-            <number-card id="ViewEntitiesCard" title="View entities" value="${viewEntityCountText}" icon="sym_o_join_inner" link="../Schema/Entities?orderByField=-isView"/>
+            <number-card id="ViewEntitiesCard" title="View entities" value="${viewEntityCountText}" icon="sym_o_join_inner" link="../Schema/Entities?viewOption=views"/>
             <number-card id="ServicesCard" title="Services" value="${serviceCountText}" icon="sym_o_bolt" link="../Service/ServiceReference"/>
             <number-card id="ScreensCard" title="${screenCountTitle}" value="${screenCountText}" icon="sym_o_web_asset" link="../ArtifactStats"/>
             <number-card id="EcaRulesCard" title="ECA rules" value="${ecaCountText}" icon="sym_o_rule" link="../ArtifactStats"/>

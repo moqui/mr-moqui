@@ -28,7 +28,7 @@ the test mount of the ReportMounts spec.
 | `Load.xml`, `Load/` | Load testing ([docs/tools/Load-Runner.md](../../../docs/tools/Load-Runner.md)): Scripts (the components' `test/load/*.load.js`), New run (`NewRun.qvue`, with `NewRun.tui.json`), Runs (with Compare and Import result), a Run (`Run.qvue`: live numbers and charts while it runs, with `Run.tui.json`) and Compare, over `org.moqui.dev.LoadServices`; `Load.xml` holds the JSON transitions the two `.qvue` files use, and `template/LoadRuns.js` the reads they share. Needs `LOAD_RUNNER` |
 | `Service/`, `StatusFlows.xml` | Services (reference, detail, run) and status flows. A service's detail, an entity's (Schema) and Database › Overview show Monitor's numbers for it to a reader of the telemetry ([Monitor's screens in other places](../../../docs/tools/Monitoring.md#monitors-screens-in-other-places)) |
 | `ArtifactStats.xml` | Artifact summary: the entities, services and screens counted by package. Its totals are the Tools home's counters. (Hit performance is Monitor › Artifacts) |
-| `RestApi.xml` | REST API: the service REST resources and the entity master API, each opening its Swagger document; `filter` narrows both lists, `api` (`service` or `entity`) shows one |
+| `RestApi.xml` | REST API: the service REST resources and the entity master API, each linking to its description as JSON (a resource's OpenAPI document, an entity's master schema); `filter` narrows both lists, `api` (`service` or `entity`) shows one. There is no viewer: Dev AIDE explores them on a dev instance |
 
 **Home** (`Tools/Home.xml`, [plans/Tools-Fancy.md](../../../plans/Tools-Fancy.md) §4) reads each block in its
 actions:

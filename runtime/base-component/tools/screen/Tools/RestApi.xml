@@ -13,10 +13,11 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The REST API reference (plans/Tools-Fancy.md §2.3): the service REST resources (service/*.rest.xml) and the entity
-    master API, each opening its Swagger document in Swagger UI in a new tab, as the signed-in user. A root resource
-    with more than a hundred methods is listed by its child resources, since Swagger UI does not load a document that
-    large. `filter` narrows both lists to the names and descriptions that hold it; `api` (service or entity) shows one
-    list alone. -->
+    master API, each linking to its description as JSON (a resource's OpenAPI document, an entity's master schema), read
+    as the signed-in user with REST_SCHEMA. There is no viewer here: on a dev instance Dev AIDE explores the services
+    and entities behind them. A root resource with more than a hundred methods is listed by its child resources.
+    `filter` narrows both lists to the names and descriptions that hold it; `api` (service or entity) shows one list
+    alone. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="REST API" default-menu-index="10" menu-image="sym_o_api" menu-image-type="icon">
 
@@ -27,11 +28,12 @@ along with this software (see the LICENSE.md file). If not, see
         <script><![CDATA[
             const term = String(filter || '').trim().toLowerCase()
             const holds = (...texts) => !term || texts.some(text => String(text || '').toLowerCase().includes(term))
-            const swagger = '/toolstatic/lib/swagger-ui/index.html?url=' + sri.buildUrl('/rest').url
+            const rest = sri.buildUrl('/rest').url
+            devAide = ec.resource.script('component://tools/template/HomeCatalog.js').devMounted(sri, ec)
             showService = api !== 'entity'
             showEntity = api !== 'service'
 
-            // one row a Swagger document: a root resource, or each child of a root too large for one document
+            // one row an OpenAPI document: a root resource, or each child of a root too large for one document
             resourceRows = []
             if (showService) {
                 let roots = []
@@ -44,22 +46,25 @@ along with this software (see the LICENSE.md file). If not, see
                             if (!holds(resource.name, rootText, child.name, child.displayName, child.description)) continue
                             resourceRows.push({resourceText: rootText + ' › ' + String(child.displayName || child.name),
                                 description: String(child.description || ''), methods: child.childMethods,
-                                swaggerUrl: swagger + '/service.swagger/' + resource.name + '/' + child.name})
+                                documentUrl: rest + '/service.swagger/' + resource.name + '/' + child.name})
                         }
                     } else if (holds(resource.name, rootText, resource.description)) {
                         resourceRows.push({resourceText: rootText, description: String(resource.description || ''),
-                            methods: resource.childMethods, swaggerUrl: swagger + '/service.swagger/' + resource.name})
+                            methods: resource.childMethods, documentUrl: rest + '/service.swagger/' + resource.name})
                     }
                 }
             }
             entityRows = showEntity
                 ? Array.from(ec.entity.getAllEntityNamesWithMaster() || []).map(String).filter(name => holds(name))
-                    .map(name => ({masterEntityName: name, swaggerUrl: swagger + '/master.swagger/' + name}))
+                    .map(name => ({masterEntityName: name, documentUrl: rest + '/master.json/' + name}))
                 : []
         ]]></script>
     </actions>
     <widgets>
-        <label text="Each link opens the interactive documentation of one API in a new tab, with your current sign-in. A large API takes a few seconds to load." type="p" style="m-muted"/>
+        <label text="Each link opens the description of one API as JSON in a new tab, with your current sign-in: a resource's OpenAPI document, an entity's master schema." type="p" style="m-muted"/>
+        <container id="RestApiDevAide" style="q-mb-sm" condition="devAide">
+            <link url="//apps/dev" text="Explore services and entities in Dev AIDE" link-type="anchor" icon="sym_o_code"/>
+        </container>
         <form-single name="RestApiFilter" transition=".">
             <field name="api"><default-field><hidden/></default-field></field>
             <field name="filter"><default-field title="Filter" tooltip="A part of a resource's or an entity's name or description">
@@ -80,7 +85,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <label text="No resource matches the filter." type="div" style="m-muted q-pa-sm" condition="!resourceRows.length"/>
                         <form-list name="RestResourceList" list="resourceRows" skip-form="true" paginate="false">
                             <field name="resourceText"><default-field title="Resource">
-                                <link url="${swaggerUrl}" text="${resourceText}" url-type="plain" link-type="anchor" target-window="_blank"/>
+                                <link url="${documentUrl}" text="${resourceText}" url-type="plain" link-type="anchor" target-window="_blank"/>
                             </default-field></field>
                             <field name="description"><default-field title="Description"><display/></default-field></field>
                             <field name="methods"><default-field title="Methods" align="right"><display/></default-field></field>
@@ -98,7 +103,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <label text="No entity with a master definition matches the filter." type="div" style="m-muted q-pa-sm" condition="!entityRows.length"/>
                         <form-list name="MasterEntityList" list="entityRows" skip-form="true" paginate="false">
                             <field name="masterEntityName"><default-field title="Entity">
-                                <link url="${swaggerUrl}" text="${masterEntityName}" url-type="plain" link-type="anchor" target-window="_blank"/>
+                                <link url="${documentUrl}" text="${masterEntityName}" url-type="plain" link-type="anchor" target-window="_blank"/>
                             </default-field></field>
                         </form-list>
                     </box-body-nopad></container-box>
