@@ -302,8 +302,16 @@ pub(crate) fn run(
             .unwrap_or((usize::MAX, usize::MAX))
     };
     all.sort_by_key(order);
-    println!("Worker logs: {}", out_dir.display());
-    super::finish_report(args, None, &all, started, false)
+    let outcome = super::finish_report(args, None, &all, started, false);
+    // the workers' results and logs: kept to explain a run that did not pass (or with --keep), else removed
+    if outcome.is_ok() && !args.keep {
+        if let Err(err) = std::fs::remove_dir_all(&out_dir) {
+            tracing::warn!(error = %err, path = %out_dir.display(), "could not remove the workers' logs");
+        }
+    } else {
+        println!("Worker logs: {}", out_dir.display());
+    }
+    outcome
 }
 
 #[cfg(test)]

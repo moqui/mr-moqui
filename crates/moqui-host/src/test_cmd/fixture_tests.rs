@@ -13,11 +13,11 @@
  */
 
 //! The scratch runtime: its snapshot key, the components a load reads and not every component directory there is,
-//! and the downloaded Chromium it links.
+//! and the downloaded Chromium it links; and the snapshots a run's end prunes.
 
 use std::path::{Path, PathBuf};
 
-use super::{data_hash, scratch_runtime};
+use super::{data_hash, prune_snapshots, scratch_runtime, USED_MARK};
 
 /// A runtime with the framework, `component/plain` and the dev component `dev-component/devonly`.
 fn runtime() -> PathBuf {
@@ -96,4 +96,46 @@ fn the_scratch_runtime_links_the_downloaded_chromium() {
     for dir in [scratch, runtime] {
         let _ = std::fs::remove_dir_all(dir);
     }
+}
+
+/// At a run's end the other snapshots go once no run has used them for an hour: the one the run used stays however old,
+/// one another run restored a minute ago stays, an old one goes, and so does one with no mark whose dump is old; a
+/// directory that is not a snapshot stays.
+#[test]
+fn a_runs_end_prunes_the_snapshots_no_run_has_used_for_an_hour() {
+    let save = std::env::temp_dir().join(format!("moqui-fixture-prune-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&save);
+    let two_hours_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60);
+    let snapshot = |name: &str, dump_age: Option<std::time::SystemTime>, mark: Option<std::time::SystemTime>| {
+        let dir = save.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dump = std::fs::File::create(dir.join("moqui.dump")).unwrap();
+        if let Some(time) = dump_age {
+            dump.set_modified(time).unwrap();
+        }
+        if let Some(time) = mark {
+            std::fs::File::create(dir.join(USED_MARK))
+                .unwrap()
+                .set_modified(time)
+                .unwrap();
+        }
+        dir
+    };
+    let kept = snapshot("test-kept", Some(two_hours_ago), Some(two_hours_ago));
+    let recent = snapshot("test-recent", Some(two_hours_ago), Some(std::time::SystemTime::now()));
+    let old = snapshot("test-old", Some(two_hours_ago), Some(two_hours_ago));
+    let unmarked = snapshot("test-unmarked", Some(two_hours_ago), None);
+    let other = save.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+
+    prune_snapshots(&save, &kept);
+
+    assert!(kept.is_dir(), "the snapshot the run used stays");
+    assert!(recent.is_dir(), "a snapshot another run used a minute ago stays");
+    assert!(!old.exists(), "a snapshot no run has used for two hours goes");
+    assert!(!unmarked.exists(), "a snapshot with no mark goes by its dump's age");
+    assert!(other.is_dir(), "a directory that is not a snapshot stays");
+    // a second prune, as each worker's end makes, finds them gone and says nothing of it
+    prune_snapshots(&save, &kept);
+    let _ = std::fs::remove_dir_all(&save);
 }
