@@ -70,6 +70,75 @@
         <relationship type="one" related="moqui.report.DefinitionGitSync"/>
         <index name="REPORT_GIT_FILE_DEF"><index-field name="definitionId"/></index>
     </entity>
+    <!-- Owner-equivalent delivery (BOSS impl-insights P7, INS-06; crates/moqui-report/src/delivery.rs; docs/tools/Monitoring.md
+        "Report delivery"): the recipients of a business schedule, each run of it and each recipient's own outcome. No row
+        holds a report's content: an occurrence and a delivery are evidence (who, when, which version, what state and safe
+        reason), and a recipient's report is rendered again as that recipient when they ask for it. -->
+    <entity entity-name="ReportScheduleRecipient" package="moqui.report" use="configuration" cache="never">
+        <description>A recipient of a business report schedule (store#Schedule): a user, or a user group whose members in
+            date are expanded at each run. Each must pass check#ReportAudience at save and again at each run.</description>
+        <field name="screenScheduledId" type="id" is-pk="true"/>
+        <field name="recipientKind" type="text-short" is-pk="true"><description>user or group</description></field>
+        <field name="recipientId" type="id" is-pk="true"/>
+        <relationship type="one" related="moqui.screen.ScreenScheduled"/>
+    </entity>
+    <entity entity-name="ReportOccurrence" package="moqui.report" use="transactional" cache="never">
+        <description>One run of a business report schedule: a cron occurrence (its key the schedule and the cron instant, so
+            a retry does not depend on the clock) or an explicit Send now. It pins the owner, the schedule's revision and the
+            definition's version, and keeps safe counters; never frames or files.</description>
+        <field name="occurrenceId" type="id" is-pk="true"/>
+        <field name="screenScheduledId" type="id"/>
+        <field name="occurrenceKey" type="text-medium"/>
+        <field name="occurrenceKind" type="text-short"><description>scheduled or manual</description></field>
+        <field name="occurrenceDate" type="date-time"/>
+        <field name="completedDate" type="date-time"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="scheduleRevision" type="number-integer"/>
+        <field name="definitionId" type="id-long"/>
+        <field name="definitionVersion" type="number-integer"/>
+        <field name="renderMode" type="text-short"/>
+        <field name="deliveryMode" type="text-short"/>
+        <field name="statusId" type="id"/>
+        <field name="reasonCode" type="text-short"/>
+        <field name="recipientCount" type="number-integer"/>
+        <field name="sentCount" type="number-integer"/>
+        <field name="skippedCount" type="number-integer"/>
+        <field name="failedCount" type="number-integer"/>
+        <field name="uncertainCount" type="number-integer"/>
+        <field name="renderCount" type="number-integer"><description>How many times the report was rendered for this
+            occurrence: one per locale of its recipients, whatever their number</description></field>
+        <field name="versionNumber" type="number-integer"><description>The revision a retry or a reconciliation
+            advances</description></field>
+        <relationship type="one" related="moqui.screen.ScreenScheduled"/>
+        <relationship type="one" title="ReportOccurrence" related="moqui.basic.StatusItem"/>
+        <index name="REPORT_OCC_KEY" unique="true"><index-field name="occurrenceKey"/></index>
+        <index name="REPORT_OCC_SCHEDULE"><index-field name="screenScheduledId"/><index-field name="occurrenceDate"/></index>
+        <index name="REPORT_OCC_OWNER"><index-field name="ownerUserId"/><index-field name="occurrenceDate"/></index>
+    </entity>
+    <entity entity-name="ReportRecipientDelivery" package="moqui.report" use="transactional" cache="never">
+        <description>One recipient's outcome in an occurrence, unique by occurrence, recipient and channel: pending,
+            sending (claimed by an attempt), sent, skipped, failed or uncertain, with a safe reason code (scope-differs,
+            inactive, no-address, over-cap, removed-audience, schedule-changed, delivery-blocked, transport-failure,
+            uncertain) and the attempt's identity. scopeHash is the scope fingerprint the delivery was sent under, which
+            get#RecipientReport compares with the recipient's own before it renders for them.</description>
+        <field name="deliveryId" type="id" is-pk="true"/>
+        <field name="occurrenceId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="channel" type="text-short"><description>email</description></field>
+        <field name="statusId" type="id"/>
+        <field name="reasonCode" type="text-short"/>
+        <field name="scopeHash" type="text-medium"/>
+        <field name="locale" type="text-short"/>
+        <field name="attemptCount" type="number-integer"/>
+        <field name="attemptId" type="id-long"/>
+        <field name="attemptDate" type="date-time"/>
+        <field name="messageId" type="text-medium"/>
+        <relationship type="one" related="moqui.report.ReportOccurrence"/>
+        <relationship type="one" related="moqui.security.UserAccount"/>
+        <relationship type="one" title="ReportDelivery" related="moqui.basic.StatusItem"/>
+        <index name="REPORT_DLV_UNIQUE" unique="true"><index-field name="occurrenceId"/><index-field name="userId"/><index-field name="channel"/></index>
+        <index name="REPORT_DLV_USER"><index-field name="userId"/><index-field name="attemptDate"/></index>
+    </entity>
     <entity entity-name="AlertInstance" package="moqui.report" use="transactional" cache="never">
         <field name="definitionId" type="id-long" is-pk="true"/>
         <field name="seriesId" type="id-long" is-pk="true"/>

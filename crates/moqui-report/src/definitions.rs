@@ -171,6 +171,19 @@ pub fn read_optional(ec: &ExecutionContext, id: &str) -> Result<Option<Json>, Er
     visible(ec, definition).map(Some)
 }
 
+/// A definition whoever asks, for the engine's own questions about a schedule (delivery.rs: whether it reads a business
+/// dataset, its version). Never returned to a caller.
+pub(super) fn read_unchecked(ec: &ExecutionContext, id: &str) -> Result<Option<Json>, Error> {
+    if let Some(definition) = shipped(ec).iter().find(|d| text(d, "id", "") == id) {
+        return Ok(Some(definition.clone()));
+    }
+    internal(ec, || {
+        entity(ec)?.find(ENTITY)?.eq("definitionId", Value::string(id)).one()
+    })?
+    .map(|row| row_json(&row))
+    .transpose()
+}
+
 pub fn list(ec: &ExecutionContext, kind: Option<&str>) -> Result<Vec<Json>, Error> {
     let mut definitions = shipped(ec)
         .iter()

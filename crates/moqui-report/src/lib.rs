@@ -3,8 +3,8 @@
 //! delivery ([`schedule`]), the monitoring sources' keys ([`monitor`]) and Monitor › Settings ([`settings`]).
 //!
 //! This crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it through the [`moqui_core::extension`]
-//! entry below: its native services, whose locations stay `moqui_core::report::…`, `moqui_core::report_schedule::…` and
-//! `moqui_core::monitor::…` as the service files name them, and the load of the components' shipped definitions after
+//! entry below: its native services, whose locations stay `moqui_core::report::…`, `moqui_core::report_schedule::…`,
+//! `moqui_core::report_delivery::…` and `moqui_core::monitor::…` as the service files name them, and the load of the components' shipped definitions after
 //! boot. moqui-host and moqui-browser link it in every build.
 
 moqui_core::extension::submit! {
@@ -17,6 +17,7 @@ moqui_core::extension::submit! {
             incident::register(registry)?;
             recovery::register(registry)?;
             settings::register(registry)?;
+            delivery::register(registry)?;
             schedule::register(registry)
         },
         after_boot: |factory| {
@@ -39,6 +40,7 @@ pub mod annotations;
 pub mod browser;
 pub mod business;
 pub mod definitions;
+pub mod delivery;
 pub mod drill;
 pub mod frame;
 pub mod git_sync;
@@ -3126,6 +3128,7 @@ mod tests {
         crate::recovery::register(&mut registry).unwrap();
         crate::settings::register(&mut registry).unwrap();
         crate::schedule::register(&mut registry).unwrap();
+        crate::delivery::register(&mut registry).unwrap();
         let registered = registry.service_locations();
         let dir = moqui_core::context::framework_dir().join("service/org/moqui");
         let mut named = Vec::new();
@@ -3139,6 +3142,7 @@ mod tests {
                         [
                             "moqui_core::report::",
                             "moqui_core::report_schedule::",
+                            "moqui_core::report_delivery::",
                             "moqui_core::monitor::",
                         ]
                         .iter()
