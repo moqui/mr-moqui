@@ -117,6 +117,20 @@ pub(crate) fn note_touch(
         return;
     };
     let Some(frame) = tx.frame_token() else {
+        // No transaction in place: the write committed on its own. Feed it now, as a frame's commit would.
+        if !tx.in_transaction() && fields.is_some() && feed_keeps_values(facade, entity_name) {
+            feed_autocommit(
+                facade,
+                &tx,
+                Touch {
+                    entity_name: entity_name.to_string(),
+                    operation: operation.to_string(),
+                    fields: fields.cloned(),
+                    old,
+                    origin_agent: (crate::hooks::get().agent_id)(),
+                },
+            );
+        }
         return;
     };
     if !TOUCHES.with(|touches| touches.borrow().contains_key(&frame))
@@ -211,6 +225,27 @@ fn touch_feeds(target: &DocTarget, touch: &Touch, fields: &FieldMap) -> bool {
     })
 }
 
+/// Feed a write made with no transaction in place, which committed as it ran: its `DataFeedPending` rows are inserted
+/// in a transaction of their own on a reserve connection, and handed to the feed receive once that commits, as a
+/// frame's commit does ([`register_feed_insert`]). Without this such a write reached no document: one whose related
+/// record changed in an autocommit write (an order part's status set outside a transaction) kept the value an earlier
+/// delivery read, with no pending row left to correct it. A failure is logged and the write stands, as at a commit.
+fn feed_autocommit(facade: &EntityFacade, tx: &TransactionManager, touch: Touch) {
+    let inserted =
+        crate::entity::exec::with_reserve_tx(tx, |conn| insert_touches(facade, conn, vec![touch], true));
+    match inserted {
+        Ok(ids) => {
+            if let Err(err) = (crate::hooks::get().schedule_feed_receive)(facade, ids) {
+                tracing::warn!(error = %err, "data feed receive was not scheduled; pending rows stay");
+            }
+        }
+        Err(err) => tracing::error!(
+            "Data feed pending rows of a write with no transaction were not recorded: {}",
+            error_chain(&err)
+        ),
+    }
+}
+
 fn drop_frame_touches(frame: u64) {
     TOUCHES.with(|touches| touches.borrow_mut().remove(&frame));
 }
@@ -259,7 +294,17 @@ pub(super) fn insert_pending(
     conn: &mut dyn DbConnection,
     frame: Option<u64>,
 ) -> Result<Vec<String>, Error> {
-    let touches = take_frame_touches(frame);
+    insert_touches(facade, conn, take_frame_touches(frame), false)
+}
+
+/// [`insert_pending`] for these touches. `committed` is true for a write that committed on its own: no statement
+/// waits on `conn` before the feed's, and the touches carry their values, so the Postgres `xmin` probe is not used.
+fn insert_touches(
+    facade: &EntityFacade,
+    conn: &mut dyn DbConnection,
+    touches: Vec<Touch>,
+    committed: bool,
+) -> Result<Vec<String>, Error> {
     if facade.sim_active() || facade.flags().disable_data_feed {
         return Ok(Vec::new());
     }
@@ -271,7 +316,7 @@ pub(super) fn insert_pending(
     // read, so a failure of it is the transaction's, passed on, never logged as the feed's and committed past. The
     // pending rows alone (a write of a document's primary entity, the configuration known) go out behind it, in their
     // savepoint, and their one wait answers both ([`probe_behind`] with `behind`).
-    let mut batch = Unanswered(true);
+    let mut batch = Unanswered(!committed);
     // A frame that wrote a feed definition reads its own uncommitted rows, which no other frame may see.
     let own_definitions = aggs.keys().any(|entity_name| {
         model_name(facade, entity_name).is_some_and(|name| crate::entity::cache::is_feed_definition(&name))
