@@ -103,9 +103,6 @@ macro_rules! tools_js {
     wrappers.Text = (data) => Object.assign(data, { toString: () => data.text || "" });
     const makeText = (text) => wrap("Text", { text: text });
 
-    // `ec.context.putAll(map)`: each entry on the stack by name
-    ec.context.putAll = (map) => { for (const [key, value] of Object.entries(map || {})) globalThis[key] = value; };
-
     // ---- cache ----
     ec.cache.cacheExists = host.cacheExists;
     ec.cache.clearAllCaches = host.clearAllCaches;
@@ -852,8 +849,12 @@ macro_rules! tools_js {
         getOwnPropertyDescriptor: (target, key) => typeof key !== "symbol" && host.sharedHas(key)
             ? { value: host.sharedGet(key), enumerable: true, configurable: true, writable: true } : undefined
     });
-    Object.defineProperty(ec.context, "sharedMap", { get: () => sharedMap, enumerable: false, configurable: true });
-    ec.context.getSharedMap = () => sharedMap;
+    // on the stack's methods (`ec.context` is the stack itself, where an assignment would set a name)
+    const contextMethods = globalThis.__moquiContextMethods;
+    if (contextMethods) {
+        Object.defineProperty(contextMethods, "sharedMap", { get: () => sharedMap, enumerable: false, configurable: true });
+        contextMethods.getSharedMap = () => sharedMap;
+    }
 
     // ---- user and messages ----
     // `getPeriodRange(baseName, inputs)`: from `{base}_period`, `_poffset`, and `_pdate`, else `_from` and `_thru`.
@@ -867,7 +868,6 @@ macro_rules! tools_js {
         if (period) return host.periodRange(String(period), String(inputs[baseName + "_poffset"] ?? ""), String(inputs[baseName + "_pdate"] ?? ""));
         return [inputs[baseName + "_from"] || null, inputs[baseName + "_thru"] || null];
     };
-    Object.defineProperty(ec.message, "messageInfos", { get: host.messageInfos });
 
     // ---- factory and web ----
     ec.factory.getStatusMap = host.getStatusMap;
@@ -939,7 +939,9 @@ pub(super) static SHIM: Shim = Shim {
         super::pass::pass_js!(),
         ")(ec, hidden);\n    (",
         super::files::files_js!(),
-        ")(ec, hidden);\n})"
+        ")(ec, hidden);\n    (",
+        super::context::context_js!(),
+        ")(ec, hidden, global);\n})"
     ),
     hidden: &[
         METHODS,
@@ -947,6 +949,7 @@ pub(super) static SHIM: Shim = Shim {
         super::archive::METHODS,
         super::pass::METHODS,
         super::files::METHODS,
+        super::context::METHODS,
     ],
 };
 
@@ -1093,7 +1096,6 @@ static METHODS: &[Method] = &[
         get_all_entity_names_with_master
     ),
     method!("tools", "periodRange", [Text, Text, Text], period_range),
-    method!("tools", "messageInfos", [], message_infos),
     method!("tools", "resourceText", [Text], resource_text),
     method!("tools", "resourceTextIn", [Text, Text], resource_text_in),
     method!("tools", "resourcePutText", [Text, Text], resource_put_text),
@@ -2967,21 +2969,6 @@ fn period_range(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let (from, thru) =
         crate::user::period_range(&period, &offset, &basis).map_err(|err| HostError::message(err.message()))?;
     Ok(Ret::Value(Value::List(vec![from, thru])))
-}
-
-/// `ec.message.messageInfos`: the messages as `{message, typeString}`. The port keeps no type with a message.
-fn message_infos(_call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let messages = with_ec(|ec| ec.message().messages().to_vec())?;
-    let rows = messages
-        .into_iter()
-        .map(|message| {
-            let mut row = indexmap::IndexMap::default();
-            row.insert("message".to_string(), Value::String(message));
-            row.insert("typeString".to_string(), Value::string("info"));
-            row
-        })
-        .collect();
-    Ok(list(rows))
 }
 
 /// `TimeZone.getAvailableIDs()`: the zone names of the time zone database, sorted.

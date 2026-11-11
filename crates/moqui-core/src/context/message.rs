@@ -19,6 +19,9 @@ pub struct MessageFacade {
     messages: Vec<String>,
     /// The type of each message: `info`, `success`, `warning` or `danger`, as Java's `MessageInfo`.
     message_types: Vec<String>,
+    /// The messages that may be shown on a public site too, each with its type (Java's `addPublic`). They are in
+    /// `messages` as well.
+    public_messages: Vec<(String, String)>,
     errors: Vec<String>,
     validation_errors: Vec<ValidationError>,
     error_stack: Vec<(Vec<String>, Vec<ValidationError>)>,
@@ -89,6 +92,22 @@ impl MessageFacade {
         self.messages.push(message);
         self.message_types
             .push(if kind.trim().is_empty() { "info" } else { kind.trim() }.to_string());
+    }
+
+    /// Java's `addPublic`: a message for internal users that a public site or portal may show too.
+    pub fn add_public(&mut self, message: impl Into<String>, kind: &str) {
+        let message = message.into();
+        if message.is_empty() {
+            return;
+        }
+        let kind = if kind.trim().is_empty() { "info" } else { kind.trim() };
+        self.public_messages.push((message.clone(), kind.to_string()));
+        self.add_message_typed(message, kind);
+    }
+
+    /// The public messages, each with its type.
+    pub fn public_messages(&self) -> &[(String, String)] {
+        &self.public_messages
     }
 
     /// The type of the message at `index`.
@@ -192,6 +211,7 @@ impl MessageFacade {
     pub(crate) fn absorb(&mut self, other: MessageFacade) {
         self.messages.extend(other.messages);
         self.message_types.extend(other.message_types);
+        self.public_messages.extend(other.public_messages);
         self.added += other.errors.len() as u64;
         self.errors.extend(other.errors);
         self.validation_errors.extend(other.validation_errors);
@@ -222,6 +242,7 @@ impl MessageFacade {
     pub fn clear(&mut self) {
         self.messages.clear();
         self.message_types.clear();
+        self.public_messages.clear();
         self.errors.clear();
         self.validation_errors.clear();
     }

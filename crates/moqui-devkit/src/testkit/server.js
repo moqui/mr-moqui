@@ -7,9 +7,9 @@
 
     // A service call that throws, naming the service and its errors, when the service fails.
     define("call", (name, params) => {
-        const before = ec.message.errors || 0;
+        const before = ec.message.errors.length;
         const out = ec.service.sync().name(name).parameters(params || {}).call();
-        const after = ec.message.errors || 0;
+        const after = ec.message.errors.length;
         if (after > before || out == null) {
             const errors = ec.message.getErrorsString();
             throw new Error(`service ${name} failed${errors ? ": " + errors : ""}`);

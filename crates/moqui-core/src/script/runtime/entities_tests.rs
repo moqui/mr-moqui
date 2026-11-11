@@ -603,8 +603,8 @@ fn the_entity_members_keep_their_names_and_lengths() {
         "checkTables/1 clearEntityDefinitionFromCache/0 clearQueryStats/0 \
          createAllAutoReverseManyRelationships/0 find/1 findOneXml/5 formatFieldString/3 getAllEntitiesInfo/0 \
          getAllEntityInfo/0 getAllEntityNames/0 getAllEntityNamesWithMaster/0 getAllEntityRelatedFields/3 \
-         getDataDocuments/1 getDatabaseConfName/1 getDatasourceGroupNames/0 getEecaRuleCount/0 \
-         getEntityDataDocument/0 getEntityDefinition/1 getQueryStatsList/0 getValueListFromPlainMap/2 \
+         getConditionFactory/0 getDataDocuments/1 getDatabaseConfName/1 getDatabaseTimeZone/0 getDatasourceGroupNames/0 getEecaRuleCount/0 \
+         getEecaRulesByEntityName/0 getEntityDataDocument/0 getEntityDefinition/1 getQueryStatsList/0 getValueListFromPlainMap/2 \
          isEntityDefined/0 isTxCacheActive/0 makeDataLoader/0 makeDataWriter/0 makeValue/1 \
          runSqlCountConf/3 runSqlStatement/2 runSqlUpdateConf/2 sequencedIdPrimary/1 startTxCacheDb/1 \
          stopTxCache/0 tempResetSequencedIdPrimary/1 tempSetSequencedIdPrimary/3 testConfConnection/1",

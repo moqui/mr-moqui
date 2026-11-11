@@ -29,6 +29,7 @@ use moqui_lib::object::{HostObject, Value};
 
 mod archive;
 mod cache;
+mod context;
 pub(crate) mod conditions;
 pub(crate) mod list_iterator;
 mod ec_web;

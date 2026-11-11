@@ -46,9 +46,41 @@ type TimestampInput = Timestamp | string | number;
 /** A plain map with no proven keys. */
 type MoquiMap = Record<string, unknown>;
 
-/** The context stack as a map. A name no map holds reads as null on the server. */
+/**
+ * The context stack as a map, Java's `ContextStack`; `ec.context` is the same object. A name no map holds reads as
+ * null on the server. A name in the context wins over a method of the same name (`context.size` reads the name `size`
+ * when one is set), so read such a name with `context.get("size")`.
+ */
 interface MoquiContext {
     [name: string]: unknown;
+    get(name: string): unknown;
+    getByString(name: string): unknown;
+    /** Sets the name in the top map; returns the value it had. */
+    put(name: string, value: unknown): unknown;
+    putAll(map: MoquiMap | null): void;
+    /** Removes the name from the top map; returns the value it had. */
+    remove(name: string): unknown;
+    containsKey(name: string): boolean;
+    containsValue(value: unknown): boolean;
+    keySet(): string[];
+    values(): unknown[];
+    entrySet(): { key: string; value: unknown; getKey(): string; getValue(): unknown }[];
+    size(): number;
+    isEmpty(): boolean;
+    getCombinedMap(): MoquiMap;
+    /** A new top map, empty or with the entries given. Returns the stack. */
+    push(map?: MoquiMap | null): MoquiContext;
+    /** Removes the top map and returns its entries. The last map cannot be popped. */
+    pop(): MoquiMap;
+    /** Sets the whole stack aside for an empty one, until `popContext()`. */
+    pushContext(): MoquiContext;
+    popContext(): MoquiContext;
+    getRootMap(): MoquiMap;
+    addRootMap(map: MoquiMap): void;
+    /** Empties the top map. */
+    clear(): void;
+    /** One map for the execution context, shared by every service call in it. Values are copied in and out. */
+    getSharedMap(): Record<string, unknown>;
 }
 
 // ---- entities ----
@@ -606,7 +638,44 @@ interface MoquiMessageFacade {
     clearErrors(): void;
     pushErrors(): void;
     popErrors(): void;
+    /** Clear the errors, the messages and the public messages. */
+    clearAll(): void;
+    addValidationError(form: string | null, field: string | null, serviceName: string | null, message: string): void;
+    /** The error texts, a validation error's message among them; empty when there are none. */
     readonly errors: string[];
+    getErrors(): string[];
+    readonly messages: string[];
+    getMessages(): string[];
+    /** Each message and a newline. */
+    readonly messagesString: string;
+    getMessagesString(): string;
+    readonly messageInfos: MoquiMessageInfo[];
+    getMessageInfos(): MoquiMessageInfo[];
+    /** The messages added with `addPublic`, which a public site or portal may show. */
+    readonly publicMessages: string[];
+    getPublicMessages(): string[];
+    readonly publicMessageInfos: MoquiMessageInfo[];
+    getPublicMessageInfos(): MoquiMessageInfo[];
+    readonly validationErrors: MoquiValidationError[];
+    getValidationErrors(): MoquiValidationError[];
+}
+
+/** A message with its type: `info`, `success`, `warning` or `danger`. */
+interface MoquiMessageInfo {
+    message: string;
+    typeString: string;
+}
+
+/** An error for one field of a form or service. `stringPretty` is Java's `toStringPretty()`. */
+interface MoquiValidationError {
+    form: string;
+    field: string;
+    serviceName: string;
+    message: string;
+    formPretty: string;
+    fieldPretty: string;
+    serviceNamePretty: string;
+    stringPretty: string;
 }
 
 interface MoquiLoggerFacade {
@@ -861,12 +930,8 @@ interface MoquiScreenFacade {
     testRender(options: MoquiScreenRenderOptions & { method?: string; baseScreenPath?: string }): { output: string | null; errorMessages: string[]; renderTime: number; status: number | null };
 }
 
-interface MoquiEcContext {
-    get(name: string): unknown;
-    /** One map for the execution context, shared by every service call in it. Values are copied in and out. */
-    readonly sharedMap: Record<string, unknown>;
-    getSharedMap(): Record<string, unknown>;
-}
+/** `ec.context`: the context stack, the same object as the name `context`. */
+type MoquiEcContext = MoquiContext;
 
 interface MoquiNotificationMessage {
     topic(topic: string): MoquiNotificationMessage;
@@ -988,6 +1053,25 @@ interface MoquiServerEc {
         disableTarpit(): boolean;
         enableTarpit(): void;
     };
+    /** The root map of the context stack. */
+    readonly contextRoot: MoquiMap;
+    getContextRoot(): MoquiMap;
+    /** Each member by its Java getter: `ec.getUser()` is `ec.user`. */
+    getContext(): MoquiEcContext;
+    getEntity(): MoquiEntityFacade;
+    getResource(): MoquiResourceFacade;
+    getL10n(): MoquiL10nFacade;
+    getMessage(): MoquiMessageFacade;
+    getLogger(): MoquiLoggerFacade;
+    getUser(): MoquiUserFacade;
+    getWeb(): MoquiWebFacade;
+    getScreen(): MoquiScreenFacade;
+    getService(): MoquiServerEc["service"];
+    getFactory(): MoquiServerEc["factory"];
+    getCache(): MoquiServerEc["cache"];
+    getArtifactExecution(): MoquiServerEc["artifactExecution"];
+    /** The signed-in user's notification messages, of one topic or all, as plain objects. */
+    getNotificationMessages(topic?: string | null): MoquiMap[];
     /** A notification builder: `ec.makeNotificationMessage().topic("T").message({..}).userIds([..]).send()`. */
     makeNotificationMessage(): MoquiNotificationMessage;
     readonly search: { [method: string]: (...args: unknown[]) => unknown };
@@ -1014,7 +1098,7 @@ interface MoquiLlmFacade {
 
 /** `ec` while a server screen render is on the stack: the form-list keys of `ec.context` are set. */
 interface MoquiRenderEc extends MoquiServerEc {
-    readonly context: MoquiEcContext & { readonly formListFindId: string | null; readonly orderByField: string | null };
+    readonly context: MoquiEcContext;
 }
 
 /** An element as generated screen code writes it. */
