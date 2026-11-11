@@ -1570,6 +1570,19 @@ fn feed_scenario(facade: &moqui_core::entity::EntityFacade) {
         vec!["TcBlue", "TcRed"]
     );
 
+    // An update with no transaction in place commits on its own, and is fed as a commit is: each enumeration shows the
+    // type's new description. It reached no document before, so an order item kept its part's earlier status when
+    // the part was set outside a transaction (mr-boss CommerceReviewsScenario).
+    let mut color = facade.make_value(entity).unwrap();
+    color.set("enumTypeId", Value::string("TestColor"));
+    color.set("description", Value::string("Wall Color"));
+    color.update(facade).unwrap();
+    wait_drained(facade);
+    let red = search.get_document("TestEnum", "TcRed").unwrap().unwrap();
+    assert_eq!(to_plain_string(&red["typeDescription"]), "Wall Color");
+    let body = search.get_document("TestEnumType", "TestColor").unwrap().unwrap();
+    assert_eq!(to_plain_string(&body["description"]), "Wall Color");
+
     // Deleting an enumeration deletes its document and reindexes the type, whose child list shrinks.
     facade.begin(entity, None).unwrap();
     let mut blue = facade.make_value("moqui.basic.Enumeration").unwrap();
