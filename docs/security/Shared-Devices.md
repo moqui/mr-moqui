@@ -85,7 +85,11 @@ group, device or error text) and `Cache-Control: private, no-store` (`user::devi
 
 A page a device plays should reload itself when one of its own requests is refused (401 or 403), so that the server's
 plain page replaces it: the report playlist does this in kiosk mode (`m-report-playlist`'s `kiosk`, `WebrootReport.js`), and
-Insights' wall display (mr-boss `screen/Insights/WallDisplay.xml`) uses it.
+Insights' wall display (mr-boss `screen/Insights/WallDisplay.xml`) uses it. It reloads at most once a minute (the time kept
+in the tab's `sessionStorage`), so a refusal the page itself does not show cannot make it reload in a loop. Such a page also
+takes from the request nothing that could make its queries larger: Insights' wall display renders its playlist's dashboards
+over its own range (not a `from` and `thru` the browser sends), and shows a panel's failure as not available, with its text
+only in the log.
 
 ## One browser
 

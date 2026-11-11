@@ -1256,11 +1256,22 @@
                 h("div", { ref: "stage", class: "m-session-replay-stage", style: { overflow: "auto", maxWidth: "100%" } }) ]);
         }
     };
-    // the page loaded again (a kiosk playlist whose request was refused), apart so a test can stand in for it
-    report.reloadPage = () => root.location.reload();
+    // the page loaded again (a kiosk playlist whose request was refused or whose playlist changed), apart so a test can stand
+    // in for it; at most once a minute (the time kept in the tab's sessionStorage), so an answer the page cannot get past
+    // (a refused data request under a page that still renders) is tried at the next turns instead of reloading in a loop.
+    // False when it did not reload.
+    report.reloadPage = () => {
+        try {
+            const last = Number(root.sessionStorage.getItem("moqui.playlistReload")) || 0;
+            if (Date.now() - last < 60000) return false;
+            root.sessionStorage.setItem("moqui.playlistReload", String(Date.now()));
+        } catch (error) { /* no storage: reload; the server's answer decides */ }
+        root.location.reload();
+        return true;
+    };
     // kiosk: a wall display with no one at it (a shared device's page, BOSS Insights WallDisplay): no link out, a failed load
-    // retried at the next turn rather than paused, and a refused one (401, 403: the device revoked or stopped) reloads the page,
-    // whose answer is then the server's plain refusal page.
+    // retried at the next turn rather than paused, and a refused one (401, 403: the device revoked or stopped) or a changed
+    // playlist reloads the page, whose answer is then the server's plain refusal page or the playlist as it is now.
     components["m-report-playlist"] = {
         props: { source: String, items: {type:Array,default:()=>[]}, seconds: {type:Number,default:30}, kiosk: Boolean },
         data: () => ({ at:0, paused:false, pausedForError:false, timer:null, loading:false, error:"", changed:false, dashboard:null, frames:{}, requestId:0, controller:null }),
@@ -1275,7 +1286,7 @@
             restartTimer() {
                 root.clearInterval(this.timer);
                 // the next dashboard at each turn; a playlist of one loads its dashboard again, so its panels stay current
-                this.timer=root.setInterval(()=>{ if (!this.paused && !this.loading && !root.document.hidden) { if (this.items.length>1) this.move(1); else this.load(true); } }, Math.max(5,this.seconds)*1000);
+                this.timer=root.setInterval(()=>{ if (!this.paused && !this.loading && !root.document.hidden) { if (this.items.length>1) this.move(1); else this.load(true); } }, Math.min(86400,Math.max(5,Number(this.seconds) || 30))*1000);
             },
             togglePause() { this.paused=!this.paused;this.pausedForError=false; if (!this.paused) this.restartTimer(); },
             // refresh (true only from the turn of a playlist of one): the dashboard shown stays until its new frames come
@@ -1302,7 +1313,9 @@
                     // The saved playlist may have been reordered since this page loaded. Never mislabel another dashboard's frames.
                     const expectedId=link.searchParams.get("definitionId");
                     if (!expectedId || json.dashboard.definitionId!==expectedId) {
-                        this.changed=true;this.paused=true;
+                        // a wall display has no one to press Reload: it loads the page again (or tries at the next turn)
+                        if (this.kiosk && report.reloadPage() !== false) return;
+                        this.changed=true;this.paused=!this.kiosk;
                         this.error=T("This playlist has changed. Reload the playlist to continue, or open the selected dashboard directly.");
                         return;
                     }
@@ -1314,7 +1327,7 @@
                     // A pause the load failure made ends once a dashboard loads again (Retry); a pause by hand stays.
                     if (this.pausedForError) { this.paused=false;this.pausedForError=false;this.restartTimer(); }
                 } catch (error) {
-                    if (requestId===this.requestId && this.kiosk && error && (error.status===401 || error.status===403)) { report.reloadPage(); return; }
+                    if (requestId===this.requestId && this.kiosk && error && (error.status===401 || error.status===403) && report.reloadPage() !== false) return;
                     if (requestId===this.requestId) {
                         this.error=T(this.kiosk ? "Could not load this dashboard. It is tried again at the next turn." : "Could not load this dashboard. Retry or open it directly.");
                         if (!this.paused && !this.kiosk) { this.paused=true;this.pausedForError=true; }

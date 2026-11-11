@@ -321,7 +321,7 @@ test("playlist controls render authorized frames and reject stale or changed sel
         assert.equal(target.textContent,'');
     } finally {if(!unmounted)app.unmount();target.remove();moqui.request=previousRequest;window.setInterval=previousInterval;window.fetch=previousFetch;}
 });
-test("a kiosk playlist of one refreshes its dashboard each turn, retries a failure and reloads the page when refused", async () => {
+test("a kiosk playlist of one refreshes its dashboard each turn, retries a failure and reloads the page when refused or changed, not in a loop", async () => {
     const target=document.createElement('div');document.body.appendChild(target);
     const previousRequest=moqui.request,previousInterval=window.setInterval,previousReload=report.reloadPage,pending=[];let rotate,reloads=0;
     moqui.request=(url,options)=>new Promise((resolve,reject)=>pending.push({url,options,resolve,reject}));
@@ -352,6 +352,13 @@ test("a kiosk playlist of one refreshes its dashboard each turn, retries a failu
         assert.equal(reloads,0);
         rotate();await Vue.nextTick();pending[3].reject({status:403});await settled();
         assert.equal(reloads,1,'a refused request loads the page again, which the server answers with its refusal');
+        report.reloadPage=()=>{reloads++;return false;};
+        rotate();await Vue.nextTick();pending[4].reject({status:403});await settled();
+        assert.equal(reloads,2);
+        assert.equal(playlist.paused,false,'a reload put off (once a minute) leaves the turns going');
+        rotate();await Vue.nextTick();pending[5].resolve({json:{dashboard:{definitionId:'moved',panels:{}},frames:{}}});await settled();
+        assert.equal(reloads,3,'a changed playlist loads the page again');
+        assert.equal(playlist.paused,false,'and is not paused waiting for someone to press Reload');
     } finally {app.unmount();target.remove();moqui.request=previousRequest;window.setInterval=previousInterval;report.reloadPage=previousReload;}
 });
 test("structural pills retain typed values, negation, disable, labels and user-scoped pins", async () => {
