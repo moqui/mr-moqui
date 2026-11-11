@@ -60,8 +60,8 @@ const $xc = (text) => {
     return found;
 };
 const $openRender = (fields) => {
-    // A nested render writes to the output itself, so it cannot be captured.
-    if ($sink) throw new Error("a section, include or subscreen in a list cell's dialog is not supported");
+    // A nested render writes to the output itself, so it cannot be captured (a section is taken as a value instead).
+    if ($sink) throw new Error("an include or subscreen in a list cell's dialog is not supported");
     $sep();
     $w($scrub(fields).slice(0, -1) + ',"c":');
 };
@@ -743,6 +743,12 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
             nameExpr: multi ? `${jsString(name + "_")} + $index` : jsString(name),
             suffixExpr: multi ? `"_" + $index` : ""
         };
+    };
+    // A section or section-iterate: rendered in place, or, inside a captured list row dialog, as the value of its node.
+    const sectionCode = (node, extra) => {
+        const fields = `t:"section",id:$uid(${jsString(idOf(node))}),name:${jsString(attr(node, "name") || "")}${extra}`;
+        const name = jsString(attr(node, "name") || "");
+        return `if ($sink) $emit({${fields},c:JSON.parse(sri.renderSectionValue(${name}))});\nelse { $openRender({${fields}});\nsri.renderSection(${name});\n$closeRender(); }\n`;
     };
     // One widget of a list cell: a text, a link, or a field node (an editable; an input or a button of a row form).
     const cellPiece = (field, sub, widget, list) => {
@@ -1560,10 +1566,10 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
         // A report-embed is a report-dashboard of the definition, or nothing when the viewer may not see it.
         "report-embed": stmt((node) => guarded(node, `{ const $reportProps = ${S.reportPropsExpr(node)};\nif ($reportProps) $emit({t:"component",id:$uid(${jsString(idOf(node))}),name:"report-dashboard",props:$reportProps});\n}\n`)),
         "dashboard": group("dashboard"),
-        "section": stmt((node) =>
-            `$openRender({t:"section",id:$uid(${jsString(idOf(node))}),name:${jsString(attr(node, "name") || "")}});\nsri.renderSection(${jsString(attr(node, "name") || "")});\n$closeRender();\n`),
-        "section-iterate": stmt((node) =>
-            `$openRender({t:"section",id:$uid(${jsString(idOf(node))}),name:${jsString(attr(node, "name") || "")},iterate:true});\nsri.renderSection(${jsString(attr(node, "name") || "")});\n$closeRender();\n`),
+        // A section in a list row's dialog (written while $captured runs) is its nodes as a value, as a section in a list cell
+        // is (sri.renderSectionValue: its conditions, actions and fail-widgets); anywhere else it renders in place.
+        "section": stmt((node) => sectionCode(node, "")),
+        "section-iterate": stmt((node) => sectionCode(node, ",iterate:true")),
         "section-include": stmt((node) =>
             `$openRender({t:"section",id:$uid(${jsString(idOf(node))}),name:${jsString(attr(node, "name") || "")}});\nsri.renderSectionInclude(${S.bareLit(node)});\n$closeRender();\n`),
         "subscreens-active": stmt((node) =>
