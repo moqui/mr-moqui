@@ -116,6 +116,35 @@ fn a_server_not_reached_is_retryable() {
     );
 }
 
+/// Admin P12: a delivery that failed keeps its outcome and error on the stored message, for the mail queue; the Sent status
+/// clears the outcome, and a send with no stored message keeps nothing.
+#[test]
+fn a_failed_delivery_keeps_its_outcome_on_the_message() {
+    let _lock = lock_tests();
+    let (facade, context) = entered();
+    seed(
+        &facade,
+        &context,
+        MESSAGE,
+        &[("emailMessageId", "P12_OUTCOME"), ("statusId", "ES_READY")],
+    );
+    let message = || {
+        let _authz = context.disable_authz();
+        super::find_one(&facade, MESSAGE, "emailMessageId", "P12_OUTCOME")
+            .unwrap()
+            .unwrap()
+    };
+    let lost = moqui_core::context::Error::new("The SMTP session stopped before its end");
+    super::record_send_failure(&facade, "P12_OUTCOME", &lost, "uncertain");
+    super::record_send_failure(&facade, "", &lost, "uncertain");
+    assert_eq!(field_text(&message(), "sendOutcome"), "uncertain");
+    assert_eq!(field_text(&message(), "sendError"), lost.message());
+    assert_eq!(field_text(&message(), "statusId"), "ES_READY");
+    super::update_sent(&facade, "P12_OUTCOME", "<p12@example.com>").unwrap();
+    assert_eq!(field_text(&message(), "statusId"), "ES_SENT");
+    assert_eq!(field_text(&message(), "sendOutcome"), "");
+}
+
 /// Admin P11: a server that is disabled until a test of it passes sends nothing, and one that may not use the private
 /// network (`allowPrivateNetwork` N) is connected to at no internal address; both before any socket.
 #[test]

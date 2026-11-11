@@ -503,7 +503,9 @@ along with this software (see the LICENSE.md file). If not, see
             (test#Connection) with its safe diagnostics, the mark of a passing test (the fingerprint of the endpoint fields
             it ran against, never a secret, by whom and when), whether the connection waits for a test because its
             endpoint changed, and whether that change cleared a stored secret that has not been entered again (no test
-            sends anything until it is). Written by ConfigurationServices only.</description>
+            sends anything until it is). Written by ConfigurationServices only. The last result of a protocol check
+            (test#Protocol, impl-admin P12) is kept here too, under the adapter key protocol and the protocol's and
+            check's keys.</description>
         <field name="adapterKey" type="id" is-pk="true"/>
         <field name="connectionKey" type="id-long" is-pk="true"/>
         <field name="testedConfigHash" type="text-medium"/>
@@ -518,5 +520,37 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastCheckByUserId" type="id"/>
         <field name="lastCheckText" type="text-long"><description>The checks of the last test as JSON: each a name, ok or
             failed and a text that names hosts and statuses, never a secret or a response body</description></field>
+    </entity>
+
+    <!-- Admin P12 (mr-boss plan/impl-admin.md P12; design-admin §9 MailQueue, §14): who owns a send outcome, and what an
+        operation answered -->
+    <entity entity-name="MailOutcomeOwner" package="moqui.server" use="configuration" cache="true">
+        <description>A registered owner of mail send outcomes (org.moqui.admin.OperationServices.find#MailOutcomes): a
+            component whose own ledger holds the attempts of messages it sends (Mantle's delivery ledger) seeds a row, so
+            the mail queue never retries or settles such a message beside its owner. ownerService answers which of a list
+            of EmailMessages are its own, with their state at the owner (it implements
+            OperationServices.find#MailOutcomeOwners); recoverService, when it names one, is the owner's own retry and
+            reconciliation of such a message (OperationServices.recover#OwnedMailOutcome), which checks the owner's
+            permission itself: the registration adds no right. A row naming a service that is not there is logged by name
+            when read and left out, and every message is then held for its owner (no retry here) until it answers.</description>
+        <field name="ownerKey" type="id" is-pk="true"/>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerService" type="text-medium"/>
+        <field name="recoverService" type="text-medium"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+    <entity entity-name="OperationResult" package="moqui.server" cache="never">
+        <description>What an operation of org.moqui.admin.OperationServices answered, by the operation key its caller gave
+            (a retry, a reconciliation; later a recovery action): a repeat of the request with the same key answers the
+            first result and does nothing again. A key is one operation's: one kind, one target, one user. The result is
+            the service's safe answer (no secret, address, subject or body). Written by OperationServices only.</description>
+        <field name="operationKey" type="id-long" is-pk="true"/>
+        <field name="operationKind" type="text-short"/>
+        <field name="targetKey" type="text-medium"/>
+        <field name="userId" type="id"/>
+        <field name="operationDate" type="date-time"/>
+        <field name="resultText" type="text-long"/>
     </entity>
 </entities>

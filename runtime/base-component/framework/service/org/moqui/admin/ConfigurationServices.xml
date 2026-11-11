@@ -33,7 +33,8 @@ along with this software (see the LICENSE.md file). If not, see
             when and why. A secret is masked: value null, valueSet whether it is set. Narrowed by settingGroup, kind
             (preference or configuration) and settingKey. Needs ADMIN_SETTINGS_VIEW; with ADMIN_ACCESS_VIEW alone, the
             sign-in settings only (the groups Sign-in and Sign-in policy), which the access administrator reads beside the
-            groups' sign-in rules.</description>
+            groups' sign-in rules; with ADMIN_CONNECTION_VIEW or ADMIN_OPERATION_VIEW alone, the protocols' settings only
+            (the groups named "Protocols: ...", impl-admin P12).</description>
         <in-parameters>
             <parameter name="settingKey"/>
             <parameter name="settingGroup"/>
@@ -485,5 +486,103 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="connectionKey" required="true"/>
         </in-parameters>
         <out-parameters><parameter name="consumerList" type="List"/></out-parameters>
+    </service>
+
+    <!-- ========== Protocols (ConfigurationProtocols.js; impl-admin P12) ========== -->
+    <!-- What each protocol of the server is doing, and the diagnostics that may be run on it (design-admin §9 ProtocolsHome,
+        ServerConfiguration). The conf stays the deployment's: nothing here changes it, and the settings a protocol runs with
+        are get#EffectiveSettings' rows of the Protocols groups. get#ProtocolFacts and probe#ProtocolTarget are the server's
+        own answers (crates/moqui-core/src/service/protocol_admin.rs), each from a fixed list; they are in no group's grant
+        and check their permission themselves. -->
+    <service verb="get" noun="ProtocolReadiness" allow-remote="false">
+        <description>The protocols of the server (protocolList), each with its state told apart: absent (this build leaves
+            it out, or no build has it), disabled (built, and the conf does not turn it on), failing (turned on and it did
+            not start, with the reason the server recorded, or its last check did not pass), untrusted (running while what
+            it trusts does not hold), notStarted (turned on, in a process that opened no listeners) and ready. Each also:
+            built and the build feature, enabled, the reason, where its listener is bound, where the answer comes from
+            (Build, Startup or Configuration), the settings group get#EffectiveSettings shows its configuration under,
+            the owner its links open (ownerKey) and its checks with their last results (checkList, also flat as
+            checkList of the answer). SMTP reception answers its trust: trusted only while it listens,
+            smtp_allowed_addresses names addresses that are no range of every address and can reach the address it is
+            bound to, and smtp_authserv_id is set; a mismatch is never ready (untrusted, trustProblems in words), and a
+            listener that takes mail from the internet trusts no gateway (direct). Narrowed to one protocolKey. No
+            secret, key or key file is read. Needs ADMIN_CONNECTION_VIEW, ADMIN_SETTINGS_VIEW or
+            ADMIN_OPERATION_VIEW.</description>
+        <in-parameters><parameter name="protocolKey"/></in-parameters>
+        <out-parameters>
+            <parameter name="protocolList" type="List"/>
+            <parameter name="checkList" type="List"/>
+            <parameter name="serverStarted" type="Boolean"/>
+            <parameter name="packageName"/>
+            <parameter name="checkedDate"/>
+            <parameter name="canTest" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationProtocols.js').execute('getProtocolReadiness', context))</script></actions>
+    </service>
+    <service verb="test" noun="Protocol" allow-remote="false" transaction-timeout="120">
+        <description>Run one check of a protocol (checkKey, one of its checkList) and keep its result as the check's last:
+            configuration (the readiness read again; nothing is sent), listener (one TCP connection from this server to
+            the address the conf binds, closed at once) or publicAddress (the name the deployment gives its clients is
+            looked up and its port connected to from this server, closed at once). A check that leaves the server runs
+            only with confirmed true (CONFIRM_REQUIRED otherwise, and nothing is sent); a protocol that is not built
+            (NOT_BUILT) or is off (NOT_ENABLED) is sent nothing. The target is the conf's own, from the server's fixed
+            list: none is taken from the request. The result names a host, a port and a kind of failure, never the
+            other side's words. Needs ADMIN_CONNECTION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="protocolKey" required="true"/>
+            <parameter name="checkKey" required="true"/>
+            <parameter name="confirmed" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="passed" type="Boolean"/>
+            <parameter name="protocolKey"/>
+            <parameter name="checkKey"/>
+            <parameter name="target"/>
+            <parameter name="resultText"/>
+            <parameter name="checkedDate"/>
+            <parameter name="external" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationProtocols.js').execute('testProtocol', context))</script></actions>
+    </service>
+    <service verb="get" noun="ProtocolFacts" type="rust" location="moqui_core::service::protocol_admin::get_protocol_facts"
+            allow-remote="false">
+        <description>What the server knows of its protocols, which a script cannot read: the build (packageName,
+            featureList), the entries of the startup report for a fixed list of listeners and integrations (entryList:
+            section, name, state on, off, failed, skipped or notBuilt, detail), whether this process opened its listeners
+            (serverStarted) and a fixed list of nonsecret conf attributes of smtp-server, ssh-server and git-server by
+            element/@attribute (confMap). get#ProtocolReadiness reads it. Needs ADMIN_CONNECTION_VIEW,
+            ADMIN_SETTINGS_VIEW or ADMIN_OPERATION_VIEW.</description>
+        <out-parameters>
+            <parameter name="packageName"/>
+            <parameter name="featureList" type="List"/>
+            <parameter name="entryList" type="List"/>
+            <parameter name="serverStarted" type="Boolean"/>
+            <parameter name="confMap" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="probe" noun="ProtocolTarget" type="rust" location="moqui_core::service::protocol_admin::probe_protocol_target"
+            allow-remote="false" transaction="ignore">
+        <description>One TCP connection, closed as soon as it is made, to a target of the server's fixed list by its key
+            (smtp.listener, ssh.listener, xmpp.listener, sip.listener, turn.listener: the address the conf binds;
+            web.public, ssh.public, turn.public, xmpp.public: the public name and port the conf gives clients), whose
+            host and port are the conf's own properties: target, external, reached, failureKind (notConfigured, notFound,
+            refused, timedOut, unreachable), internalAddress and millis. A public target is tried only with confirmed
+            true. test#Protocol calls it. Needs ADMIN_CONNECTION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="targetKey" required="true"/>
+            <parameter name="confirmed" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="targetKey"/>
+            <parameter name="target"/>
+            <parameter name="external" type="Boolean"/>
+            <parameter name="reached" type="Boolean"/>
+            <parameter name="failureKind"/>
+            <parameter name="internalAddress" type="Boolean"/>
+            <parameter name="millis" type="Long"/>
+        </out-parameters>
     </service>
 </services>

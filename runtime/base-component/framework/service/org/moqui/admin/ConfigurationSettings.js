@@ -26,8 +26,16 @@ const SETTING = "moqui.server.InstanceSetting"
 const PREFERENCE = "moqui.server.InstancePreference"
 const VIEW = "ADMIN_SETTINGS_VIEW"
 const MANAGE = "ADMIN_SETTINGS_MANAGE"
-const signInGroups = ["Sign-in", "Sign-in policy"]
-const signInGroupPermissions = ["ADMIN_ACCESS_VIEW", "ADMIN_ACCESS_MANAGE"]
+// The groups another administrator reads without ADMIN_SETTINGS_VIEW, and nothing else: the access administrator the sign-in
+// settings (impl-admin P10), the integration administrator and the operations operator the protocols' (impl-admin P12: each
+// registered in a group named "Protocols: ...").
+const groupReaders = [
+    {holds: group => ["Sign-in", "Sign-in policy"].includes(group), permissions: ["ADMIN_ACCESS_VIEW", "ADMIN_ACCESS_MANAGE"]},
+    {
+        holds: group => group.startsWith("Protocols: "),
+        permissions: ["ADMIN_CONNECTION_VIEW", "ADMIN_CONNECTION_MANAGE", "ADMIN_OPERATION_VIEW", "ADMIN_OPERATION_MANAGE"]
+    }
+]
 const valueTypes = {
     IsvText: "text",
     IsvInteger: "integer",
@@ -261,14 +269,16 @@ function described(setting, preference, canManage) {
 // effect; narrowed by group, by kind (preference or configuration) and to one key.
 function getEffectiveSettings(p) {
     lib.signedIn()
-    // the access administrator reads the sign-in settings beside the groups' sign-in rules (impl-admin P10), nothing else
+    // another administrator reads the groups that are theirs (groupReaders), nothing else
     const all = ec.user.hasPermission(VIEW) || ec.user.hasPermission(MANAGE)
-    if (!all && !signInGroupPermissions.some(permission => ec.user.hasPermission(permission)))
-        throw new Error(VIEW + " is required")
+    const readers = all
+        ? []
+        : groupReaders.filter(reader => reader.permissions.some(permission => ec.user.hasPermission(permission)))
+    if (!all && !readers.length) throw new Error(VIEW + " is required")
     const canManage = ec.user.hasPermission(MANAGE)
     const preferences = new Map(rows(PREFERENCE).map(row => [row.settingKey, map(row)]))
     const settingList = registered()
-        .filter(setting => all || signInGroups.includes(setting.settingGroup))
+        .filter(setting => all || readers.some(reader => reader.holds(String(setting.settingGroup || ""))))
         .filter(setting => !p.settingKey || setting.settingKey === p.settingKey)
         .filter(setting => !p.settingGroup || setting.settingGroup === p.settingGroup)
         .filter(setting => !p.kind || (p.kind === "preference") === (setting.editable === "Y"))

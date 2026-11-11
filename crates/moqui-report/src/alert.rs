@@ -595,6 +595,9 @@ pub(crate) fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> 
                     Value::string(text(contact, "emailTemplateId", "")),
                 ),
                 ("toAddresses".into(), Value::string(text(contact, "toAddresses", ""))),
+                // no stored message, as a scheduled report's mail: a failed alert mail is tried again here, so a copy of
+                // it in the mail queue would be sent a second time by whoever pressed Send again (impl-admin P12 R1)
+                ("createEmailMessage".into(), Value::Bool(false)),
                 ("bodyParameters".into(), moqui_lib::json::from_json(payload)),
             ]);
             let sent = moqui_core::service::call::sync_checked(
