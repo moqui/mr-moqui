@@ -592,11 +592,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sendOutcome" type="text-short"><description>What the last failed send left (send#EmailTemplate's and
             send#EmailMessage's deliveryOutcome): retryable (nothing was sent), permanent (refused for good) or uncertain
             (it may have gone: reconciled by its owner, never sent again on its own); empty for a message that was sent
-            or never tried. Admin's mail queue reads it (org.moqui.admin.OperationServices.find#MailOutcomes).</description></field>
+            or never tried. A send that begins of a message known not sent marks it uncertain until its result is kept. Admin's mail queue reads it (org.moqui.admin.OperationServices.find#MailOutcomes).</description></field>
         <!-- The settlement of an uncertain send, kept apart from the message's status and sendOutcome, which only the
             transport's own result sets (org.moqui.admin.OperationServices.reconcile#MailOutcome): what a person concluded,
             who, when and why. It marks nothing as sent and no reader of statusId takes it for a delivery; it holds for
-            the send it was made for, and a retry's claim clears it (the audit log keeps it). -->
+            the send it was made for: send#EmailMessage clears it when a send of the message begins, before the transport
+            is contacted, whoever the caller is (the audit log keeps it). -->
         <field name="sendSettlement" type="text-short" enable-audit-log="true"><description>What a person reported of a send
             that is uncertain: delivered or notDelivered. Empty for a message nobody settled.</description></field>
         <field name="sendSettledByUserId" type="id"/>

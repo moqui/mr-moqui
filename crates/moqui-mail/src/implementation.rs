@@ -366,6 +366,14 @@ pub(super) fn send_message(
     if let Err(err) = stored_attachments(facade, &email_message_id, &mut letter) {
         return Ok(send_failed(&email_message_id, &err));
     }
+    // the send begins here: what was known or concluded of the send before no longer holds for this one
+    if !client {
+        if let Err(err) = begin_send(facade, &message) {
+            return fail(format!(
+                "Email Message {email_message_id} was not sent: the start of its send could not be recorded: {err}"
+            ));
+        }
+    }
     if let Err(err) = deliver(facade, &letter, &server, &email_message_id) {
         let outcome = delivery_outcome(&server, &err);
         // a client message's result is the mail client's to write (record#SendResult, which keeps the outcome too): its
@@ -723,6 +731,60 @@ fn mark_sent(facade: &EntityFacade, id: &str, message_id: &str) -> Result<(), Li
     row.set("sendOutcome", Value::Null);
     row.update(facade)?;
     Ok(())
+}
+
+/// What a send that begins supersedes on its stored message: `(uncertain, settlement)`, whether its outcome is to be
+/// marked uncertain and whether a settlement is to be cleared. The outcome of the send before (retryable or permanent:
+/// nothing was sent; none on a bounced message) is not this send's, which may go out: until its result is written the
+/// message is uncertain, so a send lost part way never reads as known not sent. A Ready message with no outcome
+/// already reads so and is left. A settlement (`sendSettlement`: what a person reported of an uncertain send) was of
+/// the send before, whatever the message's status.
+fn superseded_by_send(status: &str, outcome: &str, settlement: &str) -> (bool, bool) {
+    let known = match status {
+        "ES_READY" => outcome == "retryable" || outcome == "permanent",
+        "ES_BOUNCED" => outcome != "uncertain",
+        _ => false,
+    };
+    (known, !settlement.is_empty())
+}
+
+/// The start of a send of a stored message that is not a mail client's (Admin's mail queue, F179), written in a
+/// transaction of its own before the transport is contacted, as [`superseded_by_send`] says: a settlement is cleared
+/// (the audit log of `sendSettlement` keeps what was concluded and by whom) and a known outcome becomes uncertain, so
+/// that whoever sends the message again (the queue's retry, a screen's resend, any caller of send#EmailMessage) and
+/// however the send ends, the row never keeps a conclusion about an earlier send. Nothing is written for a message
+/// with neither. A refusal before this (no body, no server, a host not allowed, no recipient allowed, an attachment
+/// that cannot be read) is no send: the message is left as it was. A mail client's message is claimed by the mail
+/// client (claim#DraftSend), which may hold its row, and is never settled.
+fn begin_send(facade: &EntityFacade, message: &EntityValue) -> Result<(), LibError> {
+    let (uncertain, settlement) = superseded_by_send(
+        &field_text(message, "statusId"),
+        &field_text(message, "sendOutcome"),
+        &field_text(message, "sendSettlement"),
+    );
+    if !uncertain && !settlement {
+        return Ok(());
+    }
+    force_new(facade, || {
+        let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
+        let mut row = facade.make_value(MESSAGE)?;
+        set_text(&mut row, "emailMessageId", &field_text(message, "emailMessageId"));
+        if uncertain {
+            set_text(&mut row, "sendOutcome", "uncertain");
+        }
+        if settlement {
+            for name in [
+                "sendSettlement",
+                "sendSettledByUserId",
+                "sendSettledDate",
+                "sendSettledReason",
+            ] {
+                row.set(name, Value::Null);
+            }
+        }
+        row.update(facade)?;
+        Ok(())
+    })
 }
 
 /// A delivery that failed, kept on the stored message for whoever reconciles it (Admin's mail queue,

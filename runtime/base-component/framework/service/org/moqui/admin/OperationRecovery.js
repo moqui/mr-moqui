@@ -12,7 +12,7 @@
 // The kinds. A kind is a module beside this one that knows its records (kindModules below): how one is read with its state
 // and revision, which actions it has, what never holds for an action whatever a descriptor says (its baseline: a record
 // whose outcome is unknown is reconciled and never retried; one in progress is left alone), and its native actions. System
-// messages are OperationMessages.js; job runs add theirs. A reconciliation never sets a record's own outcome: a person's
+// messages are OperationMessages.js; scheduled jobs OperationJobs.js. A reconciliation never sets a record's own outcome: a person's
 // word is kept apart from what the transport knows (a kind's settlement; the decision of Nov 10, impl-admin §4).
 //
 // A batch. Each record is on its own: read again, checked at the revision its caller read, claimed in a transaction of its
@@ -21,7 +21,11 @@
 const lib = ec.resource.script("component://framework/service/org/moqui/admin/OperationLib.js")
 const {rows, map, text, refused} = lib
 const DESCRIPTOR = "moqui.server.RecoveryDescriptor"
-const kindModules = {SystemMessage: "component://framework/service/org/moqui/admin/OperationMessages.js"}
+const kindModules = {
+    SystemMessage: "component://framework/service/org/moqui/admin/OperationMessages.js",
+    // a scheduled job: its one action is a run outside its schedule (impl-admin P14)
+    ServiceJob: "component://framework/service/org/moqui/admin/OperationJobs.js"
+}
 const modeFields = ["retryMode", "reconcileMode", "cancelMode"]
 const modes = ["native", "owner"]
 // the records of one preview or one batch
