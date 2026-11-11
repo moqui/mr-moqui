@@ -80,7 +80,12 @@
         // what the user may open from here (get#TerminalOptions)
         options: null,
         settings: readSettings(),
-        loaded: false
+        loaded: false,
+        // the sessions shown in a floating window, by id, and the one floated last (the quick terminal's)
+        floating: {},
+        lastFloat: "",
+        // a session to show in a pane once the Terminal screen is there
+        pendingShow: ""
     });
     // Per session key, not reactive: { key, kind, term, fit, el, socket, received, drawn, acked, opened, shown }.
     const sessions = new Map();
@@ -239,9 +244,73 @@
     // The keys of the terminal's own actions: xterm.js passes them over, and the shell's keymap acts on them. Copy and
     // paste (Ctrl+Shift+C, V) stay the terminal's.
     function isOwnKey(event) {
+        // the quick terminal's key (Ctrl+`) shows and hides it from inside it too
+        if (event.ctrlKey && !event.altKey && !event.metaKey && event.key === "`") return true;
         if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return false;
         const key = String(event.key || "").toLowerCase();
         return key !== "c" && key !== "v" && key !== "shift" && key !== "control";
+    }
+
+    // ---- floating terminals (§10.4) ----
+    const FLOAT = "terminal";
+    // this browser has had a terminal: a load restores floating terminals only then, so a user who never opens one costs no
+    // request (§9.1)
+    const USED_KEY = "moqui.terminal.used";
+    // a session's status as a Quasar color, for a window's dot
+    const DOT_COLORS = { working: "info", blocked: "warning", done: "positive", error: "negative", ended: "grey-6" };
+    const scoped = (key) => (moqui.scopedKey ? moqui.scopedKey(key) : key);
+
+    function usedHere() {
+        try {
+            return !!root.localStorage.getItem(scoped(USED_KEY)) || !!root.localStorage.getItem(scoped("moqui.terminal.layout"));
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function markUsed() {
+        try {
+            root.localStorage.setItem(scoped(USED_KEY), "1");
+        } catch (e) {
+            /* storage refused: a load does not restore floating terminals */
+        }
+    }
+
+    function statusOf(info) {
+        if (!info) return "idle";
+        if (info.state === "ended") return "ended";
+        return info.status || "idle";
+    }
+
+    function registerFloat() {
+        const floats = moqui.floats;
+        if (!floats || floats.kinds[FLOAT]) return;
+        floats.register(FLOAT, {
+            title: (key) => (state.sessions[key] && state.sessions[key].title) || t("Terminal"),
+            icon: "sym_o_terminal",
+            dot: (key) => DOT_COLORS[statusOf(state.sessions[key])] || "",
+            defaultSize: { w: 760, h: 440 },
+            minSize: { w: 320, h: 180 },
+            place: "right",
+            // never in Assist's reach (D18)
+            inReach: false,
+            gatherLabel: t("Gather terminals"),
+            actions: (key) => [
+                { id: "popout", icon: "sym_o_open_in_new", label: t("Pop out"), run: () => terminal.popOut(key) },
+                { id: "end", icon: "sym_o_power_settings_new", label: t("End session"), run: () => terminal.endFloating(key) }
+            ],
+            // shown: the terminal is started there if it was not (a chip of a session attached elsewhere takes it here)
+            focus: (key, body) => {
+                terminal.showFloating(key, body);
+                return true;
+            },
+            dock: (shown, key) => {
+                delete state.floating[key];
+                if (state.lastFloat === key) state.lastFloat = "";
+                terminal.detach(key);
+                if (shown) terminal.showInScreen(key);
+            }
+        });
     }
 
     const terminal = {
@@ -297,6 +366,7 @@
             for (const name of ["profileName", "directory", "title"]) if (opts[name]) body[name] = opts[name];
             if (opts.resume) body.resume = "true";
             return withReauth(() => request("open", body)).then((out) => {
+                markUsed();
                 const session = out.session || { id: out.sessionId, kind: body.kind };
                 state.sessions[session.id] = session;
                 if (!state.order.includes(session.id)) state.order.push(session.id);
@@ -641,7 +711,133 @@
         },
 
         isOwnKey,
-        copyText
+        copyText,
+
+        // ---- floating terminals ----
+
+        // The shell's start: the float kind, the quick terminal's key, and the floating terminals of the last visit back.
+        startShell() {
+            registerFloat();
+            if (moqui.keymap && moqui.keymap.registerScope && !terminal.keysOff)
+                terminal.keysOff = moqui.keymap.registerScope("global", [
+                    { keys: "Ctrl+`", action: "terminalToggle", label: t("Show or hide the quick terminal"), run: () => terminal.toggleQuick() }
+                ]);
+            if (usedHere()) terminal.restoreFloating();
+        },
+
+        // The floating terminals of the last visit, as they were: one attached in another window comes back as a chip, and
+        // takes the session here only when it is shown (§10.9).
+        restoreFloating() {
+            const floats = moqui.floats;
+            return terminal.refresh().then(() => {
+                if (!floats) return;
+                floats.load();
+                const keys = Object.keys(floats.restoring || {})
+                    .filter((pk) => pk.startsWith(FLOAT + "|"))
+                    .map((pk) => pk.slice(FLOAT.length + 1));
+                for (const key of keys) {
+                    const info = state.sessions[key];
+                    if (!info || info.state === "ended") continue;
+                    if (info.attached) {
+                        const id = floats.open(FLOAT, key, { restore: true });
+                        if (id) {
+                            state.floating[key] = true;
+                            floats.minimize(id);
+                        }
+                    } else {
+                        terminal.float(key, { restore: true });
+                    }
+                }
+            }, () => {});
+        },
+
+        // Show the session `key` in a floating window, its element moved there; answers the window's id, or false where
+        // nothing floats.
+        float(key, options) {
+            registerFloat();
+            const floats = moqui.floats;
+            if (!floats) return false;
+            const id = floats.open(FLOAT, key, options || {});
+            if (!id) return false;
+            state.floating[key] = true;
+            state.lastFloat = key;
+            floats.whenReady(FLOAT, key).then((body) => {
+                if (body && floats.shown(floats.find(FLOAT, key))) terminal.showFloating(key, body);
+            });
+            return id;
+        },
+
+        showFloating(key, body) {
+            const target = body || (moqui.floats && moqui.floats.bodyOf(FLOAT, key));
+            if (!target) return;
+            terminal.start(key).then(() => {
+                if (!moqui.floats.find(FLOAT, key)) return;
+                terminal.attach(key, target);
+                terminal.focus(key);
+            }, () => {});
+        },
+
+        // Out of its window, docked closed: the session goes on, in the Terminal's list.
+        unfloat(key) {
+            const f = moqui.floats && moqui.floats.find(FLOAT, key);
+            if (f) moqui.floats.close(f.id);
+        },
+
+        endFloating(key) {
+            return terminal.close(key).then(() => {
+                terminal.unfloat(key);
+                terminal.forget(key);
+            });
+        },
+
+        // A pane of the Terminal screen: there now, or once it opens.
+        showInScreen(key) {
+            if (key && terminal.workspace) {
+                terminal.workspace.showHere(key);
+                return;
+            }
+            state.pendingShow = key || "";
+            const vm = shellVm();
+            if (vm.setUrl) vm.setUrl((vm.appRootPath || "") + "/qapps/Terminal");
+        },
+
+        // A browser window of its own for the session, the page with no chrome; it takes the session, and this window offers
+        // to take it back (§10.4).
+        popOut(key) {
+            const url = (shellVm().appRootPath || "") + "/qapps/Terminal?session=" + encodeURIComponent(key) + "&solo=true";
+            root.open(url, "_blank", "popup,width=960,height=600");
+        },
+
+        // The quick terminal (§10.4): the last floating terminal shown or hidden, else a session floated, else a new one.
+        toggleQuick() {
+            registerFloat();
+            const floats = moqui.floats;
+            if (!floats || !floats.canFloat()) {
+                terminal.showInScreen(state.lastFloat || state.order[0] || "");
+                return;
+            }
+            if (state.lastFloat && floats.find(FLOAT, state.lastFloat)) {
+                floats.toggle(FLOAT, state.lastFloat);
+                return;
+            }
+            const floating = Object.keys(state.floating).find((key) => floats.find(FLOAT, key));
+            if (floating) {
+                floats.toggle(FLOAT, floating);
+                return;
+            }
+            const pick = () => state.order.find((id) => state.sessions[id] && state.sessions[id].state !== "ended"
+                && !state.sessions[id].attached && state.sessions[id].kind !== "apps");
+            terminal.refresh().then(() => {
+                const existing = pick();
+                if (existing) return terminal.float(existing);
+                const kinds = (state.options && state.options.kinds) || ["apps"];
+                const kind = kinds.includes("command") ? "command" : "apps";
+                return terminal.open(kind, { cols: 100, rows: 28 }).then((id) => terminal.float(id));
+            }).catch((err) => {
+                const vm = shellVm();
+                if (vm.$q && vm.$q.notify) vm.$q.notify({ type: "negative", message: (err && err.errors) || String(err) });
+            });
+        }
     };
 
     // ---- the Terminal screen's layout: tabs, each a tree of splits whose leaves are panes showing a session ----
@@ -806,7 +1002,8 @@
         data() {
             return { sessions: state.sessions, labels: { splitRight: t("Split right"), splitDown: t("Split down"), zoom: t("Zoom"),
                 unzoom: t("Restore"), close: t("Close pane"), end: t("End session"), float: t("Float"),
-                gone: t("This session ended with the server."), startAgain: t("Start again") } };
+                gone: t("This session ended with the server."), startAgain: t("Start again"),
+                floating: t("This session is in a floating window."), showHere: t("Show here") } };
         },
         computed: {
             info() {
@@ -818,6 +1015,9 @@
             },
             zoomed() {
                 return this.workspace.zoomedPane === this.node.id;
+            },
+            floating() {
+                return !!(this.node.pane && state.floating[this.node.session]);
             },
             dot() {
                 return this.workspace.dotOf(this.info);
@@ -848,8 +1048,8 @@
             '<span class="ellipsis q-ml-xs">{{info.title || node.session}}</span>' +
             '<span v-if="info.cwd" class="ellipsis q-ml-sm text-caption m-terminal-muted">{{info.cwd}}</span>' +
             "<q-space></q-space>" +
-            '<q-btn flat dense round size="sm" icon="sym_o_vertical_split" :aria-label="labels.splitRight" @click.stop="workspace.splitPane(node.id, \'row\')"><q-tooltip>{{labels.splitRight}}</q-tooltip></q-btn>' +
-            '<q-btn flat dense round size="sm" icon="sym_o_horizontal_split" :aria-label="labels.splitDown" @click.stop="workspace.splitPane(node.id, \'column\')"><q-tooltip>{{labels.splitDown}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="!workspace.narrow" flat dense round size="sm" icon="sym_o_vertical_split" :aria-label="labels.splitRight" @click.stop="workspace.splitPane(node.id, \'row\')"><q-tooltip>{{labels.splitRight}}</q-tooltip></q-btn>' +
+            '<q-btn v-if="!workspace.narrow" flat dense round size="sm" icon="sym_o_horizontal_split" :aria-label="labels.splitDown" @click.stop="workspace.splitPane(node.id, \'column\')"><q-tooltip>{{labels.splitDown}}</q-tooltip></q-btn>' +
             '<q-btn flat dense round size="sm" :icon="zoomed ? \'sym_o_close_fullscreen\' : \'sym_o_open_in_full\'" :aria-label="zoomed ? labels.unzoom : labels.zoom" @click.stop="workspace.zoomPane(node.id)"><q-tooltip>{{zoomed ? labels.unzoom : labels.zoom}}</q-tooltip></q-btn>' +
             '<q-btn v-if="workspace.canFloat" flat dense round size="sm" icon="sym_o_picture_in_picture" :aria-label="labels.float" @click.stop="workspace.floatPane(node.id)"><q-tooltip>{{labels.float}}</q-tooltip></q-btn>' +
             '<q-btn flat dense round size="sm" icon="sym_o_close" :aria-label="labels.close" @click.stop="workspace.closePane(node.id)"><q-tooltip>{{labels.close}}</q-tooltip></q-btn>' +
@@ -858,6 +1058,9 @@
             '<div v-if="node.gone" class="col column flex-center q-pa-md text-center m-terminal-muted">' +
             '<div>{{labels.gone}}</div>' +
             '<q-btn unelevated no-caps color="primary" class="q-mt-sm" :label="labels.startAgain" @click="workspace.startAgain(node.id)"></q-btn></div>' +
+            '<div v-else-if="floating" class="col column flex-center q-pa-md text-center m-terminal-muted">' +
+            '<div>{{labels.floating}}</div>' +
+            '<q-btn unelevated no-caps color="primary" class="q-mt-sm" :label="labels.showHere" @click="workspace.showHere(node.session)"></q-btn></div>' +
             '<m-terminal-view v-else class="col" style="min-height: 0" :session-key="node.session" @focused="workspace.focusPane(node.id)"></m-terminal-view>' +
             "</div>" +
             '<div v-else class="m-terminal-split no-wrap" :class="node.dir === \'row\' ? \'row\' : \'column\'">' +
@@ -865,6 +1068,53 @@
             '<div class="m-terminal-divider" :class="node.dir === \'row\' ? \'m-terminal-divider-row\' : \'m-terminal-divider-column\'" @pointerdown="startDrag"></div>' +
             '<m-terminal-node :node="node.b" :style="{ flex: (1 - node.ratio) + \' 1 0\' }" style="min-width: 0; min-height: 0"></m-terminal-node>' +
             "</div>"
+    };
+
+    // The header's terminal button, while the user has sessions (§10.4): the count of those that want attention, and a menu
+    // of them, each shown floating (or in the Terminal screen where nothing floats).
+    components["m-terminal-button"] = {
+        name: "mTerminalButton",
+        data() {
+            return { state, labels: { terminal: t("Terminal sessions"), open: t("Open the Terminal") } };
+        },
+        computed: {
+            running() {
+                return this.state.order.filter((id) => this.state.sessions[id] && this.state.sessions[id].state !== "ended");
+            },
+            attention() {
+                return this.running.filter((id) => {
+                    const info = this.state.sessions[id];
+                    return info.unseen && (info.status === "blocked" || info.status === "done");
+                }).length;
+            }
+        },
+        methods: {
+            dot(id) {
+                return "m-terminal-dot-" + statusOf(this.state.sessions[id]);
+            },
+            show(id) {
+                if (moqui.floats && moqui.floats.canFloat()) terminal.float(id);
+                else terminal.showInScreen(id);
+            },
+            openScreen() {
+                const vm = shellVm();
+                if (vm.setUrl) vm.setUrl((vm.appRootPath || "") + "/qapps/Terminal");
+            },
+            refresh() {
+                terminal.refresh().catch(() => {});
+            }
+        },
+        template:
+            '<q-btn v-if="running.length" flat round dense icon="sym_o_terminal" id="m-terminal-button" :aria-label="labels.terminal">' +
+            '<q-badge v-if="attention" color="warning" floating rounded>{{attention}}</q-badge>' +
+            "<q-tooltip>{{labels.terminal}}</q-tooltip>" +
+            '<q-menu @before-show="refresh"><q-list dense style="min-width: 260px">' +
+            '<q-item v-for="id in running" :key="id" clickable v-close-popup @click="show(id)" :data-terminal-session="id">' +
+            '<q-item-section avatar style="min-width: 0"><span class="m-terminal-dot" :class="dot(id)"></span></q-item-section>' +
+            '<q-item-section><q-item-label class="ellipsis">{{state.sessions[id].title || id}}</q-item-label>' +
+            '<q-item-label v-if="state.sessions[id].cwd" caption class="ellipsis">{{state.sessions[id].cwd}}</q-item-label></q-item-section></q-item>' +
+            '<q-separator></q-separator><q-item clickable v-close-popup @click="openScreen"><q-item-section>{{labels.open}}</q-item-section></q-item>' +
+            "</q-list></q-menu></q-btn>"
     };
 
     // The copy the browser refused, to select and copy by hand.

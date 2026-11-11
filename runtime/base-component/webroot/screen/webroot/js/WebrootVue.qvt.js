@@ -9472,6 +9472,8 @@
         "        </q-btn>\n" +
         // the Assist toggle, rightmost (WebrootAssist.js, for a user who may use it); its right q-drawer (view LpR) below, the
         // screen context and assistReach its inputs (IronStone impl-drawers-commons R1)
+        // the browser terminal's button while the user has sessions: its menu lists them (WebrootTerminal.js, Terminal-Fancy §10.4)
+        "        <m-terminal-button v-if=\"terminalOn && !handheld\"></m-terminal-button>\n" +
         "        <m-assist-button v-if=\"assistOn && !handheld\"></m-assist-button>\n" +
         "    </q-toolbar></q-header>\n" +
         "\n" +
@@ -9503,6 +9505,8 @@
         // the floating windows (WebrootFloats.js, plans/Terminal-Fancy.md §10.1): outside #m-canvas and over the layout, below the
         // dialogs, menus and notices; what floats is its owner's content, moved into a window's body
         "<m-float-layer v-if=\"floatsOn\"></m-float-layer>\n" +
+        // the copy a terminal's program made that the browser refused, to copy by hand (WebrootTerminal.js)
+        "<m-terminal-copy v-if=\"terminalOn\"></m-terminal-copy>\n" +
         "\n" +
         "<m-dialog v-model=\"reLoginShow\" width=\"400\" :title=\"labels.reLogin\">\n" +
         "    <div v-if=\"reLoginMfaData\">\n" +
@@ -10285,6 +10289,7 @@
             callsOn() { return !!(moqui.call && this.userId && moqui.config && moqui.config.calls); },
             // floats (WebrootFloats.js): the layer, on any page that loads the store
             floatsOn() { return !!moqui.floats; },
+            terminalOn() { return !!(moqui.terminal && this.userId); },
             // an Assist canvas covers the page (the page under it stays mounted)
             assistCanvasShown() { return !!(this.assistOn && moqui.assist.canvasShown && moqui.assist.canvasShown()); },
             myPresence() { return moqui.chat && this.userId ? moqui.chat.myPresence() : ""; },
@@ -10374,6 +10379,8 @@
             if (moqui.assist) moqui.assist.start(this);
             // calls: the pushes of the user's calls and the calls going on after a reload (WebrootCall.js)
             if (moqui.call) moqui.call.start(this);
+            // the browser terminal: floating terminals back where they were, the quick terminal's key (WebrootTerminal.js)
+            if (moqui.terminal && this.userId) moqui.terminal.startShell(this);
             // the suite shell: its data once, its keys, and the counts every 5 minutes while the socket is down
             this.loadShellData();
             this.shellKeysOff = keymap.registerScope("global", this.shellKeyBindings());

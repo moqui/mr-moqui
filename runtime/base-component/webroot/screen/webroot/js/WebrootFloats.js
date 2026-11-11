@@ -142,6 +142,8 @@
         iconOf(f) { const def = floats.kinds[f.kind] || {}; return valueOf(def.icon, f.key, f) || "sym_o_select_window"; },
         badgeOf(f) { const def = floats.kinds[f.kind] || {}; const value = valueOf(def.badge, f.key, f); return value ? String(value) : ""; },
         dotOf(f) { const def = floats.kinds[f.kind] || {}; return valueOf(def.dot, f.key, f) || ""; },
+        // a kind's own buttons on the title bar, before Minimize: [{icon, label, run(key, float)}] (a terminal's End session)
+        actionsOf(f) { const def = floats.kinds[f.kind] || {}; const list = valueOf(def.actions, f.key, f); return Array.isArray(list) ? list : []; },
 
         // Whether anything may float now: a viewport 600 px or wider and not a handheld screen (§10.8).
         canFloat() {
@@ -155,6 +157,8 @@
         // nothing may float.
         open(kind, key, options) {
             floats.load();
+            // measured again: at the layer's mount the header may not be laid out yet, and a window must not cover it
+            floats.measure();
             const def = floats.kinds[kind];
             const k = key || "";
             if (!def) return false;
@@ -624,6 +628,7 @@
             icon() { return floats.iconOf(this.float); },
             badge() { return floats.badgeOf(this.float); },
             dot() { return floats.dotOf(this.float); },
+            actions() { return floats.actionsOf(this.float); },
             domId() { return floats.domId(this.float.id); },
             bodyId() { return floats.bodyId(this.float.id); },
             top() { return floats.isTop(this.float); },
@@ -641,6 +646,7 @@
             toggleMax() { floats.maximize(this.float.id); },
             dock() { floats.dock(this.float.id); },
             close() { floats.close(this.float.id); },
+            act(action) { action.run(this.float.key, this.float); },
             onBarKey(event) { if (floats.keyMove(this.float.id, event)) event.preventDefault(); },
             startMove(event) {
                 if (!primary(event) || (event.target && event.target.closest && event.target.closest(".q-btn, button, a, input"))) return;
@@ -687,6 +693,7 @@
                     '<q-icon v-else :name="icon" size="18px" class="m-float-icon" aria-hidden="true"></q-icon>' +
                     '<div class="col ellipsis m-float-title">{{title}}</div>' +
                     '<q-badge v-if="badge" color="negative" rounded class="q-mx-xs" data-float-badge>{{badge}}</q-badge>' +
+                    '<q-btn v-for="action in actions" :key="action.label" flat round dense size="sm" :icon="action.icon" :aria-label="action.label" :data-float-action="action.id || action.label" @click="act(action)"><q-tooltip>{{action.label}}</q-tooltip></q-btn>' +
                     '<q-btn flat round dense size="sm" icon="sym_o_minimize" :aria-label="labels.minimize" data-float-action="minimize" @click="minimize"><q-tooltip>{{labels.minimize}}</q-tooltip></q-btn>' +
                     '<q-btn flat round dense size="sm" :icon="float.maximized ? \'sym_o_close_fullscreen\' : \'sym_o_open_in_full\'" :aria-label="float.maximized ? labels.restore : labels.maximize"' +
                         ' data-float-action="maximize" @click="toggleMax"><q-tooltip>{{float.maximized ? labels.restore : labels.maximize}}</q-tooltip></q-btn>' +

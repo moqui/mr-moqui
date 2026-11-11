@@ -17,7 +17,7 @@
 spec({server: false})
 
 browser.runInPage({
-    scripts: ["/js/MoquiLib.js", "/libs/xterm/xterm.js", "/libs/xterm/addon-fit.js", "/libs/xterm/addon-search.js", "/libs/xterm/addon-web-links.js", "/libs/xterm/addon-unicode11.js", "/js/WebrootTerminal.js", "/libs/vue/compiler-dom.cjs.js"],
+    scripts: ["/js/MoquiLib.js", "/libs/xterm/xterm.js", "/libs/xterm/addon-fit.js", "/libs/xterm/addon-search.js", "/libs/xterm/addon-web-links.js", "/libs/xterm/addon-unicode11.js", "/js/WebrootFloats.js", "/js/WebrootTerminal.js", "/libs/vue/compiler-dom.cjs.js"],
     styles: ["/libs/xterm/xterm.css"],
     test: "/files/runtime/base-component/webroot/test/client/pages/WebrootTerminal.page.js"
 })

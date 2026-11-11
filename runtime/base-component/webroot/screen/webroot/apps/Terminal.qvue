@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
 <div class="m-terminal-body column no-wrap" :style="{ height: height + 'px', padding: '4px 8px' }">
     <div v-if="!ready" class="m-terminal-closed q-pa-sm text-negative">{{labels.notLoaded}}</div>
     <template v-else>
-    <div class="m-terminal-strip row items-center no-wrap">
+    <div v-if="!solo" class="m-terminal-strip row items-center no-wrap">
         <q-tabs v-model="active" dense no-caps inline-label outside-arrows mobile-arrows align="left" class="col" style="min-width: 0">
             <q-tab v-for="(tab, index) in tabs" :key="tab.id" :name="tab.id" :id="'m-terminal-tab-' + index">
                 <div class="row items-center no-wrap">
@@ -77,7 +77,6 @@ along with this software (see the LICENSE.md file). If not, see
     </div>
     </template>
 </div>
-<m-terminal-copy v-if="ready"></m-terminal-copy>
 <q-dialog v-model="settingsOpen">
     <q-card style="min-width: 320px; max-width: 92vw" id="TerminalSettings">
         <q-card-section class="text-h6">{{labels.settings}}</q-card-section>
@@ -121,7 +120,10 @@ module.exports = {
     provide() { return { workspace: this }; },
     data() {
         const store = moqui.terminal;
+        const params = new URLSearchParams(window.location.search);
+        const soloSession = params.get("solo") === "true" ? params.get("session") || "" : "";
         return { height: 400, ready: !!store, terminalState: store ? store.state : { sessions: {}, order: [] },
+            solo: !!soloSession, soloSession,
             tabs: [], active: "", focusedPane: "", listOpen: false, settingsOpen: false, draft: {}, profileDraft: [], failed: "",
             labels: { notLoaded: localize("The terminal could not load."), new: localize("New"), sessions: localize("Sessions"),
                 settings: localize("Settings"), closeTab: localize("Close tab"), showHere: localize("Show here"),
@@ -142,7 +144,8 @@ module.exports = {
     computed: {
         options() { return this.terminalState.options || { kinds: ["apps"], profiles: [] }; },
         canHost() { return (this.options.kinds || []).includes("host"); },
-        canFloat() { return !!(moqui.floats && moqui.floats.canFloat && moqui.floats.canFloat()); },
+        canFloat() { return !this.solo && !this.narrow && !!(moqui.floats && moqui.floats.canFloat && moqui.floats.canFloat()); },
+        narrow() { return !!(this.$q && this.$q.screen && this.$q.screen.width < 600); },
         zoomedPane() { const tab = this.tab(); return tab ? tab.zoom || "" : ""; },
         newChoices() {
             const kinds = this.options.kinds || ["apps"];
@@ -172,6 +175,8 @@ module.exports = {
         settle();
         if (!this.ready) return;
         this.offKeys = moqui.keymap && moqui.keymap.registerScope ? moqui.keymap.registerScope("terminal", this.keyBindings()) : null;
+        if (this.solo) { this.openSolo(); return; }
+        moqui.terminal.workspace = this;
         this.restore();
     },
     beforeUnmount() {
@@ -179,6 +184,8 @@ module.exports = {
         window.removeEventListener("resize", this.onWindowResize);
         if (this.layoutObserver) this.layoutObserver.disconnect();
         if (this.offKeys) this.offKeys();
+        if (moqui.terminal && moqui.terminal.workspace === this) moqui.terminal.workspace = null;
+        if (this.solo) document.body.classList.remove("m-terminal-solo");
     },
     methods: {
         // all the room from the terminal's top to the footer (fixed, as the header is), less the page's bottom padding, so the
@@ -195,7 +202,17 @@ module.exports = {
         store() { return moqui.terminal; },
         tree() { return moqui.terminal.tree; },
         tab(id) { return this.tabs.find((tab) => tab.id === (id || this.active)) || null; },
-        tabNode(tab) { return (tab.zoom && this.tree().find(tab.root, tab.zoom)) || tab.root; },
+        // zoomed, or on a small screen (§10.8: no splits there, the tabs switch sessions), the one pane alone
+        tabNode(tab) {
+            const one = tab.zoom || (this.narrow ? tab.focus : "");
+            return (one && this.tree().find(tab.root, one)) || tab.root;
+        },
+        // the pop-out window (§10.4): one session, the page with no shell chrome
+        openSolo() {
+            document.body.classList.add("m-terminal-solo");
+            this.tabs = [{ id: "solo", root: this.tree().pane(this.soloSession), focus: "", zoom: "" }];
+            this.active = "solo";
+        },
         tabTitle(tab) {
             const pane = this.tree().find(tab.root, tab.focus) || this.tree().panes(tab.root)[0];
             const info = pane ? this.terminalState.sessions[pane.session] : null;
@@ -220,6 +237,7 @@ module.exports = {
         },
         // ---- the layout ----
         save() {
+            if (this.solo) return;
             // a pane keeps its session's title and directory, so a session the server ended can start again there
             for (const tab of this.tabs) for (const pane of this.tree().panes(tab.root)) {
                 const info = this.terminalState.sessions[pane.session];
@@ -247,7 +265,10 @@ module.exports = {
                 }
                 this.tabs = tabs;
                 this.active = tabs.some((tab) => tab.id === (kept && kept.active)) ? kept.active : tabs.length ? tabs[0].id : "";
-                if (!tabs.length) this.openFirst();
+                const pending = this.terminalState.pendingShow;
+                this.terminalState.pendingShow = "";
+                if (pending && live(pending)) this.showHere(pending);
+                else if (!tabs.length) this.openFirst();
                 else this.save();
             }, (err) => { this.failed = (err && err.errors) || this.labels.notLoaded; });
         },
@@ -371,7 +392,8 @@ module.exports = {
                 const pane = this.tree().panes(tab.root).find((other) => other.session === id);
                 if (pane) { this.active = tab.id; this.focusPane(pane.id); return; }
             }
-            if (moqui.terminal.dock) moqui.terminal.dock(id, true);
+            // a floating session comes back to a pane: one terminal is never in two places (D11)
+            if (this.terminalState.floating[id]) moqui.terminal.unfloat(id);
             const info = this.terminalState.sessions[id] || {};
             const pane = this.tree().pane(id, this.about(info.kind, info.profile, info));
             const tab = { id: "t" + pane.id, root: pane, focus: pane.id, zoom: "" };

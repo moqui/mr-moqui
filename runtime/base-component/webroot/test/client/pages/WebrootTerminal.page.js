@@ -228,3 +228,35 @@ test("several lines pasted into a shell ask first, unless its program takes a br
         screen.remove()
     }
 })
+
+test("a floating terminal takes the session's element, stays out of Assist's reach, and docks without ending it", async () => {
+    const store = moqui.terminal
+    const floats = moqui.floats
+    const key = "float-" + (++made)
+    store.create(key, { kind: "host", connect: false, send: () => {} })
+    store.startShell()
+    const id = store.float(key)
+    assert.ok(id, "the window opened")
+    // the layer would mount the window's body; here it is made by hand
+    const body = document.createElement("div")
+    body.id = floats.bodyId(id)
+    body.style.cssText = "width:600px;height:300px"
+    document.body.appendChild(body)
+    floats.bodyReady(id, true)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const session = store.session(key)
+    try {
+        assert.equal(session.el.parentNode, body, "the terminal's element is in the window")
+        assert.ok(store.state.floating[key])
+        assert.equal(session.el.getAttribute("data-assist-self"), "terminal", "never in Assist's reach")
+        assert.ok(!floats.reach().includes(floats.bodyId(id)), "the kind says it is not in reach")
+        // Close docks it closed: the session goes on, its terminal kept
+        floats.close(id)
+        assert.ok(!store.state.floating[key])
+        assert.equal(store.session(key), session, "the same session")
+        assert.equal(session.el.parentNode, null, "taken out of the window")
+    } finally {
+        store.end(key)
+        body.remove()
+    }
+})

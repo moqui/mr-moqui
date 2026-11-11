@@ -1198,3 +1198,10 @@ button.m-report-native.m-report-cell-filter { min-height:0; margin:0; padding:0;
 .m-terminal-dot-done { background:var(--q-positive); opacity:1; }
 .m-terminal-dot-error { background:var(--q-negative); opacity:1; }
 .m-terminal-dot-ended { background:transparent; border:1px solid var(--m-text-muted); }
+/* the Terminal's pop-out window: one session, no shell chrome (Terminal-Fancy §10.4) */
+body.m-terminal-solo #top, body.m-terminal-solo #footer, body.m-terminal-solo .q-drawer, body.m-terminal-solo .m-float-layer,
+body.m-terminal-solo .m-terminal-pane-header { display:none !important; }
+body.m-terminal-solo .q-page-container { padding:0 !important; }
+.m-terminal-search { border-bottom:1px solid var(--m-border, rgba(0,0,0,.12)); }
+/* a terminal's text off the window's edge; the fit addon takes the padding off its size */
+.m-float-body .m-terminal-screen .xterm, .m-terminal-host .m-terminal-screen .xterm { padding:2px 4px; }
