@@ -73,6 +73,15 @@ along with this software (see the LICENSE.md file). If not, see
             }
             databaseRows = databaseList.map((database) => ({db: database.db, groups: database.label,
                 databaseConf: database.databaseConf}))
+
+            // Monitor's numbers are shown to a reader of the telemetry only (the otel_metrics dataset, granted with System):
+            // to anyone else a report-embed says "Not available", so it is left out. list#Datasets leaves out, without an
+            // error, the datasets the user may not read.
+            monitorMetrics = false
+            try {
+                monitorMetrics = (ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call()?.datasets || [])
+                    .some((dataset) => dataset.id === 'otel_metrics')
+            } catch (e) { ec.logger.warn('The report datasets could not be listed: ' + String(e)) }
         ]]></script>
     </actions>
     <widgets>
@@ -110,6 +119,8 @@ along with this software (see the LICENSE.md file). If not, see
                 </widgets></section>
             </box-body>
         </container-box>
+        <!-- the default entity group's pool over the last hour: the shipped library panel report/system-db-pool.json -->
+        <report-embed id="DatabasePoolEmbed" definition-id="system-db-pool" from="now-1h" condition="monitorMetrics"/>
         <container-box><box-header title="What the Tools can do on this database"/><box-body>
             <form-list name="FeatureList" list="featureList" skip-form="true" paginate="false">
                 <field name="label"><default-field title="Feature"><display/></default-field></field>

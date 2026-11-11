@@ -30,6 +30,12 @@ along with this software (see the LICENSE.md file). If not, see
             <econdition field-name="errorClass" operator="is-not-null"/><order-by field-name="-startDate"/></entity-find>
     </actions>
     <widgets>
+        <!-- Monitor's AI dashboard (report/monitor-ai.json), two of its panels over seven days; the whole of it is Traces'
+            "AI dashboard" link -->
+        <container-row>
+            <row-col md="4"><report-embed id="LlmCallsEmbed" definition-id="monitor-ai" panel-id="calls" from="now-7d"/></row-col>
+            <row-col md="8"><report-embed id="LlmTokensEmbed" definition-id="monitor-ai" panel-id="tokens" from="now-7d"/></row-col>
+        </container-row>
         <container-row>
             <row-col md="4"><container-box><box-header title="Runs"/><box-body>
                 <label text="Submitted today: ${totals.runsToday ?? 0}" type="p"/>

@@ -1,7 +1,8 @@
 // Monitor › Settings (plans/archive/Monitor-Settings.md): the runtime settings services and screen. Listing needs Monitor
 // access; a change needs MONITOR_SETTINGS. The spec's own user has Monitor access only, through a group of its own,
 // until the second feature grants that group MONITOR_SETTINGS. The setting changed is the receiver's rate limit, which
-// the conf leaves to its default.
+// the conf leaves to its default. The screen is mounted a second time as Configuration › Logging and telemetry
+// (System/Conf/Logging.xml), where the same rule holds.
 // Run: ./moq test tools --spec MonitorSettings
 const SERVICES = "org.moqui.monitor.MonitorServices."
 const KEY = "telemetry/receiver@requests-per-minute"
@@ -41,6 +42,19 @@ function render() {
     ec.message.clearErrors()
     return {status: str.status, errors: str.errorMessages.join(" | "), output, broken: /Error rendering|Exception in render/.test(output)}
 }
+// The second mount, Configuration › Logging and telemetry, and a change posted to that mount's own setSetting.
+function renderTab() {
+    const str = ec.screen.makeTest().rootScreen(monitorRoot).renderMode("html").render("Conf/Logging", {}, null)
+    const output = String(str.output || "")
+    ec.message.clearErrors()
+    return {status: str.status, output, broken: /Error rendering|Exception in render/.test(output)}
+}
+function setThroughTab() {
+    const str = ec.screen.makeTest().rootScreen(monitorRoot).render("Conf/Logging/setSetting", CHANGE, null)
+    const errors = str.errorMessages.join(" | ") + " " + ec.message.getErrorsString()
+    ec.message.clearErrors()
+    return errors
+}
 function grant() {
     sys(() => make("moqui.security.UserGroupPermission", {userGroupId: GROUP, userPermissionId: "MONITOR_SETTINGS", fromDate: new Date(Date.now() - 60000)}))
 }
@@ -77,9 +91,10 @@ spec({
 
 feature("without MONITOR_SETTINGS a Monitor user sees the settings and cannot change them", {
     when() {
-        return {row: setting(KEY), refused: errorsOf("set#RuntimeSetting", CHANGE), page: render(), after: setting(KEY)}
+        return {row: setting(KEY), refused: errorsOf("set#RuntimeSetting", CHANGE), page: render(), tab: renderTab(),
+            tabRefused: setThroughTab(), after: setting(KEY)}
     },
-    then({row, refused, page, after}) {
+    then({row, refused, page, tab, tabRefused, after}) {
         row.onDisk == "600"
         row.source == "default"
         row.effective == "600"
@@ -93,10 +108,15 @@ feature("without MONITOR_SETTINGS a Monitor user sees the settings and cannot ch
         page.output.includes("Requests per minute")
         !page.output.includes("Change…")
         !page.output.includes("Add a target rule")
+        tab.status == 200
+        !tab.broken
+        tab.output.includes("Changing these settings needs the MONITOR_SETTINGS permission")
+        tab.output.includes("Requests per minute")
+        tabRefused.includes("MONITOR_SETTINGS permission is required")
     }
 })
 
-feature("with MONITOR_SETTINGS a set shows beside the on-disk value until it is reverted", {
+feature("withMONITOR_SETTINGS a set shows beside the on-disk value until it is reverted", {
     given() {
         grant()
     },
