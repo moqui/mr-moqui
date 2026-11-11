@@ -19,4 +19,17 @@ along with this software (see the LICENSE.md file). If not, see
         alerting, so Web Push takes it to a phone. -->
     <moqui.security.user.NotificationTopic topic="TerminalAttention" inboxEnumId="NinNotifications" description="Terminal Attention"
             typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" titleTemplate="${title || 'Terminal'}"/>
+    <!-- The terminal's services check their caller themselves, whatever calls them (each works on the caller's own sessions,
+        and the administrator's ask authorization on the System app), as the admin audit services do:
+        the group lets anyone call them, so the checks are the services' own. -->
+    <moqui.security.ArtifactGroup artifactGroupId="TerminalServices" description="Terminal services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="TerminalServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="Y"
+            artifactName="org\.moqui\.terminal\.TerminalServices\..*"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="TerminalServicesALL" userGroupId="ALL_USERS" artifactGroupId="TerminalServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- an administrator ended another user's session (end#TerminalSessionOf): who, whose and the reason, for
+        org.moqui.admin.AuditServices.find#Changes -->
+    <moqui.server.AuditProjection auditProjectionId="TerminalSessionEnded" changedEntityName="moqui.terminal.TerminalSession"
+            changedFieldName="endedBy" category="operation" description="Terminal session of another user ended" valueMode="show"
+            primaryKeyKind="plain" primaryKeyTitle="Session" secondaryKeyKind="user" secondaryKeyTitle="Its user" sequenceNum="900"/>
 </entity-facade-xml>

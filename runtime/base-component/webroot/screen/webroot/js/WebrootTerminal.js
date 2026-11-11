@@ -46,6 +46,35 @@
         dark: { background: "#16181d", foreground: "#e6e6e6", cursor: "#e6e6e6", selectionBackground: "#3a4a63" }
     };
     const FONT = 'ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace';
+    // Named palettes for Settings (§9.6, P9), with the 16 ANSI colors; "follow" takes the app's light or dark one.
+    const ansi = (colors) => {
+        const names = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+        const out = {};
+        names.forEach((name, at) => {
+            out[name] = colors[at];
+            out["bright" + name.charAt(0).toUpperCase() + name.slice(1)] = colors[at + 8];
+        });
+        return out;
+    };
+    const PALETTES = {
+        "solarized-dark": Object.assign({ background: "#002b36", foreground: "#93a1a1", cursor: "#93a1a1", selectionBackground: "#2e4f5a" },
+            ansi(["#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
+                "#586e75", "#cb4b16", "#859900", "#b58900", "#268bd2", "#6c71c4", "#2aa198", "#fdf6e3"])),
+        "solarized-light": Object.assign({ background: "#fdf6e3", foreground: "#586e75", cursor: "#586e75", selectionBackground: "#e6dfc8" },
+            ansi(["#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
+                "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3"])),
+        "gruvbox-dark": Object.assign({ background: "#282828", foreground: "#ebdbb2", cursor: "#ebdbb2", selectionBackground: "#504945" },
+            ansi(["#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#a89984",
+                "#928374", "#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#ebdbb2"])),
+        "high-contrast": Object.assign({ background: "#000000", foreground: "#ffffff", cursor: "#ffff00", selectionBackground: "#4a4a4a" },
+            ansi(["#000000", "#ff5555", "#55ff55", "#ffff55", "#5c9dff", "#ff55ff", "#55ffff", "#bbbbbb",
+                "#777777", "#ff8080", "#80ff80", "#ffff80", "#8cb8ff", "#ff80ff", "#80ffff", "#ffffff"]))
+    };
+    const PALETTE_NAMES = { follow: "Follow the app", "solarized-dark": "Solarized dark", "solarized-light": "Solarized light",
+        "gruvbox-dark": "Gruvbox dark", "high-contrast": "High contrast" };
+    // Fonts offered in Settings; any CSS font list may be typed instead.
+    const FONTS = ["", '"JetBrains Mono", monospace', '"Fira Code", monospace', '"Source Code Pro", monospace', '"Cascadia Mono", monospace',
+        '"DejaVu Sans Mono", monospace', "Menlo, monospace", "Consolas, monospace"];
     // The page acknowledges what it drew each this many bytes (§5.4).
     const ACK_EVERY = 100000;
     // Live xterm.js instances kept; past it the one shown longest ago is let go (§9.2).
@@ -255,6 +284,11 @@
         }
     }
 
+    function notifyError(err) {
+        const vm = shellVm();
+        if (vm.$q && vm.$q.notify) vm.$q.notify({ type: "negative", message: (err && err.errors) || String(err) });
+    }
+
     function onControl(session, message) {
         const info = state.sessions[session.key];
         if (message.type === "attached") {
@@ -323,6 +357,56 @@
             });
         }
         return false;
+    }
+
+    // Files and lines in a shell's output: `src/term/mod.rs:42`, `./a.js:3:7`, `/home/dev/x.xml:10`.
+    const FILE_LINE = /(^|[\s"'(\[=])((?:\.{1,2}\/|\/|~\/)?[\w@.+-]+(?:\/[\w@.+-]+)*\.[A-Za-z0-9]{1,8}):(\d+)(?::(\d+))?/g;
+    // the Dev AIDE's roots (rootId and path), asked once
+    let workspaceRoots = null;
+    function fileLinks(session) {
+        return {
+            provideLinks(y, callback) {
+                const line = session.term.buffer.active.getLine(y - 1);
+                if (!line) return callback(undefined);
+                const text = line.translateToString(true);
+                const links = [];
+                FILE_LINE.lastIndex = 0;
+                let match;
+                while ((match = FILE_LINE.exec(text))) {
+                    const start = match.index + match[1].length;
+                    const whole = match[0].slice(match[1].length);
+                    const [file, lineNo] = [match[2], Number(match[3])];
+                    links.push({ text: whole, range: { start: { x: start + 1, y }, end: { x: start + whole.length, y } },
+                        activate: () => openFile(session, file, lineNo) });
+                }
+                callback(links.length ? links : undefined);
+            }
+        };
+    }
+    function openFile(session, file, line) {
+        const info = state.sessions[session.key] || {};
+        const home = (root.moqui && moqui.config && moqui.config.homeDir) || "";
+        let path = file;
+        if (path.startsWith("~/") && home) path = home + path.slice(1);
+        else if (!path.startsWith("/") && info.cwd) path = info.cwd.replace(/\/$/, "") + "/" + path.replace(/^\.\//, "");
+        const shell = shellVm();
+        const rootsOf = workspaceRoots || root.fetch((shell.appRootPath || "") + "/apps/dev/Workspace/roots", { credentials: "same-origin", headers: { Accept: "application/json" } })
+            .then((response) => (response.ok ? response.json() : {}))
+            .then((out) => (out && out.roots) || [], () => []);
+        workspaceRoots = rootsOf;
+        rootsOf.then((roots) => {
+            const found = roots
+                .filter((one) => one && one.path && (path === one.path || path.startsWith(one.path.replace(/\/$/, "") + "/")))
+                .sort((a, b) => b.path.length - a.path.length)[0];
+            if (!found) {
+                notifyError({ errors: t("This file is in none of the Workspace's roots: ") + path });
+                return;
+            }
+            const relative = path.slice(found.path.replace(/\/$/, "").length + 1);
+            const url = "/qapps/dev/Workspace?rootId=" + encodeURIComponent(found.id) + "&path=" + encodeURIComponent(relative) + "&line=" + line;
+            if (shell.setUrl) shell.setUrl((shell.appRootPath || "") + url);
+            else root.open(url, "_blank", "noopener");
+        });
     }
 
     // The bell (§9.6): a flash of the terminal, a sound, or nothing.
@@ -399,6 +483,11 @@
             clearTimeout(press);
             pinch = null;
         }, { passive: true });
+    }
+
+    // The terminal's colors: a named palette of the user's, else the app's light or dark one.
+    function themeOf() {
+        return PALETTES[state.settings.palette] || (isDark() ? THEMES.dark : THEMES.light);
     }
 
     // The settings a terminal takes from the user's preferences.
@@ -487,6 +576,9 @@
     const terminal = {
         state,
         THEMES,
+        PALETTES,
+        PALETTE_NAMES,
+        FONTS,
         ACK_EVERY,
         MAX_LIVE,
         request,
@@ -572,6 +664,9 @@
                 const options = termOptions(session.kind);
                 session.term.options.fontFamily = options.fontFamily;
                 session.term.options.fontSize = options.fontSize;
+                session.term.options.theme = themeOf();
+                // the apps ask again for the background, so their own colors follow it
+                if (session.kind === "apps") session.term.write("\x1b]11;?\x1b\\");
                 if (session.kind !== "apps") session.term.options.scrollback = options.scrollback;
                 fit(session);
             }
@@ -617,7 +712,7 @@
                         macOptionIsMeta: true,
                         // Muted text, frame titles and application theme overrides still need to be readable on this background.
                         minimumContrastRatio: 4.5,
-                        theme: isDark() ? THEMES.dark : THEMES.light,
+                        theme: themeOf(),
                         linkHandler: { activate: openLink },
                         // the unicode11 addon's widths are a proposed API
                         allowProposedApi: true
@@ -630,6 +725,8 @@
             const session = { key, kind, term, fit: fitAddon, el, socket: null, received: 0, drawn: 0, acked: 0, opened: false, shown: Date.now(), retries: 0, prompts: [] };
             sessions.set(key, session);
             term.parser.registerOscHandler(133, (data) => onMark(session, data));
+            // a file and line in the output of a shell (path:line) opens in the Dev AIDE's Workspace (P9)
+            if (kind !== "apps" && term.registerLinkProvider) term.registerLinkProvider(fileLinks(session));
             term.onBell(() => onBell(session));
             watchViews();
             // wide characters and emoji at their width, plain URLs as links, and search (§9.4)
@@ -908,7 +1005,7 @@
             if (dark === !!value) return;
             dark = !!value;
             for (const session of sessions.values()) {
-                session.term.options.theme = dark ? THEMES.dark : THEMES.light;
+                session.term.options.theme = themeOf();
                 if (session.kind === "apps") session.term.write("\x1b]11;?\x1b\\");
             }
         },
@@ -953,6 +1050,36 @@
                     { keys: "Ctrl+`", action: "terminalToggle", label: t("Show or hide the quick terminal"), run: () => terminal.toggleQuick() }
                 ]);
             if (usedHere()) terminal.restoreFloating();
+            terminal.registerPaletteActions();
+        },
+
+        // The terminal's actions in the command palette (P9): a new session, the quick terminal, and the windows.
+        registerPaletteActions() {
+            const palette = moqui.shellPalette;
+            if (!palette || !palette.registerActions || terminal.paletteOff) return;
+            terminal.paletteOff = palette.registerActions("terminal", () => {
+                const kinds = (state.options && state.options.kinds) || ["apps"];
+                const opening = (kind, profile, title) => ({ title, subtitle: t("Terminal"), icon: "sym_o_terminal",
+                    run: () => terminal.open(kind, { profileName: profile }).then((id) => terminal.showSomewhere(id), (err) => notifyError(err)) });
+                const rows = [];
+                if (kinds.includes("command")) rows.push(opening("command", "", t("New command line")));
+                rows.push(opening("apps", "", t("New terminal of the apps")));
+                if (kinds.includes("host")) rows.push(opening("host", "shell", t("New shell on the server")));
+                rows.push({ title: t("Show or hide the quick terminal"), subtitle: "Ctrl+`", icon: "sym_o_terminal", run: () => terminal.toggleQuick() });
+                rows.push({ title: t("Open the Terminal"), icon: "sym_o_terminal", run: () => terminal.showInScreen("") });
+                if (moqui.floats) {
+                    rows.push({ title: t("Gather terminals"), subtitle: t("Windows"), icon: "sym_o_dock_to_right", run: () => moqui.floats.arrange("gather", FLOAT) });
+                    rows.push({ title: t("Tile windows"), subtitle: t("Windows"), icon: "sym_o_grid_view", run: () => moqui.floats.arrange("tile") });
+                    rows.push({ title: t("Cascade windows"), subtitle: t("Windows"), icon: "sym_o_stacks", run: () => moqui.floats.arrange("cascade") });
+                }
+                return rows;
+            });
+        },
+
+        // A new session shown floating where windows float, else in the Terminal screen.
+        showSomewhere(id) {
+            if (moqui.floats && moqui.floats.canFloat()) terminal.float(id);
+            else terminal.showInScreen(id);
         },
 
         // The floating terminals of the last visit, as they were: one attached in another window comes back as a chip, and

@@ -83,7 +83,9 @@ along with this software (see the LICENSE.md file). If not, see
         <q-card-section class="text-h6">{{labels.settings}}</q-card-section>
         <q-card-section class="q-gutter-sm">
             <q-input dense outlined type="number" v-model.number="draft.fontSize" :label="labels.fontSize" :min="8" :max="32"></q-input>
-            <q-input dense outlined v-model="draft.fontFamily" :label="labels.fontFamily" :hint="labels.fontFamilyHint"></q-input>
+            <q-select dense outlined emit-value map-options v-model="draft.palette" :options="paletteChoices" :label="labels.palette"></q-select>
+            <q-select dense outlined v-model="draft.fontFamily" :options="fontChoices" :label="labels.fontFamily" :hint="labels.fontFamilyHint"
+                use-input fill-input hide-selected input-debounce="0" new-value-mode="add" @input-value="(value) => draft.fontFamily = value"></q-select>
             <q-input dense outlined type="number" v-model.number="draft.scrollback" :label="labels.scrollback" :min="0" :max="100000"></q-input>
             <q-select dense outlined emit-value map-options v-model="draft.opensFirst" :options="firstChoices" :label="labels.opensFirst"></q-select>
             <q-select dense outlined emit-value map-options v-model="draft.bell" :options="bellChoices" :label="labels.bell"></q-select>
@@ -156,11 +158,16 @@ module.exports = {
                 notifyBlocked: localize("When a session waits for you"), notifyDone: localize("When a session is done"),
                 notifyBell: localize("When a session rings the bell"), notifyLong: localize("When a command runs longer than (seconds)"),
                 notifyLongHint: localize("0 for never; needs the shell integration"),
-                previousPrompt: localize("Previous prompt"), nextPrompt: localize("Next prompt") } };
+                previousPrompt: localize("Previous prompt"), nextPrompt: localize("Next prompt"), palette: localize("Colors") } };
     },
     computed: {
         options() { return this.terminalState.options || { kinds: ["apps"], profiles: [] }; },
         canHost() { return (this.options.kinds || []).includes("host"); },
+        paletteChoices() {
+            const names = moqui.terminal ? moqui.terminal.PALETTE_NAMES : { follow: "Follow the app" };
+            return Object.keys(names).map((value) => ({ label: localize(names[value]), value: value === "follow" ? "" : value }));
+        },
+        fontChoices() { return moqui.terminal ? moqui.terminal.FONTS.filter((font) => font) : []; },
         bellChoices() {
             return [{ label: this.labels.bellVisual, value: "visual" }, { label: this.labels.bellSound, value: "sound" }, { label: this.labels.bellNone, value: "none" }];
         },
@@ -294,7 +301,10 @@ module.exports = {
                 this.active = tabs.some((tab) => tab.id === (kept && kept.active)) ? kept.active : tabs.length ? tabs[0].id : "";
                 const pending = this.terminalState.pendingShow;
                 this.terminalState.pendingShow = "";
-                if (pending && live(pending)) this.showHere(pending);
+                // "Open a terminal here" from another screen (the Dev AIDE's repositories): a host profile in a directory
+                const asked = new URLSearchParams(window.location.search);
+                if (asked.get("openHost")) this.newSession("host", asked.get("openHost"), { directory: asked.get("directory") || "" });
+                else if (pending && live(pending)) this.showHere(pending);
                 else if (!tabs.length) this.openFirst();
                 else this.save();
             }, (err) => { this.failed = (err && err.errors) || this.labels.notLoaded; });
@@ -315,8 +325,8 @@ module.exports = {
         about(kind, profile, info) {
             return { kind: kind || "apps", profile: profile || "", title: (info && info.title) || "", cwd: (info && info.cwd) || "" };
         },
-        newSession(kind, profile) {
-            this.store().open(kind, { profileName: profile }).then((id) => {
+        newSession(kind, profile, more) {
+            this.store().open(kind, Object.assign({ profileName: profile }, more || {})).then((id) => {
                 const pane = this.tree().pane(id, this.about(kind, profile, this.terminalState.sessions[id]));
                 const tab = { id: "t" + pane.id, root: pane, focus: pane.id, zoom: "" };
                 this.tabs.push(tab);

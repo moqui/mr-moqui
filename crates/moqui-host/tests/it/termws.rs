@@ -891,3 +891,97 @@ fn a_device_key_opens_a_remote_command_line_with_a_ticket() {
     let mut attached = socket(&ticket);
     read_messages_until(&mut attached, "moqui> ").unwrap();
 }
+
+/// System › Terminal sessions (plans/Terminal-Fancy.md P9): an administrator lists every user's sessions and ends
+/// another user's, which is an audit row; a plain user may do neither.
+#[test]
+fn an_administrator_lists_and_ends_another_users_session() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let gate = crate::common::start_with_conf_properties("termws-admin", Some(PLAIN_USER), "", &[]);
+    let address = gate.server.address();
+    let plain = Page::signed_in(address, "plain.user");
+    gate.server.factory().flush_sessions().unwrap();
+    let opened = plain.call("open", Some(serde_json::json!({"kind": "apps"})));
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+
+    let call = |username: &str, service: &str, parameters: &[(&str, &str)]| {
+        let context = gate.server.factory().new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user(username).unwrap();
+        let parameters: std::collections::BTreeMap<String, moqui_lib::object::Value> = parameters
+            .iter()
+            .map(|(name, value)| (name.to_string(), moqui_lib::object::Value::string(*value)))
+            .collect();
+        let out = moqui_core::service::sync(&format!("org.moqui.terminal.TerminalServices.{service}"), &parameters);
+        let mut errors = moqui_core::context::ExecutionContext::with_current(|ec| ec.message().errors().join("; "))
+            .unwrap_or_default();
+        let out = match out {
+            Ok(out) => out,
+            Err(err) => {
+                errors.push_str(err.message());
+                Default::default()
+            }
+        };
+        (
+            moqui_lib::json::to_json(&moqui_lib::object::Value::Map(out.into_iter().collect())),
+            errors,
+        )
+    };
+    let (refused, errors) = call("plain.user", "find#AllTerminalSessions", &[]);
+    assert!(
+        !errors.is_empty() && refused["sessions"].is_null(),
+        "{refused} {errors}"
+    );
+    let (listed, errors) = call("john.doe", "find#AllTerminalSessions", &[]);
+    let row = listed["sessions"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{listed} {errors}"))
+        .iter()
+        .find(|row| row["id"] == id.as_str())
+        .cloned();
+    assert_eq!(
+        row.map(|row| row["username"].clone()),
+        Some(serde_json::json!("plain.user")),
+        "{listed}"
+    );
+    let (_, errors) = call(
+        "john.doe",
+        "end#TerminalSessionOf",
+        &[("sessionId", &id), ("reason", "test")],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    let audited = {
+        let context = gate.server.factory().new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        gate.server
+            .factory()
+            .entity()
+            .unwrap()
+            .find("moqui.entity.EntityAuditLog")
+            .unwrap()
+            .eq(
+                "changedEntityName",
+                moqui_lib::object::Value::string("moqui.terminal.TerminalSession"),
+            )
+            .eq("pkPrimaryValue", moqui_lib::object::Value::string(&id))
+            .count()
+            .unwrap()
+    };
+    assert_eq!(audited, 1, "the end of another user's session is an audit row");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while plain.call("sessions", None)["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["id"] == id.as_str())
+    {
+        assert!(Instant::now() < deadline, "the session did not end");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}

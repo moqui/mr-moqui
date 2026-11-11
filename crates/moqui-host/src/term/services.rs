@@ -50,6 +50,8 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     moqui_core::rust_service!(map, update_terminal_session)?;
     moqui_core::rust_service!(map, close_terminal_session)?;
     moqui_core::rust_service!(map, confirm_terminal_user)?;
+    moqui_core::rust_service!(map, find_all_terminal_sessions)?;
+    moqui_core::rust_service!(map, end_terminal_session_of)?;
     Ok(())
 }
 
@@ -394,6 +396,121 @@ fn confirm_terminal_user(parameters: &BTreeMap<String, Value>, _facade: &EntityF
         ])),
         Err(err) => refuse("notConfirmed", err.message()),
     }
+}
+
+/// The System app, whose authorization the administrator's services ask (its Terminal sessions screen inherits it).
+const ADMIN_SCREEN: &str = "component://tools/screen/System.xml";
+
+/// May the caller act on every user's sessions: authorization for `action` on the System app, asked whatever calls
+/// the service.
+fn may_administer(action: &str) -> bool {
+    match moqui_core::user::authorize_own("AT_XML_SCREEN", ADMIN_SCREEN, action) {
+        Ok(()) => true,
+        Err(err) => {
+            tracing::info!(error = %err, "Refused a terminal administration service");
+            false
+        }
+    }
+}
+
+/// `find#AllTerminalSessions`: every user's sessions on this server, as find#TerminalSessions lists one's own, with
+/// their user. Never what they show.
+fn find_all_terminal_sessions(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    if !may_administer("view") {
+        return refuse(NOT_AVAILABLE, "Not allowed");
+    }
+    let factory = factory()?;
+    #[cfg(all(feature = "devtools", unix))]
+    {
+        let holder = super::held::Holder::of(&factory);
+        let weak = Arc::downgrade(&factory);
+        let _ = crate::edge::block_on(async move { holder.adopt(weak).await });
+    }
+    let sessions: Vec<serde_json::Value> = Registry::of(&factory)
+        .all()
+        .iter()
+        .map(|session| {
+            let mut row = session.to_json();
+            row["username"] = serde_json::Value::String(session.username.clone());
+            row["held"] = serde_json::Value::Bool(session.held);
+            row
+        })
+        .collect();
+    answer("sessions", &serde_json::Value::Array(sessions))
+}
+
+/// `end#TerminalSessionOf`: end any user's session, with `reason`; for another user's an audit row (who ended it,
+/// whose it was, the reason) as the administration's other actions on an account write one.
+fn end_terminal_session_of(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    if !may_administer("update") {
+        return refuse(NOT_AVAILABLE, "Not allowed");
+    }
+    let me = match username() {
+        Ok(username) => username,
+        Err(refused) => return refused,
+    };
+    let factory = factory()?;
+    let id = text(parameters, "sessionId");
+    let Some(session) = Registry::of(&factory).find_any(&id) else {
+        return refuse("notFound", "No such terminal session");
+    };
+    let reason = text(parameters, "reason");
+    session.end(if reason.is_empty() {
+        "ended by an administrator"
+    } else {
+        "ended by an administrator: see the audit log"
+    });
+    tracing::info!("terminal session {id} of {} ended by {me}", session.username);
+    if session.username != me {
+        let owner = user_id_of(&factory, &session.username).unwrap_or_default();
+        let mut audit = BTreeMap::from([
+            (
+                "changedEntityName".to_string(),
+                Value::string("moqui.terminal.TerminalSession"),
+            ),
+            ("changedFieldName".to_string(), Value::string("endedBy")),
+            ("pkPrimaryValue".to_string(), Value::string(&id)),
+            ("pkSecondaryValue".to_string(), Value::string(&owner)),
+            ("newValueText".to_string(), Value::string("Ended by an administrator")),
+            ("changedDate".to_string(), moqui_core::user::now_value()),
+        ]);
+        if let Ok(Some(user_id)) = moqui_core::user::current_user_id() {
+            audit.insert("changedByUserId".to_string(), Value::string(&user_id));
+        }
+        if let Ok(Some(visit_id)) = moqui_core::user::visit_id() {
+            audit.insert("changedInVisitId".to_string(), Value::string(&visit_id));
+        }
+        if !reason.is_empty() {
+            audit.insert("changeReason".to_string(), Value::string(&reason));
+        }
+        let written = ExecutionContext::with_current(|ec| {
+            let _authz = ec.disable_authz();
+            moqui_core::service::sync("create#moqui.entity.EntityAuditLog", &audit)
+        });
+        if let Some(Err(err)) = written {
+            tracing::error!(
+                "terminal session {id}: the audit row of its end was not written: {}",
+                err.message()
+            );
+        }
+    }
+    Ok(BTreeMap::new())
+}
+
+/// The account id of `username`, read with authorization off.
+fn user_id_of(factory: &ExecutionContextFactory, username: &str) -> Option<String> {
+    ExecutionContext::with_current(|ec| {
+        let _authz = ec.disable_authz();
+        let row = factory
+            .entity()?
+            .find("moqui.security.UserAccount")
+            .ok()?
+            .eq("username", Value::string(username))
+            .one()
+            .ok()??;
+        row.get("userId").map(to_plain_string)
+    })
+    .flatten()
 }
 
 /// `update#TerminalSession`: the session's title, the user's own name for it (empty gives it back to the program).

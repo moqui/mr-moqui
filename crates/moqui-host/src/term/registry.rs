@@ -120,6 +120,18 @@ impl Registry {
         sessions
     }
 
+    /// Every session, oldest first: an administrator's list (P9).
+    pub fn all(&self) -> Vec<Arc<Session>> {
+        let mut sessions: Vec<Arc<Session>> = lock(&self.live).values().cloned().collect();
+        sessions.sort_by_key(|session| session.started);
+        sessions
+    }
+
+    /// The session `id`, whoever's: for an administrator only.
+    pub fn find_any(&self, id: &str) -> Option<Arc<Session>> {
+        lock(&self.live).get(id).cloned()
+    }
+
     /// The server is stopping: every session ends, but one the holder runs, which is let go to it (§7.5).
     pub fn end_all(&self) {
         let sessions: Vec<Arc<Session>> = lock(&self.live).values().cloned().collect();

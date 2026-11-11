@@ -8737,7 +8737,23 @@
             out.forEach((group) => group.rows.forEach((row) => { row.index = index; index += 1; }));
             return out;
         },
-        rows(groups) { return [].concat(...(groups || []).map((group) => group.rows)); }
+        rows(groups) { return [].concat(...(groups || []).map((group) => group.rows)); },
+        // Actions of the client's own (the terminal's, Terminal-Fancy §9.6): rows with run(), not a url, by source. A source
+        // registers its rows again to change them, and a function gives them anew each time the palette asks.
+        client: (root.Vue && root.Vue.reactive ? root.Vue.reactive({}) : {}),
+        registerActions(source, rows) {
+            palette.client[source] = rows;
+            return () => { delete palette.client[source]; };
+        },
+        clientActions() {
+            const out = [];
+            Object.keys(palette.client).forEach((source) => {
+                const given = palette.client[source];
+                const rows = typeof given === "function" ? given() : given;
+                (rows || []).forEach((row) => { if (row && typeof row.run === "function") out.push(Object.assign({ icon: "sym_o_bolt" }, row)); });
+            });
+            return out;
+        }
     };
     moqui.shellPalette = palette;
 
@@ -9033,6 +9049,12 @@
                 if (row && row.ask) {
                     this.$root.paletteOpen = false;
                     if (moqui.assist) moqui.assist.ask(row.text);
+                    return;
+                }
+                // a client action: its function (a copy of the row keeps it)
+                if (row && typeof row.run === "function") {
+                    this.$root.paletteOpen = false;
+                    row.run();
                     return;
                 }
                 if (!row || !row.url) return;
@@ -10309,7 +10331,7 @@
                     seen[action.url] = true;
                     out.push({ title: action.label, subtitle: app.title, icon: action.icon || "sym_o_bolt", url: action.url });
                 }));
-                return out;
+                return out.concat(palette.clientActions());
             },
             // the saved finds of the screens on the current path, from its menu data
             paletteSavedFinds() {

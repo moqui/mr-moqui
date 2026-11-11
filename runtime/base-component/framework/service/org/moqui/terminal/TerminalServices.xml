@@ -96,6 +96,27 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reasonCode"/>
         </out-parameters>
     </service>
+    <service verb="find" noun="AllTerminalSessions" type="rust" location="moqui_host::term::services::find_all_terminal_sessions"
+            allow-remote="false" transaction="ignore">
+        <description>Every user's terminal sessions on this server (System › Terminal sessions), as find#TerminalSessions
+            lists one's own, with username and held (the holder keeps it through a restart). Never what a session shows.
+            Needs view authorization on the System app (component://tools/screen/System.xml), whatever calls it.</description>
+        <out-parameters>
+            <parameter name="sessions" type="List"><parameter name="session" type="Map"/></parameter>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+    </service>
+    <service verb="end" noun="TerminalSessionOf" type="rust" location="moqui_host::term::services::end_terminal_session_of"
+            allow-remote="false" transaction="ignore">
+        <description>End any user's terminal session: its program is asked to end, and killed when it has not after five
+            seconds. Another user's is an audit row (moqui.terminal.TerminalSession endedBy: who ended it, whose it was,
+            the reason). Needs update authorization on the System app.</description>
+        <in-parameters>
+            <parameter name="sessionId" required="true"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="reasonCode"/></out-parameters>
+    </service>
     <service verb="clean" noun="TerminalSessions" authenticate="anonymous-all">
         <description>The job clean_TerminalSessions_daily: deletes the audit rows (moqui.terminal.TerminalSession) of
             sessions opened more than daysToKeep days ago.</description>

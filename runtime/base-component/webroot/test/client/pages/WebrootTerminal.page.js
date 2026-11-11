@@ -324,3 +324,37 @@ test("the phone's key bar sends what a phone's keyboard has not got", async () =
         screen.remove()
     }
 })
+
+test("the terminal's actions are in the command palette, and files with lines in a shell are links", async () => {
+    // the palette's registry, as WebrootVue.qvt.js has it, for this page with no shell
+    const registered = {}
+    moqui.shellPalette = moqui.shellPalette || { registerActions(source, rows) { registered[source] = rows; return () => {} } }
+    const store = moqui.terminal
+    store.paletteOff = null
+    store.state.options = { kinds: ["apps", "command", "host"], profiles: [] }
+    store.registerPaletteActions()
+    const rows = (registered.terminal || moqui.shellPalette.client.terminal)()
+    const titles = rows.map(row => row.title)
+    for (const title of ["New command line", "New terminal of the apps", "New shell on the server", "Show or hide the quick terminal"])
+        assert.ok(titles.includes(title), title)
+    assert.ok(rows.every(row => typeof row.run === "function"))
+    // the links
+    const key = "links-" + (++made)
+    const screen = document.createElement("div")
+    screen.style.cssText = "width:800px;height:200px"
+    document.body.appendChild(screen)
+    try {
+        store.create(key, { kind: "host", connect: false, send: () => {} })
+        store.attach(key, screen)
+        await write(store.session(key).term, "error at src/term/mod.rs:42:7 and (./web/x.js:3) not a.b: or http://x\r\n")
+        // every link provider asked for the first line: the web links addon's and the store's
+        const term = store.session(key).term
+        const providers = term._core._linkProviderService ? term._core._linkProviderService.linkProviders : []
+        const answers = await Promise.all(providers.map(provider => new Promise(resolve => provider.provideLinks(1, links => resolve(links || [])))))
+        const found = [].concat(...answers).map(link => link.text).filter(text => !text.startsWith("http"))
+        assert.deepEqual(found, ["src/term/mod.rs:42:7", "./web/x.js:3"], JSON.stringify(found))
+    } finally {
+        store.end(key)
+        screen.remove()
+    }
+})

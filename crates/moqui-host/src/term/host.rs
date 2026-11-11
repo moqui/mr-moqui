@@ -243,10 +243,12 @@ pub(crate) fn argv(profile: &Profile, resume: bool) -> (Vec<String>, Option<Stri
 /// above the runtime (the checkout that holds `moq`), else the runtime.
 pub(crate) fn directory(requested: Option<&str>, profile: &Profile, host_directory: &str, runtime: &Path) -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
+    // a relative directory is the checkout's (the directory above the runtime), as the Dev AIDE names its roots
+    let checkout = runtime.parent().unwrap_or(runtime);
     let expand = |text: &str| match text.strip_prefix("~/") {
         Some(rest) if !home.is_empty() => PathBuf::from(&home).join(rest),
         _ if text == "~" && !home.is_empty() => PathBuf::from(&home),
-        _ => PathBuf::from(text),
+        _ => checkout.join(text),
     };
     [requested, profile.directory.as_deref(), Some(host_directory)]
         .into_iter()
