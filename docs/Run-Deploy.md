@@ -326,6 +326,7 @@ conf's `resource-watch` element:
 | The 5-minute load, of the processors | `cpu-load-warning`, `cpu-load-critical` | 80 % | 100 % |
 | Open files, of the soft limit | `open-files-warning`, `open-files-critical` | 80 % | 95 % |
 | Swap in use | `swap-warning`, `swap-critical` | 50 % | none |
+| The days until a certificate the HTTPS listener serves expires | `certificate-days-warning`, `certificate-days-critical` | 30 days left | 7 days left |
 
 ```xml
 <resource-watch disk-warning="70" disk-critical="85" swap-warning=""/>
@@ -338,9 +339,10 @@ below the machine's memory, else the machine's.
 The levels are in the status map (`ec.factory.getStatusMap()`, its `Resources`), which the System app shows, and the
 attention list of the System home names every reading that is not `ok`
 (`moqui.tools.SystemHomeServices.get#SystemAttention`). With telemetry on, the readings are also recorded each minute
-as gauges ([Monitoring](tools/Monitoring.md)), and three alert rule templates in the System folder of Dashboards ›
-Alerts (low disk space, high memory use, high CPU load) send a notification once an administrator saves a copy with
-its contact points. Linux reports every reading; macOS the filesystems only; Windows none, and a reading that is not
+as gauges ([Monitoring](tools/Monitoring.md)), and four alert rule templates in the System folder of Dashboards ›
+Alerts (low disk space, high memory use, high CPU load, a certificate expiring) send a notification once an
+administrator saves a copy with its contact points. The certificates are those in `runtime/cert`, read again as the
+readings are, so a renewed one is seen without a restart. Linux reports every reading; macOS the filesystems only; Windows none, and a reading that is not
 reported has no level.
 
 ## Command line

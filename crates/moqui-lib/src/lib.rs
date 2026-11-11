@@ -18,6 +18,7 @@
 
 pub mod barcode;
 pub mod cache;
+pub mod certificate;
 pub mod codec;
 pub mod collection;
 pub mod context_stack;

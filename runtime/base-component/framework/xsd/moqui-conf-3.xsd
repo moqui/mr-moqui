@@ -396,6 +396,8 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="open-files-critical" type="xs:string"><xs:annotation><xs:documentation>Default 95.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="swap-warning" type="xs:string"><xs:annotation><xs:documentation>Swap in use as a share of the swap. Default 50.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="swap-critical" type="xs:string"><xs:annotation><xs:documentation>Default empty: swap is never critical.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="certificate-days-warning" type="xs:string"><xs:annotation><xs:documentation>The days until a certificate the HTTPS listener serves expires: a warning at or below this. Default 30.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="certificate-days-critical" type="xs:string"><xs:annotation><xs:documentation>Critical at or below this many days. Default 7.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
     <xs:element name="server-stats">
         <xs:complexType>

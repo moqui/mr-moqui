@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
             that counts records (at most 100: a count of 100 is "100 or more"), value for a resource reading (its
             percent), link a route under /apps with its parameters. The resource readings whose level is not ok come
             first (the status map's Resources: disk space and inodes of each filesystem, memory, CPU load, open files,
-            swap), the most severe first; then the listeners and integrations that failed or were skipped, a draining
+            the certificates the HTTPS listener serves, swap), the most severe first; then the listeners and integrations that failed or were skipped, a draining
             instance, saturated workers or database pool, a silent cluster member, failed job runs of the last 24
             hours, an embedded database with no scheduled backup, system messages in error, open incidents, firing
             alerts, failing checks and scrape targets, new error groups, lost telemetry and agent approvals waiting.
@@ -111,6 +111,18 @@ along with this software (see the LICENSE.md file). If not, see
                 if (flagged(files.Level)) item(resources, Object.assign({key: 'openFiles', severity: files.Level, value: files.UsedPercent,
                     text: say('${count} of ${limit} open files', {count: files.Count, limit: files.Limit})},
                     metrics('process.unix.file_descriptor.count')))
+            })
+            check('certificates', () => {
+                for (const certificate of Array.from(readings.Certificates || [])) {
+                    if (!flagged(certificate.level)) continue
+                    const days = Math.floor(Number(certificate.daysLeft))
+                    item(resources, Object.assign({key: 'certificates', severity: certificate.level, value: days,
+                        text: days < 0 ? say('The certificate of ${name} has expired', {name: certificate.name})
+                            : days === 0 ? say('The certificate of ${name} expires today', {name: certificate.name})
+                            : days === 1 ? say('The certificate of ${name} expires in 1 day', {name: certificate.name})
+                            : say('The certificate of ${name} expires in ${days} days', {name: certificate.name, days})},
+                        metrics('moqui.tls.certificate.days_left')))
+                }
             })
             check('swap', () => {
                 const swap = readings.Swap || {}

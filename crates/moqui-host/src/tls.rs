@@ -566,6 +566,25 @@ fn read_certified_key(cert: &Path, key: &Path) -> Result<CertifiedKey, Error> {
         .map_err(|err| Error::new(format!("{} does not match its key: {err}", cert.display())))
 }
 
+/// The leaf certificate of each pair in `dir` and when it expires, for the resource readings
+/// (`moqui_core::context::resources`): a pair whose certificate does not read, or has no date this reads, is left out.
+pub(crate) fn certificate_expiries(dir: &Path) -> Vec<moqui_core::context::resources::Certificate> {
+    let mut found = Vec::new();
+    for name in pair_names(dir) {
+        let Some((cert, _)) = find_files(dir, &name) else {
+            continue;
+        };
+        let Ok(bytes) = std::fs::read(&cert) else {
+            continue;
+        };
+        let leaf = CertificateDer::pem_slice_iter(&bytes).next().and_then(Result::ok);
+        if let Some(not_after) = leaf.and_then(|leaf| moqui_lib::certificate::not_after(&leaf)) {
+            found.push(moqui_core::context::resources::Certificate { name, not_after });
+        }
+    }
+    found
+}
+
 /// Whether the directory holds a certificate and key pair in any layout.
 fn has_any_pair(dir: &Path) -> bool {
     pair_names(dir).iter().any(|name| find_files(dir, name).is_some())

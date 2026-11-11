@@ -219,6 +219,13 @@ along with this software (see the LICENSE.md file). If not, see
                 : DASH, files.Level, 'process.unix.file_descriptor.count', '')
             if (Number(swap.TotalBytes || 0) > 0) resource(L('Swap'), percent(swap.UsedPercent) + ' ' + L('of') + ' ' + bytes(swap.TotalBytes) + ' ' + L('used'),
                 swap.Level, '', '')
+            // each certificate the HTTPS listener serves, the soonest to expire first
+            for (const certificate of Array.from(readings.Certificates || [])) {
+                const days = Math.floor(Number(certificate.daysLeft))
+                resource(L('Certificate') + ' ' + certificate.name, (days < 0 ? L('Expired') : days + ' ' + L('days left')) + ' · ' + L('until') + ' ' +
+                    ec.l10n.format(new Date(Number(certificate.notAfter)), 'yyyy-MM-dd'), certificate.level, 'moqui.tls.certificate.days_left',
+                    L('When the certificate in runtime/cert stops being valid'))
+            }
             // a meter beside each reading that is a share: how full, by its row's name
             const shares = {}
             shares[L('CPU load')] = cpu.LoadPercent

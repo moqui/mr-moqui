@@ -118,7 +118,10 @@ feature("a resource at warning is listed with its number, resources first, and o
                     {mountPoint: "/", holds: ["system temp"], usedPercent: 38, availableBytes: 62 * GIB, level: "ok", inodesLevel: "ok"},
                     {mountPoint: "/var", holds: ["runtime", "database"], usedPercent: 91.2, availableBytes: 4 * GIB, level: "critical",
                         inodesUsedPercent: 12, inodesLevel: "ok"}
-                ]
+                ],
+                // the certificates of the HTTPS listener: one inside the warning days, one far from them
+                Certificates: [{name: "shop.example.com", daysLeft: 12.4, level: "warning", notAfter: Date.now() + 12.4 * 86400000},
+                    {name: "example.com", daysLeft: 200, level: "ok", notAfter: Date.now() + 200 * 86400000}]
             }
         }
         const rows = {"moqui.service.job.ServiceJobRun": [{}, {}, {}]}
@@ -153,7 +156,7 @@ feature("a resource at warning is listed with its number, resources first, and o
     },
     then({items, keys, logged, checkedDate}) {
         // the resources first, the critical one before the warning; then the others, the critical one first
-        keys == "disk,memory,startup,jobRuns"
+        keys == "disk,memory,certificates,startup,jobRuns"
         items[0].severity == "critical"
         items[0].text == "Disk /var is 91 % full, 4.0 GiB free (runtime, database)"
         items[0].value == 91.2
@@ -162,10 +165,15 @@ feature("a resource at warning is listed with its number, resources first, and o
         items[1].severity == "warning"
         items[1].text == "The server uses 82 % of the 4.0 GiB it may use"
         items[1].value == 82
-        items[2].severity == "critical"
-        items[2].text == "Listener SSH failed to start: the port is in use"
-        items[3].count == 3
-        items[3].text == "3 job runs failed in 24 hours"
+        // a certificate inside its warning days, with the whole days it has left; the one far from them is not listed
+        items[2].severity == "warning"
+        items[2].text == "The certificate of shop.example.com expires in 12 days"
+        items[2].value == 12
+        items[2].parameters.metricName == "moqui.tls.certificate.days_left"
+        items[3].severity == "critical"
+        items[3].text == "Listener SSH failed to start: the port is in use"
+        items[4].count == 3
+        items[4].text == "3 job runs failed in 24 hours"
         // the item that failed is named in the log and the rest came back
         logged == "System attention item systemMessages failed: Error: the spec's failure"
         checkedDate != null

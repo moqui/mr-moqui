@@ -1407,6 +1407,14 @@ fn serve_thread(
             return Err(err);
         }
     };
+    // The certificates the listener serves, for the resource readings: when each expires (System home, the gauge).
+    if https.is_some() {
+        let cert_dir = runtime_dir.join("cert");
+        moqui_core::context::resources::set_certificate_source(
+            &factory,
+            std::sync::Arc::new(move || tls::certificate_expiries(&cert_dir)),
+        );
+    }
     let listened = runtime.block_on(http::listen(
         factory,
         address,

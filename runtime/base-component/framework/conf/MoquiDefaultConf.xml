@@ -678,7 +678,8 @@
     <resource-watch disk-warning="80" disk-critical="90" disk-free-critical="1073741824"
             inodes-warning="80" inodes-critical="90" memory-warning="80" memory-critical="90"
             memory-available-warning="10" memory-available-critical="5" cpu-load-warning="80" cpu-load-critical="100"
-            open-files-warning="80" open-files-critical="95" swap-warning="50" swap-critical=""/>
+            open-files-warning="80" open-files-critical="95" swap-warning="50" swap-critical=""
+            certificate-days-warning="30" certificate-days-critical="7"/>
     <server-stats visit-enabled="true" visit-ip-info-on-login="true" visitor-enabled="true"/>
 
     <webapp-list>

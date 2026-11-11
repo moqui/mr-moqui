@@ -1,0 +1,56 @@
+{
+  "id": "system-certificate-expiring",
+  "type": "alert",
+  "title": "Certificate expiring",
+  "body": {
+    "folder": "System",
+    "description": "Fires when a certificate the HTTPS listener serves has 7 days or fewer left: the critical level of the System home, whose warning is at 30 days (the conf's resource-watch). A template: copy it to have a rule with an owner and contact points.",
+    "query": {
+      "datasetId": "otel_metrics",
+      "from": "now-5m",
+      "thru": "now",
+      "queryString": "name:\"moqui.tls.certificate.days_left\"",
+      "aggregations": [
+        {
+          "id": "days",
+          "type": "min",
+          "role": "metric",
+          "params": {
+            "field": "min"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "type": "organize",
+          "hide": [
+            "count"
+          ]
+        }
+      ]
+    },
+    "field": "days",
+    "reduce": "last",
+    "condition": {
+      "type": "below",
+      "threshold": 7
+    },
+    "intervalSeconds": 3600,
+    "pendingSeconds": 0,
+    "keepFiringSeconds": 0,
+    "labels": {
+      "team": "system",
+      "severity": "critical"
+    },
+    "contactPoints": [
+      {
+        "id": "administrators",
+        "type": "notification",
+        "topic": "ReportAlert",
+        "userGroupId": "ADMIN",
+        "groupWaitSeconds": 0,
+        "repeatSeconds": 86400
+      }
+    ]
+  }
+}

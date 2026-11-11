@@ -1188,7 +1188,7 @@ type FilesystemGauge = fn(&crate::context::resources::Filesystem) -> Option<f64>
 /// The gauges of the resource readings (`context::resources`, plans/Tools-Fancy.md B3), named after the OpenTelemetry
 /// host and process metrics where there is one. Each collection reads the kept readings, so a minute's gauges share
 /// one read; a reading the platform does not report records nothing. Shares are 0 to 1.
-const RESOURCE_GAUGES: [(&str, ReadingGauge); 9] = [
+const RESOURCE_GAUGES: [(&str, ReadingGauge); 10] = [
     ("system.cpu.load_average.1m", |readings| readings.load.map(|load| load[0])),
     ("system.cpu.load_average.5m", |readings| readings.load.map(|load| load[1])),
     ("moqui.system.cpu.load.utilization", |readings| {
@@ -1206,6 +1206,8 @@ const RESOURCE_GAUGES: [(&str, ReadingGauge); 9] = [
     ("process.unix.file_descriptor.count", |readings| {
         readings.open_files.map(|count| count as f64)
     }),
+    // the fewest days a listener certificate has left: nothing recorded with no certificate
+    ("moqui.tls.certificate.days_left", |readings| readings.certificate_days_left()),
 ];
 
 /// The attribute of the filesystem gauges' series: where the filesystem is mounted.

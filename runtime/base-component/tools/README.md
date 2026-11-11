@@ -94,7 +94,7 @@ whether Dev AIDE is mounted (`devMounted`): then an entity's and a service's pag
 (resource readings past their `resource-watch` thresholds, failed job runs, system messages in error and the like;
 [plans/Tools-Fancy.md](../../../plans/Tools-Fancy.md) §3.4). `report/` holds the shipped dashboards, library panels
 and alert rule templates: the `monitor-*` dashboards of Monitor, and in the System folder `system-home`,
-`system-db-pool` and the disk, memory and CPU alert rules.
+`system-db-pool` and the disk, memory, CPU and certificate alert rules.
 
 ## Tests
 

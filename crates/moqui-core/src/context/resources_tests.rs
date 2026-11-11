@@ -368,3 +368,68 @@ fn a_filesystem_is_listed_once_when_two_directories_are_on_it() {
     assert!(rows[0].available <= rows[0].total);
     assert!(canonical.starts_with(&rows[0].mount_point), "{}", rows[0].mount_point);
 }
+
+#[test]
+fn a_certificate_is_graded_by_its_days_left_and_the_soonest_is_first() {
+    const DAY: i64 = 86_400;
+    let thresholds = Thresholds::default();
+    // days left: at or below a threshold has that level
+    for (days, level) in [
+        (31.0, Level::Ok),
+        (30.0, Level::Warning),
+        (8.0, Level::Warning),
+        (7.0, Level::Critical),
+        (-2.0, Level::Critical),
+    ] {
+        assert_eq!(
+            thresholds.certificate_days.level_of_left(Some(days)),
+            Some(level),
+            "{days} days"
+        );
+    }
+    let custom = Thresholds::from_settings(|name| match name {
+        "certificate-days-warning" => Some("14".to_string()),
+        "certificate-days-critical" => Some(String::new()),
+        _ => None,
+    });
+    assert_eq!(
+        custom.certificate_days,
+        Limits {
+            warning: Some(14.0),
+            critical: None
+        }
+    );
+
+    let now = 1_794_312_000;
+    let readings = Readings {
+        certificates: vec![
+            Certificate {
+                name: "example.com".to_string(),
+                not_after: now + 90 * DAY,
+            },
+            Certificate {
+                name: "shop.example.com".to_string(),
+                not_after: now + 5 * DAY + DAY / 2,
+            },
+        ],
+        ..Readings::default()
+    };
+    assert_eq!(readings.certificates[1].days_left(now), 5.5);
+    let listed = readings.certificates_value(&thresholds, now);
+    let field = |at: usize, name: &str| match &listed[at] {
+        Value::Map(map) => map.get(name).cloned().unwrap_or(Value::Null),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        field(0, "name"),
+        Value::string("shop.example.com"),
+        "the soonest to expire first"
+    );
+    assert_eq!(field(0, "level"), Value::string("critical"));
+    assert_eq!(field(0, "daysLeft"), Value::F64(5.5));
+    assert_eq!(field(0, "notAfter"), Value::I64((now + 5 * DAY + DAY / 2) * 1000));
+    assert_eq!(field(1, "level"), Value::string("ok"));
+    // no certificate: an empty list, and no days for the gauge
+    assert!(Readings::default().certificates_value(&thresholds, now).is_empty());
+    assert_eq!(Readings::default().certificate_days_left(), None);
+}

@@ -128,6 +128,8 @@ pub struct Thresholds {
     pub open_files: Limits,
     /// Swap in use as a share of the swap.
     pub swap: Limits,
+    /// A listener certificate's days until it expires: days left, so at or below a value has that level.
+    pub certificate_days: Limits,
 }
 
 impl Default for Thresholds {
@@ -144,6 +146,7 @@ impl Default for Thresholds {
                 warning: Some(50.0),
                 critical: None,
             },
+            certificate_days: Limits::of(30.0, 7.0),
         }
     }
 }
@@ -187,6 +190,7 @@ impl Thresholds {
             cpu_load: limits("cpu-load", defaults.cpu_load),
             open_files: limits("open-files", defaults.open_files),
             swap: limits("swap", defaults.swap),
+            certificate_days: limits("certificate-days", defaults.certificate_days),
         }
     }
 
@@ -292,9 +296,46 @@ pub struct Readings {
     pub filesystems: Vec<Filesystem>,
     pub open_files: Option<u64>,
     pub open_files_limit: Option<u64>,
+    /// The certificates the listeners serve, as the host tells them ([`set_certificate_source`]); none without one.
+    pub certificates: Vec<Certificate>,
+}
+
+/// A certificate a listener serves, and when it expires.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Certificate {
+    /// The name it is served for: the name of its files in `runtime/cert`.
+    pub name: String,
+    /// Its `notAfter`, in seconds since 1970 UTC.
+    pub not_after: i64,
+}
+
+impl Certificate {
+    /// The days from `now` (seconds since 1970 UTC) until it expires; negative once it has.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // Seconds to a date fit a double.
+    pub fn days_left(&self, now: i64) -> f64 {
+        (self.not_after - now) as f64 / 86_400.0
+    }
+}
+
+/// Seconds since 1970 UTC, now.
+fn now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| i64::try_from(since.as_secs()).unwrap_or(i64::MAX))
 }
 
 impl Readings {
+    /// The fewest days any certificate has left, now; `None` with no certificate.
+    #[must_use]
+    pub fn certificate_days_left(&self) -> Option<f64> {
+        let now = now_seconds();
+        self.certificates
+            .iter()
+            .map(|certificate| certificate.days_left(now))
+            .min_by(f64::total_cmp)
+    }
+
     /// The 5-minute load as a share of the processors, in percent.
     #[must_use]
     pub fn load_percent(&self) -> Option<f64> {
@@ -426,6 +467,10 @@ impl Readings {
             ),
             ("Filesystems", Value::List(filesystems)),
             (
+                "Certificates",
+                Value::List(self.certificates_value(thresholds, now_seconds())),
+            ),
+            (
                 "OpenFiles",
                 map(vec![
                     ("Count", count(self.open_files)),
@@ -439,6 +484,42 @@ impl Readings {
             ),
         ])
     }
+}
+
+impl Readings {
+    /// The certificates for the status map, the soonest to expire first: name, notAfter (milliseconds since 1970),
+    /// daysLeft and level.
+    fn certificates_value(&self, thresholds: &Thresholds, now: i64) -> Vec<Value> {
+        let mut certificates: Vec<&Certificate> = self.certificates.iter().collect();
+        certificates.sort_by_key(|certificate| certificate.not_after);
+        certificates
+            .into_iter()
+            .map(|certificate| {
+                let days = certificate.days_left(now);
+                map(vec![
+                    ("name", Value::string(&certificate.name)),
+                    ("notAfter", Value::I64(certificate.not_after.saturating_mul(1000))),
+                    ("daysLeft", number(Some(days))),
+                    ("level", level(thresholds.certificate_days.level_of_left(Some(days)))),
+                ])
+            })
+            .collect()
+    }
+}
+
+/// What tells the certificates the listeners serve: the host sets it when it starts its HTTPS listener.
+pub type CertificateSource = Arc<dyn Fn() -> Vec<Certificate> + Send + Sync>;
+
+#[derive(Default)]
+struct CertificateSlot {
+    source: Mutex<Option<CertificateSource>>,
+}
+
+/// The source of [`Readings::certificates`], asked at each read (at most every [`KEEP`]), so a renewed certificate
+/// is seen without a restart.
+pub fn set_certificate_source(factory: &ExecutionContextFactory, source: CertificateSource) {
+    let slot = factory.extension(|_| CertificateSlot::default());
+    *lock(&slot.source) = Some(source);
 }
 
 fn map(entries: Vec<(&str, Value)>) -> Value {
@@ -714,7 +795,14 @@ pub fn readings(factory: &ExecutionContextFactory) -> Arc<Readings> {
             return Arc::clone(readings);
         }
     }
-    let readings = Arc::new(read(factory.runtime_dir(), &mut state.last_cpu));
+    let mut read = read(factory.runtime_dir(), &mut state.last_cpu);
+    let source = factory
+        .extension_if_present::<CertificateSlot>()
+        .and_then(|slot| lock(&slot.source).clone());
+    if let Some(source) = source {
+        read.certificates = source();
+    }
+    let readings = Arc::new(read);
     state.readings = Some((Instant::now(), Arc::clone(&readings)));
     readings
 }
