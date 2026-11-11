@@ -108,6 +108,37 @@ impl Refusal {
             Self::Account => "This device's display account is not available",
         }
     }
+
+    /// What the plain page of a refused device's browser says ([`refusal_page`]): not registered, revoked, ended or
+    /// refused, and nothing else.
+    pub fn page_text(self) -> &'static str {
+        match self {
+            Self::Unknown => "This display is not registered.",
+            Self::Revoked => "This display's registration was revoked.",
+            Self::Stopped => "This display's registration has ended. Register it again to use it.",
+            Self::Address | Self::Account => "This display is refused for now.",
+        }
+    }
+}
+
+/// What the plain page says to a device's browser that asked for something outside its route group, or whose request
+/// failed: no error text, which could name the instance's records, paths or setup.
+pub const OUTSIDE_PAGE_TEXT: &str = "This page is not part of this display.";
+/// The plain page of a device's request that failed for another reason.
+pub const FAILED_PAGE_TEXT: &str = "This display cannot show this page now.";
+
+/// The page a shared device's browser gets for a refusal it can show (a wall display has no one to read a JSON error):
+/// one sentence and a link to `/Device`, where the browser is registered again. Nothing about the instance: no host,
+/// title, theme, logo, user, path or error text; no script or style sheet of the instance's.
+pub fn refusal_page(text: &str) -> String {
+    format!(
+        "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <meta name=\"robots\" content=\"noindex\"><title>Display not available</title></head>\
+         <body style=\"font-family:sans-serif;margin:3rem;font-size:1.5rem;\"><p>{}</p>\
+         <p><a href=\"/Device\">Register this display</a></p></body></html>\n",
+        crate::screen::encode_html(text)
+    )
 }
 
 /// What [`begin_request`] found.

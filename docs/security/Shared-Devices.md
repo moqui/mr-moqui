@@ -76,7 +76,20 @@ with the cookie among its headers):
 6. `lastSeenDate`, the address and the user agent are written at most once a minute.
 
 A refused device gets 403; when the refusal is final (unknown, revoked, stopped) the response also removes the cookie, so
-the browser is an ordinary one again.
+the browser is an ordinary one again. A browser's page (an `Accept` of `text/html`: a wall display, which has no one to read
+a JSON error) gets a plain page instead of the JSON error: one sentence (not registered, revoked, ended, refused for now, or
+for a request the route group does not admit or that failed, "This page is not part of this display" or "cannot show this
+page now") and a link to `/Device`, with nothing of the instance (no host, title, theme, logo, script, style sheet, route
+group, device or error text) and `Cache-Control: private, no-store` (`user::device::refusal_page`, `screen::handle` and
+`error_page`). An API client keeps the JSON error.
+
+A page a device plays should reload itself when one of its own requests is refused (401 or 403), so that the server's
+plain page replaces it: the report playlist does this in kiosk mode (`m-report-playlist`'s `kiosk`, `WebrootReport.js`), and
+Insights' wall display (mr-boss `screen/Insights/WallDisplay.xml`) uses it. It reloads at most once a minute (the time kept
+in the tab's `sessionStorage`), so a refusal the page itself does not show cannot make it reload in a loop. Such a page also
+takes from the request nothing that could make its queries larger: Insights' wall display renders its playlist's dashboards
+over its own range (not a `from` and `thru` the browser sends), and shows a panel's failure as not available, with its text
+only in the log.
 
 ## One browser
 
@@ -121,3 +134,5 @@ most every ten minutes). An owner that knows organizations registers the audit p
   and address refusals.
 - `./moq test framework --spec DeviceCredential`: registering and its refusals, the code through `/Device`, the route
   gate, revocation.
+- `./moq test-client framework --serve --spec SecurityDevice`: the same over HTTP, with the plain page of a refused
+  display and of a page outside its route group.

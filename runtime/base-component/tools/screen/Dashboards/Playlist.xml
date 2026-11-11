@@ -12,7 +12,9 @@
             const at=Number(index || 0),items=definition.body.playlist || []
             if (!Number.isInteger(at) || at<0 || at>=items.length) throw new Error('Choose a playlist item')
             const id=items[at].definitionId
-            const output=ec.service.sync().name('org.moqui.report.ReportServices.render#Dashboard').parameters({definitionId:id,from:from || 'now-7d',thru:thru || 'now'}).call().dashboard
+            const output=ec.service.sync().name('org.moqui.report.ReportServices.render#Dashboard').parameters({definitionId:id,from:from || 'now-7d',thru:thru || 'now'}).call()?.dashboard
+            // a dashboard the viewer may not read: its refusal is the answer
+            if (!output) throw new Error('This playlist dashboard is not available')
             output.definitionId=id;output.absoluteTime=output.range
             const frames={};for (const [panelId,panel] of Object.entries(output.panels || {})) frames[panelId]=panel.frames || []
             ec.web.sendJsonResponse({dashboard:output,frames})

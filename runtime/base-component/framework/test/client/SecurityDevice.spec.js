@@ -82,3 +82,22 @@ feature("a device's daily new secret reaches its browser on any answer it may ke
         next.status == 200
     },
 })
+
+// A wall display's browser asks for pages: a refused device, and a page outside its route group, get a plain page that says so
+// and nothing of the instance (no route group, device, title, script or style sheet), never cached. Insights P11.
+feature("a refused display's page and a page outside its route group are a plain page with nothing of the instance", {
+    when() {
+        return {
+            revoked: session().get("/apps/AppList", { accept: "html", headers: { Cookie: "moqui.device=SEC_DEV_REVOKED." + REVOKED_SECRET } }),
+            outside: device.get("/apps/ScreenTree", { accept: "html" }),
+        }
+    },
+    then({ revoked, outside }) {
+        revoked.status == 403 && revoked.text.includes("registration was revoked.")
+        revoked.cookie("moqui.device") != null && revoked.cookie("moqui.device").maxAge == 0
+        outside.status == 403 && outside.text.includes("This page is not part of this display.")
+        const plain = (page) => String(page.header("Content-Type")).startsWith("text/html") && String(page.header("Cache-Control")).includes("no-store")
+            && !page.text.includes("SEC_DEV") && !page.text.includes("<script") && !page.text.includes("<link") && page.text.includes('href="/Device"')
+        plain(revoked) && plain(outside)
+    },
+})

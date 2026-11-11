@@ -269,7 +269,12 @@ fn handle(
         Ok(user::device::DeviceRequest::None) => None,
         Ok(user::device::DeviceRequest::Active(device)) => Some(device),
         Ok(user::device::DeviceRequest::Refused(refusal)) => {
-            let mut response = web::json_error(403, refusal.message());
+            // a browser's page (a wall display) gets a plain page it can show, an API client the JSON error
+            let mut response = if takes_html(request) {
+                device_page(403, refusal.page_text())
+            } else {
+                web::json_error(403, refusal.message())
+            };
             if refusal.ends_cookie() {
                 response
                     .headers
@@ -784,6 +789,25 @@ impl Drop for EndRequest {
     }
 }
 
+/// Whether the client takes an html page for its answer (a browser's navigation).
+fn takes_html(request: &WebRequest) -> bool {
+    request
+        .header("accept")
+        .is_some_and(|accept| accept.contains("text/html"))
+}
+
+/// The plain page of a shared device's browser ([`user::device::refusal_page`]), never cached.
+fn device_page(status: u16, text: &str) -> WebResponse {
+    let mut response = WebResponse::new(status, user::device::refusal_page(text).into_bytes());
+    response
+        .headers
+        .push(("Content-Type".to_string(), "text/html; charset=utf-8".to_string()));
+    response
+        .headers
+        .push(("Cache-Control".to_string(), "private, no-store".to_string()));
+    response
+}
+
 /// The html page for a failure, when the client takes html and the path is not an API path: the `error/*`
 /// screen with `errorCode`, `errorType`, `errorMessage`, `errorThrowable` and `showErrorDetail` in its context.
 /// None when the page cannot be made, and the caller sends the JSON error. `message` is the client's text of the error,
@@ -797,15 +821,23 @@ fn error_page(
     err: &Error,
     message: &str,
 ) -> Option<WebResponse> {
-    if !request
-        .header("accept")
-        .is_some_and(|accept| accept.contains("text/html"))
-    {
+    if !takes_html(request) {
         return None;
     }
     let first = request.path.trim_start_matches('/').split('/').next().unwrap_or("");
     if ["rest", "rpc", "status", "error", "health", "metrics"].contains(&first) {
         return None;
+    }
+    // a shared device's page: the plain one, never the instance's error screen (which its route group refuses anyway)
+    // or the error's text
+    if user::device::current_scope().is_some() {
+        let _ = web::take_output();
+        let text = if err.kind() == crate::context::ErrorKind::Unauthorized {
+            user::device::OUTSIDE_PAGE_TEXT
+        } else {
+            user::device::FAILED_PAGE_TEXT
+        };
+        return Some(device_page(status, text));
     }
     // The webapp's `error-screen` of this error type, as `MoquiServlet.sendErrorResponse`; the shipped path otherwise.
     let (kind, shipped) = web::error_info::error_screen(status);
