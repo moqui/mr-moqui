@@ -31,7 +31,9 @@ along with this software (see the LICENSE.md file). If not, see
             the deployment's conf or environment; default), whether it is editable here and by the caller, whether a change of
             its conf value waits for a restart, the operator's note, and for a preference its revision and who changed it,
             when and why. A secret is masked: value null, valueSet whether it is set. Narrowed by settingGroup, kind
-            (preference or configuration) and settingKey. Needs ADMIN_SETTINGS_VIEW.</description>
+            (preference or configuration) and settingKey. Needs ADMIN_SETTINGS_VIEW; with ADMIN_ACCESS_VIEW alone, the
+            sign-in settings only (the groups Sign-in and Sign-in policy), which the access administrator reads beside the
+            groups' sign-in rules.</description>
         <in-parameters>
             <parameter name="settingKey"/>
             <parameter name="settingGroup"/>
@@ -79,6 +81,17 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="value"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationSettings.js').execute('storeInstancePreference', context))</script></actions>
+    </service>
+
+    <service verb="get" noun="SignInPolicyValues" type="rust" location="moqui_core::service::sign_in_policy::get_sign_in_policy_values"
+            allow-remote="false">
+        <description>The sign-in policy the server runs with (impl-admin P10, F110): a fixed list of nonsecret conf attributes
+            no property holds, each by its key (user-facade/password/@min-length and the other password minimums, history
+            and change rules; user-facade/login-key/@expire-hours and device-expire-hours; user-facade/login/@max-failures,
+            disable-minutes and history-store; webapp/session-config/@timeout) with the conf's value, else the one the code
+            falls back to. get#EffectiveSettings shows them through the settings that name one as confAttribute. Needs
+            ADMIN_SETTINGS_VIEW or ADMIN_ACCESS_VIEW.</description>
+        <out-parameters><parameter name="valueMap" type="Map"/></out-parameters>
     </service>
 
     <!-- ========== Localization (ConfigurationLocalization.js; impl-admin P8) ========== -->
@@ -173,5 +186,136 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="revision"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('storeLocalizedEntityField', context))</script></actions>
+    </service>
+
+    <!-- ========== Identity providers (ConfigurationProviders.js; impl-admin P10) ========== -->
+    <!-- The sign-in providers (moqui.security.sso.AuthFlow with its OpenID Connect, OAuth and SAML row, AuthFlowFieldMap and
+        AuthFlowRoleMap). Reading needs ADMIN_CONNECTION_VIEW or ADMIN_ACCESS_VIEW; the configuration ADMIN_CONNECTION_MANAGE;
+        the role mappings, the default group, the link rule and enabling ADMIN_ACCESS_MANAGE, each group by the grant
+        proposal's rules for the actor and never a privileged group or one granting a sealed permission. A secret is
+        write-only. -->
+
+    <service verb="find" noun="IdentityProviders" allow-remote="false">
+        <description>The sign-in providers: each with its name, type, whether it is enabled, its readiness (enabled, untested,
+            tested, needsTest, incomplete, unavailable for SAML, inbound) and the callback URL to register at the provider;
+            narrowed by text, type and state (enabled or disabled). With authFlowId, that provider alone (provider): its
+            configuration with each secret as whether it is set, never its value, its identity mappings (an expression or a
+            mapping service marked advanced, never shown), its role mappings each with whether a sign-in may give the group
+            and why not, its link rule and default group, its revision, and the options its forms offer (the groups only for
+            a caller who may map them). Needs ADMIN_CONNECTION_VIEW or ADMIN_ACCESS_VIEW.</description>
+        <in-parameters>
+            <parameter name="authFlowId"/>
+            <parameter name="text"/>
+            <parameter name="authFlowTypeEnumId"/>
+            <parameter name="state"><description>enabled or disabled</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="providerList" type="List"/>
+            <parameter name="provider" type="Map"/>
+            <parameter name="typeOptions" type="List"/>
+            <parameter name="clientTypeOptions" type="List"/>
+            <parameter name="algorithmOptions" type="List"/>
+            <parameter name="accountLinkOptions" type="List"/>
+            <parameter name="localFieldOptions" type="List"/>
+            <parameter name="groupOptions" type="List"/>
+            <parameter name="canConfigure" type="Boolean"/>
+            <parameter name="canMap" type="Boolean"/>
+            <parameter name="canEnable" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationProviders.js').execute('findIdentityProviders', context))</script></actions>
+    </service>
+    <service verb="store" noun="IdentityProvider" allow-remote="false">
+        <description>A new sign-in provider (no authFlowId, or a new one; OpenID Connect or OAuth; saved disabled), or
+            changes of one at the revision read (expectedRevision as find#IdentityProviders gives it); only what is given
+            changes. The configuration (name, icon, order, the type's fields, a secret, the identity mappings: a claim name
+            onto the full name, email address, locale or time zone, never an expression) needs ADMIN_CONNECTION_MANAGE; the
+            role mappings, the default group, the link rule and enabling need ADMIN_ACCESS_MANAGE. Refused, with the reason
+            and nothing written: a stale revision (STALE_REVISION); a mapped or default group the actor may not assign, a
+            privileged group or one granting a sealed permission (UNREGISTERED_BUNDLE, NOT_DELEGABLE, PRIVILEGED_GROUP,
+            SEALED_PERMISSION; roleMapList names each); enabling without a passing test of the configuration as it is now
+            (TEST_REQUIRED), or while a linked account holds access beyond the actor's (HELD_BEYOND); disabling the provider
+            the last administrator signs in by (ADMINISTRATION_PATH); an inbound flow (UNSUPPORTED_PROVIDER); SAML enabled, or
+            another type started (UNSUPPORTED_TYPE); identity mappings an instance administrator wrote as expressions
+            (ADVANCED_MAPPING). A change of the client type, client id, issuer, discovery or metadata URL, realm, an endpoint
+            or the Apple team or key needs the secret entered again in the same save, else the stored one is cleared
+            (secretCleared); either way the provider is saved disabled and its test mark cleared (design-admin §8.1), with
+            the reason saying so, as a change of the token signature or the nonce does with the secret kept. URLs are https
+            (http only for the server's own machine on an instance that is not production). The audit log keeps before and after, a secret as replaced or cleared, never its
+            value.</description>
+        <in-parameters>
+            <parameter name="authFlowId"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="authFlowTypeEnumId"><description>For a new provider: AftOidc or AftOauth</description></parameter>
+            <parameter name="description"/>
+            <parameter name="iconName"/>
+            <parameter name="sequenceNum"/>
+            <parameter name="clientTypeEnumId"/>
+            <parameter name="clientId"/>
+            <parameter name="secret"><description>Write-only: the client secret (Apple: the private key), replaced when given</description></parameter>
+            <parameter name="discoveryUri"/>
+            <parameter name="realm"/>
+            <parameter name="baseUri"/>
+            <parameter name="preferredJwsAlgorithmEnumId"/>
+            <parameter name="useNonce"/>
+            <parameter name="appleTeamId"/>
+            <parameter name="appleKeyId"/>
+            <parameter name="authorizeUrl"/>
+            <parameter name="tokenUrl"/>
+            <parameter name="userInfoUrl"/>
+            <parameter name="scope"/>
+            <parameter name="serviceProviderEntityId"/>
+            <parameter name="identityProviderMetadataLocation"/>
+            <parameter name="forceAuth"/>
+            <parameter name="passive"/>
+            <parameter name="keystorePassword"><description>Write-only</description></parameter>
+            <parameter name="privateKeyPassword"><description>Write-only</description></parameter>
+            <parameter name="accountLinkEnumId"/>
+            <parameter name="defaultUserGroupId"/>
+            <parameter name="fieldMapList" type="List"><description>When given, every identity mapping: each {srcFieldName, dstFieldName}</description></parameter>
+            <parameter name="roleMapList" type="List"><description>When given, every role mapping: each {roleName, userGroupId}</description></parameter>
+            <parameter name="enabled"><description>true to enable, false to disable</description></parameter>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="authFlowId"/>
+            <parameter name="revision"/>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="secretCleared" type="Boolean"/>
+            <parameter name="testRequired" type="Boolean"/>
+            <parameter name="roleMapList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationProviders.js').execute('storeIdentityProvider', context))</script></actions>
+    </service>
+    <service verb="test" noun="IdentityProvider" allow-remote="false">
+        <description>The explicit check of a provider as it is configured now, enabled or not (checkList, each ok or failed
+            with its text): the configuration is complete, every mapped and default group may still be given by a sign-in,
+            and a sign-in could start (org.moqui.sso.AuthServices.check#Flow: an OpenID provider's discovery document is
+            read and the client built as a sign-in builds it). No account is made, nobody is signed in and no token is asked
+            for; a failure's text names URLs and never a secret or a token. A pass is marked on the provider for the
+            configuration it ran against, which enabling requires; a failure clears the mark and leaves the provider as
+            it was. With testRoles, the roles of a test identity, grantPreview says which group each would give.
+            callbackUrl is the redirect URI to register at the provider. Needs ADMIN_CONNECTION_MANAGE or
+            ADMIN_ACCESS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="authFlowId" required="true"/>
+            <parameter name="testRoles"><description>Comma or space separated, or a List</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="passed" type="Boolean"/>
+            <parameter name="checkList" type="List"/>
+            <parameter name="callbackUrl"/>
+            <parameter name="authorizeHost"/>
+            <parameter name="grantPreview" type="List"/>
+            <parameter name="enabled" type="Boolean"/>
+            <parameter name="testedDate"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationProviders.js').execute('testIdentityProvider', context))</script></actions>
     </service>
 </services>

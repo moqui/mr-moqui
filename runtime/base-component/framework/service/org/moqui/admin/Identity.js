@@ -17,8 +17,8 @@
 //
 // The proposed change is a map: memberships (rows {userGroupId, userId, fromDate, thruDate} that replace the stored row of the
 // same key or are added), groups ({userGroupId: {requireAuthcFactor, ipAllowed}}), accounts ({userId: {disabled,
-// disabledDateTime, terminateDate, ipAllowed}}) and endedFactorIds (factors a reset ends, P4). Later phases add the provider
-// changes their services make.
+// disabledDateTime, terminateDate, ipAllowed}}), endedFactorIds (factors a reset ends, P4) and disabledFlowIds (the sign-in
+// providers a change disables, P10: an administrator with no password signs in only through an enabled one).
 //
 // P4 adds the sessions and credentials of an account (design-admin §4 Sessions, UserDetail AccessCredentials; impl-admin F3,
 // F4, F42): find#Sessions and revoke#Sessions over Visit and HttpSession, for the caller's own sessions (Commons Account) or,
@@ -69,7 +69,20 @@ function groupFlags(groupId, proposed, cache) {
     }
     return cache.get(groupId)
 }
-const enabledFlows = () => rows("moqui.security.sso.AuthFlow").some(row => row.disabled !== "Y")
+// The sign-in providers enabled once the change has disabled those it names (their ids).
+function enabledFlows(proposed = {}) {
+    const disabled = new Set(Array.from(proposed.disabledFlowIds || []).map(String))
+    return new Set(
+        rows("moqui.security.sso.AuthFlow")
+            .filter(row => row.disabled !== "Y" && row.inbound !== "Y" && !disabled.has(String(row.authFlowId)))
+            .map(row => String(row.authFlowId))
+    )
+}
+// Whether an administrator signs in through a provider: the account carries a provider's id, and the provider it names is
+// enabled; one that names none is taken by a provider only while that is the one enabled (with several, a sign-in never
+// takes an account in a privileged group, crates/moqui-core/src/service/sso.rs).
+const providerSignIn = (account, flows) =>
+    !!account.externalUserId && (account.externalAuthFlowId ? flows.has(String(account.externalAuthFlowId)) : flows.size === 1)
 
 // Why the account is not a usable path at the moment, or null when it is.
 function unusable(userId, at, memberRows, proposed, context) {
@@ -78,7 +91,7 @@ function unusable(userId, at, memberRows, proposed, context) {
     const account = Object.assign(map(stored), (proposed.accounts || {})[userId] || {})
     if (account.disabled === "Y" && !account.disabledDateTime) return "DISABLED"
     if (account.terminateDate && ms(account.terminateDate) < at) return "TERMINATED"
-    if (!account.currentPassword && !(account.externalUserId && context.flows)) return "NO_CREDENTIAL"
+    if (!account.currentPassword && !providerSignIn(account, context.flows)) return "NO_CREDENTIAL"
     const groupIds = memberRows.filter(row => row.userId === userId && open(row, at)).map(row => row.userGroupId)
     if (!groupIds.includes(ADMIN_GROUP)) return "NOT_ADMINISTRATOR"
     groupIds.push("ALL_USERS")
@@ -115,8 +128,8 @@ function moments(proposed) {
 // Whether the change keeps a usable administration path: allowed, with the paths before and after (counts only, no names), or
 // refused with ADMINISTRATION_PATH and the reason. A change on an instance that had no path is not refused for it.
 function administrationPath(proposed = {}) {
-    const context = {clientIp: String(ec.user.getClientIp() || ""), flows: enabledFlows(), groups: new Map()}
-    const before = countPaths(nowMs(), {}, Object.assign({}, context, {groups: new Map()}))
+    const context = {clientIp: String(ec.user.getClientIp() || ""), flows: enabledFlows(proposed), groups: new Map()}
+    const before = countPaths(nowMs(), {}, Object.assign({}, context, {flows: enabledFlows(), groups: new Map()}))
     let after = before
     for (const at of moments(proposed)) {
         after = countPaths(at, proposed, context)
@@ -527,7 +540,8 @@ function checkPath(p) {
         memberships: Array.from(proposed.memberships || []).map(map),
         groups: Object.assign({}, proposed.groups || {}),
         accounts: Object.assign({}, proposed.accounts || {}),
-        endedFactorIds: Array.from(proposed.endedFactorIds || [])
+        endedFactorIds: Array.from(proposed.endedFactorIds || []),
+        disabledFlowIds: Array.from(proposed.disabledFlowIds || [])
     })
 }
 

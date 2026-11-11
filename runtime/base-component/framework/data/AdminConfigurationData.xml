@@ -94,4 +94,74 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.Geo" fieldName="geoName" title="Country and region names" sequenceNum="40"/>
     <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.EnumerationType" fieldName="description" title="Type list names" sequenceNum="50"/>
     <moqui.basic.LocalizedLabelTarget entityName="moqui.basic.StatusType" fieldName="description" title="Status list names" sequenceNum="60"/>
+
+    <!-- ========== Admin P10 (mr-boss plan/impl-admin.md P10): sign-in policy and identity providers ========== -->
+    <!-- The identity provider services for every signed-in user: each checks ADMIN_CONNECTION_VIEW or ADMIN_ACCESS_VIEW to
+        read, ADMIN_CONNECTION_MANAGE for the configuration and ADMIN_ACCESS_MANAGE for the role mappings, the link rule and
+        enabling. A grant of its own, as the settings services'; inheritable, so the service's own reads and writes and
+        test#IdentityProvider's call of org.moqui.sso.AuthServices.check#Flow (which checks the same permissions) are
+        authorized as it. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminIdentityProviderServices" description="Admin identity provider services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminIdentityProviderServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ConfigurationServices\.(find#IdentityProviders|store#IdentityProvider|test#IdentityProvider)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminIdentityProviderServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminIdentityProviderServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- The sign-in policy the server runs with (design-admin §6 EffectiveSignInPolicy; F110), shown read only: literal conf
+        attributes of user-facade and of the web session, each named by confAttribute and answered by
+        ConfigurationServices.get#SignInPolicyValues (a fixed list in the server; a row naming another is logged and left
+        out). The conf's user-facade is read live, so a change applies when the conf is reloaded. A setting's key avoids the
+        words that mark a secret (pass, key, token), or it would be masked. -->
+    <moqui.server.InstanceSetting settingKey="signin.minLength" title="Shortest password" settingGroup="Sign-in policy"
+            description="The fewest characters a new password may have" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@min-length" sequenceNum="2010"
+            operatorNote="Set min-length on user-facade password in the runtime conf (System, Conf) and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.minDigits" title="Digits required" settingGroup="Sign-in policy"
+            description="The fewest digits a new password must hold" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@min-digits" sequenceNum="2020"
+            operatorNote="Set min-digits on user-facade password in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.minOthers" title="Other characters required" settingGroup="Sign-in policy"
+            description="The fewest characters that are neither letter nor digit a new password must hold" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@min-others" sequenceNum="2030"
+            operatorNote="Set min-others on user-facade password in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.reuseHistory" title="Earlier passwords refused" settingGroup="Sign-in policy"
+            description="How many of an account's last passwords may not be chosen again" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@history-limit" sequenceNum="2040"
+            operatorNote="Set history-limit on user-facade password in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.changeWeeks" title="Weeks until a change is required" settingGroup="Sign-in policy"
+            description="After this many weeks a sign-in asks for a new password" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@change-weeks" sequenceNum="2050"
+            operatorNote="Set change-weeks on user-facade password in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.resetRequiresChange" title="Change required after a reset" settingGroup="Sign-in policy"
+            description="Whether a password sent by a reset must be changed at the next sign-in" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@email-require-change" sequenceNum="2060"
+            operatorNote="Set email-require-change on user-facade password in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.resetExpireHours" title="Hours a reset stays usable" settingGroup="Sign-in policy"
+            description="How long a password sent by a reset may be used" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/password/@email-expire-hours" sequenceNum="2070"
+            operatorNote="Set email-expire-hours on user-facade password in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.maxFailures" title="Failed sign-ins before a lock" settingGroup="Sign-in policy"
+            description="After this many wrong passwords in a row the account is locked for a time" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/login/@max-failures" sequenceNum="2110"
+            operatorNote="Set max-failures on user-facade login in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.lockMinutes" title="Minutes a lock lasts" settingGroup="Sign-in policy"
+            description="How long an account stays locked after too many wrong passwords" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/login/@disable-minutes" sequenceNum="2120"
+            operatorNote="Set disable-minutes on user-facade login in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.historyStore" title="Sign-in history kept" settingGroup="Sign-in policy"
+            description="Whether each sign-in leaves a history row, which Sessions and the new-device notice read" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/login/@history-store" sequenceNum="2130"
+            operatorNote="Set history-store on user-facade login in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.sessionMinutes" title="Minutes until an idle session ends" settingGroup="Sign-in policy"
+            description="A web session with no request for this long expires; 0 never" valueTypeEnumId="IsvText"
+            confAttribute="webapp/session-config/@timeout" sequenceNum="2210"
+            operatorNote="Set timeout on session-config of the webroot webapp in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.rememberHours" title="Hours a browser stays signed in" settingGroup="Sign-in policy"
+            description="How long the sign-in a browser keeps between sessions lasts" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/login-key/@expire-hours" sequenceNum="2220"
+            operatorNote="Set expire-hours on user-facade login-key in the runtime conf and reload the conf"/>
+    <moqui.server.InstanceSetting settingKey="signin.deviceHours" title="Hours an app stays signed in" settingGroup="Sign-in policy"
+            description="How long the sign-in of a desktop or mobile app lasts" valueTypeEnumId="IsvText"
+            confAttribute="user-facade/login-key/@device-expire-hours" sequenceNum="2230"
+            operatorNote="Set device-expire-hours on user-facade login-key in the runtime conf and reload the conf"/>
 </entity-facade-xml>

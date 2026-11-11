@@ -669,8 +669,10 @@ pub fn internal_literal(url: &reqwest::Url) -> bool {
 
 /// The resolver of a client that denies internal addresses: the system lookup, failing when any address is
 /// internal. The lookup runs on its own thread, as reqwest's own resolver does, so it does not hold up the client's
-/// runtime.
-struct PublicOnly;
+/// runtime. Public for a client built outside [`RestClient`] (the SSO client's); such a client checks an address
+/// written out itself ([`internal_literal`]), which no resolver sees.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PublicOnly;
 
 impl reqwest::dns::Resolve for PublicOnly {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {

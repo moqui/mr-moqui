@@ -163,6 +163,14 @@ function groupSummary(group, context) {
         hasSealed: sealed.length > 0,
         requireAuthcFactor: group.requireAuthcFactor === "Y",
         ipLimited: !!text(group.ipAllowed),
+        ipAllowed: text(group.ipAllowed),
+        // whether the actor may change its profile and sign-in rules (store#Group), as groupRefusal decides: a privileged
+        // group only by a member, a bundle by who may assign it, else a custom group
+        canChange: context.privileged.has(groupId)
+            ? ec.user.isInGroup(groupId)
+            : bundle
+              ? delegable(bundle, context.privileged)
+              : custom,
         memberCount: context.counts.get(groupId) || 0,
         permissionCount: grants.length,
         appGates: (context.authz.get(groupId) || []).map(row => row.artifactGroupId),
@@ -1120,6 +1128,10 @@ const operations = {
 }
 // What AccessCapabilities.js (the matrix, the scope rules and the review) shares with these services.
 const lib = {
+    proposalBundles,
+    validIpAllowed,
+    find,
+    identity,
     rows,
     one,
     map,
