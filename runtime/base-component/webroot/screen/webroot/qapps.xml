@@ -181,6 +181,8 @@ along with this software (see the LICENSE.md file). If not, see
         if (ec.user.userId) footer_scripts.add('/js/WebrootCrypto.js')
         // end-to-end encrypted calls (moqui.callKeys): the call-key protocol; its SFrame worker loads only in such a call
         if (ec.user.userId) footer_scripts.add('/js/WebrootCallKeys.js')
+        // the browser terminal's store and views (moqui.terminal), when this server serves its socket
+        if (ec.user.userId && System.getProperty('webapp_terminal_endpoint')) footer_scripts.add('/js/WebrootTerminal.js')
         // the render functions of the components, precompiled from their templates; WebrootVue.qvt.js applies them when it starts
         footer_scripts.add('/js/WebrootVue.qvt.render.js')
         footer_scripts.add('/js/WebrootVue.qvt.js')

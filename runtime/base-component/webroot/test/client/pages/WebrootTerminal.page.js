@@ -12,29 +12,27 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-const componentReady = fetch("/files/runtime/base-component/webroot/screen/webroot/apps/Terminal.qvue")
-    .then(response => response.text())
-    .then(source => moqui.parseVue(source))
 const write = (term, text) => new Promise(resolve => term.write(text, resolve))
 const painted = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+let made = 0
 
+// A session of the store with no socket, shown in a box of the page; what it sends is kept.
 const terminal = async dark => {
-    const component = await componentReady
+    const store = moqui.terminal
+    store.setDark(dark)
+    const key = "spec-" + (++made)
+    const replies = []
     const screen = document.createElement("div")
     screen.style.cssText = "width:800px;height:320px"
     document.body.appendChild(screen)
-    const replies = []
-    const context = {dark, $refs: {screen}, connect() {}}
-    for (const [name, method] of Object.entries(component.methods)) context[name] = method.bind(context)
     // Keep the test offline; xterm's real input reply still crosses the same send boundary as the socket.
-    context.connect = () => {}
-    context.send = bytes => replies.push(new TextDecoder().decode(bytes))
-    context.open()
+    const session = store.create(key, {kind: "apps", connect: false, send: bytes => replies.push(new TextDecoder().decode(bytes))})
+    store.attach(key, screen)
     return {
-        component, context, replies, screen,
+        store, key, session, replies, screen,
+        get term() { return session.term },
         dispose() {
-            context.observer.disconnect()
-            context.term.dispose()
+            store.end(key)
             screen.remove()
         }
     }
@@ -43,17 +41,17 @@ const terminal = async dark => {
 test("switching background reports its new color without resetting terminal content", async () => {
     const view = await terminal(false)
     try {
-        const {component, context, replies} = view
-        const term = context.term
+        const {store, replies} = view
+        const term = view.term
         await write(term, "Unsubmitted field value")
-        component.watch.dark.call(context, true)
+        store.setDark(true)
         await write(term, "")
         assert.ok(replies.some(reply => reply.includes("11;rgb:1616/1818/1d1d")), "dark background reaches the TUI decoder")
         assert.equal(term.buffer.active.getLine(0).translateToString(true), "Unsubmitted field value")
-        component.watch.dark.call(context, false)
+        store.setDark(false)
         await write(term, "")
         assert.ok(replies.some(reply => reply.includes("11;rgb:ffff/ffff/ffff")), "light background reaches the TUI decoder")
-        assert.equal(context.term, term)
+        assert.equal(store.session(view.key).term, term)
         assert.equal(term.buffer.active.getLine(0).translateToString(true), "Unsubmitted field value")
     } finally {
         view.dispose()
@@ -72,7 +70,7 @@ const contrast = (foreground, background) => {
 test("muted terminal text remains readable on both browser backgrounds", async () => {
     const view = await terminal(true)
     try {
-        await write(view.context.term, "\u001b[38;2;110;110;110mSection heading")
+        await write(view.term, "\u001b[38;2;110;110;110mSection heading")
         await painted()
         const foreground = () => {
             const text = [...view.screen.querySelectorAll(".xterm-rows span")].find(span => span.textContent.includes("Section heading"))
@@ -80,11 +78,33 @@ test("muted terminal text remains readable on both browser backgrounds", async (
             return getComputedStyle(text).color.match(/[\d.]+/g).slice(0, 3).map(Number)
         }
         assert.ok(contrast(foreground(), [22, 24, 29]) >= 4.5, "dark terminal heading contrast")
-        view.component.watch.dark.call(view.context, false)
-        await write(view.context.term, "\r\u001b[38;2;150;150;150mSection heading")
+        view.store.setDark(false)
+        await write(view.term, "\r\u001b[38;2;150;150;150mSection heading")
         await painted()
         assert.ok(contrast(foreground(), [255, 255, 255]) >= 4.5, "light terminal heading contrast")
     } finally {
         view.dispose()
+    }
+})
+
+test("a session's terminal moves to another view with its screen and nothing reconnects", async () => {
+    const view = await terminal(false)
+    const other = document.createElement("div")
+    other.style.cssText = "width:640px;height:240px"
+    document.body.appendChild(other)
+    try {
+        const {store, key, session} = view
+        await write(view.term, "kept across the move")
+        store.detach(key, view.screen)
+        assert.equal(view.screen.childElementCount, 0, "the first view gave the element up")
+        store.attach(key, other)
+        assert.equal(session.el.parentNode, other, "the element is in the second view")
+        assert.equal(store.session(key), session, "the same session, not a new one")
+        assert.equal(view.term.buffer.active.getLine(0).translateToString(true), "kept across the move")
+        store.detach(key, view.screen)
+        assert.equal(session.el.parentNode, other, "a view that no longer holds it takes nothing away")
+    } finally {
+        view.dispose()
+        other.remove()
     }
 })

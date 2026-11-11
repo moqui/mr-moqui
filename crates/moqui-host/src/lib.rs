@@ -123,6 +123,9 @@ mod worker;
 
 mod cluster_edge;
 mod cluster_notify;
+// The `moqui>` command line: SSH's admin shell.
+#[cfg(feature = "ssh")]
+mod command;
 mod tls_pin;
 
 #[cfg(feature = "axum")]

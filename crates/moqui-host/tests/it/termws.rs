@@ -128,7 +128,8 @@ fn the_browser_terminal_runs_the_apps_as_the_signed_in_user() {
     let cookie = crate::common::sign_in(address, "john.doe", "moqui");
     gate.server.factory().flush_sessions().unwrap();
 
-    // The shell's config names the Terminal screen, and the screen is the component that opens the socket.
+    // The shell's config names the Terminal screen and loads the terminal's store, which opens the socket, and the
+    // screen shows a session through the store's view.
     let get = |path: &str| {
         crate::common::exchange(
             address,
@@ -138,12 +139,10 @@ fn the_browser_terminal_runs_the_apps_as_the_signed_in_user() {
     let (status, _, shell) = get("/qapps");
     assert_eq!(status, 200, "{shell}");
     assert!(shell.contains(r#""terminalUrl":"/qapps/Terminal""#), "{shell}");
+    assert!(shell.contains("/js/WebrootTerminal.js"), "{shell}");
     let (status, _, component) = terminal_screen(address, &cookie);
     assert_eq!(status, 200, "{component}");
-    assert!(
-        component.contains("/termws") && component.contains("/libs/xterm/xterm.js"),
-        "{component}"
-    );
+    assert!(component.contains("m-terminal-view"), "{component}");
     let mut socket = open(address, &cookie, 120, 40);
     let mut seen = Vec::new();
     read_until(&mut socket, &mut seen, "\x1b[?1049h").unwrap();

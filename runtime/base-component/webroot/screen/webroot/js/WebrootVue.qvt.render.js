@@ -9483,6 +9483,103 @@
               ], 8, ["id", "data-step", "data-step-form", "data-forms"]))
             }
         } },
+        "m-terminal-copy": { hash: "6ad6f086", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createElementVNode: _createElementVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, openBlock: _openBlock, createBlock: _createBlock } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_card_section = _resolveComponent("q-card-section")
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_card_actions = _resolveComponent("q-card-actions")
+              const _component_q_card = _resolveComponent("q-card")
+              const _component_q_dialog = _resolveComponent("q-dialog")
+              const _directive_close_popup = _resolveDirective("close-popup")
+
+              return (_openBlock(), _createBlock(_component_q_dialog, {
+                modelValue: _ctx.copy.open,
+                "onUpdate:modelValue": $event => ((_ctx.copy.open) = $event),
+                onShow: _ctx.shown
+              }, {
+                default: _withCtx(() => [
+                  _createVNode(_component_q_card, { style: {"min-width":"360px","max-width":"90vw"} }, {
+                    default: _withCtx(() => [
+                      _createVNode(_component_q_card_section, { class: "text-subtitle1" }, {
+                        default: _withCtx(() => [
+                          _createTextVNode(_toDisplayString(_ctx.labels.copyByHand), 1)
+                        ]),
+                        _: 1
+                      }),
+                      _createVNode(_component_q_card_section, { class: "q-pt-none" }, {
+                        default: _withCtx(() => [
+                          _createElementVNode("textarea", {
+                            ref: "text",
+                            readonly: "",
+                            value: _ctx.copy.text,
+                            rows: "8",
+                            style: {"width":"100%","font-family":"monospace"}
+                          }, null, 8, ["value"])
+                        ]),
+                        _: 1
+                      }),
+                      _createVNode(_component_q_card_actions, { align: "right" }, {
+                        default: _withCtx(() => [
+                          _withDirectives(_createVNode(_component_q_btn, {
+                            flat: "",
+                            "no-caps": "",
+                            label: _ctx.labels.close
+                          }, null, 8, ["label"]), [
+                            [_directive_close_popup]
+                          ])
+                        ]),
+                        _: 1
+                      })
+                    ]),
+                    _: 1
+                  })
+                ]),
+                _: 1
+              }, 8, ["modelValue", "onUpdate:modelValue", "onShow"]))
+            }
+        } },
+        "m-terminal-view": { hash: "ddc19b8", make: function (Vue) {
+            const { createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_btn = _resolveComponent("q-btn")
+
+              return (_openBlock(), _createElementBlock("div", { class: "m-terminal-view column no-wrap fit" }, [
+                _createElementVNode("div", {
+                  ref: "screen",
+                  class: "m-terminal-host col",
+                  style: {"min-height":"0","overflow":"hidden"},
+                  onClick: _ctx.focus
+                }, null, 8, ["onClick"]),
+                (_ctx.shown.closed)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 0,
+                      class: "m-terminal-closed row items-center no-wrap q-pa-sm q-gutter-sm",
+                      id: "TerminalClosed"
+                    }, [
+                      _createVNode(_component_q_icon, { name: "sym_o_link_off" }),
+                      _createElementVNode("span", { class: "col" }, _toDisplayString(_ctx.shown.reason), 1),
+                      _createVNode(_component_q_btn, {
+                        dense: "",
+                        unelevated: "",
+                        "no-caps": "",
+                        color: "primary",
+                        label: _ctx.labels.reconnect,
+                        onClick: _ctx.reconnect
+                      }, null, 8, ["label", "onClick"])
+                    ]))
+                  : (_ctx.shown.failed)
+                    ? (_openBlock(), _createElementBlock("div", {
+                        key: 1,
+                        class: "m-terminal-closed q-pa-sm text-negative"
+                      }, _toDisplayString(_ctx.shown.failed), 1))
+                    : _createCommentVNode("", true)
+              ]))
+            }
+        } },
         "m-text-area": { hash: "879c7991", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createVNode: _createVNode, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, mergeProps: _mergeProps } = Vue
 
