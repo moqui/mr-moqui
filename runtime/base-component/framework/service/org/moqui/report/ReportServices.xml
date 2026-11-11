@@ -186,8 +186,149 @@
     <service verb="create" noun="Schedule" type="rust" location="moqui_core::report_schedule::create_schedule">
         <in-parameters><parameter name="definitionId" required="true"/><parameter name="cronExpression" required="true"/><parameter name="renderMode"/><parameter name="emailTemplateId"/><parameter name="userId"/><parameter name="userGroupId"/><parameter name="saveToLocation"/><parameter name="emailSubject"/></in-parameters><out-parameters><parameter name="screenScheduledId"/></out-parameters>
     </service>
-    <service verb="list" noun="Schedules" type="rust" location="moqui_core::report_schedule::list_schedules"><out-parameters><parameter name="schedules" type="List"/></out-parameters></service>
-    <service verb="pause" noun="Schedule" type="rust" location="moqui_core::report_schedule::pause_schedule"><in-parameters><parameter name="screenScheduledId" required="true"/><parameter name="paused" type="Boolean"/></in-parameters></service>
+    <service verb="list" noun="Schedules" type="rust" location="moqui_core::report_schedule::list_schedules">
+        <description>The report schedules the viewer owns (one of them with screenScheduledId), each with its definition, timing,
+            delivery mode (empty for an owner-mode schedule, personal or group), recipients, revision, pause reason and last
+            run.</description>
+        <in-parameters><parameter name="screenScheduledId"/></in-parameters>
+        <out-parameters><parameter name="schedules" type="List"/></out-parameters>
+    </service>
+    <service verb="pause" noun="Schedule" type="rust" location="moqui_core::report_schedule::pause_schedule">
+        <description>Pause or resume a schedule the viewer owns. Resuming a group schedule repeats the audience check
+            (check#ReportAudience) and is refused while a recipient's scope differs from the owner's.</description>
+        <in-parameters><parameter name="screenScheduledId" required="true"/><parameter name="paused" type="Boolean"/></in-parameters>
+    </service>
+    <!-- Owner-equivalent delivery (crates/moqui-report/src/delivery.rs; docs/tools/Monitoring.md "Report delivery"; BOSS
+        impl-insights P7, INS-06) -->
+    <service verb="check" noun="ReportAudience" type="rust" location="moqui_core::report_delivery::check_audience">
+        <description>Whether each proposed recipient of a report or dashboard the viewer would own a schedule of may be sent
+            the viewer's own result: an internal, active user with an address whose scope fingerprint for the definition
+            equals the viewer's. The fingerprint is a hash of what the user reads of the definition and everything it
+            references, the documents of each dataset they may read and each dataset's resolved row filter (rowFilter,
+            contextFilters and the rowFilterService's answer). Groups are expanded to their members in date and each is
+            checked. recipients names each one (userId, username, userFullName, viaGroupIds, eligible, blocking, reasonCode,
+            reason); a reason is a code (not-shared: the definition or one it references is not theirs to read; scope-differs;
+            not-comparable for a service source; denied-source; inactive; external; no-address) and never another user's
+            grants. recipientCap is the cap asked for, 50 by default, held
+            under the instance preference report.groupRecipientCeiling; overCap says the audience is larger. Recipients
+            other than the viewer need the artifact org.moqui.report.delivery.group.</description>
+        <in-parameters>
+            <parameter name="definitionId" required="true"/><parameter name="recipientUserIds" type="List"/>
+            <parameter name="recipientGroupIds" type="List"/><parameter name="recipientCap" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recipients" type="List"/><parameter name="recipientCount" type="Integer"/>
+            <parameter name="eligibleCount" type="Integer"/><parameter name="refusedCount" type="Integer"/>
+            <parameter name="recipientCap" type="Integer"/><parameter name="recipientCeiling" type="Integer"/>
+            <parameter name="overCap" type="Boolean"/><parameter name="deliveryMode"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="Schedule" type="rust" location="moqui_core::report_delivery::store_schedule">
+        <description>Create or change a business report schedule the viewer owns, delivered by email only. The server sets
+            the delivery mode: personal when the owner is the only recipient, group otherwise. A group schedule is saved only
+            when check#ReportAudience passes every recipient (a refused one is an error naming each with its reason code,
+            RECIPIENT_REFUSED) and the audience is within the cap (RECIPIENT_CAP); a change needs the revision read
+            (expectedRevision, STALE_REVISION), and cancels the deliveries of the earlier revision not yet sent. A value not
+            sent is kept: recipient lists not sent keep the recipients (an empty list names the owner alone), and
+            clearFields names which of emailSubject, fromDate and thruDate to empty. At each run the check repeats and a
+            recipient whose scope changed is skipped (scope-differs).</description>
+        <in-parameters>
+            <parameter name="screenScheduledId"/><parameter name="definitionId"/><parameter name="cronExpression"/>
+            <parameter name="renderMode"/><parameter name="noResultsAbort"/><parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/><parameter name="emailTemplateId"/><parameter name="emailSubject"/>
+            <parameter name="recipientUserIds" type="List"/><parameter name="recipientGroupIds" type="List"/>
+            <parameter name="recipientCap" type="Integer"/><parameter name="paused" type="Boolean"/>
+            <parameter name="clearFields" type="List"/><parameter name="expectedRevision" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="screenScheduledId"/><parameter name="deliveryMode"/><parameter name="revision" type="Long"/>
+            <parameter name="recipientCount" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="ReportOccurrences" type="rust" location="moqui_core::report_delivery::find_occurrences">
+        <description>The occurrences of business report schedules, newest first, as status and safe counters, never content:
+            those of the viewer's own schedules (one schedule's with screenScheduledId); with received true, those that hold a
+            delivery to the viewer, each with that delivery's state alone; with administrative true, every owner's, for a
+            holder of ADMIN_TRANSFER_VIEW, without titles.</description>
+        <in-parameters>
+            <parameter name="screenScheduledId"/><parameter name="statusId"/><parameter name="received" type="Boolean"/>
+            <parameter name="administrative" type="Boolean"/><parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="occurrences" type="List"/><parameter name="total" type="Long"/>
+            <parameter name="pageIndex" type="Integer"/><parameter name="pageSize" type="Integer"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="ReportOccurrence" type="rust" location="moqui_core::report_delivery::get_occurrence">
+        <description>One occurrence: for its schedule's owner, or a holder of ADMIN_TRANSFER_VIEW, what ran (schedule and
+            revision, definition and version, counters) and each recipient's outcome (identity, state, safe reason, attempt
+            time, whether it may be retried); for a recipient who is neither, their own delivery only. No frame, file or
+            query diagnostic of anyone's.</description>
+        <in-parameters><parameter name="occurrenceId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="occurrence" type="Map"/><parameter name="deliveries" type="List"/>
+            <parameter name="ownDelivery" type="Map"/><parameter name="administers" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="RecipientReport" type="rust" transaction="ignore" location="moqui_core::report_delivery::get_recipient_report">
+        <description>The report of one delivery, for its own recipient only. Nothing sent is stored: the report is rendered
+            again as the recipient, with their current authorization, and says so (rerendered, generatedDate). A recipient
+            whose scope fingerprint is no longer the one the delivery was sent under gets available false with reasonCode
+            scope-changed and no content; another user's delivery id is refused as one that does not exist.</description>
+        <in-parameters><parameter name="deliveryId" required="true"/><parameter name="renderMode"/></in-parameters>
+        <out-parameters>
+            <parameter name="available" type="Boolean"/><parameter name="reasonCode"/><parameter name="contentBase64"/>
+            <parameter name="contentType"/><parameter name="filename"/><parameter name="rerendered" type="Boolean"/>
+            <parameter name="generatedDate" type="Long"/><parameter name="definitionId"/><parameter name="title"/>
+        </out-parameters>
+    </service>
+    <service verb="retry" noun="ReportRecipients" type="rust" transaction="ignore" location="moqui_core::report_delivery::retry_recipients">
+        <description>Send again to the failed recipients of an occurrence, for its schedule's owner: only deliveries in the
+            failed state (a sent one is never replayed, an uncertain one is refused until reconcile#ReportRecipient settles
+            it), at the occurrence's revision read (expectedRevision), with the same schedule revision and definition
+            version (else DEFINITION_CHANGED: send a new occurrence). Each recipient is checked again as at a run; the report
+            is rendered again and the delivery says so. results names each delivery's outcome.</description>
+        <in-parameters>
+            <parameter name="occurrenceId" required="true"/><parameter name="deliveryIds" type="List" required="true"/>
+            <parameter name="expectedRevision" type="Long"/><parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="results" type="List"/><parameter name="sentCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="reconcile" noun="ReportRecipient" type="rust" location="moqui_core::report_delivery::reconcile_recipient">
+        <description>Settle an uncertain delivery, for its schedule's owner: outcome sent (the message did arrive) or failed
+            (it did not, so it may be retried), with the reason kept in the audit log.</description>
+        <in-parameters>
+            <parameter name="deliveryId" required="true"/><parameter name="outcome" required="true"/><parameter name="reason" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="statusId"/></out-parameters>
+    </service>
+    <service verb="find" noun="OwnedSchedules" type="rust" location="moqui_core::report_delivery::find_owned_schedules">
+        <description>The report schedules userId owns, by name only (the owned-resource lookup of
+            org.moqui.admin.IdentityServices): the viewer's own, or another user's for a holder of REPORT_OWNER_CHANGE.</description>
+        <in-parameters><parameter name="userId" required="true"/></in-parameters>
+        <out-parameters><parameter name="resourceList" type="List"/></out-parameters>
+    </service>
+    <service verb="pause" noun="OwnedSchedules" type="rust" location="moqui_core::report_delivery::pause_owned_schedules">
+        <description>Pause every report schedule userId owns (the owned-resource pause), marked owner-disabled, until
+            transfer#DefinitionOwner hands each to a new owner: the viewer's own, or another user's for a holder of
+            REPORT_OWNER_CHANGE. It reads no report.</description>
+        <in-parameters><parameter name="userId" required="true"/><parameter name="reason"/></in-parameters>
+        <out-parameters><parameter name="pausedCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="transfer" noun="DefinitionOwner" type="rust" location="moqui_core::report_delivery::transfer_definition_owner">
+        <description>Hand one report schedule (screenScheduledId), with its definition and the definitions that references
+            which fromUserId owns, to toUserId (the owned-resource transfer): for fromUserId themselves or a holder of
+            REPORT_OWNER_CHANGE. Refused unless toUserId is an active internal user who may store a schedule and reads the
+            definition and every source it names. The schedule stays paused (transfer-pending) until the new owner resumes
+            it, which repeats the audience check against the new owner's scope; nothing already delivered runs again, and the
+            caller gains no report data.</description>
+        <in-parameters>
+            <parameter name="screenScheduledId" required="true"/><parameter name="fromUserId" required="true"/>
+            <parameter name="toUserId" required="true"/><parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="transferred" type="Boolean"/><parameter name="definitionIds" type="List"/></out-parameters>
+    </service>
     <service verb="preview" noun="Report" type="rust" transaction="ignore" location="moqui_core::report_schedule::preview_report"><in-parameters><parameter name="definitionId" required="true"/><parameter name="renderMode"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/><parameter name="variables" type="Map"/><parameter name="filters" type="List"/></in-parameters><out-parameters><parameter name="contentBase64"/><parameter name="contentType"/><parameter name="filename"/><parameter name="files" type="List"/><parameter name="empty" type="Boolean"/></out-parameters></service>
     <service verb="send" noun="Report" type="rust" transaction="ignore" location="moqui_core::report_schedule::send_report"><in-parameters><parameter name="screenScheduledId" required="true"/></in-parameters><out-parameters><parameter name="sent" type="Boolean"/><parameter name="skipped" type="Boolean"/><parameter name="reason"/></out-parameters></service>
     <service verb="run" noun="ScheduledReport" type="rust" authenticate="anonymous-all" allow-remote="false" transaction="ignore" location="moqui_core::report_schedule::run_scheduled"><in-parameters><parameter name="screenScheduledId" required="true"/></in-parameters><out-parameters><parameter name="sent" type="Boolean"/><parameter name="skipped" type="Boolean"/><parameter name="reason"/></out-parameters></service>

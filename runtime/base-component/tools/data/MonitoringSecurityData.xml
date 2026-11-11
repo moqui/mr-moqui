@@ -47,6 +47,12 @@
         <artifacts artifactName="org.moqui.report.rows.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
         <authz artifactAuthzId="REPORT_BUSINESS_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
+    <!-- Group delivery of a report schedule (store#Schedule and check#ReportAudience for recipients other than the owner;
+        crates/moqui-report/src/delivery.rs): ADMIN's, and an app grants it to its distributors -->
+    <artifactGroups artifactGroupId="REPORT_DELIVERY_ADMIN" description="Deliver report schedules to owner-equivalent groups">
+        <artifacts artifactName="org.moqui.report.delivery.group" artifactTypeEnumId="AT_SERVICE"/>
+        <authz artifactAuthzId="REPORT_DELIVERY_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
     <moqui.security.UserPermission userPermissionId="MONITOR_INGEST" description="Send telemetry through source-scoped ingestion keys"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_INGEST" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="MONITOR_REPLAY" description="See browser session replays (Monitor › Replays)"/>

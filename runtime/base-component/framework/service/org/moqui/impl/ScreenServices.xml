@@ -161,31 +161,67 @@ along with this software (see the LICENSE.md file). If not, see
                             <log level="warn" message="User ${userAccount.username} [${userAccount.userId}] has no emailAddress, tried to use in ScreenScheduled ${screenScheduledId}"/>
                         </else></if>
                     </if>
+                    <!-- A screen schedule goes to a user group only through a registered adapter (an Enumeration of type
+                        ReportLegacyAdapter whose enumCode is the screen path; BOSS design-insights §7.3, INS-11): the screen
+                        renders as the schedule's user, and whether that result is each member's to see is the adapter's
+                        review. Without one the group is not sent to and the schedule stays personal. With one, each member
+                        the saved find is shared with (or every member when no find is named) gets a message of their own,
+                        never an address line shared with another recipient. -->
+                    <set field="groupAddressSet" from="new Set()"/>
                     <if condition="screenScheduled.userGroupId">
-                        <entity-find entity-name="moqui.security.UserGroupMemberUser" list="groupUserList">
-                            <date-filter/>
-                            <econdition field-name="userGroupId" from="screenScheduled.userGroupId"/>
-                            <select-field field-name="userId,username,emailAddress,disabled"/>
-                        </entity-find>
-                        <iterate list="groupUserList" entry="groupUser">
-                            <if condition="groupUser.emailAddress"><then>
-                                <if condition="groupUser.disabled != 'Y'"><then>
-                                    <script>toAddressSet.add(groupUser.emailAddress)</script>
-                                </then><else>
-                                    <log level="warn" message="User ${groupUser.username} [${groupUser.userId}] in group ${screenScheduled.userGroupId} is disabled, not sending email for ScreenScheduled ${screenScheduledId}"/>
-                                </else></if>
-                            </then><else>
-                                <log level="warn" message="User ${groupUser.username} [${groupUser.userId}] in group ${screenScheduled.userGroupId} has no emailAddress, tried to use in ScreenScheduled ${screenScheduledId}"/>
-                            </else></if>
-                        </iterate>
+                        <entity-find-count entity-name="moqui.basic.Enumeration" count-field="legacyAdapterCount">
+                            <econdition field-name="enumTypeId" value="ReportLegacyAdapter"/>
+                            <econdition field-name="enumCode" from="screenPath"/>
+                        </entity-find-count>
+                        <if condition="!legacyAdapterCount"><then>
+                            <log level="error" message="ScreenScheduled ${screenScheduledId} names user group ${screenScheduled.userGroupId} but ${screenPath} is not a registered ReportLegacyAdapter: not sending to the group, the user's own delivery continues"/>
+                        </then><else>
+                            <entity-find entity-name="moqui.security.UserGroupMemberUser" list="groupUserList">
+                                <date-filter/>
+                                <econdition field-name="userGroupId" from="screenScheduled.userGroupId"/>
+                                <select-field field-name="userId,username,emailAddress,disabled"/>
+                            </entity-find>
+                            <iterate list="groupUserList" entry="groupUser">
+                                <if condition="!groupUser.emailAddress || groupUser.disabled == 'Y'">
+                                    <log level="warn" message="User ${groupUser.username} [${groupUser.userId}] in group ${screenScheduled.userGroupId} is disabled or has no emailAddress, not sending email for ScreenScheduled ${screenScheduledId}"/>
+                                    <continue/>
+                                </if>
+                                <if condition="formListFindId &amp;&amp; groupUser.userId != screenScheduled.userId">
+                                    <!-- the saved find must be the member's to read: shared with them or with a group of theirs -->
+                                    <entity-find-count entity-name="moqui.screen.form.FormListFindUser" count-field="findUserCount">
+                                        <econdition field-name="formListFindId"/>
+                                        <econdition field-name="userId" from="groupUser.userId"/>
+                                    </entity-find-count>
+                                    <set field="findShared" from="findUserCount &gt; 0"/>
+                                    <if condition="!findShared">
+                                        <entity-find entity-name="moqui.screen.form.FormListFindUserGroup" list="findGroupList">
+                                            <econdition field-name="formListFindId"/></entity-find>
+                                        <set field="memberGroupIds" from="ec.user.getUserGroupIdSet(groupUser.userId) || new Set()"/>
+                                        <set field="findShared" from="Array.from(findGroupList).some(row =&gt; row.userGroupId == 'ALL_USERS' || memberGroupIds.has(row.userGroupId))"/>
+                                    </if>
+                                    <if condition="!findShared">
+                                        <log level="warn" message="Saved find ${formListFindId} is not shared with user ${groupUser.username} [${groupUser.userId}], not sending email for ScreenScheduled ${screenScheduledId}"/>
+                                        <continue/>
+                                    </if>
+                                </if>
+                                <script>if (!toAddressSet.has(groupUser.emailAddress)) groupAddressSet.add(groupUser.emailAddress)</script>
+                            </iterate>
+                        </else></if>
                     </if>
+                    <iterate list="[...groupAddressSet]" entry="groupAddress">
+                        <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate" ignore-error="true" transaction="force-new"
+                                in-map="{emailTemplateId: emailTemplate.emailTemplateId, bodyParameters: bodyParameters,
+                                    attachments: [attachmentInfo], toAddresses: groupAddress, createEmailMessage: false}"/>
+                    </iterate>
                     <if condition="toAddressSet.size"><then>
                         <set field="toAddresses" from="[...toAddressSet].join(',')"/>
                         <service-call name="org.moqui.mail.EmailServices.send#EmailTemplate" ignore-error="true" transaction="force-new"
                                 in-map="{emailTemplateId: emailTemplate.emailTemplateId, bodyParameters: bodyParameters,
                                     attachments: [attachmentInfo], toAddresses: toAddresses, createEmailMessage: false}"/>
                     </then><else>
-                        <log level="error" message="No email addresses found trying to send email for ScreenScheduled ${screenScheduledId} user ${screenScheduled.userId} group ${screenScheduled.userGroupId}"/>
+                        <if condition="!groupAddressSet.size">
+                            <log level="error" message="No email addresses found trying to send email for ScreenScheduled ${screenScheduledId} user ${screenScheduled.userId} group ${screenScheduled.userGroupId}"/>
+                        </if>
                     </else></if>
                 </if>
 

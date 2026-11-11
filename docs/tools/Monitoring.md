@@ -525,6 +525,78 @@ query, a dataset, an entity or a service.
 A mount offers it from each panel's menu by naming its drill screen in `reportLinks` (above). The code is
 `crates/moqui-report/src/drill.rs`; the regression spec is `framework/test/ReportDrill.spec.js`.
 
+### Report delivery
+
+A schedule renders as its owner. A **business schedule** sends that result to another user only when it is what that user
+would see, and to each recipient in a message of their own. A schedule is a business one when `store#Schedule` saved it (its
+`deliveryMode` is `personal` or `group`) or when its definition reads a business dataset or any other dataset whose rows
+depend on the viewer (one with a `rowFilterService` or `contextFilters`, such as a business events dataset over the
+annotations), whatever wrote its row: one made by `create#Schedule`, or by an entity write, is held to the same check at each
+run. A technical schedule (telemetry and other datasets that give every reader the same rows) is delivered as before, in
+owner mode, to one address line.
+
+- **The scope fingerprint.** A user's fingerprint for a definition is a hash of what they read of the definition and of
+  everything it references (each dashboard and library panel, read or not), the documents of each dataset they may read, each
+  dataset's resolved row filter (`rowFilter`, `contextFilters` and the `rowFilterService`'s answer, in a form that does not
+  depend on the order of its values) and, for a dataset whose records are restricted, whether they hold them. What a
+  dashboard reads without naming it counts too: the telemetry dataset of a query that names none, the change markers
+  (`monitor_annotations`) and, over a business dataset, each registered source of business events. It is computed in
+  a context of its own signed in as that user, so a screen's inheritable grant or a disabled authorization never enters it.
+  Two users are owner-equivalent when their fingerprints are equal. A policy that names the viewer's own groups
+  (`ReportUserGroups`) gives users of different groups different filters, so different fingerprints; a policy that answers the
+  organizations a user works in gives every user of those organizations the same one. A definition over a service source is
+  not comparable (the service decides its scope in its own code), so it goes to its owner alone.
+- **`check#ReportAudience`** answers, for a definition the viewer would own a schedule of, each proposed recipient's result:
+  the named users and the members in date of the named groups, each `eligible` or not with a `reasonCode` and a `reason` in
+  words: `not-shared` (the definition, or a dashboard or panel it uses, is not theirs to read: its owner shares it),
+  `scope-differs`, `not-comparable`, `denied-source` (the owner does not read a source), `inactive`, `external`,
+  `no-address`. A reason never says what the other user holds. Recipients other than the viewer need the artifact
+  `org.moqui.report.delivery.group` (`REPORT_DELIVERY_ADMIN`, `ADMIN`'s; an app grants it to its distributors).
+- **`store#Schedule`** creates or changes a business schedule its viewer owns, delivered by email only (no save location). The
+  server sets the mode: `personal` when the owner is the only recipient, `group` otherwise, with its recipients in
+  `moqui.report.ReportScheduleRecipient`. An active group schedule is saved only when every recipient passes
+  (`RECIPIENT_REFUSED`, naming each with its reason code; a group's member without an address or an active account is not a
+  refusal, they are skipped at each run) and the audience is within the cap (`RECIPIENT_CAP`). The cap is `recipientCap`, 50
+  without one, held under the instance preference `report.groupRecipientCeiling` (Admin's, 200 by default). A change needs
+  the revision read (`expectedRevision`, `STALE_REVISION`). `pause#Schedule` resumes a group schedule only when its recipients
+  pass again.
+- **A run** opens a `moqui.report.ReportOccurrence` (a cron occurrence keyed by the schedule and the cron instant, or a Send
+  now), pins the owner, the schedule's revision and the definition's version, and for each recipient, just before their
+  message: checks the lease, the owner and the schedule again, computes the recipient's fingerprint again, and sends one
+  message to their one address, or records why not. Each recipient has a `moqui.report.ReportRecipientDelivery` row: `sent`
+  with its message id, `skipped` with a safe reason (`scope-differs`, `inactive`, `no-address`, `over-cap`,
+  `owner-unauthorized`, `delivery-blocked`, `schedule-changed`, `removed-audience`), `failed` (`transport-failure`,
+  `source-failure`) or `uncertain` (the transport does not know whether the message was accepted). One recipient's failure
+  does not stop the others. An occurrence that runs again (a run that ended before its schedule's last run time was
+  kept) sends to nobody whose delivery is `sent` or `uncertain`. One render serves every recipient of a locale (`renderCount`): they share the definition's
+  version and the fingerprint. A data export's message carries its files; a PDF's or a picture's also the dashboard inline.
+- **No row keeps a report.** An occurrence and its deliveries are evidence: who, when, which revision and version, what state
+  and which reason code. `find#ReportOccurrences` lists the viewer's own schedules' occurrences as status and counters; with
+  `received` the deliveries to the viewer; with `administrative`, for a holder of `ADMIN_TRANSFER_VIEW`, every owner's, without
+  titles. `get#ReportOccurrence` answers each recipient's outcome to the schedule's owner (and to that administrator), and to
+  a recipient their own delivery alone. `get#RecipientReport` renders a delivered report again as its recipient, and only
+  while their fingerprint is still the one the delivery was sent under (`scope-changed` otherwise); another user's delivery
+  id is refused as one that does not exist.
+- **Retry.** `retry#ReportRecipients` sends again to the failed deliveries named, for the schedule's owner, at the
+  occurrence's revision read, with each recipient checked again; a sent delivery is never replayed, and a schedule or
+  definition changed since the occurrence is refused (`DEFINITION_CHANGED`: send a new occurrence). An uncertain delivery is
+  never retried blind: `reconcile#ReportRecipient` records what a person found (sent, or failed and so retryable).
+- **Ownership.** A business schedule whose owner is disabled or gone pauses (`pausedReason` `owner-disabled`) at its next
+  run. `find#OwnedSchedules`, `pause#OwnedSchedules` and `transfer#DefinitionOwner` carry the owned-resource contract of
+  `org.moqui.admin.IdentityServices` for an account's lifecycle: the user's own, or another user's for a holder of
+  `REPORT_OWNER_CHANGE` (`ADMIN`'s). A transfer hands one schedule, with its definition and the definitions that references
+  which the leaving owner owns, to an active internal user who may store a schedule, reads every source and, for a group
+  schedule, may deliver to a group (`NEW_OWNER_REFUSED` otherwise). The schedule stays paused (`transfer-pending`) until the
+  new owner resumes it, which checks the recipients against the new owner's fingerprint; nothing is sent meanwhile, by Send
+  now or a retry either. The caller of these gains no report data.
+- **Screen schedules** (a `ScreenScheduled` with a `screenPath` and no report definition) render as their user. One that
+  names a `userGroupId` is sent to the group only when its screen path is registered as a `ReportLegacyAdapter` enumeration
+  (`enumCode` the path), then one message a member, and only to members the saved find is shared with; without a
+  registration the group is not sent to and the user's own delivery continues.
+
+The code is `crates/moqui-report/src/delivery.rs` (and `schedule.rs` for the run); the regression spec is
+`framework/test/ReportAudience.spec.js`.
+
 ## Regressions and incidents
 
 The `detect_Regressions_5min` job (`detect#Regressions`) compares each service version that served requests in the
@@ -684,7 +756,8 @@ ends. The services are `org.moqui.monitor.MonitorServices.list#RuntimeSettings`,
   filters are not translated automatically: write the dataset filters an organization needs, and grant business roles
   only the datasets they should read.
 - Alerts and scheduled reports run as their owner, whose access is checked at each run; recipients do not set what
-  the report may read.
+  the report may read. A schedule over business data goes only to recipients whose scope equals the owner's, one message
+  each ([Report delivery](#report-delivery)).
 - Queries have row, bucket and time limits, and a timeout. Exports and scheduled deliveries are logged to the
   `moqui.report.audit` target, so they show in Monitor Logs.
 - Regressions and incidents need `MONITOR_INCIDENT`; approving, refusing, completing, cancelling and reverting
@@ -735,6 +808,13 @@ take the index refresh interval to appear.
   fields (`organizationPartyId`, `event`, `recordType`, `recordId`), added to an existing table in place. From then on a panel
   over a business dataset that sums an amount across several currencies without grouping by the currency says so
   (`UNIT_MIXED`) instead of showing a number without a unit: group it by its unit field or filter it to one.
+- **Report delivery** (Insights P7): the entity check creates `moqui.report.ReportScheduleRecipient`, `ReportOccurrence` and
+  `ReportRecipientDelivery` and adds `deliveryMode`, `recipientCap`, `pausedReason` and `versionNumber` to `ScreenScheduled`.
+  Load `ReportSetupData.xml` (the occurrence and delivery states, `REPORT_OWNER_CHANGE`, the `ReportLegacyAdapter` type) and
+  `MonitoringSecurityData.xml` (`REPORT_DELIVERY_ADMIN`) again. From then on an existing report schedule whose definition
+  reads a business dataset sends each recipient their own message, and only to recipients whose scope equals its owner's;
+  and a screen schedule that names a user group stops sending to the group until its screen path is registered as a
+  `ReportLegacyAdapter` (its user's own delivery continues).
 - **Retired:** the ArtifactHit and ArtifactHitBin entities and their report view, the System Artifact Summary,
   Artifact Bins, Log Viewer and DataDocument Search screens, the hit REST resources, and the shipping of logs to
   `moqui_logs` and `moqui_http_log`. Startup pauses the old `clean_ArtifactData_daily`,
