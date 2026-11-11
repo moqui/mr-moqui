@@ -52,8 +52,8 @@
     const MAX_LIVE = 12;
     // A dropped connection is tried again after these waits, then each last one.
     const RETRY = [500, 1000, 2000, 5000, 10000];
-    // The close reasons after which the page does not attach again by itself.
-    const FINAL = ["opened elsewhere", "no such terminal session", "logged out", "the server is stopping"];
+    // A refusal of an attach to a command line or a shell, as the socket's close reason (crates/moqui-host/src/termws.rs).
+    const REFUSALS = { reauthRequired: "Confirm it is you to open this terminal from here.", notAvailable: "This terminal is not available here." };
     const SETTINGS_PREFERENCE = "TERMINAL_CONFIG";
     const DEFAULT_SETTINGS = { fontSize: 14, fontFamily: "", scrollback: 5000, copyOnSelect: false, pasteProtection: true, opensFirst: "" };
 
@@ -88,7 +88,7 @@
     let dark = null;
 
     function view(key) {
-        if (!state.views[key]) state.views[key] = { closed: false, reason: "", failed: "", taken: false, reconnecting: false };
+        if (!state.views[key]) state.views[key] = { closed: false, reason: "", failed: "", taken: false, reauth: false, reconnecting: false };
         return state.views[key];
     }
 
@@ -447,7 +447,7 @@
             const session = sessions.get(key);
             if (!session) return;
             const shown = view(key);
-            Object.assign(shown, { closed: false, reason: "", taken: false, reconnecting: false });
+            Object.assign(shown, { closed: false, reason: "", taken: false, reauth: false, reconnecting: false });
             clearTimeout(session.retryTimer);
             if (session.socket) {
                 session.socket.onclose = null;
@@ -496,7 +496,9 @@
                 }
                 shown.closed = true;
                 shown.taken = reason === "opened elsewhere";
-                shown.reason = shown.taken ? t("This terminal was opened in another window.") : reason || t("The terminal session ended.");
+                shown.reauth = reason === "reauthRequired";
+                shown.reason = shown.taken ? t("This terminal was opened in another window.")
+                    : REFUSALS[reason] ? t(REFUSALS[reason]) : reason || t("The terminal session ended.");
                 if (reason === "no such terminal session" && info) info.state = "ended";
             };
             session.socket = socket;
@@ -593,7 +595,7 @@
         props: { sessionKey: { type: String, required: true }, kind: { type: String, default: "" } },
         emits: ["focused"],
         data() {
-            return { views: state.views, labels: { reconnect: t("Reconnect"), takeBack: t("Take it back"), reconnecting: t("Connecting again…") } };
+            return { views: state.views, labels: { reconnect: t("Reconnect"), takeBack: t("Take it back"), confirm: t("Confirm it is you"), reconnecting: t("Connecting again…") } };
         },
         computed: {
             shown() {
@@ -635,7 +637,9 @@
                 this.$emit("focused");
             },
             reconnect() {
-                terminal.connect(this.sessionKey);
+                // a remote attach to a command line or a shell wants a recent sign-in first (§8.2)
+                if (this.shown.reauth && moqui.reauth) moqui.reauth.confirm().then(() => terminal.connect(this.sessionKey), () => {});
+                else terminal.connect(this.sessionKey);
             }
         },
         template:
@@ -645,7 +649,7 @@
             '<q-spinner size="1em"></q-spinner><span>{{labels.reconnecting}}</span></div>' +
             '<div v-else-if="shown.closed" class="m-terminal-closed row items-center no-wrap q-pa-sm q-gutter-sm" id="TerminalClosed">' +
             '<q-icon name="sym_o_link_off"></q-icon><span class="col">{{shown.reason}}</span>' +
-            '<q-btn dense unelevated no-caps color="primary" :label="shown.taken ? labels.takeBack : labels.reconnect" @click="reconnect"></q-btn></div>' +
+            '<q-btn dense unelevated no-caps color="primary" :label="shown.taken ? labels.takeBack : shown.reauth ? labels.confirm : labels.reconnect" @click="reconnect"></q-btn></div>' +
             '<div v-else-if="shown.failed" class="m-terminal-closed q-pa-sm text-negative">{{shown.failed}}</div>' +
             "</div>"
     };

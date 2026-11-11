@@ -117,14 +117,15 @@ pub mod usage;
     feature = "inbound-smtp",
     feature = "xmpp",
     feature = "edge",
-    feature = "sip"
+    feature = "sip",
+    all(feature = "devtools", feature = "tui")
 ))]
 mod worker;
 
 mod cluster_edge;
 mod cluster_notify;
-// The `moqui>` command line: SSH's admin shell.
-#[cfg(feature = "ssh")]
+// The `moqui>` command line: SSH's admin shell, and the browser terminal's on a dev instance (devtools).
+#[cfg(any(feature = "ssh", all(feature = "devtools", feature = "tui")))]
 mod command;
 mod tls_pin;
 

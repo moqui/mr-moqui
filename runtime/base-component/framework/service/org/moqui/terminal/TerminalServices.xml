@@ -75,4 +75,15 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="sessionId" required="true"/></in-parameters>
         <out-parameters><parameter name="reasonCode"/></out-parameters>
     </service>
+    <service verb="clean" noun="TerminalSessions" authenticate="anonymous-all">
+        <description>The job clean_TerminalSessions_daily: deletes the audit rows (moqui.terminal.TerminalSession) of
+            sessions opened more than daysToKeep days ago.</description>
+        <in-parameters><parameter name="daysToKeep" type="Integer" default-value="90"/></in-parameters>
+        <out-parameters><parameter name="deleted" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            const days = Math.max(1, Number(daysToKeep) || 90)
+            const cutoff = new Date(Date.now() - days * 86400000)
+            deleted = ec.entity.find('moqui.terminal.TerminalSession').condition('fromDate', '<', cutoff).disableAuthz().deleteAll()
+        ]]></script></actions>
+    </service>
 </services>

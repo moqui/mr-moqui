@@ -78,6 +78,19 @@ pub fn take_auth_failure() -> bool {
     AUTH_FAILED.with(|flag| flag.replace(false))
 }
 
+/// How a request reached this server, beside its peer's address (plans/Terminal-Fancy.md §8.2): the host sets it from
+/// the connection, and a client cannot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RequestVia {
+    /// A connection to one of this server's listeners.
+    #[default]
+    Direct,
+    /// The Desktop app's node in process: the app's own pages, with no network between.
+    InProcess,
+    /// The edge node's link: a client of the edge node, forwarded or tunneled (plans/Edge-Node.md §5.3).
+    Edge,
+}
+
 /// One HTTP request, already read off the socket.
 #[derive(Clone, Debug)]
 pub struct WebRequest {
@@ -96,6 +109,8 @@ pub struct WebRequest {
     pub peer_ip: String,
     pub session_cookie: Option<String>,
     pub visitor_cookie: Option<String>,
+    /// How the request reached this server.
+    pub via: RequestVia,
 }
 
 impl WebRequest {
@@ -113,6 +128,7 @@ impl WebRequest {
             peer_ip: String::new(),
             session_cookie: None,
             visitor_cookie: None,
+            via: RequestVia::Direct,
         }
     }
 
@@ -611,7 +627,7 @@ pub(crate) fn set_request(request: std::sync::Arc<WebRequest>, body: bytes::Byte
 }
 
 /// The request of this thread's web slot, None with no socket.
-pub(crate) fn current_request() -> Option<std::sync::Arc<WebRequest>> {
+pub fn current_request() -> Option<std::sync::Arc<WebRequest>> {
     WEB.with(|slot| slot.borrow().as_ref().and_then(|web| web.request.clone()))
 }
 

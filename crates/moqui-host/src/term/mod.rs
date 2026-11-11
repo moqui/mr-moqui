@@ -34,7 +34,10 @@ use moqui_lib::sync::lock;
 use moqui_tui::Theme;
 use tokio::sync::watch;
 
+pub(crate) mod access;
 mod apps;
+#[cfg(feature = "devtools")]
+mod audit;
 pub(crate) mod registry;
 mod ring;
 mod services;
@@ -201,6 +204,16 @@ pub(crate) enum Who {
     },
 }
 
+/// How an apps session takes its place in the `terminal` limits.
+pub(crate) enum Admission {
+    /// It takes one when it starts.
+    Take,
+    /// A kept session took it when it was opened, so a refusal was the opening's answer.
+    Held(SessionSlot),
+    /// The session it runs in holds the place: `apps` at a kept command line.
+    Counted,
+}
+
 /// What a session needs from its transport.
 pub(crate) struct Start {
     pub factory: Weak<ExecutionContextFactory>,
@@ -213,16 +226,15 @@ pub(crate) struct Start {
     pub label: String,
     /// The client's address, which a login in the dialog checks `ipAllowed` against; empty checks nothing.
     pub client_ip: String,
-    /// The place in [`Sessions`] already taken for this session (a kept session takes it when it is opened, so a
-    /// refusal is the opening's answer); `None` takes one when the session starts.
-    pub slot: Option<SessionSlot>,
+    /// The session's place in [`Sessions`].
+    pub admission: Admission,
     /// Notified when a client attaches again to a kept session: the session writes its whole screen again.
     pub redraw: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl Start {
-    /// The same start again with its own window watch: `apps` typed a second time at the SSH prompt.
-    #[cfg(feature = "ssh")]
+    /// The same start again with its own window watch: `apps` typed a second time at the prompt.
+    #[cfg(any(feature = "ssh", feature = "devtools"))]
     pub fn again(&self) -> Self {
         Self {
             factory: Weak::clone(&self.factory),
@@ -232,8 +244,11 @@ impl Start {
             size: self.size.clone(),
             label: self.label.clone(),
             client_ip: self.client_ip.clone(),
-            slot: None,
-            redraw: None,
+            admission: match self.admission {
+                Admission::Counted => Admission::Counted,
+                Admission::Take | Admission::Held(_) => Admission::Take,
+            },
+            redraw: self.redraw.clone(),
         }
     }
 }

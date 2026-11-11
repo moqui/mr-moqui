@@ -28,6 +28,7 @@ use moqui_lib::json::from_json;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 use serde_json::json;
 
+use super::access::{self, Facts};
 use super::registry::Registry;
 use super::session::Kind;
 use super::{terminal_number, DEFAULT_MAX, DEFAULT_MAX_PER_USER};
@@ -36,6 +37,7 @@ moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["tui"],
         register_services,
+        after_boot: warn_remote,
         before_shutdown: super::registry::before_shutdown,
         ..moqui_core::extension::Extension::EMPTY
     }
@@ -51,6 +53,18 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
 }
 
 type Out = Result<BTreeMap<String, Value>, LibError>;
+
+/// A server whose command line or host sessions are reachable from other machines says so at start (§8.2).
+fn warn_remote(factory: &ExecutionContextFactory) {
+    if !factory.conf_flag("terminal", "remote", false) || !moqui_core::devtools::is_dev_instance() {
+        return;
+    }
+    tracing::warn!(
+        "terminal remote is on: a user with SSH_SHELL may open the moqui> command line, and one with TERMINAL_HOST a \
+         shell as this server's operating system user, from other machines over HTTPS with a recent sign-in \
+         (plans/Terminal-Fancy.md §8.2)"
+    );
+}
 
 /// The refusal that tells nothing about why: a kind this server does not offer here, for this user, from this place.
 pub(crate) const NOT_AVAILABLE: &str = "notAvailable";
@@ -100,6 +114,11 @@ fn answer(key: &str, value: &serde_json::Value) -> Out {
     Ok(BTreeMap::from([(key.to_string(), from_json(value))]))
 }
 
+/// A permission of the signed-in user; a check that fails is a no.
+fn permitted(permission: &str) -> bool {
+    moqui_core::user::has_permission(permission).unwrap_or(false)
+}
+
 /// `get#TerminalOptions`: the kinds this user may open from here, and the limits.
 fn get_terminal_options(_parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     let _username = match username() {
@@ -108,8 +127,13 @@ fn get_terminal_options(_parameters: &BTreeMap<String, Value>, _facade: &EntityF
     };
     let factory = factory()?;
     let registry = Registry::of(&factory);
+    let facts = Facts::of_current_request().listing();
+    let kinds: Vec<&str> = access::offered(access::Switches::of(&factory), &facts, &permitted)
+        .into_iter()
+        .map(Kind::as_str)
+        .collect();
     let options = json!({
-        "kinds": ["apps"],
+        "kinds": kinds,
         "profiles": [],
         "maxSessions": terminal_number(&factory, "max-sessions", DEFAULT_MAX),
         "maxSessionsPerUser": terminal_number(&factory, "max-sessions-per-user", DEFAULT_MAX_PER_USER),
@@ -149,23 +173,68 @@ fn open_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityF
     let cols = dimension(parameters, "cols", 20, 80);
     let rows = dimension(parameters, "rows", 10, 24);
     let title = text(parameters, "title");
+    let facts = Facts::of_current_request();
+    if let Err(refusal) = access::check(
+        access::Switches::of(&factory),
+        kind,
+        &facts,
+        &permitted,
+        &moqui_core::user::recent_auth,
+    ) {
+        tracing::info!("terminal {} session refused for {username}: {refusal:?}", kind.as_str());
+        return refuse(refusal.code(), refusal.message());
+    }
     let opened = match kind {
         Kind::Apps => registry.open_apps(&factory, &username, &title, cols, rows),
-        Kind::Command | Kind::Host => return refuse(NOT_AVAILABLE, "That terminal is not available here"),
+        #[cfg(feature = "devtools")]
+        Kind::Command => open_command(&factory, &registry, &username, &title, cols, rows, &facts),
+        _ => return refuse(NOT_AVAILABLE, "That terminal is not available here"),
     };
     match opened {
         Ok(session) => {
-            tracing::info!(
-                "terminal session {} ({}) opened for {username}",
-                session.id,
-                kind.as_str()
-            );
+            // a command or host session's opening is logged with its audit row
+            if kind == Kind::Apps {
+                tracing::info!("terminal session {} (apps) opened for {username}", session.id);
+            }
             let mut out = BTreeMap::from([("sessionId".to_string(), Value::string(&session.id))]);
             out.insert("session".to_string(), from_json(&session.to_json()));
             Ok(out)
         }
         Err(reason) => refuse("limit", &reason),
     }
+}
+
+/// A command line, with its audit row.
+#[cfg(feature = "devtools")]
+fn open_command(
+    factory: &Arc<ExecutionContextFactory>,
+    registry: &Arc<Registry>,
+    username: &str,
+    title: &str,
+    cols: u16,
+    rows: u16,
+    facts: &Facts,
+) -> Result<Arc<super::session::Session>, String> {
+    let id = super::registry::new_id()?;
+    let spec = super::registry::CommandSpec {
+        id: id.clone(),
+        username: username.to_string(),
+        title: title.to_string(),
+        cols,
+        rows,
+        on_end: Some(super::audit::on_end(Arc::downgrade(factory), id.clone())),
+    };
+    let session = registry.open_command(factory, spec)?;
+    super::audit::record_open(&super::audit::Opened {
+        id: &id,
+        username,
+        kind: Kind::Command,
+        profile: "",
+        command_line: "",
+        directory: "",
+        facts,
+    });
+    Ok(session)
 }
 
 /// `update#TerminalSession`: the session's title, the user's own name for it (empty gives it back to the program).

@@ -10188,7 +10188,7 @@
                   ], 2))
             }
         } },
-        "m-terminal-view": { hash: "37302981", make: function (Vue) {
+        "m-terminal-view": { hash: "222aed4b", make: function (Vue) {
             const { createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode } = Vue
 
             return function render(_ctx, _cache) {
@@ -10227,7 +10227,7 @@
                           unelevated: "",
                           "no-caps": "",
                           color: "primary",
-                          label: _ctx.shown.taken ? _ctx.labels.takeBack : _ctx.labels.reconnect,
+                          label: _ctx.shown.taken ? _ctx.labels.takeBack : _ctx.shown.reauth ? _ctx.labels.confirm : _ctx.labels.reconnect,
                           onClick: _ctx.reconnect
                         }, null, 8, ["label", "onClick"])
                       ]))

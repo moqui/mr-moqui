@@ -261,6 +261,11 @@ impl Page {
     }
 
     fn call(&self, name: &str, body: Option<serde_json::Value>) -> serde_json::Value {
+        self.call_with(name, body, &[])
+    }
+
+    /// A call with more headers: a proxy's, to look like a request from another machine.
+    fn call_with(&self, name: &str, body: Option<serde_json::Value>, more: &[(&str, &str)]) -> serde_json::Value {
         let path = format!("/apps/Terminal/{name}");
         let (status, _, text) = match body {
             Some(mut body) => {
@@ -271,17 +276,28 @@ impl Page {
                         "POST",
                         &path,
                         &[
-                            ("Cookie", &self.cookie),
-                            ("Content-Type", "application/json"),
-                            ("X-CSRF-Token", &self.token),
-                        ],
+                            &[
+                                ("Cookie", self.cookie.as_str()),
+                                ("Content-Type", "application/json"),
+                                ("X-CSRF-Token", self.token.as_str()),
+                                // the page's own origin, as a browser sends it on a POST
+                                ("Origin", "http://localhost"),
+                            ][..],
+                            more,
+                        ]
+                        .concat(),
                         &body.to_string(),
                     ),
                 )
             }
             None => crate::common::exchange(
                 self.address,
-                &crate::common::http_request("GET", &path, &[("Cookie", &self.cookie)], ""),
+                &crate::common::http_request(
+                    "GET",
+                    &path,
+                    &[&[("Cookie", self.cookie.as_str())][..], more].concat(),
+                    "",
+                ),
             ),
         };
         assert_eq!(status, 200, "{name}: {text}");
@@ -291,8 +307,10 @@ impl Page {
     /// Attach a socket to the kept session `id`, as a page that drew `have` of its bytes.
     fn attach(&self, id: &str, have: Option<u64>) -> Ws {
         let uri: tungstenite::http::Uri = format!("ws://{}/termws?session={id}", self.address).parse().unwrap();
-        let (mut socket, response) =
-            connect(ClientRequestBuilder::new(uri).with_header("Cookie", &self.cookie)).unwrap();
+        let request = ClientRequestBuilder::new(uri)
+            .with_header("Cookie", &self.cookie)
+            .with_header("Origin", format!("http://{}", self.address));
+        let (mut socket, response) = connect(request).unwrap();
         assert_eq!(response.status().as_u16(), 101);
         if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
             stream.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
@@ -412,4 +430,101 @@ fn a_kept_session_outlives_its_socket_and_draws_again_on_reattach() {
         assert!(Instant::now() < deadline, "an ended apps session is not kept");
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// The `moqui>` command line in the browser (plans/Terminal-Fancy.md §6, §8): on a dev instance for a user with
+/// SSH_SHELL, from this machine; refused to a user without it and to a request through a proxy while remote is off; a
+/// window that comes back goes on with nothing repeated; an audit row is written.
+#[test]
+fn the_command_line_opens_on_a_dev_instance_for_a_user_with_ssh_shell() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let gate = crate::common::start_with_conf_properties(
+        "termws-command",
+        Some(PLAIN_USER),
+        "",
+        &[("instance_purpose", "dev")],
+    );
+    let address = gate.server.address();
+    let page = Page::signed_in(address, "john.doe");
+    let plain = Page::signed_in(address, "plain.user");
+    gate.server.factory().flush_sessions().unwrap();
+
+    let options = page.call("options", None);
+    assert!(
+        options["options"]["kinds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|kind| kind == "command"),
+        "{options}"
+    );
+    let refused = plain.call("open", Some(serde_json::json!({"kind": "command"})));
+    assert_eq!(refused["reasonCode"], "notAvailable", "{refused}");
+    assert_eq!(
+        plain.call("options", None)["options"]["kinds"],
+        serde_json::json!(["apps"])
+    );
+    // through a proxy is another machine, and remote is off
+    let proxied = page.call_with(
+        "open",
+        Some(serde_json::json!({"kind": "command"})),
+        &[("X-Forwarded-For", "203.0.113.5")],
+    );
+    assert_eq!(proxied["reasonCode"], "notAvailable", "{proxied}");
+
+    let opened = page.call(
+        "open",
+        Some(serde_json::json!({"kind": "command", "cols": 100, "rows": 30})),
+    );
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+    let mut socket = page.attach(&id, None);
+    let (_, first) = read_messages_until(&mut socket, "moqui> ").unwrap();
+    socket.send(Message::Binary(b"status\r".to_vec().into())).unwrap();
+    let (_, mut more) = read_messages_until(&mut socket, "user john.doe").unwrap();
+    // let the prompt come back before leaving
+    let after = String::from_utf8_lossy(&more)
+        .rsplit("user john.doe")
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    if !after.contains("moqui> ") {
+        more.extend(read_messages_until(&mut socket, "moqui> ").unwrap().1);
+    }
+    let drawn = (first.len() + more.len()) as u64;
+    drop(socket);
+
+    // back with all it drew: nothing is repeated, and the history has the line
+    let mut back = page.attach(&id, Some(drawn));
+    back.send(Message::Binary(b"\x1b[A".to_vec().into())).unwrap();
+    let (texts, bytes) = read_messages_until(&mut back, "status").unwrap();
+    assert!(texts[0].contains(r#""reset":false"#), "{texts:?}");
+    assert!(
+        !String::from_utf8_lossy(&bytes).contains("user john.doe"),
+        "repeated: {:?}",
+        String::from_utf8_lossy(&bytes)
+    );
+
+    // the audit row, read at the prompt itself
+    back.send(Message::Binary(
+        b"\x15entity moqui.terminal.TerminalSession\r".to_vec().into(),
+    ))
+    .unwrap();
+    let (_, listed) = read_messages_until(&mut back, &id).unwrap();
+    assert!(
+        String::from_utf8_lossy(&listed).contains("\"kind\": \"command\""),
+        "{}",
+        String::from_utf8_lossy(&listed)
+    );
+
+    // another user's attach finds nothing
+    let mut other = plain.attach(&id, None);
+    assert_eq!(
+        read_messages_until(&mut other, "never").unwrap_err(),
+        "no such terminal session"
+    );
 }

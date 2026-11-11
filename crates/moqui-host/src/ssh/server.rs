@@ -668,7 +668,7 @@ impl Connection {
                 size: pty.size.subscribe(),
                 label: format!("SSH apps from {}", self.peer),
                 client_ip: self.peer.ip().to_string(),
-                slot: None,
+                admission: crate::term::Admission::Take,
                 redraw: None,
             })
         }

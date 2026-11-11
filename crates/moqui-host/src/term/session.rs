@@ -200,6 +200,8 @@ pub(crate) struct Spec {
     pub replay: usize,
     /// The session's place in its limits, given back when it ends.
     pub slot: Option<SessionSlot>,
+    /// Called once the session ended, with its exit status and the reason (the audit row's end).
+    pub on_end: Option<Box<dyn FnOnce(u32, String) + Send>>,
 }
 
 pub(crate) fn now_millis() -> i64 {
@@ -328,6 +330,7 @@ pub(crate) fn spawn(registry: &Arc<Registry>, spec: Spec, program: Program) -> A
         detached_since: Some(Instant::now()),
         detached_for: spec.detached_for,
         _slot: spec.slot,
+        on_end: spec.on_end,
     };
     crate::edge::handle().spawn(pump.run(program, commands_in, input_in));
     session
@@ -365,6 +368,7 @@ struct Pump {
     detached_since: Option<Instant>,
     detached_for: Duration,
     _slot: Option<SessionSlot>,
+    on_end: Option<Box<dyn FnOnce(u32, String) + Send>>,
 }
 
 /// Write the client's input to the program until the session ends it or the program stops reading.
@@ -493,6 +497,9 @@ impl Pump {
             .update_info(|info| info.ended = Some((ended.status, reason.clone())));
         // Its place in the limits goes back now; an ended session is only listed.
         self._slot = None;
+        if let Some(on_end) = self.on_end.take() {
+            on_end(ended.status, reason.clone());
+        }
         if let Some(client) = self.client.take() {
             let _ = client.out.try_send(Out::Text(ended_message(ended.status, &reason)));
             let _ = client.out.try_send(Out::Close(reason.clone()));

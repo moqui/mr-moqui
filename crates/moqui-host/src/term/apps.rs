@@ -114,7 +114,8 @@ fn forward_log(events: &mpsc::Sender<SessionEvent>, username: &str) {
 /// What the session and its login dialog share with [`serve`].
 struct Gate {
     factory: Weak<ExecutionContextFactory>,
-    slot: Mutex<SessionSlot>,
+    /// The session's place in the limits; none when the session it runs in holds the place.
+    slot: Mutex<Option<SessionSlot>>,
     events: mpsc::Sender<SessionEvent>,
     label: String,
     logged_in: AtomicBool,
@@ -171,8 +172,13 @@ impl ScreenLink for GatedLink {
     fn login(&self, username: &str, password: &str, code: &str) -> Result<(), LinkError> {
         let gate = &self.gate;
         // The user's slot is taken before the password is checked, and given back when the login fails.
-        let before = lock(&gate.slot).username.clone();
-        lock(&gate.slot).assign(username).map_err(LinkError::Remote)?;
+        let before = lock(&gate.slot)
+            .as_ref()
+            .map(|slot| slot.username.clone())
+            .unwrap_or_default();
+        if let Some(slot) = lock(&gate.slot).as_mut() {
+            slot.assign(username).map_err(LinkError::Remote)?;
+        }
         match self.link.login(username, password, code) {
             Ok(()) => {
                 gate.logged_in.store(true, Ordering::Release);
@@ -188,7 +194,8 @@ impl ScreenLink for GatedLink {
                 Ok(())
             }
             Err(err) => {
-                if let Err(reason) = lock(&gate.slot).assign(&before) {
+                let back = lock(&gate.slot).as_mut().map_or(Ok(()), |slot| slot.assign(&before));
+                if let Err(reason) = back {
                     tracing::warn!(
                         "{}: the session slot did not go back to {before:?}: {reason}",
                         gate.label
@@ -242,7 +249,13 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
         Who::User(username) => username.clone(),
         Who::Login { .. } => String::new(),
     };
-    let slot = match start.slot.take().map_or_else(|| start.sessions.take(&username), Ok) {
+    let admission = std::mem::replace(&mut start.admission, super::Admission::Counted);
+    let slot = match admission {
+        super::Admission::Take => start.sessions.take(&username).map(Some),
+        super::Admission::Held(slot) => Ok(Some(slot)),
+        super::Admission::Counted => Ok(None),
+    };
+    let slot = match slot {
         Ok(slot) => slot,
         Err(reason) => {
             tracing::warn!("{label} refused: {reason}");

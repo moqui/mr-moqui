@@ -33,18 +33,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{RawQuery, State};
+use axum::extract::{ConnectInfo, FromRequestParts, RawQuery, State};
+use axum::http::request::Parts;
 use axum::http::HeaderMap;
 use axum::response::Response;
 use moqui_core::context::{ErrorKind, ExecutionContext, ExecutionContextFactory};
 use moqui_core::user::verify_session_cookie;
+use moqui_core::web::RequestVia;
 use moqui_lib::object::Value;
+use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::http::{plain, HttpState};
 use crate::notws::{origin_allowed, session_cookie, session_user, RequestSite};
+use crate::term::access::{self, Facts, Refusal};
 use crate::term::registry::Registry;
-use crate::term::session::Out;
+use crate::term::session::{Kind, Out};
 use crate::term::{Sessions, Start, Terminal, Who};
 
 type CoreError = moqui_core::context::Error;
@@ -61,10 +65,42 @@ const FIRST_SIZE_WAIT: Duration = Duration::from_secs(30);
 /// The pipe between the socket and the session, each way. A paste larger than this waits for the session to read it.
 const PIPE: usize = 1 << 20;
 
+/// What the upgrade request says about where it came from, for a command or host session (plans/Terminal-Fancy.md
+/// §8.2).
+pub(crate) struct UpgradeFacts(Facts);
+
+impl FromRequestParts<Arc<HttpState>> for UpgradeFacts {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, state: &Arc<HttpState>) -> Result<Self, Self::Rejection> {
+        let peer = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|info| info.0.ip());
+        let via = parts.extensions.get::<RequestVia>().copied().unwrap_or_default();
+        let https = parts.extensions.get::<crate::http::HttpsRequest>().is_some();
+        let conf = state.guard.conf();
+        let addressing = conf.addressing();
+        let client_ip = peer
+            .map(|peer| state.guard.client_of(peer, &parts.headers).to_string())
+            .unwrap_or_default();
+        let headers = &parts.headers;
+        Ok(Self(Facts::of(
+            peer,
+            via,
+            https,
+            addressing.header(),
+            client_ip,
+            |name| headers.get(name).and_then(|value| value.to_str().ok()),
+        )))
+    }
+}
+
 pub(crate) async fn upgrade(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     site: RequestSite,
+    UpgradeFacts(facts): UpgradeFacts,
     RawQuery(query): RawQuery,
     State(state): State<Arc<HttpState>>,
 ) -> Response {
@@ -106,6 +142,7 @@ pub(crate) async fn upgrade(
                 user_id,
                 username,
                 session,
+                facts,
             },
             shutdown,
         )
@@ -160,6 +197,8 @@ struct Opened {
     username: String,
     /// The kept session to attach to; none runs one that ends with the socket.
     session: Option<String>,
+    /// Where the socket came from, for a command or host session.
+    facts: Facts,
 }
 
 /// A resize message: `{"type":"resize","cols":N,"rows":N}`, at least 20 by 10 and at most 500 by 500.
@@ -189,6 +228,33 @@ async fn close(socket: &mut WebSocket, reason: &str) {
         })),
     )
     .await;
+}
+
+/// May the HTTP session `session_id`'s user attach to a session of `kind` from where `facts` say: its permission,
+/// and from anywhere but this machine a recent sign-in, read on the request pool with the HTTP session bound.
+async fn may_attach(
+    factory: &Arc<ExecutionContextFactory>,
+    session_id: &str,
+    kind: Kind,
+    facts: Facts,
+) -> Result<(), Refusal> {
+    let session_id = session_id.to_string();
+    let https = facts.https;
+    let checked = crate::worker::on_pool(&Arc::downgrade(factory), move |factory| {
+        let strong = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
+            .ok_or_else(|| CoreError::new("no execution context is entered"))?;
+        let _bound = moqui_core::user::session::bind_id(&strong, Some(&session_id), https)?;
+        let permitted = |permission: &str| moqui_core::user::has_permission(permission).unwrap_or(false);
+        Ok(access::check(
+            access::Switches::of(factory),
+            kind,
+            &facts,
+            &permitted,
+            &moqui_core::user::recent_auth,
+        ))
+    })
+    .await;
+    checked.unwrap_or(Err(Refusal::NotAvailable))
 }
 
 /// An attach message: `{"type":"attach","cols","rows","have"}`, or a first `resize`, taken as an attach of a page that
@@ -254,6 +320,7 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
         user_id,
         username,
         session,
+        facts,
     } = opened;
     let id = session.unwrap_or_default();
     let label = format!("browser terminal {id} of {username}");
@@ -262,6 +329,14 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
         close(&mut socket, "no such terminal session").await;
         return;
     };
+    // an attach to a running command line or shell is worth as much as a new one: asked again (§8.2)
+    if kept.kind != Kind::Apps {
+        if let Err(refusal) = may_attach(&factory, &session_id, kept.kind, facts).await {
+            tracing::info!("{label}: attach refused: {refusal:?}");
+            close(&mut socket, refusal.code()).await;
+            return;
+        }
+    }
     let first = match first_message(&mut socket, &mut shutdown, parse_attach).await {
         Ok(Some(first)) => first,
         Ok(None) => {
@@ -406,7 +481,7 @@ async fn run_ephemeral(mut socket: WebSocket, opened: Opened, mut shutdown: toki
         label: label.clone(),
         // The user logged in over HTTP, so this session has no login dialog to check an address for.
         client_ip: String::new(),
-        slot: None,
+        admission: crate::term::Admission::Take,
         redraw: None,
     };
     let session = tokio::spawn(async move { crate::term::serve(&mut theirs, &mut start).await });

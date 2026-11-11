@@ -789,6 +789,7 @@ async fn a_websocket_over_extended_connect_is_checked_as_a_get() {
         secure: true,
         https: true,
         exporter: None,
+        via: moqui_core::web::RequestVia::Direct,
     };
     let connect = || {
         axum::http::Request::builder()

@@ -187,6 +187,7 @@ impl InProcess {
             closing: live.closing,
             exporter: None,
             hold: None,
+            via: moqui_core::web::RequestVia::InProcess,
         };
         live.handle.spawn(run_connection(server, false, Http::One, serving));
         let (outbox, mut queued) = tokio::sync::mpsc::unbounded_channel::<tungstenite::Message>();
@@ -284,6 +285,7 @@ fn local_peer() -> Peer {
         secure: false,
         https: false,
         exporter: None,
+        via: moqui_core::web::RequestVia::InProcess,
     }
 }
 
