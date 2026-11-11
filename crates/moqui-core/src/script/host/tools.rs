@@ -96,9 +96,67 @@ macro_rules! tools_js {
             if (node.xml == null && node.parsed === true) node.xml = writeXml(node, 0);
             return node.xml || "";
         };
+        // Java's MNode, the rest: the changes forget the text the node was parsed from, so toString writes it again
+        const changed = () => { node.xml = null; node.parsed = true; };
+        node.getName = () => node.name;
+        node.getText = () => node.text ?? null;
+        node.setText = (text) => { node.text = text == null ? null : String(text); changed(); return node; };
+        node.getAttributes = () => node.attributes;
+        node.setAttribute = (name, value) => {
+            if (value == null) delete node.attributes[name]; else node.attributes[name] = String(value);
+            changed();
+            return node;
+        };
+        // append(name, attributes) makes the child and gives it; append(node) adds a node (a copy keeps its own parent's)
+        node.append = (nameOrNode, attributes) => {
+            const kid = nameOrNode !== null && typeof nameOrNode === "object" ? nameOrNode
+                : wrap("Node", { name: String(nameOrNode), attributes: Object.assign({}, attributes || {}), children: [], parsed: true });
+            all.push(kid);
+            changed();
+            return kid;
+        };
+        // remove(name) the children of that name, or remove(index); whether any went
+        node.remove = (which) => {
+            const before = all.length;
+            if (typeof which === "number") all.splice(which, 1);
+            else for (let i = all.length - 1; i >= 0; i--) if (all[i].name === which) all.splice(i, 1);
+            if (all.length !== before) changed();
+            return all.length !== before;
+        };
+        node.deepCopy = () => wrap("Node", { name: node.name, attributes: Object.assign({}, node.attributes), text: node.text ?? null,
+            children: all.map((kid) => kid.deepCopy()), parsed: true });
+        // the nodes below this one the function holds for, children before or after their own children
+        node.depthFirst = (matches) => {
+            const found = [];
+            for (const kid of all) { found.push(...kid.depthFirst(matches)); if (matches(kid)) found.push(kid); }
+            return found;
+        };
+        node.breadthFirst = (matches) => {
+            const found = [];
+            let level = all.slice();
+            while (level.length) {
+                found.push(...level.filter((kid) => matches(kid)));
+                level = level.flatMap((kid) => kid.childNodes);
+            }
+            return found;
+        };
+        // descendants(name) the nodes of that name at any depth; descendants(names) an object of them by name
+        node.descendants = (names) => {
+            if (typeof names === "string") return node.breadthFirst((kid) => kid.name === names);
+            const wanted = Array.from(names || []), found = {};
+            for (const name of wanted) found[name] = [];
+            for (const kid of node.breadthFirst((kid) => wanted.includes(kid.name))) found[kid.name].push(kid);
+            return found;
+        };
         return node;
     };
     const makeNode = (data) => wrap("Node", data);
+    // Java's MNode statics: parseText(location, text), parse(location) of a resource location, and a new node
+    globalThis.MNode = {
+        parseText: (location, text) => makeNode(host.parseNode(String(text))),
+        parse: (location) => makeNode(host.parseNode(String(host.resourceText(String(location)) ?? ""))),
+        make: (name, attributes) => wrap("Node", { name: String(name), attributes: Object.assign({}, attributes || {}), children: [], parsed: true })
+    };
     // a rule or tree that a screen shows with `toString()`
     wrappers.Text = (data) => Object.assign(data, { toString: () => data.text || "" });
     const makeText = (text) => wrap("Text", { text: text });

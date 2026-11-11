@@ -55,6 +55,7 @@ mod transaction;
 pub(crate) mod upload;
 mod urls;
 mod user;
+mod utilities;
 mod web;
 
 pub(crate) use l10n::rounding_strategy_named;

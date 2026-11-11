@@ -5,8 +5,6 @@
 declare const ec: MoquiServerEc;
 /** The context stack. A screen script can narrow it: `context as MoquiScreenContexts["component://..."]`. */
 declare const context: MoquiContext;
-/** The result map of a service's actions. */
-declare let result: MoquiMap;
 /** The screen renderer. Its methods work only while a server screen render is on the stack. */
 declare const sri: MoquiScreenRenderer;
 
@@ -15,6 +13,12 @@ declare const CollectionUtilities: MoquiCollectionUtilities;
 declare const StringUtilities: MoquiStringUtilities;
 declare const WebUtilities: MoquiWebUtilities;
 declare const System: { getProperty(name: string): string | null };
+/** Java's `MNode` statics: an XML text or resource parsed, or a new element. */
+declare const MNode: {
+    parseText(location: string | null, text: string): MoquiNode;
+    parse(location: string): MoquiNode;
+    make(name: string, attributes?: Record<string, string> | null): MoquiNode;
+};
 
 /** The bytes of a resource or an uploaded file, as `openStream()` and `getInputStream()` of a location reference
  * return them: read whole, a window from an offset, or written to a location as they are read. */

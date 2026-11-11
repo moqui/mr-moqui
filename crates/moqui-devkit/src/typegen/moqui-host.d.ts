@@ -1587,15 +1587,70 @@ interface MoquiScreenRenderer {
 // ---- statics the generated script calls ----
 
 /**
- * Bound once per runtime and returned by the bare-name proxy when the context has no such key. This port binds no
- * method on `ObjectUtilities` yet. `ScheduledJobRunner.getCronDescription` is not added (Server host methods, slice 2).
+ * Java's helper classes, bound once per runtime, frozen, and read by their bare names when the context has no such
+ * key (docs/dev/JS-Globals.md).
  */
-interface MoquiObjectUtilities {}
+interface MoquiObjectUtilities {
+    /** Null, empty text, an empty list, set or map. */
+    isEmpty(value: unknown): boolean;
+    compare(field: unknown, operator: string, value?: unknown, toField?: unknown, format?: string | null, type?: string | null): boolean;
+    basicConvert(value: unknown, type: string): unknown;
+    /** SQL LIKE: `%` any run and `_` any one character. */
+    compareLike(value: unknown, pattern: string): boolean;
+    countChars(text: string, digits: boolean, letters: boolean, other: boolean): number;
+    toPlainString(value: unknown): string | null;
+    addNumbers(left: number | Decimal | null, right: number | Decimal | null): number | Decimal | null;
+}
+
+/** An XML element, as Java's `MNode`: from `MNode.parseText`, `MNode.parse`, `MNode.make` or a host call. */
+interface MoquiNode {
+    name: string;
+    attributes: Record<string, string>;
+    text?: string | null;
+    childNodes: MoquiNode[];
+    getName(): string;
+    getText(): string | null;
+    setText(text: string | null): MoquiNode;
+    attribute(name: string): string | null;
+    getAttributes(): Record<string, string>;
+    setAttribute(name: string, value: string | null): MoquiNode;
+    children(name?: string | null): MoquiNode[];
+    first(name?: string | null): MoquiNode | null;
+    hasChild(name: string): boolean;
+    /** `append(name, attributes)` makes the child and gives it; `append(node)` adds a node. */
+    append(nameOrNode: string | MoquiNode, attributes?: Record<string, string> | null): MoquiNode;
+    /** The children of that name, or the one at an index; whether any went. */
+    remove(nameOrIndex: string | number): boolean;
+    deepCopy(): MoquiNode;
+    depthFirst(matches: (node: MoquiNode) => boolean): MoquiNode[];
+    breadthFirst(matches: (node: MoquiNode) => boolean): MoquiNode[];
+    descendants(name: string): MoquiNode[];
+    descendants(names: string[] | Set<string>): Record<string, MoquiNode[]>;
+    toString(): string;
+}
 
 interface MoquiCollectionUtilities {
     /** Sets `{list}Count`, `{list}PageIndex`, `{list}PageSize`, `{list}PageMaxIndex`, `{list}PageRangeLow`, `{list}PageRangeHigh` on `context`. */
     paginateParameters(count: number, listName: string, context: MoquiMap): MoquiMap;
     getMapArrayListValues(list: MoquiMap[], field: string, skipNull: boolean): unknown[];
+    /** The list ordered in place by the fields, `-` for descending. */
+    orderMapList(list: MoquiMap[] | EntityList, fields: string[]): void;
+    /** The list keeps the maps that match every value, or with `exclude` drops them. */
+    filterMapList(list: MoquiMap[] | EntityList, values: MoquiMap, exclude?: boolean): void;
+    filterMapListByDate(list: MoquiMap[] | EntityList, fromField: string, thruField: string, moment?: TimestampInput | null, ignoreIfEmpty?: boolean): void;
+    addToBigDecimalInMap(key: string, value: DecimalInput | null, map: MoquiMap): void;
+    addToListInMap(key: string, value: unknown, map: MoquiMap): void;
+    addToSetInMap(key: string, value: unknown, map: MoquiMap): void;
+    addToMapInMap(keyOuter: string, keyInner: string, value: unknown, map: MoquiMap): void;
+    addToBigDecimalInMapInMap(keyOuter: string, keyInner: string, value: DecimalInput | null, map: MoquiMap): void;
+    /** The null entries removed, in nested maps and lists too; the map itself. */
+    removeNullsFromMap<T extends MoquiMap>(map: T): T;
+    /** The overrides put into base, nested maps merged and lists joined. */
+    mergeNestedMap(base: MoquiMap, overrides: MoquiMap, overrideEmpty?: boolean): void;
+    toHashMap(map: MoquiMap | null): MoquiMap;
+    mapMatchesFields(map: MoquiMap | null, fields: MoquiMap): boolean;
+    findFieldNestedMap(key: string, map: unknown): unknown;
+    flattenNestedMap(map: MoquiMap): MoquiMap;
 }
 
 interface MoquiStringUtilities {
@@ -1606,6 +1661,24 @@ interface MoquiStringUtilities {
     base64Encode(value: string | Uint8Array | ArrayBuffer | null): string;
     /** The bytes of standard base64 text; white space is skipped and the padding may be left out. Throws on other text. */
     base64Decode(text: string): Uint8Array;
+    camelCaseToPretty(text: string): string;
+    prettyToCamelCase(text: string, firstUpper?: boolean): string;
+    /** The whole number with zeros before it up to the length. */
+    paddedNumber(number: number, desiredLength: number): string;
+    /** Cut or padded to the length: `paddedString(input, length, rightPad)` or `paddedString(input, length, padChar, rightPad)`. */
+    paddedString(input: string | null, desiredLength: number, padCharOrRightPad?: string | boolean, rightPad?: boolean): string;
+    removeNonAlphaNumeric(text: string | null): string | null;
+    replaceNonAlphaNumeric(text: string | null, replacement: string): string | null;
+    isAlphaNumeric(text: string, also?: string | null): boolean;
+    findFirstNumber(text: string | null): string | null;
+    getRandomString(length: number): string;
+    pathStringToList(path: string, skipSegments?: number): string[];
+    decodeFromXml(text: string | null): string | null;
+    escapeElasticQueryString(query: string): string;
+    toStringCleanBom(text: string): string;
+    elasticQueryAutoWildcard(query: string, allWords?: boolean): string;
+    numberToWords(number: number, capitalize?: boolean): string;
+    numberToWordsWithDecimal(number: unknown): string;
 }
 
 interface MoquiWebUtilities {
@@ -1616,6 +1689,10 @@ interface MoquiWebUtilities {
     isSafeSinglePathSegment(segment: string): boolean;
     isSameOriginRedirect(url: string, host?: string | null): boolean;
     lastPathSegment(path: string): string;
+    /** The response text of a POST of the body, or of a GET with none. */
+    simpleHttpStringRequest(location: string, requestBody?: string | null, contentType?: string | null): string | null;
+    /** The response text of a POST of the parameters as a form. */
+    simpleHttpMapRequest(location: string, parameters: MoquiMap): string | null;
 }
 
 // ---- the unwrapped projection ----

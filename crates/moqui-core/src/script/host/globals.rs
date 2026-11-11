@@ -131,8 +131,12 @@ const GLOBALS_JS: &str = concat!(
     const resource = ec.resource || (ec.resource = {});
     for (const name of ["code128Svg", "barcodeSvg", "parseGs1", "isValidGs1CheckDigit", "template",
         "getTemplateRendererExtensionSet"]) resource[name] = hidden[name];
-    // QuickJS's `ObjectUtilities` has no functions; a whole script reads it (`typeof ObjectUtilities`)
+    // filled below with Java's `ObjectUtilities` statics
     helpers.ObjectUtilities = {};
+    // the rest of the Java helper classes' statics (`utilities.rs`)
+    ("#,
+    super::utilities::utilities_js!(),
+    r#")(global, helpers);
     // the last shim to fill them (`oxide::engine`, `finish_start`), so nothing writes them after this
     ("#,
     freeze_helpers_js!(),

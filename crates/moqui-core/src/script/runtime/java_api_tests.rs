@@ -554,3 +554,67 @@ fn service_call_names_and_rest_client_members() {
     );
     clear_context_stack();
 }
+
+#[test]
+fn utility_classes_have_javas_statics() {
+    clear_context_stack();
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    holds(
+        r#"StringUtilities.paddedNumber(42, 5) === "00042" && StringUtilities.paddedString("ab", 4, true) === "ab  "
+            && StringUtilities.paddedString("ab", 4, "*", false) === "**ab" && StringUtilities.paddedString("abcdef", 3, true) === "abc"
+            && StringUtilities.removeNonAlphaNumeric("a-b_c 1!") === "abc1" && StringUtilities.replaceNonAlphaNumeric("a-b", "_") === "a_b"
+            && StringUtilities.isAlphaNumeric("ab_1", "_") && !StringUtilities.isAlphaNumeric("ab-1", "_")
+            && StringUtilities.findFirstNumber("order 123 of 9") === "123" && StringUtilities.getRandomString(12).length === 12
+            && StringUtilities.pathStringToList("/a/b/c", 1).join() === "b,c"
+            && StringUtilities.decodeFromXml("a &lt;b&gt; &amp; c") === "a <b> & c"
+            && StringUtilities.escapeElasticQueryString("a:b") === "a\\:b""#,
+    );
+    holds(
+        r#"ObjectUtilities.isEmpty(null) && ObjectUtilities.isEmpty("") && ObjectUtilities.isEmpty([]) && ObjectUtilities.isEmpty({})
+            && !ObjectUtilities.isEmpty(0) && !ObjectUtilities.isEmpty("x") && ObjectUtilities.compare(2, "greater", 1) === true
+            && ObjectUtilities.compareLike("Hello World", "Hel%Wor_d") && !ObjectUtilities.compareLike("Hello", "h%")
+            && ObjectUtilities.countChars("ab12-", true, false, false) === 2 && ObjectUtilities.countChars("ab12-", false, true, true) === 3
+            && ObjectUtilities.addNumbers(1, 2) === 3 && ObjectUtilities.addNumbers(toDecimal("1.5"), 2).eq(toDecimal("3.5"))"#,
+    );
+    holds(
+        r#"(function () {
+            const map = {};
+            CollectionUtilities.addToBigDecimalInMap("total", 2, map);
+            CollectionUtilities.addToBigDecimalInMap("total", toDecimal("1.5"), map);
+            CollectionUtilities.addToListInMap("items", "a", map);
+            CollectionUtilities.addToListInMap("items", "b", map);
+            CollectionUtilities.addToMapInMap("outer", "inner", 1, map);
+            const base = {a: 1, nested: {x: 1}, list: [1], gone: null};
+            CollectionUtilities.mergeNestedMap(base, {b: 2, nested: {y: 2}, list: [2]}, false);
+            CollectionUtilities.removeNullsFromMap(base);
+            const rows = [{n: 2}, {n: 1}];
+            CollectionUtilities.orderMapList(rows, ["n"]);
+            CollectionUtilities.filterMapList(rows, {n: 1});
+            return map.total.eq(toDecimal("3.5")) && map.items.join() === "a,b" && map.outer.inner === 1
+                && base.b === 2 && base.nested.x === 1 && base.nested.y === 2 && base.list.join() === "1,2" && !("gone" in base)
+                && rows.length === 1 && rows[0].n === 1
+                && CollectionUtilities.mapMatchesFields({a: 1, b: 2}, {a: 1}) && !CollectionUtilities.mapMatchesFields({a: 1}, {a: 2})
+                && CollectionUtilities.findFieldNestedMap("deep", {a: [{b: {deep: 7}}]}) === 7;
+        })()"#,
+    );
+    holds(
+        r#"typeof WebUtilities.simpleHttpStringRequest === "function" && typeof WebUtilities.simpleHttpMapRequest === "function""#,
+    );
+    holds(
+        r#"(function () {
+            const root = MNode.parseText("test", '<root kind="a"><item name="one"/><group><item name="two"/></group></root>');
+            const made = root.append("item", {name: "three"});
+            root.setAttribute("kind", "b");
+            const copy = root.deepCopy();
+            copy.remove("group");
+            return root.getName() === "root" && made.attribute("name") === "three" && root.children("item").length === 2
+                && root.descendants("item").length === 3 && root.depthFirst((node) => node.name === "item").length === 3
+                && root.breadthFirst((node) => node.attribute("name") === "two").length === 1
+                && String(root).includes('kind="b"') && String(root).includes('name="three"')
+                && copy.children().length === 2 && root.children().length === 3
+                && MNode.make("x", {a: "1"}).attribute("a") === "1";
+        })()"#,
+    );
+    clear_context_stack();
+}
