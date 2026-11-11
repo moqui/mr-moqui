@@ -96,6 +96,39 @@ whether Dev AIDE is mounted (`devMounted`): then an entity's and a service's pag
 and alert rule templates: the `monitor-*` dashboards of Monitor, and in the System folder `system-home`,
 `system-db-pool` and the disk, memory, CPU and certificate alert rules.
 
+### Mounting the administration screens
+
+Another app shows System's administration screens under its own root, as IronStone Admin does
+([plans/Admin-Screens-Down.md](../../../plans/Admin-Screens-Down.md)). Its root sets `adminMount` in its
+`always-actions`, so that the transitions read it too; `System.xml` sets it to null, so a request parameter never supplies
+one. The map is data only, never authority:
+
+| Key | What it does |
+|---|---|
+| `routes` | `{key: {url, idParameter, parameters}}`: where a link to a record goes under the mount. The keys are the registrations' own (a recovery descriptor's or a transfer target's `ownerRoute`, a provider's `linkKey`) and the framework's (`user`, ...), which default to the System screens beside the one shown; a mount adds its apps' routes and may replace a framework one (`null` removes it). A key with no route is no link |
+| `hide` | The part keys the mount leaves out |
+
+`template/AdminMount.js` answers where a screen stands: `state()` gives `{mounted, raw, routes, hidden}` in a screen's
+actions, and `link(routes, key, id)` one record's `{url, parameters}`. `raw` is whether the instance administrator's parts
+are shown: what only System does (any field of a record, records no registration covers, artifact authorization). They
+are never shown under a mount, and with none only to a user who opens System by their own grant, asked of the user's
+own authorization records (`ec.artifactExecution.isPermittedOwn`), since an app's inheritable always-allow on its area
+answers the stack's question for everyone and passes the transitions and entity operations below it too.
+
+So an app reuses a System screen in one of three ways:
+
+- **By location**, a `subscreens-item` of its area pointing at the System screen, only when no grant of the app names
+  the screen, the screen has no raw transition and the app adds nothing.
+- **A wrapper** at the app's own location: `include-screen share-scope="true"` and one `transition-include` for each
+  transition the app takes in. A raw transition that is not taken in does not exist on the app's route. This is the
+  way for a screen with raw parts and for one a grant of the app names.
+- **A screen of the app's own**, with its own actions and transitions and the System screen's named sections by
+  `section-include`, where the app adds data of its own (an organization scope).
+
+Every transition of a raw part carries `AdminMount.js`'s `raw()` as its `condition`. No group of the app is granted a
+System screen's location: a grant there would open it under `/apps/system` too. The regression spec is
+`test/AdminMounts.spec.js`, over the test mount `test/screen/AdminMount.xml`.
+
 ## Tests
 
 ```sh

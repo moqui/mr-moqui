@@ -457,6 +457,7 @@ context.
 | `pop()` | Removes the top frame |
 | `getStackNameString()` | The artifact names on the stack, top first, joined with `, ` |
 | `isPermitted(name, artifactType, action)` | Whether the user may reach one artifact |
+| `isPermittedOwn(name, artifactType, action)` | The same question of the user's own authorization records: nothing is inherited from the frames on the stack, so a screen mounted under another app's inheritable always-allow can ask whether the user holds an artifact's grant themselves (the System screens' instance administrator sections, `tools/template/AdminMount.js`) |
 | `disableAuthz()` | Authorization is not checked in this execution context until `enableAuthz()`. Returns whether it was already disabled |
 | `enableAuthz()` | Checks authorization again |
 | `authzDisabled()` | Whether authorization is disabled, by a script or by the caller (a call with `disableAuthz()`, a job); changes nothing |
@@ -1307,7 +1308,7 @@ Members Moqui Java does not have.
 | `ec.user` | `machineTimeZone`, `passwordRules`, `loginRules`, `endVisit`, `hashPassword`, `passwordsMatch`, `singleUseCodeHash`, `randomCode`, `randomString`, `totpSecret`, `totpCodeValid`, `totpUri`, `timestampMillis` |
 | `ec.l10n` | `getAvailableTimeZones`, `getAvailableLocales`, the time zone argument of `format` |
 | `ec.resource` | `makeChangeSet`, `putContent`, `getLastChange`, `getChildChanges`, `getChangeLog`, `getTreeSize`, `restoreVersion`, `getVersionBytes`, `textDiff`, `readLines`, `digest`, `digestText`, `gunzip`, `extractArchive`, `writeZip`, `writeTarGz`, `extractText`, `readSheetPreview`, `makeThumbnail`, `makePdfPreview`, `imageAvailable`, `makeGrant`, `checkGrant`, `runTokenCommand`, `markdownHtml`, `code128Svg`, `barcodeSvg`, `parseGs1`, `isValidGs1CheckDigit`, `theme`; version notes on a reference's `putText`, `putBytes` and `putStream`, and `getVersionDiff` |
-| `ec.artifactExecution` | `runAsSystem`, `runAsUser`, `isPermitted` |
+| `ec.artifactExecution` | `runAsSystem`, `runAsUser`, `isPermitted`, `isPermittedOwn` |
 | `ec.entity` | `checkTables`, `runSqlStatement`, `testConfConnection`, `runSqlCountConf`, `runSqlUpdateConf`; EntityFind `forNoKeyUpdate`, `purge`; the `forNoKeyUpdate` argument of `findRelated` and `findRelatedOne`; EntityValue `getEntityNamePretty`, and fields and relationships as properties; EntityList as an array with the Array methods |
 | `ec.service` | `throwOnError`, `nextCronExecution`, `restApi.resolveService`, `passAuthority`, `ssoAvailable`; RestClient `bodyBytes`, `multipart`, `streamFrom`, `followRedirects`, `denyInternal`, `send`; response `bytes` |
 | `ec.screen` | `render(options)`, `renderBytes`, `isRenderModeBinary`, `staticReport`, `getTransitionInfo`; a screen test's `header`, `clientModes`, `withStaticData`, and a result's `status`, `headers`, `header` |

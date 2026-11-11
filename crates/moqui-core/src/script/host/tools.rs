@@ -913,6 +913,8 @@ macro_rules! tools_js {
 
     // `ScreenUrlInfo.isPermitted(ec, null, AUTHZA_ALL)` as a check of one artifact: the screen, the type, the action.
     ec.artifactExecution = { isPermitted: host.isPermitted, getFindFiltersForUser: host.getFindFiltersForUser,
+        // the same question of the user's own authorization records, with nothing inherited from the stack
+        isPermittedOwn: host.isPermittedOwn,
         // Java's: disable returns whether entity ECA was already disabled, and the caller that found it so leaves it so
         disableEntityEca: host.disableEntityEca, enableEntityEca: host.enableEntityEca,
         entityEcaDisabled: host.entityEcaDisabled, getStackNameString: host.stackNameString,
@@ -1214,6 +1216,7 @@ static METHODS: &[Method] = &[
     method!("tools", "transitionInfo", [Text, Text, Text, Text], transition_info),
     method!("tools", "valuesFromPlainMap", [Value, Text], values_from_plain_map),
     method!("tools", "isPermitted", [Text, OptText, OptText], is_permitted),
+    method!("tools", "isPermittedOwn", [Text, OptText, OptText], is_permitted_own),
     method!("tools", "disableEntityEca", [], disable_entity_eca),
     method!("tools", "enableEntityEca", [], enable_entity_eca),
     method!("tools", "artifactStack", [], None, leaf, artifact_stack),
@@ -3087,6 +3090,20 @@ fn is_permitted(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::from(
         crate::user::authorize(&artifact_type, &name, &action).is_ok(),
     ))
+}
+
+/// Whether the user's own authorization records allow `action` on the artifact, with nothing inherited from the
+/// frames on the stack ([`crate::user::permitted_own`]): what a screen mounted under another app's inheritable
+/// always-allow asks before it shows a part that is another artifact's to grant.
+fn is_permitted_own(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.text_or_empty(0);
+    let artifact_type = call.text(1).map(str::to_string);
+    let action = call.text(2).map(str::to_string);
+    let artifact_type = artifact_type.unwrap_or_else(|| "AT_XML_SCREEN".to_string());
+    let action = action.unwrap_or_else(|| "view".to_string());
+    let permitted =
+        crate::user::permitted_own(&artifact_type, &name, &action).map_err(|err| HostError::message(err.message()))?;
+    Ok(Ret::from(permitted))
 }
 
 /// `getFindFiltersForUser(entityName)`: the `EntityFilter` records that apply to a find on the entity now, or null

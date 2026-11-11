@@ -433,7 +433,9 @@ A notification itself is sent with `ec.makeNotificationMessage()` ([JS-Core-API]
 
 ## Administration: `org.moqui.admin`
 
-What the Admin app's screens call: access (groups, memberships, grants), configuration (instance settings, translations, identity providers, connections, protocols), identity (sessions and credentials of an account), operations (jobs, system messages, mail outcomes, notification topics) and the AI Constitution. Inline actions over `.js` modules (`Access.js`, `ConfigurationSettings.js`, `OperationJobs.js`, ...); the Constitution services are Rust (`llm`). The write services take the `expectedRevision` that the read gave and answer `applied`, `reasonCode` and `reason` instead of failing.
+What the System app's administration screens and the apps that mount them (IronStone Admin) call: access (groups, memberships, grants), configuration (instance settings, translations, identity providers, connections, protocols), identity (sessions and credentials of an account), operations (jobs, system messages, mail outcomes, notification topics) and the AI Constitution. Inline actions over `.js` modules (`Access.js`, `ConfigurationSettings.js`, `OperationJobs.js`, ...); the Constitution services are Rust (`llm`). The write services take the `expectedRevision` that the read gave and answer `applied`, `reasonCode` and `reason` instead of failing.
+
+A screen reads through `AdminCalls.js` beside them: `ec.resource.script('component://framework/service/org/moqui/admin/AdminCalls.js').read(serviceName, parameters, fallback)` calls the service in a transaction and an error frame of its own and answers `{out, failure}`, `failure` being the refusal's own reason ("CODE: words", or "PERMISSION is required") or the fallback text, never an exception's text. A `service-call` with `ignore-error="true"` clears the message, so a screen could not tell a refusal from an empty list.
 
 | Service | |
 |---|---|

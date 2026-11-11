@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- The AdminMounts spec's app root (test only, never mounted): an app that shows System's administration screens under its
+    own root, as IronStone Admin does (README, "Mounting the administration screens"). Its adminMount sends a user's link to
+    its own screen, adds a route of its own and leaves one part out. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Admin mount">
+    <always-actions>
+        <set field="adminMount" from="{routes:{user:{url:'../Staff', idParameter:'staffUserId'}, storeIntegration:{url:'../Store', idParameter:'storeId', parameters:{tab:'messages'}}}, hide:['scheduler']}"/>
+    </always-actions>
+    <subscreens default-item="Probe"/>
+    <widgets><subscreens-active/></widgets>
+</screen>

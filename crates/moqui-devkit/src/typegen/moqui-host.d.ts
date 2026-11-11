@@ -1390,6 +1390,8 @@ interface MoquiServerEc {
      */
     readonly artifactExecution: {
         isPermitted(name: string, artifactType?: string, action?: string): boolean;
+        /** The same question of the user's own authorization records: nothing is inherited from the frames on the stack. */
+        isPermittedOwn(name: string, artifactType?: string, action?: string): boolean;
         /** Entity ECA rules do not run for this execution context's writes. Returns whether they were already disabled. */
         disableEntityEca(): boolean;
         enableEntityEca(): void;
