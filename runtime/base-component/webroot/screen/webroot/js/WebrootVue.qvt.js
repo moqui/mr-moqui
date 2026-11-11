@@ -9479,6 +9479,9 @@
         "        <div v-html=\"shell.footerHtml\" class=\"row full-width\"></div>\n" +
         "    </q-footer>\n" +
         "</q-layout>\n" +
+        // the floating windows (WebrootFloats.js, plans/Terminal-Fancy.md §10.1): outside #m-canvas and over the layout, below the
+        // dialogs, menus and notices; what floats is its owner's content, moved into a window's body
+        "<m-float-layer v-if=\"floatsOn\"></m-float-layer>\n" +
         "\n" +
         "<m-dialog v-model=\"reLoginShow\" width=\"400\" :title=\"labels.reLogin\">\n" +
         "    <div v-if=\"reLoginMfaData\">\n" +
@@ -10200,6 +10203,8 @@
             // Assist (WebrootAssist.js): for a signed in user whose bootstrap answered with an agent to use
             assistOn() { return !!(moqui.assist && this.userId && moqui.assist.state.available); },
             callsOn() { return !!(moqui.call && this.userId && moqui.config && moqui.config.calls); },
+            // floats (WebrootFloats.js): the layer, on any page that loads the store
+            floatsOn() { return !!moqui.floats; },
             // an Assist canvas covers the page (the page under it stays mounted)
             assistCanvasShown() { return !!(this.assistOn && moqui.assist.canvasShown && moqui.assist.canvasShown()); },
             myPresence() { return moqui.chat && this.userId ? moqui.chat.myPresence() : ""; },

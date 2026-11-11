@@ -416,6 +416,42 @@ closes those), `?` the overlay of the keys on now, `c` the current app's first `
 scope everywhere, another while its app is the current one. The `KEYMAP` user preference (`config.preferences`) changes keys:
 `{"global": {"palette": "Mod+P", "g c": "g x"}}`, by scope, the binding's `action` or else its keys.
 
+## Floats
+
+Windows over the shell that are not dialogs: not modal, several at once, moved and resized by mouse, touch, pen and keys
+(`js/WebrootFloats.js`, plans/Terminal-Fancy.md §10). It loads before `WebrootVue.qvt.js` in `qapps.xml` and the desktop
+shell, so its components are precompiled; its tests are `test/client/WebrootFloats.spec.js`.
+
+- **The layer** (`m-float-layer`, in the root after `q-layout`, outside `#m-canvas`): fixed over the page, the header and the
+  docked drawers (z-index 2050), below the call's ring bar, an overlay drawer, dialogs, menus and notices. It draws the windows
+  the store lists and holds no content. At its bottom left a strip has the Arrange button (Tile, Cascade, Column at the
+  right, Minimize all, and a kind's Gather) and a chip for each minimized window. The Arrange items are `moqui.keymap` actions
+  `floatsTile`, `floatsCascade`, `floatsColumn` and `floatsMinimizeAll` with no keys; `KEYMAP` gives them some.
+- **A window** (`m-float`, `role="dialog"`, `aria-modal="false"`, labelled by its title): a title bar with the kind's icon or
+  status dot, the title, a count badge, then Minimize, Maximize, Dock and Close. The bar drags it (pointer capture); at an
+  edge it snaps to that half, near a corner to that quarter, with an outline before the drop; a double click maximizes and
+  restores; with the bar focused the arrow keys move it and Shift with them resizes it. Eight grips resize it, down to the
+  kind's minimum. A press raises it; a click on the bar gives the content the keys. Esc is the content's, never the window's.
+  The windows keep below the header (`#top`) and inside the viewport when it is resized. **Dock** puts the content back and
+  shows it there; **Close** puts it back and does not show it: closing a float ends nothing.
+- **A kind** is what floats: `moqui.floats.register(kind, {title, icon, badge, dot, defaultSize: {w, h}, minSize: {w, h},
+  place: "right" | "center", dock(shown, key, float), inReach, focus(key, bodyEl), gatherLabel})`. `title`, `icon`,
+  `badge` and `dot` are values or functions of the key, read at each render. `open(kind, key, {title, rect, restore})`
+  answers the window's id (`kind:key`), or false; `close(id)`, `dock(id)`, `hide(id)` (still a float, drawn nowhere),
+  `show(id)`, `focus(id)`, `minimize(id)`, `maximize(id)`, `toggle(kind, key)` (shows a hidden or minimized window,
+  raises one under another, hides the top one), `arrange(mode, kind)`; `state.floats` is reactive (id, kind, key, x, y,
+  w, h, z, minimized, maximized, hidden).
+- **Content comes to the window** (D17): the owner keeps its component where it is and moves its element into the body,
+  `<teleport :to="floats.target(kind, key) || 'body'" :disabled="!floats.target(kind, key)">`. `target` answers the body's
+  selector only once the body is mounted, so the teleport never names an element that is not there. Content that is an
+  element of its own (a terminal) takes `await floats.whenReady(kind, key)`, the body element or null. A moved element
+  loses its scroll position; the owner puts it back.
+- **Kept**: places, sizes, the order, minimized, maximized, hidden and which (kind, key) float, in `localStorage` under
+  `moqui.scopedKey("moqui.floats")`, per device (D13), with the last place of a docked one. At a load a kind asks
+  `wasFloated(kind, key)` and opens itself with `{restore: true}`.
+- **Small screens**: below 600 px, and on a `density="handheld"` screen, nothing floats: `open` answers false,
+  `canFloat()` is false (an owner hides its Undock button), and what floats docks, closed.
+
 ## Preferences
 
 The user's preferences in the page are `config.preferences` (the keys the user has set, read through `ec.user.getPreference`),

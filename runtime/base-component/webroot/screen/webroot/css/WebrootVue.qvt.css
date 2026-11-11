@@ -228,6 +228,44 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 .m-tray .q-tab { padding:0 10px; min-height:40px; }
 .m-tray-body { overflow-y:auto; min-height:0; }
 @media print { .m-tray-sticky { display:none!important; } }
+/* floats (WebrootFloats.js, plans/Terminal-Fancy.md §10): a fixed layer over the page, the header (2000) and the docked drawers,
+   below the call's ring bar (2100), an overlay drawer (3000), dialogs and menus (6000) and notices; it takes no pointer itself */
+.m-float-layer { position:fixed; inset:0; z-index:2050; pointer-events:none; }
+.m-float { position:absolute; pointer-events:auto; background:var(--m-panel-bg); color:var(--m-text); border:1px solid var(--m-border);
+    border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.12); overflow:hidden; min-width:0; min-height:0; }
+.body--dark .m-float { box-shadow:0 8px 24px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.4); }
+.m-float.m-float--max { border-radius:0; }
+.m-float-bar { flex:none; min-height:34px; padding:0 2px 0 8px; gap:2px; cursor:grab; user-select:none; touch-action:none;
+    background:color-mix(in srgb, var(--m-text) 4%, var(--m-panel-bg)); border-bottom:1px solid var(--m-divider); }
+.m-float--top .m-float-bar { background:color-mix(in srgb, var(--q-primary) 10%, var(--m-panel-bg)); }
+.m-float-bar:focus-visible { outline:2px solid var(--q-primary); outline-offset:-2px; }
+.m-float-bar .q-btn { cursor:pointer; }
+.m-float-title { font-size:.875rem; font-weight:500; padding-left:4px; }
+.m-float-icon { color:var(--m-text-muted); }
+.m-float-dot { width:10px; height:10px; border-radius:50%; flex:none; margin:0 4px; }
+/* the body: what its owner moves into it fills it, a tray tab's .col and Assist's .fit alike */
+.m-float-body { flex:1 1 0; min-height:0; display:flex; flex-direction:column; position:relative; overflow:hidden; }
+.m-float-body > * { min-height:0; }
+/* the grips: four edges and four corners, just inside the frame, larger for touch */
+.m-float-grip { position:absolute; z-index:2; touch-action:none; }
+.m-float-grip--n, .m-float-grip--s { left:10px; right:10px; height:6px; cursor:ns-resize; }
+.m-float-grip--e, .m-float-grip--w { top:10px; bottom:10px; width:6px; cursor:ew-resize; }
+.m-float-grip--n { top:0; } .m-float-grip--s { bottom:0; } .m-float-grip--e { right:0; } .m-float-grip--w { left:0; }
+.m-float-grip--ne, .m-float-grip--nw, .m-float-grip--se, .m-float-grip--sw { width:12px; height:12px; }
+.m-float-grip--ne { top:0; right:0; cursor:nesw-resize; } .m-float-grip--sw { bottom:0; left:0; cursor:nesw-resize; }
+.m-float-grip--nw { top:0; left:0; cursor:nwse-resize; } .m-float-grip--se { bottom:0; right:0; cursor:nwse-resize; }
+@media (pointer: coarse) { .m-float-grip--n, .m-float-grip--s { height:12px; } .m-float-grip--e, .m-float-grip--w { width:12px; }
+    .m-float-grip--ne, .m-float-grip--nw, .m-float-grip--se, .m-float-grip--sw { width:20px; height:20px; } }
+.m-float--max .m-float-grip { display:none; }
+/* the outline of where a drop snaps */
+.m-float-snap { position:absolute; border:2px solid var(--q-primary); border-radius:8px; background:color-mix(in srgb, var(--q-primary) 12%, transparent);
+    pointer-events:none; z-index:100000; }
+/* the strip at the bottom: Arrange and the minimized windows */
+.m-float-strip { position:absolute; left:8px; bottom:8px; max-width:calc(100% - 16px); gap:4px; overflow-x:auto; pointer-events:none; z-index:100001; }
+.m-float-strip > * { pointer-events:auto; }
+.m-float-strip-btn { background:var(--m-panel-bg); border:1px solid var(--m-border); }
+.m-float-chip.q-chip { margin:0; max-width:220px; background:var(--m-panel-bg); color:var(--m-text); border:1px solid var(--m-border); }
+@media print { .m-float-layer { display:none!important; } }
 /* the Appearance dialog (m-appearance-dialog): a scheme card is its light and dark swatches (the page, a panel with text, the primary)
    over its name, the chosen one outlined in the primary */
 .m-appearance-schemes { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:8px; }

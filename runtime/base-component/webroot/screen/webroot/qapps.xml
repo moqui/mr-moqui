@@ -162,6 +162,9 @@ along with this software (see the LICENSE.md file). If not, see
         footer_scripts.add('/js/MoquiL10n.js')
         // the chat store and the account menu's status (moqui.chat), before the client, which registers its components
         footer_scripts.add('/js/WebrootChat.js')
+        // floats: the windows over the shell that Assist, the tray's tabs and the terminal undock into (moqui.floats,
+        // plans/Terminal-Fancy.md §10), before the client, which registers its components, and before Assist, which floats
+        footer_scripts.add('/js/WebrootFloats.js')
         // Assist: the drawer, its store, transport and follow (moqui.assist), before the client, which registers its components
         footer_scripts.add('/js/WebrootAssist.js')
         // the Constitution's reading view, reference dialog and the drawer's Rules pane (moqui.constitution)
