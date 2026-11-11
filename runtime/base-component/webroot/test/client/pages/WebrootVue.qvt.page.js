@@ -652,6 +652,30 @@ test("a number card's delta has the tone of its sign against delta-good, and the
     assert.equal(computed({ delta: "0" }).deltaClass, "m-muted");
 });
 
+test("a nav card is a link only with an href, and its title is the one link of the card", () => {
+    const card = qvt.components["m-nav-card"];
+    const computed = (props) => {
+        const self = Object.assign({ size: "md", external: false }, props);
+        Object.keys(card.computed).forEach((name) => Object.defineProperty(self, name, { get: () => card.computed[name].call(self) }));
+        return self;
+    };
+    assert.equal(computed({}).wrapper, "div");
+    assert.equal(computed({ href: "/apps/tools/Data/Grid" }).wrapper, "m-link");
+    assert.equal(computed({ href: "https://example.com", external: true }).wrapper, "a");
+    assert.deepEqual([computed({}).large, computed({}).avatarSize, computed({}).iconSize], [false, "36px", "sm"]);
+    assert.deepEqual([computed({ size: "lg" }).large, computed({ size: "lg" }).avatarSize, computed({ size: "lg" }).iconSize], [true, "48px", "md"]);
+    assert.equal(card.props.size.default, "md");
+    // the card itself is no anchor (its child links are anchors, and an anchor holds none): the title is, and the style sheet
+    // stretches it over the card; the child links are the default slot, left out with its row when there are none
+    const template = card.template;
+    assert.match(template, /^<q-card flat bordered class="m-nav-card /);
+    assert.equal((template.match(/:href=/g) || []).length, 1);
+    assert.match(template, /<component :is="wrapper" :href="href \|\| undefined" class="m-nav-card-title text-subtitle1 text-weight-medium">\{\{title\}\}<\/component>/);
+    assert.match(template, /<div v-if="text" class="text-caption m-muted m-nav-card-text">\{\{text\}\}<\/div>/);
+    assert.match(template, /<q-avatar v-if="icon" rounded :size="avatarSize" class="m-nav-card-avatar /);
+    assert.match(template, /<div v-if="\$slots\.default" class="m-nav-card-links [^"]*"><slot><\/slot><\/div><\/q-card>$/);
+});
+
 // a .qvue component's <style> is added once, whatever its text: a line break or a quote at its start made the old selector
 // invalid (impl-projects.md F53)
 test("a component style with any text is added to the head once", () => {

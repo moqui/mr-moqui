@@ -8,3 +8,9 @@
 <div class="m-dashboard q-mx-sm"><div class="m-dashboard-item"><m-number-card title="Held orders" value="1" href="/Orders?statusId=Held"></m-number-card>
 </div></div>
 <m-link href="/Orders?sort=-date" class="m-link-text">Dynamic orders</m-link>
+<div id="Featured" class="m-dashboard q-mx-sm" style="--m-dashboard-min:280px"><div class="m-dashboard-item"><m-nav-card title="Orders" text="Find {{x}} &amp; open orders" icon="sym_o_receipt_long" href="/Orders" size="lg"><m-link href="/Orders?statusId=Open" class="m-link-text">Open ones</m-link>
+<a href="https://example.com/help" class="m-link-text">Help</a>
+</m-nav-card>
+</div><div class="m-dashboard-item"><m-nav-card id="Late" title="Late" href="https://example.com/late" external class="wide"></m-nav-card>
+</div><div class="m-dashboard-item"></div><div class="m-dashboard-item"><m-nav-card title="Counted" text="42 open" icon="fa fa-hashtag"></m-nav-card>
+</div></div>

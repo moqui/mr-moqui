@@ -121,6 +121,8 @@ a { color: blue; }
 .number-card { display: inline-block; vertical-align: top; min-width: 90pt; margin: 0 6pt 6pt 0; padding: 4pt 6pt; border: thin solid #999999; break-inside: avoid; }
 .number-card-title { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.5pt; }
 .number-card-value { font-size: 14pt; font-weight: bold; }
+.nav-card { margin: 0 0 2pt 0; break-inside: avoid; }
+.nav-card-title { font-weight: bold; }
 `;
 
     const widgetsMacro = stmt((node, children) => {
@@ -159,6 +161,23 @@ a { color: blue; }
             sri.write("<div>");
             ${anchor}
             sri.write("</div>\\n");
+        `;
+        return condition ? js`
+            if (${raw(condition)}) {
+                ${body}
+            }
+        ` : body;
+    });
+
+    // A nav-card printed as "Title: text", a line of its own; a print follows no link, so its child links are not written.
+    const navCardMacro = stmt((node) => {
+        const condition = attr(node, "condition");
+        const body = js`
+            {
+                const $text = String(${expandExpr(attr(node, "text") || "")}).trim();
+                sri.write("<div class=\\"nav-card\\"><span class=\\"nav-card-title\\">" + $e(${expandExpr(attr(node, "title") || "")}) + "</span>" +
+                    ($text ? ": " + $e($text) : "") + "</div>\\n");
+            }
         `;
         return condition ? js`
             if (${raw(condition)}) {
@@ -396,6 +415,7 @@ a { color: blue; }
         "image": imageMacro,
         "label": labelMacro,
         "number-card": numberCardMacro,
+        "nav-card": navCardMacro,
         // a status-bar printed as the current status's description
         "status-bar": stmt((node) => {
             const line = `{ const $v = ${S.statusTextExpr(node)}; if ($v) sri.write("<div class=\\"status-bar\\">" + $e(ec.l10n.localize("Status")) + ": " + $e($v) + "</div>\\n"); }\n`;

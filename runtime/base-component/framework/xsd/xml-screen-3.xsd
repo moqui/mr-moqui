@@ -1516,6 +1516,39 @@ along with this software (see the LICENSE.md file). If not, see
             false the card is not rendered.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="style" type="xs:string"><xs:annotation><xs:documentation>CSS classes for the card.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
+    <xs:element name="nav-card" substitutionGroup="AllWidgets"><xs:annotation><xs:documentation>
+        A navigation tile: an icon, a title and one line saying what is there, the whole card a link to a screen, with up
+        to three secondary links along its bottom (the featured screens of an app home, the shortcuts of a landing). Put
+        them in a dashboard, which lays them out as it does number cards. In qvt an m-nav-card, a q-card flat bordered
+        with the icon in a tonal avatar, the title as text-subtitle1 and the text as text-caption, the child links as text
+        links in its default slot; in a server-static screen the attributes are bound over the screen's actions data, as
+        a label's text is. In html a plain card whose title is the anchor; in tui a container of a link (the title), the
+        text and the child links; in text and print "Title: text". The attributes may hold ${} expressions.
+    </xs:documentation></xs:annotation><xs:complexType>
+        <xs:sequence>
+            <xs:element ref="link" minOccurs="0" maxOccurs="3"><xs:annotation><xs:documentation>A secondary link (a
+                screen under the card's, a filtered list), written as a text link whatever its link-type; one whose
+                condition is false or whose target the user may not see is left out as any link is.</xs:documentation></xs:annotation></xs:element>
+        </xs:sequence>
+        <xs:attribute name="id" type="xs:string"/>
+        <xs:attribute name="title" type="xs:string" use="required"><xs:annotation><xs:documentation>The name of what
+            the card opens, localized (Data grid).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="text" type="xs:string"><xs:annotation><xs:documentation>One line saying what is there,
+            localized (Browse and edit the records of any entity).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="icon" type="xs:string"><xs:annotation><xs:documentation>A Quasar icon name, Material Symbols
+            outlined (sym_o_table) or Material Icons, or CSS classes when it has a space.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="link" type="xs:string"><xs:annotation><xs:documentation>Where the card goes, as a
+            number-card's link: a screen path or transition of this screen, as the url of a link with url-type
+            transition, with a query string if any (../Data/Grid); a link to something other than a screen is a plain
+            anchor. A card whose link the user may not follow is not a link.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="size" default="md"><xs:annotation><xs:documentation>md: the icon beside the title and the
+            text, for a row of several; lg: a larger icon and more room, for the few featured screens of a home.</xs:documentation></xs:annotation>
+            <xs:simpleType><xs:restriction base="xs:token"><xs:enumeration value="md"/><xs:enumeration value="lg"/></xs:restriction></xs:simpleType>
+        </xs:attribute>
+        <xs:attribute name="condition" type="xs:string"><xs:annotation><xs:documentation>If specified and evaluates to
+            false the card is not rendered.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="style" type="xs:string"><xs:annotation><xs:documentation>CSS classes for the card.</xs:documentation></xs:annotation></xs:attribute>
+    </xs:complexType></xs:element>
 
     <!-- ================ Includes ================ -->
     <!-- possible good idea, but not implementing in 1.0; should use render-mode.text instead

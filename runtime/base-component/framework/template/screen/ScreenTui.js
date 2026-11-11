@@ -1611,6 +1611,18 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
         "form-list": formList,
         "number-card": stmt((node) => guarded(node,
             `$emit({t:"numberCard",id:$uid(${jsString(idOf(node))}),title:String(${S.expandExpr(attr(node, "title") || "")} || ""),value:String(${S.expandNoL10nExpr(attr(node, "value") || "")} || ""),url:String(${S.expandNoL10nExpr(attr(node, "url") || "")} || "")});\n`)),
+        // A nav-card is a container of a link (the title, the card's link; a text without one), the text and the child links.
+        "nav-card": stmt((node, children) => guarded(node, `$openChildren({t:"container",id:$uid(${jsString(idOf(node))})});
+{
+    const $title = String(${S.expandExpr(attr(node, "title") || "")} || "");
+    const $made = ${attr(node, "link") ? `sri.makeUrlByType(${jsString(attr(node, "link"))}, "transition", ${S.nodeLit(node, false)}, "true")` : "null"};
+    if ($made && !$made.getDisableLink()) $emit({t:"link",id:$uid(${jsString(idOf(node) + ".link")}),text:$title,url:$made.getUrlWithParams() || "",kind:"anchor"});
+    else if ($title) $emit({t:"text",id:$uid(${jsString(idOf(node) + ".title")}),text:$title});
+    const $text = String(${S.expandExpr(attr(node, "text") || "")} || "");
+    if ($text && $text !== "null") $emit({t:"text",id:$uid(${jsString(idOf(node) + ".text")}),text:$text});
+}
+${children}$closeChildren();
+`)),
         "dynamic-dialog": stmt((node) => guarded(node, `{
     const $made = sri.makeUrlByType(${jsString(attr(node, "transition") || "")}, "transition", ${S.nodeLit(node, true)}, "true");
     let $button = String(${S.expandExpr(attr(node, "button-text") || "")} || "");${attr(node, "icon") ? `

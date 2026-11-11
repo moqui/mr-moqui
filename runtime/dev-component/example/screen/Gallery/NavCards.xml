@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Gallery: the nav-card element (plans/Tools-Fancy.md B6), the navigation tile of an app home and of a landing's
+    shortcuts. Both sizes in a dashboard, with and without child links, with and without an icon and a text, a card that
+    is no link, a card and a child link left out by their conditions, and a card per row of a list. Every link goes to
+    another gallery screen. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Nav cards" default-menu-include="false" menu-image="sym_o_dashboard_customize" menu-image-type="icon">
+
+    <actions>
+        <set field="showSecret" from="false"/>
+        <entity-find entity-name="moqui.basic.EnumerationType" list="enumTypeList" limit="4" cache="true">
+            <order-by field-name="description"/></entity-find>
+    </actions>
+    <widgets>
+        <container-box type="info"><box-header title="The nav-card element"/><box-body>
+            <label type="p" text="A navigation tile: an icon in a tonal avatar, a title and one line saying what is there. The whole card is one link, and up to three child links along the bottom go further in. A dashboard lays the cards out, as many columns as fit. In the terminal a card is a link, its text and its links; in text and print it is a line."/>
+        </box-body></container-box>
+
+        <!-- size lg: the few featured screens of a home, each with its secondary links -->
+        <label type="h6" style="q-mx-sm q-mt-md" text="Large, with links"/>
+        <dashboard id="NavCardsLarge" min-width="300">
+            <nav-card title="List" text="Find, sort and page the enumerations, and act on the rows selected" icon="sym_o_list_alt" link="../List" size="lg">
+                <link url="../List?enumTypeId=ExampleType" text="Example types"/>
+                <link url="../List?enumTypeId=GeoType" text="Geo types"/>
+                <link url="../Views" text="As a board"/>
+            </nav-card>
+            <nav-card title="Detail" text="One record: its fields in sections, its status and its history" icon="sym_o_article" link="../Detail" size="lg">
+                <link url="../Record360" text="360 of a user"/>
+                <!-- left out by its condition: the row keeps the links that are shown -->
+                <link url="../Settings" text="Secret settings" condition="showSecret"/>
+            </nav-card>
+            <nav-card title="Report" text="Parameters in the URL, counters, two charts and a table with totals" icon="sym_o_monitoring" link="../Report" size="lg"/>
+            <!-- left out by its condition: the others fill the row -->
+            <nav-card title="Secret" text="Not shown" icon="sym_o_lock" link="../Settings" size="lg" condition="showSecret"/>
+        </dashboard>
+
+        <!-- size md (the default): a row of several -->
+        <label type="h6" style="q-mx-sm q-mt-md" text="Medium"/>
+        <dashboard id="NavCardsMedium" min-width="240">
+            <nav-card title="Board" text="Cards by status" icon="sym_o_view_kanban" link="../Board"/>
+            <nav-card title="Calendar" text="Examples by their start and end" icon="sym_o_calendar_month" link="../Calendar"/>
+            <nav-card title="Wizard" text="Steps with Back and Next" icon="sym_o_checklist" link="../Wizard">
+                <link url="../Dialog" text="Dialogs"/>
+                <link url="../Task" text="A task"/>
+            </nav-card>
+            <nav-card title="Widgets" icon="sym_o_widgets" link="../Widgets"/>
+            <nav-card title="No icon" text="A title and a text only" link="../Panel"/>
+            <nav-card title="Moqui documentation" text="A link to something other than a screen is a plain anchor" icon="sym_o_open_in_new" link="https://www.moqui.org/docs"/>
+            <nav-card title="Not a link" text="A card without a link, or whose link the user may not follow, is plain" icon="sym_o_link_off"/>
+        </dashboard>
+
+        <!-- a card per row of a list: the cell of a section-iterate is each row's card -->
+        <label type="h6" style="q-mx-sm q-mt-md" text="From a list"/>
+        <dashboard id="NavCardsEach" min-width="240">
+            <section-iterate name="TypeCards" list="enumTypeList" entry="enumType"><widgets>
+                <nav-card title="${enumType.description}" text="Enumerations of the type ${enumType.enumTypeId}" icon="sym_o_label"
+                        link="../List?enumTypeId=${enumType.enumTypeId}"/>
+            </widgets></section-iterate>
+        </dashboard>
+    </widgets>
+</screen>

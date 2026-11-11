@@ -240,6 +240,59 @@ fn a_dashboard_lays_out_number_cards() {
     }
 }
 
+/// `nav-card` is an m-nav-card: the title and the text localized and encoded, the link a number-card's (a screen's path, a
+/// link elsewhere external), and its child links text links in the card's slot whatever their link-type; a card or a child
+/// link whose condition is false writes nothing. `dashboard` lays the cards out. The html mode writes a plain card whose title
+/// is the anchor, the text and print modes "Title: text".
+#[test]
+fn a_nav_card_is_one_link_with_its_text_links() {
+    let out = render_path("Dashboard", "", &[]);
+    for expected in [
+        r#"<div id="Featured" class="m-dashboard q-mx-sm" style="--m-dashboard-min:280px"><div class="m-dashboard-item"><m-nav-card title="Orders" text="Find {{x}} &amp; open orders" icon="sym_o_receipt_long" href="/Orders" size="lg"><m-link href="/Orders?statusId=Open" class="m-link-text">Open ones</m-link>"#,
+        r#"<a href="https://example.com/help" class="m-link-text">Help</a>"#,
+        r#"<m-nav-card id="Late" title="Late" href="https://example.com/late" external class="wide"></m-nav-card>"#,
+        r#"<m-nav-card title="Counted" text="42 open" icon="fa fa-hashtag"></m-nav-card>"#,
+    ] {
+        assert!(out.contains(expected), "{expected} in {out}");
+    }
+    assert!(!out.contains("Hidden"), "{out}");
+    for (mode, expected) in [
+        (
+            "html",
+            vec![
+                r#"<div class="nav-card" data-size="lg"><span class="material-symbols-outlined icon" aria-hidden="true">receipt_long</span> <a href="/Orders" class="nav-card-title">Orders</a><span class="nav-card-text">Find {{x}} &amp; open orders</span><div class="nav-card-links"><a href="/Orders?statusId=Open">Open ones</a>"#,
+                r#"<a href="https://example.com/help">Help</a>"#,
+                r#"<div id="Late" class="nav-card wide"><a href="https://example.com/late" class="nav-card-title">Late</a></div>"#,
+                r#"<span class="nav-card-title">Counted</span><span class="nav-card-text">42 open</span></div>"#,
+            ],
+        ),
+        (
+            "text",
+            vec!["Orders: Find {{x}} & open orders", "\nLate  ", "Counted: 42 open"],
+        ),
+        (
+            "html-print",
+            vec![
+                r#"<div class="nav-card"><span class="nav-card-title">Orders</span>: Find {{x}} &amp; open orders</div>"#,
+                r#"<div class="nav-card"><span class="nav-card-title">Late</span></div>"#,
+            ],
+        ),
+    ] {
+        let context = ExecutionContextFactory::test_context();
+        let output = make_render(context.factory())
+            .root_screen(render_dir().join("Dashboard.xml").to_string_lossy().into_owned())
+            .screen_path("")
+            .render_mode(mode)
+            .render()
+            .unwrap_or_else(|err| panic!("{mode}: {err}"));
+        let text = output.body_text();
+        for expected in expected {
+            assert!(text.contains(expected), "{expected} in {mode}: {text}");
+        }
+        assert!(!text.contains("Hidden"), "{mode}: {text}");
+    }
+}
+
 /// `chatter` and `record-files` are an m-chatter and an m-record-files with the request's record and hints (an expression that
 /// comes to nothing left out, a false condition nothing): the client finds the theme's subscreen of the current app root. A
 /// text-area with editor-type rich or rich-light is an m-text-area with that editor type and the mention or record
