@@ -865,6 +865,18 @@ impl ExecutionContextFactory {
         self.conf_setting_on_disk(path, name)
     }
 
+    /// [`Self::conf_setting`], or `None` when the conf has no such attribute (and no live override): for a setting
+    /// whose empty value says something other than its absence.
+    pub fn conf_setting_if_set(&self, path: &str, name: &str) -> Option<String> {
+        let overlaid = self.conf_overlaid.load(std::sync::atomic::Ordering::Acquire)
+            && read(&self.conf_overlay).contains_key(&format!("{path}@{name}"));
+        if overlaid || self.conf().element_attr(path, name).is_some() {
+            Some(self.conf_setting(path, name))
+        } else {
+            None
+        }
+    }
+
     /// [`Self::conf_setting`] from the merged conf alone, with no live override.
     pub fn conf_setting_on_disk(&self, path: &str, name: &str) -> String {
         self.conf()

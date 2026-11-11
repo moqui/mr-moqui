@@ -824,7 +824,20 @@ pub fn transform_frames(mut frames: Vec<Frame>, steps: &[Value]) -> Result<Vec<F
                     return Err(Error::new("join requires at least one key field"));
                 }
                 let mut joined: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
+                // The joined frame is made from rows, which tells a time in milliseconds from a number no better
+                // than a guess: each field keeps the kind and unit it had (a time axis stays one).
+                let mut typed: BTreeMap<String, (String, Option<String>)> = BTreeMap::new();
                 for (index, frame) in frames.iter().enumerate() {
+                    for field in &frame.fields {
+                        let name = if !keys.contains(&field.name) && typed.contains_key(&field.name) {
+                            format!("{}.{}", field.name, index + 1)
+                        } else {
+                            field.name.clone()
+                        };
+                        typed
+                            .entry(name)
+                            .or_insert_with(|| (field.kind.clone(), field.unit.clone()));
+                    }
                     let mut seen = BTreeSet::new();
                     for row in frame.rows() {
                         let key: Vec<_> = keys
@@ -853,7 +866,14 @@ pub fn transform_frames(mut frames: Vec<Frame>, steps: &[Value]) -> Result<Vec<F
                         }
                     }
                 }
-                frames = vec![Frame::from_rows(&joined.into_values().collect::<Vec<_>>())];
+                let mut frame = Frame::from_rows(&joined.into_values().collect::<Vec<_>>());
+                for field in &mut frame.fields {
+                    if let Some((kind, unit)) = typed.remove(&field.name) {
+                        field.kind = kind;
+                        field.unit = unit;
+                    }
+                }
+                frames = vec![frame];
             }
             "merge" => {
                 let rows: Vec<_> = frames.iter().flat_map(Frame::rows).collect();
@@ -1222,6 +1242,35 @@ mod tests {
         .unwrap();
         assert_eq!(result[0].rows()[0]["avg"], 2.5);
         assert_eq!(result[0].rows()[0]["slow_hits"], 1);
+    }
+    #[test]
+    fn a_join_keeps_each_fields_kind_and_unit() {
+        let field = |name: &str, kind: &str, unit: Option<&str>, values: Vec<Value>| Field {
+            name: name.into(),
+            kind: kind.into(),
+            unit: unit.map(str::to_owned),
+            labels: BTreeMap::new(),
+            config: BTreeMap::new(),
+            values,
+        };
+        // a time axis in milliseconds, as a date histogram gives it
+        let time = || field("time", "time", None, vec![json!(1_794_356_040_000_i64), json!(1_794_356_100_000_i64)]);
+        let left = Frame {
+            fields: vec![time(), field("count", "number", None, vec![json!(1), json!(2)])],
+        };
+        let right = Frame {
+            fields: vec![
+                time(),
+                field("count", "number", None, vec![json!(3), json!(4)]),
+                field("held", "number", Some("bytes"), vec![json!(5), json!(6)]),
+            ],
+        };
+        let joined = transform_frames(vec![left, right], &[json!({"type":"join","fields":["time"]})]).unwrap();
+        let by_name = |name: &str| joined[0].fields.iter().find(|field| field.name == name).unwrap();
+        assert_eq!(by_name("time").kind, "time");
+        assert_eq!(by_name("held").unit.as_deref(), Some("bytes"));
+        assert_eq!(by_name("count.2").kind, "number");
+        assert_eq!(joined[0].rows()[1]["count.2"], 4);
     }
     #[test]
     fn pivot_totals_come_from_complete_input() {

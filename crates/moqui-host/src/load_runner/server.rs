@@ -25,11 +25,6 @@ use std::time::{Duration, Instant};
 use moqui_core::context::ExecutionContextFactory;
 use serde_json::{json, Value};
 
-use crate::test_client::load;
-
-/// The shortest span a CPU share is computed over.
-const MIN_INTERVAL: Duration = Duration::from_secs(1);
-
 /// The samples a run keeps; past it every other one is dropped, so a long run keeps its whole span.
 const MAX_SAMPLES: usize = 720;
 
@@ -48,7 +43,7 @@ impl Samples {
     pub(crate) fn new() -> Self {
         Self {
             started: Instant::now(),
-            last: load::process_cpu().map(|cpu| (Instant::now(), cpu)),
+            last: moqui_core::context::resources::process_cpu_time().map(|cpu| (Instant::now(), cpu)),
             samples: Vec::new(),
         }
     }
@@ -62,14 +57,11 @@ impl Samples {
         let number = |group: &str, key: &str| status.get(group).and_then(|group| group.get(key)).cloned();
         let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
         let now = Instant::now();
-        let cpu = load::process_cpu();
-        // over less than MIN_INTERVAL the clock ticks of /proc/self/stat are too coarse to give a share
+        let cpu = moqui_core::context::resources::process_cpu_time();
+        // over too short an interval the clock ticks of /proc/self/stat are too coarse to give a share
         let share = match (self.last, cpu) {
-            (Some((at, before)), Some(after)) if now.duration_since(at) >= MIN_INTERVAL => {
-                let wall = now.duration_since(at).as_secs_f64() * cores as f64;
-                let share = after.saturating_sub(before).as_secs_f64() / wall;
-                Some((share.clamp(0.0, 1.0) * 1000.0).round() / 1000.0)
-            }
+            (Some(before), Some(after)) => moqui_core::context::resources::cpu_share(before, (now, after), cores)
+                .map(|share| (share * 1000.0).round() / 1000.0),
             _ => None,
         };
         if let Some(cpu) = cpu {

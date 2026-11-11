@@ -324,7 +324,8 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 - **Ends and deletes** use `btn-type="danger"` and a `confirmation` that names the record. Activate, publish and generate
   confirm too.
 - **Landing** screens use `number-card`s in a `dashboard`, each linking to a filtered list, shortcut buttons with one
-  primary, and an empty state that offers the first steps (Create, Import).
+  primary, and an empty state that offers the first steps (Create, Import). The screens an app home features are
+  `nav-card`s in a `dashboard`: an icon, a title, one line of text and up to three child `link`s.
 - **Tabs** use `subscreens-panel type="tab"` (or `subscreens-menu type="tab"` with `subscreens-active` inside a tab)
   with an explicit `menu-index` on each item, in the design's order.
 - **Do not wrap one button in a box.** A box whose body is a single dialog button belongs in the header's actions or

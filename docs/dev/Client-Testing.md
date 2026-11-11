@@ -581,7 +581,7 @@ feature("mixed reads and writes", {
             scenario(user, args) {                                           // repeated until the duration ends
                 http.get("/rest/s1/moqui/basic/enums", { params: { enumTypeId: "UserPreferenceKey" },
                     name: "s1 enums" })
-                http.get("/apps/system/dashboard.qvt", { name: "dashboard qvt" })
+                http.get("/apps/system/Home.qvt", { name: "dashboard qvt" })
                 http.post("/apps/setPreference", { form: { preferenceKey: `test.load.${user}`, preferenceValue: "x" },
                     name: "setPreference" })
             },

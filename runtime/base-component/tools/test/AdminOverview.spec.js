@@ -20,7 +20,7 @@ spec({
 
 feature("recovery editors load configuration, keep rejected blanks and separate new IDs from updates", {
     expect() {
-        const source = ec.resource.getLocationText("component://tools/screen/Monitor/Recovery.xml")
+        const source = ec.resource.getLocationText("component://tools/screen/System/Monitor/Recovery.xml")
         const actions = /^    <actions><script><!\[CDATA\[([\s\S]*?)\]\]><\/script><\/actions>/m.exec(source)[1]
         const policy = {policyId: "UI_RECOVERY_EDIT", description: "Loaded recovery policy", enabled: "N", sequenceNum: 1000000,
             serviceName: "example.*", minSeverity: "critical", mode: "advisory", ladderJson: '[{"action":"escalate"}]',
@@ -91,7 +91,7 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
                 value.create()
             }
         })
-        const page = render("Recovery", "Monitor", {editPolicyId: policy.policyId, editAdapterId: adapter.adapterId})
+        const page = render("Monitor/Recovery", "System", {editPolicyId: policy.policyId, editAdapterId: adapter.adapterId})
         assert.equal(page.status, 200)
         assert.equal(page.errors, "")
         assert(!/Error rendering|Exception in render/.test(page.output))
@@ -110,13 +110,13 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
         assert(page.output.includes("Review the incident before doing anything."))
         // Exercise the actual transition boundary: a message + check-errors must skip the store, redirect,
         // and save the rejected inputs. An isolated script throw would bypass this entire recovery path.
-        const test = ec.screen.makeTest().rootScreen("component://tools/screen/Monitor.xml").renderMode("html")
+        const test = ec.screen.makeTest().rootScreen("component://tools/screen/System.xml").renderMode("html")
         // The adapter transition has the same shape; one duplicate POST covers the boundary.
         for (const [kind, id, entityName] of [["Policy", policy.policyId, "moqui.monitor.RecoveryPolicy"]]) {
             const idName = kind === "Policy" ? "policyId" : "adapterId"
             const submitted = {moquiFormName: "Store" + kind, [idName]: id, ["recovery" + kind + "Mode"]: "create",
                 description: "", enabled: "N", ladderJson: "[]", adapterType: "manual", instructions: "Rejected instructions"}
-            const rejected = test.render("Recovery/store" + kind, submitted, "post")
+            const rejected = test.render("Monitor/Recovery/store" + kind, submitted, "post")
             assert.equal(rejected.status, 302, kind + " duplicate uses its error response")
             assert(rejected.errorMessages.join(" | ").includes("ID already exists"))
             assert(String(rejected.header("Location")).includes("_openDialog=" + kind + "Dialog"))
@@ -137,29 +137,82 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
     }
 })
 
-feature("the instance overview formats its start time and names unavailable metrics", {
+// The System home (plans/Tools-Fancy.md §3), its one render: plain XML widgets, so html alone. `moqui test` serves no
+// requests, so the runtime report has no listeners and the page says so; a server's page has a row for each.
+feature("the System home shows the instance, its listeners or their absence, and what needs attention", {
     when() {
         const status = ec.factory.getStatusMap(true)
-        const page = render("dashboard")
+        const report = ec.factory.getStartupReport()
+        const page = render("Home")
         return {
             page,
-            started: ec.l10n.format(status.Runtime.Start, null),
-            memory: status.Process.MemoryUsed,
-            threads: status.Process.Threads,
-            loadAvailable: status.System.OsName === "linux"
+            version: report.version,
+            listeners: Array.from(report.listeners || []),
+            started: ec.l10n.format(status.Runtime.Start, "MMM d, HH:mm"),
+            processCpu: status.Resources.Cpu.ProcessPercent
         }
     },
-    then({page, started, memory, threads, loadAvailable}) {
+    then({page, version, listeners, started, processCpu}) {
         page.status == 200
         page.errors == ""
         !/Error rendering|Exception in render/.test(page.output)
-        page.output.includes("Instance overview")
-        page.output.includes("Started: " + started)
-        memory != null || page.output.includes("Memory used: Unavailable")
-        threads != null || page.output.includes("Threads: Unavailable")
-        loadAvailable || page.output.includes("Load: Unavailable")
-        !page.output.includes("Threads: null")
-        !page.output.includes("Hazelcast")
+        // present whatever the data
+        page.output.includes("MR Moqui " + version)
+        page.output.includes("since " + started)
+        page.output.includes("Listeners and integrations")
+        page.output.includes('id="SystemCounters"')
+        listeners.length > 0
+            ? page.output.includes('id="ListenerList_table"') && page.output.includes(">" + listeners[0].name + "<")
+            : page.output.includes("This process reported no listeners")
+        // the empty attention state or its rows, each with its level as a word
+        page.output.includes("Nothing needs attention") ||
+            (page.output.includes('id="AttentionList_table"') &&
+                /<span data-level>(Critical|Warning|Note)<\/span>/.test(page.output))
+        // a reading that is not reported is a dash with its reason, never zero or null
+        processCpu != null || page.output.includes('title="Not reported by this platform"')
+        !/>null<|: null|>undefined</.test(page.output.slice(page.output.indexOf('id="SystemIdentity"')))
+        // the navigation comes from the catalog and the menu; what left the page is gone
+        page.output.includes('id="NavFeaturedCards"')
+        page.output.includes(">Users and access</a>")
+        page.output.includes('id="NavGroupBoxes"')
+        !page.output.includes("Loaded components")
+        !page.output.includes("Database connections</h5>")
+    }
+})
+
+// The Tools home (plans/Tools-Fancy.md §4), its one render: plain XML widgets, so html alone. john.doe holds the four
+// Tools permissions; the line names each one whether or not it is held. The lists of what the user left off and of what
+// is running are hidden when empty, so they are not checked here.
+feature("the Tools home shows the instance, what the user may do, the jump row, the counters and the main tools", {
+    when() {
+        return {page: render("Home", "Tools"), purpose: ec.factory.getStartupReport().purpose, entities: ec.entity.getAllEntityNames().length}
+    },
+    then({page, purpose, entities}) {
+        page.status == 200
+        page.errors == ""
+        !/Error rendering|Exception in render/.test(page.output)
+        // present whatever the data: the instance line, the permission line with each permission named
+        page.output.includes('id="ToolsInstance"')
+        !purpose || page.output.includes(">" + purpose)
+        page.output.includes("You can:")
+        ["SQL_RUNNER_WEB", "DATABASE_ADMIN", "DATABASE_EXTERNAL", "LOAD_RUNNER"].every(permission =>
+            page.output.includes("You hold the permission " + permission) || page.output.includes("Needs the permission " + permission)
+        )
+        // the jump row and the counters
+        page.output.includes("Open an entity")
+        page.output.includes("Open a service")
+        page.output.includes('id="ToolsCounters"')
+        entities > 0
+        !/>null<|: null|>undefined<|>NaN</.test(page.output.slice(page.output.indexOf('id="ToolsInstance"')))
+        // the main tools and the rest come from the catalog and the menu
+        page.output.includes('id="NavFeaturedLargeCards"')
+        page.output.includes(">Data grid</a>")
+        page.output.includes('id="NavGroupBoxes"')
+        page.output.includes(" REST API</a>")
+        page.output.includes(" Terminal UI</a>")
+        // what left the page is gone
+        !page.output.includes("API reference")
+        !page.output.includes("External databases</a>")
     }
 })
 
@@ -483,7 +536,7 @@ feature("incident display dates preserve raw values and missing records retain t
     expect() {
         // The existing Monitoring acceptance owns the screens' renders. Exercise their actual data mapping only.
         const scripts = Object.fromEntries(["Incidents", "IncidentDetail"].map(name => {
-            const source = ec.resource.getLocationText("component://tools/screen/Monitor/" + name + ".xml")
+            const source = ec.resource.getLocationText("component://tools/screen/System/Monitor/" + name + ".xml")
             return [name, /<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(source)[1]]
         }))
         const instant = new Date("2026-11-04T18:28:00.123Z"), epoch = instant.getTime()

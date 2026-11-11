@@ -1,26 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Monitoring/reporting grants are separate so an upgrade need not reload unrelated tool grants. -->
+<!-- Monitoring/reporting grants are separate so an upgrade need not reload unrelated tool grants. Monitor is a section
+    of System and is granted with it: its datasets, services and entities are members of SYSTEM_APP (ToolsSecurityData.xml). -->
 <entity-facade-xml type="seed">
-    <artifactGroups artifactGroupId="MONITOR_APP" description="Monitoring and telemetry datasets">
-        <artifacts artifactName="component://tools/screen/Monitor.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
-        <artifacts artifactName="org.moqui.report.dataset.otel_.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
-        <artifacts artifactName="org.moqui.report.dataset.monitor_annotations" artifactTypeEnumId="AT_SERVICE"/>
-        <artifacts artifactName="org.moqui.monitor.MonitorServices.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
-        <artifacts artifactName="org.moqui.monitor.TelemetryServices.scrape#Targets" artifactTypeEnumId="AT_SERVICE"/>
-        <artifacts artifactName="org.moqui.monitor.TelemetryServices.run#Checks" artifactTypeEnumId="AT_SERVICE"/>
-        <artifacts artifactName="moqui.monitor.ScrapeTarget" artifactTypeEnumId="AT_ENTITY"/>
-        <artifacts artifactName="moqui.monitor.SyntheticCheck" artifactTypeEnumId="AT_ENTITY"/>
-        <!-- Monitor › Evals; MONITOR_EVAL and MONITOR_EVAL_RUN are checked by AgentEval.js -->
-        <artifacts artifactName="org.moqui.agent.AgentEvalServices.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
-        <artifacts artifactName="moqui.agent.AgentScorer" artifactTypeEnumId="AT_ENTITY"/>
-        <artifacts artifactName="moqui.agent.AgentScorerAttach" artifactTypeEnumId="AT_ENTITY"/>
-        <artifacts artifactName="moqui.agent.AgentDataset" artifactTypeEnumId="AT_ENTITY"/>
-        <artifacts artifactName="moqui.agent.AgentDatasetItem" artifactTypeEnumId="AT_ENTITY"/>
-        <artifacts artifactName="moqui.agent.AgentExperiment" artifactTypeEnumId="AT_ENTITY"/>
-        <artifacts artifactName="moqui.agent.AgentExperimentResult" artifactTypeEnumId="AT_ENTITY"/>
-        <artifacts artifactName="moqui.agent.AgentScore" artifactTypeEnumId="AT_ENTITY"/>
-        <authz artifactAuthzId="MONITOR_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
-    </artifactGroups>
     <artifactGroups artifactGroupId="DASHBOARDS_APP" description="Dashboards and report execution">
         <artifacts artifactName="/moqui/reports" artifactTypeEnumId="AT_REST_PATH" inheritAuthz="Y"/>
         <artifacts artifactName="component://tools/screen/Dashboards.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>

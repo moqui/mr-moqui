@@ -55,7 +55,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <q-item clickable v-close-popup @click="exportOpen = true"><q-item-section>To a location…</q-item-section></q-item>
                 </q-list>
             </q-btn-dropdown>
-            <q-btn-dropdown flat dense no-caps icon="bookmarks" label="Views" @show="loadViews">
+            <q-btn-dropdown ref="viewsMenu" flat dense no-caps icon="bookmarks" label="Views" @show="loadViews">
                 <q-list dense style="min-width:240px">
                     <q-item clickable v-close-popup :disable="!source" @click="viewOpen = true"><q-item-section avatar><q-icon name="bookmark_add"></q-icon></q-item-section>
                         <q-item-section>Save this view</q-item-section></q-item>
@@ -237,7 +237,7 @@ module.exports = {
             if (!name) return null;
             const conditions = {};
             for (const [key, value] of Object.entries(p)) {
-                if (['entityName', 'selectedEntity', 'viewId', 'sqlKey', 'moquiSessionToken', 'lastStandalone', 'pageIndex'].includes(key)) continue;
+                if (['entityName', 'selectedEntity', 'viewId', 'sqlKey', 'moquiSessionToken', 'lastStandalone', 'pageIndex', 'open'].includes(key)) continue;
                 if (value != null && value !== '') conditions[key] = value;
             }
             return Object.keys(conditions).length ? { type: 'entity', entityName: String(name), conditions } : { type: 'entity', entityName: String(name) };
@@ -816,6 +816,9 @@ module.exports = {
             }
             const source = this.initialSource();
             if (source) this.open(source);
+            // the Tools home's links: open=file is the file dialog, open=views the saved views
+            else if (this.parameters.open === 'file') this.fileOpen = true;
+            else if (this.parameters.open === 'views' && this.$refs.viewsMenu) this.$refs.viewsMenu.show();
         }, (err) => console.error('The data grid could not load Tabulator', err));
     },
     beforeUnmount() {

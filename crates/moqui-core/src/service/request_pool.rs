@@ -17,6 +17,7 @@
 use std::any::Any;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -44,6 +45,8 @@ struct Shared {
     state: Mutex<State>,
     workers: usize,
     queue_cap: usize,
+    /// The workers running a job now.
+    busy: AtomicUsize,
     handles: Mutex<Vec<JoinHandle<()>>>,
 }
 
@@ -144,6 +147,21 @@ impl RequestPool {
         Ok(())
     }
 
+    /// The pool's size and what it is doing now; all zero while it is not running.
+    pub fn status(&self) -> RequestPoolStatus {
+        let shared = lock(&self.inner).as_ref().cloned();
+        let Some(shared) = shared else {
+            return RequestPoolStatus::default();
+        };
+        let queued = lock(&shared.state).queue.len();
+        RequestPoolStatus {
+            workers: shared.workers,
+            busy: shared.busy.load(Ordering::Relaxed),
+            queued,
+            queue_cap: shared.queue_cap,
+        }
+    }
+
     /// Jobs waiting for a worker. A job a worker has already taken is not included.
     pub fn queue_depth(&self) -> usize {
         let shared = lock(&self.inner).as_ref().cloned();
@@ -173,6 +191,19 @@ impl Drop for RequestPool {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+/// [`RequestPool::status`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RequestPoolStatus {
+    /// The worker threads.
+    pub workers: usize,
+    /// Those running a job now.
+    pub busy: usize,
+    /// Jobs waiting for a worker.
+    pub queued: usize,
+    /// The most jobs that may wait.
+    pub queue_cap: usize,
 }
 
 /// `(request-pool-max, worker-pool-max)`. Missing or non-integer attributes are 8 and 25.
@@ -381,6 +412,7 @@ fn make_shared(workers: usize, queue: usize) -> Result<Arc<Shared>, Error> {
         state: Mutex::new(State::default()),
         workers,
         queue_cap: queue,
+        busy: AtomicUsize::new(0),
         handles: Mutex::new(Vec::new()),
     });
     let handles = spawn_all(&shared, workers)?;
@@ -415,7 +447,10 @@ fn worker_loop(shared: Arc<Shared>) {
     crate::script::mark_request_thread();
     let waiter = Arc::new(Condvar::new());
     while let Some(work) = next_work(&shared, &waiter) {
+        shared.busy.fetch_add(1, Ordering::Relaxed);
+        // run_work catches a job's panic, so the count always comes back down
         run_work(work);
+        shared.busy.fetch_sub(1, Ordering::Relaxed);
     }
 }
 

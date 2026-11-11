@@ -1,5 +1,5 @@
 //! Monitor › Settings (plans/archive/Monitor-Settings.md): the services over [`moqui_core::live_settings`]. Listing needs
-//! Monitor access (the MONITOR_APP artifact group); setting, extending and reverting need `MONITOR_SETTINGS`. Each
+//! Monitor access (the SYSTEM_APP artifact group); setting, extending and reverting need `MONITOR_SETTINGS`. Each
 //! change is logged on the `moqui.monitor.audit` target by live_settings, and here written as a `config` annotation,
 //! tagged `runtime-override` and the key, from this instance only: a set is a band to its expiry, an extend or an early
 //! revert a point. A failed annotation is logged and does not undo the change.

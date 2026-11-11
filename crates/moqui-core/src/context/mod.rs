@@ -27,6 +27,7 @@ pub(crate) mod identity;
 mod locate;
 mod message;
 mod resource;
+pub mod resources;
 pub mod status;
 
 pub use anonymous::{AnonymousAccess, AnonymousLogin};

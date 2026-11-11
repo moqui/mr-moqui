@@ -28,7 +28,7 @@ feature("shipped definitions explain the copy workflow and expose version histor
 feature("the authorized log search retains controls after an invalid query without the qvt shell", {
     expect() {
         const page = monitoringPage()
-        page.goto("/apps/monitor/Logs?from=now-1h&thru=now").status == 200
+        page.goto("/apps/system/Monitor/Logs?from=now-1h&thru=now").status == 200
         page.text().includes("Queries run with your dataset permissions")
         page.text().includes("Query")
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
@@ -118,7 +118,7 @@ async function monitoringOtlpFixture(options) {
     const resource=(instance)=>join(message(1,attribute('service.name',marker)),...(instance?[message(1,attribute('service.instance.id',instance))]:[]));
     const resourceJson=instance=>({attributes:[{key:'service.name',value:{stringValue:marker}},...(instance?[{key:'service.instance.id',value:{stringValue:instance}}]:[])]});
     // The transition shows the new token once, in its message, and returns to Sources.
-    const credentials=await moqui.request('/apps/monitor/Sources/createKey',{method:'POST',params:{source:marker,expireDays:1}});
+    const credentials=await moqui.request('/apps/system/Monitor/Sources/createKey',{method:'POST',params:{source:marker,expireDays:1}});
     const shown=credentials.json && (credentials.json.messageInfos || []).map(info=>info.message).find(message=>/token: mqi_/.test(message));
     if(!credentials.ok || !shown || !/\/Sources/.test(credentials.json.screenUrl || ''))throw new Error('The authorized ingest-key transition failed');
     const token=shown.match(/token: (\S+)/)[1],keyId=shown.match(/ingest key (\S+) for/)[1],statuses=[];
@@ -144,14 +144,14 @@ async function monitoringOtlpFixture(options) {
         }
         throw new Error('Accepted OTLP records did not appear through authorized document queries');
     } finally {
-        const revoked=await moqui.request('/apps/monitor/Sources/revokeKey',{method:'POST',params:{keyId}});
+        const revoked=await moqui.request('/apps/system/Monitor/Sources/revokeKey',{method:'POST',params:{keyId}});
         if(!revoked.ok)throw new Error('Fixture ingest key could not be revoked');
     }
 }
 feature('the browser posts OTLP JSON and protobuf for all three signals with a source key',{
     expect(){
         const page=monitoringPage()
-        page.goto('/qapps/monitor/Sources').status==200
+        page.goto('/qapps/system/Monitor/Sources').status==200
         page.waitFor(()=>!!window.moqui && !!moqui.sessionToken)
         const result=page.evaluate(monitoringOtlpFixture,{complex:false})
         result.statuses.length==6
@@ -207,7 +207,7 @@ async function monitoringFilteredCount(options) {
 feature('structured UI saves and renders a joined dashboard and bucket clicks filter the same exported data',{
     expect(){
         const page=monitoringPage()
-        page.goto('/qapps/monitor/Sources').status==200
+        page.goto('/qapps/system/Monitor/Sources').status==200
         page.waitFor(()=>!!window.moqui && !!moqui.sessionToken)
         const fixture=page.evaluate(monitoringOtlpFixture,{complex:true})
         page.goto('/qapps/dashboards/Explore?datasetId=otel_logs&from=now-1h&thru=now&queryString='+encodeURIComponent('service.name:'+JSON.stringify(fixture.marker))).status==200
@@ -271,36 +271,36 @@ async function monitoringReportPreview(options) {
         texts.push(method===0?new TextDecoder().decode(data):await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text());at=start+size;}
     return {hasDocuments:texts.some(text=>text.includes('documents'))};
 }
-// Monitor Logs includes Explore; its row links and forms resolve against /monitor/Logs, so its transitions must be there.
+// Monitor Logs includes Explore; its row links and forms resolve against /Monitor/Logs, so its transitions must be there.
 feature('Monitor Logs follows a trace link and the surrounding entries of a row',{
     expect(){
         const page=monitoringPage()
-        page.goto('/qapps/monitor/Sources').status==200
+        page.goto('/qapps/system/Monitor/Sources').status==200
         page.waitFor(()=>!!window.moqui && !!moqui.sessionToken)
         const fixture=page.evaluate(monitoringOtlpFixture,{complex:false})
-        const logs='/qapps/monitor/Logs?from=now-1h&thru=now&queryString='+encodeURIComponent('service.name:'+JSON.stringify(fixture.marker))
+        const logs='/qapps/system/Monitor/Logs?from=now-1h&thru=now&queryString='+encodeURIComponent('service.name:'+JSON.stringify(fixture.marker))
         page.goto(logs).status==200
-        page.waitFor(()=>!!document.querySelector('a[href*="/monitor/TraceDetail"]'))
+        page.waitFor(()=>!!document.querySelector('a[href*="/Monitor/TraceDetail"]'))
         page.evaluate(()=>Array.from(document.querySelectorAll('a')).filter(a=>a.textContent.trim()==='Surrounding entries').every(a=>/\/LogContext\?/.test(a.getAttribute('href') || '')))
-        page.locator('a[href*="/monitor/TraceDetail"]').first().click()
-        page.waitFor(()=>location.pathname.endsWith('/monitor/TraceDetail') && /^[0-9a-f]{32}$/.test(new URL(location.href).searchParams.get('traceId') || ''))
+        page.locator('a[href*="/Monitor/TraceDetail"]').first().click()
+        page.waitFor(()=>location.pathname.endsWith('/Monitor/TraceDetail') && /^[0-9a-f]{32}$/.test(new URL(location.href).searchParams.get('traceId') || ''))
         page.waitFor(()=>document.body.innerText.includes('Logs for this trace'))
         page.goto(logs).status==200
         page.waitFor(()=>Array.from(document.querySelectorAll('a')).some(a=>a.textContent.trim()==='Surrounding entries'))
         page.evaluate(()=>{Array.from(document.querySelectorAll('a')).find(a=>a.textContent.trim()==='Surrounding entries').click();return true})
-        // The Monitor mount, so a user with only MONITOR_APP can follow it.
-        page.waitFor(()=>location.pathname.endsWith('/monitor/LogContext'))
+        // The Monitor mount, so a user with only SYSTEM_APP can follow it.
+        page.waitFor(()=>location.pathname.endsWith('/Monitor/LogContext'))
         page.waitFor(()=>document.body.innerText.includes('Entries surrounding'))
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
         page.goto(logs).status==200
         page.waitFor(()=>Array.from(document.querySelectorAll('a')).some(a=>a.textContent.trim()==='Compare ranges or versions'))
-        page.evaluate(()=>Array.from(document.querySelectorAll('a')).find(a=>a.textContent.trim()==='Compare ranges or versions').getAttribute('href')).includes('/monitor/Split')
+        page.evaluate(()=>Array.from(document.querySelectorAll('a')).find(a=>a.textContent.trim()==='Compare ranges or versions').getAttribute('href')).includes('/Monitor/Split')
     },
 })
 feature('the Monitor overview inspects and exports a panel through its own transitions',{
     expect(){
         const page=monitoringPage()
-        page.goto('/qapps/monitor/dashboard?from=now-1h&thru=now').status==200
+        page.goto('/qapps/system/Monitor/Overview?from=now-1h&thru=now').status==200
         page.waitFor(()=>!!document.querySelector('button[aria-label="Inspect Job runs by outcome"]'))
         page.evaluate(()=>{const fetch=window.fetch;window.panelRequests=[];window.fetch=function(url,init){window.panelRequests.push(String(url));return fetch.call(this,url,init);};return true})
         page.locator('button[aria-label="Inspect Job runs by outcome"]').click()
@@ -309,25 +309,25 @@ feature('the Monitor overview inspects and exports a panel through its own trans
         page.waitFor(()=>window.panelRequests.some(url=>url.includes('/exportPanel')) && !document.querySelector('button[aria-label="Export Job runs by outcome as CSV"]').disabled)
         const requests=page.evaluate(()=>window.panelRequests.filter(url=>/\/(inspectPanel|exportPanel)\?/.test(url)))
         requests.length==2
-        requests.every(url=>url.startsWith('/apps/monitor/dashboard/'))
+        requests.every(url=>url.startsWith('/apps/system/Monitor/Overview/'))
         page.evaluate(()=>!document.querySelector('.m-report-panel [role="alert"]'))
     },
 })
 feature('creating an ingest key shows its token once, in a message',{
     expect(){
         const page=monitoringPage()
-        page.goto('/qapps/monitor/Sources').status==200
+        page.goto('/qapps/system/Monitor/Sources').status==200
         page.waitFor(()=>!!document.querySelector('form input[name="source"]'))
         page.evaluate(()=>{for(const [name,value] of [['source','browser-token-check'],['expireDays','1']]){const input=document.querySelector('form input[name="'+name+'"]');input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));}return true})
         page.getByRole('button',{name:'Create ingest key'}).click()
         page.waitFor(()=>/New ingest key [0-9a-f]+ for browser-token-check\. Copy it now; it is not shown again\. token: mqi_[A-Za-z0-9_-]+/.test(document.body.innerText))
-        page.waitFor(()=>location.pathname.endsWith('/monitor/Sources'))
+        page.waitFor(()=>location.pathname.endsWith('/Monitor/Sources'))
     },
 })
 feature('the dashboard time form keeps the variables and the single-panel view',{
     expect(){
         const page=monitoringPage()
-        page.goto('/apps/monitor/Services?from=now-1h&thru=now&panelId=summary&var-service=browser-variable').status==200
+        page.goto('/apps/system/Monitor/Services?from=now-1h&thru=now&panelId=summary&var-service=browser-variable').status==200
         // The marker is on the page before the submit only, so the wait is for the page the form answers with.
         page.evaluate(()=>{window.timeFormSent=true;const form=document.getElementById('DashboardTime');form.querySelector('input[name="from"]').value='now-2h';form.requestSubmit();return true})
         page.waitFor(()=>!window.timeFormSent && document.readyState==='complete' && !!document.getElementById('DashboardTime') && document.querySelector('#DashboardTime input[name="from"]').value==='now-2h')
@@ -341,11 +341,11 @@ feature('the Metrics picker lists the metric names and charts one grouped by an 
         const page=monitoringPage()
         // Explore shows a metric document's highlights in the sandboxed html-view frame; Chromium reports its blocked script as a console error.
         page.allowProblems(/Blocked script execution in 'about:srcdoc'/)
-        page.goto('/qapps/monitor/Sources').status==200
+        page.goto('/qapps/system/Monitor/Sources').status==200
         page.waitFor(()=>!!window.moqui && !!moqui.sessionToken)
         const fixture=page.evaluate(monitoringOtlpFixture,{complex:false})
         const metric=fixture.marker+'.json'
-        page.goto('/qapps/monitor/Metrics?from=now-1h&thru=now&metricStat=last&groupBy=service.instance.id&metricName='+encodeURIComponent(metric)).status==200
+        page.goto('/qapps/system/Monitor/Metrics?from=now-1h&thru=now&metricStat=last&groupBy=service.instance.id&metricName='+encodeURIComponent(metric)).status==200
         page.waitFor((title)=>document.body.innerText.includes(title),{arg:metric+' · last by service.instance.id'})
         page.evaluate((metric)=>Array.from(document.querySelectorAll('select[name="metricName"] option')).some(option=>option.value===metric),metric)
         page.evaluate(()=>Array.from(document.querySelectorAll('select[name="groupBy"] option')).some(option=>option.value==='service.instance.id'))
@@ -357,10 +357,10 @@ feature('the Metrics picker lists the metric names and charts one grouped by an 
 feature('Traces searches by service, name, status and duration',{
     expect(){
         const page=monitoringPage()
-        page.goto('/qapps/monitor/Sources').status==200
+        page.goto('/qapps/system/Monitor/Sources').status==200
         page.waitFor(()=>!!window.moqui && !!moqui.sessionToken)
         const fixture=page.evaluate(monitoringOtlpFixture,{complex:false})
-        const base='/qapps/monitor/Traces?from=now-1h&thru=now&serviceName='+encodeURIComponent(fixture.marker)
+        const base='/qapps/system/Monitor/Traces?from=now-1h&thru=now&serviceName='+encodeURIComponent(fixture.marker)
         page.goto(base+'&spanName='+encodeURIComponent(fixture.marker+'.js*')+'&maxDuration=1000').status==200
         page.waitFor((marker)=>document.body.innerText.includes(marker+'.json'),{arg:fixture.marker})
         !page.text().includes(fixture.marker+'.protobuf')
@@ -374,12 +374,12 @@ feature('Traces searches by service, name, status and duration',{
 feature('Errors, Services and Compare render their charts',{
     expect(){
         const page=monitoringPage()
-        page.goto('/qapps/monitor/Errors?from=now-1h&thru=now').status==200
+        page.goto('/qapps/system/Monitor/Errors?from=now-1h&thru=now').status==200
         page.waitFor(()=>document.body.innerText.includes('Failed requests and jobs over time'))
-        page.goto('/qapps/monitor/Services?from=now-1h&thru=now').status==200
+        page.goto('/qapps/system/Monitor/Services?from=now-1h&thru=now').status==200
         page.waitFor(()=>!!document.querySelector('.m-report-dashboard'))
         page.waitFor(()=>['Endpoints','Instances','Request rate','Duration percentiles','Busiest artifacts'].every(text=>document.body.innerText.includes(text)))
-        page.goto('/qapps/monitor/Split?from=now-1h&thru=now').status==200
+        page.goto('/qapps/system/Monitor/Split?from=now-1h&thru=now').status==200
         page.waitFor(()=>['Requests · all versions','Server errors (5xx) · all versions','Duration percentiles · all versions'].every(text=>document.body.innerText.includes(text)))
         page.evaluate(()=>!!document.querySelector('select[name="leftVersion"]') && !!document.querySelector('select[name="rightVersion"]'))
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
@@ -438,7 +438,7 @@ feature('the dashboard time picker, panel menu and an embed work against the ser
 feature('a synthetic check added on Checks runs now and links its trace; AI and log patterns render',{
     expect(){
         const page=monitoringPage()
-        page.goto('/qapps/monitor/Checks').status==200
+        page.goto('/qapps/system/Monitor/Checks').status==200
         page.waitFor(()=>!!document.querySelector('form input[name="checkId"]'))
         page.evaluate(()=>{const form=[...document.querySelectorAll('form')].find(form=>form.querySelector('input[name="checkId"]') && form.querySelector('input[name="expectStatus"]'))
             for(const [name,value] of [['checkId','browser_health'],['name','Browser health'],['url',location.origin+'/health']]){const input=form.querySelector('input[name="'+name+'"]');input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}))}return true})
@@ -448,10 +448,10 @@ feature('a synthetic check added on Checks runs now and links its trace; AI and 
         page.waitFor(()=>/Check browser_health passed, trace [0-9a-f]{32}/.test(document.body.innerText))
         page.waitFor(()=>/\b[0-9a-f]{32}\b/.test(document.body.innerText) && document.body.innerText.includes('HTTP 200'))
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
-        page.goto('/qapps/monitor/AgentTraces?from=now-1h&thru=now').status==200
+        page.goto('/qapps/system/Monitor/AgentTraces?from=now-1h&thru=now').status==200
         page.waitFor(()=>document.body.innerText.includes('AI and agent traces'))
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
-        page.goto('/qapps/monitor/Logs?from=now-1h&thru=now&showPatterns=Y').status==200
+        page.goto('/qapps/system/Monitor/Logs?from=now-1h&thru=now&showPatterns=Y').status==200
         page.waitFor(()=>document.body.innerText.includes('Hide log patterns'))
         page.waitFor(()=>/Patterns of the newest \d+ of \d+ matching lines/.test(document.body.innerText))
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
@@ -460,35 +460,35 @@ feature('a synthetic check added on Checks runs now and links its trace; AI and 
 feature("the Browser dashboard and the session replay screens render", {
     expect() {
         const page = monitoringPage()
-        page.goto("/qapps/monitor/Browser?from=now-1d&thru=now").status == 200
+        page.goto("/qapps/system/Monitor/Browser?from=now-1d&thru=now").status == 200
         page.waitFor(() => !!document.querySelector(".m-report-dashboard"))
         page.text().includes("Browser experience")
         page.text().includes("Slowest pages")
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
-        page.goto("/apps/monitor/Replays").status == 200
+        page.goto("/apps/system/Monitor/Replays").status == 200
         page.text().includes("Masked recordings of sampled signed-in sessions")
-        page.goto("/apps/monitor/Sources").status == 200
+        page.goto("/apps/system/Monitor/Sources").status == 200
         page.text().includes("Move telemetry tables into day partitions")
     },
 })
 feature("the Operations dashboard and the Releases, Incidents, Recovery and Settings screens render", {
     expect() {
         const page = monitoringPage()
-        page.goto("/qapps/monitor/Operations?from=now-1d&thru=now").status == 200
+        page.goto("/qapps/system/Monitor/Operations?from=now-1d&thru=now").status == 200
         page.waitFor(() => !!document.querySelector(".m-report-dashboard"))
         page.text().includes("Business operations")
         page.text().includes("Outcomes over time")
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
-        page.goto("/apps/monitor/Releases").status == 200
+        page.goto("/apps/system/Monitor/Releases").status == 200
         page.text().includes("Each version a service started with")
-        page.goto("/apps/monitor/Incidents?statusId=all").status == 200
+        page.goto("/apps/system/Monitor/Incidents?statusId=all").status == 200
         page.text().includes("New incident")
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
-        page.goto("/apps/monitor/Recovery").status == 200
+        page.goto("/apps/system/Monitor/Recovery").status == 200
         page.text().includes("Advisory by default")
         page.text().includes("Escalate major and critical incidents")
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
-        page.goto("/apps/monitor/Settings").status == 200
+        page.goto("/apps/system/Monitor/Settings").status == 200
         page.text().includes("Requests per minute")
         page.text().includes("gone on restart")
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())

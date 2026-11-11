@@ -19,6 +19,8 @@ pub(crate) const ADAPTER: &str = "moqui.monitor.RecoveryAdapter";
 pub(crate) const ACTIVE: [&str; 3] = ["Persisted", "Running", "AwaitingOperator"];
 /// Webhook attempts before an action waits only for its deadline.
 const MAX_ATTEMPTS: i64 = 5;
+/// The route of System › Monitor, where an incident opens.
+const MONITOR_PATH: &str = "/apps/system/Monitor";
 
 /// A RecoveryAdapter row, read.
 #[derive(Clone, Debug)]
@@ -254,7 +256,7 @@ fn escalate(incident: &EntityValue, contact: &Json, title: &str) -> Ran {
     let id = field(incident, "incidentId");
     let payload = json!({
         "title": format!("{title}: {}", field(incident, "title")),
-        "link": format!("/apps/monitor/IncidentDetail?incidentId={id}"),
+        "link": format!("{MONITOR_PATH}/IncidentDetail?incidentId={id}"),
         "incidentId": id,
         "severity": field(incident, "severity"),
         "status": field(incident, "statusId"),

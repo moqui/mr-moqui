@@ -135,7 +135,7 @@ shows in those two, and starts that no user could take show as `dropped`. Read a
 
 ## Running from Tools › Load
 
-Tools › Load (`/apps/tools/Load`; the "Load testing" box on the Tools dashboard) needs the `LOAD_RUNNER` permission.
+Tools › Load (`/apps/tools/Load`; the "Load testing" links on the Tools home) needs the `LOAD_RUNNER` permission.
 
 - **Load scripts** lists the `test/load/*.load.js` files of the loaded components with their plans. A file that does
   not evaluate is listed with its error.

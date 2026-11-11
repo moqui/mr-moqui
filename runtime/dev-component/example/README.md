@@ -30,7 +30,7 @@ out with an error line, so the gallery works and the rust services and tool do n
 | `MoquiConf.xml` | Selects the tool factory by the class the crate registers, `example::ExampleToolFactory`. |
 | `service/example/ExampleServices.xml` | The two rust service definitions, and XML Actions that keep the tool in a field and call it. |
 | `test/Example.spec.js` | Specs for each of these. |
-| `screen/Gallery.xml`, `screen/Gallery/*.xml`, `*.qvue` | The screen archetype gallery of the IronStone BOSS style guide (`runtime/component/mr-boss/plan/style-guide.md` §3, §4 and §10): one screen per archetype over framework data, mounted at `/qapps/gallery`; `Board`, `Calendar` and `QuickTask` show `.qvue` screens. |
+| `screen/Gallery.xml`, `screen/Gallery/*.xml`, `*.qvue` | The screen archetype gallery of the IronStone BOSS style guide (`runtime/component/mr-boss/plan/style-guide.md` §3, §4 and §10): one screen per archetype over framework data, mounted at `/qapps/gallery`; `Board`, `Calendar` and `QuickTask` show `.qvue` screens. `NavCards` (`/qapps/gallery/NavCards`) shows the `nav-card` element. |
 | `data/ExampleSecurityData.xml` | Seed authorization: the gallery for the ADMIN group. |
 | `entity/ExampleEntities.xml`, `data/ExampleDemoData.xml` | `moqui.example.Example` (a type, a status flow, a size, a start and end) with seed and demo data, for the gallery's `Views` screen: one form-list as a board, a calendar and a tree. |
 | `acceptance/Gallery.spec.js` | Acceptance: renders every gallery screen in its render mode through `ec.screen.makeTest()` (`./moq accept example`). |

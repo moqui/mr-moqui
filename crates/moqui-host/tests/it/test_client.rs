@@ -101,7 +101,7 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
     assert!(
         lines
             .iter()
-            .any(|line| line.starts_with("Http > redirects are off unless asked: \"/apps/system/dashboard\"  PASSED")),
+            .any(|line| line.starts_with("Http > redirects are off unless asked: \"/apps/system/Home\"  PASSED")),
         "{text}"
     );
     assert!(

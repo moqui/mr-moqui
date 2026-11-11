@@ -16,6 +16,9 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Tools App artifacts/authz -->
     <artifactGroups artifactGroupId="TOOLS_APP" description="Tools App (via root screen)">
         <artifacts artifactName="component://tools/screen/Tools.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
+        <!-- The Tools home's count of screens (plans/Tools-Fancy.md §4.3): count#Screens runs on a worker, outside the screen -->
+        <artifacts artifactName="moqui.tools.ToolsHomeServices.get#ScreenCount" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+        <artifacts artifactName="moqui.tools.ToolsHomeServices.count#Screens" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
         <!-- Full permissions for the ADMIN user group -->
         <authz artifactAuthzId="TOOLS_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
@@ -32,6 +35,25 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- System App artifacts/authz -->
     <artifactGroups artifactGroupId="SYSTEM_APP" description="System App (via root screen)">
         <artifacts artifactName="component://tools/screen/System.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
+        <!-- The System home's attention list (plans/Tools-Fancy.md B5): what it reads is the System administrator's -->
+        <artifacts artifactName="moqui.tools.SystemHomeServices.get#SystemAttention" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+        <!-- Monitor (System › Monitor): the telemetry datasets, its services and entities; the screen is under System.xml -->
+        <artifacts artifactName="org.moqui.report.dataset.otel_.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
+        <artifacts artifactName="org.moqui.report.dataset.monitor_annotations" artifactTypeEnumId="AT_SERVICE"/>
+        <artifacts artifactName="org.moqui.monitor.MonitorServices.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
+        <artifacts artifactName="org.moqui.monitor.TelemetryServices.scrape#Targets" artifactTypeEnumId="AT_SERVICE"/>
+        <artifacts artifactName="org.moqui.monitor.TelemetryServices.run#Checks" artifactTypeEnumId="AT_SERVICE"/>
+        <artifacts artifactName="moqui.monitor.ScrapeTarget" artifactTypeEnumId="AT_ENTITY"/>
+        <artifacts artifactName="moqui.monitor.SyntheticCheck" artifactTypeEnumId="AT_ENTITY"/>
+        <!-- LLM and Agents › Evals; MONITOR_EVAL and MONITOR_EVAL_RUN are checked by AgentEval.js -->
+        <artifacts artifactName="org.moqui.agent.AgentEvalServices.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
+        <artifacts artifactName="moqui.agent.AgentScorer" artifactTypeEnumId="AT_ENTITY"/>
+        <artifacts artifactName="moqui.agent.AgentScorerAttach" artifactTypeEnumId="AT_ENTITY"/>
+        <artifacts artifactName="moqui.agent.AgentDataset" artifactTypeEnumId="AT_ENTITY"/>
+        <artifacts artifactName="moqui.agent.AgentDatasetItem" artifactTypeEnumId="AT_ENTITY"/>
+        <artifacts artifactName="moqui.agent.AgentExperiment" artifactTypeEnumId="AT_ENTITY"/>
+        <artifacts artifactName="moqui.agent.AgentExperimentResult" artifactTypeEnumId="AT_ENTITY"/>
+        <artifacts artifactName="moqui.agent.AgentScore" artifactTypeEnumId="AT_ENTITY"/>
         <!-- Full permissions for the ADMIN user group -->
         <authz artifactAuthzId="SYSTEM_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>

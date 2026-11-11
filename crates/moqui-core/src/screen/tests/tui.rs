@@ -1599,6 +1599,94 @@ fn qvt_render_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/script/testdata/screen/qvt/render")
 }
 
+/// A `nav-card` is a container of a link (the title, to the card's link), the text and its child links, a cell of the
+/// dashboard; a card with no link has its title as a text, and a card or a child link whose condition is false is left out.
+#[test]
+fn a_nav_card_is_a_container_of_its_link_its_text_and_its_child_links() {
+    let context = ExecutionContextFactory::test_context();
+    let body = make_render(context.factory())
+        .root_screen(qvt_render_dir().join("Dashboard.xml").to_string_lossy().into_owned())
+        .screen_path("")
+        .render_mode("tui")
+        .render()
+        .unwrap_or_else(|err| panic!("{err}"))
+        .body_text();
+    let doc: Json = serde_json::from_str(&body).unwrap_or_else(|err| panic!("{err}: {body}"));
+    let featured = nodes(&doc)
+        .into_iter()
+        .find(|node| node.get("t") == Some(&json!("dashboard")) && node["id"] == json!("Featured"))
+        .unwrap_or_else(|| panic!("{body}"));
+    let cards = featured["c"].as_array().unwrap();
+    assert_eq!(cards.len(), 3, "{body}");
+    let parts = |card: &Json| -> Vec<(String, String, String)> {
+        card["c"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| {
+                let text = |key: &str| node.get(key).and_then(Json::as_str).unwrap_or("").to_string();
+                (text("t"), text("text"), text("url"))
+            })
+            .collect()
+    };
+    let part = |t: &str, text: &str, url: &str| (t.to_string(), text.to_string(), url.to_string());
+    assert_eq!(cards[0]["t"], json!("container"));
+    assert_eq!(
+        parts(&cards[0]),
+        [
+            part("link", "Orders", "/Orders"),
+            part("text", "Find {{x}} & open orders", ""),
+            part("link", "Open ones", "/Orders?statusId=Open"),
+            part("link", "Help", "https://example.com/help"),
+        ]
+    );
+    assert_eq!(parts(&cards[1]), [part("link", "Late", "https://example.com/late")]);
+    assert_eq!(
+        parts(&cards[2]),
+        [part("text", "Counted", ""), part("text", "42 open", "")]
+    );
+    assert!(!body.contains("Hidden"), "{body}");
+    // the client reads every node
+    client_model(&body);
+}
+
+/// A `number-card` carries its `link` as the card's url, resolved as a screen link is (a path below this screen with
+/// its query, another address as it is); a card with no link has an empty url. The macro once read a `url` attribute
+/// the element does not have, so no card was a link in the terminal.
+#[test]
+fn a_number_card_carries_its_link() {
+    let context = ExecutionContextFactory::test_context();
+    let body = make_render(context.factory())
+        .root_screen(qvt_render_dir().join("Dashboard.xml").to_string_lossy().into_owned())
+        .screen_path("")
+        .render_mode("tui")
+        .render()
+        .unwrap_or_else(|err| panic!("{err}"))
+        .body_text();
+    let doc: Json = serde_json::from_str(&body).unwrap_or_else(|err| panic!("{err}: {body}"));
+    let cards: Vec<(String, String)> = nodes(&doc)
+        .into_iter()
+        .filter(|node| node.get("t") == Some(&json!("numberCard")))
+        .map(|node| {
+            let text = |key: &str| node.get(key).and_then(Json::as_str).unwrap_or("").to_string();
+            (text("title"), text("url"))
+        })
+        .collect();
+    let card = |title: &str, url: &str| (title.to_string(), url.to_string());
+    assert_eq!(
+        cards,
+        [
+            card("Open orders", "/Orders?statusId=Open"),
+            card("Late shipments", "https://example.com/late"),
+            card("Revenue {{x}} & more", ""),
+            card("Plain", ""),
+            card("Held orders", "/Orders?statusId=Held"),
+        ],
+        "{body}"
+    );
+    client_model(&body);
+}
+
 /// A parent level asked for alone, as the terminal asks for each level, holds an empty active node: the level under it is
 /// the client's next request, so a parent with no default item is not an error (Tools' ServiceJob, Security).
 #[test]

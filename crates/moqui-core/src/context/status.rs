@@ -12,12 +12,14 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `ExecutionContextFactoryImpl.getStatusMap` and `getComponentInfoList` for the System dashboard.
+//! `ExecutionContextFactoryImpl.getStatusMap` and `getComponentInfoList` for the System home.
 //!
 //! The Java map reads the JVM management beans: heap, non-heap, garbage collection, JIT, and class loading. A Rust
 //! process has none of those, so `Process` (resident and peak memory, threads, from `/proc/self/status` on Linux)
-//! stands in for `Heap`, `NonHeap`, and `JavaStats`, and `Runtime` for `JavaRuntime`. Disk space needs `statvfs`,
-//! which the standard library does not have, so `Disk` is not reported.
+//! stands in for `Heap`, `NonHeap`, and `JavaStats`, and `Runtime` for `JavaRuntime`. What the machine has left (CPU
+//! load, memory against its limit, the filesystems, open files, swap) is the `Resources` map, each reading with its
+//! level ([`super::resources`], plans/Tools-Fancy.md B2); `Ready` and `Draining` are what `/health` answers, and
+//! `RequestPool` the request workers.
 
 use indexmap::IndexMap;
 use moqui_lib::object::Value;
@@ -38,42 +40,16 @@ fn decimal(number: f64, scale: u32) -> Value {
     moqui_lib::object::basic_convert(&Value::string(text), "BigDecimal").value
 }
 
-/// The fields of `/proc/self/status` in KiB or counts. Empty off Linux.
-fn proc_status() -> IndexMap<String, i64> {
-    let Ok(text) = std::fs::read_to_string("/proc/self/status") else {
-        return IndexMap::default();
-    };
-    text.lines()
-        .filter_map(|line| {
-            let (name, rest) = line.split_once(':')?;
-            let number = rest.split_whitespace().next()?.parse().ok()?;
-            Some((name.to_string(), number))
-        })
-        .collect()
-}
-
-/// The one-minute load average, `None` off Linux.
-fn load_average() -> Option<f64> {
-    std::fs::read_to_string("/proc/loadavg")
-        .ok()?
-        .split_whitespace()
-        .next()?
-        .parse()
-        .ok()
-}
-
 /// The status map. `include_sensitive` adds the CPU and OS names, the version, and the data sources, as in Java.
 pub fn status_map(factory: &ExecutionContextFactory, include_sensitive: bool) -> moqui_lib::object::ValueMap {
-    let processors = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-    let load = load_average().unwrap_or(0.0);
+    let readings = super::resources::readings(factory);
+    let processors = readings.processors;
+    let load = readings.load.map_or(0.0, |load| load[0]);
     #[allow(clippy::cast_precision_loss)] // A processor count fits a double.
-    let load_percent = load / processors as f64 * 100.0;
-    let status = proc_status();
-    let mib = |name: &str| {
-        #[allow(clippy::cast_precision_loss)] // Memory sizes in KiB fit a double.
-        status
-            .get(name)
-            .map_or(Value::Null, |kib| decimal(*kib as f64 / 1024.0, 3))
+    let load_percent = load / processors.max(1) as f64 * 100.0;
+    let mib = |bytes: Option<u64>| {
+        #[allow(clippy::cast_precision_loss)] // Memory sizes fit a double.
+        bytes.map_or(Value::Null, |bytes| decimal(bytes as f64 / (1024.0 * 1024.0), 3))
     };
     let now = jiff::Timestamp::now().as_millisecond();
     let started = factory.started_millis();
@@ -94,12 +70,9 @@ pub fn status_map(factory: &ExecutionContextFactory, include_sensitive: bool) ->
     out.insert(
         "Process".to_string(),
         map(vec![
-            ("MemoryUsed", mib("VmRSS")),
-            ("MemoryPeak", mib("VmHWM")),
-            (
-                "Threads",
-                status.get("Threads").map_or(Value::Null, |count| Value::I64(*count)),
-            ),
+            ("MemoryUsed", mib(readings.process_memory)),
+            ("MemoryPeak", mib(readings.process_memory_peak)),
+            ("Threads", readings.threads.map_or(Value::Null, count)),
         ]),
     );
     let mut system = vec![
@@ -117,11 +90,43 @@ pub fn status_map(factory: &ExecutionContextFactory, include_sensitive: bool) ->
         "Runtime".to_string(),
         map(vec![("Start", start), ("UptimeHours", decimal(uptime_hours, 2))]),
     );
+    out.insert(
+        "Resources".to_string(),
+        readings.to_value(&super::resources::Thresholds::from_conf(factory)),
+    );
+    out.insert("Ready".to_string(), Value::Bool(is_ready(factory)));
+    out.insert("Draining".to_string(), Value::Bool(crate::drain::is_draining(factory)));
+    let requests = factory.request_pool().status();
+    out.insert(
+        "RequestPool".to_string(),
+        map(vec![
+            ("Workers", size(requests.workers)),
+            ("Busy", size(requests.busy)),
+            ("Queued", size(requests.queued)),
+            ("QueueCap", size(requests.queue_cap)),
+        ]),
+    );
     if include_sensitive {
         out.insert("MoquiFramework".to_string(), Value::string(env!("CARGO_PKG_VERSION")));
         out.insert("DataSources".to_string(), Value::List(data_sources(factory)));
     }
     out
+}
+
+fn count(value: u64) -> Value {
+    Value::I64(i64::try_from(value).unwrap_or(i64::MAX))
+}
+
+fn size(value: usize) -> Value {
+    Value::I64(i64::try_from(value).unwrap_or(i64::MAX))
+}
+
+/// Whether the server can serve: the default group's database is open, as `/health` asks.
+#[must_use]
+pub fn is_ready(factory: &ExecutionContextFactory) -> bool {
+    factory
+        .entity()
+        .is_some_and(|facade| facade.transactions_for("moqui.basic.Enumeration").is_ok())
 }
 
 fn os_release() -> String {
@@ -130,17 +135,23 @@ fn os_release() -> String {
         .unwrap_or_default()
 }
 
-/// `EntityFacadeImpl.getDataSourcesInfo`: each entity group with its database and pool.
+/// `EntityFacadeImpl.getDataSourcesInfo`: each entity group with its database and pool, the pool as a sentence
+/// (`detail`) and as numbers; `embedded` says the database is the cluster this process runs.
 fn data_sources(factory: &ExecutionContextFactory) -> Vec<Value> {
     let Some(facade) = factory.entity() else {
         return Vec::new();
     };
+    let conf = moqui_lib::node::MNode::parse_shared("moqui-conf", &factory.conf_text()).ok();
     let mut groups: Vec<_> = facade.groups().collect();
     groups.sort_by(|left, right| left.0.cmp(right.0));
     groups
         .into_iter()
         .map(|(name, dialect, transactions)| {
             let stats = transactions.stats();
+            let embedded = conf
+                .as_ref()
+                .and_then(|conf| crate::entity::datasource::datasource_conf(conf, name).ok())
+                .map(|datasource| datasource.kind == crate::entity::datasource::DatasourceKind::Embedded);
             map(vec![
                 ("group", Value::string(name)),
                 ("uniqueName", Value::string(format!("{name}_{}", dialect.name))),
@@ -152,6 +163,13 @@ fn data_sources(factory: &ExecutionContextFactory) -> Vec<Value> {
                         stats.checked_out, stats.parked, stats.waiting, stats.ordinary_idle, stats.reserve_idle
                     )),
                 ),
+                ("checkedOut", count(u64::from(stats.checked_out))),
+                ("parked", count(u64::from(stats.parked))),
+                ("waiting", count(u64::from(stats.waiting))),
+                ("idle", count(u64::from(stats.ordinary_idle))),
+                ("reserveIdle", count(u64::from(stats.reserve_idle))),
+                ("max", count(u64::from(transactions.pool_max()))),
+                ("embedded", embedded.map_or(Value::Null, Value::Bool)),
             ])
         })
         .collect()

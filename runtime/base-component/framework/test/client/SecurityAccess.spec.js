@@ -20,7 +20,7 @@ const formSession = (username, password) => {
 
 // test_a01_access.py: test_tools_without_session_is_not_the_tool
 feature("A01 Tools without a session redirects to the login, not the tool", {
-    when() { return { res: session().get("/apps/tools/dashboard") } },
+    when() { return { res: session().get("/apps/tools/Home") } },
     then({ res }) {
         res.status == 302
         res.location.includes("/Login")
@@ -78,7 +78,7 @@ feature("A01 a static path with .. does not serve screen XML", {
 // test_a01_more.py: test_none_user_cannot_open_tools
 feature("A01 a user with no authorization cannot open Tools", {
     given() { requireFixture("sec.none.only", "SecNone1!!") },
-    when() { return { res: formSession("sec.none.only", "SecNone1!!").get("/apps/tools/dashboard") } },
+    when() { return { res: formSession("sec.none.only", "SecNone1!!").get("/apps/tools/Home") } },
     then({ res }) {
         res.status == 403
         !res.text.toLowerCase().includes("auto screens")
@@ -91,7 +91,7 @@ feature("A01 a VIEW-only user cannot open the SQL Runner", {
     when() {
         const s = formSession("sec.view.only", "SecView1!!")
         return {
-            tools: s.get("/apps/tools/dashboard"),
+            tools: s.get("/apps/tools/Home"),
             res: s.get("/apps/tools/SqlTui", { params: { db: "group:transactional", sql: "SELECT 1" } }),
         }
     },

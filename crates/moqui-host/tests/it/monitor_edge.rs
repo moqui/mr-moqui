@@ -242,7 +242,7 @@ fn otlp_keys_partial_success_compression_and_request_context() {
         address,
         &common::http_request(
             "GET",
-            "/apps/monitor/Traces.html",
+            "/apps/system/Monitor/Traces.html",
             &[("Authorization", &auth), ("traceparent", parent)],
             "",
         ),

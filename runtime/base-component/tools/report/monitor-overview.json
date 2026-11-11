@@ -183,7 +183,7 @@
               },
               "config": {
                 "displayName": "Error",
-                "link": "/apps/monitor/ErrorDetail?fingerprint=${fingerprint}&from=${first_seen}&thru=now"
+                "link": "/apps/system/Monitor/ErrorDetail?fingerprint=${fingerprint}&from=${first_seen}&thru=now"
               }
             },
             {

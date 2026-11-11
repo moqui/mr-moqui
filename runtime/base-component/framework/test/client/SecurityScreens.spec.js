@@ -35,7 +35,7 @@ feature("A01 an extra path on echopath is HTML-escaped", {
 // test_a01_more.py: test_fop_without_login_is_not_a_pdf
 feature("A01 FOP of a screen without a login is not a PDF", {
     when() {
-        const res = session().get("/fop/apps/tools/dashboard")
+        const res = session().get("/fop/apps/tools/Home")
         return { res, ctype: (res.contentType ?? "").toLowerCase() }
     },
     then({ res, ctype }) {
@@ -116,7 +116,7 @@ feature("A01 qzSign without a login is 401 and not a signature", {
 // test_a01_more.py: test_htmlr_anonymous_error_does_not_include_stack, test_htmlr_tools_without_login_is_not_a_pdf.
 // There is no /htmlr here; the proof that nothing answers at its path is kept.
 feature("A01 no HTML renderer is mounted at #path", {
-    where: [{ path: "/htmlr" }, { path: "/htmlr/Login" }, { path: "/htmlr/apps/tools/dashboard" }],
+    where: [{ path: "/htmlr" }, { path: "/htmlr/Login" }, { path: "/htmlr/apps/tools/Home" }],
     when({ path }) {
         const res = session().get(path)
         return { res, ctype: (res.contentType ?? "").toLowerCase(), location: res.location ?? "" }
@@ -139,7 +139,7 @@ feature("A01 a GET of the login with a password does not log in", {
     when() {
         const s = session()
         const res = s.get("/Login/login", { params: { username: USER, password: PASSWORD } })
-        const tools = s.get("/apps/tools/dashboard")
+        const tools = s.get("/apps/tools/Home")
         return { res, tools, flat: res.text.replace(/\s/g, "").toLowerCase(), location: tools.location ?? "" }
     },
     then({ res, tools, flat, location }) {
@@ -225,8 +225,8 @@ feature("A01 menu data for Tools without a login is not the menu", {
 // test_a01_more.py: test_fop_filename_quote_stays_in_one_content_disposition
 feature("A01 a FOP filename quote stays in one Content-Disposition", {
     when() {
-        const res = formSession(USER, PASSWORD).get("/fop/apps/tools/dashboard", { params: { filename: 'a"; x=y' } })
-        if (res.status == 401 || res.status == 403) skip("user cannot render /fop/apps/tools/dashboard")
+        const res = formSession(USER, PASSWORD).get("/fop/apps/tools/Home", { params: { filename: 'a"; x=y' } })
+        if (res.status == 401 || res.status == 403) skip("user cannot render /fop/apps/tools/Home")
         return { cd: res.header("Content-Disposition") ?? "" }
     },
     then({ cd }) {
@@ -323,7 +323,7 @@ feature("A01 a /resources put does not write a screen under component://webroot"
 // test_a01_more.py: test_anonymous_tools_csv_is_not_a_data_dump
 feature("A01 an anonymous Tools CSV is not a data dump", {
     when() {
-        const res = session().get("/apps/tools/dashboard.csv")
+        const res = session().get("/apps/tools/Home.csv")
         return { res, ctype: (res.contentType ?? "").toLowerCase(), body: res.text.toLowerCase() }
     },
     then({ res, ctype, body }) {
@@ -337,7 +337,7 @@ feature("A01 an anonymous Tools CSV is not a data dump", {
 feature("A01 a VIEW-only Tools CSV is not a privilege escalation", {
     given() { requireFixture(VIEW_USER, VIEW_PASSWORD) },
     when() {
-        const res = formSession(VIEW_USER, VIEW_PASSWORD).get("/apps/tools/dashboard.csv")
+        const res = formSession(VIEW_USER, VIEW_PASSWORD).get("/apps/tools/Home.csv")
         return { res, body: res.text.toLowerCase() }
     },
     then({ res, body }) {
@@ -349,7 +349,7 @@ feature("A01 a VIEW-only Tools CSV is not a privilege escalation", {
 // test_a01_more.py: test_authorized_tools_csv_is_csv
 feature("A01 a Tools CSV for a user who may open Tools is CSV", {
     when() {
-        const res = formSession(USER, PASSWORD).get("/apps/tools/dashboard.csv")
+        const res = formSession(USER, PASSWORD).get("/apps/tools/Home.csv")
         if (res.status == 401 || res.status == 403) skip("user cannot open Tools dashboard")
         return { res, ctype: (res.contentType ?? "").toLowerCase() }
     },

@@ -50,7 +50,7 @@
     <moqui.service.job.ServiceJob jobName="score_AgentLiveRuns_frequent" description="Score a sample of the finished runs of agents with attached scorers"
             serviceName="org.moqui.agent.AgentEvalServices.score#LiveRuns" cronExpression="0 0/5 * * * ?" paused="N" errorHistoryOnly="Y"/>
 
-    <moqui.security.UserPermission userPermissionId="MONITOR_EVAL" description="Edit eval datasets and scorers, and score agent runs (Monitor › Evals)"/>
+    <moqui.security.UserPermission userPermissionId="MONITOR_EVAL" description="Edit eval datasets and scorers, and score agent runs (LLM and Agents › Evals)"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_EVAL" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="MONITOR_EVAL_RUN" description="Start and cancel eval experiments, which start agent runs that cost money"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_EVAL_RUN" fromDate="0"/>

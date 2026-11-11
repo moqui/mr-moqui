@@ -273,6 +273,7 @@ pub static CATALOG: &[Unit] = &[
         Class::Restart("the log writer starts at boot; Monitor › Settings changes its levels for a while"),
     ),
     single("report", Class::Live),
+    single("resource-watch", Class::Live),
     single("dev-reload", Class::Restart("the file watcher starts at boot")),
     single("dev-aide", Class::Live).attrs(&[("shared", BOOT)]),
     // read by the desktop and mobile apps, not the server

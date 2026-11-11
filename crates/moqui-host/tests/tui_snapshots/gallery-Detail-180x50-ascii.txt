@@ -19,8 +19,8 @@
      Message             | | ID  . . . . . : STT_ERROR                                               | # record-files has a browser-only part - o=Open in browser
      Views               | | Type  . . . . : Screen Theme Type                                       |
      Handheld            | | Description . : Error Screens                                           |
- v Home                  | | Code  . . . . : ERROR                                                   |
-                         | | Sequence  . . :                                                         |
+     Nav cards           | | Code  . . . . : ERROR                                                   |
+ v Home                  | | Sequence  . . :                                                         |
                          | | Parent  . . . :                                                         |
                          | | Option value  :                                                         |
                          | | Related . . . :                                                         |

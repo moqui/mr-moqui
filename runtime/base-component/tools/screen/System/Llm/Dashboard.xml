@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Dashboard" default-menu-index="1">
+        default-menu-title="Overview" default-menu-index="1">
 
     <transition name="callDetail"><default-response url="../Calls/CallDetail"/></transition>
     <transition name="callList"><default-response url="../Calls/CallList"/></transition>
@@ -30,6 +30,12 @@ along with this software (see the LICENSE.md file). If not, see
             <econdition field-name="errorClass" operator="is-not-null"/><order-by field-name="-startDate"/></entity-find>
     </actions>
     <widgets>
+        <!-- Monitor's AI dashboard (report/monitor-ai.json), two of its panels over seven days; the whole of it is Traces'
+            "AI dashboard" link -->
+        <container-row>
+            <row-col md="4"><report-embed id="LlmCallsEmbed" definition-id="monitor-ai" panel-id="calls" from="now-7d"/></row-col>
+            <row-col md="8"><report-embed id="LlmTokensEmbed" definition-id="monitor-ai" panel-id="tokens" from="now-7d"/></row-col>
+        </container-row>
         <container-row>
             <row-col md="4"><container-box><box-header title="Runs"/><box-body>
                 <label text="Submitted today: ${totals.runsToday ?? 0}" type="p"/>

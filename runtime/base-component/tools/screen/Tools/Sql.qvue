@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
             <q-select dense outlined emit-value map-options v-model="db" :options="databases" label="Database" @update:model-value="chooseDatabase"></q-select>
         </div>
         <div class="col-auto">
-            <q-btn-dropdown flat dense no-caps icon="bookmarks" label="Saved" @show="loadSaved">
+            <q-btn-dropdown ref="savedMenu" flat dense no-caps icon="bookmarks" label="Saved" @show="loadSaved">
                 <q-list dense style="min-width:260px;max-width:480px">
                     <q-item clickable v-close-popup @click="openSave"><q-item-section avatar><q-icon name="bookmark_add"></q-icon></q-item-section>
                         <q-item-section>Save this query</q-item-section></q-item>
@@ -247,7 +247,30 @@ module.exports = {
                 this.db = info.db; this.databases = info.databases || []; this.backend = info.backend || '';
                 this.canRun = info.canRun !== false; this.canAdmin = !!info.canAdmin;
                 this.loadCatalog();
+                this.openFromParameters();
             });
+        },
+        // the Tools home's links: queryId puts a saved query in the editor and auditId a statement of the user's history
+        // (neither is run), open=history is the history and open=saved the saved queries
+        openFromParameters() {
+            const p = this.$root.currentParameters || {};
+            if (p.queryId) {
+                this.call('savedQueries').then((out) => {
+                    this.savedQueries = (out && out.savedQueries) || [];
+                    const saved = this.savedQueries.find((item) => String(item.queryId) === String(p.queryId));
+                    if (saved) this.useSaved(saved);
+                });
+            } else if (p.auditId) {
+                this.call('history').then((out) => {
+                    this.history = (out && out.history) || [];
+                    const item = this.history.find((row) => String(row.auditId) === String(p.auditId));
+                    if (item) this.sqlText = item.statementText;
+                });
+            } else if (p.open === 'history') {
+                this.openHistory();
+            } else if (p.open === 'saved' && this.$refs.savedMenu) {
+                this.$refs.savedMenu.show();
+            }
         },
         loadCatalog() {
             this.call('catalog').then((catalog) => {

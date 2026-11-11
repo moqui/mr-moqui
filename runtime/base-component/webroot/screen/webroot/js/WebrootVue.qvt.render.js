@@ -5914,6 +5914,74 @@
               ], 12, ["onClick"]))
             }
         } },
+        "m-nav-card": { hash: "d60a1261", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveDynamicComponent: _resolveDynamicComponent, createElementBlock: _createElementBlock, createElementVNode: _createElementVNode, normalizeClass: _normalizeClass, renderSlot: _renderSlot } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_m_menu_icon = _resolveComponent("m-menu-icon")
+              const _component_q_avatar = _resolveComponent("q-avatar")
+              const _component_q_card_section = _resolveComponent("q-card-section")
+              const _component_q_card = _resolveComponent("q-card")
+
+              return (_openBlock(), _createBlock(_component_q_card, {
+                flat: "",
+                bordered: "",
+                class: _normalizeClass(["m-nav-card column no-wrap", ['m-nav-card-' + _ctx.size, {'m-nav-card-link': !!_ctx.href}]])
+              }, {
+                default: _withCtx(() => [
+                  _createVNode(_component_q_card_section, {
+                    class: _normalizeClass(["col row no-wrap q-pa-md", _ctx.large ? 'items-start' : 'items-center'])
+                  }, {
+                    default: _withCtx(() => [
+                      (_ctx.icon)
+                        ? (_openBlock(), _createBlock(_component_q_avatar, {
+                            key: 0,
+                            rounded: "",
+                            size: _ctx.avatarSize,
+                            class: "m-nav-card-avatar q-mr-md"
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_m_menu_icon, {
+                                name: _ctx.icon,
+                                size: _ctx.iconSize
+                              }, null, 8, ["name", "size"])
+                            ]),
+                            _: 1
+                          }, 8, ["size"]))
+                        : _createCommentVNode("", true),
+                      _createElementVNode("div", { class: "col m-nav-card-body" }, [
+                        (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.wrapper), {
+                          href: _ctx.href || undefined,
+                          class: "m-nav-card-title text-subtitle1 text-weight-medium"
+                        }, {
+                          default: _withCtx(() => [
+                            _createTextVNode(_toDisplayString(_ctx.title), 1)
+                          ]),
+                          _: 1
+                        }, 8, ["href"])),
+                        (_ctx.text)
+                          ? (_openBlock(), _createElementBlock("div", {
+                              key: 0,
+                              class: "text-caption m-muted m-nav-card-text"
+                            }, _toDisplayString(_ctx.text), 1))
+                          : _createCommentVNode("", true)
+                      ])
+                    ]),
+                    _: 1
+                  }, 8, ["class"]),
+                  (_ctx.$slots.default)
+                    ? (_openBlock(), _createElementBlock("div", {
+                        key: 0,
+                        class: "m-nav-card-links row items-center q-px-md q-pb-sm"
+                      }, [
+                        _renderSlot(_ctx.$slots, "default")
+                      ]))
+                    : _createCommentVNode("", true)
+                ]),
+                _: 3
+              }, 8, ["class"]))
+            }
+        } },
         "m-number-card": { hash: "4e5c1196", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, normalizeClass: _normalizeClass, resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createBlock: _createBlock, withCtx: _withCtx, resolveDynamicComponent: _resolveDynamicComponent } = Vue
 

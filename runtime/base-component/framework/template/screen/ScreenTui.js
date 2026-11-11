@@ -320,7 +320,7 @@ $w("]");
             if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             ${kind ? `$link.kind = ${jsString(kind)};` : ""}
             ${attr(node, "btn-type") ? `$link.btnType = ${jsString(attr(node, "btn-type"))};` : ""}
-            ${attr(node, "icon") ? `$link.icon = ${jsString(attr(node, "icon"))};` : ""}
+            ${attr(node, "icon") ? `$link.icon = String(${S.expandExpr(attr(node, "icon"))} || "");` : ""}
             ${attr(node, "badge") ? `$link.badge = String(${S.expandNoL10nExpr(attr(node, "badge"))} || "");` : ""}
             ${attr(node, "tooltip") ? `$link.tooltip = String(${S.expandExpr(attr(node, "tooltip"))} || "");` : ""}
             ${kind === "hidden-form-link" ? `$link.method = "post";` : ""}
@@ -1609,8 +1609,24 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
         }),
         "form-single": formSingle,
         "form-list": formList,
-        "number-card": stmt((node) => guarded(node,
-            `$emit({t:"numberCard",id:$uid(${jsString(idOf(node))}),title:String(${S.expandExpr(attr(node, "title") || "")} || ""),value:String(${S.expandNoL10nExpr(attr(node, "value") || "")} || ""),url:String(${S.expandNoL10nExpr(attr(node, "url") || "")} || "")});\n`)),
+        // A number-card's link is a screen link, as a nav-card's: no url for a card without one or one the user may not follow.
+        "number-card": stmt((node) => guarded(node, `{
+    const $made = ${attr(node, "link") ? `sri.makeUrlByType(${jsString(attr(node, "link"))}, "transition", ${S.nodeLit(node, false)}, "true")` : "null"};
+    $emit({t:"numberCard",id:$uid(${jsString(idOf(node))}),title:String(${S.expandExpr(attr(node, "title") || "")} || ""),value:String(${S.expandNoL10nExpr(attr(node, "value") || "")} || ""),url:$made && !$made.getDisableLink() ? $made.getUrlWithParams() || "" : ""});
+}
+`)),
+        // A nav-card is a container of a link (the title, the card's link; a text without one), the text and the child links.
+        "nav-card": stmt((node, children) => guarded(node, `$openChildren({t:"container",id:$uid(${jsString(idOf(node))})});
+{
+    const $title = String(${S.expandExpr(attr(node, "title") || "")} || "");
+    const $made = ${attr(node, "link") ? `sri.makeUrlByType(${jsString(attr(node, "link"))}, "transition", ${S.nodeLit(node, false)}, "true")` : "null"};
+    if ($made && !$made.getDisableLink()) $emit({t:"link",id:$uid(${jsString(idOf(node) + ".link")}),text:$title,url:$made.getUrlWithParams() || "",kind:"anchor"});
+    else if ($title) $emit({t:"text",id:$uid(${jsString(idOf(node) + ".title")}),text:$title});
+    const $text = String(${S.expandExpr(attr(node, "text") || "")} || "");
+    if ($text && $text !== "null") $emit({t:"text",id:$uid(${jsString(idOf(node) + ".text")}),text:$text});
+}
+${children}$closeChildren();
+`)),
         "dynamic-dialog": stmt((node) => guarded(node, `{
     const $made = sri.makeUrlByType(${jsString(attr(node, "transition") || "")}, "transition", ${S.nodeLit(node, true)}, "true");
     let $button = String(${S.expandExpr(attr(node, "button-text") || "")} || "");${attr(node, "icon") ? `

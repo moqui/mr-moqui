@@ -18,9 +18,9 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="jobRunId" required="true"/>
     <transition name="serviceJobDetail"><default-response url="../../Jobs/ServiceJobDetail"/></transition>
     <transition name="userAccountDetail"><default-response url="../../../Security/UserAccount/UserAccountDetail"/></transition>
-    <transition name="logViewer"><default-response url="//apps/monitor/Logs"/></transition>
+    <transition name="logViewer"><default-response url="//apps/system/Monitor/Logs"/></transition>
 
-    <transition name="trace"><default-response url="//apps/monitor/TraceDetail"/></transition>
+    <transition name="trace"><default-response url="//apps/system/Monitor/TraceDetail"/></transition>
     <actions>
         <entity-find-one entity-name="moqui.service.job.ServiceJobRun" value-field="serviceJobRun"/>
         <set field="runUser" from="null"/>

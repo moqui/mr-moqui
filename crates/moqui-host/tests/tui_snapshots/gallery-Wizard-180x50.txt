@@ -19,8 +19,8 @@
      Message             │
      Views               │
      Handheld            │
+     Nav cards           │
  ▾ Home                  │
-                         │
                          │
                          │
                          │

@@ -51,7 +51,7 @@ use record::{Pending, Recorder, ScenarioCounts, Shared};
 pub(crate) use schedule::Target;
 use schedule::{Schedule, Take};
 pub(crate) use script::{LoadScript, ScenarioSettings};
-pub(crate) use stats::{grouped, process_cpu, table, table_ms};
+pub(crate) use stats::{grouped, table, table_ms};
 
 /// The errors a load result keeps whole, the first.
 pub(crate) const ERROR_SAMPLES: usize = 20;
@@ -1035,7 +1035,7 @@ pub(crate) fn start(host: &Arc<dyn SpecHost>, start: Start) -> Result<Running, S
         .filter(|seconds| *seconds > 0.0)
         .unwrap_or_else(|| scenarios.iter().map(ScenarioSettings::timeout).fold(0.0, f64::max));
     let load = Load::new(&scenarios);
-    let cpu = stats::process_cpu();
+    let cpu = moqui_core::context::resources::process_cpu_time();
     let mut running = Running {
         load: Arc::clone(&load),
         handles: Vec::new(),
@@ -1195,7 +1195,7 @@ impl Running {
         let second = elapsed.as_secs();
         shared.bins.note_users(second, load.active_users());
         shared.bins.close_before(second + 1);
-        let cpu = match (self.cpu, stats::process_cpu()) {
+        let cpu = match (self.cpu, moqui_core::context::resources::process_cpu_time()) {
             (Some(before), Some(after)) => Some(after.saturating_sub(before)),
             _ => None,
         };
