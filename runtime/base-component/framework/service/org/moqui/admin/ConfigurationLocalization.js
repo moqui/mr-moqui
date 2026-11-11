@@ -382,7 +382,87 @@ function storeLocalizedEntityField(p) {
     return {applied: true, revision: stamp(one(FIELD, key))}
 }
 
-const operations = {findLocalizedMessages, storeLocalizedMessage, findLocalizedEntityFields, storeLocalizedEntityField}
+// ===== the import of message translations (impl-admin P15) =====
+// The row services of the import target messageTranslations (moqui.server.TransferTarget, DataTransferServices): a row is an
+// original, a locale and its translation. The validation changes nothing and answers the translation's revision as it is
+// now; the apply is store#LocalizedMessage at that revision, with every rule of it. An import never removes a translation.
+function translationRow(p) {
+    const values = p.rowValues?.getMap ? p.rowValues.getMap() : Object.assign({}, p.rowValues || {})
+    return {
+        original: String(values.original ?? ""),
+        locale: text(values.locale),
+        localized: String(values.localized ?? "").trim()
+    }
+}
+function validateMessageTranslationRow(p) {
+    lib.requireManage(MANAGE)
+    const {original, locale, localized} = translationRow(p)
+    const errors = []
+    if (!original.trim() || original.length > 255) errors.push("Give the original message, at most 255 characters")
+    if (!localeOk(locale, false)) errors.push("Give a locale such as es or pt_BR")
+    if (!localized) errors.push("Give the translation: an import does not remove one")
+    if (!errors.length) {
+        const problem = originalProblem(original) || translationProblem(original, localized)
+        if (problem) errors.push(problem)
+    }
+    if (errors.length) return {valid: false, errors, normalizedValues: {}}
+    const existing = one(MESSAGE, {original, locale})
+    const same = !!existing && existing.localized === localized
+    return {
+        valid: !same,
+        skip: same,
+        warnings: same ? ["Already translated so"] : existing ? ["Replaces the translation there"] : [],
+        normalizedValues: {original, locale, localized},
+        sourceRevision: stamp(existing),
+        displayText: locale + ": " + original.slice(0, 80)
+    }
+}
+function applyMessageTranslationRow(p) {
+    const {original, locale, localized} = translationRow(p)
+    if (!localized) return refused("TRANSLATION_REQUIRED", "Give the translation: an import does not remove one")
+    const stored = storeLocalizedMessage({
+        original,
+        locale,
+        localized,
+        expectedRevision: text(p.sourceRevision),
+        reason: "Imported translation"
+    })
+    if (!stored.applied) return {applied: false, reasonCode: stored.reasonCode, reason: stored.reason, resultRef: null}
+    return {applied: true, resultRef: (locale + ": " + original).slice(0, 120), resultText: "Translation saved"}
+}
+
+// export#MessageTranslationRows: the export target messageTranslationsExport's rows (DataTransferServices.run#TargetExport):
+// the translations of one locale, or of every locale, as the import of translations reads them, in the order of the list.
+// Needs ADMIN_SETTINGS_VIEW. Only the fields asked for are answered; past maxRows it stops counting.
+function exportMessageTranslationRows(p) {
+    lib.requireView(VIEW, MANAGE)
+    const locale = text(p.selection?.locale)
+    if (locale && !/^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8}){0,2}$/.test(locale))
+        return {refused: true, reasonCode: "LOCALE_INVALID", reason: "A locale is like es or pt_BR", rowCount: 0}
+    const fields = Array.from(p.fieldList || [])
+        .map(text)
+        .filter(name => ["original", "locale", "localized"].includes(name))
+    const most = Math.max(Number(p.maxRows) || 0, 0) || 50000
+    const query = () => find(MESSAGE, locale ? {locale} : {})
+    const rowCount = Math.min(Number(query().count()), most + 1)
+    if (p.countOnly === true || rowCount > most) return {rowCount}
+    return {
+        rowCount,
+        rowList: Array.from(query().orderBy("original").orderBy("locale").limit(most).list()).map(row =>
+            Object.fromEntries(fields.map(name => [name, row[name] ?? ""]))
+        )
+    }
+}
+
+const operations = {
+    findLocalizedMessages,
+    exportMessageTranslationRows,
+    storeLocalizedMessage,
+    findLocalizedEntityFields,
+    storeLocalizedEntityField,
+    validateMessageTranslationRow,
+    applyMessageTranslationRow
+}
 ;({
     execute: (op, parameters) => {
         if (!Object.hasOwn(operations, op)) throw new Error("Unknown configuration localization operation " + op)

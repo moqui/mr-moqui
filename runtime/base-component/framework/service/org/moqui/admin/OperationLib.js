@@ -83,6 +83,7 @@ function pageOf(p) {
     ...lib,
     VIEW,
     MANAGE,
+    RESULT,
     requireView,
     requireManage,
     requiredReason,

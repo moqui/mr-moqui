@@ -684,4 +684,130 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sequenceNum" type="number-integer"/>
         <field name="disabled" type="text-indicator"/>
     </entity>
+
+    <!-- Admin P15 (mr-boss plan/impl-admin.md P15; design-admin §11.1, §14 "Import/export target"): what may be imported
+        through org.moqui.admin.DataTransferServices, and the batch of a target that has no batch of its owner's -->
+    <entity entity-name="TransferTarget" package="moqui.server" use="configuration" cache="true">
+        <description>A registered target of a business data transfer (org.moqui.admin.DataTransferServices): its owner seeds
+            a row, and without one nothing is staged, applied, exported or listed there. direction is import or export.
+            An export target (impl-admin P16) has targetMode file (its owner's exportService, implementing
+            DataTransferServices.run#TargetExport, writes a file of its own format), rows (the exportService answers rows
+            and the file is written here, delimited text) or wizard (exported in its owner's own place: only ownerRoute
+            is registered); for file and rows columnsJson names the only fields an export may hold (name, label,
+            permission: what a caller must hold for the field to be written, comma separated; required; selected false
+            for one left out unless asked for), optionsJson the options of a selection, scopeService the scopes a caller
+            may export from, maxRows and maxBytes the bounds of one file (5000 rows and 2097152 bytes when empty, at
+            most 50000 and 16777216; a larger one is refused whole), exportPermission
+            what a caller must hold besides the owner's own checks, viewPermission who reads the records of others'
+            exports, and retentionDays how long the record of an export is kept (366 when empty). For an import target
+            targetMode says what the owner registers. steps: the owner keeps its own batch
+            and names the five steps (stageService, configureService, validateService, applyService, getService, with an
+            optional reportService, sampleService and kindsService), each carrying the import contract's parameters, as
+            mantle.product.ProductImportServices. rows: the owner has no batch, and the framework keeps one (TransferBatch,
+            TransferItem) for it: columnsJson names the only fields a row may carry (name, label, required), keyFields the
+            fields that may not repeat in one file, optionsJson the options of a whole batch (name, label, type integer,
+            text or option, with min, max, maxLength, options and default), refusedColumns words that refuse a file with
+            such a column (beside the secret names every file is refused for), validateRowService
+            (DataTransferServices.validate#TargetRow, which changes nothing) and applyRowService (apply#TargetRow, one row
+            in a transaction of its own under an operation key), scopeService (find#TargetScopes: the scopes, such as
+            organizations, the caller may import into and read), maxBytes and maxRows the bounds of a file and
+            retentionDays how long a batch's staged rows are kept. wizard: the owner keeps its own wizard, and only its
+            place (ownerRoute, a key the application showing it resolves, never a URL) is registered. For every mode
+            findService (find#TargetRuns), when named, answers the owner's runs the caller may read there; a target with
+            none and no batch here keeps no runs. importPermission and viewPermission name, comma separated, the
+            permissions a caller must hold besides what the owner's services check themselves. fixedValuesJson holds
+            values the registration gives every row's services (never from a request). The registration adds no right: an
+            owner's service is called as the caller, under the caller's own authorization
+            (call#TargetService). A row naming a service that is not defined, or one without its contract's parameters,
+            is logged by name when read and left out.</description>
+        <field name="targetId" type="id" is-pk="true"/>
+        <field name="direction" type="text-short"><description>import</description></field>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="effectsNote" type="text-medium"><description>What applying it does, in words, shown before it is confirmed</description></field>
+        <field name="ownerApp" type="text-short"/>
+        <field name="targetVersion" type="text-short"/>
+        <field name="targetMode" type="text-short"><description>steps, rows or wizard</description></field>
+        <field name="fieldLabel" type="text-short"><description>What a field of the target is called in the wizard, such as Catalog field</description></field>
+        <field name="stepFeatures" type="text-medium"><description>For steps: what its wizard offers, comma separated: kinds, updateMode, formats, clearFields, forceNew, sample</description></field>
+        <field name="clearableFields" type="text-medium"/>
+        <field name="stageService" type="text-medium"/>
+        <field name="configureService" type="text-medium"/>
+        <field name="validateService" type="text-medium"/>
+        <field name="applyService" type="text-medium"/>
+        <field name="getService" type="text-medium"/>
+        <field name="reportService" type="text-medium"/>
+        <field name="sampleService" type="text-medium"/>
+        <field name="kindsService" type="text-medium"/>
+        <field name="columnsJson" type="text-long"/>
+        <field name="keyFields" type="text-medium"/>
+        <field name="optionsJson" type="text-long"/>
+        <field name="fixedValuesJson" type="text-long"/>
+        <field name="refusedColumns" type="text-medium"/>
+        <field name="validateRowService" type="text-medium"/>
+        <field name="applyRowService" type="text-medium"/>
+        <field name="scopeService" type="text-medium"/>
+        <field name="scopeLabel" type="text-short"/>
+        <field name="maxBytes" type="number-integer"><description>Of an import's file: 1048576 when empty, at most 2097152</description></field>
+        <field name="maxRows" type="number-integer"><description>Of an import's file: 2000 when empty, at most 5000</description></field>
+        <field name="retentionDays" type="number-integer"><description>30 when empty</description></field>
+        <field name="findService" type="text-medium"/>
+        <field name="viewPermission" type="text-medium"/>
+        <field name="importPermission" type="text-medium"/>
+        <field name="exportService" type="text-medium"/>
+        <field name="exportPermission" type="text-medium"/>
+        <field name="ownerRoute" type="text-medium"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
+    <entity entity-name="TransferBatch" package="moqui.server" cache="never">
+        <description>One export of an export target (state exported: who, the target, scopeKey, the selection and field
+            names in requestJson, rowCount, the file's name and the hash of its content, never the content; the record
+            of the export, removed after the target's retention), or one import of a target that has no batch of its
+            owner's (TransferTarget, targetMode rows), written by
+            org.moqui.admin.DataTransferServices only. For an import: transferId is the import's operation key: the one its caller gave,
+            or one made of the user, the target, the scope and the content's hash, so the same file staged again answers
+            the same batch. scopeKey is the scope the import is for (an organization), userId who staged it: the batch
+            and its rows are read by that user, and by a holder of the target's view permission whom the target's scope
+            service admits. requestJson holds the file's headers, the mapping, defaults, value mappings and batch
+            options; inputFingerprint the revision of the last validation, which an apply must name. state is staged,
+            mapped, validated, applying, complete or partial. The staged rows are removed after the target's retention
+            (purgedDate), the outcomes kept.</description>
+        <field name="transferId" type="id-long" is-pk="true"/>
+        <field name="targetId" type="id"/>
+        <field name="scopeKey" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="state" type="text-short"/>
+        <field name="filename" type="text-medium"/>
+        <field name="fileHash" type="text-medium"/>
+        <field name="requestJson" type="text-very-long"/>
+        <field name="inputFingerprint" type="text-medium"/>
+        <field name="lastError" type="text-medium"/>
+        <field name="rowCount" type="number-integer"/>
+        <field name="stagedDate" type="date-time"/>
+        <field name="appliedDate" type="date-time"/>
+        <field name="completedDate" type="date-time"/>
+        <field name="purgedDate" type="date-time"/>
+        <index name="TRANSFER_BATCH_TARGET"><index-field name="targetId"/><index-field name="stagedDate"/></index>
+    </entity>
+    <entity entity-name="TransferItem" package="moqui.server" cache="never">
+        <description>One row of a TransferBatch: what the file held (sourceJson), what validation made of it (previewJson:
+            the values its apply would be given, warnings and the source's revision) and its outcome: result staged,
+            valid, invalid, skipped, applied or failed, with the reason, the owner's reference of what it made
+            (resultRef), the operation key its apply carried and the number of attempts. An applied row is never applied
+            again.</description>
+        <field name="transferId" type="id-long" is-pk="true"/>
+        <field name="itemSeqId" type="number-integer" is-pk="true"/>
+        <field name="rowNumber" type="number-integer"/>
+        <field name="sourceJson" type="text-very-long"/>
+        <field name="previewJson" type="text-very-long"/>
+        <field name="result" type="text-short"/>
+        <field name="reasonCode" type="text-short"/>
+        <field name="errorMessage" type="text-medium"/>
+        <field name="resultRef" type="text-medium"/>
+        <field name="resultText" type="text-medium"/>
+        <field name="operationKey" type="text-medium"/>
+        <field name="attemptCount" type="number-integer"/>
+        <field name="completedDate" type="date-time"/>
+    </entity>
 </entities>

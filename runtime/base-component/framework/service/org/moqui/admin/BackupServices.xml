@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Backups for delegated administration (mr-boss plan/design-admin.md §11 Backups, §15.3 "Backup scope", §17.2;
+    impl-admin P16; Backups.js): what of this instance's data is backed up, the archives kept as metadata, and a backup
+    asked for now, over the framework's own backup (org.moqui.impl.ServerServices.backup#EmbeddedDatabase and its seeded
+    job backup_EmbeddedDatabase_daily; docs/Run-Deploy.md "Backups"). ALL_USERS may call the three (data/
+    AdminConfigurationData.xml AdminBackupServices) and each checks the caller itself: ADMIN_BACKUP_VIEW (or
+    ADMIN_BACKUP_RUN) to read, ADMIN_BACKUP_RUN to ask for a backup. No parameter of any of them names a path, a file, a
+    directory, a mode or a destination: those are the backup job's stored parameters and the instance's properties. There
+    is no download and no restore here: an archive is the whole instance's data, and its download is later, under the
+    sealed ADMIN_BACKUP_DOWNLOAD. A state is what the job's runs recorded, never what a person reports. No dependency on
+    Mantle or an app. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="get" noun="Coverage" allow-remote="false">
+        <description>What is backed up and how it last went (coverage): the database (embedded, external, both or
+            unknown) and its provider; state and stateText, from the backup job's runs: success only for a run that
+            ended without an error, was not skipped and names the archive it wrote; skipped, failed, partial (an archive
+            written with a failure after it, or an external database beside the embedded one), unscheduled (the last
+            run succeeded and no next one is scheduled: the job is paused or has no schedule), notEnded, running (the
+            first run is under way), never, none (no backup job) and unknown each their own; an external database is external, with its state unknown here,
+            never a success. Also whether a run is under way, the job's schedule or pause, the last run and the last
+            success, the archives kept (count, size of the dumps, the newest, how long they are kept), the off-site
+            mirror or none, that no restore was verified, and what an archive does not hold (notIncluded and the fixed
+            warning: the .env file, the field-encryption key, resource files). canRun with holdReasonCode and holdReason
+            says whether a backup may be asked for now. Needs ADMIN_BACKUP_VIEW or ADMIN_BACKUP_RUN.</description>
+        <out-parameters>
+            <parameter name="coverage" type="Map"/>
+            <parameter name="canRun" type="Boolean"/>
+            <parameter name="mayRun" type="Boolean"/>
+            <parameter name="holdReasonCode"/>
+            <parameter name="holdReason"/>
+            <parameter name="minMinutes" type="Integer"/>
+            <parameter name="maxPerDay" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Backups.js').execute('getCoverage', context))</script></actions>
+    </service>
+    <service verb="find" noun="Archives" allow-remote="false">
+        <description>The archives the backup keeps (archiveList, newest first, a page at a time), as metadata only: the
+            archive's name (archiveKey), its database, its kind (a dump file or a physical backup), its tier (daily,
+            weekly, monthly, yearly), when it was made and, for a dump, its size. Never a path, and no download. The
+            directory read is the instance's own (the backup job's stored parameter, the embedded_db_backup_dir
+            property or runtime/db/backup): no parameter names one. Needs ADMIN_BACKUP_VIEW or
+            ADMIN_BACKUP_RUN.</description>
+        <in-parameters>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="archiveList" type="List"/>
+            <parameter name="archiveCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="problem"/>
+            <parameter name="external" type="Boolean"/>
+            <parameter name="retentionText"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Backups.js').execute('findArchives', context))</script></actions>
+    </service>
+    <service verb="run" noun="Backup" allow-remote="false">
+        <description>Ask for a backup now: one run of the backup job with its stored parameters (the instance's
+            directory, mode, counts and mirror; nothing of this request), recorded as a job run, whose outcome
+            get#Coverage then reads. reason is kept in the audit log. Refused with a reason and nothing started
+            (applied false): EXTERNAL_DATABASE or DATABASE_UNKNOWN (not a database this server backs up),
+            NO_BACKUP_JOB, IN_PROGRESS (a run is under way, the schedule's too: the run asked for takes the job's lock, so
+            the schedule starts none beside it), TOO_SOON (within minMinutes of the last run's start or the
+            last request) and DAILY_LIMIT (maxPerDay requests in a day). operationKey, when given, answers a repeat with
+            the first result. Needs ADMIN_BACKUP_RUN.</description>
+        <in-parameters>
+            <parameter name="reason" required="true"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="requested" type="Boolean"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="jobRunId"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="stateText"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Backups.js').execute('runBackup', context))</script></actions>
+    </service>
+    <!-- The run of the backup job that run#Backup starts, after its checks: with no transaction of its own, so the run's
+        row is committed before the job runner writes to it from its own thread. No group is authorized to call it. -->
+    <service verb="start" noun="BackupRun" allow-remote="false" transaction="ignore">
+        <out-parameters><parameter name="jobRunId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Backups.js').execute('startBackupRun', context))</script></actions>
+    </service>
+    <!-- The backup job's lock for a run start#BackupRun started (Backups.js "One backup at a time"): two backups beside each
+        other are not safe, and a run outside the schedule takes no lock of its own. In a transaction of its own. No group
+        is authorized to call it. -->
+    <service verb="hold" noun="BackupLock" allow-remote="false" transaction="force-new">
+        <in-parameters>
+            <parameter name="jobRunId" required="true"/>
+            <parameter name="settle" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="held" type="Boolean"/>
+            <parameter name="heldBy"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Backups.js').execute('holdBackupLock', context))</script></actions>
+    </service>
+</services>
