@@ -86,7 +86,8 @@ The navigation catalog is a list of entries in a home's actions (`navCatalog`), 
 `NavFeaturedLarge` and `NavGroups` sections of `template/HomeParts.xml`; the rule is in `template/HomeCatalog.js`,
 which describes an entry: one whose screen the menu does not show for the user has no tile, a `hidden` entry names its
 screen and shows nothing, and a menu item no entry names is in a last group. A component adds entries with a
-`screen-extend` `actions-extend` of the home.
+`screen-extend` `actions-extend` of the home, as basic-comms does for Voice and Chat Bridges. `HomeCatalog.js` also tells
+whether Dev AIDE is mounted (`devMounted`): then an entity's and a service's page in Tools link to it in Dev AIDE.
 
 `service/moqui/tools/SystemHomeServices.xml` has `get#SystemAttention`, the one list of what needs an administrator
 (resource readings past their `resource-watch` thresholds, failed job runs, system messages in error and the like;
