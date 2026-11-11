@@ -198,6 +198,17 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="triggerVisitId" type="id"><description>Active visit when SystemMessage triggered (mainly produced) to track
             the user who did so; independent of the message transport which could have separate remote system and other Visit-like data.</description></field>
 
+        <!-- MR Moqui only. The settlement of a send or consume whose outcome is unknown (the message stayed Sending or
+            Consuming), kept apart from statusId, which only the transport's own result sets
+            (org.moqui.admin.OperationServices.execute#Recovery, reconcile): what a person concluded, who, when and why. It
+            marks nothing as sent or consumed and no reader of statusId takes it for a delivery; it holds for the attempt
+            it was made for, and the next send or consume clears it (claim#SystemMessage; the audit log keeps it). -->
+        <field name="outcomeSettlement" type="text-short" enable-audit-log="true"><description>What a person reported of an
+            attempt whose outcome is unknown: done or notDone. Empty for a message nobody settled.</description></field>
+        <field name="outcomeSettledByUserId" type="id"/>
+        <field name="outcomeSettledDate" type="date-time"/>
+        <field name="outcomeSettledReason" type="text-medium"/>
+
         <!-- the follow may be useful for other types of messages, but come specifically from the OAGIS specification;
             leave out for now, senderId and messageId with combined fields may be adequate and are more generic
         <field name="logicalId" type="text-medium"/>

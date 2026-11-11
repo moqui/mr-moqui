@@ -12,7 +12,8 @@
 // The kinds. A kind is a module beside this one that knows its records (kindModules below): how one is read with its state
 // and revision, which actions it has, what never holds for an action whatever a descriptor says (its baseline: a record
 // whose outcome is unknown is reconciled and never retried; one in progress is left alone), and its native actions. System
-// messages are OperationMessages.js; job runs add theirs.
+// messages are OperationMessages.js; job runs add theirs. A reconciliation never sets a record's own outcome: a person's
+// word is kept apart from what the transport knows (a kind's settlement; the decision of Nov 10, impl-admin §4).
 //
 // A batch. Each record is on its own: read again, checked at the revision its caller read, claimed in a transaction of its
 // own, then acted on apart from the others, so one that is refused or fails is named in its result and the rest go on. An
@@ -72,6 +73,9 @@ function descriptorsOf(targetKind) {
         (a, b) => Number(a.sequenceNum ?? 9999) - Number(b.sequenceNum ?? 9999) || a.descriptorKey.localeCompare(b.descriptorKey)
     )
 }
+// Whether a record's outcome is unknown: by its own state, or by its owner's word; never one a person settled already.
+const unknownOutcome = (target, owner) =>
+    target.state === "uncertain" || (target.settled !== true && owner?.answer?.uncertain === true)
 // The first descriptor that covers a record, by its target key and, where the descriptor names one, its direction.
 const descriptorFor = (descriptors, target) =>
     descriptors.find(
@@ -140,7 +144,7 @@ function evaluate(kind, target, action, descriptor, owner) {
     const permission = text(descriptor.managePermission)
     if (permission && !ec.user.hasPermission(permission))
         return no("OWNER_PERMISSION", "This also needs " + ownerName(descriptor) + "'s own permission (" + permission + ")")
-    const uncertain = target.state === "uncertain" || owner?.answer?.uncertain === true
+    const uncertain = unknownOutcome(target, owner)
     const held = kind.baseline(Object.assign({}, target, {uncertain}), action, descriptor)
     if (held) return no(held.reasonCode, held.reason)
     if (text(descriptor.describeService)) {
@@ -170,7 +174,7 @@ function assess(kind, targets) {
         assessed.set(target.targetId, {
             descriptor,
             owner,
-            uncertain: target.state === "uncertain" || owner?.answer?.uncertain === true,
+            uncertain: unknownOutcome(target, owner),
             verdicts
         })
     }
@@ -278,7 +282,10 @@ function executeOne(kind, action, resolution, reason, key, item, descriptors) {
             )
         let done
         if (verdict.mode === "native") done = kind.nativeApply(target, action, {resolution, reason})
-        else if (!kind.claim(target)) done = refused("STALE_REVISION", "It changed since it was read; read it again and repeat")
+        // an owner's retry is claimed first, as a native one is, so a second request finds the record changed; its
+        // settlement or cancellation is the owner's own to guard (its state there, and the key below)
+        else if (action === "retry" && !kind.claim(target))
+            done = refused("STALE_REVISION", "It changed since it was read; read it again and repeat")
         else {
             // the owner's own action, keyed so the owner too answers a repeat with its first result
             const asked = lib.callRegistered(text(descriptor.recoverService), {
@@ -298,12 +305,24 @@ function executeOne(kind, action, resolution, reason, key, item, descriptors) {
                     text(asked.out.reasonCode).slice(0, 40) || "OWNER_REFUSED",
                     kind.safeText(asked.out.reason) || ownerName(descriptor) + " did not take it"
                 )
-            else done = {applied: true, ownerStateText: kind.safeText(asked.out.ownerStateText).slice(0, 120)}
+            else {
+                done = {applied: true, ownerStateText: kind.safeText(asked.out.ownerStateText).slice(0, 120)}
+                // the owner settled its own record: the kind keeps the same settlement beside its own, marking nothing done
+                if (action === "reconcile" && kind.ownerSettled) kind.ownerSettled(targetId, resolution, reason)
+            }
         }
         const after = kind.after(targetId)
         // what was asked for and by whom, with the reason, whatever came of it (the claim was made: something was tried)
         if (done.applied || done.reasonCode !== "STALE_REVISION")
-            kind.audit(target, after, (done.applied ? "" : "Not applied. ") + kind.actions[action].label + ": " + reason)
+            kind.audit(
+                target,
+                after,
+                (done.applied ? "" : "Not applied. ") +
+                    kind.actions[action].label +
+                    (resolution ? " (reported " + (resolution === "done" ? "done" : "not done") + ")" : "") +
+                    ": " +
+                    reason
+            )
         return result(Object.assign(done, after))
     } catch (error) {
         ec.logger.error("Recovery of " + kind.noun + " " + targetId + " failed: " + String(error?.message ?? error))

@@ -17,15 +17,23 @@
 // - inProgress: Sending or Consuming, begun within the time such a call may take;
 // - uncertain: Sending or Consuming for longer than that. The server stopped, or the call never answered: the message may
 //   have gone, or its consuming service may have applied it. It is never sent or consumed again from here; someone who
-//   looked at the other side says which it was (reconcile), and only what is then known not done may be retried.
+//   looked at the other side says which it was (reconcile), and only what is then reported not done may be retried;
+// - settled: an uncertain one a person settled. A message's status is what the transport knows, and no person sets it
+//   (the decision of Nov 10 for mail, impl-admin §4): the settlement is kept apart, in outcomeSettlement (done or notDone:
+//   "reported", never known) with who, when and the reason, and in the audit log. The message stays Sending or Consuming,
+//   is out of "Needs attention" and is never counted or shown as sent or consumed; no reader of statusId, status hook or
+//   rule takes the settlement for a delivery. One reported not done may be retried: the retry's claim moves it to Error
+//   and clears the settlement (it was of the attempt before), and the send's or consume's own result is its state.
 //
 // What is done. Nothing without a registration (OperationRecovery.js): a type whose owner registered no descriptor is read
 // only. With one, the native actions are the framework's own services, called for the same stored message, so its identity
 // is kept and no second message is made: retry (send#ProducedSystemMessage or consume#ReceivedSystemMessage, now, once),
 // requeue (reset#SystemMessageInError: the scheduled job tries it again), cancel (cancel#SystemMessage, of a failed message
-// only) and the reconciliation of an uncertain one (marked Sent or Consumed by a person's word, or failed). Each is claimed
-// first in a transaction of its own, the row locked at the revision read, so a second request finds it changed. A message
-// of a remote that is disabled (a connection waiting for its test, ConfigurationServices.store#Connection) is not sent.
+// only) and the reconciliation of an uncertain one (the settlement above: nothing is marked Sent or Consumed). Each is
+// claimed first in a transaction of its own, the row locked at the revision read, so a second request finds it changed;
+// the framework's send and consume then take the message themselves (claim#SystemMessage), so the scheduled job and a
+// retry here never both send or consume it. A message of a remote that is disabled (a connection waiting for its test,
+// ConfigurationServices.store#Connection) is not sent.
 const lib = ec.resource.script("component://framework/service/org/moqui/admin/OperationLib.js")
 const engine = ec.resource.script("component://framework/service/org/moqui/admin/OperationRecovery.js")
 const {find, one, map, ms, iso, stamp, text, refused} = lib
@@ -46,12 +54,20 @@ const stateList = [
     {state: "attention", text: "Needs attention"},
     {state: "failed", text: "Failed"},
     {state: "uncertain", text: "Outcome unknown"},
+    {state: "settled", text: "Settled by a person"},
     {state: "waiting", text: "Waiting or in progress"},
     {state: "done", text: "Sent or consumed"},
     {state: "closed", text: "Cancelled or rejected"},
     {state: "all", text: "All"}
 ]
 const now = () => ms(ec.user.nowTimestamp)
+// what a person may report of an attempt whose outcome is unknown (SystemMessage.outcomeSettlement)
+const settlements = ["done", "notDone"]
+const settlementFields = ["outcomeSettlement", "outcomeSettledByUserId", "outcomeSettledDate", "outcomeSettledReason"]
+// The settlement a message carries, or "": read only over a send or consume that never answered.
+const settlementOf = message => (settlements.includes(text(message.outcomeSettlement)) ? text(message.outcomeSettlement) : "")
+const settlementText = (message, settlement) =>
+    "Reported " + (settlement === "done" ? "" : "not ") + (message.isOutgoing === "Y" ? "sent" : "applied")
 
 // ===== reading =====
 function stateOf(message) {
@@ -68,6 +84,8 @@ function stateOf(message) {
             return "staged"
         case "SmsgSending":
         case "SmsgConsuming": {
+            // a settlement is of this attempt: the next send or consume clears it when it takes the message
+            if (settlementOf(message)) return "settled"
             const began = ms(message.lastAttemptDate) ?? ms(message.lastUpdatedStamp)
             return began != null && now() - began < busyMinutes[message.statusId] * 60000 ? "inProgress" : "uncertain"
         }
@@ -95,6 +113,8 @@ function stateTextOf(message, state) {
             return out ? "Being sent" : "Being consumed"
         case "uncertain":
             return uncertainTextOf(directionOf(message))
+        case "settled":
+            return "Settled: " + settlementText(message, settlementOf(message)).toLowerCase()
         case "staged":
             return "Staged, not committed"
         case "rejected":
@@ -151,6 +171,9 @@ function targetOf(message) {
         state,
         stateText: stateTextOf(message, state),
         statusId: message.statusId,
+        // settled by a person: no longer unknown, whatever an owner says of it
+        settled: state === "settled",
+        settlement: state === "settled" ? settlementOf(message) : "",
         revision: stamp(message),
         row: message
     }
@@ -186,7 +209,9 @@ function baseline(target, action, descriptor) {
     if (action === "reconcile")
         return state === "uncertain"
             ? null
-            : hold("NOT_UNCERTAIN", "Only a message whose outcome is unknown is settled; this one is: " + target.stateText)
+            : state === "settled"
+              ? hold("ALREADY_SETTLED", "It is settled already: " + target.stateText.replace(/^Settled: /, ""))
+              : hold("NOT_UNCERTAIN", "Only a message whose outcome is unknown is settled; this one is: " + target.stateText)
     if (state === "uncertain")
         return hold(
             "RECONCILE_REQUIRED",
@@ -196,6 +221,12 @@ function baseline(target, action, descriptor) {
                 " again from here"
         )
     if (state === "inProgress") return hold("IN_PROGRESS", "It is " + target.stateText.toLowerCase() + " now")
+    // reported done by the person who settled it: never sent or consumed again
+    if (state === "settled" && target.settlement === "done")
+        return hold(
+            "SETTLED",
+            "It was settled as " + (out ? "reported sent: it is not sent again" : "reported applied: it is not consumed again")
+        )
     if (action === "cancel" || action === "requeue")
         return target.statusId === "SmsgError"
             ? action === "requeue" && out && remoteOf(target.row)?.disabled === "Y"
@@ -209,15 +240,21 @@ function baseline(target, action, descriptor) {
               .map(text)
               .filter(name => ["failed", "retrying"].includes(name))
         : ["failed", "retrying"]
-    if (!retryStates.includes(state))
+    // one reported not done may be retried as a failed one may
+    if (!retryStates.includes(state) && !(state === "settled" && target.settlement === "notDone"))
         return hold("NOT_FAILED", "Only a failed message is retried; this one is: " + target.stateText)
     if (out && remoteOf(target.row)?.disabled === "Y")
         return hold("REMOTE_DISABLED", "Its remote is disabled until a test of that connection passes")
     return null
 }
 // One step on a message in a transaction of its own (apply#MessageRecovery): whether it was taken.
-const step = (target, name) => {
-    const taken = lib.callRegistered(APPLY, {systemMessageId: target.targetId, expectedRevision: target.revision, step: name})
+const step = (target, name, reason = null) => {
+    const taken = lib.callRegistered(APPLY, {
+        systemMessageId: target.targetId,
+        expectedRevision: target.revision,
+        step: name,
+        reason
+    })
     if (taken.failure) throw new Error(taken.failure)
     return taken.out.taken === true
 }
@@ -230,7 +267,8 @@ function nativeApply(target, action, given) {
     const out = target.direction === "out"
     if (action === "requeue") return step(target, "requeue") ? {applied: true} : stale()
     if (action === "cancel") return step(target, "cancel") ? {applied: true} : stale()
-    if (action === "reconcile") return step(target, given.resolution) ? {applied: true, resolution: given.resolution} : stale()
+    if (action === "reconcile")
+        return step(target, given.resolution, given.reason) ? {applied: true, resolution: given.resolution} : stale()
     // retry: claimed at the revision read, then the same stored message through the framework's own send or consume, once
     if (!step(target, "claim")) return stale()
     const called = out
@@ -242,6 +280,9 @@ function nativeApply(target, action, given) {
           })
     const after = stateOf(map(one(MESSAGE, {systemMessageId: target.targetId})))
     if (!called.failure && !["failed", "retrying"].includes(after)) return {applied: true}
+    // the framework's own claim found it taken (the scheduled job began it first): nothing was sent or consumed by this
+    if (called.failure && after === "inProgress")
+        return refused("IN_PROGRESS", "It is being " + (out ? "sent" : "consumed") + " by another request now")
     const error = called.failure || latestError(target.targetId)?.errorText
     return refused("RETRY_FAILED", "Not " + (out ? "sent" : "consumed") + ": " + (safeText(error) || "it failed again"), {
         errorClass: errorClassOf(error)
@@ -271,7 +312,11 @@ function consequence(target, action, descriptor) {
                 (note ? " " + note : "")
             )
         case "reconcile":
-            return "Nothing is sent or consumed. What you found on the other side is recorded with your reason."
+            return (
+                "Nothing is sent or consumed, and the message is not marked " +
+                (out ? "sent" : "consumed") +
+                ": what you found on the other side is recorded beside it, with your name and reason."
+            )
         default:
             return "The message is closed and is not " + (out ? "sent" : "consumed") + ". It stays as evidence."
     }
@@ -279,12 +324,12 @@ function consequence(target, action, descriptor) {
 const resolutionOf = (target, resolution) => {
     const out = target.direction === "out"
     return resolution === "done"
-        ? {resolution, label: out ? "It was sent (the remote has it)" : "It was applied (what it does is done)"}
+        ? {resolution, label: out ? "Reported sent (the remote has it)" : "Reported applied (what it does is done)"}
         : {
               resolution,
               label: out
-                  ? "It was not sent (it is then failed, and may be retried)"
-                  : "It was not applied (it is then failed, and may be retried)"
+                  ? "Reported not sent (it may then be sent again)"
+                  : "Reported not applied (it may then be consumed again)"
           }
 }
 const recoveryKind = {
@@ -295,6 +340,12 @@ const recoveryKind = {
     baseline,
     nativeApply,
     claim: target => step(target, "claim"),
+    // after an owner settled its own record: the same settlement beside the message, where its transport outcome is
+    // unknown too (otherwise nothing is written: the owner's record is the owner's)
+    ownerSettled: (systemMessageId, resolution, reason) => {
+        const target = read([systemMessageId]).get(systemMessageId)
+        if (target?.state === "uncertain" && settlements.includes(resolution)) step(target, resolution, reason)
+    },
     after,
     consequence,
     resolutionOf,
@@ -306,8 +357,10 @@ const recoveryKind = {
 }
 
 // apply#MessageRecovery: one step on a message, in a transaction of its own, the row locked, still at the revision read and
-// still in the state the step is for. claim marks the attempt (so a second request at that revision finds it changed);
-// requeue and cancel are the framework's own services; done and notDone settle a message whose outcome is unknown.
+// still in the state the step is for. claim marks the attempt (so a second request at that revision finds it changed)
+// and, for a message reported not done, moves it to Error with the settlement cleared, so the framework's send or consume
+// takes it; requeue and cancel are the framework's own services; done and notDone record the settlement of a message
+// whose outcome is unknown and leave its status as the transport left it.
 function applyMessageRecovery(p) {
     if (!ec.artifactExecution.authzDisabled() && !ec.user.hasPermission(lib.MANAGE)) throw new Error(lib.MANAGE + " is required")
     const systemMessageId = text(p.systemMessageId)
@@ -317,15 +370,25 @@ function applyMessageRecovery(p) {
     const message = map(row)
     if (stamp(message) !== text(p.expectedRevision)) return {taken: false}
     const state = stateOf(message)
-    const out = directionOf(message) === "out"
     const call = (service, parameters) => {
         ec.service.sync().name(service).parameters(parameters).call()
         if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
     }
     switch (name) {
         case "claim":
-            if (!["failed", "retrying"].includes(state)) return {taken: false}
-            row.set("lastAttemptDate", ec.user.nowTimestamp)
+            if (state === "settled" && settlementOf(message) === "notDone")
+                // the attempt before is reported not done: this retry begins from Error, as a failed message's does
+                row.setFields(
+                    Object.assign(Object.fromEntries(settlementFields.map(field => [field, null])), {
+                        statusId: "SmsgError",
+                        lastAttemptDate: ec.user.nowTimestamp
+                    }),
+                    true,
+                    null,
+                    null
+                )
+            else if (["failed", "retrying"].includes(state)) row.set("lastAttemptDate", ec.user.nowTimestamp)
+            else return {taken: false}
             row.update()
             return {taken: true}
         case "requeue":
@@ -339,10 +402,14 @@ function applyMessageRecovery(p) {
         case "done":
         case "notDone":
             if (state !== "uncertain") return {taken: false}
+            // the settlement alone: the status, the processed date and the attempts stay as the transport left them
             row.setFields(
-                name === "done"
-                    ? {statusId: out ? "SmsgSent" : "SmsgConsumed", processedDate: ec.user.nowTimestamp}
-                    : {statusId: "SmsgError"},
+                {
+                    outcomeSettlement: name,
+                    outcomeSettledByUserId: ec.user.userId,
+                    outcomeSettledDate: ec.user.nowTimestamp,
+                    outcomeSettledReason: text(p.reason).slice(0, 255) || null
+                },
                 true,
                 null,
                 null
@@ -363,9 +430,11 @@ function messageFind(p) {
     const status = (...ids) => factory.makeCondition("statusId", "in", ids)
     const failedBefore = factory.makeCondition("failCount", "greater", 0)
     const neverFailed = any(factory.makeCondition("failCount", "equals", null), factory.makeCondition("failCount", "equals", 0))
+    const unsettled = factory.makeCondition("outcomeSettlement", "equals", null)
     const stuck = (statusId, older) =>
         all(
             status(statusId),
+            unsettled,
             factory.makeCondition(
                 "lastAttemptDate",
                 older ? "less" : "greater-equals",
@@ -380,6 +449,10 @@ function messageFind(p) {
     if (state === "attention") found = found.condition(any(failed(), uncertain()))
     else if (state === "failed") found = found.condition(failed())
     else if (state === "uncertain") found = found.condition(uncertain())
+    else if (state === "settled")
+        found = found.condition(
+            all(status("SmsgSending", "SmsgConsuming"), factory.makeCondition("outcomeSettlement", "in", settlements))
+        )
     else if (state === "waiting")
         found = found.condition(
             any(
@@ -429,38 +502,46 @@ const named = (entityName, keyField, ids) =>
         ids.length ? Array.from(find(entityName).condition(keyField, "in", ids).list()).map(row => [row[keyField], map(row)]) : []
     )
 // Whether a reader is shown the line of a message's errors: always its class; the line only where no owner answers per
-// message, or the owner says this reader may see it.
+// message, or the owner says this reader may see it. The same holds for its references, its remote, who settled it and
+// the reasons people gave: of a message its owner holds from this reader, only its transport row is answered.
 const detailVisible = assessed =>
     !text(assessed.descriptor?.describeService) ? true : assessed.owner?.answer?.detailVisible === true
 // A message as the list and the detail show it, with its owner and what may be done here.
-function described(target, assessed, error, canManage, types, remotes) {
+function described(target, assessed, error, canManage, types, remotes, userNames = new Map()) {
     const message = target.row
     const state = assessed.uncertain ? "uncertain" : target.state
+    const settlement = state === "settled" ? target.settlement : ""
     const verdicts = assessed.verdicts
     const can = action => canManage && verdicts[action].eligible
     const type = types.get(message.systemMessageTypeId)
-    const remote = remotes.get(message.systemMessageRemoteId)
     const open = ["failed", "retrying", "uncertain"].includes(state)
-    // a message's own references and the line of its error are its owner's to show, where the owner answers per message
+    // a message's own references, its remote and the line of its error are its owner's to show, where the owner answers
+    // per message (a remote names the store or the partner it is of)
     const shown = detailVisible(assessed)
+    const remote = shown ? remotes.get(message.systemMessageRemoteId) : null
     // why nothing is offered, where something would be expected
     const asked = state === "uncertain" ? verdicts.reconcile : verdicts.retry
-    const nextStep = !open
-        ? ""
-        : asked.eligible
-          ? state === "uncertain"
-              ? "Look at the other side, then settle it."
-              : state === "retrying"
-                ? "It will be tried again on its own; it can be retried now."
-                : "It can be retried."
-          : asked.reason
+    const nextStep = settlement
+        ? settlement === "notDone" && verdicts.retry.eligible
+            ? "Reported not " +
+              (target.direction === "out" ? "sent: it can be sent again." : "applied: it can be consumed again.")
+            : ""
+        : !open
+          ? ""
+          : asked.eligible
+            ? state === "uncertain"
+                ? "Look at the other side, then settle it."
+                : state === "retrying"
+                  ? "It will be tried again on its own; it can be retried now."
+                  : "It can be retried."
+            : asked.reason
     return Object.assign(
         {
             systemMessageId: message.systemMessageId,
             systemMessageTypeId: message.systemMessageTypeId || null,
             typeText: text(type?.description) || text(message.systemMessageTypeId),
-            systemMessageRemoteId: message.systemMessageRemoteId || null,
-            remoteText: text(remote?.description) || text(message.systemMessageRemoteId),
+            systemMessageRemoteId: shown ? message.systemMessageRemoteId || null : null,
+            remoteText: shown ? text(remote?.description) || text(message.systemMessageRemoteId) : "",
             remoteDisabled: remote?.disabled === "Y",
             direction: target.direction,
             directionText: target.direction === "out" ? "Sent from here" : "Received",
@@ -478,6 +559,15 @@ function described(target, assessed, error, canManage, types, remotes) {
             docType: shown ? text(message.docType).slice(0, 60) || null : null,
             errorClass: open || state === "inProgress" ? errorClassOf(error?.errorText) : "",
             errorText: open && shown ? safeText(error?.errorText) : "",
+            // the settlement, apart from the status: what a person reported, who, when and why; null on every other state
+            settlement: settlement || null,
+            settlementText: settlement ? settlementText(message, settlement) : null,
+            settledByName:
+                settlement && shown
+                    ? userNames.get(message.outcomeSettledByUserId) || message.outcomeSettledByUserId || null
+                    : null,
+            settledDate: settlement ? iso(message.outcomeSettledDate) : null,
+            settledReason: settlement && shown ? text(message.outcomeSettledReason) || null : null,
             retryEligible: can("retry"),
             requeueEligible: can("requeue"),
             reconcileEligible: can("reconcile"),
@@ -487,6 +577,15 @@ function described(target, assessed, error, canManage, types, remotes) {
         },
         engine.registrationOf(assessed)
     )
+}
+
+// The names of the people who settled these messages, read in one find.
+function settlerNames(targets) {
+    const ids = Array.from(new Set(targets.map(target => target.row.outcomeSettledByUserId).filter(Boolean)))
+    const names = new Map()
+    for (const row of named("moqui.security.UserAccount", "userId", ids).values())
+        names.set(row.userId, text(row.userFullName) || text(row.username) || row.userId)
+    return names
 }
 
 // find#Messages: a page of system messages, newest first, each with its state, its owner and what may be done here.
@@ -509,9 +608,10 @@ function findMessages(p) {
     const ids = field => Array.from(new Set(targets.map(target => target.row[field]).filter(Boolean)))
     const types = named(TYPE, "systemMessageTypeId", ids("systemMessageTypeId"))
     const remotes = named(REMOTE, "systemMessageRemoteId", ids("systemMessageRemoteId"))
+    const userNames = settlerNames(targets)
     return {
         messageList: targets.map(target =>
-            described(target, assessed.get(target.targetId), errors.get(target.targetId), canManage, types, remotes)
+            described(target, assessed.get(target.targetId), errors.get(target.targetId), canManage, types, remotes, userNames)
         ),
         messageCount,
         pageIndex,
@@ -573,7 +673,7 @@ function getMessage(p) {
     const wanted = p.includePayload === true || p.includePayload === "true"
     const payloadText = wanted && !hidden ? shownPayload(message.messageText) : null
     return {
-        message: Object.assign(described(target, assessed, attempts[0], canManage, types, remotes), {
+        message: Object.assign(described(target, assessed, attempts[0], canManage, types, remotes, settlerNames([target])), {
             contentType: text(types.get(message.systemMessageTypeId)?.contentType) || null,
             payloadLength: text(message.messageText).length,
             childCount: Number(find(MESSAGE, {parentMessageId: systemMessageId}).count())
@@ -602,10 +702,12 @@ function getMessage(p) {
             changedDate: iso(row.changedDate),
             fromText: statusText(row.oldValueText),
             toText: statusText(row.newValueText),
-            username: row.changedByUserId
-                ? text(one("moqui.security.UserAccount", {userId: row.changedByUserId})?.username) || row.changedByUserId
-                : null,
-            reason: text(row.changeReason) || null
+            // who acted and the reason they gave are shown as the error's line is: where its owner lets this reader
+            username:
+                lineVisible && row.changedByUserId
+                    ? text(one("moqui.security.UserAccount", {userId: row.changedByUserId})?.username) || row.changedByUserId
+                    : null,
+            reason: lineVisible ? text(row.changeReason) || null : null
         })),
         actionList: engine.actionList(recoveryKind, target, assessed, canManage),
         canManage,

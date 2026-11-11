@@ -2,7 +2,8 @@
 // plan/impl-admin.md P13; design-admin §8, §14 "Operational recovery", §15.3 "Unknown provider outcome" and "Independent
 // failure"): a message is listed with its state, the class of its error and no text, a remote's answer or a token; its payload
 // is shown only with the permission its owner registered; nothing is recovered without a registration; a message whose
-// outcome is unknown is offered reconciliation and never a retry; in a batch each message has its own result and a refused
+// outcome is unknown is offered reconciliation and never a retry, and its settlement is kept apart from its status, which no
+// person sets (reported done: never sent; reported not done: sent again through the retry's claim); in a batch each message has its own result and a refused
 // or failing one does not stop the others; an operation key answers the first results and sends nothing again; a disabled
 // remote is sent nothing; and a message type is given only a handler registered for it. The HTTP fixtures answer every
 // send: nothing leaves the machine.
@@ -21,6 +22,7 @@ const ids = {
     out: "SPEC_RC_M_OUT",
     again: "SPEC_RC_M_AGAIN",
     unknown: "SPEC_RC_M_UNKNOWN",
+    gone: "SPEC_RC_M_GONE",
     busy: "SPEC_RC_M_BUSY",
     plain: "SPEC_RC_M_PLAIN",
     off: "SPEC_RC_M_OFF",
@@ -200,6 +202,7 @@ spec({
         message(ids.again)
         // a send that never answered: it may have gone
         message(ids.unknown, {statusId: "SmsgSending", failCount: 0})
+        message(ids.gone, {statusId: "SmsgSending", failCount: 0})
         message(ids.busy, {statusId: "SmsgSending", failCount: 0, lastAttemptDate: Date.now()})
         message(ids.plain, {systemMessageTypeId: types.plain})
         message(ids.off, {systemMessageRemoteId: "SPEC_RC_OFF"})
@@ -274,7 +277,10 @@ feature("a message is listed with its state and the class of its error, and its 
         by(out.view.attention, ids.out).retryEligible === false
         by(out.view.attention, ids.unknown).state === "uncertain"
         by(out.view.attention, ids.unknown).stateText === "May have been sent"
-        out.view.unknown.messageList.map(found => found.systemMessageId).join() === ids.unknown
+        out.view.unknown.messageList
+            .map(found => found.systemMessageId)
+            .sort()
+            .join() === [ids.gone, ids.unknown].join()
         out.view.done.messageList.map(found => found.systemMessageId).join() === ids.sent
         out.view.incoming.messageList.map(found => found.systemMessageId).join() === ids.incoming
         out.view.byEnvelope.messageList.map(found => found.systemMessageId).join() === ids.out
@@ -319,6 +325,12 @@ feature("a message is listed with its state and the class of its error, and its 
         )
         by(out.manage.list, ids.plain).nextStep.includes("No recovery is registered")
         action(out.manage.preview, ids.held, "retry").reasonCode === "OWNER_UNAVAILABLE"
+        // a message its owner does not answer for to this reader: its transport row, with no remote, reference or line
+        by(out.manage.list, ids.held).errorClass === "HTTP 500: the remote failed"
+        by(out.manage.list, ids.held).remoteText === ""
+        by(out.manage.list, ids.held).systemMessageRemoteId == null
+        by(out.manage.list, ids.held).messageId == null
+        by(out.manage.list, ids.held).errorText === ""
         action(out.manage.preview, ids.owned, "retry").reasonCode === "OWNER_PERMISSION"
         action(out.manage.preview, ids.owned, "reconcile").reasonCode === "NOT_OFFERED"
         action(out.manage.preview, ids.sent, "retry").reasonCode === "NOT_FAILED"
@@ -379,13 +391,30 @@ feature(
                 out.noReason = recover("retry", [ids.cancel], {reason: " "})
                 out.badAction = recover("constructor", [ids.cancel])
 
-                // the unknown one: settled by a person's word, never sent
+                // the unknown ones: settled by a person's word, kept apart from the status, which stays the transport's
                 out.unknownRetry = recover("retry", [ids.unknown])
                 out.noResolution = recover("reconcile", [ids.unknown])
                 out.notSent = recover("reconcile", [ids.unknown], {resolution: "notDone"})
                 out.afterNotSent = row(ids.unknown)
-                out.settleFailed = recover("reconcile", [ids.unknown], {resolution: "done"})
+                out.storedNotSent = stored(ids.unknown)
+                out.settleAgain = recover("reconcile", [ids.unknown], {resolution: "done"})
+                out.gone = recover("reconcile", [ids.gone], {resolution: "done"})
+                out.afterGone = row(ids.gone)
+                out.goneRetry = recover("retry", [ids.gone])
+                const listed = state =>
+                    invoke(O + "find#Messages", {state, systemMessageTypeId: types.out})
+                        .messageList.map(found => found.systemMessageId)
+                        .sort()
+                        .join()
+                out.lists = {settled: listed("settled"), uncertain: listed("uncertain"), done: listed("done")}
+                out.inAttention = invoke(O + "find#Messages", {systemMessageTypeId: types.out}).messageList.some(found =>
+                    [ids.unknown, ids.gone].includes(found.systemMessageId)
+                )
                 out.sendsAfterSettle = http.count()
+                // the one reported not sent is sent again through the retry's claim: its settlement cleared, and the
+                // send's own result (it fails here) its state
+                out.notSentRetry = recover("retry", [ids.unknown])
+                out.sendsAfterNotSentRetry = http.count()
 
                 out.cancelled = recover("cancel", [ids.cancel, ids.busy])
                 out.requeued = recover("requeue", [ids.requeue])
@@ -397,6 +426,16 @@ feature(
                 out.consumed = recover("retry", [ids.incoming])
             })
             out.sendsAtEnd = http.count()
+            // the framework's own claim of a message for a send: of two senders that read the same status only one takes it
+            // (the scheduled job and an operator's retry)
+            out.requeuedRow = stored(ids.requeue)
+            const claim = () =>
+                invoke("org.moqui.impl.SystemMessageServices.claim#SystemMessage", {
+                    systemMessageId: ids.requeue,
+                    fromStatusId: "SmsgProduced",
+                    toStatusId: "SmsgSending"
+                }).claimed
+            out.claims = [claim(), claim()]
         },
         then() {
             const out = context.out
@@ -440,28 +479,55 @@ feature(
             out.unknownRetry.reasonCode === "RECONCILE_REQUIRED"
             has(out.noResolution.error, /A resolution is one of/)
             out.notSent.applied === true
-            out.afterNotSent.state === "failed"
+            // the settlement is beside the message: its status is as the transport left it
+            out.storedNotSent.statusId === "SmsgSending"
+            out.storedNotSent.outcomeSettlement === "notDone"
+            out.storedNotSent.outcomeSettledByUserId === users.manage
+            out.storedNotSent.outcomeSettledReason === "Spec recovery"
+            out.afterNotSent.state === "settled"
+            out.afterNotSent.stateText === "Settled: reported not sent"
+            out.afterNotSent.settlement === "notDone"
+            out.afterNotSent.settledReason === "Spec recovery"
             out.afterNotSent.retryEligible === true
-            // once it is known not sent it is no longer settled
-            result(out.settleFailed, ids.unknown).reasonCode === "NOT_UNCERTAIN"
-            audit(MESSAGE, "statusId", ids.unknown).some(
-                found => found.changeReason === "Settle: Spec recovery" && found.newValueText === "SmsgError"
-            )
+            out.afterNotSent.reconcileEligible === false
+            result(out.settleAgain, ids.unknown).reasonCode === "ALREADY_SETTLED"
+            // reported sent: not marked Sent, no status row, never listed as done, never sent again
+            out.gone.applied === true
+            stored(ids.gone).statusId === "SmsgSending"
+            stored(ids.gone).processedDate == null
+            stored(ids.gone).outcomeSettlement === "done"
+            out.afterGone.state === "settled"
+            out.afterGone.stateText === "Settled: reported sent"
+            result(out.goneRetry, ids.gone).reasonCode === "SETTLED"
+            !audit(MESSAGE, "statusId", ids.gone).some(found => found.newValueText === "SmsgSent")
+            audit(MESSAGE, "statusId", ids.gone).some(found => found.changeReason === "Settle (reported done): Spec recovery")
+            out.lists.settled === [ids.gone, ids.unknown].join()
+            out.lists.uncertain === ""
+            out.lists.done === [ids.out, ids.sent].sort().join()
+            out.inAttention === false
             out.sendsAfterSettle === 2
+            // sent again as itself: the claim cleared the settlement, and the send that failed is its state
+            result(out.notSentRetry, ids.unknown).reasonCode === "RETRY_FAILED"
+            out.sendsAfterNotSentRetry === 3
+            stored(ids.unknown).statusId === "SmsgError"
+            stored(ids.unknown).outcomeSettlement == null
+            Number(stored(ids.unknown).failCount) === 1
 
             result(out.cancelled, ids.cancel).applied === true
             stored(ids.cancel).statusId === "SmsgCancelled"
             result(out.cancelled, ids.busy).reasonCode === "IN_PROGRESS"
             stored(ids.busy).statusId === "SmsgSending"
             out.requeued.applied === true
-            stored(ids.requeue).statusId === "SmsgProduced"
-            Number(stored(ids.requeue).failCount) === 0
+            out.requeuedRow.statusId === "SmsgProduced"
+            Number(out.requeuedRow.failCount) === 0
+            out.claims.join() === "true,false"
+            stored(ids.requeue).statusId === "SmsgSending"
 
             result(out.consumeFails, ids.incoming).reasonCode === "RETRY_FAILED"
             out.handler.applied === true
             out.consumed.applied === true
             stored(ids.incoming).statusId === "SmsgConsumed"
-            out.sendsAtEnd === 2
+            out.sendsAtEnd === 3
         }
     }
 )
