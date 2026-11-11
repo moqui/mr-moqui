@@ -288,10 +288,19 @@ feature("a stale preview is refused, an identical retry answers the first result
                 inputFingerprint: out.revalidated.inputFingerprint
             })
             out.report = step("get#ImportReport", {operationKey: "spec-dt-key-1"})
+            // the apply that took rows is one row of the audit log beside the batch (impl-admin P17); its repeat took none
+            out.importAudit = Array.from(
+                find("moqui.entity.EntityAuditLog", {
+                    changedEntityName: "moqui.server.TransferBatch",
+                    changedFieldName: "import",
+                    pkSecondaryValue: TARGET
+                }).list()
+            ).map(row => String(row.newValueText))
         })
     },
     then() {
         const k = context.keyed
+        k.importAudit.length === 1 && /^\d+ of \d+ rows applied of /.test(k.importAudit[0])
         k.staged.operationKey == "spec-dt-key-1"
         // a file's name is its last part, with nothing a template would expand
         k.staged.filename == "spec $_{evil}.csv"
