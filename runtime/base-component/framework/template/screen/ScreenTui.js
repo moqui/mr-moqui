@@ -320,7 +320,7 @@ $w("]");
             if ($isTransition && !$made.isReadOnly()) $link.writes = true;
             ${kind ? `$link.kind = ${jsString(kind)};` : ""}
             ${attr(node, "btn-type") ? `$link.btnType = ${jsString(attr(node, "btn-type"))};` : ""}
-            ${attr(node, "icon") ? `$link.icon = ${jsString(attr(node, "icon"))};` : ""}
+            ${attr(node, "icon") ? `$link.icon = String(${S.expandExpr(attr(node, "icon"))} || "");` : ""}
             ${attr(node, "badge") ? `$link.badge = String(${S.expandNoL10nExpr(attr(node, "badge"))} || "");` : ""}
             ${attr(node, "tooltip") ? `$link.tooltip = String(${S.expandExpr(attr(node, "tooltip"))} || "");` : ""}
             ${kind === "hidden-form-link" ? `$link.method = "post";` : ""}

@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     and a screen another component mounts is never missing.
 
     A home sets `navCatalog` in its actions, a list of entries {path, group, featured, text, links, title, icon,
-    parameters} (or {url, title, ...} for a link outside the menus); template/HomeCatalog.js describes them and holds
+    parameters, hidden} (or {url, title, ...} for a link outside the menus); template/HomeCatalog.js describes them and holds
     the rule. `navOptions` is optional: {otherTitle} names the last group, of the app's menu items no entry names
     (default "More"). The home then includes one or both sections:
 

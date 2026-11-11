@@ -17,7 +17,9 @@ along with this software (see the LICENSE.md file). If not, see
     (save#DataGridChanges), exported, and kept as saved views. The source is entityName (or selectedEntity), a saved
     view (viewId), or a SQL result handed over from the SQL screen. Every request goes to the transitions below, over
     the data grid services of org.moqui.dev.DatabaseServices; a SQL source needs SQL_RUNNER_WEB. The terminal render is
-    a paged list of the same rows, read only, whose rows open the record form (Record.xml) for an entity. -->
+    a paged list of the same rows, read only, whose rows open the record form (Record.xml) for an entity. An entity
+    that opens, in the grid (gridColumns) or the terminal, is put first in the user's recent entities, the preference
+    tools.recent (template/ToolsRecent.js). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Grid" default-menu-index="1" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
@@ -39,6 +41,9 @@ along with this software (see the LICENSE.md file). If not, see
                 const source = parse('sourceJson', null)
                 if (source && source.type == 'sql' && ec.web.secureRequestParameters.sourceJson == null) throw new Error('A SQL source goes in the request body')
                 out = ec.service.sync().name('org.moqui.dev.DatabaseServices.get#DataGridColumns').parameters({source, columns: parse('columnsJson', [])}).call() || {}
+                // an entity that opened is first in the user's recent entities (template/ToolsRecent.js), which the Tools home lists
+                if (!ec.message.hasError() && source && source.type == 'entity' && source.entityName)
+                    ec.resource.script('component://tools/template/ToolsRecent.js').record(source.entityName)
             } catch (e) { errors = String(e.message || e) }
             if (ec.message.hasError()) errors = ec.message.errorsString
             ec.message.clearErrors()
@@ -281,6 +286,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const source = {type: 'entity', entityName: name}
                 const columns = call('get#DataGridColumns', {source})
                 if (columns.error) return [{t: 'text', id: 'GridError', style: 'error', text: columns.error}]
+                ec.resource.script('component://tools/template/ToolsRecent.js').record(name)
                 const shown = (columns.out.columns || []).slice(0, 8)
                 const rows = call('get#DataGridRows', {source, columns: shown.map((column) => column.name), page: pageIndex + 1, size})
                 if (rows.error) return [{t: 'text', id: 'GridError', style: 'error', text: rows.error}]

@@ -180,6 +180,42 @@ feature("the System home shows the instance, its listeners or their absence, and
     }
 })
 
+// The Tools home (plans/Tools-Fancy.md §4), its one render: plain XML widgets, so html alone. john.doe holds the four
+// Tools permissions; the line names each one whether or not it is held. The lists of what the user left off and of what
+// is running are hidden when empty, so they are not checked here.
+feature("the Tools home shows the instance, what the user may do, the jump row, the counters and the main tools", {
+    when() {
+        return {page: render("Home", "Tools"), purpose: ec.factory.getStartupReport().purpose, entities: ec.entity.getAllEntityNames().length}
+    },
+    then({page, purpose, entities}) {
+        page.status == 200
+        page.errors == ""
+        !/Error rendering|Exception in render/.test(page.output)
+        // present whatever the data: the instance line, the permission line with each permission named
+        page.output.includes('id="ToolsInstance"')
+        !purpose || page.output.includes(">" + purpose)
+        page.output.includes("You can:")
+        ["SQL_RUNNER_WEB", "DATABASE_ADMIN", "DATABASE_EXTERNAL", "LOAD_RUNNER"].every(permission =>
+            page.output.includes("You hold the permission " + permission) || page.output.includes("Needs the permission " + permission)
+        )
+        // the jump row and the counters
+        page.output.includes("Open an entity")
+        page.output.includes("Open a service")
+        page.output.includes('id="ToolsCounters"')
+        entities > 0
+        !/>null<|: null|>undefined<|>NaN</.test(page.output.slice(page.output.indexOf('id="ToolsInstance"')))
+        // the main tools and the rest come from the catalog and the menu
+        page.output.includes('id="NavFeaturedLargeCards"')
+        page.output.includes(">Data grid</a>")
+        page.output.includes('id="NavGroupBoxes"')
+        page.output.includes(" REST API</a>")
+        page.output.includes(" Terminal UI</a>")
+        // what left the page is gone
+        !page.output.includes("API reference")
+        !page.output.includes("External databases</a>")
+    }
+})
+
 feature("cache statistics explain missing process metrics instead of showing blank quantities", {
     when() {
         const process = ec.factory.getStatusMap().Process

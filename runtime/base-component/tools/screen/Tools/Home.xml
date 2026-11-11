@@ -12,124 +12,350 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
+<!-- The Tools home (plans/Tools-Fancy.md §4): which instance and database this is and what the user may do here, an
+    entity's records or a service one search away, the size of the model, the main tools, what the user was doing and
+    what is running, and everything else. Every block is read in the actions as data, so the permission flags and
+    the counts are in the screen package of a server-static template; the page writes nothing (the database picker
+    keeps the choice, as on the other Tools screens). The navigation is the catalog of template/HomeParts.xml. The
+    server-static report still names two things here: the picker's form (map="context", in DatabaseParts.xml) and the
+    state chip of Running and recent, whose color is a row's value in a render-mode text. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-index="1" menu-image="sym_o_home" menu-image-type="icon" default-menu-title="Home">
 
-    <transition name="reloadEcfi" begin-transaction="false" authz-action="all">
-        <actions>
-            <script>ec.factory.triggerDynamicReInit()</script>
-            <message>ExecutionContextFactory dynamic re-initialize triggered</message>
-        </actions>
+    <parameter name="db"/>
+
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
+    <!-- the options of the two jump drop-downs: the entity names (kind entity) or the known service names (kind
+        service) that hold the term, fifty at most, those whose own name (after the package) begins with it first -->
+    <transition name="searchNames" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const term = String(ec.web.parameters.term || '').trim().toLowerCase()
+            const selected = String(ec.web.parameters.value || '').trim()
+            const services = String(ec.web.parameters.kind || '') === 'service'
+            let names = []
+            if (term.length >= 2) {
+                const all = services ? ec.service.getKnownServiceNames() : ec.entity.getAllEntityNames()
+                // 0 the own name is the term, 1 it (or a service's noun) begins with it, 2 it holds it, 3 the package does
+                const rank = name => {
+                    const lower = name.toLowerCase()
+                    const own = lower.slice(lower.lastIndexOf('.') + 1)
+                    return own === term ? 0 : own.startsWith(term) || own.slice(own.indexOf('#') + 1).startsWith(term) ? 1 : own.includes(term) ? 2 : 3
+                }
+                names = Array.from(all || []).map(String).filter(name => name.toLowerCase().includes(term))
+                    .map(name => [rank(name), name]).sort((first, second) => first[0] - second[0] || first[1].localeCompare(second[1]))
+                    .slice(0, 50).map(ranked => ranked[1])
+            } else if (selected) {
+                names = [selected]
+            }
+            ec.web.sendJsonResponse(names.map(name => ({value: name, label: name})))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the entity chosen in the jump row: its records in the grid, or its definition (the conditions exclude each
+        other: of two that hold, the later response is taken) -->
+    <transition name="openEntity">
+        <actions><set field="openDefinition" from="jumpTo == 'definition'"/></actions>
+        <conditional-response url="../Schema/Entity"><condition><expression>entityName &amp;&amp; openDefinition</expression></condition>
+            <parameter name="selectedEntity" from="entityName"/></conditional-response>
+        <conditional-response url="../Data/Grid"><condition><expression>entityName &amp;&amp; !openDefinition</expression></condition>
+            <parameter name="entityName"/></conditional-response>
+        <default-response url="."/>
+    </transition>
+    <!-- the service chosen in the jump row: its detail, which has Run -->
+    <transition name="openService">
+        <actions><set field="serviceName" from="String(serviceName || '').trim()"/></actions>
+        <conditional-response url="../Service/ServiceDetail"><condition><expression>serviceName</expression></condition>
+            <parameter name="serviceName"/></conditional-response>
         <default-response url="."/>
     </transition>
 
-    <!-- the permission checks run here, so a server-static template reads flags from the screen package -->
     <actions>
-        <set field="canLoadRunner" from="ec.user.hasPermission('LOAD_RUNNER')"/>
-        <set field="canSql" from="ec.user.hasPermission('SQL_RUNNER_WEB')"/>
-        <!-- Database › Connections, when the server offers external databases to this user -->
         <script><![CDATA[
-            // whether the server offers external databases to this user (find#DatabaseConnections refuses with "Not available"
-            // on production or without DATABASE_EXTERNAL); asked only of a DATABASE_EXTERNAL holder
-            canExternal = false
-            if (ec.user.hasPermission('DATABASE_EXTERNAL')) {
-                try { ec.service.sync().name('org.moqui.dev.DatabaseServices.find#DatabaseConnections').call(); canExternal = !ec.message.hasError() } catch (e) { canExternal = false }
-                ec.message.clearErrors()
+            const L = text => ec.l10n.localize(text)
+            const number = (value, pattern) => ec.l10n.format(Number(value), pattern || '#,##0')
+            const DASH = '—'
+            const bytes = value => {
+                const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+                let amount = Number(value), unit = 0
+                while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit++ }
+                return number(amount, amount >= 100 || unit === 0 ? '#,##0' : '#,##0.#') + ' ' + units[unit]
             }
+            // each read on its own: a failure is logged and the rest of the page still shows
+            const read = (name, body, fallback) => {
+                try { return body() } catch (error) { ec.logger.error('Tools home: ' + name + ' failed: ' + String(error)); return fallback }
+                finally { ec.message.clearErrors() }
+            }
+            // a service's answer, empty when it refused
+            const call = (name, parameters) => read(name, () => {
+                const out = ec.service.sync().name('org.moqui.dev.' + name).parameters(parameters || {}).call() || {}
+                return ec.message.hasError() ? {} : out
+            }, {})
+
+            // ---- instance: the purpose, the database, and what the user may do here ----
+            const report = read('runtime report', () => ec.factory.getStartupReport(), null) || {}
+            isProduction = report.purpose === 'production'
+            // the database: db, else the last choice, else the default group's (template/DatabaseParts.xml)
+            databaseList = Array.from(call('DatabaseServices.get#DatabaseList', {includeExternal: false}).databases || [])
+                .map(database => Object.assign({}, database, {groupNames: database.groupNames || [],
+                    label: database.external ? (database.description || database.db) + ' (external)'
+                        : (database.groupNames || []).join(', ') + ' (' + database.databaseConf + ')'}))
+            db = [db, ec.user.getPreference('database.selected')].find(name => databaseList.some(database => database.db == name)) ||
+                (databaseList[0] || {}).db || null
+            selectedDatabase = databaseList.find(database => database.db == db) || null
+            // what the database says of itself, kept five minutes by the service
+            const facts = db ? call('DatabaseServices.get#Capabilities', {db}) : {}
+            const BACKENDS = {'embedded-postgres': L('embedded PostgreSQL'), postgres: 'PostgreSQL', mysql: 'MySQL', mariadb: 'MariaDB'}
+            const version = /[0-9]+(\.[0-9]+)*/.exec(String(facts.version || ''))
+            instanceText = [report.purpose, [BACKENDS[facts.backend] || facts.backend || (selectedDatabase || {}).databaseConf, version ? version[0] : '']
+                .filter(part => part).join(' '), selectedDatabase ? L('database') + ': ' + selectedDatabase.label : ''].filter(part => part).join(' · ')
+            abilityRows = [['SQL_RUNNER_WEB', L('SQL')], ['DATABASE_ADMIN', L('Database admin')], ['DATABASE_EXTERNAL', L('External databases')],
+                ['LOAD_RUNNER', L('Load testing')]].map(([permission, text]) => {
+                    const held = ec.user.hasPermission(permission)
+                    return {text, held, tooltip: (held ? L('You hold the permission') : L('Needs the permission')) + ' ' + permission}
+                })
+            canSql = abilityRows[0].held
+            canLoadRunner = abilityRows[3].held
+
+            // ---- counters: the model as Artifact summary counts it, and the selected database's size ----
+            let entities = 0, viewEntities = 0
+            read('entity counts', () => {
+                for (const info of Array.from(ec.entity.getAllEntityInfo(1, false) || [])) { entities += Number(info.entities || 0); viewEntities += Number(info.viewEntities || 0) }
+            })
+            entityCountText = number(entities)
+            viewEntityCountText = number(viewEntities)
+            serviceCountText = number(read('service count', () => Array.from(ec.service.getKnownServiceNames()).length, 0))
+            ecaCountText = number(read('ECA rule count', () => Number(ec.entity.getEecaRuleCount()) + Number(ec.service.getSecaRuleCount()), 0))
+            // the screens are counted by a walk of every screen, two seconds the first time in a process: the service
+            // answers the count it kept and has it counted on a worker when it has none or the one it has is old
+            const screens = read('screen count', () => ec.service.sync().name('moqui.tools.ToolsHomeServices.get#ScreenCount').call() || {}, {})
+            screenCountText = screens.screenCount != null ? number(screens.screenCount) : '…'
+            screenCountTitle = screens.screenCount != null ? L('Screens') : L('Screens') + ' · ' + L('being counted')
+            databaseSizeText = facts.databaseSize != null ? bytes(facts.databaseSize) : DASH
+            databaseSizeTitle = facts.databaseSize != null ? L('Database size') : L('Database size') + ' · ' + L('not reported')
+
+            // ---- pick up where you left off: recent entities, saved grid views, saved queries, SQL history ----
+            const oneLine = text => { const line = String(text || '').replace(/\s+/g, ' ').trim(); return line.length > 80 ? line.slice(0, 79) + '…' : line }
+            const leftOff = [
+                read('recent entities', () => ec.resource.script('component://tools/template/ToolsRecent.js').read()
+                    .filter(name => ec.entity.isEntityDefined(name)), [])
+                    .map(name => ({text: name, kindText: L('entity'), rowLink: '../Data/Grid', rowParameters: {entityName: name}})),
+                Array.from(call('DatabaseServices.find#GridViews').gridViews || [])
+                    .map(view => ({text: String(view.description || view.viewId), kindText: L('grid view'), rowLink: '../Data/Grid',
+                        rowParameters: {viewId: view.viewId}})),
+                canSql ? Array.from(call('DatabaseServices.find#SavedQueries').savedQueries || [])
+                    .map(query => ({text: String(query.description || query.queryId), kindText: L('saved query'), rowLink: '../Sql',
+                        rowParameters: {queryId: query.queryId, db: query.db || ''}})) : [],
+                canSql ? Array.from(call('DatabaseServices.find#SqlHistory', {limit: 10}).history || [])
+                    .map(item => ({text: oneLine(item.statementText), kindText: L('SQL history'), rowLink: '../Sql',
+                        rowParameters: {auditId: item.auditId, db: item.db || ''}})) : []
+            ]
+            // ten rows: four entities and two of each other kind, then more of each in that order while there is room
+            const LEFT_OFF = 10
+            const taken = leftOff.map((rows, index) => rows.slice(0, index === 0 ? 4 : 2))
+            let room = LEFT_OFF - taken.reduce((total, rows) => total + rows.length, 0)
+            for (let index = 0; room > 0 && index < leftOff.length; index++) {
+                const more = leftOff[index].slice(taken[index].length, taken[index].length + room)
+                taken[index] = taken[index].concat(more)
+                room -= more.length
+            }
+            recentRows = [].concat(...taken)
+            hasRecent = recentRows.length > 0
+
+            // ---- running and recent: the latest five ETL runs, database jobs and load runs, newest first ----
+            const STATES = {pending: [L('Pending'), 'grey-7'], running: [L('Running'), 'primary'], done: [L('Completed'), 'positive'],
+                failed: [L('Failed'), 'negative'], stopped: [L('Stopped'), 'warning'], cancelled: [L('Cancelled'), 'warning'], skipped: [L('Skipped'), 'warning']}
+            const ETL_STATES = {EtlrPending: 'pending', EtlrRunning: 'running', EtlrDone: 'done', EtlrFailed: 'failed'}
+            const JOB_STATES = {DbjsPending: 'pending', DbjsRunning: 'running', DbjsDone: 'done', DbjsFailed: 'failed', DbjsCancelled: 'cancelled', DbjsSkipped: 'skipped'}
+            const LOAD_STATES = {running: 'running', completed: 'done', stopped: 'stopped', failed: 'failed'}
+            // a time of a run: a timestamp, epoch milliseconds or an RFC 3339 text, as epoch milliseconds
+            const digits = /^[0-9]+$/, scriptDir = /^.*\//, loadJs = /\.load\.js$/
+            const millis = value => {
+                if (value == null || value === '') return null
+                const text = String(value)
+                try { return Number(String(basicConvert(digits.test(text) ? Number(text) : text, 'Timestamp'))) } catch (error) { return null }
+            }
+            const today = ec.l10n.format(ec.user.nowTimestamp, 'yyyy-MM-dd')
+            const timeText = at => {
+                if (at == null || !Number.isFinite(at)) return ''
+                const stamp = basicConvert(at, 'Timestamp')
+                return ec.l10n.format(stamp, ec.l10n.format(stamp, 'yyyy-MM-dd') === today ? 'HH:mm' : 'MMM d')
+            }
+            const running = (kindText, text, state, start, rowLink, rowParameters) => {
+                const shown = STATES[state] || [DASH, 'grey-7']
+                const at = millis(start)
+                return {kindText, text: oneLine(text), stateText: shown[0], stateColor: shown[1], at, timeText: timeText(at), rowLink, rowParameters}
+            }
+            // a run is named by its mapping, read once for each mapping of the five runs
+            const mappingNames = {}
+            const mappingName = mappingId => {
+                if (!mappingId) return ''
+                if (!(mappingId in mappingNames)) mappingNames[mappingId] = read('ETL mapping ' + mappingId, () =>
+                    (ec.entity.find('moqui.etl.EtlMapping').condition('mappingId', mappingId).one() || {}).description, '') || String(mappingId)
+                return mappingNames[mappingId]
+            }
+            runningRows = [].concat(
+                Array.from(call('EtlServices.get#EtlRuns', {limit: 5}).runs || []).map(run => running(L('ETL'),
+                    mappingName(run.mappingId) || run.runId, ETL_STATES[run.statusId], run.startTime, '../Etl/Run', {runId: run.runId})),
+                Array.from(call('DatabaseServices.get#DatabaseJobs', {limit: 5}).jobs || []).map(job => running(L('Job'),
+                    job.description || job.jobId, JOB_STATES[job.statusId], job.startTime || job.createdDate, '../Database/JobDetail', {jobId: job.jobId})),
+                canLoadRunner ? Array.from(call('LoadServices.find#LoadRuns').runs || []).slice(0, 5).map(run => running(L('Load'),
+                    run.label || String(run.script || '').replace(scriptDir, '').replace(loadJs, '') || run.runId, LOAD_STATES[run.status], run.start,
+                    '../Load/Run', {runId: run.runId})) : []
+            ).sort((first, second) => (second.at || 0) - (first.at || 0))
+            hasRunning = runningRows.length > 0
+
+            // ---- navigation: the catalog of template/HomeParts.xml (a component adds entries with an actions-extend) ----
+            const featured = (path, title, text, links) => ({path, title, text, links, featured: true})
+            const entry = (group, path, title, icon, parameters) => ({group, path, title, icon, parameters})
+            const data = L('Data'), schema = L('Schema and database'), services = L('Services and reference'), load = L('Load testing'),
+                elsewhere = L('Elsewhere')
+            // Dev AIDE is linked when its app is mounted beside this one (a dev instance)
+            const fullPath = Array.from(sri.getScreenUrlInfo().fullPathNameList || [])
+            const devAide = fullPath.length > 1 && read('apps menu', () => Array.from(sri.getMenuItems('/' + fullPath.slice(0, -2).join('/')) || [])
+                .some(item => String(item.name) === 'dev'), false)
+            navOptions = {otherTitle: L('More')}
+            navCatalog = [
+                featured('Data/Grid', L('Data grid'), L('Find and edit records of an entity, a view, a SQL result or a file'),
+                    [{path: 'Data/Grid', title: L('Open a file'), parameters: {open: 'file'}}, {path: 'Data/Grid', title: L('Saved views'), parameters: {open: 'views'}}]),
+                // SQL only for a holder of SQL_RUNNER_WEB: without it the screen is named and not shown
+                Object.assign(featured('Sql', L('SQL'), L('Run statements, read only or with changes confirmed'),
+                    [{path: 'Sql', title: L('History'), parameters: {open: 'history'}}, {path: 'Sql', title: L('Saved queries'), parameters: {open: 'saved'}}]),
+                    {hidden: !canSql}),
+                featured('Schema/Entities', L('Entities'), L('Definitions, tables and their differences'),
+                    [{path: 'Schema/Entities', title: L('Check tables')}, {path: 'Schema/IndexesKeys', title: L('Indexes, keys')}]),
+                featured('Service', L('Services'), L('Inputs, results and the rules of any service; run one'),
+                    [{path: 'Service/ServiceRun', title: L('Run a service')}]),
+                featured('Database', L('Database'), L('Sessions, statements, tables, maintenance and jobs'),
+                    [{path: 'Database/Activity'}, {path: 'Database/Tables'}, {path: 'Database/Jobs'}]),
+                featured('Etl', L('ETL'), L('Mappings that load a file or a query into entities'),
+                    [{path: 'Etl/Runs'}, {path: 'Etl/ValueMaps', title: L('Value maps')}]),
+
+                entry(data, 'Data/Browse', L('Browse related'), 'sym_o_account_tree'), entry(data, 'Data/Views', '', 'sym_o_view_column'),
+                entry(data, 'Data/Documents'), entry(data, 'Data/Load', '', 'sym_o_upload'), entry(data, 'Data/Export', '', 'sym_o_download'),
+                entry(data, 'Data/Snapshots', '', 'sym_o_photo_camera'),
+
+                entry(schema, 'Schema/IndexesKeys', '', 'sym_o_key'), entry(schema, 'Database/Queries', L('Statement statistics'), 'sym_o_query_stats'),
+                entry(schema, 'Database/Settings', L('Database settings'), 'sym_o_tune'), entry(schema, 'Database/SpeedTest', L('Speed test'), 'sym_o_speed'),
+
+                entry(services, 'StatusFlows', L('Status flows')), entry(services, 'ArtifactStats'), entry(services, 'RestApi'),
+                entry(services, 'RestApi', L('Entity master API'), 'sym_o_data_object', {api: 'entity'}),
+                {group: services, url: '//apps/system/Monitor/Artifacts', title: L('Artifact performance'), icon: 'sym_o_deployed_code',
+                    parameters: {'var-artifactType': 'AT_SERVICE'}},
+
+                entry(load, 'Load/Scripts', '', 'sym_o_description'), entry(load, 'Load/Runs', '', 'sym_o_play_circle'),
+
+                {group: elsewhere, url: '//apps/Terminal', title: L('Terminal UI'), icon: 'sym_o_terminal'},
+                {group: elsewhere, url: '//apps/ScreenTree', title: L('Site map'), icon: 'sym_o_map'},
+                devAide ? {group: elsewhere, url: '//apps/dev', title: L('Dev AIDE'), icon: 'sym_o_code_blocks'} : null,
+                {group: elsewhere, url: '//apps/system/Monitor', title: L('System › Monitor'), icon: 'sym_o_monitoring'}
+            ].filter(item => item)
         ]]></script>
     </actions>
-
     <widgets>
-        <container-row>
-            <row-col md="4">
-                <container-box><box-header title="Data"/><box-body>
-                    <label text="Find and edit records, browse related records, build views, and load, export or snapshot data." type="p" style="m-muted"/>
-                    <link url="../Data/Grid" text="Records"/>
-                    <link url="../Data/Browse" text="Browse related records"/>
-                    <link url="../Data/Views" text="Data views"/>
-                    <link url="../Data/Load" text="Load data"/>
-                    <link url="../Data/Export" text="Export data"/>
-                    <link url="../Data/Snapshots" text="Data snapshots"/>
-                </box-body></container-box>
-                <container-box><box-header title="ETL"/><box-body>
-                    <label text="Saved mappings that load a file, a query result or entity data into an entity or a service, run now or on a schedule." type="p" style="m-muted"/>
-                    <link url="../Etl/Mappings" text="Mappings"/>
-                    <link url="../Etl/Runs" text="Runs"/>
-                    <link url="../Etl/ValueMaps" text="Value maps"/>
-                </box-body></container-box>
-                <section name="SqlSection" condition="canSql"><widgets>
-                    <container-box><box-header title="SQL"/><box-body>
-                        <label text="Run a statement or a script on a database." type="p" style="m-muted"/>
-                        <link url="../Sql" text="SQL"/>
-                    </box-body></container-box>
-                </widgets></section>
-            </row-col>
-            <row-col md="4">
-                <container-box><box-header title="Schema and database"/><box-body>
-                    <label text="Entity definitions and their tables, indexes and keys; the database server, its sessions, statements, tables and jobs." type="p" style="m-muted"/>
-                    <link url="../Schema/Entities" text="Entities"/>
-                    <link url="../Schema/IndexesKeys" text="Indexes and keys"/>
-                    <link url="../Database/Overview" text="Database"/>
-                    <link url="../Database/Activity" text="Sessions and activity"/>
-                    <link url="../Database/Queries" text="Statement statistics"/>
-                    <link url="../Database/Tables" text="Tables"/>
-                    <link url="../Database/Jobs" text="Database jobs"/>
-                    <link url="../Database/SpeedTest" text="Entity speed test"/>
-                    <link url="../Database/Settings" text="Database settings"/>
-                    <link url="../Database/Connections" text="External databases" condition="canExternal"/>
-                </box-body></container-box>
-                <container-box><box-header title="Services and diagnostics"/><box-body>
-                    <label text="Inspect service inputs and results, run a service, and see status flows and artifact use." type="p" style="m-muted"/>
-                    <link url="../Service" text="Services"/>
-                    <link url="../StatusFlows" text="Status flows"/>
-                    <link url="../ArtifactStats" text="Artifact statistics"/>
-                </box-body></container-box>
-                <section name="LoadSection" condition="canLoadRunner"><widgets>
-                    <container-box><box-header title="Load testing"/><box-body>
-                        <label text="Run a component's load scripts against this server or another, follow a run as it goes, and compare runs." type="p" style="m-muted"/>
-                        <link url="../Load/Scripts" text="Load scripts"/>
-                        <link url="../Load/Runs" text="Runs"/>
-                    </box-body></container-box>
-                </widgets></section>
-            </row-col>
-            <row-col md="4">
-            <section name="RestApiSection"><actions>
-                <set field="restUrl" from="sri.buildUrl('/rest').url"/>
-                <set field="rootResources" from="ec.service.restApi.getFreshRootResources()"/>
-
-                <set field="masterEntityNameList" from="ec.entity.getAllEntityNamesWithMaster()"/>
-            </actions><widgets>
-                <container-box><box-header title="API reference"/><box-body>
-                    <section-iterate name="RootResourcesSection" list="rootResources" entry="resource"><widgets>
-                        <section name="RootResourceChildren" condition="resource.childMethods &gt; 100"><widgets>
-                            <container-dialog id="RootResourceSwaggerDialog_${resource.name}" button-text="${resource.displayName || resource.name} (${resource.childMethods})">
-                                <section-iterate name="RootResourceSwaggerSection" list="Object.values(resource.resourceMap)" entry="childResource"><widgets>
-                                    <container><link url="/toolstatic/lib/swagger-ui/index.html?url=${restUrl}/service.swagger/${resource.name}/${childResource.name}"
-                                                     text="${childResource.displayName || childResource.description || childResource.name} (${childResource.childMethods})"
-                                                     url-type="plain" link-type="anchor" target-window="_blank"/></container>
-                                </widgets></section-iterate>
-                            </container-dialog>
-                        </widgets><fail-widgets>
-                            <link url="/toolstatic/lib/swagger-ui/index.html?url=${restUrl}/service.swagger/${resource.name}" url-type="plain"
-                                  target-window="_blank" text="${resource.displayName || resource.name} (${resource.childMethods})"
-                                  tooltip="${resource.description || ''}"/>
-                        </fail-widgets></section>
-                    </widgets></section-iterate>
-
-                    <container-dialog id="EntitySwagger" button-text="Entity master API">
-                        <section-iterate name="EntitySwaggerSection" list="masterEntityNameList" entry="masterEntityName"><widgets>
-                            <container><link url="/toolstatic/lib/swagger-ui/index.html?url=${restUrl}/master.swagger/${masterEntityName}" url-type="plain"
-                                             text="${masterEntityName}" link-type="anchor" target-window="_blank"/></container>
-                        </widgets></section-iterate>
-                    </container-dialog>
-                    <!-- Generates enough that Swagger UI has a hard time loading it, takes a long time or fails:
-                    <link url="/toolstatic/lib/swagger-ui/index.html?url=${restUrl}/master.swagger/all"
-                            url-type="plain" target-window="_blank" text="Entity master API"/>
-                    -->
-                    <label text="Open interactive API documentation in a new tab using your current sign-in. Larger APIs may take a few seconds to load." type="p"/>
-                </box-body></container-box>
+        <!-- instance: which instance and database, and what the user may do here -->
+        <container id="ToolsInstance" style="q-mb-sm">
+            <container id="ToolsInstanceLine" style="row items-center q-gutter-x-md">
+                <label text="${instanceText}" type="h6" style="q-my-none"/>
+                <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
+            </container>
+            <container id="ToolsAbilities" style="row items-center q-gutter-x-sm">
+                <label text="You can:" type="span" style="m-muted"/>
+                <section-iterate name="ToolsAbilityEach" list="abilityRows" entry="ability"><widgets>
+                    <label text="${ability.text}" type="strong" tooltip="${ability.tooltip}" condition="ability.held"/>
+                    <label text="${ability.text}" type="span" style="m-muted text-strike" tooltip="${ability.tooltip}" condition="!ability.held"/>
+                </widgets></section-iterate>
+            </container>
+            <section name="ToolsProduction" condition="isProduction"><widgets>
+                <render-mode><text type="qvt"><![CDATA[<q-banner dense rounded class="m-tonal text-warning q-mt-sm">]]></text><text type="tui" template="false">[]</text></render-mode>
+                <label text="This is a production instance. Changes made here are changes to live data." type="span"/>
+                <render-mode><text type="qvt"><![CDATA[</q-banner>]]></text><text type="tui" template="false">[]</text></render-mode>
             </widgets></section>
+        </container>
+
+        <!-- jump: an entity's records (or its definition) and a service's detail, each one search away -->
+        <container-row id="ToolsJump">
+            <row-col md="6">
+                <form-single name="JumpEntity" transition="openEntity">
+                    <field name="entityName"><default-field title="Open an entity" tooltip="Type a part of the name; choosing one opens it">
+                        <drop-down allow-empty="true" submit-on-select="true">
+                            <dynamic-options transition="searchNames" server-search="true" min-length="2" parameter-map="{kind: 'entity'}"/>
+                        </drop-down>
+                    </default-field></field>
+                    <field name="jumpTo"><default-field title="Show" tooltip="What opens: the entity's records in the data grid, or its definition">
+                        <drop-down no-current-selected-key="records"><option key="records" text="Records"/><option key="definition" text="Definition"/></drop-down>
+                    </default-field></field>
+                    <field name="submitButton"><default-field title="Open"><submit/></default-field></field>
+                    <field-layout><field-row-big><field-ref name="entityName"/><field-ref name="jumpTo"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                </form-single>
+            </row-col>
+            <row-col md="6">
+                <form-single name="JumpService" transition="openService">
+                    <field name="serviceName"><default-field title="Open a service" tooltip="Type a part of the name; choosing one opens its detail, which has Run">
+                        <drop-down allow-empty="true" submit-on-select="true">
+                            <dynamic-options transition="searchNames" server-search="true" min-length="2" parameter-map="{kind: 'service'}"/>
+                        </drop-down>
+                    </default-field></field>
+                    <field name="submitButton"><default-field title="Open"><submit/></default-field></field>
+                    <field-layout><field-row-big><field-ref name="serviceName"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                </form-single>
             </row-col>
         </container-row>
+
+        <!-- counters: each goes to its list -->
+        <dashboard id="ToolsCounters" min-width="170">
+            <number-card id="EntitiesCard" title="Entities" value="${entityCountText}" icon="sym_o_table" link="../Schema/Entities?viewOption=exclude-views"/>
+            <number-card id="ViewEntitiesCard" title="View entities" value="${viewEntityCountText}" icon="sym_o_join_inner" link="../Schema/Entities?orderByField=-isView"/>
+            <number-card id="ServicesCard" title="Services" value="${serviceCountText}" icon="sym_o_bolt" link="../Service/ServiceReference"/>
+            <number-card id="ScreensCard" title="${screenCountTitle}" value="${screenCountText}" icon="sym_o_web_asset" link="../ArtifactStats"/>
+            <number-card id="EcaRulesCard" title="ECA rules" value="${ecaCountText}" icon="sym_o_rule" link="../ArtifactStats"/>
+            <number-card id="DatabaseSizeCard" title="${databaseSizeTitle}" value="${databaseSizeText}" icon="sym_o_database" link="../Database/Overview"/>
+        </dashboard>
+
+        <!-- the main tools -->
+        <section-include name="NavFeaturedLarge" location="component://tools/template/HomeParts.xml"/>
+
+        <container-row id="ToolsWork">
+            <row-col md="6">
+                <section name="ToolsLeftOff" condition="hasRecent"><widgets>
+                    <container-box id="ToolsLeftOff"><box-header title="Pick up where you left off"/><box-body-nopad>
+                        <form-list name="LeftOffList" list="recentRows" skip-form="true" skip-header="true" paginate="false">
+                            <field name="text"><default-field title="What">
+                                <link url="${rowLink}" text="${text}" link-type="anchor" parameter-map="rowParameters"/>
+                            </default-field></field>
+                            <field name="kindText"><default-field title="Kind"><display/></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="text"/></column>
+                                <column><field-ref name="kindText"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body-nopad></container-box>
+                </widgets></section>
+            </row-col>
+            <row-col md="6">
+                <section name="ToolsRunning" condition="hasRunning"><widgets>
+                    <container-box id="ToolsRunning"><box-header title="Running and recent"/><box-body-nopad>
+                        <form-list name="RunningList" list="runningRows" skip-form="true" skip-header="true" paginate="false">
+                            <field name="kindText"><default-field title="Kind"><display/></default-field></field>
+                            <field name="text"><default-field title="What">
+                                <link url="${rowLink}" text="${text}" link-type="anchor" parameter-map="rowParameters"/>
+                            </default-field></field>
+                            <field name="stateText"><default-field title="State"><render-mode>
+                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateText}</q-chip>]]></text>
+                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                <text type="html"><![CDATA[<span data-state>${stateText}</span>]]></text>
+                            </render-mode></default-field></field>
+                            <field name="timeText"><default-field title="Started"><display/></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="text"/><field-ref name="kindText"/></column>
+                                <column><field-ref name="stateText"/><field-ref name="timeText"/></column>
+                            </columns>
+                        </form-list>
+                    </box-body-nopad></container-box>
+                </widgets></section>
+            </row-col>
+        </container-row>
+
+        <!-- everything else, in groups -->
+        <section-include name="NavGroups" location="component://tools/template/HomeParts.xml"/>
     </widgets>
 </screen>

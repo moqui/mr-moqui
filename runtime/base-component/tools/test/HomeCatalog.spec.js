@@ -71,9 +71,11 @@ feature("a menu item no entry names is in the last group, and a link outside the
         const elsewhere = nav.groups.find(group => group.title === "Elsewhere") || {items: []}
         // every menu item named: no last group
         const complete = build(CATALOG.concat([{path: "Voice", group: "Server"}]), {otherTitle: "Other"})
-        return {nav, last, elsewhere, complete}
+        // a hidden entry names its screen and shows nothing: no card, and not in the last group
+        const hidden = build(CATALOG.concat([{path: "Voice", featured: true, hidden: true}]), {otherTitle: "Other"})
+        return {nav, last, elsewhere, complete, hidden}
     },
-    then({nav, last, elsewhere, complete}) {
+    then({nav, last, elsewhere, complete, hidden}) {
         // Voice, mounted by another component, is not missing; the home itself and the named screens are not repeated
         last.title == "Other"
         titles(last.items) == "Voice"
@@ -85,5 +87,7 @@ feature("a menu item no entry names is in the last group, and a link outside the
         elsewhere.items[0].title == "Terminal UI"
         !complete.groups.some(group => group.title === "Other")
         titles(complete.groups[0].items) == "Caches, Voice"
+        titles(hidden.featured) == "Users and access"
+        !hidden.groups.some(group => group.items.some(item => item.path === "Voice"))
     }
 })

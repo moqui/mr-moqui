@@ -22,7 +22,24 @@ the test mount of the ReportMounts spec.
 | `Etl.xml`, `Etl/` | ETL: Mappings, a Mapping (`Mapping.qvue`: source, target, fields with sample values, test, run, schedule), Runs and a Run (errors, error file, rerun), Value Maps; `Etl.xml` holds the JSON transitions the mapping form and the grid's Load into… use |
 | `Database/` | Overview, Activity (sessions, blockers, index health), Queries, Tables (with maintenance), Jobs and a job's page, Settings, Speed Test, and Connections (external databases: `DATABASE_EXTERNAL`, never on production) |
 | `Load.xml`, `Load/` | Load testing ([docs/tools/Load-Runner.md](../../../docs/tools/Load-Runner.md)): Scripts (the components' `test/load/*.load.js`), New run (`NewRun.qvue`, with `NewRun.tui.json`), Runs (with Compare and Import result), a Run (`Run.qvue`: live numbers and charts while it runs, with `Run.tui.json`) and Compare, over `org.moqui.dev.LoadServices`; `Load.xml` holds the JSON transitions the two `.qvue` files use, and `template/LoadRuns.js` the reads they share. Needs `LOAD_RUNNER` |
-| `Service/`, `StatusFlows.xml`, `ArtifactStats.xml` | Services, status flows, artifact statistics |
+| `Service/`, `StatusFlows.xml` | Services (reference, detail, run) and status flows |
+| `ArtifactStats.xml` | Artifact summary: the entities, services and screens counted by package. Its totals are the Tools home's counters. (Hit performance is Monitor › Artifacts) |
+| `RestApi.xml` | REST API: the service REST resources and the entity master API, each opening its Swagger document; `filter` narrows both lists, `api` (`service` or `entity`) shows one |
+
+**Home** (`Tools/Home.xml`, [plans/Tools-Fancy.md](../../../plans/Tools-Fancy.md) §4) reads each block in its
+actions:
+
+| Block | Reads |
+| --- | --- |
+| Instance | `ec.factory.getStartupReport()` (the purpose; a production instance gets one banner line), `get#DatabaseList` and `get#Capabilities` of the selected database (kind and version) with the picker of `template/DatabaseParts.xml`, and `ec.user.hasPermission` for `SQL_RUNNER_WEB`, `DATABASE_ADMIN`, `DATABASE_EXTERNAL` and `LOAD_RUNNER` (a missing one is muted, its tooltip naming the permission) |
+| Jump | Two server-search drop-downs over the `searchNames` transition (entity names, or the known service names, that hold the term; fifty at most). An entity opens in Data › Grid, or its definition; a service opens its detail, which has Run |
+| Counters | `ec.entity.getAllEntityInfo`, `ec.service.getKnownServiceNames`, the EECA and SECA rule counts, the database size of `get#Capabilities`, and the screens from `moqui.tools.ToolsHomeServices.get#ScreenCount`, which answers the count it kept and has `count#Screens` count again on a worker (the walk loads every screen: about two seconds the first time in a process), so the page never waits for it |
+| Main tools, More | The navigation catalog (`navCatalog`, below under System). SQL is left out without `SQL_RUNNER_WEB`, Load testing without `LOAD_RUNNER`; Dev AIDE is linked when its app is mounted |
+| Pick up where you left off | The preference `tools.recent` (the entities the user opened last in Data › Grid, twenty names, `template/ToolsRecent.js`), `find#GridViews`, and with `SQL_RUNNER_WEB` `find#SavedQueries` and `find#SqlHistory`; ten rows, hidden when empty |
+| Running and recent | `get#EtlRuns`, `get#DatabaseJobs` and, with `LOAD_RUNNER`, `find#LoadRuns`: five of each, newest first, hidden when empty |
+
+Data › Grid takes `open=file` (the file dialog) and `open=views` (the saved views); SQL takes `queryId` and `auditId`
+(a saved query or a statement of the user's history put in the editor, not run) and `open=history` or `open=saved`.
 
 Data › Load and Snapshots can drop the foreign keys of the loaded tables first and make them again after: the load
 runs on a worker as the `DatabaseLoadWrap` ServiceJob (`service/moqui/tools/DatabaseLoadServices.xml`, `data/ToolsDatabaseData.xml`).
@@ -44,8 +61,8 @@ switched on, what needs an administrator and where to go: the runtime report (`e
 status map with its resource readings, the attention service, an embed of the `system-home` dashboard over the `period`
 URL parameter, and the navigation catalog. The catalog is a list of entries in the home's actions (`navCatalog`), shown
 by the `NavFeatured`, `NavFeaturedLarge` and `NavGroups` sections of `template/HomeParts.xml`; the rule is in
-`template/HomeCatalog.js`: an entry whose screen the menu does not show for the user has no tile, and a menu item no
-entry names is in a last group. A component adds entries with a `screen-extend` `actions-extend` of the home.
+`template/HomeCatalog.js`: an entry whose screen the menu does not show for the user has no tile, a `hidden` entry
+names its screen and shows nothing, and a menu item no entry names is in a last group. A component adds entries with a `screen-extend` `actions-extend` of the home.
 
 `service/moqui/tools/SystemHomeServices.xml` has `get#SystemAttention`, the one list of what needs an administrator
 (resource readings past their `resource-watch` thresholds, failed job runs, system messages in error and the like;

@@ -18,6 +18,8 @@
 //   `links` its secondary links (the first three that are shown), each `{path | url, title, parameters}`.
 // - `group` is the title of the group of an entry that is not featured; the groups keep the order in which the
 //   catalog first names them. `parameters` is added to the link as a query string.
+// - `hidden: true` names the entry's screen and shows nothing for it: a screen the menu has that this home leaves out
+//   for this user (a tool whose permission the user does not hold), so it is not in the last group either.
 // - A menu item of the app root that no entry names (by the first name of a `path`, in an entry or in a card's
 //   links) goes in a last group, `otherTitle`, so a screen another component mounts is never missing.
 //
@@ -98,7 +100,7 @@ function build(catalog, menuOf, options) {
             .map(resolve)
             .filter(link => link)
             .slice(0, 3)
-        if (!shown) continue
+        if (!shown || entry.hidden) continue
         shown.text = entry.text ? String(entry.text) : ""
         if (entry.featured) {
             shown.links = links.map(link => ({title: link.title, link: link.link}))

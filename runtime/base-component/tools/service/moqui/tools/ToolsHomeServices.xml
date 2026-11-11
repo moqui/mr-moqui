@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- What the Tools home reads that is not one call of the framework (plans/Tools-Fancy.md §4.3). -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="ScreenCount" transaction="ignore">
+        <description>The count of screens the Tools home shows, as Tools › Artifact summary counts them (each root
+            screen of the webapps with every screen below it), without making the page wait for it. Counting walks
+            every screen and so loads each definition: about two seconds the first time in a process and a few
+            milliseconds after. So this answers the count kept in the cache tools.home.counts (null when there is none
+            yet), and when there is none or it is ten minutes old it calls count#Screens on a worker, once: counting is
+            true from then until that count is kept.</description>
+        <out-parameters>
+            <parameter name="screenCount" type="Integer"/>
+            <parameter name="counting" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const STALE = 10 * 60 * 1000
+            const counts = ec.cache.getCache('tools.home.counts')
+            let kept = null
+            try { kept = JSON.parse(counts.get('screens') || 'null') } catch (error) { kept = null }
+            screenCount = kept && kept.count != null ? Number(kept.count) : null
+            counting = !kept || Date.now() - Number(kept.time || 0) > STALE
+            if (counting) {
+                // the time is now, so the renders of the next ten minutes do not ask again
+                counts.put('screens', JSON.stringify({count: screenCount, time: Date.now()}))
+                ec.service.async().name('moqui.tools.ToolsHomeServices.count#Screens').call()
+            }
+        ]]></script></actions>
+    </service>
+    <service verb="count" noun="Screens" transaction="ignore">
+        <description>Count the screens under the root screens of the webapps, each root with every screen below it,
+            and keep the count for get#ScreenCount (the cache tools.home.counts, key screens, the JSON text of {count,
+            time}). A root that does not load is logged as an error and left out.</description>
+        <out-parameters><parameter name="screenCount" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            let count = 0
+            for (const rootLocation of Array.from(ec.screen.getAllRootScreenLocations() || [])) {
+                try {
+                    const rows = ec.screen.getScreenInfoList(rootLocation, 1)
+                    if (rows.length) count += 1 + Number(rows[0].allSubscreens || 0)
+                } catch (error) {
+                    ec.logger.error('Tools home: the screens under ' + rootLocation + ' were not counted: ' + String(error))
+                }
+            }
+            ec.cache.getCache('tools.home.counts').put('screens', JSON.stringify({count, time: Date.now()}))
+            screenCount = count
+        ]]></script></actions>
+    </service>
+</services>
