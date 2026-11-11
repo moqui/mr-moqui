@@ -477,7 +477,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="find" noun="AdapterConsumers" type="interface">
         <description>What a connection consumer provider implements (moqui.server.ConnectionConsumerProvider.serviceName):
             the records of its owner that use the connection, as find#ConnectionConsumers lists them, only those the caller
-            may see there.</description>
+            may see there. A consumer with ownsConnection true is a record of another kind whose connection this is (a
+            gateway's remote): the connection is then read only as its own kind and changed through that record's kind,
+            whose rules hold on every path; that answer is not narrowed by what the caller may see.</description>
         <in-parameters>
             <parameter name="adapterKey" required="true"/>
             <parameter name="connectionKey" required="true"/>

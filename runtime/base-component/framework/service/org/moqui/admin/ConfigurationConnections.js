@@ -83,6 +83,8 @@ function hostOf(url) {
     const parts = /^[a-z][a-z0-9+.-]*:\/\/(?:[^\/?#@]*@)?(\[[^\]]+\]|[^\/?#:]+)/i.exec(text(url))
     return parts ? parts[1].toLowerCase() : ""
 }
+// A URL as a read shows it: without the user and password an instance administrator may have written into it (Tools).
+const shownUrl = url => text(url).replace(/^([a-z][a-z0-9+.-]*:\/\/)[^\/?#@]*@/i, "$1(credentials)@")
 // Why a request did not get an answer, from the error's own words, as one of a fixed list: never the remote's text.
 function failureKind(message) {
     const found = String(message || "").toLowerCase()
@@ -141,6 +143,9 @@ function engine(def) {
     const valueOf = (parts, entry) => parts[partOf(entry)]?.[columnOf(entry)]
     const stored = (parts, entry) =>
         entry.kind === "flag" ? (valueOf(parts, entry) === "Y" ? "Y" : "N") : text(valueOf(parts, entry))
+    // what a read shows of a field: a URL never with credentials written into it
+    const shown = (parts, entry) =>
+        entry.read ? text(entry.read(parts)) : entry.kind === "url" ? shownUrl(stored(parts, entry)) : stored(parts, entry)
     const editable = def.fields.filter(entry => entry.kind !== "display")
     // a secret that is not entered here (cleared by the rule all the same): by its kind, or by the record as it is
     const fixedOf = (entry, parts) => (typeof entry.fixed === "function" ? !!entry.fixed(parts) : !!entry.fixed)
@@ -241,7 +246,7 @@ function engine(def) {
                     name: entry.name,
                     label: entry.label,
                     kind: entry.kind,
-                    value: entry.read ? text(entry.read(parts)) : stored(parts, entry),
+                    value: shown(parts, entry),
                     endpoint: !!entry.endpoint,
                     help: entry.help || "",
                     options: entry.kind === "choice" ? entry.options() : []
@@ -310,6 +315,11 @@ function engine(def) {
         const changed = []
         for (const entry of editable) {
             if (!given(entry.name)) continue
+            // A value given back as it was read is no change: a form posts every setting, and a stored value is neither
+            // judged by today's validation nor normalized into a change (a host in capitals would otherwise be an
+            // endpoint change that clears the stored secrets).
+            if (!creating && entry.kind !== "flag" && parts[partOf(entry)] && text(values[entry.name]) === shown(parts, entry))
+                continue
             if (!parts[partOf(entry)])
                 throw new Error(entry.label + " cannot be set: this connection has no " + partOf(entry) + " record")
             let value
@@ -379,7 +389,9 @@ function engine(def) {
                     }
                 )
             enabledAfter = false
-            pendingTest = true
+            // the test enables what this change disabled (or a new one, or one that already waited for it): a connection an
+            // administrator disabled before stays disabled after the test, until Enable
+            pendingTest = creating || wasEnabled || pendingTest
             Object.assign(checkChanges, {testedConfigHash: null, testedDate: null, testedByUserId: null})
             // the address is the administrator's to choose: on a production instance the server reaches it on the
             // public network only, whoever made the record, until an instance administrator allows more
@@ -445,6 +457,14 @@ function engine(def) {
                 reason
             )
         }
+        // disabled and allowPrivateNetwork are audit-logged by their entities, which write no row for a first value (most
+        // connections have none until they are disabled here)
+        if (hasState) {
+            const part = def.parts[def.statePart]
+            for (const [name, value] of Object.entries(stateChanges))
+                if (creating || !text(parts[def.statePart][name]))
+                    lib.auditRow(part.entity, name, parts[def.statePart][part.keyField], null, null, value, reason)
+        }
         // a secret's replacement or clearing is recorded with no value
         for (const row of secretWrites) {
             const part = def.parts[partOf(row.entry)]
@@ -469,7 +489,9 @@ function engine(def) {
                 retest && !creating
                     ? (endpointChanged ? "The endpoint changed: " : "What the connection is tested by changed: ") +
                       (secretCleared ? "the stored secret was cleared, and " : "") +
-                      "the connection is disabled until a test of it passes"
+                      (pendingTest
+                          ? "the connection is disabled until a test of it passes"
+                          : "the connection stays disabled: test it as it is now, then enable it")
                     : null,
             connectionKey,
             revision: revisionOf(now),
@@ -569,8 +591,9 @@ function engine(def) {
     function consumers(p) {
         const connectionKey = text(p.connectionKey)
         const parts = load(connectionKey)
-        if (!parts || def.hidden?.(parts)) return {consumerList: []}
-        return {consumerList: Array.from(def.consumers?.(parts, connectionKey) || [])}
+        // available false: not this kind's on any path, so no provider is asked about it either
+        if (!parts || def.hidden?.(parts)) return {consumerList: [], available: false}
+        return {consumerList: Array.from(def.consumers?.(parts, connectionKey) || []), available: true}
     }
     const operations = {list, get, store, test, consumers}
     return {
@@ -725,6 +748,22 @@ function remoteReadOnly(remote, own = false) {
         )
     return null
 }
+// A remote that is the connection of another kind's record (a gateway's) is changed through that kind, so that kind's own
+// rules (a provider's addresses on a production instance) hold on every path: the owner of the records that name the remote
+// says so (ownsConnection on a consumer it answers, find#AdapterConsumers). When an owner cannot be asked the remote is
+// not changed here either.
+function remoteOwned(systemMessageRemoteId) {
+    const asked = providerConsumers("remote", systemMessageRemoteId)
+    const owner = asked.consumerList.find(row => row.ownsConnection === true)
+    if (owner)
+        return (
+            "This remote is the connection of " +
+            (text(owner.recordName) || text(owner.recordId) || "another record") +
+            (text(owner.ownerName) ? " (" + text(owner.ownerName) + ")" : "") +
+            ": its address and credentials are changed there"
+        )
+    return asked.failed ? "Where this remote is used could not be read, so it is not changed here" : null
+}
 function remoteTest(remote, context) {
     const url = text(remote?.sendUrl)
     if (!url) return [{check: "Address", ok: true, text: "No sending address: nothing is sent to this remote"}]
@@ -744,7 +783,7 @@ const remoteDefinition = (() => {
         providerName: () => "Remote system",
         summary: parts => hostOf(parts.main.sendUrl),
         listKeys: () => allKeys(REMOTE, "systemMessageRemoteId"),
-        readOnly: parts => remoteReadOnly(parts.main, true),
+        readOnly: parts => remoteReadOnly(parts.main, true) || remoteOwned(parts.main.systemMessageRemoteId),
         incomplete: parts => remoteIncomplete(parts.main),
         test: (parts, context) => remoteTest(parts.main, context),
         newParts: values => {
@@ -1362,8 +1401,17 @@ function findConnectionConsumers(p) {
     requireRead()
     const adapter = adapterOf(p.adapterKey)
     const connectionKey = text(p.connectionKey)
-    const found = Array.from(run(adapter, "consumers", {connectionKey}).consumerList || []).map(ownNames)
-    for (const row of rows(PROVIDER, {adapterKey: adapter.adapterKey})
+    const own = run(adapter, "consumers", {connectionKey})
+    if (own.available === false) return {consumerList: []}
+    const found = Array.from(own.consumerList || []).map(ownNames)
+    return {consumerList: found.concat(providerConsumers(adapter.adapterKey, connectionKey).consumerList).slice(0, 500)}
+}
+// What the registered providers of a kind answer for one connection (the owners of records that name it). A provider that
+// fails is logged and passed over, and failed says so.
+function providerConsumers(adapterKey, connectionKey) {
+    const found = []
+    let failed = false
+    for (const row of rows(PROVIDER, {adapterKey})
         .map(map)
         .sort((a, b) => (a.sequenceNum ?? 999) - (b.sequenceNum ?? 999))) {
         if (row.disabled === "Y") continue
@@ -1371,18 +1419,24 @@ function findConnectionConsumers(p) {
             ec.logger.error(
                 "Connection consumer provider " + row.providerKey + " names a missing service " + row.serviceName + ": left out"
             )
+            failed = true
             continue
         }
+        // its errors are its own: they neither fail the caller nor are lost as a silent empty answer
+        ec.message.pushErrors()
         try {
-            const out =
-                ec.service.sync().name(row.serviceName).parameters({adapterKey: adapter.adapterKey, connectionKey}).call() || {}
+            const out = ec.service.sync().name(row.serviceName).parameters({adapterKey, connectionKey}).call() || {}
+            if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
             for (const consumer of Array.from(out.consumerList || [])) found.push(ownNames(consumer))
         } catch (error) {
-            ec.message.clearErrors()
             ec.logger.error("Connection consumer provider " + row.providerKey + " failed: " + (error?.message ?? error))
+            failed = true
+        } finally {
+            ec.message.clearErrors()
+            ec.message.popErrors()
         }
     }
-    return {consumerList: found.slice(0, 500)}
+    return {consumerList: found, failed}
 }
 
 const operations = {findConnections, getConnection, storeConnection, testConnection, findConnectionConsumers}

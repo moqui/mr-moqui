@@ -1594,12 +1594,26 @@ fn smtp_send_retry(
 /// The `deliveryOutcome` of a send through `server` that failed with `error`: through the edge node it was not queued
 /// (not paired, the kind not listed), so nothing was sent and it is retryable; else as [`smtp_delivery_outcome`].
 fn delivery_outcome(server: &EntityValue, error: &Error) -> &'static str {
-    if super::edge_mail::is_edge_host(&field_text(server, "smtpHost")) {
+    if super::edge_mail::is_edge_host(&field_text(server, "smtpHost")) || refused_before_connecting(server, error) {
         "retryable"
     } else {
         smtp_delivery_outcome(error)
     }
 }
+
+/// [`smtp_transport`] refused the server before any connection (it is disabled until a test of it passes, or it may not
+/// use the private network and its address is internal or was not found): nothing was sent, so the message is tried
+/// again once the server is tested or allowed, never left as possibly sent.
+fn refused_before_connecting(server: &EntityValue, error: &Error) -> bool {
+    let text = error.to_string();
+    (field_text(server, "disabled") == "Y" && text.contains(DISABLED_SERVER))
+        || (field_text(server, "allowPrivateNetwork") == "N"
+            && (text.contains(INTERNAL_SERVER) || text.contains(SERVER_NOT_FOUND)))
+}
+
+const DISABLED_SERVER: &str = "is disabled until a test of it passes";
+const INTERNAL_SERVER: &str = "is an internal address, which this server may not use";
+const SERVER_NOT_FOUND: &str = "could not be looked up";
 
 /// An explicit SMTP rejection may be retried or treated as permanent, and so may a server that was not reached
 /// (refused, not resolved, the connect timed out): nothing was sent. A connection lost after
@@ -1701,7 +1715,7 @@ fn smtp_transport(
     // (org.moqui.admin.ConfigurationServices store#Connection), sends nothing; test#EmailServer tries it all the same.
     if field_text(server, "disabled") == "Y" {
         return Err(Error::new(format!(
-            "Email server {} is disabled until a test of it passes",
+            "Email server {} {DISABLED_SERVER}",
             field_text(server, "emailServerId")
         )));
     }
@@ -1739,12 +1753,12 @@ fn smtp_transport(
 /// The address to connect to for `host`, a server that may not use the private network: an error when the name does
 /// not resolve or any of its addresses is loopback, private, link-local or otherwise internal.
 fn public_address(host: &str, port: u16) -> Result<String, Error> {
-    let refused = || Error::new(format!("{host} is an internal address, which this server may not use"));
+    let refused = || Error::new(format!("{host} {INTERNAL_SERVER}"));
     let addresses = moqui_lib::net::public_addresses(host, port).map_err(|err| {
         if err.to_string().contains("internal address") {
             refused()
         } else {
-            Error::new(format!("{host} could not be looked up"))
+            Error::new(format!("{host} {SERVER_NOT_FOUND}"))
         }
     })?;
     addresses

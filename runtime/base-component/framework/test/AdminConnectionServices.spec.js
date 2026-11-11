@@ -18,6 +18,7 @@ const ids = {
     inner: "SPEC_CONN_INNER",
     hook: "SPEC_CONN_HOOK",
     made: "SPEC_CONN_MADE",
+    legacy: "SPEC_CONN_LEGACY",
     oauth: "EopSpecConn",
     relay: "SPEC_CONN_RELAY",
     owned: "SPEC_CONN_OWNED",
@@ -106,6 +107,14 @@ spec({
             password: secret,
             sharedSecret: shared,
             sendServiceName: "org.moqui.impl.SystemMessageServices.send#SystemMessageRest"
+        })
+        // a remote as Tools may have left it: credentials written into its address, which today's validation would refuse
+        make(REMOTE, {
+            systemMessageRemoteId: ids.legacy,
+            description: "Spec legacy remote",
+            sendUrl: "https://spec-in:url-pass-9z@Legacy.Example.com/in",
+            username: "spec-user",
+            password: secret
         })
         // a remote that may not use the private network, at an internal address
         make(REMOTE, {
@@ -197,6 +206,16 @@ feature(
                     allowPrivateNetwork: "Y",
                     disabled: "Y"
                 })
+                // a form posts every setting back: what is given as it was read is no change, so no endpoint change either;
+                // credentials written into an address are not read
+                out.legacy = get("remote", ids.legacy)
+                out.legacySave = store(
+                    "remote",
+                    ids.legacy,
+                    Object.assign(Object.fromEntries(out.legacy.fieldList.map(row => [row.name, row.value])), {
+                        description: "Spec legacy renamed"
+                    })
+                )
                 out.expression = store("remote", ids.remote, {sendUrl: "https://one.example.com/${ec.user.userId}"})
                 out.plain = store("remote", ids.remote, {sendUrl: "http://one.example.com/api"})
                 out.stale = invoke(C + "store#Connection", {
@@ -213,6 +232,7 @@ feature(
                 )
             })
             out.movedRow = one(REMOTE, {systemMessageRemoteId: ids.remote}).getMap()
+            out.legacyRow = one(REMOTE, {systemMessageRemoteId: ids.legacy}).getMap()
             out.movedCheck = check("remote", ids.remote).getMap()
             as(users.manage, () => {
                 out.afterMove = get("remote", ids.remote)
@@ -282,6 +302,11 @@ feature(
             JSON.stringify(out.listed.connectionList.map(row => row.connectionKey)) === JSON.stringify([ids.remote])
             out.listed.connectionList[0].endpointSummary === "one.example.com"
             !out.listed.adapterList.map(row => row.adapterKey).includes("specMissing")
+            !JSON.stringify(out.legacy).includes("url-pass-9z")
+            out.legacy.fieldList.find(row => row.name === "sendUrl").value === "https://(credentials)@Legacy.Example.com/in"
+            out.legacySave.applied === true && out.legacySave.secretCleared === false && out.legacySave.enabled === true
+            out.legacyRow.description === "Spec legacy renamed" && out.legacyRow.password === secret
+            out.legacyRow.sendUrl === "https://spec-in:url-pass-9z@Legacy.Example.com/in" && out.legacyRow.disabled == null
             // only declared fields change; a ${} of its own, a plain http address and a stale revision are refused
             out.ignored.applied === true
             out.expression.error.includes("${")
@@ -304,6 +329,10 @@ feature(
                 .includes("(cleared: the endpoint changed)")
             !JSON.stringify(audit(REMOTE, "password", ids.remote).map(row => row.getMap())).includes(secret)
             audit(REMOTE, "sendUrl", ids.remote).some(row => row.changeReason === "Spec: the provider moved") === true
+            // the disabling too, a first value the entity's own audit log does not write
+            audit(REMOTE, "disabled", ids.remote).some(
+                row => row.newValueText === "Y" && row.changeReason === "Spec: the provider moved"
+            ) === true
             out.afterMove.state === "incomplete"
             // a test while the secret is missing sends nothing, and enabling is refused
             out.unsent.passed === false
@@ -358,6 +387,9 @@ feature(
                 out.ready = get("mailOAuth", ids.oauth)
                 out.off = store("mailOAuth", ids.oauth, {}, {enabled: false})
                 out.offTest = test("mailOAuth", ids.oauth)
+                // repointed while an administrator has it disabled: the test of the new client does not enable it
+                out.offMoved = store("mailOAuth", ids.oauth, {clientId: "spec-client-three", clientSecret: secret + "-two"})
+                out.offMovedTest = test("mailOAuth", ids.oauth)
                 out.on = store("mailOAuth", ids.oauth, {}, {enabled: true})
             })
             out.row = one(OAUTH, {oauthProviderEnumId: ids.oauth}).getMap()
@@ -379,6 +411,8 @@ feature(
             out.off.enabled === false
             out.offTest.passed === true
             out.offTest.enabled === false
+            out.offMoved.applied === true && out.offMoved.testRequired === false
+            out.offMovedTest.passed === true && out.offMovedTest.enabledByTest === false && out.offMovedTest.enabled === false
             out.on.enabled === true
             out.row.disabled === "N"
             out.row.clientSecret === secret + "-two"

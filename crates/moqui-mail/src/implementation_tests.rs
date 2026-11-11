@@ -139,16 +139,23 @@ fn a_disabled_server_and_an_internal_address_are_refused_before_a_connection() {
             ],
         );
     }
-    let transport = |id: &str| {
-        let server = super::find_one(&facade, super::SERVER, "emailServerId", id)
+    let server = |id: &str| {
+        super::find_one(&facade, super::SERVER, "emailServerId", id)
             .unwrap()
-            .unwrap();
-        super::smtp_transport(&server, &super::SmtpAuth::None, None).map(|_| ())
+            .unwrap()
     };
-    let off = transport("OFF").unwrap_err().to_string();
-    assert!(off.contains("is disabled until a test of it passes"), "{off}");
-    let inner = transport("INNER").unwrap_err().to_string();
-    assert!(inner.contains("is an internal address"), "{inner}");
+    let transport = |id: &str| super::smtp_transport(&server(id), &super::SmtpAuth::None, None).map(|_| ());
+    let off = transport("OFF").unwrap_err();
+    assert!(
+        off.to_string().contains("is disabled until a test of it passes"),
+        "{off}"
+    );
+    let inner = transport("INNER").unwrap_err();
+    assert!(inner.to_string().contains("is an internal address"), "{inner}");
+    // nothing was sent, so the message is tried again later, never left as possibly sent
+    assert_eq!(super::delivery_outcome(&server("OFF"), &off), "retryable");
+    assert_eq!(super::delivery_outcome(&server("INNER"), &inner), "retryable");
+    assert_eq!(super::delivery_outcome(&server("OUTER"), &off), "uncertain");
     // a public address written out is taken as it is: no lookup, no connection yet
     transport("OUTER").unwrap();
 }
