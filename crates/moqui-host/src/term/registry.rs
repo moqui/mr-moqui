@@ -35,8 +35,13 @@ const REPLAY_KB: usize = 2048;
 /// The pipe between an apps or command session's program and its pump, each way.
 const PIPE: usize = 1 << 20;
 
+/// How long a terminal ticket lasts: a confirmation of who the user is that a device key's socket can carry (§12).
+const TICKET_LIFE: Duration = Duration::from_secs(300);
+
 pub(crate) struct Registry {
     live: Mutex<HashMap<String, Arc<Session>>>,
+    /// The tickets given out, with their user and when they were given.
+    tickets: Mutex<HashMap<String, (String, std::time::Instant)>>,
     /// An apps session with no window this long is ended.
     pub detach: Duration,
     /// A command or host session with no window this long is ended.
@@ -62,6 +67,7 @@ impl Registry {
     pub fn new(detach: Duration) -> Self {
         Self {
             live: Mutex::new(HashMap::new()),
+            tickets: Mutex::new(HashMap::new()),
             detach,
             host_detach: Duration::from_secs(HOST_DETACH_HOURS as u64 * 3600),
             replay: REPLAY_KB * 1024,
@@ -74,6 +80,25 @@ impl Registry {
 
     pub(super) fn remove(&self, id: &str) {
         lock(&self.live).remove(id);
+    }
+
+    /// A ticket for `username`, who just confirmed who they are: what a request or a socket with no session of its
+    /// own to keep a sign-in in (a device key's, in the Desktop and Mobile apps) shows for a recent sign-in.
+    pub fn ticket(&self, username: &str) -> Result<String, String> {
+        let ticket = new_id()?;
+        let mut tickets = lock(&self.tickets);
+        tickets.retain(|_, (_, given)| given.elapsed() < TICKET_LIFE);
+        tickets.insert(ticket.clone(), (username.to_string(), std::time::Instant::now()));
+        Ok(ticket)
+    }
+
+    /// Whether `ticket` is `username`'s, given within `millis`.
+    pub fn ticket_holds(&self, ticket: &str, username: &str, millis: i64) -> bool {
+        let life = Duration::from_millis(u64::try_from(millis).unwrap_or(0)).min(TICKET_LIFE);
+        !ticket.is_empty()
+            && lock(&self.tickets)
+                .get(ticket)
+                .is_some_and(|(owner, given)| owner == username && given.elapsed() < life)
     }
 
     /// The session `id` when it is `username`'s.

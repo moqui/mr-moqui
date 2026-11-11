@@ -108,17 +108,37 @@ pub(crate) async fn upgrade(
     if !origin_allowed(&state.factory, &headers, &site, "terminal") {
         return plain(403, "origin not allowed");
     }
-    let Some(cookie) = session_cookie(&headers) else {
-        return plain(401, "unauthorized");
-    };
-    let session_id = match verify_session_cookie(&cookie) {
-        Ok(Some(id)) if !id.is_empty() => id,
-        Ok(_) | Err(_) => return plain(401, "unauthorized"),
+    // a browser has its session cookie; the Desktop and Mobile apps' host has the device's login key, and no session
+    // (§12): a key socket is rechecked by its key, and a command or host session through it takes a ticket for the
+    // recent sign-in
+    let (session_id, key_hash, key) = match session_cookie(&headers) {
+        Some(cookie) => match verify_session_cookie(&cookie) {
+            Ok(Some(id)) if !id.is_empty() => (id, None, None),
+            Ok(_) | Err(_) => return plain(401, "unauthorized"),
+        },
+        None => {
+            let Some(key) = headers
+                .get("login_key")
+                .and_then(|value| value.to_str().ok())
+                .filter(|key| !key.is_empty())
+                .map(str::to_string)
+            else {
+                return plain(401, "unauthorized");
+            };
+            let Ok(hash) = moqui_core::user::hash_login_key(&key) else {
+                return plain(401, "unauthorized");
+            };
+            (String::new(), Some(hash), Some(key))
+        }
     };
     let factory = Arc::clone(&state.factory);
     let lookup_id = session_id.clone();
     let loaded = tokio::task::spawn_blocking(move || -> Result<Option<(String, String)>, CoreError> {
-        let Some(user_id) = session_user(Arc::clone(&factory), lookup_id)? else {
+        let user_id = match key {
+            Some(key) => crate::notws::key_user(Arc::clone(&factory), key)?.0,
+            None => session_user(Arc::clone(&factory), lookup_id)?,
+        };
+        let Some(user_id) = user_id else {
             return Ok(None);
         };
         Ok(username_of(&factory, &user_id)?.map(|username| (user_id, username)))
@@ -143,6 +163,11 @@ pub(crate) async fn upgrade(
                 username,
                 session,
                 facts,
+                key_hash,
+                ticket: query
+                    .as_deref()
+                    .and_then(|query| query_value(query, "ticket"))
+                    .unwrap_or_default(),
             },
             shutdown,
         )
@@ -151,9 +176,15 @@ pub(crate) async fn upgrade(
 
 /// The `session` of the query: a kept session's id, URL-safe characters only.
 fn session_of(query: &str) -> Option<String> {
+    query_value(query, "session")
+}
+
+/// A value of the query, URL-safe characters only.
+fn query_value(query: &str, name: &str) -> Option<String> {
+    let prefix = format!("{name}=");
     query
         .split('&')
-        .find_map(|pair| pair.strip_prefix("session="))
+        .find_map(|pair| pair.strip_prefix(prefix.as_str()))
         .filter(|id| !id.is_empty() && id.len() <= 64)
         .filter(|id| {
             id.bytes()
@@ -199,6 +230,45 @@ struct Opened {
     session: Option<String>,
     /// Where the socket came from, for a command or host session.
     facts: Facts,
+    /// The hash of the device key the socket signed in with, which it is rechecked by; none for a session cookie's.
+    key_hash: Option<String>,
+    /// A ticket of a recent sign-in, from `confirm#TerminalUser`.
+    ticket: String,
+}
+
+/// What a socket's sign-in is rechecked by.
+struct SignIn {
+    factory: Arc<ExecutionContextFactory>,
+    session_id: String,
+    user_id: String,
+    key_hash: Option<String>,
+}
+
+impl SignIn {
+    /// Whether the socket's user is still signed in: its HTTP session's user, or its device key's.
+    async fn still_signed_in(&self) -> bool {
+        let current = match &self.key_hash {
+            Some(hash) => {
+                let hash = hash.clone();
+                crate::worker::on_pool(&Arc::downgrade(&self.factory), move |_| {
+                    moqui_core::user::login_key_user_by_hash(&hash)
+                })
+                .await
+            }
+            None => {
+                let lookup = (Arc::clone(&self.factory), self.session_id.clone());
+                match tokio::task::spawn_blocking(move || session_user(lookup.0, lookup.1)).await {
+                    Ok(result) => result,
+                    Err(_) => return true,
+                }
+            }
+        };
+        // a pool that is busy or a read that fails is not a logout; only another user, or none, is
+        match current {
+            Ok(current) => current.as_deref() == Some(self.user_id.as_str()),
+            Err(_) => true,
+        }
+    }
 }
 
 /// A resize message: `{"type":"resize","cols":N,"rows":N}`, at least 20 by 10 and at most 500 by 500.
@@ -230,27 +300,47 @@ async fn close(socket: &mut WebSocket, reason: &str) {
     .await;
 }
 
-/// May the HTTP session `session_id`'s user attach to a session of `kind` from where `facts` say: its permission,
-/// and from anywhere but this machine a recent sign-in, read on the request pool with the HTTP session bound.
+/// Who attaches, and what shows their sign-in is recent.
+struct Attach<'a> {
+    session_id: &'a str,
+    /// By a device key: no HTTP session keeps a sign-in, so only a ticket shows a recent one (§12).
+    by_key: bool,
+    ticket: &'a str,
+    username: &'a str,
+}
+
+/// May the user attach to a session of `kind` from where `facts` say: their permission, and from anywhere but this
+/// machine a recent sign-in, read on the request pool with their HTTP session bound, or a ticket of
+/// `confirm#TerminalUser`.
 async fn may_attach(
     factory: &Arc<ExecutionContextFactory>,
-    session_id: &str,
+    attach: &Attach<'_>,
     kind: Kind,
     facts: Facts,
 ) -> Result<(), Refusal> {
-    let session_id = session_id.to_string();
+    let session_id = attach.session_id.to_string();
+    let (by_key, ticket, username) = (attach.by_key, attach.ticket.to_string(), attach.username.to_string());
     let https = facts.https;
+    let registry = Registry::of(factory);
     let checked = crate::worker::on_pool(&Arc::downgrade(factory), move |factory| {
         let strong = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
             .ok_or_else(|| CoreError::new("no execution context is entered"))?;
-        let _bound = moqui_core::user::session::bind_id(&strong, Some(&session_id), https)?;
+        let _bound = if by_key {
+            moqui_core::user::internal_login_user(&username)?;
+            None
+        } else {
+            Some(moqui_core::user::session::bind_id(&strong, Some(&session_id), https)?)
+        };
         let permitted = |permission: &str| moqui_core::user::has_permission(permission).unwrap_or(false);
+        let recent = |millis: i64| {
+            (!by_key && moqui_core::user::recent_auth(millis)) || registry.ticket_holds(&ticket, &username, millis)
+        };
         Ok(access::check(
             access::Switches::of(factory),
             kind,
             &facts,
             &permitted,
-            &moqui_core::user::recent_auth,
+            &recent,
         ))
     })
     .await;
@@ -327,7 +417,16 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
         username,
         session,
         facts,
+        key_hash,
+        ticket,
     } = opened;
+    let by_key = key_hash.is_some();
+    let sign_in = SignIn {
+        factory: Arc::clone(&factory),
+        session_id: session_id.clone(),
+        user_id,
+        key_hash,
+    };
     let id = session.unwrap_or_default();
     let label = format!("browser terminal {id} of {username}");
     // a session the holder kept from the server before is found once it is taken back
@@ -343,7 +442,13 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
     };
     // an attach to a running command line or shell is worth as much as a new one: asked again (§8.2)
     if kept.kind != Kind::Apps {
-        if let Err(refusal) = may_attach(&factory, &session_id, kept.kind, facts).await {
+        let attach = Attach {
+            session_id: &session_id,
+            by_key,
+            ticket: &ticket,
+            username: &username,
+        };
+        if let Err(refusal) = may_attach(&factory, &attach, kept.kind, facts).await {
             tracing::info!("{label}: attach refused: {refusal:?}");
             close(&mut socket, refusal.code()).await;
             return;
@@ -430,18 +535,13 @@ async fn run_attached(mut socket: WebSocket, opened: Opened, mut shutdown: tokio
                 }
             }
             _ = check.tick() => {
-                let lookup = (Arc::clone(&factory), session_id.clone());
-                let current = tokio::task::spawn_blocking(move || session_user(lookup.0, lookup.1)).await;
-                // A pool that is busy or a read that fails is not a logout; only a session with another or no user is.
-                if let Ok(Ok(current)) = current {
-                    if current.as_deref() != Some(user_id.as_str()) {
-                        tracing::info!("{label} closed: the HTTP session logged out; the session is kept");
-                        reason = "logged out".to_string();
-                        break;
-                    }
+                if !sign_in.still_signed_in().await {
+                    tracing::info!("{label} closed: its sign-in ended; the session is kept");
+                    reason = if by_key { "authentication is no longer valid" } else { "logged out" }.to_string();
+                    break;
                 }
                 // Typing is use: a developer in a terminal all afternoon is not logged out for it (§5.2).
-                if std::mem::take(&mut typed) {
+                if std::mem::take(&mut typed) && !by_key {
                     moqui_core::user::session::note_use(&factory, &session_id);
                 }
             }
@@ -461,8 +561,16 @@ async fn run_ephemeral(mut socket: WebSocket, opened: Opened, mut shutdown: toki
         session_id,
         user_id,
         username,
+        key_hash,
         ..
     } = opened;
+    let by_key = key_hash.is_some();
+    let sign_in = SignIn {
+        factory: Arc::clone(&factory),
+        session_id,
+        user_id,
+        key_hash,
+    };
     let label = format!("browser terminal of {username}");
     // The session starts at the page's first size.
     // A stop does not wait for the page's size either: the HTTP listener's drain waits for this socket (HL-027).
@@ -554,16 +662,11 @@ async fn run_ephemeral(mut socket: WebSocket, opened: Opened, mut shutdown: toki
                 }
             }
             _ = check.tick(), if open => {
-                let lookup = (Arc::clone(&factory), session_id.clone());
-                let current = tokio::task::spawn_blocking(move || session_user(lookup.0, lookup.1)).await;
-                // A pool that is busy or a read that fails is not a logout; only a session with another or no user is.
-                if let Ok(Ok(current)) = current {
-                    if current.as_deref() != Some(user_id.as_str()) {
-                        tracing::info!("{label} closed: the HTTP session logged out");
-                        reason = Some("logged out".to_string());
-                        open = false;
-                        let _ = to_session.shutdown().await;
-                    }
+                if !sign_in.still_signed_in().await {
+                    tracing::info!("{label} closed: its sign-in ended");
+                    reason = Some(if by_key { "authentication is no longer valid" } else { "logged out" }.to_string());
+                    open = false;
+                    let _ = to_session.shutdown().await;
                 }
             }
         }

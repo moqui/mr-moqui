@@ -75,6 +75,9 @@ pub(crate) struct Facts {
     pub client_ip: String,
     /// An SSH connection: no origin to check, and encrypted.
     pub ssh: bool,
+    /// Signed in by a device's login key (the Desktop and Mobile apps' host, §12), which sends no `Origin`: a page of
+    /// another site cannot send the key.
+    pub device_key: bool,
 }
 
 /// Whether `host` names this machine: `localhost`, a name under `.localhost`, or a loopback address.
@@ -110,6 +113,7 @@ impl Facts {
             origin: header("origin").map(str::to_string),
             client_ip,
             ssh: false,
+            device_key: header("login_key").is_some_and(|key| !key.is_empty()),
         }
     }
 
@@ -289,7 +293,8 @@ pub(crate) fn check(
         return Err(Refusal::NotAvailable);
     }
     // the server's own origin only, whatever allow-origins says (§8.3); the node in process has its own
-    if !facts.ssh && facts.via != RequestVia::InProcess && !facts.own_origin() {
+    let keyed = facts.device_key && facts.origin.is_none();
+    if !facts.ssh && !keyed && facts.via != RequestVia::InProcess && !facts.own_origin() {
         return Err(Refusal::NotAvailable);
     }
     match facts.place() {

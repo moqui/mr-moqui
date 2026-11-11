@@ -49,6 +49,7 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     moqui_core::rust_service!(map, open_terminal_session)?;
     moqui_core::rust_service!(map, update_terminal_session)?;
     moqui_core::rust_service!(map, close_terminal_session)?;
+    moqui_core::rust_service!(map, confirm_terminal_user)?;
     Ok(())
 }
 
@@ -223,13 +224,10 @@ fn open_terminal_session(parameters: &BTreeMap<String, Value>, _facade: &EntityF
     let rows = dimension(parameters, "rows", 10, 24);
     let title = text(parameters, "title");
     let facts = Facts::of_current_request();
-    if let Err(refusal) = access::check(
-        access::Switches::of(&factory),
-        kind,
-        &facts,
-        &permitted,
-        &moqui_core::user::recent_auth,
-    ) {
+    let ticket = text(parameters, "ticket");
+    let recent =
+        |millis: i64| moqui_core::user::recent_auth(millis) || registry.ticket_holds(&ticket, &username, millis);
+    if let Err(refusal) = access::check(access::Switches::of(&factory), kind, &facts, &permitted, &recent) {
         tracing::info!("terminal {} session refused for {username}: {refusal:?}", kind.as_str());
         return refuse(refusal.code(), refusal.message());
     }
@@ -373,6 +371,29 @@ fn open_host(
         facts,
     });
     Ok(session)
+}
+
+/// `confirm#TerminalUser`: the signed-in user's password, and the code of their second factor, checked in this request
+/// (`reauthenticate#User`'s rules); then a ticket that the opening of a command or host session and its socket take for
+/// a recent sign-in. For a client whose requests keep no session (a device key's, §12). `codeNeeded` when the code is
+/// still to come.
+fn confirm_terminal_user(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+    let username = match username() {
+        Ok(username) => username,
+        Err(refused) => return refused,
+    };
+    let factory = factory()?;
+    match moqui_core::user::reauthenticate(&text(parameters, "password"), text(parameters, "code").trim()) {
+        Ok(moqui_core::user::CodeLogin::LoggedIn) => match Registry::of(&factory).ticket(&username) {
+            Ok(ticket) => Ok(BTreeMap::from([("ticket".to_string(), Value::string(ticket))])),
+            Err(reason) => refuse("failed", &reason),
+        },
+        Ok(moqui_core::user::CodeLogin::CodeNeeded { text, .. }) => Ok(BTreeMap::from([
+            ("codeNeeded".to_string(), Value::Bool(true)),
+            ("codeText".to_string(), Value::string(text)),
+        ])),
+        Err(err) => refuse("notConfirmed", err.message()),
+    }
 }
 
 /// `update#TerminalSession`: the session's title, the user's own name for it (empty gives it back to the program).

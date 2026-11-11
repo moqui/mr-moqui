@@ -48,6 +48,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="title"/>
             <parameter name="cols" type="Integer"/>
             <parameter name="rows" type="Integer"/>
+            <parameter name="resume"><description>true: a host session started again, with its profile's resume-args.</description></parameter>
+            <parameter name="ticket"><description>A ticket of confirm#TerminalUser, for a recent sign-in.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="sessionId"/>
@@ -75,6 +77,24 @@ along with this software (see the LICENSE.md file). If not, see
             after five seconds is killed.</description>
         <in-parameters><parameter name="sessionId" required="true"/></in-parameters>
         <out-parameters><parameter name="reasonCode"/></out-parameters>
+    </service>
+    <service verb="confirm" noun="TerminalUser" type="rust" location="moqui_host::term::services::confirm_terminal_user"
+            allow-remote="false" transaction="ignore">
+        <description>The signed-in user's password, and the code of their second factor, checked in this request as
+            reauthenticate#User checks them; then a ticket (five minutes) that open#TerminalSession and the terminal's
+            socket (/termws?ticket=) take for a recent sign-in. For the Desktop and Mobile apps, whose requests sign in by
+            the device's key and keep no session to hold a sign-in in (plans/Terminal-Fancy.md §12). codeNeeded, with
+            codeText, while the code is still to come. A wrong password or code counts as a failed login.</description>
+        <in-parameters>
+            <parameter name="password" required="true"/>
+            <parameter name="code"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ticket"/>
+            <parameter name="codeNeeded" type="Boolean"/>
+            <parameter name="codeText"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
     </service>
     <service verb="clean" noun="TerminalSessions" authenticate="anonymous-all">
         <description>The job clean_TerminalSessions_daily: deletes the audit rows (moqui.terminal.TerminalSession) of

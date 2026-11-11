@@ -289,3 +289,38 @@ test("prompts the shell marks are places to jump to in the scrollback", async ()
         screen.remove()
     }
 })
+
+test("the phone's key bar sends what a phone's keyboard has not got", async () => {
+    const store = moqui.terminal
+    const key = "keys-" + (++made)
+    const sent = []
+    const screen = document.createElement("div")
+    screen.style.cssText = "width:400px;height:200px"
+    document.body.appendChild(screen)
+    try {
+        store.create(key, { kind: "host", connect: false, send: bytes => sent.push(new TextDecoder().decode(bytes)) })
+        store.attach(key, screen)
+        store.key(key, "esc")
+        store.key(key, "tab")
+        store.key(key, "up")
+        assert.deepEqual(sent, ["\u001b", "\t", "\u001b[A"])
+        // in application cursor mode the arrows are ESC O
+        await write(store.session(key).term, "\u001b[?1h")
+        store.key(key, "left")
+        assert.equal(sent[3], "\u001bOD")
+        // Ctrl, then a letter typed on the phone's keyboard: its control character, once
+        store.key(key, "ctrl")
+        assert.ok(store.mods(key).ctrl)
+        assert.equal(store.applyModifiers(store.session(key), "c"), "\u0003")
+        assert.ok(!store.mods(key).ctrl, "Ctrl applies once")
+        store.key(key, "alt")
+        assert.equal(store.applyModifiers(store.session(key), "b"), "\u001bb")
+        // the bar compiles
+        const errors = []
+        globalThis.VueCompilerDOM.compile(moqui.qvtComponents["m-terminal-keys"].template, { mode: "function", onError: err => errors.push(err.message) })
+        assert.deepEqual(errors, [])
+    } finally {
+        store.end(key)
+        screen.remove()
+    }
+})

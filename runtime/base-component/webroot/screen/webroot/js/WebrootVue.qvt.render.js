@@ -10172,6 +10172,36 @@
               }, 8, ["modelValue", "onUpdate:modelValue", "onShow"]))
             }
         } },
+        "m-terminal-keys": { hash: "99f47568", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, withModifiers: _withModifiers, normalizeClass: _normalizeClass, createBlock: _createBlock } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_btn = _resolveComponent("q-btn")
+
+              return (_openBlock(), _createElementBlock("div", {
+                class: "m-terminal-keys row no-wrap items-center",
+                role: "toolbar",
+                "aria-label": "Keys"
+              }, [
+                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.keys, (key) => {
+                  return (_openBlock(), _createBlock(_component_q_btn, {
+                    key: key.name,
+                    dense: "",
+                    flat: "",
+                    "no-caps": "",
+                    size: "sm",
+                    class: _normalizeClass(["m-terminal-key", { 'm-terminal-key-on': _ctx.mods[key.name] }]),
+                    "data-key": key.name,
+                    icon: key.icon,
+                    label: key.label,
+                    "aria-label": key.label || key.name,
+                    onMousedown: _withModifiers(() => {}, ["prevent"]),
+                    onClick: $event => (_ctx.press(key.name))
+                  }, null, 8, ["data-key", "icon", "label", "aria-label", "class", "onMousedown", "onClick"]))
+                }), 128))
+              ]))
+            }
+        } },
         "m-terminal-node": { hash: "57e2058d", make: function (Vue) {
             const { normalizeClass: _normalizeClass, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, withModifiers: _withModifiers, createBlock: _createBlock, normalizeStyle: _normalizeStyle } = Vue
 
@@ -10385,8 +10415,8 @@
                   ], 2))
             }
         } },
-        "m-terminal-view": { hash: "f6296bf7", make: function (Vue) {
-            const { resolveComponent: _resolveComponent, withModifiers: _withModifiers, withKeys: _withKeys, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx } = Vue
+        "m-terminal-view": { hash: "dac7644", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, withModifiers: _withModifiers, withKeys: _withKeys, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_input = _resolveComponent("q-input")
@@ -10397,6 +10427,7 @@
               const _component_q_menu = _resolveComponent("q-menu")
               const _component_q_spinner = _resolveComponent("q-spinner")
               const _component_q_icon = _resolveComponent("q-icon")
+              const _component_m_terminal_keys = _resolveComponent("m-terminal-keys")
 
               return (_openBlock(), _createElementBlock("div", {
                 class: "m-terminal-view column no-wrap fit",
@@ -10601,7 +10632,13 @@
                           key: 3,
                           class: "m-terminal-closed q-pa-sm text-negative"
                         }, _toDisplayString(_ctx.shown.failed), 1))
-                      : _createCommentVNode("", true)
+                      : _createCommentVNode("", true),
+                (_ctx.touch)
+                  ? (_openBlock(), _createBlock(_component_m_terminal_keys, {
+                      key: 4,
+                      "session-key": _ctx.sessionKey
+                    }, null, 8, ["session-key"]))
+                  : _createCommentVNode("", true)
               ], 40, ["onFocusin"]))
             }
         } },

@@ -815,3 +815,79 @@ fn a_session_says_its_status_and_notifies_when_nobody_looks() {
 pub fn on_path(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
+
+/// The Desktop and Mobile apps' way in (plans/Terminal-Fancy.md §12): the host signs requests and the socket in by the
+/// device's login key, with no session to keep a sign-in in. From another machine a command line then takes a ticket
+/// of confirm#TerminalUser (the password, in that one request) at its opening and at its socket's attach.
+#[test]
+fn a_device_key_opens_a_remote_command_line_with_a_ticket() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let gate = crate::common::start_with_conf_properties(
+        "termws-key",
+        None,
+        r#"<terminal remote="true"/>"#,
+        &[("instance_purpose", "dev"), ("webapp_client_ip_header", "X-Real-IP")],
+    );
+    let address = gate.server.address();
+    let key = {
+        let context = gate.server.factory().new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        moqui_core::user::get_login_key(None).unwrap()
+    };
+    // a believed proxy says the client is another machine, over HTTPS
+    let remote = [("X-Real-IP", "198.51.100.20"), ("X-Forwarded-Proto", "https")];
+    let call = |name: &str, body: serde_json::Value| -> serde_json::Value {
+        let headers: Vec<(&str, &str)> = [("login_key", key.as_str()), ("Content-Type", "application/json")]
+            .into_iter()
+            .chain(remote)
+            .collect();
+        let (status, _, text) = crate::common::exchange(
+            address,
+            &crate::common::http_request("POST", &format!("/apps/Terminal/{name}"), &headers, &body.to_string()),
+        );
+        assert_eq!(status, 200, "{name}: {text}");
+        serde_json::from_str(&text).unwrap_or_else(|err| panic!("{name}: {err}: {text}"))
+    };
+    let refused = call("open", serde_json::json!({"kind": "command"}));
+    assert_eq!(refused["reasonCode"], "reauthRequired", "{refused}");
+    let wrong = call("confirm", serde_json::json!({"password": "not it"}));
+    assert!(wrong["ticket"].is_null(), "{wrong}");
+    let confirmed = call("confirm", serde_json::json!({"password": "moqui"}));
+    let ticket = confirmed["ticket"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{confirmed}"))
+        .to_string();
+    let opened = call("open", serde_json::json!({"kind": "command", "ticket": ticket}));
+    let id = opened["sessionId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{opened}"))
+        .to_string();
+
+    let socket = |ticket: &str| {
+        let uri: tungstenite::http::Uri = format!("ws://{address}/termws?session={id}&ticket={ticket}")
+            .parse()
+            .unwrap();
+        let mut request = ClientRequestBuilder::new(uri).with_header("login_key", key.as_str());
+        for (name, value) in remote {
+            request = request.with_header(name, value);
+        }
+        let (mut socket, response) = connect(request).unwrap();
+        assert_eq!(response.status().as_u16(), 101);
+        if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
+            stream.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+        }
+        let attach = serde_json::json!({"type": "attach", "cols": 100, "rows": 30, "have": null});
+        socket.send(Message::Text(attach.to_string().into())).unwrap();
+        socket
+    };
+    // no ticket: the attach asks for a recent sign-in
+    assert_eq!(
+        read_messages_until(&mut socket("none"), "never").unwrap_err(),
+        "reauthRequired"
+    );
+    let mut attached = socket(&ticket);
+    read_messages_until(&mut attached, "moqui> ").unwrap();
+}

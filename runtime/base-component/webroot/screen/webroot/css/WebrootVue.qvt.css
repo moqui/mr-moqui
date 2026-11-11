@@ -1206,3 +1206,7 @@ body.m-terminal-solo .q-page-container { padding:0 !important; }
 /* a terminal's text off the window's edge; the fit addon takes the padding off its size */
 .m-float-body .m-terminal-screen .xterm, .m-terminal-host .m-terminal-screen .xterm { padding:2px 4px; }
 .m-terminal-bell { outline:2px solid color-mix(in srgb, var(--q-warning) 70%, transparent); outline-offset:-2px; }
+/* the phone's key bar of the terminal (Terminal-Fancy §12) */
+.m-terminal-keys { overflow-x:auto; gap:2px; padding:2px 0; border-top:1px solid var(--m-border, rgba(0,0,0,.12)); }
+.m-terminal-key { min-width:36px; font-family:ui-monospace, monospace; }
+.m-terminal-key-on { background:color-mix(in srgb, var(--q-primary) 22%, transparent); }

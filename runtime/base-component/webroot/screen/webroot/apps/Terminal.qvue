@@ -188,6 +188,7 @@ module.exports = {
         // measured again on each frame for a short while, and whenever the window, the header, the footer or the page changes.
         this.onWindowResize = () => this.fitHeight();
         window.addEventListener("resize", this.onWindowResize);
+        if (window.visualViewport) window.visualViewport.addEventListener("resize", this.onWindowResize);
         this.layoutObserver = new ResizeObserver(() => this.fitHeight());
         ["top", "footer", "m-canvas"].forEach((id) => { const el = document.getElementById(id); if (el) this.layoutObserver.observe(el); });
         const settleUntil = Date.now() + 1500;
@@ -205,6 +206,7 @@ module.exports = {
     beforeUnmount() {
         this.disposed = true;
         window.removeEventListener("resize", this.onWindowResize);
+        if (window.visualViewport) window.visualViewport.removeEventListener("resize", this.onWindowResize);
         if (this.layoutObserver) this.layoutObserver.disconnect();
         if (this.offKeys) this.offKeys();
         if (moqui.terminal && moqui.terminal.workspace === this) moqui.terminal.workspace = null;
@@ -216,7 +218,9 @@ module.exports = {
         fitHeight() {
             if (!this.$el || !this.$el.getBoundingClientRect) return;
             const footer = document.getElementById("footer");
-            const bottom = footer ? footer.getBoundingClientRect().top : window.innerHeight;
+            // on a phone the visual viewport, so the terminal fits above the keyboard as it opens (§12)
+            const view = window.visualViewport ? window.visualViewport.height + window.visualViewport.offsetTop : window.innerHeight;
+            const bottom = Math.min(footer ? footer.getBoundingClientRect().top : view, view);
             // where the terminal starts with the page scrolled to its top
             const top = this.$el.getBoundingClientRect().top + window.scrollY;
             const height = Math.max(200, Math.floor(bottom - top - 8));

@@ -142,7 +142,48 @@
         const shell = shellVm();
         const scheme = root.location.protocol === "https:" ? "wss://" : "ws://";
         const host = shell.appHost || root.location.host;
-        return scheme + host + (shell.appRootPath || "") + "/termws?session=" + encodeURIComponent(key);
+        const ticket = currentTicket();
+        return scheme + host + (shell.appRootPath || "") + "/termws?session=" + encodeURIComponent(key) + (ticket ? "&ticket=" + ticket : "");
+    }
+
+    // ---- a recent sign-in in the Desktop and Mobile apps (§12) ----
+    // Their host signs each request in by the device's key, and keeps no session to hold a sign-in in: the user confirms
+    // who they are in one request (confirm#TerminalUser), which answers a ticket the opening and the socket show.
+    const TICKET_MS = 4 * 60 * 1000;
+    let ticket = null;
+    function inApp() {
+        return !!(root.moquiDesktop && typeof root.moquiDesktop.socket === "function");
+    }
+    function currentTicket() {
+        return ticket && Date.now() < ticket.until ? ticket.value : "";
+    }
+    function dialogOf() {
+        const vm = shellVm();
+        if (vm.$q && vm.$q.dialog) return vm.$q.dialog.bind(vm.$q);
+        return root.Quasar && root.Quasar.Dialog ? root.Quasar.Dialog.create.bind(root.Quasar.Dialog) : null;
+    }
+    function ask(title, message, type) {
+        const dialog = dialogOf();
+        if (!dialog) return Promise.reject({ reasonCode: "cancelled" });
+        return new Promise((resolve, reject) => {
+            dialog({ title, message, prompt: { model: "", type: type || "password", isValid: (value) => !!value }, cancel: true, persistent: true })
+                .onOk(resolve)
+                .onCancel(() => reject({ reasonCode: "cancelled" }));
+        });
+    }
+    function confirmTicket() {
+        const title = t("Confirm it is you");
+        return ask(title, t("Your password, to open a terminal on this server from here")).then((password) =>
+            request("confirm", { password }).then((out) => {
+                if (out.ticket) return out;
+                if (!out.codeNeeded) throw { reasonCode: "notConfirmed", errors: t("Not confirmed") };
+                return ask(title, out.codeText || t("The code of your second factor"), "text").then((code) => request("confirm", { password, code }));
+            })
+        ).then((out) => {
+            if (!out.ticket) throw { reasonCode: "notConfirmed", errors: t("Not confirmed") };
+            ticket = { value: out.ticket, until: Date.now() + TICKET_MS };
+            return ticket.value;
+        });
     }
 
     // A transition of the Terminal screen, as JSON: {errors, reasonCode} rejects.
@@ -168,8 +209,14 @@
         });
     }
 
-    // With the recent sign-in check (moqui.reauth) where a refusal asks for it.
+    // With the recent sign-in check where a refusal asks for it: moqui.reauth in a browser, a ticket in an app (§12).
     function withReauth(fn) {
+        if (inApp()) {
+            return Promise.resolve().then(fn).catch((err) => {
+                if (!err || err.reasonCode !== "reauthRequired") throw err;
+                return confirmTicket().then(() => fn());
+            });
+        }
         return moqui.reauth && moqui.reauth.retry ? moqui.reauth.retry(fn) : fn();
     }
 
@@ -299,6 +346,59 @@
                 /* no sound */
             }
         }
+    }
+
+    // A phone's key bar (§12): Ctrl makes the next letter its control character, Alt sends ESC before it; each once.
+    function applyModifiers(session, data) {
+        const mods = session.mods || {};
+        if (!mods.ctrl && !mods.alt) return data;
+        let text = data;
+        if (mods.ctrl && text.length === 1) {
+            const code = text.toUpperCase().charCodeAt(0);
+            if (code >= 64 && code <= 95) text = String.fromCharCode(code - 64);
+            else if (text === " ") text = "\x00";
+        }
+        if (mods.alt) text = "\x1b" + text;
+        session.mods = { ctrl: false, alt: false };
+        state.modsChanged = (state.modsChanged || 0) + 1;
+        return text;
+    }
+
+    // Touch (§12): two fingers pinch the font size; a long press selects the line under it and copies it.
+    function touchGestures(session) {
+        const el = session.el;
+        let pinch = null;
+        let press = null;
+        const distance = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+        el.addEventListener("touchstart", (event) => {
+            if (event.touches.length === 2) {
+                clearTimeout(press);
+                pinch = { from: distance(event.touches), size: session.term.options.fontSize };
+            } else if (event.touches.length === 1) {
+                const touch = event.touches[0];
+                press = root.setTimeout(() => {
+                    const rect = el.getBoundingClientRect();
+                    const row = Math.floor(((touch.clientY - rect.top) / rect.height) * session.term.rows);
+                    const line = session.term.buffer.active.viewportY + Math.max(0, Math.min(session.term.rows - 1, row));
+                    session.term.selectLines(line, line);
+                    if (session.term.hasSelection()) copyText(session.term.getSelection().trim());
+                }, 550);
+            }
+        }, { passive: true });
+        el.addEventListener("touchmove", (event) => {
+            clearTimeout(press);
+            if (pinch && event.touches.length === 2) {
+                const size = Math.round(Math.max(8, Math.min(32, (pinch.size * distance(event.touches)) / pinch.from)));
+                if (size !== session.term.options.fontSize) {
+                    session.term.options.fontSize = size;
+                    fit(session);
+                }
+            }
+        }, { passive: true });
+        el.addEventListener("touchend", () => {
+            clearTimeout(press);
+            pinch = null;
+        }, { passive: true });
     }
 
     // The settings a terminal takes from the user's preferences.
@@ -436,7 +536,7 @@
             const body = { kind: kind || "apps", cols: opts.cols || 100, rows: opts.rows || 30 };
             for (const name of ["profileName", "directory", "title"]) if (opts[name]) body[name] = opts[name];
             if (opts.resume) body.resume = "true";
-            return withReauth(() => request("open", body)).then((out) => {
+            return withReauth(() => request("open", Object.assign({}, body, currentTicket() ? { ticket: currentTicket() } : {}))).then((out) => {
                 markUsed();
                 const session = out.session || { id: out.sessionId, kind: body.kind };
                 state.sessions[session.id] = session;
@@ -572,7 +672,10 @@
             }, true);
             const encoder = new TextEncoder();
             const out = opts.send || ((bytes) => send(session, bytes));
-            term.onData((data) => out(encoder.encode(data)));
+            session.out = (data) => out(encoder.encode(data));
+            // the key bar's Ctrl and Alt (§12) apply to the next key typed
+            term.onData((data) => session.out(applyModifiers(session, data)));
+            touchGestures(session);
             // the bytes of a mouse report in the X10 encoding, one per character
             term.onBinary((data) => out(Uint8Array.from(data, (ch) => ch.charCodeAt(0) & 0xff)));
             term.onResize(({ cols, rows }) => {
@@ -812,6 +915,30 @@
 
         isOwnKey,
         copyText,
+        applyModifiers,
+
+        // A key of the phone's key bar (§12): its bytes to the session, or Ctrl and Alt for the next key.
+        key(key, name) {
+            const session = sessions.get(key);
+            if (!session) return;
+            if (name === "ctrl" || name === "alt") {
+                session.mods = Object.assign({ ctrl: false, alt: false }, session.mods);
+                session.mods[name] = !session.mods[name];
+                state.modsChanged = (state.modsChanged || 0) + 1;
+                session.term.focus();
+                return;
+            }
+            // the arrows as the program asked for them: application cursor keys (ESC O) or normal (ESC [)
+            const app = session.term.modes.applicationCursorKeysMode;
+            const arrows = { up: "A", down: "B", right: "C", left: "D" };
+            const bytes = arrows[name] ? "\x1b" + (app ? "O" : "[") + arrows[name] : { esc: "\x1b", tab: "\t" }[name] || name;
+            session.out(applyModifiers(session, bytes));
+            session.term.focus();
+        },
+        mods(key) {
+            const session = sessions.get(key);
+            return (session && session.mods) || { ctrl: false, alt: false };
+        },
 
         // ---- floating terminals ----
 
@@ -1012,6 +1139,10 @@
             shown() {
                 return this.views[this.sessionKey] || { closed: false, reason: "", failed: "" };
             },
+            // a phone or a tablet: the key bar (§12)
+            touch() {
+                return !!(this.$q.platform && this.$q.platform.is && (this.$q.platform.is.mobile || (this.$q.platform.has && this.$q.platform.has.touch && this.$q.screen.lt.md)));
+            },
             dark() {
                 return this.$q.dark.isActive;
             }
@@ -1054,8 +1185,9 @@
                 else if (action === "clear") terminal.clearScrollback(key);
             },
             reconnect() {
-                // a remote attach to a command line or a shell wants a recent sign-in first (§8.2)
-                if (this.shown.reauth && moqui.reauth) moqui.reauth.confirm().then(() => terminal.connect(this.sessionKey), () => {});
+                // a remote attach to a command line or a shell wants a recent sign-in first (§8.2): a ticket in an app
+                if (this.shown.reauth && inApp()) confirmTicket().then(() => terminal.connect(this.sessionKey), () => {});
+                else if (this.shown.reauth && moqui.reauth) moqui.reauth.confirm().then(() => terminal.connect(this.sessionKey), () => {});
                 else terminal.connect(this.sessionKey);
             }
         },
@@ -1093,6 +1225,7 @@
             '<q-icon name="sym_o_link_off"></q-icon><span class="col">{{shown.reason}}</span>' +
             '<q-btn dense unelevated no-caps color="primary" :label="shown.taken ? labels.takeBack : shown.reauth ? labels.confirm : labels.reconnect" @click="reconnect"></q-btn></div>' +
             '<div v-else-if="shown.failed" class="m-terminal-closed q-pa-sm text-negative">{{shown.failed}}</div>' +
+            '<m-terminal-keys v-if="touch" :session-key="sessionKey"></m-terminal-keys>' +
             "</div>"
     };
 
@@ -1218,6 +1351,38 @@
             '<q-item-label v-if="state.sessions[id].cwd" caption class="ellipsis">{{state.sessions[id].cwd}}</q-item-label></q-item-section></q-item>' +
             '<q-separator></q-separator><q-item clickable v-close-popup @click="openScreen"><q-item-section>{{labels.open}}</q-item-section></q-item>' +
             "</q-list></q-menu></q-btn>"
+    };
+
+    // The phone's key bar (§12), above the keyboard: what a phone's keyboard has not got.
+    const BAR = [
+        { name: "esc", label: "Esc" }, { name: "tab", label: "Tab" }, { name: "ctrl", label: "Ctrl" }, { name: "alt", label: "Alt" },
+        { name: "left", icon: "sym_o_arrow_back" }, { name: "up", icon: "sym_o_arrow_upward" }, { name: "down", icon: "sym_o_arrow_downward" },
+        { name: "right", icon: "sym_o_arrow_forward" }, { name: "|", label: "|" }, { name: "~", label: "~" }, { name: "/", label: "/" },
+        { name: "-", label: "-" }, { name: "`", label: "`" }
+    ];
+    components["m-terminal-keys"] = {
+        name: "mTerminalKeys",
+        props: { sessionKey: { type: String, required: true } },
+        data() {
+            return { state, keys: BAR };
+        },
+        computed: {
+            mods() {
+                // read again when a modifier changes
+                return this.state.modsChanged >= 0 ? terminal.mods(this.sessionKey) : {};
+            }
+        },
+        methods: {
+            press(name) {
+                terminal.key(this.sessionKey, name);
+            }
+        },
+        // mousedown.prevent: the terminal keeps the focus, and the phone its keyboard
+        template:
+            '<div class="m-terminal-keys row no-wrap items-center" role="toolbar" aria-label="Keys">' +
+            '<q-btn v-for="key in keys" :key="key.name" dense flat no-caps size="sm" class="m-terminal-key" :data-key="key.name"' +
+            ' :icon="key.icon" :label="key.label" :aria-label="key.label || key.name" :class="{ \'m-terminal-key-on\': mods[key.name] }"' +
+            ' @mousedown.prevent @click="press(key.name)"></q-btn></div>'
     };
 
     // The copy the browser refused, to select and copy by hand.

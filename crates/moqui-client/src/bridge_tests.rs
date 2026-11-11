@@ -134,4 +134,15 @@ fn the_page_hears_each_event_as_its_kind() {
     );
     assert_eq!(event_json(&Event::Closed), json!({ "kind": "closed" }));
     assert_eq!(event_json(&Event::Revoked), json!({ "kind": "revoked" }));
+    // the terminal's bytes in base64, and a close with its reason
+    assert_eq!(
+        event_json(&Event::Binary(vec![0x1b, b'['])),
+        json!({ "kind": "binary", "data": "G1s=" })
+    );
+    assert_eq!(
+        event_json(&Event::Ended("opened elsewhere".to_string())),
+        json!({ "kind": "closed", "reason": "opened elsewhere" })
+    );
+    assert_eq!(decode_binary("G1s=").unwrap(), vec![0x1b, b'[']);
+    assert!(decode_binary("not base64!").is_err());
 }

@@ -276,3 +276,43 @@ fn a_listing_with_no_origin_is_taken_as_its_own() {
     assert_eq!(six.listing().place(), Place::Local);
     assert_ne!(get.place(), Place::Local, "opening carries its origin");
 }
+
+#[test]
+fn a_device_key_with_no_origin_is_taken_and_its_place_is_its_peers() {
+    let all = |_: &str| true;
+    let recent = |_: i64| true;
+    let app = facts(
+        "198.51.100.4",
+        RequestVia::Direct,
+        true,
+        &[("host", "dev.example.com"), ("login_key", "k")],
+    );
+    assert_eq!(
+        app.place(),
+        Place::Remote {
+            secure: true,
+            via_edge: false
+        }
+    );
+    let remote = Switches { remote: true, ..ON };
+    assert_eq!(check(remote, Kind::Command, &app, &all, &recent), Ok(()));
+    assert_eq!(
+        check(remote, Kind::Command, &app, &all, &|_| false),
+        Err(Refusal::ReauthRequired)
+    );
+    // a key with another site's Origin is still refused
+    let other = facts(
+        "198.51.100.4",
+        RequestVia::Direct,
+        true,
+        &[
+            ("host", "dev.example.com"),
+            ("login_key", "k"),
+            ("origin", "https://evil.example"),
+        ],
+    );
+    assert_eq!(
+        check(remote, Kind::Command, &other, &all, &recent),
+        Err(Refusal::NotAvailable)
+    );
+}
