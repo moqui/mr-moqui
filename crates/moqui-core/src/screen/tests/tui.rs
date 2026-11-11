@@ -1650,6 +1650,43 @@ fn a_nav_card_is_a_container_of_its_link_its_text_and_its_child_links() {
     client_model(&body);
 }
 
+/// A `number-card` carries its `link` as the card's url, resolved as a screen link is (a path below this screen with
+/// its query, another address as it is); a card with no link has an empty url. The macro once read a `url` attribute
+/// the element does not have, so no card was a link in the terminal.
+#[test]
+fn a_number_card_carries_its_link() {
+    let context = ExecutionContextFactory::test_context();
+    let body = make_render(context.factory())
+        .root_screen(qvt_render_dir().join("Dashboard.xml").to_string_lossy().into_owned())
+        .screen_path("")
+        .render_mode("tui")
+        .render()
+        .unwrap_or_else(|err| panic!("{err}"))
+        .body_text();
+    let doc: Json = serde_json::from_str(&body).unwrap_or_else(|err| panic!("{err}: {body}"));
+    let cards: Vec<(String, String)> = nodes(&doc)
+        .into_iter()
+        .filter(|node| node.get("t") == Some(&json!("numberCard")))
+        .map(|node| {
+            let text = |key: &str| node.get(key).and_then(Json::as_str).unwrap_or("").to_string();
+            (text("title"), text("url"))
+        })
+        .collect();
+    let card = |title: &str, url: &str| (title.to_string(), url.to_string());
+    assert_eq!(
+        cards,
+        [
+            card("Open orders", "/Orders?statusId=Open"),
+            card("Late shipments", "https://example.com/late"),
+            card("Revenue {{x}} & more", ""),
+            card("Plain", ""),
+            card("Held orders", "/Orders?statusId=Held"),
+        ],
+        "{body}"
+    );
+    client_model(&body);
+}
+
 /// A parent level asked for alone, as the terminal asks for each level, holds an empty active node: the level under it is
 /// the client's next request, so a parent with no default item is not an error (Tools' ServiceJob, Security).
 #[test]

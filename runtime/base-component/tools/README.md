@@ -39,6 +39,14 @@ in the terminal) and reloads it (Changes) ([docs/tools/Component-Deploy.md](../.
 edits the instance's Constitution, previews its agent prompt section and manages the trusted reference origins
 ([docs/ai/Constitution.md](../../../docs/ai/Constitution.md)); its shared parts are `template/ConstitutionParts.xml`.
 
+**Home** (`System/Home.xml`) answers whether the instance is healthy, what it is, what it has been doing, what is
+switched on, what needs an administrator and where to go: the runtime report (`ec.factory.getStartupReport()`), the
+status map with its resource readings, the attention service, an embed of the `system-home` dashboard over the `period`
+URL parameter, and the navigation catalog. The catalog is a list of entries in the home's actions (`navCatalog`), shown
+by the `NavFeatured`, `NavFeaturedLarge` and `NavGroups` sections of `template/HomeParts.xml`; the rule is in
+`template/HomeCatalog.js`: an entry whose screen the menu does not show for the user has no tile, and a menu item no
+entry names is in a last group. A component adds entries with a `screen-extend` `actions-extend` of the home.
+
 `service/moqui/tools/SystemHomeServices.xml` has `get#SystemAttention`, the one list of what needs an administrator
 (resource readings past their `resource-watch` thresholds, failed job runs, system messages in error and the like;
 [plans/Tools-Fancy.md](../../../plans/Tools-Fancy.md) §3.4). `report/` holds the shipped dashboards, library panels

@@ -137,29 +137,46 @@ feature("recovery editors load configuration, keep rejected blanks and separate 
     }
 })
 
-feature("the instance overview formats its start time and names unavailable metrics", {
+// The System home (plans/Tools-Fancy.md §3), its one render: plain XML widgets, so html alone. `moqui test` serves no
+// requests, so the runtime report has no listeners and the page says so; a server's page has a row for each.
+feature("the System home shows the instance, its listeners or their absence, and what needs attention", {
     when() {
         const status = ec.factory.getStatusMap(true)
+        const report = ec.factory.getStartupReport()
         const page = render("Home")
         return {
             page,
-            started: ec.l10n.format(status.Runtime.Start, null),
-            memory: status.Process.MemoryUsed,
-            threads: status.Process.Threads,
-            loadAvailable: status.System.OsName === "linux"
+            version: report.version,
+            listeners: Array.from(report.listeners || []),
+            started: ec.l10n.format(status.Runtime.Start, "MMM d, HH:mm"),
+            processCpu: status.Resources.Cpu.ProcessPercent
         }
     },
-    then({page, started, memory, threads, loadAvailable}) {
+    then({page, version, listeners, started, processCpu}) {
         page.status == 200
         page.errors == ""
         !/Error rendering|Exception in render/.test(page.output)
-        page.output.includes("Instance overview")
-        page.output.includes("Started: " + started)
-        memory != null || page.output.includes("Memory used: Unavailable")
-        threads != null || page.output.includes("Threads: Unavailable")
-        loadAvailable || page.output.includes("Load: Unavailable")
-        !page.output.includes("Threads: null")
-        !page.output.includes("Hazelcast")
+        // present whatever the data
+        page.output.includes("MR Moqui " + version)
+        page.output.includes("since " + started)
+        page.output.includes("Listeners and integrations")
+        page.output.includes('id="SystemCounters"')
+        listeners.length > 0
+            ? page.output.includes('id="ListenerList_table"') && page.output.includes(">" + listeners[0].name + "<")
+            : page.output.includes("This process reported no listeners")
+        // the empty attention state or its rows, each with its level as a word
+        page.output.includes("Nothing needs attention") ||
+            (page.output.includes('id="AttentionList_table"') &&
+                /<span data-level>(Critical|Warning|Note)<\/span>/.test(page.output))
+        // a reading that is not reported is a dash with its reason, never zero or null
+        processCpu != null || page.output.includes('title="Not reported by this platform"')
+        !/>null<|: null|>undefined</.test(page.output.slice(page.output.indexOf('id="SystemIdentity"')))
+        // the navigation comes from the catalog and the menu; what left the page is gone
+        page.output.includes('id="NavFeaturedCards"')
+        page.output.includes(">Users and access</a>")
+        page.output.includes('id="NavGroupBoxes"')
+        !page.output.includes("Loaded components")
+        !page.output.includes("Database connections</h5>")
     }
 })
 

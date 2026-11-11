@@ -1609,8 +1609,12 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
         }),
         "form-single": formSingle,
         "form-list": formList,
-        "number-card": stmt((node) => guarded(node,
-            `$emit({t:"numberCard",id:$uid(${jsString(idOf(node))}),title:String(${S.expandExpr(attr(node, "title") || "")} || ""),value:String(${S.expandNoL10nExpr(attr(node, "value") || "")} || ""),url:String(${S.expandNoL10nExpr(attr(node, "url") || "")} || "")});\n`)),
+        // A number-card's link is a screen link, as a nav-card's: no url for a card without one or one the user may not follow.
+        "number-card": stmt((node) => guarded(node, `{
+    const $made = ${attr(node, "link") ? `sri.makeUrlByType(${jsString(attr(node, "link"))}, "transition", ${S.nodeLit(node, false)}, "true")` : "null"};
+    $emit({t:"numberCard",id:$uid(${jsString(idOf(node))}),title:String(${S.expandExpr(attr(node, "title") || "")} || ""),value:String(${S.expandNoL10nExpr(attr(node, "value") || "")} || ""),url:$made && !$made.getDisableLink() ? $made.getUrlWithParams() || "" : ""});
+}
+`)),
         // A nav-card is a container of a link (the title, the card's link; a text without one), the text and the child links.
         "nav-card": stmt((node, children) => guarded(node, `$openChildren({t:"container",id:$uid(${jsString(idOf(node))})});
 {
