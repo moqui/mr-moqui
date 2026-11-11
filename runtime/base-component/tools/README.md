@@ -39,6 +39,12 @@ in the terminal) and reloads it (Changes) ([docs/tools/Component-Deploy.md](../.
 edits the instance's Constitution, previews its agent prompt section and manages the trusted reference origins
 ([docs/ai/Constitution.md](../../../docs/ai/Constitution.md)); its shared parts are `template/ConstitutionParts.xml`.
 
+`service/moqui/tools/SystemHomeServices.xml` has `get#SystemAttention`, the one list of what needs an administrator
+(resource readings past their `resource-watch` thresholds, failed job runs, system messages in error and the like;
+[plans/Tools-Fancy.md](../../../plans/Tools-Fancy.md) §3.4). `report/` holds the shipped dashboards, library panels
+and alert rule templates: the `monitor-*` dashboards of Monitor, and in the System folder `system-home`,
+`system-db-pool` and the disk, memory and CPU alert rules.
+
 ## Tests
 
 ```sh

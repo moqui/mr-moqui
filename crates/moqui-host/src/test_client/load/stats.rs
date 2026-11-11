@@ -276,19 +276,6 @@ pub(crate) fn check_thresholds(limits: &Value) -> Result<(), String> {
     }
 }
 
-/// This process's CPU time (user and system, every thread), from `/proc/self/stat`; `None` off Linux.
-pub(crate) fn process_cpu() -> Option<Duration> {
-    // USER_HZ is 100 on Linux, so a tick is ten milliseconds.
-    const TICK_MILLIS: u64 = 10;
-    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
-    // The fields after the name in parentheses: state is the first, utime and stime the 12th and 13th.
-    let (_, rest) = stat.rsplit_once(')')?;
-    let fields: Vec<&str> = rest.split_whitespace().collect();
-    let utime: u64 = fields.get(11)?.parse().ok()?;
-    let stime: u64 = fields.get(12)?.parse().ok()?;
-    Some(Duration::from_millis((utime + stime) * TICK_MILLIS))
-}
-
 /// A count with thousands separators: 2,412.
 pub(crate) fn grouped(count: u64) -> String {
     let digits = count.to_string();

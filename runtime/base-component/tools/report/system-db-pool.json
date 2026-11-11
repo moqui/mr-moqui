@@ -1,0 +1,123 @@
+{
+  "id": "system-db-pool",
+  "type": "panel",
+  "title": "Database pool",
+  "body": {
+    "folder": "System",
+    "title": "Database pool",
+    "description": "Connections of the default entity group's pool in use, and requests waiting for one.",
+    "visualization": "timeSeries",
+    "queries": [
+      {
+        "datasetId": "otel_metrics",
+        "metricGranularity": "auto",
+        "queryString": "name:\"moqui.db.pool.checked_out\"",
+        "aggregations": [
+          {
+            "id": "time",
+            "type": "date_histogram",
+            "role": "x-axis",
+            "params": {
+              "field": "bucket_start",
+              "fixed_interval": "auto",
+              "min_doc_count": 0
+            }
+          },
+          {
+            "id": "inUse",
+            "type": "max",
+            "role": "metric",
+            "params": {
+              "field": "max"
+            }
+          }
+        ],
+        "transformations": [
+          {
+            "type": "organize",
+            "hide": [
+              "count"
+            ]
+          }
+        ]
+      },
+      {
+        "datasetId": "otel_metrics",
+        "metricGranularity": "auto",
+        "queryString": "name:\"moqui.db.pool.waiting\"",
+        "aggregations": [
+          {
+            "id": "time",
+            "type": "date_histogram",
+            "role": "x-axis",
+            "params": {
+              "field": "bucket_start",
+              "fixed_interval": "auto",
+              "min_doc_count": 0
+            }
+          },
+          {
+            "id": "waiting",
+            "type": "max",
+            "role": "metric",
+            "params": {
+              "field": "max"
+            }
+          }
+        ],
+        "transformations": [
+          {
+            "type": "organize",
+            "hide": [
+              "count"
+            ]
+          }
+        ]
+      }
+    ],
+    "transformations": [
+      {
+        "type": "join",
+        "fields": [
+          "time"
+        ]
+      },
+      {
+        "type": "organize",
+        "hide": [
+          "count",
+          "count.2"
+        ],
+        "order": [
+          "time",
+          "inUse",
+          "waiting"
+        ]
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "decimals": 0,
+        "min": 0
+      },
+      "overrides": [
+        {
+          "match": {
+            "name": "inUse"
+          },
+          "config": {
+            "displayName": "In use"
+          }
+        },
+        {
+          "match": {
+            "name": "waiting"
+          },
+          "config": {
+            "displayName": "Waiting"
+          }
+        }
+      ]
+    }
+  }
+}

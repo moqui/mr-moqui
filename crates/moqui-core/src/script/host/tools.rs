@@ -872,6 +872,8 @@ macro_rules! tools_js {
     // ---- factory and web ----
     ec.factory.getStatusMap = host.getStatusMap;
     ec.factory.getComponentInfoList = host.getComponentInfoList;
+    // What the server reported when it became ready (moqui_core::startup): the listeners, integrations and tools.
+    ec.factory.getStartupReport = host.getStartupReport;
     ec.factory.getRuntimePath = host.getRuntimePath;
     // This server's instance id, as its telemetry and the database audit name it (Tools' Database › Queries).
     ec.factory.getInstanceId = host.getInstanceId;
@@ -1023,6 +1025,7 @@ static METHODS: &[Method] = &[
     method!("tools", "getScreenInfoList", [Text, OptValue], get_screen_info_list),
     method!("tools", "getStatusMap", [OptValue], get_status_map),
     method!("tools", "getComponentInfoList", [], get_component_info_list),
+    method!("tools", "getStartupReport", [], get_startup_report),
     method!("tools", "getRuntimePath", [], get_runtime_path),
     method!("tools", "getInstanceId", [], get_instance_id),
     method!(
@@ -1996,6 +1999,12 @@ fn get_status_map(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let factory = factory()?;
     let map = crate::context::status::status_map(&factory, flag_of(include_sensitive.as_ref()));
     Ok(Ret::Value(Value::Map(map)))
+}
+
+/// `ec.factory.getStartupReport()`: [`crate::startup::script_value`].
+fn get_startup_report(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let factory = factory()?;
+    Ok(Ret::Value(Value::Map(crate::startup::script_value(&factory))))
 }
 
 /// `ec.factory.getInstanceId()`: this server's instance id ([`crate::drain::instance_id`]).

@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- What the System home reads that is not one call of the framework (plans/Tools-Fancy.md §3.4, B5). -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="SystemAttention" transaction="ignore">
+        <description>What needs an administrator on this instance, as one list (plans/Tools-Fancy.md §3.4). Each item
+            is {key, severity (critical, warning or info), text, count, value, link, parameters}: count for an item
+            that counts records (at most 100: a count of 100 is "100 or more"), value for a resource reading (its
+            percent), link a route under /apps with its parameters. The resource readings whose level is not ok come
+            first (the status map's Resources: disk space and inodes of each filesystem, memory, CPU load, open files,
+            swap), the most severe first; then the listeners and integrations that failed or were skipped, a draining
+            instance, saturated workers or database pool, a silent cluster member, failed job runs of the last 24
+            hours, an embedded database with no scheduled backup, system messages in error, open incidents, firing
+            alerts, failing checks and scrape targets, new error groups, lost telemetry and agent approvals waiting.
+            Each item is checked on its own: one that fails is logged as an error and left out, and the others still
+            come back. An item whose source the user may not read (the entity, the dataset, the service, or
+            MONITOR_INCIDENT for incidents) is left out; it reads nothing but counts. Refuses nothing.</description>
+        <out-parameters>
+            <parameter name="items" type="List"><description>The items, resource readings first, then the most severe first</description></parameter>
+            <parameter name="checkedDate" type="Timestamp"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            // A count stops here: the list says "100 or more" past it.
+            const LIMIT = 100
+            const DAY = 24 * 60 * 60 * 1000
+            // A cluster member is silent past three heartbeats (one a scheduler pass, a minute by default); its
+            // peers delete its row after ten.
+            const SILENT = 3 * 60 * 1000
+            const OPEN_INCIDENT = ['Open', 'Mitigating', 'Monitoring', 'Reopened']
+            const BACKUP_SERVICE = 'org.moqui.impl.ServerServices.backup#EmbeddedDatabase'
+            const BACKUP_JOB = 'backup_EmbeddedDatabase_daily'
+            const now = Date.now()
+
+            const say = (template, values) => String(ec.l10n.localize(template)).replace(/\$\{(\w+)\}/g, (all, name) => String((values || {})[name] ?? ''))
+            const whole = (number) => String(Math.round(Number(number)))
+            const size = (bytes) => {
+                const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']
+                let value = Number(bytes), unit = 0
+                while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++ }
+                return (value >= 10 || unit === 0 ? String(Math.round(value)) : value.toFixed(1)) + ' ' + units[unit]
+            }
+            const counted = (count) => count >= LIMIT ? say('${count} or more', {count: LIMIT}) : String(count)
+            const mayView = (entityName) => ec.artifactExecution.isPermitted(entityName, 'AT_ENTITY', 'view')
+            const mayCall = (serviceName, action) => ec.artifactExecution.isPermitted(serviceName, 'AT_SERVICE', action)
+            // counts past entity authorization: each item has checked what the user may read
+            const count = (find) => Array.from(find.limit(LIMIT).disableAuthz().list()).length
+            const call = (serviceName, parameters) => {
+                const out = ec.service.sync().name(serviceName).parameters(parameters || {}).call() || {}
+                if (ec.message.hasError()) {
+                    const errors = ec.message.getErrorsString()
+                    ec.message.clearErrors()
+                    throw new Error(errors)
+                }
+                return out
+            }
+
+            const resources = [], others = []
+            const item = (list, fields) => list.push(Object.assign({count: null, value: null, link: null, parameters: {}}, fields))
+            // one item, checked on its own: a failure is logged and the rest still come back
+            const check = (key, body) => {
+                try { body() } catch (error) { ec.logger.error('System attention item ' + key + ' failed: ' + String(error)) }
+            }
+            const metrics = (metricName) => ({link: '/apps/system/Monitor/Metrics', parameters: {metricName}})
+            const flagged = (level) => level === 'warning' || level === 'critical'
+
+            let status = {}, report = {}
+            check('status', () => { status = ec.factory.getStatusMap(true) || {} })
+            check('startupReport', () => { report = ec.factory.getStartupReport() || {} })
+            const readings = status.Resources || {}
+
+            // ---- resource readings whose level is not ok ----
+            check('disk', () => {
+                for (const filesystem of Array.from(readings.Filesystems || [])) {
+                    const values = {path: filesystem.mountPoint, percent: whole(filesystem.usedPercent), free: size(filesystem.availableBytes),
+                        holds: Array.from(filesystem.holds || []).join(', '), inodes: whole(filesystem.inodesUsedPercent)}
+                    if (flagged(filesystem.level)) item(resources, Object.assign({key: 'disk', severity: filesystem.level, value: filesystem.usedPercent,
+                        text: say('Disk ${path} is ${percent} % full, ${free} free (${holds})', values)}, metrics('system.filesystem.utilization')))
+                    if (flagged(filesystem.inodesLevel)) item(resources, Object.assign({key: 'inodes', severity: filesystem.inodesLevel, value: filesystem.inodesUsedPercent,
+                        text: say('Disk ${path} has used ${inodes} % of its file entries (${holds})', values)}, metrics('system.filesystem.utilization')))
+                }
+            })
+            check('memory', () => {
+                const memory = readings.Memory || {}
+                if (flagged(memory.Level)) item(resources, Object.assign({key: 'memory', severity: memory.Level, value: memory.ProcessPercent,
+                    text: say('The server uses ${percent} % of the ${limit} it may use', {percent: whole(memory.ProcessPercent), limit: size(memory.LimitBytes)})},
+                    metrics('moqui.process.memory.utilization')))
+                if (flagged(memory.AvailableLevel)) item(resources, Object.assign({key: 'memoryAvailable', severity: memory.AvailableLevel, value: memory.AvailablePercent,
+                    text: say('The machine has ${percent} % of its memory available', {percent: whole(memory.AvailablePercent)})},
+                    metrics('system.linux.memory.available')))
+            })
+            check('cpu', () => {
+                const cpu = readings.Cpu || {}
+                if (flagged(cpu.Level)) item(resources, Object.assign({key: 'cpu', severity: cpu.Level, value: cpu.LoadPercent,
+                    text: say('CPU load is ${percent} % of ${processors} processors over five minutes', {percent: whole(cpu.LoadPercent), processors: cpu.Processors})},
+                    metrics('moqui.system.cpu.load.utilization')))
+            })
+            check('openFiles', () => {
+                const files = readings.OpenFiles || {}
+                if (flagged(files.Level)) item(resources, Object.assign({key: 'openFiles', severity: files.Level, value: files.UsedPercent,
+                    text: say('${count} of ${limit} open files', {count: files.Count, limit: files.Limit})},
+                    metrics('process.unix.file_descriptor.count')))
+            })
+            check('swap', () => {
+                const swap = readings.Swap || {}
+                if (flagged(swap.Level)) item(resources, {key: 'swap', severity: swap.Level, value: swap.UsedPercent,
+                    text: say('Swap is ${percent} % used', {percent: whole(swap.UsedPercent)})})
+            })
+
+            // ---- saturation and state ----
+            check('startup', () => {
+                for (const [kind, entries] of [['Listener', report.listeners], ['Integration', report.integrations]]) {
+                    for (const entry of Array.from(entries || [])) {
+                        if (entry.state !== 'failed' && entry.state !== 'skipped') continue
+                        const values = {name: entry.name, detail: entry.detail}
+                        item(others, {key: 'startup', severity: entry.state === 'failed' ? 'critical' : 'warning', link: '/apps/system/Conf',
+                            text: kind === 'Listener'
+                                ? (entry.state === 'failed' ? say('Listener ${name} failed to start: ${detail}', values) : say('Listener ${name} was skipped: ${detail}', values))
+                                : (entry.state === 'failed' ? say('${name} failed to start: ${detail}', values) : say('${name} was skipped: ${detail}', values))})
+                    }
+                }
+            })
+            check('draining', () => {
+                if (status.Draining === true) item(others, {key: 'draining', severity: 'warning', link: '/apps/system/Monitor/Recovery',
+                    text: say('This instance is draining: /health answers 503, so a load balancer sends it no new traffic')})
+            })
+            check('workers', () => {
+                const pool = ec.factory.workerPool
+                const active = pool.activeCount, maximum = pool.maximumPoolSize, queued = pool.queue.size()
+                if (maximum > 0 && (active >= maximum || pool.queue.remainingCapacity() <= 0)) item(others, {key: 'workers', severity: 'warning',
+                    link: '/apps/system/ThreadList', count: active,
+                    text: say('Service workers are saturated: ${active} of ${maximum} active, ${queued} queued', {active, maximum, queued})})
+            })
+            check('databasePool', () => {
+                for (const source of Array.from(status.DataSources || [])) {
+                    if (!(source.waiting > 0)) continue
+                    item(others, {key: 'databasePool', severity: 'warning', link: '/apps/tools/Database/Activity', parameters: {db: 'group:' + source.group},
+                        count: source.waiting, text: say('${waiting} waiting for a connection of the ${group} database pool (${checkedOut} of ${max} in use)',
+                            {waiting: source.waiting, group: source.group, checkedOut: source.checkedOut, max: source.max})})
+                }
+            })
+            check('cluster', () => {
+                const clustered = Array.from(report.listeners || []).some((entry) => entry.name === 'Cluster' && entry.state === 'on')
+                if (!clustered || !mayView('moqui.server.ClusterMember')) return
+                const silent = count(ec.entity.find('moqui.server.ClusterMember').condition('heartbeat', '<', new Date(now - SILENT)))
+                if (silent > 0) item(others, {key: 'cluster', severity: 'warning', count: silent,
+                    text: silent === 1 ? say('1 cluster member is silent') : say('${count} cluster members are silent', {count: counted(silent)})})
+            })
+
+            // ---- work that failed or waits ----
+            check('jobRuns', () => {
+                if (!mayView('moqui.service.job.ServiceJobRun')) return
+                const since = new Date(now - DAY)
+                const failed = count(ec.entity.find('moqui.service.job.ServiceJobRun').condition('hasError', 'Y').condition('startTime', '>=', since))
+                if (failed > 0) item(others, {key: 'jobRuns', severity: 'warning', count: failed, link: '/apps/system/ServiceJob/JobRuns/JobRunList',
+                    parameters: {hasError: 'Y', startTime_from: ec.l10n.format(since, 'yyyy-MM-dd HH:mm')},
+                    text: failed === 1 ? say('1 job run failed in 24 hours') : say('${count} job runs failed in 24 hours', {count: counted(failed)})})
+            })
+            check('backup', () => {
+                const embedded = Array.from(status.DataSources || []).some((source) => source.embedded === true)
+                if (!embedded || !mayView('moqui.service.job.ServiceJob')) return
+                const jobs = Array.from(ec.entity.find('moqui.service.job.ServiceJob').condition('serviceName', BACKUP_SERVICE).limit(LIMIT).disableAuthz().list())
+                if (jobs.some((job) => job.paused !== 'Y' && job.cronExpression)) return
+                const shipped = jobs.find((job) => job.jobName === BACKUP_JOB) || jobs[0]
+                item(others, shipped
+                    ? {key: 'backup', severity: 'warning', link: '/apps/system/ServiceJob/Jobs/ServiceJobDetail', parameters: {jobName: shipped.jobName},
+                        text: say('The embedded database has no running backup: the backup job is paused')}
+                    : {key: 'backup', severity: 'warning', link: '/apps/system/ServiceJob/Jobs',
+                        text: say('The embedded database has no running backup: there is no backup job')})
+            })
+            check('systemMessages', () => {
+                if (!mayView('moqui.service.message.SystemMessage')) return
+                const errors = count(ec.entity.find('moqui.service.message.SystemMessage').condition('statusId', 'SmsgError'))
+                if (errors > 0) item(others, {key: 'systemMessages', severity: 'warning', count: errors,
+                    link: '/apps/system/SystemMessage/Message/SystemMessageList', parameters: {statusId: 'SmsgError'},
+                    text: errors === 1 ? say('1 system message in error') : say('${count} system messages in error', {count: counted(errors)})})
+            })
+            check('incidents', () => {
+                if (!ec.user.hasPermission('MONITOR_INCIDENT') || !mayView('moqui.monitor.MonitorIncident')) return
+                const open = count(ec.entity.find('moqui.monitor.MonitorIncident').condition('statusId', 'in', OPEN_INCIDENT))
+                if (open > 0) item(others, {key: 'incidents', severity: 'critical', count: open, link: '/apps/system/Monitor/Incidents',
+                    text: open === 1 ? say('1 open incident') : say('${count} open incidents', {count: counted(open)})})
+            })
+            check('alerts', () => {
+                // the rules the user may read: the list service applies the rules' own access
+                if (!mayView('moqui.report.AlertInstance') || !mayCall('org.moqui.report.ReportServices.list#Definitions', 'all')) return
+                const rules = Array.from(call('org.moqui.report.ReportServices.list#Definitions', {definitionType: 'alert'}).definitions || [])
+                if (!rules.length) return
+                const firing = count(ec.entity.find('moqui.report.AlertInstance').condition('definitionId', 'in', rules.map((rule) => rule.id)).condition('state', 'Firing'))
+                if (firing > 0) item(others, {key: 'alerts', severity: 'warning', count: firing, link: '/apps/dashboards/Alerts',
+                    text: firing === 1 ? say('1 alert firing') : say('${count} alerts firing', {count: counted(firing)})})
+            })
+            check('checks', () => {
+                if (!mayView('moqui.monitor.SyntheticCheck')) return
+                const failing = count(ec.entity.find('moqui.monitor.SyntheticCheck').condition('lastStatus', 'failed').condition('enabled', 'Y'))
+                if (failing > 0) item(others, {key: 'checks', severity: 'warning', count: failing, link: '/apps/system/Monitor/Checks',
+                    text: failing === 1 ? say('1 check failing') : say('${count} checks failing', {count: counted(failing)})})
+            })
+            check('scrapeTargets', () => {
+                if (!mayView('moqui.monitor.ScrapeTarget')) return
+                const down = count(ec.entity.find('moqui.monitor.ScrapeTarget').condition('lastStatus', 'failed').condition('enabled', 'Y'))
+                if (down > 0) item(others, {key: 'scrapeTargets', severity: 'warning', count: down, link: '/apps/system/Monitor/Checks',
+                    text: down === 1 ? say('1 scrape target down') : say('${count} scrape targets down', {count: counted(down)})})
+            })
+            check('errorGroups', () => {
+                if (!mayCall('org.moqui.report.dataset.otel_errors', 'view') || !mayCall('org.moqui.report.ReportServices.query#Documents', 'all')) return
+                // the groups seen in the last day, newest first; those first seen in it are new
+                const result = call('org.moqui.report.ReportServices.query#Documents', {datasetId: 'otel_errors', from: 'now-24h', thru: 'now',
+                    queryString: '', sort: ['-time'], pageIndex: 0, pageSize: LIMIT})
+                const firstSeen = (value) => /^\d+$/.test(String(value)) ? Number(value) : new Date(value).getTime()
+                const fresh = Array.from(result.hits || []).filter((hit) => firstSeen((hit.body || {}).first_seen) >= now - DAY).length
+                if (fresh > 0) item(others, {key: 'errorGroups', severity: 'info', count: fresh, link: '/apps/system/Monitor/Errors', parameters: {from: 'now-24h'},
+                    text: fresh === 1 ? say('1 new error group in 24 hours') : say('${count} new error groups in 24 hours', {count: counted(fresh)})})
+            })
+            check('telemetryLost', () => {
+                if (!mayCall('org.moqui.report.dataset.otel_spans', 'view') || !mayCall('org.moqui.monitor.MonitorServices.get#SourceStatus', 'view')) return
+                const counters = call('org.moqui.monitor.MonitorServices.get#SourceStatus').counters || {}
+                const lost = Number(counters.dropped || 0) + Number(counters.failed || 0)
+                if (lost > 0) item(others, {key: 'telemetryLost', severity: 'warning', count: lost, link: '/apps/system/Monitor/Sources',
+                    text: say('Telemetry lost since the start: ${dropped} dropped, ${failed} failed', {dropped: counters.dropped || 0, failed: counters.failed || 0})})
+            })
+            check('approvals', () => {
+                if (!mayView('moqui.agent.AgentApproval')) return
+                const waiting = count(ec.entity.find('moqui.agent.AgentApproval').condition('statusId', 'AgaPending'))
+                if (waiting > 0) item(others, {key: 'approvals', severity: 'info', count: waiting, link: '/apps/system/Llm/Approvals', parameters: {statusId: 'AgaPending'},
+                    text: waiting === 1 ? say('1 agent approval waiting') : say('${count} agent approvals waiting', {count: counted(waiting)})})
+            })
+
+            // the resource readings first, then the others; in each the most severe first, in the order checked
+            const rank = {critical: 0, warning: 1, info: 2}
+            const bySeverity = (list) => list.map((entry, index) => ({entry, index}))
+                .sort((left, right) => (rank[left.entry.severity] - rank[right.entry.severity]) || (left.index - right.index)).map((row) => row.entry)
+            items = bySeverity(resources).concat(bySeverity(others))
+            checkedDate = ec.user.nowTimestamp
+        ]]></script></actions>
+    </service>
+</services>

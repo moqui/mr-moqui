@@ -652,6 +652,9 @@
             replay-retention-days="7">
         <!-- Business operations: each service call that owns its transaction counts as moqui.operation.runs by name and
              outcome (commit, rollback, retry, pending). The framework's own services are left out. -->
+        <!-- The filesystem gauges are one series per filesystem, by where it is mounted. -->
+        <metric name="system.filesystem.utilization" attributes="system.filesystem.mountpoint"/>
+        <metric name="moqui.system.filesystem.available" attributes="system.filesystem.mountpoint"/>
         <operations record="default" max-names="500">
             <operation service="org\.moqui\..*" record="false"/>
         </operations>
@@ -664,6 +667,15 @@
          telemetry/metric name="..." attributes="..." narrows or widens one instrument's attributes. -->
     <!-- Report time rounding: week-start 1 is Monday and 0 Sunday (now/w); the fiscal year (now/fy) starts on this month and day. -->
     <report week-start="1" fiscal-start-month="1" fiscal-start-day="1"/>
+    <!-- Resource watch: when a reading of the machine or the process is a warning or critical, in percent (the status
+         map's Resources, the System home and its attention list). A filesystem is also critical with less than
+         disk-free-critical bytes left to write. memory is the process's share of the memory it may use (a container's
+         limit, else the machine's), memory-available the share of the machine's memory still available, cpu-load the
+         5-minute load over the processors. An empty value turns that level off. -->
+    <resource-watch disk-warning="80" disk-critical="90" disk-free-critical="1073741824"
+            inodes-warning="80" inodes-critical="90" memory-warning="80" memory-critical="90"
+            memory-available-warning="10" memory-available-critical="5" cpu-load-warning="80" cpu-load-critical="100"
+            open-files-warning="80" open-files-critical="95" swap-warning="50" swap-critical=""/>
     <server-stats visit-enabled="true" visit-ip-info-on-login="true" visitor-enabled="true"/>
 
     <webapp-list>

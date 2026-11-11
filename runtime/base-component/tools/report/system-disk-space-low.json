@@ -1,0 +1,73 @@
+{
+  "id": "system-disk-space-low",
+  "type": "alert",
+  "title": "Low disk space",
+  "body": {
+    "folder": "System",
+    "description": "Fires when a filesystem the server writes to (the runtime, the database, the logs, temp) is more than 90 % full, by mount point: the critical level of the System home, whose warning is 80 %. Save a copy, then set the threshold and contact points.",
+    "query": {
+      "datasetId": "otel_metrics",
+      "from": "now-5m",
+      "thru": "now",
+      "queryString": "name:\"system.filesystem.utilization\"",
+      "aggregations": [
+        {
+          "id": "filesystem",
+          "type": "terms",
+          "role": "split-rows",
+          "params": {
+            "field": "system.filesystem.mountpoint",
+            "size": 50
+          }
+        },
+        {
+          "id": "share",
+          "type": "max",
+          "role": "metric",
+          "params": {
+            "field": "max"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "type": "calculate",
+          "left": "share",
+          "value": 100,
+          "operator": "*",
+          "name": "percent"
+        },
+        {
+          "type": "organize",
+          "hide": [
+            "count",
+            "share"
+          ]
+        }
+      ]
+    },
+    "field": "percent",
+    "reduce": "last",
+    "condition": {
+      "type": "above",
+      "threshold": 90
+    },
+    "intervalSeconds": 60,
+    "pendingSeconds": 0,
+    "keepFiringSeconds": 0,
+    "labels": {
+      "team": "system",
+      "severity": "critical"
+    },
+    "contactPoints": [
+      {
+        "id": "administrators",
+        "type": "notification",
+        "topic": "ReportAlert",
+        "userGroupId": "ADMIN",
+        "groupWaitSeconds": 0,
+        "repeatSeconds": 3600
+      }
+    ]
+  }
+}

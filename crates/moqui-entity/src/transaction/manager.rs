@@ -323,6 +323,11 @@ impl TransactionManager {
         self.inner.pool.stats()
     }
 
+    /// The most connections the pool holds, its reserve among them.
+    pub fn pool_max(&self) -> u32 {
+        self.inner.pool.max()
+    }
+
     /// See [`super::pool::PoolCounters`].
     pub fn pool_counters(&self) -> super::pool::PoolCounters {
         self.inner.pool.counters()

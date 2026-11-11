@@ -24,6 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="cache-list"/>
                 <xs:element minOccurs="0" ref="telemetry"/>
                 <xs:element minOccurs="0" ref="report"/>
+                <xs:element minOccurs="0" ref="resource-watch"/>
                 <xs:element minOccurs="0" ref="server-stats"/>
                 <xs:element minOccurs="0" ref="webapp-list"/>
                 <xs:element minOccurs="0" ref="artifact-execution-facade"/>
@@ -373,6 +374,28 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="alert-workers" type="xs:string">
             <xs:annotation><xs:documentation>Threads that evaluate alert rules in one pass, default 4, at most 32. The
                 calling thread also takes rules.</xs:documentation></xs:annotation></xs:attribute>
+    </xs:complexType></xs:element>
+    <xs:element name="resource-watch"><xs:complexType>
+        <xs:annotation><xs:documentation>When a reading of the machine or of the server process is a warning or
+            critical: the levels of the status map's Resources (ec.factory.getStatusMap), which the System home and
+            its attention list show. Values are percentages; a reading at or past a value has that level. An empty
+            value turns that level off; an attribute left out, or one that is not a number, keeps its default. Read
+            on each use, so a conf reload applies a change.</xs:documentation></xs:annotation>
+        <xs:attribute name="disk-warning" type="xs:string"><xs:annotation><xs:documentation>A filesystem's share of its space used, in percent, from which it is a warning. Default 80.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="disk-critical" type="xs:string"><xs:annotation><xs:documentation>A filesystem's share used from which it is critical. Default 90.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="disk-free-critical" type="xs:string"><xs:annotation><xs:documentation>Bytes: a filesystem larger than this with less than this left to write is critical whatever its share. Default 1073741824 (1 GiB).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="inodes-warning" type="xs:string"><xs:annotation><xs:documentation>A filesystem's share of its file entries (inodes) used. Default 80.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="inodes-critical" type="xs:string"><xs:annotation><xs:documentation>Default 90.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="memory-warning" type="xs:string"><xs:annotation><xs:documentation>The server process's memory as a share of the memory it may use: the container's limit (the cgroup's memory.max) when one is set, else the machine's memory. Default 80.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="memory-critical" type="xs:string"><xs:annotation><xs:documentation>Default 90.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="memory-available-warning" type="xs:string"><xs:annotation><xs:documentation>The machine's available memory as a share of its total: a warning at or below this. Default 10.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="memory-available-critical" type="xs:string"><xs:annotation><xs:documentation>Critical at or below this. Default 5.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="cpu-load-warning" type="xs:string"><xs:annotation><xs:documentation>The 5-minute load average as a share of the processors. Default 80.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="cpu-load-critical" type="xs:string"><xs:annotation><xs:documentation>Default 100.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="open-files-warning" type="xs:string"><xs:annotation><xs:documentation>The process's open files as a share of its soft limit. Default 80.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="open-files-critical" type="xs:string"><xs:annotation><xs:documentation>Default 95.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="swap-warning" type="xs:string"><xs:annotation><xs:documentation>Swap in use as a share of the swap. Default 50.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="swap-critical" type="xs:string"><xs:annotation><xs:documentation>Default empty: swap is never critical.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
     <xs:element name="server-stats">
         <xs:complexType>

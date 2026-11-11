@@ -29,6 +29,14 @@ annotations, the scheduled reports in `schedule.rs` and the ingest keys in `moni
 - **Metrics.** `http.server.request.duration`, `moqui.artifact.duration` (by type, name and action),
   `db.client.operation.duration`, `moqui.job.runs` (by outcome) and process gauges, written once a minute as one
   document per active series, then rolled up to hours and days.
+- **Resource gauges.** Each minute, from the resource readings ([Run-Deploy](../Run-Deploy.md#resource-watch)):
+  `system.cpu.load_average.1m` and `.5m`, `moqui.system.cpu.load.utilization` (the 5-minute load over the processors),
+  `process.cpu.utilization`, `process.memory.usage`, `moqui.process.memory.utilization` (of the memory limit in
+  force), `system.linux.memory.available`, `process.thread.count`, `process.unix.file_descriptor.count`,
+  `system.filesystem.utilization` and `moqui.system.filesystem.available` (one series per filesystem, by
+  `system.filesystem.mountpoint`), `moqui.service.pool.active` and `.queued`, and `moqui.request.pool.busy` beside
+  `moqui.request.queue.depth` and the `moqui.db.pool.*` gauges. A utilization is a share from 0 to 1. The shipped
+  `system-home` dashboard and the `system-db-pool` library panel (folder System) chart them.
 - **Business operations.** A service call that owns its transaction (the outermost, or a `force-new` one) is an
   operation, named by the service, by its `operation` attribute, or by a `telemetry/operations` rule. Each run counts
   as `moqui.operation.runs`, and its time as `moqui.operation.duration`, by `moqui.operation.name` and `outcome`, taken

@@ -1,0 +1,73 @@
+{
+  "id": "system-cpu-load-high",
+  "type": "alert",
+  "title": "High CPU load",
+  "body": {
+    "folder": "System",
+    "description": "Fires when a machine's 5-minute load is more than 100 % of its processors for five minutes, by instance: the critical level of the System home, whose warning is 80 %. Save a copy, then set the threshold and contact points.",
+    "query": {
+      "datasetId": "otel_metrics",
+      "from": "now-5m",
+      "thru": "now",
+      "queryString": "name:\"moqui.system.cpu.load.utilization\"",
+      "aggregations": [
+        {
+          "id": "instance",
+          "type": "terms",
+          "role": "split-rows",
+          "params": {
+            "field": "service.instance.id",
+            "size": 50
+          }
+        },
+        {
+          "id": "share",
+          "type": "max",
+          "role": "metric",
+          "params": {
+            "field": "max"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "type": "calculate",
+          "left": "share",
+          "value": 100,
+          "operator": "*",
+          "name": "percent"
+        },
+        {
+          "type": "organize",
+          "hide": [
+            "count",
+            "share"
+          ]
+        }
+      ]
+    },
+    "field": "percent",
+    "reduce": "last",
+    "condition": {
+      "type": "above",
+      "threshold": 100
+    },
+    "intervalSeconds": 60,
+    "pendingSeconds": 300,
+    "keepFiringSeconds": 0,
+    "labels": {
+      "team": "system",
+      "severity": "critical"
+    },
+    "contactPoints": [
+      {
+        "id": "administrators",
+        "type": "notification",
+        "topic": "ReportAlert",
+        "userGroupId": "ADMIN",
+        "groupWaitSeconds": 0,
+        "repeatSeconds": 3600
+      }
+    ]
+  }
+}

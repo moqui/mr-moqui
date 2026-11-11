@@ -825,6 +825,57 @@ mod enabled {
         (context, telemetry, memory)
     }
 
+    /// The runtime gauges (plans/Tools-Fancy.md B3) are registered once however often the host asks, and the
+    /// filesystem gauges are one series per mount point when the conf allows the attribute.
+    #[test]
+    fn the_runtime_gauges_are_registered_once() {
+        let context = crate::context::ExecutionContextFactory::test_context_with_conf(
+            r#"<moqui-conf><telemetry sample-ratio="1">
+                <metric name="system.filesystem.utilization" attributes="system.filesystem.mountpoint"/>
+                </telemetry></moqui-conf>"#,
+        );
+        let telemetry = for_factory(context.factory());
+        telemetry.set_exporter(Arc::new(Memory::default()));
+        assert_eq!(telemetry.gauge_count(), 0);
+        super::super::register_runtime_gauges(context.factory());
+        let registered = telemetry.gauge_count();
+        assert!(registered >= 19, "{registered}");
+        super::super::register_runtime_gauges(context.factory());
+        assert_eq!(telemetry.gauge_count(), registered);
+        let text = telemetry.prometheus_text().expect("the SDK collects");
+        for name in [
+            "moqui_service_pool_active",
+            "moqui_service_pool_queued",
+            "moqui_request_pool_busy",
+            "moqui_request_queue_depth",
+        ] {
+            let lines = text.lines().filter(|line| *line == format!("# TYPE {name} gauge")).count();
+            assert_eq!(lines, 1, "{name}\n{text}");
+        }
+        // what Linux reports; elsewhere a reading that is missing records nothing
+        if cfg!(target_os = "linux") {
+            for name in [
+                "system_cpu_load_average_1m",
+                "system_cpu_load_average_5m",
+                "moqui_system_cpu_load_utilization",
+                "process_memory_usage",
+                "moqui_process_memory_utilization",
+                "system_linux_memory_available",
+                "process_thread_count",
+                "process_unix_file_descriptor_count",
+            ] {
+                assert!(text.contains(&format!("# TYPE {name}")), "{name}\n{text}");
+            }
+        }
+        if cfg!(unix) {
+            assert!(
+                text.contains("system_filesystem_utilization{system_filesystem_mountpoint=\"/"),
+                "{text}"
+            );
+        }
+        telemetry.shutdown();
+    }
+
     /// An error is marked on the frames it was added under, not on frames popped after it, and the request counts
     /// once in its error group however many of its spans carry it.
     #[test]

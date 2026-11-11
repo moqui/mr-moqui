@@ -18,22 +18,7 @@
 //! listener or integration that was configured did not start.
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::startup::{Entry, Section, State};
-
-/// The listeners in the order the report shows them; one not named here comes after them.
-const LISTENER_ORDER: [&str; 11] = [
-    "HTTP",
-    "HTTPS",
-    "Cluster",
-    "gRPC",
-    "SSH",
-    "SMTP",
-    "Call media",
-    "TURN",
-    "SIP",
-    "XMPP",
-    "Edge tunnels",
-];
+use moqui_core::startup::{Entry, Ready, Section, State, LISTENER_ORDER};
 
 /// What the report shows besides the entries.
 pub(crate) struct Header {
@@ -56,7 +41,14 @@ pub(crate) fn log(factory: &ExecutionContextFactory, routes: &str, listeners: bo
         purpose: property("instance_purpose"),
         role: property("node_role"),
     };
-    let entries: Vec<Entry> = moqui_core::startup::report(factory)
+    let report = moqui_core::startup::report(factory);
+    // scripts read the same report (ec.factory.getStartupReport(), plans/Tools-Fancy.md B1)
+    report.record_ready(Ready {
+        seconds: header.seconds,
+        routes: routes.to_string(),
+        listeners,
+    });
+    let entries: Vec<Entry> = report
         .entries()
         .into_iter()
         .filter(|entry| listeners || entry.section != Section::Listener)

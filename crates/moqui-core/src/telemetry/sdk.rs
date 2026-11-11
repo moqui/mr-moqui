@@ -418,6 +418,12 @@ impl Runtime {
         );
     }
 
+    /// How many gauges are registered.
+    #[cfg(test)]
+    pub(super) fn gauge_count(&self) -> usize {
+        lock(&self.gauges).len()
+    }
+
     /// A gauge of several series: each attribute set the callback returns, with its value.
     pub(super) fn observe_gauge_series(
         &self,
@@ -858,6 +864,7 @@ fn safe_key(key: &str) -> bool {
             | "moqui.edgelink.direction"
             | "moqui.edgelink.set"
             | "moqui.operation.outcome"
+            | "system.filesystem.mountpoint"
     )
 }
 
