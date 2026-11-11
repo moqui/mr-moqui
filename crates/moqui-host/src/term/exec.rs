@@ -169,13 +169,14 @@ pub(crate) fn start(
     rows: u16,
 ) -> io::Result<Started> {
     let master = open_master()?;
-    rustix::termios::tcsetwinsize(&master, winsize(cols, rows))?;
     let name = rustix::pty::ptsname(&master, Vec::new())?;
     let slave = rustix::fs::open(
         name.as_c_str(),
         OFlags::RDWR | OFlags::NOCTTY | OFlags::CLOEXEC,
         Mode::empty(),
     )?;
+    // after the slave is open: on macOS a size set on a master whose slave is not yet open is ENOTTY
+    rustix::termios::tcsetwinsize(&master, winsize(cols, rows))?;
     let spec = ExecSpec {
         argv: argv.to_vec(),
         arg0: arg0.map(str::to_string),

@@ -732,7 +732,8 @@ fn a_session_says_its_status_and_notifies_when_nobody_looks() {
     let capture = moqui_core::notify::capture::NotificationCapture::of(gate.server.factory());
     capture.enable().unwrap();
 
-    if crate::termws::on_path("bash") {
+    // the integration is bash's only where the server gives it one: not macOS's own /bin/bash (3.2), which it leaves alone
+    if integrated_bash_on_path() {
         let opened = page.call("open", Some(serde_json::json!({"kind": "host", "profileName": "ib"})));
         let id = opened["sessionId"]
             .as_str()
@@ -811,9 +812,16 @@ fn a_session_says_its_status_and_notifies_when_nobody_looks() {
     }
 }
 
-/// Whether `program` is on the PATH.
-pub fn on_path(program: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
+/// Whether the first `bash` on the `PATH` is one the server integrates: any but macOS's own `/bin/bash`, as
+/// `term::host` decides on the resolved program.
+fn integrated_bash_on_path() -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path)
+        .map(|dir| dir.join("bash"))
+        .find(|candidate| candidate.is_file())
+        .is_some_and(|bash| !(cfg!(target_os = "macos") && bash == std::path::Path::new("/bin/bash")))
 }
 
 /// The Desktop and Mobile apps' way in (plans/Terminal-Fancy.md §12): the host signs requests and the socket in by the
