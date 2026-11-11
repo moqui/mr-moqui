@@ -1,8 +1,12 @@
 # tools
 
-The administration apps, mounted under `/apps` (and `/qapps`) by `MoquiConf.xml`: Dashboards, Monitor
-([docs/tools/Monitoring.md](../../../docs/tools/Monitoring.md)), System and Tools. Their access is the artifact groups
-of `data/ToolsSecurityData.xml` and `data/MonitoringSecurityData.xml`, granted to `ADMIN`.
+The administration apps, mounted under `/apps` (and `/qapps`) by `MoquiConf.xml`: Dashboards, System and Tools. Monitor
+([docs/tools/Monitoring.md](../../../docs/tools/Monitoring.md)) is a section of System, `/apps/system/Monitor`. On a
+dev instance Dev AIDE ([dev-aide](../../dev-component/dev-aide/README.md)) is beside them.
+
+Their access is three artifact groups granted to `ADMIN`: `TOOLS_APP` and `SYSTEM_APP` (`data/ToolsSecurityData.xml`)
+and `DASHBOARDS_APP` (`data/MonitoringSecurityData.xml`). Monitor has no group of its own: the telemetry datasets and
+its services and entities are members of `SYSTEM_APP`.
 
 Another app may mount the Dashboards screens under its own root, as BOSS Insights does
 ([Mounting the report screens](../../../docs/tools/Monitoring.md#mounting-the-report-screens)); `test/screen/` holds
@@ -16,13 +20,13 @@ the test mount of the ReportMounts spec.
 
 | Screen | What it is |
 | --- | --- |
-| `Data/` | Grid (`Grid.qvue`: the data grid on an entity, a view, a data document, a SQL result or an uploaded CSV or spreadsheet, edited and saved in place, with saved views; a file has Load into…) and Record (one record's form), Browse (a record and its related records), Views (`DbViewEntity` views), Load, Export (entity data and data documents; the home of `DocumentExport.json`), Snapshots |
+| `Data/` | Grid (`Grid.qvue`: the data grid on an entity, a view, a data document, a SQL result or an uploaded CSV or spreadsheet, edited and saved in place, with saved views; a file has Load into…) and Record (one record's form), Browse (a record and its related records), Views (`DbViewEntity` views), Documents (DataDocument definitions and their feed indexing), Load, Export (entity data and data documents; the home of `DocumentExport.json`), Snapshots |
 | `Sql.xml`, `Sql.qvue` | The SQL editor: statements run read only or with changes confirmed, results in a grid, explain, history and saved queries. `SqlTui.xml` is its terminal and plain-page form, `SqlDownload.xml` a result as XLSX. Needs `SQL_RUNNER_WEB` |
 | `Schema/` | Entities and one Entity (with its table's differences), Check Tables, Indexes and keys (the model against the database, planned as jobs), Download DDL |
 | `Etl.xml`, `Etl/` | ETL: Mappings, a Mapping (`Mapping.qvue`: source, target, fields with sample values, test, run, schedule), Runs and a Run (errors, error file, rerun), Value Maps; `Etl.xml` holds the JSON transitions the mapping form and the grid's Load into… use |
 | `Database/` | Overview, Activity (sessions, blockers, index health), Queries, Tables (with maintenance), Jobs and a job's page, Settings, Speed Test, and Connections (external databases: `DATABASE_EXTERNAL`, never on production) |
 | `Load.xml`, `Load/` | Load testing ([docs/tools/Load-Runner.md](../../../docs/tools/Load-Runner.md)): Scripts (the components' `test/load/*.load.js`), New run (`NewRun.qvue`, with `NewRun.tui.json`), Runs (with Compare and Import result), a Run (`Run.qvue`: live numbers and charts while it runs, with `Run.tui.json`) and Compare, over `org.moqui.dev.LoadServices`; `Load.xml` holds the JSON transitions the two `.qvue` files use, and `template/LoadRuns.js` the reads they share. Needs `LOAD_RUNNER` |
-| `Service/`, `StatusFlows.xml` | Services (reference, detail, run) and status flows |
+| `Service/`, `StatusFlows.xml` | Services (reference, detail, run) and status flows. A service's detail, an entity's (Schema) and Database › Overview show Monitor's numbers for it to a reader of the telemetry ([Monitor's screens in other places](../../../docs/tools/Monitoring.md#monitors-screens-in-other-places)) |
 | `ArtifactStats.xml` | Artifact summary: the entities, services and screens counted by package. Its totals are the Tools home's counters. (Hit performance is Monitor › Artifacts) |
 | `RestApi.xml` | REST API: the service REST resources and the entity master API, each opening its Swagger document; `filter` narrows both lists, `api` (`service` or `entity`) shows one |
 
@@ -49,20 +53,40 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
 
 ## System
 
-`screen/System.xml`: its screens are the files of `screen/System/`. **Conf** (`System/Conf/`) shows the merged conf
-with the file each value came from (Settings), edits one conf file with `CONF_EDIT` (Edit, `Edit.qvue`, `EditTui.xml`
-in the terminal) and reloads it (Changes) ([docs/tools/Component-Deploy.md](../../../docs/tools/Component-Deploy.md)).
-**Constitution** (`System/Constitution/`) reads and
-edits the instance's Constitution, previews its agent prompt section and manages the trusted reference origins
-([docs/ai/Constitution.md](../../../docs/ai/Constitution.md)); its shared parts are `template/ConstitutionParts.xml`.
+`screen/System.xml`: its screens are the files of `screen/System/`, so the file tree is the route.
 
-**Home** (`System/Home.xml`) answers whether the instance is healthy, what it is, what it has been doing, what is
-switched on, what needs an administrator and where to go: the runtime report (`ec.factory.getStartupReport()`), the
-status map with its resource readings, the attention service, an embed of the `system-home` dashboard over the `period`
-URL parameter, and the navigation catalog. The catalog is a list of entries in the home's actions (`navCatalog`), shown
-by the `NavFeatured`, `NavFeaturedLarge` and `NavGroups` sections of `template/HomeParts.xml`; the rule is in
-`template/HomeCatalog.js`: an entry whose screen the menu does not show for the user has no tile, a `hidden` entry
-names its screen and shows nothing, and a menu item no entry names is in a last group. A component adds entries with a `screen-extend` `actions-extend` of the home.
+- **Monitor** (`System/Monitor.xml`, `System/Monitor/`): the telemetry screens, Overview first
+  ([docs/tools/Monitoring.md](../../../docs/tools/Monitoring.md#monitor)).
+- **Configuration** (`System/Conf/`) shows the merged conf with the file each value came from (Settings), edits one
+  conf file with `CONF_EDIT` (Edit, `Edit.qvue`, `EditTui.xml` in the terminal) and reloads it (Changes)
+  ([docs/tools/Component-Deploy.md](../../../docs/tools/Component-Deploy.md)). Its Logging and telemetry tab
+  (`Logging.xml`) is Monitor › Settings mounted a second time.
+- **LLM and Agents** (`System/Llm/`): among its screens, Evals (agent evals) and Traces (`Traces.xml`, Monitor › AI
+  mounted a second time).
+- **Constitution** (`System/Constitution/`) reads and edits the instance's Constitution, previews its agent prompt
+  section and manages the trusted reference origins ([docs/ai/Constitution.md](../../../docs/ai/Constitution.md)); its
+  shared parts are `template/ConstitutionParts.xml`.
+
+**Home** (`System/Home.xml`, [plans/Tools-Fancy.md](../../../plans/Tools-Fancy.md) §3) answers whether the instance is
+healthy, what it is, what it has been doing, what is switched on, what needs an administrator and where to go. It
+writes nothing, so it works for a view-only administrator. Each block is read in its actions:
+
+| Block | Reads |
+| --- | --- |
+| Identity and state | `ec.factory.getStartupReport()` (version, package, purpose, role, the time to ready) and `ec.factory.getStatusMap(true)` (host, OS, processors, start, `Ready` and `Draining`); the count of loaded components |
+| Counters | The status map's `Resources` (the 5-minute load, memory, the fullest filesystem), `ec.factory.workerPool`, the `DataSources` pool numbers, and the users with a `moqui.server.VisitUserSummary` row today. A counter at a warning or critical level takes that color and says the level in its title |
+| Activity | A `report-embed` of the shipped `system-home` dashboard over the `period` URL parameter (`1h`, `6h`, `24h`, `7d`), narrowed to this instance; one line in its place when telemetry is off or not in the build |
+| Needs attention | `moqui.tools.SystemHomeServices.get#SystemAttention` (below) |
+| Resources | The status map's `Resources` ([resource watch](../../../docs/Run-Deploy.md#resource-watch)): each reading with its level and a link to its series in Monitor › Metrics; a reading the platform does not report is "—" |
+| Database | The `DataSources` by connection pool, `get#Capabilities` (kind, version, size) and the embedded database's backup job; the `moqui.server.ClusterMember` rows when there is more than one |
+| Listeners and integrations | The runtime report: each listener and integration with its state and detail (failed and skipped first) and the screen that configures it, the tool factories, what the build leaves out, and the routes in a dialog |
+| Navigation | The navigation catalog |
+
+The navigation catalog is a list of entries in a home's actions (`navCatalog`), shown by the `NavFeatured`,
+`NavFeaturedLarge` and `NavGroups` sections of `template/HomeParts.xml`; the rule is in `template/HomeCatalog.js`,
+which describes an entry: one whose screen the menu does not show for the user has no tile, a `hidden` entry names its
+screen and shows nothing, and a menu item no entry names is in a last group. A component adds entries with a
+`screen-extend` `actions-extend` of the home.
 
 `service/moqui/tools/SystemHomeServices.xml` has `get#SystemAttention`, the one list of what needs an administrator
 (resource readings past their `resource-watch` thresholds, failed job runs, system messages in error and the like;

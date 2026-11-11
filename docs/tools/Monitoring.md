@@ -1,9 +1,9 @@
 # Monitoring, dashboards and reports
 
 Moqui records its own work as OpenTelemetry spans, metrics and logs, takes in OTLP from other systems, and keeps all of
-it in SearchFacade indexes on Postgres or OpenSearch. The Monitor app reads those indexes. The Dashboards app is a
-general reporting tool over the same indexes and over business DataDocuments: datasets, report queries, panels,
-dashboards, alerts and scheduled reports. The design and the build record are in
+it in SearchFacade indexes on Postgres or OpenSearch. Monitor, a section of the System app, reads those indexes. The
+Dashboards app is a general reporting tool over the same indexes and over business DataDocuments: datasets, report
+queries, panels, dashboards, alerts and scheduled reports. The design and the build record are in
 [plans/Monitoring.md](../../plans/Monitoring.md). As of Oct 27, 2026 (M1–M7 and the review pass built).
 
 The code: `crates/moqui-core/src/telemetry/` (the SDK wiring, sampling, the bounded worker, OTLP in and out, rollups
@@ -203,7 +203,7 @@ holding up the others.
   page of this same server, that page's request span, unless sampled, decides the trace first and the CLIENT child is
   left out; the check span and the page's span are still kept.)
 - The shipped `monitor-checks` dashboard shows runs and mean duration per check, failures, runs by status over time,
-  and scrape targets' `up`. Targets and checks are set by a `MONITOR_APP` user and may be internal addresses.
+  and scrape targets' `up`. Targets and checks are set by a `SYSTEM_APP` user and may be internal addresses.
 
 ## Deploy markers and annotations
 
@@ -216,9 +216,13 @@ alert state changes and notes.
 - A signed-in user or a script with a login key can post the same to `/rest/s1/moqui/monitor/annotations`.
 - Dashboards › Annotations lists them and adds notes by hand.
 
-## The Monitor app
+## Monitor
 
-Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/report/` and Explore presets.
+Monitor is a section of the System app: `/apps/system/Monitor/<Screen>`, second in System's menu, opening on Overview.
+It is mostly dashboards shipped from `tools/report/` and Explore presets. It has no grant of its own: a holder of
+`SYSTEM_APP` uses it, and so reads the telemetry (traces with their users, logs, errors); the permissions named below
+(`MONITOR_INCIDENT`, `MONITOR_REPLAY`, `MONITOR_SETTINGS` and the others) each gate one thing inside it. "Monitor › X"
+is the short name of its screens.
 
 | Screen | What it shows |
 | --- | --- |
@@ -240,18 +244,36 @@ Monitor (menu index 97, `MONITOR_APP`) is mostly dashboards shipped from `tools/
 | Recovery | The emergency stop, the recovery policies and adapters (changed with `MONITOR_RECOVER_ADMIN`), and the newest actions |
 | Settings | Logging and telemetry settings with their on-disk values, changed for a while with `MONITOR_SETTINGS` ([below](#changing-settings-for-a-while)) |
 | Replays | With `MONITOR_REPLAY`: session replays by user and visit, newest first; ReplayDetail plays one (rrweb's Replayer, with play, pause and seek; the terminal client lists its page and traces) and links the traces its page touched. The Visit screen links a visit's replays |
-| Evals | Agent evals ([below](#agent-evals)): experiments, datasets, scorers, and recent runs with their scores |
 
 The Monitor screens built on Dashboards screens run the Explore and Dashboard transitions themselves, so trace, user,
-export, inspect and tail links work for a user with `MONITOR_APP`; Log context and Compare are mounted under Monitor
-for the same reason. The System app's Visit screens list a visit's
-requests from the request spans, and a job run links to its trace and its logs.
+export, inspect and tail links work for a holder of `SYSTEM_APP` without `DASHBOARDS_APP`; Log context and Compare are
+mounted under Monitor for the same reason.
+
+### Monitor's screens in other places
+
+Some of what Monitor has also shows where its reader already is. Monitor's screen or dashboard stays the owner; none
+of these copies it.
+
+| From Monitor | Also in | How |
+| --- | --- | --- |
+| Settings | System › Configuration › Logging and telemetry (`/apps/system/Conf/Logging`) | The same screen mounted a second time; changing still needs `MONITOR_SETTINGS` |
+| AI | System › LLM and Agents › Traces (`/apps/system/Llm/Traces`) | The same screen mounted a second time |
+| The AI dashboard (`monitor-ai`) | LLM and Agents › Overview | Its `calls` and `tokens` panels over seven days, embedded |
+| Artifacts (`monitor-artifacts`) | Tools › Service, a service's detail; Tools › Schema, an entity, while the entity artifact type's metrics are on | Its `activity` panel narrowed to that artifact (its hits over seven days), embedded, with a link to Monitor › Artifacts narrowed the same way |
+| The database pool gauges | Tools › Database › Overview | The `system-db-pool` library panel over the last hour, embedded |
+| Metrics, incidents, errors, checks, sources | The System home | The `system-home` dashboard embedded as the Activity strip, and the counts of Needs attention, each linking to its Monitor screen |
+| Traces | System › Security, a user's detail | A link, Requests by this user |
+
+The three embeds in Tools show only to a reader of the `otel_metrics` dataset (granted with System), since a user may
+hold Tools without System; the screen checks before it embeds ([Embedding](#the-dashboards-app)). The System app's
+Visit screens list a visit's requests from the request spans, and a job run links to its trace and its logs.
 
 ## Agent evals
 
-Monitor › Evals tests an agent against fixed cases and scores what it does. The entities are in
-`framework/entity/AgentEvalEntities.xml`, the services in `org.moqui.agent.AgentEvalServices` (`AgentEval.js`), and
-the seed data (types, the built-in scorers, the jobs and the permissions) in `framework/data/AgentEvalData.xml`.
+System › LLM and Agents › Evals (`/apps/system/Llm/Evals`) tests an agent against fixed cases and scores what it does.
+The entities are in `framework/entity/AgentEvalEntities.xml`, the services in `org.moqui.agent.AgentEvalServices`
+(`AgentEval.js`), and the seed data (types, the built-in scorers, the jobs and the permissions) in
+`framework/data/AgentEvalData.xml`.
 
 - **Scorers** (`AgentScorer`) give an output a score from 0 to 1 and a reason, with a pass threshold. A *service*
   scorer is a service with `input`, `output`, `groundTruth`, `runId`, `metadata` and `config` in and `score` and
@@ -357,8 +379,11 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
     file once the delete commits, and Push now removes any left behind.
 - **Embedding.** `<report-embed definition-id="" panel-id="" from="now-7d" thru="now" variables="[map expression]"/>`
   places a saved dashboard, one of its panels or a library panel on any screen. It renders as the viewer, so a
-  visitor who is not signed in (such as on a public site) gets nothing, and one that cannot be read logs a warning
-  and renders nothing.
+  visitor who is not signed in (such as on a public site) gets nothing, and a definition the viewer may not read logs
+  a warning and renders nothing. A definition the viewer may read over a dataset the viewer may not is drawn, each such
+  panel saying "Not available: viewer may not read dataset …": a screen that embeds for readers who may lack the
+  dataset checks first (`list#Datasets` leaves out what the user may not read) and leaves the embed out, as Tools'
+  service and entity detail do.
 - **Reusing the dashboard list.** `Dashboards/Home.xml`'s links run through its own transitions (`dashboard`, `star`,
   `edit`, `new`, `explore`), so a screen that includes it takes them in with `transition-include`, as
   `Dashboards/Panels.xml` and BOSS Insights › Dashboards do. A dashboard then opens in that screen's sibling `Dashboard`
@@ -608,15 +633,16 @@ conf or restarting, for a while: to see full traces or DEBUG lines of one module
   annotation tagged `runtime-override` and the key: a set is a band to its expiry, an extend or an early revert a
   point. Incidents list them as changes, and dashboards draw them.
 
-Seeing the screen needs Monitor access; changing needs `MONITOR_SETTINGS`, which ADMIN holds and the public demo
-ends. The services are `org.moqui.monitor.MonitorServices.list#RuntimeSettings`, `set#RuntimeSetting`,
-`revert#RuntimeSetting` and `revert#AllRuntimeSettings`; the code is `crates/moqui-core/src/live_settings/` and
+The same screen is System › Configuration › Logging and telemetry. Seeing it needs System access (`SYSTEM_APP`);
+changing needs `MONITOR_SETTINGS`, which ADMIN holds and the public demo ends. The services are
+`org.moqui.monitor.MonitorServices.list#RuntimeSettings`, `set#RuntimeSetting`, `revert#RuntimeSetting` and
+`revert#AllRuntimeSettings`; the code is `crates/moqui-core/src/live_settings/` and
 `crates/moqui-report/src/settings.rs`.
 
 ## Security
 
 - Every query runs as the viewer. A dataset is authorized as the artifact `org.moqui.report.dataset.<id>`
-  (`MONITOR_APP` holds the `otel_*` ones; `REPORT_DATASETS_ADMIN` holds all), plus `DataDocumentUserGroup` for a
+  (`SYSTEM_APP` holds the `otel_*` ones; `REPORT_DATASETS_ADMIN` holds all), plus `DataDocumentUserGroup` for a
   DataDocument. A saved panel never widens access.
 - A business dataset is read only once admitted, and its row filter is a registered scope policy
   ([Business datasets](#business-datasets)).
@@ -666,6 +692,13 @@ take the index refresh interval to appear.
   ```
 
   Then set the report email template's SMTP server.
+- **Monitor in System.** Monitor's routes are `/apps/system/Monitor/<Screen>` (`/apps/monitor` is gone, with no
+  alias), Evals is `/apps/system/Llm/Evals`, and the `MONITOR_APP` artifact group is no longer shipped: its datasets,
+  services and entities are members of `SYSTEM_APP`. On an existing database load
+  `runtime/base-component/tools/data/ToolsSecurityData.xml` for those members. The database keeps its `MONITOR_APP`
+  rows, which name a screen that is gone: they still grant the telemetry datasets and Monitor's services, and no
+  longer any screen. A user group that was granted only `MONITOR_APP` needs `SYSTEM_APP` to open Monitor, which also
+  opens the rest of System to it. The `MONITOR_*` permissions are unchanged. The old routes answer 404.
 - **Business datasets** (Insights P3): the entity check creates `moqui.report.BusinessDataset`; load `ReportSetupData.xml` again
   for the `ReportScopePolicy` type and mr-mantle's `MonitoringSalesSecurityData.xml` for its policy. From then on a dataset with `signal`
   business is read only once admitted or by a holder of its update artifact (`ADMIN` holds them all), so a non-`ADMIN` reader of

@@ -1,6 +1,7 @@
 # System and Tools homes
 
-Nov 10, 2026. Research and plan; nothing built. The decisions taken that day are in [§9](#9-decisions); none is open.
+Nov 10, 2026. Built, phases P1 to P6. Where the build differs from the plan below is in [§11](#11-as-built). The
+decisions taken that day are in [§9](#9-decisions); none is open.
 
 The tools component (`runtime/base-component/tools`) is the face of the framework: the first screens an administrator
 or a developer opens on a new instance. This plan covers three things:
@@ -18,7 +19,8 @@ color outside the theme ([style guide](../runtime/component/mr-boss/plan/style-g
 
 Contents: [1 today](#1-what-is-there-today) · [2 app structure](#2-app-structure) · [3 System home](#3-system-home) ·
 [4 Tools home](#4-tools-home) · [5 building blocks](#5-building-blocks) · [6 modes, access, speed](#6-render-modes-access-and-speed) ·
-[7 tests and docs](#7-tests-and-docs) · [8 phases](#8-phases) · [9 decisions](#9-decisions) · [10 later](#10-later)
+[7 tests and docs](#7-tests-and-docs) · [8 phases](#8-phases) · [9 decisions](#9-decisions) · [10 later](#10-later) ·
+[11 as built](#11-as-built)
 
 ## 1. What is there today
 
@@ -211,8 +213,10 @@ there, none of which copies logic:
 | Incidents, Errors | System home, Needs attention | Counts with links |
 | Traces of one user | System › Security, a user's detail | A link "Requests by this user" into Monitor › Traces with the user filter. A visit already lists its requests from the spans, and a job run links to its trace and logs |
 
-An embed renders nothing for a reader who may not read its dataset, so a Tools user without System sees the service
-page as it is today.
+An embed does not hide itself from a reader who may not read its dataset: each of its panels says "Not available:
+viewer may not read dataset …". So the three embeds in Tools (a service's detail, an entity's, Database › Overview) are
+guarded in the screen by a check that the reader may read `otel_metrics`, and a Tools user without System sees those
+pages as they are today.
 
 ### 2.6 Home, not dashboard
 
@@ -586,3 +590,62 @@ Not in the phases above; each stands on its own.
 - **Schema differences** on the Tools home: the count from the last Check Tables run, if a kept result makes it cheap.
 - **Auto refresh** of the System home each minute, the metric documents' own pace; the wall display is Monitor ›
   Overview in kiosk mode today.
+
+## 11. As built
+
+The plan above stands as written, with these differences in the code.
+
+**Data (P2).**
+
+- The resource readings and their levels are in `moqui-core`'s `context/resources.rs`, not `context/status.rs`; the
+  status map carries them as `Resources`.
+- `routes` in `ec.factory.getStartupReport()` is a list of route texts; `tools` and `notBuilt` are lists of names.
+- The three alert rule templates each have one threshold, the critical one of §3.4: disk above 90 % at once, memory
+  above 90 % and CPU load above 100 % for five minutes. The warning level is on the System home only.
+- An attention item is `{key, severity, text, count, value, link, parameters}`: `key` names the check, and `value` is
+  a resource reading's percent where `count` is a count of records. The resource readings come first and the others
+  after, each part with the most severe first. A count stops at 100 and reads "100 or more".
+- The silent cluster member item has no link, since there is no members screen.
+
+**System home (P4).**
+
+- A `number-card` has one value and no second line, so a counter's second line (the share of the limit, the queue,
+  those waiting) is in the card's title, with the level's word when it is at warning or critical.
+- The Activity strip is rendered with the page, not in a `dynamic-container`, and has no link of its own to Monitor ›
+  Overview: the embed's header has Open in Dashboards, and Monitor is the first featured card.
+- The Cluster members list shows only when there is more than one member row: the Cluster listener is on for every
+  server, so its state does not say the instance is clustered.
+- The link groups are boxes in a `dashboard` grid, as many in a row as fit; on a phone they are one column and do
+  not collapse to their titles.
+
+**Navigation catalog (P4).**
+
+- The rule is `template/HomeCatalog.js` (`build`, and `forScreen` over `sri.getMenuItems`); `template/HomeParts.xml`
+  has the sections that show it: `NavFeatured` (cards of size `md`), `NavFeaturedLarge` (`lg`) and `NavGroups`.
+- An entry is `{path, group, featured, text, links, title, icon, parameters, hidden}`, or `{url, title, …}` for a link
+  the menus do not know (another app, a screen out of every menu). `title` and `icon` replace the menu item's;
+  `parameters` is added to the link; `hidden` names a screen and shows nothing for it, so a tool whose permission
+  the user does not hold is not in the last group either. A card's `links` are `{path | url, title, parameters}`.
+
+**Tools home (P5).**
+
+- The entity jump is one search with a Records or Definition choice beside it, not a second action on the row.
+- The screen count is not counted in the render: `moqui.tools.ToolsHomeServices.get#ScreenCount` answers the count
+  kept in the `tools.home.counts` cache, and when there is none or it is ten minutes old has `count#Screens` count
+  again on a worker. Until the first count is kept the card says it is being counted. Both services are members of
+  `TOOLS_APP`.
+- The server-static report still names two things on the page: the database picker's form and the state chip of
+  Running and recent.
+
+**Monitor in other places (P6).**
+
+- The `report-embed` behavior of §2.5, corrected there: a "Not available" notice, and the guard in the three Tools
+  screens. The entity embed also needs the entity artifact type's metrics to be on.
+- The `activity` panel of `monitor-artifacts` charts hits only, so a service's or an entity's page shows its hits
+  over seven days; the duration is in Monitor › Artifacts, which the link beside the embed opens narrowed to it.
+
+**Not built.**
+
+- The links between Tools and Dev AIDE on a dev instance (§2.3): Tools' entity and service screens do not link to
+  Dev AIDE's. Dev AIDE's entity screen links to the data grid, and the Tools home links to Dev AIDE when it is mounted.
+

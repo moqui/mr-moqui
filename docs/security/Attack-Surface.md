@@ -30,10 +30,12 @@ Seed grants, from `runtime/base-component/tools/data/ToolsSecurityData.xml`:
 
 | Group | Artifact | Grant |
 | --- | --- | --- |
-| `TOOLS_APP` | `component://tools/screen/Tools.xml`, `inheritAuthz` Y | `ADMIN`, `AUTHZT_ALWAYS`, `AUTHZA_ALL` |
-| `SYSTEM_APP` | `component://tools/screen/System.xml`, `inheritAuthz` Y | `ADMIN`, `AUTHZT_ALWAYS`, `AUTHZA_ALL` |
+| `TOOLS_APP` | `component://tools/screen/Tools.xml`, `inheritAuthz` Y; `moqui.tools.ToolsHomeServices.get#ScreenCount` and `count#Screens` (the Tools home's screen count, counted on a worker) | `ADMIN`, `AUTHZT_ALWAYS`, `AUTHZA_ALL` |
+| `SYSTEM_APP` | `component://tools/screen/System.xml`, `inheritAuthz` Y, which holds Monitor (`System/Monitor.xml`); `moqui.tools.SystemHomeServices.get#SystemAttention`; the `org.moqui.report.dataset.otel_*` datasets and `org.moqui.report.dataset.monitor_annotations`; `org.moqui.monitor.MonitorServices.*`, `TelemetryServices.scrape#Targets` and `run#Checks`, `moqui.monitor.ScrapeTarget` and `SyntheticCheck`; `org.moqui.agent.AgentEvalServices.*` and the agent eval entities (`moqui.agent.AgentScorer`, `AgentScorerAttach`, `AgentDataset`, `AgentDatasetItem`, `AgentExperiment`, `AgentExperimentResult`, `AgentScore`) | `ADMIN`, `AUTHZT_ALWAYS`, `AUTHZA_ALL` |
 | `MOQUI_API` | `/moqui`, `AT_REST_PATH`, `inheritAuthz` Y | `ADMIN`, `AUTHZT_ALWAYS`, `AUTHZA_ALL` |
 | `MOQUI_API_GIT` | `/moqui/git`, `inheritAuthz` Y | `ALL_USERS`, `AUTHZT_ALLOW`, `AUTHZA_ALL`. The services still check `AT_GIT_REPOSITORY` |
+
+Monitor is a section of System with no group of its own, so a `SYSTEM_APP` holder reads the telemetry: traces with their users, logs and errors, in Monitor and, with `DASHBOARDS_APP`, in Explore. The `MONITOR_*` permissions (`MONITOR_INGEST`, `MONITOR_REPLAY`, `MONITOR_INCIDENT`, `MONITOR_RECOVER`, `MONITOR_RECOVER_ADMIN`, `MONITOR_SETTINGS`, `MONITOR_EVAL`, `MONITOR_EVAL_RUN`) each gate one thing inside it. A database seeded before Monitor moved keeps its `MONITOR_APP` group, which still grants those datasets and `MonitorServices` to its holders but no screen ([Monitoring, Upgrading](../tools/Monitoring.md#upgrading)).
 
 `user-facade` `authz` sets the privileged groups to `ADMIN`, `ADMIN_ADV` and `SYSMSG_RECEIVE`. Creating, updating, or deleting membership in those groups is allowed only when the caller is already a member. Seed and install, and a call with authorization disabled, skip that check. `SYSMSG_RECEIVE` is there because its members call `receive#IncomingSystemMessage` as a remote system, and a party screen that adds memberships by posted `userGroupId` would otherwise let a user join it. The sealed permissions are `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, `SSH_SHELL`, `LOAD_RUNNER`, `ADMIN_LOGIN_AS`, `ADMIN_PASSWORD`, `SearchRemote`, `DashboardRemote`, `REST_SCHEMA`, `LlmGatewayUse`, `COMPONENT_DEPLOY`, `DATABASE_ADMIN`, `DATABASE_EXTERNAL`, `ADMIN_CONSTITUTION_GLOBAL`, and the delegated-administration grants that widen access, `ADMIN_IDENTITY_GLOBAL`, `ADMIN_ACCESS_MANAGE` and `ADMIN_BACKUP_DOWNLOAD`. A `UserGroupPermission` row for one of those can be written only by a caller who already has that permission, and a `UserGroupMember` row in a group that grants one (not ended) only by a caller who has each such permission, so a sealed grant is not passed on through a group that is not privileged; an update that only ends a membership sooner passes (`Security.eecas.xml` `UserGroupMemberSealed`, `assert_sealed_group_membership`). A component adds to either list with `authz` child elements, `<privileged-group name="..."/>` and `<sealed-permission name="..."/>`, which the conf merge adds to every other component's and never replaces; setting the attribute in a component's conf replaces the framework's list, so it is not done (mr-boss adds its privileged Admin groups this way). The check reads the attribute, or the framework's default list when it is empty, joined with every element (`security_checks.rs`). A DataDocument field expression (a `fieldPath` with `(`) is JavaScript run as whoever reads the document (the grid, exports, feeds, reports), so creating or updating one needs `DATABASE_ADMIN`, which already allows data changes that end in code running on the server (`Security.eecas.xml` `DataDocumentFieldExpression`, `assert_document_expression` in `crates/moqui-core/src/service/security_checks.rs`). Seed and install, and a call with authorization disabled, skip that check too. Its context holds no encrypted or password fields (`expression_hidden`, `crates/moqui-entity/src/entity/field_rw.rs`).
 
@@ -47,7 +49,6 @@ From `runtime/base-component/tools/data/MonitoringSecurityData.xml` ([Monitoring
 
 | Group | Artifacts |
 | --- | --- |
-| `MONITOR_APP` | `component://tools/screen/System/Monitor.xml` (`inheritAuthz` Y), the `org.moqui.report.dataset.otel_*` datasets, `org.moqui.report.dataset.monitor_annotations`, `org.moqui.monitor.MonitorServices.*` |
 | `DASHBOARDS_APP` | `component://tools/screen/Dashboards.xml` and `/moqui/reports` (`inheritAuthz` Y), `org.moqui.report.ReportServices.*` |
 | `REPORT_DATASETS_ADMIN` | every `org.moqui.report.dataset.*`: unrestricted dataset access |
 | `REPORT_CONTACT_ADMIN` | `org.moqui.report.contact.webhook`: alert webhooks |
@@ -271,7 +272,7 @@ Other root screens that do not require a user: `Login` (`false`), `ChangePasswor
 
 ### Tools and System
 
-`runtime/base-component/tools/MoquiConf.xml` mounts `system` and `tools` under `apps`. The URLs are `/apps/system` and `/apps/tools`, and the same names through the qapps extra path. There is no `/vapps` mount. `Tools.xml` and `System.xml` omit `require-authentication`, so both are required. `ADMIN` has inheritable always-all on each root, from the seed table above.
+`runtime/base-component/tools/MoquiConf.xml` mounts `dashboards`, `system` and `tools` under `apps`. The URLs are `/apps/dashboards`, `/apps/system` and `/apps/tools`, and the same names through the qapps extra path. Monitor is `/apps/system/Monitor/<Screen>`, and the two homes are `/apps/system/Home` and `/apps/tools/Home`; there is no `/apps/monitor`. There is no `/vapps` mount. `Tools.xml` and `System.xml` omit `require-authentication`, so both are required. `ADMIN` has inheritable always-all on each root, from the seed table above.
 
 Tools' SQL, Service Run, Data Load, Data Snapshots, and `qzSign` are designed privileged tools. The elFinder screen was removed (Dev-AIDE replaces it); its commands are `/resources` on webroot. A screen-by-screen re-check of write refusals (the rest of the Java tool table) was not done. The extra permission checks that were read, on top of screen artifact authorization:
 
@@ -283,7 +284,8 @@ Tools' SQL, Service Run, Data Load, Data Snapshots, and `qzSign` are designed pr
 | `db=ext:…` on any database service, and the connection services | `DATABASE_EXTERNAL` (`ADMIN_ADV`), and not a production instance; the refusal is one vague "Not available" |
 | ETL (`org.moqui.dev.EtlServices`) | All actions on the Tools app, checked again as the user on the worker; `GROOVY_SHELL_WEB` for a mapping with an `expression`; `SQL_RUNNER_WEB` for a SQL source; files only from the user's uploads, `dbresource://moqui/etl/` and `runtime://import/` (any `dbresource://` with `DATABASE_ADMIN`) |
 | `Tools/Load.xml`, `Tools/Load/*` (load scripts, a run's form, runs, a run, compare; start, stop, a live change of a scenario's users or rate within `load_runner_max_users`, delete, import, download) | `LOAD_RUNNER` (sealed, `ADMIN_ADV`) and all actions on the Tools app, checked by every `org.moqui.dev.LoadServices` service whatever calls it. Without `LOAD_RUNNER` the Tools menu entry is left out (`Tools.xml` `menu-include`) and `Load.xml` shows Not available. A run names a script by location, only a `test/load/*.load.js` file of a loaded component; no screen takes script text. A run's script and target are never taken from a result file: Run again and an import resolve and check them anew. See [Load runs](#load-runs) |
-| `Tools/dashboard.xml` | shows the SQL and Load testing boxes only with `SQL_RUNNER_WEB` and `LOAD_RUNNER` |
+| `Tools/Home.xml` | shows the SQL card, saved queries and SQL history only with `SQL_RUNNER_WEB`, and the Load testing links and load runs only with `LOAD_RUNNER`. |
+| `Tools/Service/ServiceDetail.xml`, `Tools/Schema/Entity.xml`, `Tools/Database/Overview.xml` | embed a Monitor panel only for a reader of the `otel_metrics` dataset (granted with `SYSTEM_APP`): a Tools user without System sees no telemetry there |
 | `System/Llm.xml` | `AgentAdmin`, or the screen returns an error. The comment says every screen under it needs `AgentAdmin`. |
 | `System/Security/UserAccount/UserAccountDetail.xml` | `ADMIN_LOGIN_AS` for login-as, and a different username |
 
@@ -906,7 +908,7 @@ that login reaches:
   and Load testing (`Tools/Load`) are replaced by a screen that says they are disabled. Activity and Queries show every
   session's statements. Plans, jobs, maintenance and resets are refused by the VIEW-only authorization and the missing
   `DATABASE_ADMIN`.
-- `ADMIN` is VIEW-only on Tools, System, Monitor, `/moqui`, EntitySync and SystemMessage receive, `/resources` (so refused: `run` is not a view verb), git repositories,
+- `ADMIN` is VIEW-only on Tools, System (Monitor with it), `/moqui`, EntitySync and SystemMessage receive, `/resources` (so refused: `run` is not a view verb), git repositories,
   report git sync and report webhooks. It loses `SearchRemote`, `DashboardRemote`, `ADMIN_PASSWORD`, `SSH_SFTP`,
   `SSH_GIT`, `MONITOR_INGEST` and `REPORT_SAVE_LOCATION`. `john.doe` leaves `ADMIN_ADV`.
 - SSH (`ssh-server enabled="false"`), DAV, the MCP server and client, A2A both ways and the gateway are off, and mail
