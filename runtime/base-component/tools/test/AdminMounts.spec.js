@@ -6,9 +6,10 @@
 // the stack lets through. A mount's routes replace and add to the framework's, a plain one (another app's page) answered as
 // a URL with its query string; a value that is not a map is a mount with nothing in it. A System screen's own raw
 // transition (JobDetail's updateJob, an entity-auto update the mount's always-allow would pass) is refused under a mount
-// that mounts the screen by location, and runs under System. And the rule that keeps it so, read from the screens' sources
-// at no render's cost: every transition of an area's screens that acts either calls only org.moqui.admin services, which
-// check the delegated permissions themselves, or carries raw() as its condition.
+// that mounts the screen by location, and runs under System, as another area's does (GroupDetail's updateUserGroup). And
+// the rule that keeps it so, read from the screens' sources at no render's cost: every transition of an area's screens
+// that acts either calls only org.moqui.admin services, which check the delegated permissions themselves, or carries
+// raw() as its condition.
 // Run: ./moq test tools --spec AdminMounts
 const mount = "component://tools/test/screen/AdminMount.xml"
 const probe = "component://tools/test/screen/AdminMount/Probe.xml"
@@ -22,11 +23,22 @@ const JOB = "moqui.service.job.ServiceJob"
 const jobName = "AdminMountsSpec_job"
 // The areas of System that another app may show under its root (screen/System/<Area>/): each phase of
 // plans/Admin-Screens-Down.md adds its own.
-const AREAS = ["Operations", "Integrations", "Protocols"]
+const AREAS = ["Operations", "Integrations", "Protocols", "Access", "Security"]
+// What an area's directory holds that the rule does not read, as a path under screen/System (a screen and the screens below
+// it), with why.
+const NOT_AREA_SCREENS = {
+    "Security/UserAccount":
+        "System's own account administration from before the areas (its transitions are entity-auto, for whoever opens " +
+        "System), never shown by an app as a screen of an area; below it the Verify screens of a user's own factors, which " +
+        "apps mount by location on purpose"
+}
 const RAW_CONDITION =
     "<condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>"
 // A transition that is deliberately neither delegated nor raw, as "<file under screen/System>#<transition>", with why.
-const UNGUARDED = {}
+const UNGUARDED = {
+    "Security/SignInPolicy.xml#reviewRule":
+        "carries the change form's values to the review as parameters: no service, nothing written"
+}
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -250,9 +262,39 @@ feature("a System screen's raw transition is refused under a mount that mounts i
             {jobName, description: "past a forged mount", adminMount: "forged"},
             "post"
         )
-        return {mounted, afterMount, administratorMounted, afterAdministratorMount, own, afterOwn: description(), forged}
+        // another area's: a group's record changed directly on Access › GroupDetail, here the spec's own group
+        const ownGroup = screen(
+            system,
+            "Access/GroupDetail/updateUserGroup",
+            {userGroupId: GROUP, description: "directly"},
+            "post"
+        )
+        const groupDescription = sys(
+            () => ec.entity.find("moqui.security.UserGroup").condition("userGroupId", GROUP).one().description
+        )
+        return {
+            mounted,
+            afterMount,
+            administratorMounted,
+            afterAdministratorMount,
+            own,
+            afterOwn: description(),
+            forged,
+            ownGroup,
+            groupDescription
+        }
     },
-    then({mounted, afterMount, administratorMounted, afterAdministratorMount, own, afterOwn, forged}) {
+    then({
+        mounted,
+        afterMount,
+        administratorMounted,
+        afterAdministratorMount,
+        own,
+        afterOwn,
+        forged,
+        ownGroup,
+        groupDescription
+    }) {
         mounted.errors.includes("Condition failed for transition")
         afterMount == "before"
         administratorMounted.errors.includes("Condition failed for transition")
@@ -260,6 +302,7 @@ feature("a System screen's raw transition is refused under a mount that mounts i
         own.errors == ""
         forged.errors == ""
         afterOwn == "past a forged mount"
+        ownGroup.errors == "" && groupDescription == "directly"
     }
 })
 
@@ -272,6 +315,7 @@ feature("every acting transition of an area's screens calls only org.moqui.admin
         for (const area of AREAS)
             for (const location of screenFiles(base + area)) {
                 const file = location.substring(base.length)
+                if (Object.keys(NOT_AREA_SCREENS).some(path => file === path + ".xml" || file.startsWith(path + "/"))) continue
                 for (const {name, body} of actingTransitions(location)) {
                     const services = Array.from(body.matchAll(/<service-call\s+name="([^"]+)"/g)).map(match => match[1])
                     if (body.includes(RAW_CONDITION)) raw++
@@ -285,8 +329,9 @@ feature("every acting transition of an area's screens calls only org.moqui.admin
         // a transition named here acts past the delegated services with no raw() condition: under an app's inheritable
         // always-allow it would run for everyone the app lets into the area
         problems == ""
-        // the rule read something of each kind: JobDetail's saveJob and updateJob among them
-        delegated >= 10
-        raw >= 20
+        // the rule read something of each kind: JobDetail's saveJob and updateJob among them, and GroupDetail's storeGroup and
+        // updateUserGroup
+        delegated >= 30
+        raw >= 50
     }
 })

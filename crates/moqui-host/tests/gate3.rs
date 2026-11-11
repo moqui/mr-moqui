@@ -17,7 +17,7 @@
 //! server-static template and `/actions` pair, the `/qapps` shell with its menu data, and the compatibility report from the
 //! binary. The browser smoke is `gate3_browser.rs`, on the same setup (`common/mod.rs`).
 //!
-//! The fixture is `component://tools/screen/System/Security/ArtifactGroup/ArtifactGroupDetail.xml`.
+//! The fixture is `component://tools/screen/System/Access/ArtifactGroupDetail.xml`.
 //! It has what the gate asks for:
 //!
 //! - a `form-single` (`ArtifactGroupForm`, a `display` and a `text-line` over the `artifactGroup` value),
@@ -55,7 +55,7 @@ fn artifact_group_detail_renders_as_text_csv_xml_and_html_print() {
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
     let get = |mode: &str| {
-        let path = format!("/System/Security/ArtifactGroup/ArtifactGroupDetail.{mode}?artifactGroupId=SYSTEM_APP");
+        let path = format!("/System/Access/ArtifactGroupDetail.{mode}?artifactGroupId=SYSTEM_APP");
         let (status, headers, body) = exchange(address, &http_request("GET", &path, &[("Authorization", &john)], ""));
         assert_eq!(status, 200, "{mode}: {body}");
         assert!(!body.contains("Error rendering"), "{mode}: {body}");
@@ -115,7 +115,7 @@ fn artifact_group_detail_renders_as_text_csv_xml_and_html_print() {
     assert_eq!(content_type.as_deref(), Some("text/xml;charset=UTF-8"));
     assert_eq!(
         xml,
-        "<webroot>\n<System>\n<Security>\n<ArtifactGroup>\n<ArtifactGroupDetail>\n\
+        "<webroot>\n<System>\n<Access>\n<ArtifactGroupDetail>\n\
          \x20   <ArtifactGroupMemberList>\n\
          \x20       <ArtifactGroupMemberListEntry artifactTypeEnumId=\"Screen\" artifactName=\"component://tools/screen/System.xml\" nameIsPattern=\"N\" inheritAuthz=\"Y\" filterMap=\"\" deleteLink=\" \"/>\n\
          \x20   </ArtifactGroupMemberList>\n\
@@ -126,7 +126,7 @@ fn artifact_group_detail_renders_as_text_csv_xml_and_html_print() {
          \x20   <ArtifactTarpitList>\n\
          \x20       <ArtifactTarpitListEntry userGroupId=\"All Users (all users members by default) - ALL_USERS\" maxHitsCount=\"100\" maxHitsDuration=\"60\" tarpitDuration=\"30\" deleteLink=\" \"/>\n\
          \x20   </ArtifactTarpitList>\n\
-         </ArtifactGroupDetail>\n</ArtifactGroup>\n</Security>\n</System>\n</webroot>\n"
+         </ArtifactGroupDetail>\n</Access>\n</System>\n</webroot>\n"
     );
 
     // html-print: one document with print CSS. The form-single is a table of title and value, each form-list
@@ -168,7 +168,7 @@ fn artifact_group_detail_renders_as_text_csv_xml_and_html_print() {
     assert!(print.contains("SYSTEM_APP_ADMIN"), "{print}");
     assert!(print.contains("Always Allow (overrides Deny)"), "{print}");
     // userGroupDetail is an alias transition, so the link goes to the screen it names, with that screen's parameter
-    assert!(print.contains("All Users (all users members by default) - <a href=\"/System/Security/UserGroup/UserGroupDetail?userGroupId=ALL_USERS\">ALL_USERS</a>"), "{print}");
+    assert!(print.contains("All Users (all users members by default) - <a href=\"/System/Access/GroupDetail?userGroupId=ALL_USERS\">ALL_USERS</a>"), "{print}");
     // a print document has no client: no moqui-html.js and no script at all
     assert!(!print.contains("moqui-html.js"), "{print}");
     assert!(!print.contains("<script"), "{print}");
@@ -176,7 +176,7 @@ fn artifact_group_detail_renders_as_text_csv_xml_and_html_print() {
     assert_eq!(content_type.as_deref(), Some("text/html;charset=UTF-8"));
     assert_eq!(xsl_fo, print);
     // The renderMode parameter takes either name, and the layout comes from layoutMaster.
-    let path = "/System/Security/ArtifactGroup/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP&renderMode=xsl-fo&layoutMaster=legal-landscape";
+    let path = "/System/Access/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP&renderMode=xsl-fo&layoutMaster=legal-landscape";
     let (status, _, landscape) = exchange(address, &http_request("GET", path, &[("Authorization", &john)], ""));
     assert_eq!(status, 200, "{landscape}");
     assert!(
@@ -194,7 +194,7 @@ fn artifact_group_detail_renders_as_html_with_the_shared_client() {
     let gate = start("html");
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
-    let path = "/System/Security/ArtifactGroup/ArtifactGroupDetail.html?artifactGroupId=SYSTEM_APP";
+    let path = "/System/Access/ArtifactGroupDetail.html?artifactGroupId=SYSTEM_APP";
     let (status, headers, html) = exchange(address, &http_request("GET", path, &[("Authorization", &john)], ""));
     assert_eq!(status, 200, "{html}");
     assert_eq!(
@@ -219,14 +219,14 @@ fn artifact_group_detail_renders_as_html_with_the_shared_client() {
     assert!(client[..client.find("</script>").unwrap()].ends_with("\">"), "{html}");
     assert!(html.contains("<meta name=\"moquiSessionToken\" content=\""), "{html}");
     assert!(
-        html.contains("<title>Artifact Groups - Artifact Group Detail</title>"),
+        html.contains("<title>Access - Artifact Group Detail</title>"),
         "{html}"
     );
     assert!(html.trim_end().ends_with("</body>\n</html>"), "{html}");
 
     // the form-single
     assert!(
-        html.contains("<form name=\"ArtifactGroupForm\" id=\"ArtifactGroupForm\" method=\"post\" action=\"/System/Security/ArtifactGroup/ArtifactGroupDetail/updateArtifactGroup\">"),
+        html.contains("<form name=\"ArtifactGroupForm\" id=\"ArtifactGroupForm\" method=\"post\" action=\"/System/Access/ArtifactGroupDetail/updateArtifactGroup\">"),
         "{html}"
     );
     assert!(
@@ -270,7 +270,7 @@ fn artifact_group_detail_renders_as_html_with_the_shared_client() {
     // link forms saved for the end of the page are markup and not text
     assert!(
         html.contains(
-            "<form method=\"post\" action=\"/System/Security/ArtifactGroup/ArtifactGroupDetail/deleteArtifactAuthz\""
+            "<form method=\"post\" action=\"/System/Access/ArtifactGroupDetail/deleteArtifactAuthz\""
         ),
         "{html}"
     );
@@ -705,7 +705,7 @@ fn artifact_group_detail_renders_as_qvt_and_answers_qjs_and_qvue() {
     let get = |path: &str| exchange(address, &http_request("GET", path, &[("Authorization", &john)], ""));
 
     // qvt is the template of the screen under /apps, as the shell fetches it: the screen alone, with the request's values merged in
-    let path = "/apps/System/Security/ArtifactGroup/ArtifactGroupDetail.qvt?artifactGroupId=SYSTEM_APP";
+    let path = "/apps/System/Access/ArtifactGroupDetail.qvt?artifactGroupId=SYSTEM_APP";
     let (status, headers, qvt) = get(path);
     assert_eq!(status, 200, "{qvt}");
     assert_eq!(
@@ -722,7 +722,7 @@ fn artifact_group_detail_renders_as_qvt_and_answers_qjs_and_qvue() {
     );
     // the form-single is an m-form whose fields start from fields-initial, and the widgets are wrappers
     assert!(
-        qvt.contains("<m-form name=\"ArtifactGroupForm\" id=\"ArtifactGroupForm\" action=\"/apps/System/Security/ArtifactGroup/ArtifactGroupDetail/updateArtifactGroup\""),
+        qvt.contains("<m-form name=\"ArtifactGroupForm\" id=\"ArtifactGroupForm\" action=\"/apps/System/Access/ArtifactGroupDetail/updateArtifactGroup\""),
         "{qvt}"
     );
     assert!(qvt.contains("'artifactGroupId':'SYSTEM_APP'"), "{qvt}");
@@ -773,7 +773,7 @@ fn artifact_group_detail_renders_as_qvt_and_answers_qjs_and_qvue() {
         ("qvue", "text/html;charset=UTF-8"),
     ] {
         let path =
-            format!("/apps/System/Security/ArtifactGroup/ArtifactGroupDetail.{extension}?artifactGroupId=SYSTEM_APP");
+            format!("/apps/System/Access/ArtifactGroupDetail.{extension}?artifactGroupId=SYSTEM_APP");
         let (status, headers, body) = get(&path);
         assert_eq!(status, 200, "{extension}: {body}");
         assert_eq!(header(&headers, "content-type").as_deref(), Some(content_type));
@@ -837,7 +837,7 @@ fn artifact_group_detail_renders_as_qvt_and_answers_qjs_and_qvue() {
     assert_eq!(body, template);
 
     // unknown render modes and /vapps are not there
-    let (status, _, _) = get("/apps/System/Security/ArtifactGroup/ArtifactGroupDetail.vuet?artifactGroupId=SYSTEM_APP");
+    let (status, _, _) = get("/apps/System/Access/ArtifactGroupDetail.vuet?artifactGroupId=SYSTEM_APP");
     assert_eq!(status, 404);
     for path in ["/vapps", "/vapps/System", "/vapps.qvt"] {
         let (status, _, body) = get(path);
@@ -859,7 +859,7 @@ fn artifact_group_detail_static_qvt_is_a_data_free_template_with_its_data_on_act
         headers.extend_from_slice(extra);
         exchange(address, &http_request("GET", path, &headers, ""))
     };
-    let screen = "/apps/System/Security/ArtifactGroup/ArtifactGroupDetail";
+    let screen = "/apps/System/Access/ArtifactGroupDetail";
 
     // the template: a script that registers a render function, cached publicly, with a validator
     let (status, headers, template) = get(&format!("{screen}.qvt?artifactGroupId=SYSTEM_APP"), &[]);
@@ -907,10 +907,10 @@ fn artifact_group_detail_static_qvt_is_a_data_free_template_with_its_data_on_act
         template.contains(&format!("action: \"{screen}/updateArtifactGroup\"")),
         "{template}"
     );
-    // an alias transition's link goes to the screen it names, with that screen's parameter read from the row
+    // an alias transition's link goes to the screen it names, with that screen's parameters read from the row
     assert!(
         template.contains(
-            "$mq.url('/apps/System/Security/UserGroup/UserGroupDetail',{},_ctx.$mq.merge({'userGroupId':_ctx.$scope['userGroupId']}"
+            "$mq.url('/apps/System/Access/GroupDetail',{},_ctx.$mq.merge({'grantAction':_ctx.$scope['grantAction'],'grantBundleGroupId':_ctx.$scope['grantBundleGroupId'],'grantItem':_ctx.$scope['grantItem'],'userGroupId':_ctx.$scope['userGroupId']}"
         ),
         "{template}"
     );
@@ -1090,7 +1090,7 @@ fn the_qapps_shell_and_its_menu_data_work_for_a_signed_in_user() {
     assert_eq!(shell.matches("<script>").count(), 0, "{shell}");
 
     // menu data: a screen on the path for each name, the subscreens the user may view, and the target last
-    let path = "/menuData/apps/System/Security/ArtifactGroup/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP";
+    let path = "/menuData/apps/System/Access/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP";
     let (status, headers, body) = exchange(address, &http_request("GET", path, &[("Authorization", &john)], ""));
     assert_eq!(status, 200, "{body}");
     assert_eq!(header(&headers, "content-type").as_deref(), Some("application/json"));
@@ -1103,7 +1103,7 @@ fn the_qapps_shell_and_its_menu_data_work_for_a_signed_in_user() {
         .collect();
     assert_eq!(
         names,
-        ["apps", "System", "Security", "ArtifactGroup", "ArtifactGroupDetail"],
+        ["apps", "System", "Access", "ArtifactGroupDetail"],
         "{body}"
     );
     let system = &menu[1];
@@ -1112,14 +1112,14 @@ fn the_qapps_shell_and_its_menu_data_work_for_a_signed_in_user() {
     assert!(
         subscreens
             .iter()
-            .any(|item| item["name"] == "Security" && item["active"] == true),
+            .any(|item| item["name"] == "Access" && item["active"] == true),
         "{body}"
     );
     let last = menu.as_array().unwrap().last().unwrap();
-    assert_eq!(last["path"], "/apps/System/Security/ArtifactGroup/ArtifactGroupDetail");
+    assert_eq!(last["path"], "/apps/System/Access/ArtifactGroupDetail");
     assert_eq!(
         last["pathWithParams"],
-        "/apps/System/Security/ArtifactGroup/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP"
+        "/apps/System/Access/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP"
     );
     assert!(last["extraPathList"].as_array().unwrap().is_empty());
     assert!(

@@ -1763,20 +1763,24 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Resource/GitRepositoryDetail.xml` | hidden menu | S10 | P |
 | `System/Resource/GitRepositoryList.xml` | XML widgets | S10 | P |
 | `System/Resource.xml` | Container → GitRepositoryList | S10 | P |
-| `System/Security/ActiveUsers.xml` | XML widgets | S03 | P |
-| `System/Security/ArtifactGroup/ArtifactGroupDetail.xml` | XML widgets | S03 | S/P |
-| `System/Security/ArtifactGroup/ArtifactGroupList.xml` | hidden menu | S03 | P |
-| `System/Security/ArtifactGroup.xml` | Container → ArtifactGroupList | S03 | P |
+| `System/Access/AccessReview.xml` | hidden menu | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
+| `System/Access/ArtifactGroupDetail.xml` | hidden menu | S03 | S/P; moved from `System/Security/ArtifactGroup/` ([Admin-Screens-Down](Admin-Screens-Down.md) A3) |
+| `System/Access/ArtifactGroups.xml` | XML widgets | S03 | P; was `System/Security/ArtifactGroup/ArtifactGroupList.xml` ([Admin-Screens-Down](Admin-Screens-Down.md) A3) |
+| `System/Access/Capabilities.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
+| `System/Access/GroupDetail.xml` | hidden menu | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A3); not walked here since |
+| `System/Access/Groups.xml` | XML widgets | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A3); not walked here since |
+| `System/Access/RowRules.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
+| `System/Access.xml` | Container → Groups | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A3); not walked here since |
+| `System/Security/IdentityProviderDetail.xml` | hidden menu | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
+| `System/Security/IdentityProviders.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
+| `System/Security/Sessions.xml` | XML widgets | S03 | Replaces the Active Users screen S03 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A3); not walked here since |
+| `System/Security/SignInPolicy.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
 | `System/Security/UserAccount/UserAccountDetail/VerifyEmail.xml` | hidden menu | S04 | P |
 | `System/Security/UserAccount/UserAccountDetail/VerifySms.xml` | hidden menu | S04 | P |
 | `System/Security/UserAccount/UserAccountDetail/VerifyTotp.xml` | hidden menu | S04 | P |
 | `System/Security/UserAccount/UserAccountDetail.xml` | XML widgets | S03 | P |
 | `System/Security/UserAccount/UserAccountList.xml` | hidden menu | S03 | P |
 | `System/Security/UserAccount.xml` | Container → UserAccountList | S03 | P |
-| `System/Security/UserGroup/GroupUsers.xml` | XML widgets | S03 | P |
-| `System/Security/UserGroup/UserGroupDetail.xml` | XML widgets | S03 | P |
-| `System/Security/UserGroup/UserGroupList.xml` | hidden menu | S03 | P |
-| `System/Security/UserGroup.xml` | Container → UserGroupList | S03 | P |
 | `System/Security.xml` | Container → UserAccount | S03 | P |
 | `System/Operations/JobDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
 | `System/Operations/JobRunDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |

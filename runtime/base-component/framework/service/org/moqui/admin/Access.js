@@ -1126,7 +1126,8 @@ const operations = {
     applyGrants,
     storeGroupPreference
 }
-// What AccessCapabilities.js (the matrix, the scope rules and the review) shares with these services.
+// What AccessCapabilities.js (the matrix, the scope rules and the review) and AccessMatrix.js (the matrix as a screen shows and
+// changes it) share with these services.
 const lib = {
     proposalBundles,
     validIpAllowed,
@@ -1142,6 +1143,7 @@ const lib = {
     stamp,
     nowMs,
     requireView,
+    requireManage,
     bundles,
     delegable,
     privilegedIds,

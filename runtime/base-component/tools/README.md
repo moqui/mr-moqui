@@ -58,14 +58,20 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
 - **The administration areas** (menu group Administration, and Integration for those of the integrations): top-down
   areas over the `org.moqui.admin` services, each a directory of sibling screens with relative links, which another app
   may show under its own root ([Mounting the administration screens](#mounting-the-administration-screens)). So far:
-  **Operations** (`System/Operations/`): Jobs, a job (JobDetail), Job runs, a run (JobRunDetail), Notification topics and
-  a topic (TopicDetail). **Integrations** (`System/Integrations/`): Connections and a connection (ConnectionDetail: a
+  **Access** (`System/Access/`): Groups and a group (GroupDetail: its profile, dated members, grants and defaults),
+  Capabilities (the matrix of what the registered bundles and custom groups hold, `AccessServices.get#MatrixContext`),
+  Row rules and the Access review for print and CSV (AccessReview, its rows made by `template/AccessReview.js`); and
+  System's own Artifact groups and an artifact group (ArtifactGroupDetail), which no app shows. **Security**
+  (`System/Security/`): Users (`UserAccount/`, System's own account administration, with the Verify screens of a user's own
+  factors, which other apps mount by location), the Sign-in policy, Identity providers and a provider
+  (IdentityProviderDetail) and Sessions. **Operations** (`System/Operations/`): Jobs, a job (JobDetail), Job runs, a run
+  (JobRunDetail), Notification topics and a topic (TopicDetail). **Integrations** (`System/Integrations/`): Connections and a connection (ConnectionDetail: a
   gateway, a remote system, a mail sign-in provider, a printer), Message types and a type (MessageTypeDetail), System
   messages and a message (SystemMessageDetail). **Mail and protocols** (`System/Protocols/`): what each protocol is doing
   (Home), Mail relays and a relay (MailRelayDetail), the Mail queue and the Server configuration. The connection screens
-  share `template/ConnectionParts.xml`. A screen's part for the instance administrator (a job's, a remote's, a message
-  type's or a message's record changed directly, a run or a message as it is stored, every produced message sent now)
-  shows only here.
+  share `template/ConnectionParts.xml`. A screen's part for the instance administrator (a group's, a job's, a remote's,
+  a message type's or a message's record changed directly, a group of any id and type created, a run or a message as it
+  is stored, every produced message sent now, the visits by user) shows only here.
 - **Monitor** (`System/Monitor.xml`, `System/Monitor/`): the telemetry screens, Overview first
   ([docs/tools/Monitoring.md](../../../docs/tools/Monitoring.md#monitor)).
 - **Configuration** (`System/Conf/`) shows the merged conf with the file each value came from (Settings), edits one
@@ -144,7 +150,8 @@ Every transition of a raw part carries `AdminMount.js`'s `raw()` as its `conditi
 System screen's location: a grant there would open it under `/apps/system` too. The regression spec is
 `test/AdminMounts.spec.js`, over the test mount `test/screen/AdminMount.xml`; it also reads every screen of the areas
 (its `AREAS` list, which a new area is added to) and fails on a transition that acts and neither calls only
-`org.moqui.admin` services nor carries `raw()`.
+`org.moqui.admin` services nor carries `raw()`. Its `NOT_AREA_SCREENS` names what an area's directory holds that is not an
+area's screen (Security's `UserAccount/`), and `UNGUARDED` a transition that acts and writes nothing, each with why.
 
 ## Tests
 

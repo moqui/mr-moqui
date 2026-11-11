@@ -442,11 +442,12 @@ A screen reads through `AdminCalls.js` beside them: `ec.resource.script('compone
 | `AccessServices.find#Groups`, `get#Group` | `text`, `appName`, `kind`; `userGroupId*` → `groupList`; `group`, `members`, `grants` |
 | `AccessServices.store#Membership`, `end#Membership` | `userGroupId*`, `userId*`, `fromDate`, `thruDate`, `expectedRevision`, `reason` → `applied`, `revision` |
 | `AccessServices.preview#Grants`, `apply#Grants` | `userGroupId*`, `grantList*`, `expectedRevision*` → `changeList`, `applied` |
+| `AccessServices.get#MatrixContext`, `apply#MatrixChanges` | The Capabilities screen's matrix: `appName`, `groups`, `kind`, `text`, `changes` (the proposal's tokens) → `columns`, `matrixRows`, `listRows`, `proposal`, `failure`; `changes*`, `revisions`, `reason` → `resultList`, `appliedCount`, `remainingChanges` |
 | `ConfigurationServices.get#InstancePreference` | `settingKey*` → `value`, `numberValue`, `source`: a registered instance setting, for the code that uses it |
 | `ConfigurationServices.get#EffectiveSettings`, `store#InstancePreference` | `settingKey`, `settingGroup`; `settingKey*`, `value`, `expectedRevision` |
 | `ConfigurationServices.store#LocalizedMessage` | `original*`, `locale*`, `localized`, `expectedRevision` |
 | `ConfigurationServices.find#Connections`, `store#Connection`, `test#Connection` | `adapterKey*`, `connectionKey`, `values`, `enabled` → `connectionList`; `passed`, `checkList` |
-| `IdentityServices.find#Sessions`, `revoke#Sessions` | `userId`, `activeOnly`; `sessionKeyList`, `allOthers` → `sessionList`; `sessionCount` |
+| `IdentityServices.find#Sessions`, `revoke#Sessions` | `userId`, `userIdList` or `allUsers` (with `text`, a name), `activeOnly`; `sessionKeyList`, `allOthers` → `sessionList`; `sessionCount` |
 | `IdentityServices.get#AccountCredentials`, `revoke#AccountAccess` | `userId*`, `kindList`, `reason` → `factorList`, `credentialList`; `revokedCounts` |
 | `OperationServices.find#Jobs`, `store#Job`, `find#JobRuns` | `jobName*`, `expectedRevision*`, `cronExpression`, `paused` → `jobList`; `applied`, `nextRun` |
 | `OperationServices.find#Messages`, `apply#MessageRecovery` | System messages by `state`, `systemMessageTypeId`, `direction` → `messageList` |

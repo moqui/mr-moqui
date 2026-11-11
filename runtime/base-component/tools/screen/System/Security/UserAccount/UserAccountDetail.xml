@@ -45,7 +45,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="visitList"><default-response url="../../../Visit/VisitList"/></transition>
     <transition name="visitDetail"><default-response url="../../../Visit/VisitDetail"/></transition>
 
-    <transition name="userGroupDetail"><default-response url="../../UserGroup/UserGroupDetail"/></transition>
+    <transition name="userGroupDetail"><default-response url="../../../Access/GroupDetail"/></transition>
     <transition name="createUserGroupMember"><service-call name="create#moqui.security.UserGroupMember"/>
         <default-response url="."/></transition>
     <transition name="updateUserGroupMember"><service-call name="update#moqui.security.UserGroupMember"/>

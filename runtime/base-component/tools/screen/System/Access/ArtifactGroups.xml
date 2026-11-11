@@ -12,13 +12,20 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
+<!-- ArtifactGroups (plans/Admin-Screens-Down.md): the artifact groups, what an authorization names, with one created
+    directly. System's own, the instance administrator's: no app shows it under its root, and its transition that writes
+    carries raw() as its condition (README, "Mounting the administration screens"). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-include="false">
+        default-menu-title="Artifact groups" default-menu-index="4" menu-image="sym_o_key" menu-image-type="icon">
 
     <transition name="artifactGroupDetail"><default-response url="../ArtifactGroupDetail"/></transition>
-    <transition name="createArtifactGroup"><service-call name="create#moqui.security.ArtifactGroup"/>
-        <default-response url="."/></transition>
+    <!-- the instance administrator's: only for a user who opens System by their own grant -->
+    <transition name="createArtifactGroup">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="create#moqui.security.ArtifactGroup"/>
+        <default-response url="."/>
+    </transition>
 
     <actions>
         <entity-find entity-name="moqui.security.ArtifactGroup" list="artifactGroupList">

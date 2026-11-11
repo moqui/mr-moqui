@@ -340,7 +340,7 @@ mod tests {
                 "System › Security",
                 "/apps/system/Security/UserAccount",
             ),
-            entry("Users", "System › Security", "/apps/system/Security/UserGroup"),
+            entry("Users", "System › Security", "/apps/system/Security/Sessions"),
             entry("Customers", "Sales", "/apps/sales/Party"),
         ];
         let mut index = SkillIndex::default();

@@ -89,7 +89,7 @@ A list of user groups with a description to save, on the framework's own screens
     <q-table :rows="rows" :columns="columns" row-key="_id" dense flat></q-table>
     <m-text-line label="Description of ADMIN" v-model="description"></m-text-line>
     <q-btn color="primary" label="Save" @click="save"></q-btn>
-    <a href="/apps/system/Security/UserGroup/UserGroupList">All groups</a>
+    <a href="/apps/system/Access/Groups">All groups</a>
   </m-container-box>
 </template>
 
@@ -98,11 +98,11 @@ module.exports = {
   props: { values: Object },
   data: function () {
     return { rows: [], description: (this.values && this.values.description) || '',
-      columns: [{ name: 'g', label: 'Group', field: 'userGroupId' }, { name: 'd', label: 'Description', field: 'description' }] };
+      columns: [{ name: 'g', label: 'Group', field: 'userGroupId' }, { name: 'i', label: 'ID', field: 'userGroupIdText' }] };
   },
   mounted: function () {
     var vm = this;
-    this.$bridge.get('/apps/system/Security/UserGroup/UserGroupList', { pageSize: '20' })
+    this.$bridge.get('/apps/system/Access/Groups', { pageSize: '20' })
       .then(function (r) { vm.rows = r.rows || []; });
   },
   methods: {
@@ -114,11 +114,11 @@ module.exports = {
 </script>
 
 <actions>
-[{"name": "save", "label": "Save the description", "path": "/apps/system/Security/UserGroup/UserGroupDetail/updateUserGroup",
+[{"name": "save", "label": "Save the description", "path": "/apps/system/Access/GroupDetail/updateUserGroup",
   "fields": ["description"], "parameters": {"userGroupId": "ADMIN"}}]
 </actions>
 
 <reads>
-["/apps/system/Security/UserGroup/UserGroupList"]
+["/apps/system/Access/Groups"]
 </reads>
 ```

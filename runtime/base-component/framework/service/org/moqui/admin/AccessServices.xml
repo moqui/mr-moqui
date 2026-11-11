@@ -23,7 +23,8 @@ along with this software (see the LICENSE.md file). If not, see
     The bodies are Access.js. ALL_USERS may call them (data/SecurityTypeData.xml AdminAccessServices): each refuses without its
     permission. No dependency on Mantle or an app.
     P9 adds the read projections of AccessCapabilities.js (get#Capabilities, get#ScopeRules, get#GrantReview) and, in
-    preview#Grants and apply#Grants, a registered filter set bound to a registered artifact binding (a row rule). -->
+    preview#Grants and apply#Grants, a registered filter set bound to a registered artifact binding (a row rule);
+    AccessMatrix.js the matrix as the Capabilities screen shows and changes it (get#MatrixContext, apply#MatrixChanges). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="find" noun="Groups" allow-remote="false">
@@ -363,6 +364,87 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sealedOmittedCount" type="Integer"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/AccessCapabilities.js').execute('getGrantReview', context))</script></actions>
+    </service>
+
+    <!-- The capability matrix as a screen shows and changes it (AccessMatrix.js; plans/Admin-Screens-Down.md A3: first IronStone
+        Admin's): the Capabilities screen's context over get#Capabilities and preview#Grants, and its proposal applied through
+        apply#Grants -->
+    <service verb="get" noun="MatrixContext" allow-remote="false">
+        <description>The Capabilities screen's context over get#Capabilities: the group columns, the matrix rows (a capability with
+            a cell per group) and the list rows (the same cells, one a row), each cell with its state text, its bound row
+            rules, the proposal made for it and the proposal its control would make next (changes with its token added or
+            withdrawn); what the groups hold that no registered bundle describes; the find form's options; and, when changes
+            are proposed, their effect on each group from preview#Grants, whether all may be applied and the grant revisions
+            to apply them at. changes is the proposal the screen carries: comma separated tokens group~a|e~p:permission or
+            group~a|e~a:artifactGroup, at most 40. More than 8 groups or 40 changes is answered as failure, the reason, with
+            nothing else but the proposal as given. Needs ADMIN_ACCESS_VIEW; nothing is written.</description>
+        <in-parameters>
+            <parameter name="appName"/>
+            <parameter name="groups"><description>Group ids, comma separated or a list; at most 8</description></parameter>
+            <parameter name="kind"/>
+            <parameter name="text"/>
+            <parameter name="changes"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="failure"/>
+            <parameter name="columns" type="List"/>
+            <parameter name="matrixRows" type="List"/>
+            <parameter name="listRows" type="List"/>
+            <parameter name="unsupportedRows" type="List"/>
+            <parameter name="appOptions" type="List"/>
+            <parameter name="kindOptions" type="List"/>
+            <parameter name="groupOptions" type="List"/>
+            <parameter name="groups"/>
+            <parameter name="moreGroupCount" type="Integer"/>
+            <parameter name="maxGroups" type="Integer"/>
+            <parameter name="changes"/>
+            <parameter name="changeCount" type="Integer"/>
+            <parameter name="proposal" type="Map"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <set field="found" from="ec.resource.script('component://framework/service/org/moqui/admin/AccessMatrix.js').execute('matrixContext', context)"/>
+            <set field="failure" from="found.failure"/>
+            <set field="columns" from="found.columns"/>
+            <set field="matrixRows" from="found.matrixRows"/>
+            <set field="listRows" from="found.listRows"/>
+            <set field="unsupportedRows" from="found.unsupportedRows"/>
+            <set field="appOptions" from="found.appOptions"/>
+            <set field="kindOptions" from="found.kindOptions"/>
+            <set field="groupOptions" from="found.groupOptions"/>
+            <set field="groups" from="found.groups"/>
+            <set field="moreGroupCount" from="found.moreGroupCount"/>
+            <set field="maxGroups" from="found.maxGroups"/>
+            <set field="changes" from="found.changes"/>
+            <set field="changeCount" from="found.changeCount"/>
+            <set field="proposal" from="found.proposal"/>
+            <set field="canManage" from="found.canManage"/>
+        </actions>
+    </service>
+    <service verb="apply" noun="MatrixChanges" allow-remote="false">
+        <description>Applies a matrix proposal (changes, as get#MatrixContext) group by group through apply#Grants: each group's
+            changes as one change at the grant revision previewed for it (revisions, a JSON object by group), in its own
+            transaction. A group that is refused (a stale revision, a sealed permission, a privileged group, an unregistered
+            grant, the administration path) or fails is named with its reason and the others still apply; remainingChanges
+            are the tokens not applied. Needs ADMIN_ACCESS_MANAGE.</description>
+        <in-parameters>
+            <parameter name="changes" required="true"/>
+            <parameter name="revisions" allow-html="any"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="resultList" type="List"/>
+            <parameter name="appliedCount" type="Integer"/>
+            <parameter name="refusedCount" type="Integer"/>
+            <parameter name="remainingChanges"/>
+        </out-parameters>
+        <actions>
+            <set field="found" from="ec.resource.script('component://framework/service/org/moqui/admin/AccessMatrix.js').execute('applyMatrixChanges', context)"/>
+            <set field="resultList" from="found.resultList"/>
+            <set field="appliedCount" from="found.appliedCount"/>
+            <set field="refusedCount" from="found.refusedCount"/>
+            <set field="remainingChanges" from="found.remainingChanges"/>
+        </actions>
     </service>
 
     <!-- Admin P10 (AccessSignIn.js): what a change of a group's sign-in rules would do, before store#Group makes it -->

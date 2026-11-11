@@ -305,3 +305,84 @@ operator and as ADMIN: the message is unchanged); the slow `cargo test -p moqui-
 detail); `moqui lint --screens` with no parse failure and no flagged site in the new screens. Changed and not run: the
 acceptance `AdminRegistriesWalk` (the fix path) and the sweeps' screen list in `AdminSpecLib.js` (`AdminTui`,
 `AdminServerStatic`).
+
+### A3 Access, Security (Nov 11, 2026)
+
+Built: `System/Access.xml` (index 3, tabs, Groups first) with Admin's Groups, GroupDetail, Capabilities, RowRules and
+AccessReview, their BOSS references gone, and `Security/ArtifactGroup/**` moved in flat as ArtifactGroups and
+ArtifactGroupDetail (System's own: each of their eleven writing transitions carries `raw()` now). The instance
+administrator's parts folded in, each transition with `raw()` as its condition: Groups (RawGroups: a group of any id and
+type created directly), GroupDetail (RawGroup, what the User Groups screens did: any field of the group; a permission of
+any id applied, an existing one applied, a new one made, its end date changed, removed; a preference of a registered or
+any key; an artifact authorization and a tarpit created, changed and deleted, their forms extending ArtifactGroupDetail's
+as before; any user's membership with its dates; sixteen transitions and `getUserList`). `System/Security/` gains
+SignInPolicy, IdentityProviders, IdentityProviderDetail and a new Sessions (every account's sessions over
+`IdentityServices.find#Sessions` with `allUsers`, the bulk sign-out through `revoke#Sessions`; RawVisits, the Active
+Users screen's visits by user, shown in place of the list with `visits=Y`); its menu is Users, Sign-in policy, Identity
+providers, Sessions, Users the default, and it stays a popup panel (its first item is System's old-style Users section, a
+container of screens the terminal tests walk; nothing of the mount depends on the panel). `Security/UserGroup/**`,
+`Security/ArtifactGroup/**` and `Security/ActiveUsers.xml` are deleted. The matrix services moved down:
+`AccessServices.get#MatrixContext` and `apply#MatrixChanges` (`AccessMatrix.js`, over `Access.js`'s `lib`, which gains
+`requireManage`), granted in `SecurityTypeData.xml` beside the other access services and in
+`docs/dev/JS-Framework-Services.md`. The review's rows are `tools/template/AccessReview.js` (`view`), which the System
+screen calls with every member named and mr-boss's `get#AccessReview` with the users in scope. The home's catalog (the
+Administration group, the Users and access card's links, Users today), `UserAccountDetail`, `EntitySyncDetail`, the
+gallery's settings link, the prompts and skills (`small.md`, `tools-json.md`, `openui-lang.md`, `vue-sfc.md`), the agent
+task files, the cargo tests and the UI-Refinement inventory name the new paths. In mr-boss: Capabilities, RowRules,
+SignInPolicy, IdentityProviders and IdentityProviderDetail are mounted by location and their files deleted (no grant
+names them, they have no raw transition, Admin adds nothing); Groups includes the System screen and takes in only
+`createGroup`; GroupDetail (the group as an Admin record, the members in scope by `get#MemberScope`, the choice of a
+member and `check#Record` before a membership), AccessReview (`get#AccessReview`) and Users › Sessions (Mantle's
+`find#Users`, the organization filter, its own `revokeSessions`) are Admin's own screens around the System screens' named
+sections; Security › Devices is untouched; the matrix services and what only they used are gone from
+`CapabilityServices.xml` and `Capabilities.js`; `mountRoutes` needed nothing new (a group's page is the same relative path
+under both roots, a user's is the `user` route).
+
+Findings:
+
+- F15. `org.moqui.admin` has no service that lists accounts for a delegate, so the generic AddMember's choice of a user
+  is `getUserList`, the instance administrator's: under System that is whoever opens it, and an app has a members box of
+  its own (BOSS: `get#Choices`, then `check#Record`).
+- F16. A form inside a field of an extended form is the other screen's: BOSS's GroupMembers, extending the System
+  screen's, failed with "Could not find form EndMember", so it overrides that field with its own End dialog. The rest of
+  the list and AddMember extend cleanly.
+- F17. A link to an alias transition carries every declared parameter of its target that is in the context:
+  ArtifactGroupDetail's link to a group has GroupDetail's four parameters in its static template now (the gate3
+  expectation follows).
+- F18. `find#Sessions` could not narrow every account's sessions by a name: it takes `text` (username or full name,
+  ignoring case, in the query; `framework/test/AdminSessions`). The visits by user replace the sessions list rather than
+  stand beside it, since two paginated lists on a page share `pageIndex`.
+- F19. The static rule found SignInPolicy's `reviewRule` (actions that only carry the form's values to the review):
+  named in `UNGUARDED` with why. `Security/UserAccount/**` is named in `NOT_AREA_SCREENS`: System's own account
+  administration and the Verify screens apps mount on purpose; every other screen of Security is read.
+- F20. The Groups list shows a group by its description in the `userGroupId` field and its id in `userGroupIdText`: what
+  an agent's read of the list answers. The canvas tests (`it/assist.rs`, `gate3_browser.rs`) and the `vue-sfc` skill's
+  example read those fields, with `text` as the find parameter.
+- F21. The recorded agent replays are not changed. Their model replies are hand-authored and drive the User Groups
+  screens by more than a path (the list's `where`, "Create User Group", "User Group ID", "Update"), so a change of paths
+  alone does not replay: with the task files on the new screens 15 of 24 tasks of `replay/` and 7 of 9 of `replay-small/`
+  pass, and the 9 and 2 recordings that name `Security/UserGroup` fail until their replies are written again (and their
+  tool lines taken from that run's transcripts). At the commit before this phase all 24 passed and the run still failed
+  against `baseline-replay.json`: every task's tokens are 32 to 78 percent over the baseline's.
+- F22. The opt-in `gate3` and `gate3_browser` tests had failures before this phase that are not its own: three of
+  `gate3` (goldens of SYSTEM_APP's and TOOLS_APP's members, an html page read with its chunk size) and four of
+  `gate3_browser` (the gallery's dialog and tray, Dev AIDE's service writer and screen builder), the same before and
+  after; and the slow `qvt_report` test fails on `Tools/Service/ServiceDetail.xml`'s `report-embed` after the fixture's
+  own checks pass.
+
+Tests: `./moq test tools --nobuild` (71 features, 3.3 s of 4 s; `AdminMounts` reads Access and Security in its static
+rule and posts GroupDetail's `updateUserGroup` under System, applied); `./moq test framework --nobuild --spec
+AdminAccessCapabilities --spec AdminAccessServices --spec AdminSessions` (13 features, 0.4 s; the matrix's own rules moved
+here from mr-boss in one feature, 0.08 s; in two runs of thirteen AdminAccessServices' "a membership change is seen at once by
+the session it changes" failed its last condition, a membership ended at the moment it is asked about, and passed again); `./moq test mr-boss --nobuild --spec AdminGroups --spec AdminSecurity --spec
+AdminCapabilities --spec AdminAccess --spec AdminUsers --spec AdminDevices --spec AdminRegistries` (30 features;
+AdminGroups posts `updateUserGroup`, `createUserGroupPermission` and Groups' `createUserGroup` through Admin as the access
+administrator and as ADMIN: nothing changed); `cargo test -p moqui-host --test it tools_screens -- --ignored` (the new
+detail paths, a sign-in provider added to its data; 21 to 25 s) and, of the same binary, `the_canvas_over_http_on_postgres`,
+`the_drawer_calls_over_http_on_postgres`, `xlsx_spreadsheets_images_and_ipp_printing` and `types`;
+`cargo test -p moqui-llm --lib` (338, the skills' examples among them); `cargo test -p moqui-host --test gate3` (7 pass,
+the 3 of F22 fail as before) and `--test gate3_browser` (25 pass, the 4 of F22 fail as before);
+`moqui test tools --agents --replay` on both sets (F21); `moqui lint --screens` with no parse failure and no flagged
+site in the new screens, `moqui lint` of the changed service files. Changed and not run: the acceptance
+`AdminFoundationWalk`, `AdminReviewWalk` and `AdminCapabilitiesUsable` of mr-boss and the framework's
+`acceptance/client/LoadBasic`.

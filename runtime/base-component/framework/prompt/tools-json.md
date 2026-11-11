@@ -3,7 +3,7 @@
     the cache). -->
 ## Tools
 You have tools but no tool calls. Each reply is exactly one JSON object and nothing else:
-- a tool: {"tool": "screen", "args": {"go": "/apps/system/Security/UserGroup/UserGroupList"}}
+- a tool: {"tool": "screen", "args": {"go": "/apps/system/Access/Groups"}}
 - the answer: {"reply": "The answer, in plain sentences."}
 - a question: {"ask": {"question": "Which one?", "options": ["First", "Second"]}}
 A tool's result comes back as <result tool="name">…</result>; then send the next object.

@@ -12,36 +12,71 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
+<!-- ArtifactGroupDetail (plans/Admin-Screens-Down.md): one artifact group, its members (the screens, services and entities
+    it names, by name or pattern), the groups it authorizes and its tarpits, each changed directly. System's own, the
+    instance administrator's: no app shows it under its root, and each transition that writes carries raw() as its
+    condition (README, "Mounting the administration screens"). GroupDetail's forms of a group's authorizations and tarpits
+    extend this screen's (CreateArtifactAuthz, ArtifactAuthzList, CreateArtifactTarpit, ArtifactTarpitList). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-index="1">
+        default-menu-include="false">
 
     <parameter name="artifactGroupId" required="true"/>
 
-    <transition name="updateArtifactGroup"><service-call name="update#moqui.security.ArtifactGroup"/>
-        <default-response url="."/></transition>
+    <transition name="updateArtifactGroup">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="update#moqui.security.ArtifactGroup"/>
+        <default-response url="."/>
+    </transition>
 
-    <transition name="createArtifactGroupMember"><service-call name="create#moqui.security.ArtifactGroupMember"/>
-        <default-response url="."/></transition>
-    <transition name="updateArtifactGroupMember"><service-call name="update#moqui.security.ArtifactGroupMember"/>
-        <default-response url="."/></transition>
-    <transition name="deleteArtifactGroupMember"><service-call name="delete#moqui.security.ArtifactGroupMember"/>
-        <default-response url="."/></transition>
+    <transition name="createArtifactGroupMember">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="create#moqui.security.ArtifactGroupMember"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="updateArtifactGroupMember">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="update#moqui.security.ArtifactGroupMember"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteArtifactGroupMember">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="delete#moqui.security.ArtifactGroupMember"/>
+        <default-response url="."/>
+    </transition>
 
-    <transition name="userGroupDetail"><default-response url="../../UserGroup/UserGroupDetail"/></transition>
-    <transition name="createArtifactAuthz"><service-call name="create#moqui.security.ArtifactAuthz"/>
-        <default-response url="."/></transition>
-    <transition name="updateArtifactAuthz"><service-call name="update#moqui.security.ArtifactAuthz"/>
-        <default-response url="."/></transition>
-    <transition name="deleteArtifactAuthz"><service-call name="delete#moqui.security.ArtifactAuthz"/>
-        <default-response url="."/></transition>
+    <transition name="userGroupDetail"><default-response url="../GroupDetail"/></transition>
+    <transition name="createArtifactAuthz">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="create#moqui.security.ArtifactAuthz"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="updateArtifactAuthz">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="update#moqui.security.ArtifactAuthz"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteArtifactAuthz">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="delete#moqui.security.ArtifactAuthz"/>
+        <default-response url="."/>
+    </transition>
 
-    <transition name="createArtifactTarpit"><service-call name="create#moqui.security.ArtifactTarpit"/>
-        <default-response url="."/></transition>
-    <transition name="updateArtifactTarpit"><service-call name="update#moqui.security.ArtifactTarpit"/>
-        <default-response url="."/></transition>
-    <transition name="deleteArtifactTarpit"><service-call name="delete#moqui.security.ArtifactTarpit"/>
-        <default-response url="."/></transition>
+    <transition name="createArtifactTarpit">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="create#moqui.security.ArtifactTarpit"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="updateArtifactTarpit">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="update#moqui.security.ArtifactTarpit"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="deleteArtifactTarpit">
+        <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>
+        <service-call name="delete#moqui.security.ArtifactTarpit"/>
+        <default-response url="."/>
+    </transition>
 
     <actions>
         <entity-find-one entity-name="moqui.security.ArtifactGroup" value-field="artifactGroup"/>

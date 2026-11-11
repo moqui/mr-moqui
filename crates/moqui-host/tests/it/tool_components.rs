@@ -169,8 +169,7 @@ fn xlsx_spreadsheets_images_and_ipp_printing() {
     let john = basic("john.doe", "moqui");
 
     // ---- moqui-poi: the screen as xlsx, with the download name the XLS button sends ----
-    let path =
-        "/System/Security/ArtifactGroup/ArtifactGroupDetail.xlsx?artifactGroupId=SYSTEM_APP&saveFilename=Group.xlsx";
+    let path = "/System/Access/ArtifactGroupDetail.xlsx?artifactGroupId=SYSTEM_APP&saveFilename=Group.xlsx";
     let (status, headers, body) = exchange_bytes(address, &http_request("GET", path, &[("Authorization", &john)], ""));
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     assert_eq!(header(&headers, "content-type").as_deref(), Some(XLSX));
@@ -374,6 +373,6 @@ fn xlsx_spreadsheets_images_and_ipp_printing() {
 }
 
 fn exchange_xlsx(address: std::net::SocketAddr, auth: &str) -> Vec<u8> {
-    let path = "/System/Security/ArtifactGroup/ArtifactGroupDetail.xlsx?artifactGroupId=SYSTEM_APP";
+    let path = "/System/Access/ArtifactGroupDetail.xlsx?artifactGroupId=SYSTEM_APP";
     exchange_bytes(address, &http_request("GET", path, &[("Authorization", auth)], "")).2
 }

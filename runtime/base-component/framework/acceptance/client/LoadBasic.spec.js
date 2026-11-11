@@ -34,7 +34,7 @@ feature("each endpoint answers", {
             login: session().get("/Login"),
             shell: http.get("/qapps/system/Home"),
             qvt: http.get("/apps/system/Home.qvt"),
-            tui: http.get("/apps/system/Security/UserGroup/UserGroupList", { params: { renderMode: "tui" } }),
+            tui: http.get("/apps/system/Access/Groups", { params: { renderMode: "tui" } }),
             s1: http.get("/rest/s1/moqui/basic/enums", { params: { enumTypeId: "UserPreferenceKey" }, accept: "json" }),
             e1: http.get("/rest/e1/moqui.basic.Enumeration", { params: { enumTypeId: "UserPreferenceKey" }, accept: "json" }),
             set: http.post("/apps/setPreference", { form: { preferenceKey: key, preferenceValue: "v1" } }),
@@ -88,7 +88,7 @@ feature("mixed reads and writes", {
             scenario(user, args) {                                             // repeated until the duration ends
                 http.get("/rest/s1/moqui/basic/enums", { params: { enumTypeId: "UserPreferenceKey" }, accept: "json", name: "s1 enums" })
                 http.get("/apps/system/Home.qvt", { name: "dashboard qvt" })
-                http.get("/apps/system/Security/UserGroup/UserGroupList", { params: { renderMode: "tui" }, name: "UserGroupList tui" })
+                http.get("/apps/system/Access/Groups", { params: { renderMode: "tui" }, name: "Groups tui" })
                 http.post("/apps/setPreference", { form: { preferenceKey: `test.load.${user}`, preferenceValue: "x" },
                     name: "setPreference" })
             },
@@ -99,7 +99,7 @@ feature("mixed reads and writes", {
         stats.requests > 0
         stats.names["s1 enums"].p95 < Number(params.maxP95 ?? 2000)
         stats.names["dashboard qvt"].p95 < Number(params.maxP95 ?? 2000)
-        stats.names["UserGroupList tui"].p95 < Number(params.maxP95 ?? 2000)
+        stats.names["Groups tui"].p95 < Number(params.maxP95 ?? 2000)
         stats.names["setPreference"].p95 < Number(params.maxP95 ?? 2000)
         // the time series: a bin a second, whose requests add up to the total
         stats.binSeconds >= 1

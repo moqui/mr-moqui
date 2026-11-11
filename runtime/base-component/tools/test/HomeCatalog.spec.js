@@ -20,14 +20,14 @@ const CATALOG = [
         featured: true,
         title: "Users and access",
         text: "Accounts and groups",
-        links: [{path: "Security/UserAccount"}, {path: "Security/UserGroup"}]
+        links: [{path: "Security/UserAccount"}, {path: "Security/Sessions"}]
     },
     {path: "Printers", featured: true, text: "Not in the menu"},
     {path: "Cache", group: "Server"},
     {path: "Printers", group: "Server"},
     {path: "Print/Jobs", group: "Server"},
     {path: "Security/UserAccount", group: "Security", icon: "sym_o_person", parameters: {disabled: "N"}},
-    {path: "Security/ArtifactGroup", group: "Access"},
+    {path: "Security/SignInPolicy", group: "Access"},
     {url: "//apps/Terminal", title: "Terminal UI", group: "Elsewhere"}
 ]
 function build(catalog, options) {

@@ -4,7 +4,10 @@
 //   moqui test tools --agents --llm-profile local-qwen --runs 3
 //   moqui test tools --agents --replay runtime/base-component/tools/test/agent/replay
 //   moqui test tools --agents --replay runtime/base-component/tools/test/agent/replay-small
-// The tasks make their own rows (a user group, visits, a note, a user with no permissions) and remove them after.
+// The tasks make their own rows (a user group, visits, a note, a user with no permissions) and remove them after. The user
+// group tasks are on System › Access (Groups, and GroupDetail with its instance administrator's "All settings" form, whose
+// transition is updateUserGroup): the recordings of those tasks in replay/ and replay-small/ still drive the User Groups
+// screens that Access replaced (plans/Admin-Screens-Down.md A3) and fail until their replies are written again.
 
 const visitPrefix = "/agent-eval/"
 const daysAgo = (days) => new Date(Date.now() - days * 24 * 60 * 60 * 1000)
@@ -38,13 +41,13 @@ agentSpec({
         },
         {
             name: "fill a form for a hand-off",
-            start: "/apps/system/Security/UserGroup/UserGroupList",
+            start: "/apps/system/Access/Groups",
             say: "Fill in the new user group form with the ID AGENT_EVAL_HANDOFF and the description Agent eval hand-off. " +
                 "Do not save it, I will check it and save it myself.",
             cleanup() { remove("moqui.security.UserGroup", "userGroupId", "AGENT_EVAL_HANDOFF") },
             expect: {
-                path: "/apps/system/Security/UserGroup/UserGroupList",
-                values: { CreateUserGroup: { userGroupId: "AGENT_EVAL_HANDOFF", description: "Agent eval hand-off" } },
+                path: "/apps/system/Access/Groups",
+                values: { CreateGroup: { userGroupId: "AGENT_EVAL_HANDOFF", description: "Agent eval hand-off" } },
                 held: 0,
                 noWrite: true,
             },
@@ -75,7 +78,7 @@ agentSpec({
             setup() { make("moqui.security.UserGroup", { userGroupId: "AGENT_EVAL_GROUP", description: "Agent eval group" }) },
             cleanup() { remove("moqui.security.UserGroup", "userGroupId", "AGENT_EVAL_GROUP") },
             expect: {
-                path: "/apps/system/Security/UserGroup/UserGroupDetail",
+                path: "/apps/system/Access/GroupDetail",
                 parameters: { userGroupId: "AGENT_EVAL_GROUP" },
                 held: { transition: "updateUserGroup", text: /Agent eval group → Agent evaluation group, renamed/, status: "executed" },
                 results: [{ tool: "screen", result: /The user approved updateUserGroup, and it was saved/ }],
@@ -290,7 +293,7 @@ agentSpec({
             expect: {
                 called: [{ tool: "ask", args: { options: [/sales/, /support/] } }],
                 questions: 1,
-                path: "/apps/system/Security/UserGroup/UserGroupDetail",
+                path: "/apps/system/Access/GroupDetail",
                 parameters: { userGroupId: "AGENT_EVAL_ASK_B" },
                 noWrite: true,
             },
@@ -310,14 +313,14 @@ agentSpec({
             turns: [
                 {
                     say: "Open the user groups list.",
-                    expect: { path: "/apps/system/Security/UserGroup/UserGroupList" },
+                    expect: { path: "/apps/system/Access/Groups" },
                 },
                 {
                     say: "Now only the groups whose ID starts with AGENT_EVAL_FU.",
                     expect: {
                         notCalled: ["search"],
-                        path: "/apps/system/Security/UserGroup/UserGroupList",
-                        parameters: { userGroupId: "AGENT_EVAL_FU" },
+                        path: "/apps/system/Access/Groups",
+                        parameters: { text: "AGENT_EVAL_FU" },
                         results: [{ tool: "screen", result: /Rows 1–2 of 2/ }],
                         answer: /\b2\b|two/i,
                     },

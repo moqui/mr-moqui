@@ -40,6 +40,7 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.service.message.SystemMessageRemote systemMessageRemoteId="GateRemote" description="Gate remote"/>
     <moqui.service.message.SystemMessage systemMessageId="GATE_MSG" systemMessageTypeId="GateSmsg" statusId="SmsgProduced"
         isOutgoing="Y" messageText="{}"/>
+    <moqui.security.sso.AuthFlow authFlowId="GATE_FLOW" authFlowTypeEnumId="AftOauth" description="Gate sign-in" disabled="Y"/>
     <moqui.basic.email.EmailServer emailServerId="GATE_RELAY" smtpHost="smtp.gate.example.test" smtpPort="465" smtpSsl="Y"/>
     <moqui.entity.sync.EntitySync entitySyncId="GATE_SYNC" description="Gate sync" statusId="EsNotStarted" forPull="N"/>
     <moqui.resource.GitRepository repositoryId="GATE_GIT" description="Gate git" repositoryKind="db"/>
@@ -79,9 +80,12 @@ const DETAILS: &[&str] = &[
     "/System/Security/UserAccount/UserAccountDetail?userId=EX_JOHN_DOE",
     // Its render sets up a TOTP factor for the user, so it is not the user the test signs in as.
     "/System/Security/UserAccount/UserAccountDetail/VerifyTotp?userId=GATE_TOTP_USER",
-    "/System/Security/UserGroup/UserGroupDetail?userGroupId=ADMIN",
-    "/System/Security/UserGroup/GroupUsers?userGroupId=ADMIN",
-    "/System/Security/ArtifactGroup/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP",
+    "/System/Access/GroupDetail?userGroupId=ADMIN",
+    "/System/Access/AccessReview?groups=ADMIN",
+    "/System/Access/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP",
+    "/System/Security/IdentityProviderDetail?authFlowId=GATE_FLOW",
+    // the instance administrator's view of Sessions: the visits by user
+    "/System/Security/Sessions?visits=Y",
     "/System/Integrations/MessageTypeDetail?systemMessageTypeId=GateSmsg",
     "/System/Integrations/ConnectionDetail?adapterKey=remote&connectionKey=GateRemote",
     "/System/Integrations/SystemMessageDetail?systemMessageId=GATE_MSG",
@@ -419,31 +423,21 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
     assert_page(
         address,
         &john,
-        "/System/Security/UserGroup/UserGroupList",
+        "/System/Access/Groups",
         &["Administrators (full access)"],
     );
+    // the group's page with the instance administrator's part: its authorizations and its members by account
     assert_page(
         address,
         &john,
-        "/System/Security/UserGroup/UserGroupDetail?userGroupId=ADMIN",
-        &["System App (via root screen)"],
+        "/System/Access/GroupDetail?userGroupId=ADMIN",
+        &["System App (via root screen)", "john.doe - John Doe"],
     );
+    assert_page(address, &john, "/System/Access/ArtifactGroups", &["All Screens"]);
     assert_page(
         address,
         &john,
-        "/System/Security/UserGroup/GroupUsers?userGroupId=ADMIN",
-        &["john.doe - John Doe"],
-    );
-    assert_page(
-        address,
-        &john,
-        "/System/Security/ArtifactGroup/ArtifactGroupList",
-        &["All Screens"],
-    );
-    assert_page(
-        address,
-        &john,
-        "/System/Security/ArtifactGroup/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP",
+        "/System/Access/ArtifactGroupDetail?artifactGroupId=SYSTEM_APP",
         &["component://tools/screen/System.xml", "Administrators (full access)"],
     );
 

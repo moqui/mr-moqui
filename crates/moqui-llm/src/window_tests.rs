@@ -373,7 +373,7 @@ fn a_screen_digest_keeps_the_users_rejection_feedback() {
     let feedback =
         "Leave the description as it is and tell me what the group's type is, then check its permissions too.";
     let text = format!(
-        "{}\npath /apps/system/Security/UserGroup/UserGroupDetail?userGroupId=G1\ntitle Detail\n{}\n--- ok",
+        "{}\npath /apps/system/Access/GroupDetail?userGroupId=G1\ntitle Detail\n{}\n--- ok",
         crate::approval::rejected_text(Some(feedback)),
         "x".repeat(2000)
     );

@@ -25,7 +25,7 @@ ec.service.sync().name("update#moqui.security.ArtifactGroup").parameters({ descr
 void list;
 
 // A tools screen: the keys its actions prove.
-const detail = context as MoquiScreenContexts["component://tools/screen/System/Security/ArtifactGroup/ArtifactGroupDetail.xml"];
+const detail = context as MoquiScreenContexts["component://tools/screen/System/Access/ArtifactGroupDetail.xml"];
 const group: EntityValue<"moqui.security.ArtifactGroup"> | null | undefined = detail.artifactGroup;
 const members: EntityList<"moqui.security.ArtifactGroupMember"> | undefined = detail.memberList;
 void [group, members];

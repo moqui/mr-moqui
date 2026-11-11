@@ -4,7 +4,8 @@
 // names for that artifact group, on a binding of the registered type, at the grant revision, and never removed; the review
 // leaves sealed grants out, counted, as of its date. With artifact authorization on, as a spec access administrator who holds
 // ADMIN_ACCESS_VIEW and ADMIN_ACCESS_MANAGE through a group of its own (not ADMIN). The grant rules themselves are
-// AdminAccessServices'.
+// AdminAccessServices'. And the matrix as the Capabilities screen shows and changes it (get#MatrixContext, apply#MatrixChanges):
+// its list twin, a proposal's controls and effect, a refused group named while the others apply, the bounds and the permissions.
 // Run: ./moq test framework --spec AdminAccessCapabilities
 const S = "org.moqui.admin.AccessServices."
 const adminUser = "spec.cap.admin"
@@ -398,3 +399,127 @@ feature("the review lists grants, app gates and members as of its date and leave
         none.error.includes("Name the groups or the app")
     }
 })
+
+// The matrix as the Capabilities screen shows and changes it (AccessMatrix.js; plans/Admin-Screens-Down.md A3, first IronStone
+// Admin's): the proposal is the tokens the screen carries, nothing stored until it is applied
+feature(
+    "the matrix context marks a proposal with its controls and effect, and applies it group by group, naming a refused group",
+    {
+        when() {
+            const token = (groupId, action, key) => groupId + "~" + action + "~" + key
+            const viewToken = token(teamId, "a", "p:" + viewPermission)
+            // a permission no registered bundle offers: refused whoever asks
+            const refusedToken = token(looseId, "a", "p:" + loosePermission)
+            const both = [viewToken, refusedToken].join(",")
+            const asAdmin = as(adminUser, () => {
+                const context = invoke(S + "get#MatrixContext", {
+                    appName: "SpecCap",
+                    groups: [teamId, looseId].join(","),
+                    changes: viewToken
+                })
+                const refused = invoke(S + "get#MatrixContext", {changes: both})
+                const applied = invoke(S + "apply#MatrixChanges", {
+                    changes: both,
+                    revisions: refused.proposal?.revisions,
+                    reason: "Spec matrix"
+                })
+                // the team's grants changed with the first apply: the revision previewed before it is stale
+                const stale = invoke(S + "apply#MatrixChanges", {
+                    changes: token(teamId, "e", "p:" + viewPermission),
+                    revisions: refused.proposal?.revisions
+                })
+                // over a bound: answered as the reason the screen shows, the proposal kept so it can be cleared
+                const bounded = invoke(S + "get#MatrixContext", {
+                    groups: Array.from({length: 9}, (unused, n) => "SPEC_G" + n).join(","),
+                    changes: viewToken
+                })
+                const tooMany = invoke(S + "get#MatrixContext", {
+                    changes: Array.from({length: 41}, (unused, n) => token(teamId, "a", "p:SPEC_P" + n)).join(",")
+                })
+                const none = invoke(S + "apply#MatrixChanges", {changes: "not a token"})
+                return {context, refused, applied, stale, bounded, tooMany, none}
+            })
+            const context = asAdmin.context
+            // every cell of the matrix is a row of the list with the same texts and controls
+            const listed = new Map((context.listRows || []).map(row => [row.capabilityKey + "|" + row.userGroupId, row]))
+            const cells = (context.matrixRows || []).flatMap(row => row.cells.map(cell => ({row, cell})))
+            const differing = cells.filter(({row, cell}) => {
+                const item = listed.get(row.capabilityKey + "|" + cell.userGroupId)
+                return (
+                    !item ||
+                    ["state", "stateText", "proposedText", "actionText", "nextChanges", "scopeText"].some(
+                        key => item[key] !== cell[key]
+                    )
+                )
+            })
+            const cell = key =>
+                context.matrixRows?.find(row => row.capabilityKey === key)?.cells.find(c => c.userGroupId === teamId)
+            return Object.assign(asAdmin, {
+                cellCount: cells.length,
+                listCount: listed.size,
+                differing,
+                launcherCell: cell("a:" + appGroupId),
+                viewCell: cell("p:" + viewPermission),
+                editCell: cell("p:" + editPermission),
+                editToken: token(teamId, "a", "p:" + editPermission),
+                viewToken,
+                refusedToken,
+                teamPermissions: rows("moqui.security.UserGroupPermission", {userGroupId: teamId}).map(
+                    row => row.userPermissionId
+                ),
+                // a user with neither permission, with the parameters that answer the administrator
+                reader: as("spec.cap.reader", () => ({
+                    context: invoke(S + "get#MatrixContext", {appName: "SpecCap"}),
+                    applied: invoke(S + "apply#MatrixChanges", {changes: viewToken})
+                }))
+            })
+        },
+        then({
+            context,
+            refused,
+            applied,
+            stale,
+            bounded,
+            tooMany,
+            none,
+            cellCount,
+            listCount,
+            differing,
+            launcherCell,
+            viewCell,
+            editCell,
+            editToken,
+            viewToken,
+            refusedToken,
+            teamPermissions,
+            reader
+        }) {
+            context.error == ""
+            cellCount == 6 && listCount == 6
+            differing.length == 0
+            // what the team holds ends, what it lacks is granted, and a proposed cell withdraws its token
+            launcherCell.stateText == "Granted" && launcherCell.actionText == "End" && launcherCell.scopeText == setId
+            viewCell.proposed == "add" && viewCell.proposedText == "Grant proposed"
+            viewCell.actionText == "Withdraw" && viewCell.nextChanges == ""
+            editCell.actionText == "Grant" && editCell.nextChanges == [viewToken, editToken].join(",")
+            // the proposal's effect on its group, from preview#Grants, with the revision to apply it at
+            context.changeCount == 1 && context.proposal.canApply == true
+            context.proposal.rows[0].actionText == "Grant" && context.proposal.rows[0].resultText.includes("granted")
+            JSON.parse(context.proposal.revisions)[teamId] == context.proposal.groups[0].revision
+            // one group of a proposal refused: nothing is offered to apply, and applying names it and applies the other
+            refused.proposal.canApply == false
+            refused.proposal.groups.find(row => row.userGroupId === looseId).allowed == false
+            applied.appliedCount == 1 && applied.refusedCount == 1
+            applied.resultList.find(row => row.userGroupId === looseId).reasonCode == "UNREGISTERED_GRANT"
+            applied.resultList.find(row => row.userGroupId === teamId).added == 1
+            applied.remainingChanges == refusedToken
+            teamPermissions.join() == viewPermission
+            stale.appliedCount == 0 && stale.resultList[0].reasonCode == "REVISION_CHANGED"
+            bounded.failure.includes("at most 8 groups") && bounded.changes == viewToken && bounded.columns.length == 0
+            tooMany.failure.includes("more than 40") && tooMany.changeCount == 41
+            none.error.includes("no proposed change")
+            reader.context.error.includes("ADMIN_ACCESS_VIEW")
+            reader.applied.error.includes("ADMIN_ACCESS_MANAGE")
+        }
+    }
+)

@@ -273,17 +273,14 @@ fn a_patch_merges_once_and_a_rename_is_the_edit_section() {
 fn a_mutation_is_evaluated_from_the_program_with_the_posted_state() {
     let sources = test_sources();
     let program = "root = Stack([b])\n$description = \"\"\n\
-        save = Mutation(\"request\", {method: \"POST\", path: \"/apps/system/Security/UserGroup/UserGroupDetail/updateUserGroup\", body: {userGroupId: \"ADMIN\", description: $description}})\n\
+        save = Mutation(\"request\", {method: \"POST\", path: \"/apps/system/Access/GroupDetail/updateUserGroup\", body: {userGroupId: \"ADMIN\", description: $description}})\n\
         b = Button(\"Save\", Action([@Run(save)]))";
     let (tool, args) = evaluate_mutation(&sources, program, "save", &json!({"description": "Renamed"}))
         .unwrap()
         .unwrap();
     assert_eq!(tool, "request");
     assert_eq!(args["body"], json!({"userGroupId": "ADMIN", "description": "Renamed"}));
-    assert_eq!(
-        args["path"],
-        json!("/apps/system/Security/UserGroup/UserGroupDetail/updateUserGroup")
-    );
+    assert_eq!(args["path"], json!("/apps/system/Access/GroupDetail/updateUserGroup"));
     assert_eq!(evaluate_mutation(&sources, program, "other", &json!({})).unwrap(), None);
 }
 

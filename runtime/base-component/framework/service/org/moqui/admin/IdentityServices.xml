@@ -50,11 +50,13 @@ along with this software (see the LICENSE.md file). If not, see
             with a live web session; each named by its visit (sessionKey), never its cookie, token or contents, with when it
             started and was last seen, a client summary (browser and system, never the user agent), the address and place, its
             state (active, ended, expired) and whether it is the caller's current one. The caller's own (no userId), or with
-            ADMIN_IDENTITY_VIEW another user's (userId), the users of userIdList, or every user's (allUsers).</description>
+            ADMIN_IDENTITY_VIEW another user's (userId), the users of userIdList, or every user's (allUsers), narrowed by
+            text to the accounts whose username or name holds it, ignoring case.</description>
         <in-parameters>
             <parameter name="userId"/>
             <parameter name="userIdList" type="List"/>
             <parameter name="allUsers" type="Boolean" default="false"/>
+            <parameter name="text"/>
             <parameter name="activeOnly" type="Boolean" default="false"/>
             <parameter name="sinceDays" type="Integer"/>
             <parameter name="limit" type="Integer"/>

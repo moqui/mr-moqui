@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
         <service-call name="update#moqui.entity.sync.EntitySync" in-map="{entitySyncId:entitySyncId, statusId:'EsNotStarted'}"/>
         <default-response url="."/></transition>
 
-    <transition name="artifactGroupDetail"><default-response url="../../Security/ArtifactGroup/ArtifactGroupDetail"/></transition>
+    <transition name="artifactGroupDetail"><default-response url="../../Access/ArtifactGroupDetail"/></transition>
     <transition name="createEntitySyncArtifact"><service-call name="create#moqui.entity.sync.EntitySyncArtifact"/>
         <default-response url="."/></transition>
     <transition name="updateEntitySyncArtifact"><service-call name="update#moqui.entity.sync.EntitySyncArtifact"/>

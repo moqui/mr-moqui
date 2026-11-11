@@ -236,9 +236,22 @@ function heldBeyond(userId) {
     return null
 }
 
+// The accounts whose username or name holds a text, ignoring case: the first 200 by username.
+function accountsLike(term) {
+    const factory = ec.entity.conditionFactory
+    const like = "%" + term.replace(/[\\%_]/g, character => "\\" + character) + "%"
+    const named = factory.makeCondition(
+        ["username", "userFullName"].map(field => factory.makeCondition(field, "like", like).ignoreCase()),
+        "or"
+    )
+    return Array.from(find(ACCOUNT).condition(named).selectField("userId").orderBy("username").limit(200).list()).map(
+        row => row.userId
+    )
+}
 // find#Sessions: the sessions of an account (its visits, the live ones those with a web session), newest first; for the
-// caller's own account any signed-in user, for another or all accounts ADMIN_IDENTITY_VIEW. A session is named by its visit
-// (sessionKey), never by its cookie or token, and its client by a summary and address.
+// caller's own account any signed-in user, for another or all accounts ADMIN_IDENTITY_VIEW (all accounts narrowed by text to
+// those whose username or name holds it). A session is named by its visit (sessionKey), never by its cookie or token, and its
+// client by a summary and address.
 function findSessions(p) {
     const me = signedInUser()
     const listed = Array.from(p.userIdList || [])
@@ -248,7 +261,8 @@ function findSessions(p) {
     let userIds
     if (allUsers || listed.length) {
         if (!ec.user.hasPermission(IDENTITY_VIEW)) throw new Error(IDENTITY_VIEW + " is required for other users' sessions")
-        userIds = allUsers ? null : listed
+        const term = text(p.text)
+        userIds = allUsers ? (term ? accountsLike(term) : null) : listed
     } else userIds = [target(p, IDENTITY_VIEW).userId]
     const activeOnly = p.activeOnly == null ? false : p.activeOnly === true || p.activeOnly === "true" || p.activeOnly === "Y"
     const days = Math.max(1, Math.min(365, Number(p.sinceDays || 30)))

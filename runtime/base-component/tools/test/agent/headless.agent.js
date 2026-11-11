@@ -52,8 +52,8 @@ agentSpec({
             setup() { make("moqui.security.UserGroup", { userGroupId: "AGENT_EVAL_HL", description: "Agent eval headless group" }) },
             cleanup() { remove("moqui.security.UserGroup", "userGroupId", "AGENT_EVAL_HL") },
             expect: {
-                called: [{ tool: "screen", args: { go: /UserGroupDetail\?userGroupId=AGENT_EVAL_HL/ } }],
-                answer: [/Agent eval headless group/, /\]\(\/apps\/system\/Security\/UserGroup\/UserGroupDetail\?userGroupId=AGENT_EVAL_HL\)/],
+                called: [{ tool: "screen", args: { go: /GroupDetail\?userGroupId=AGENT_EVAL_HL/ } }],
+                answer: [/Agent eval headless group/, /\]\(\/apps\/system\/Access\/GroupDetail\?userGroupId=AGENT_EVAL_HL\)/],
                 noInvented: true,
                 noWrite: true,
             },

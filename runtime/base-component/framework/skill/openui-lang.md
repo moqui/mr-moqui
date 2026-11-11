@@ -204,7 +204,7 @@ WRONG: `Query("request", {path: "/qapps/system/Visit/VisitList"}, {rows: []})` (
 
 A Mutation is Mutation("request", {method: "POST", path, body: {...}}) on a transition of an /apps screen, run by a Button's Action([@Run(name)]).
 
-- The path is the transition a screen's form posts to (`/apps/system/Security/UserGroup/UserGroupDetail/updateUserGroup`);
+- The path is the transition a screen's form posts to (`/apps/system/Access/GroupDetail/updateUserGroup`);
   body holds its parameters. It never runs when the canvas renders; it runs when the user clicks its Button. The click
   is the user's approval: the server runs the program's own Mutation with the canvas's values, as the user.
 - A Mutation's body uses $variables and literals only; to send a row's value, @Set it into a $variable in the same Action first.
@@ -213,7 +213,7 @@ A Mutation is Mutation("request", {method: "POST", path, body: {...}}) on a tran
 
 ```
 $description = ""
-save = Mutation("request", {method: "POST", path: "/apps/system/Security/UserGroup/UserGroupDetail/updateUserGroup", body: {userGroupId: "ADMIN", description: $description}})
+save = Mutation("request", {method: "POST", path: "/apps/system/Access/GroupDetail/updateUserGroup", body: {userGroupId: "ADMIN", description: $description}})
 saveButton = Button("Save", Action([@Run(save), @Run(groups)]))
 ```
 

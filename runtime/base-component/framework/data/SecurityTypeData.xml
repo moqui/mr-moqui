@@ -129,6 +129,10 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Admin P10: the lockout preview of a group's sign-in rules, checking ADMIN_ACCESS_VIEW itself; a member row of its own -->
     <moqui.security.ArtifactGroupMember artifactGroupId="AdminAccessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
             artifactName="org\.moqui\.admin\.AccessServices\.preview#GroupSignInRules"/>
+    <!-- The capability matrix as the Capabilities screen shows and changes it (plans/Admin-Screens-Down.md A3), each checking
+        ADMIN_ACCESS_VIEW or ADMIN_ACCESS_MANAGE itself and calling the services above; a member row of its own -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminAccessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.AccessServices\.(get#MatrixContext|apply#MatrixChanges)"/>
     <!-- Admin P6 (mr-boss plan/impl-admin.md P6, F31): the owner change of a shared drive and of a shared mail account, which an
         account's lifecycle uses when the owner leaves (the owned-resource contract of org.moqui.admin.IdentityServices). Their
         owner may hand them over; another user's need these permissions, granted to ADMIN (an app grants them to its identity

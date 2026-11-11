@@ -582,7 +582,7 @@ fn the_drawer_calls_over_http_on_postgres() {
     let (status, _, text) = ann.post_raw(
         "turn",
         &json!({"text": "Five", "clientMessageId": "ann-5", "clientId": "ann-other-tab", "conversationId": ann_conversation,
-            "contextVersion": 40, "state": {"path": "/apps/system/Security/UserGroup"}}),
+            "contextVersion": 40, "state": {"path": "/apps/system/Access/Groups"}}),
         true,
     );
     assert_eq!(status, 429, "{text}");
@@ -1124,17 +1124,17 @@ fn the_canvas_over_http_on_postgres() {
         .unwrap();
     assert_eq!(assist["dialects"][0]["name"], "openui", "{boot}");
 
-    let list = "/apps/system/Security/UserGroup/UserGroupList";
-    let save = "/apps/system/Security/UserGroup/UserGroupDetail/updateUserGroup";
+    let list = "/apps/system/Access/Groups";
+    let save = "/apps/system/Access/GroupDetail/updateUserGroup";
     let good = format!(
         "root = Stack([CardHeader(\"Groups\"), table, FormControl(\"Description\", Input(\"description\", $description)), saveButton])\n\
-         groups = Query(\"request\", {{path: \"{list}\", query: {{userGroupId: \"AST_CANVAS\"}}}}, {{rows: []}})\n\
-         table = Table([Col(\"Group\", groups.rows.userGroupId), Col(\"Description\", groups.rows.description)])\n\
+         groups = Query(\"request\", {{path: \"{list}\", query: {{text: \"Canvas before\"}}}}, {{rows: []}})\n\
+         table = Table([Col(\"Group\", groups.rows.userGroupId), Col(\"ID\", groups.rows.userGroupIdText)])\n\
          save = Mutation(\"request\", {{method: \"POST\", path: \"{save}\", body: {{userGroupId: \"AST_CANVAS\", description: $description}}}})\n\
          saveButton = Button(\"Save\", Action([@Run(save), @Run(groups)]))"
     );
     let broken = format!(
-        "root = Stack([table])\ngroups = Query(\"request\", {{path: \"{list}\", query: {{userGroupId: $id}}, {{rows: []}})\ntable = Table([Col(\"Group\", groups.rows.userGroupId)])"
+        "root = Stack([table])\ngroups = Query(\"request\", {{path: \"{list}\", query: {{text: $id}}, {{rows: []}})\ntable = Table([Col(\"Group\", groups.rows.userGroupId)])"
     );
     fake::script(
         ENDPOINT,
@@ -1188,11 +1188,12 @@ fn the_canvas_over_http_on_postgres() {
     );
     assert_eq!(canvas["mutations"], json!(["save"]));
     let artifact_id = str_of(&canvas["artifactId"]);
-    let query = urlencoding(&json!({"userGroupId": "AST_CANVAS"}).to_string());
+    let query = urlencoding(&json!({"text": "Canvas before"}).to_string());
     let (status, rows_read) = john.get("read", &format!("artifactId={artifact_id}&path={list}&query={query}"));
     assert_eq!(status, 200, "{rows_read}");
-    assert_eq!(rows_read["rows"][0]["userGroupId"], "AST_CANVAS", "{rows_read}");
-    assert_eq!(rows_read["rows"][0]["description"], "Canvas before", "{rows_read}");
+    // the list's fields as it shows them: the group by its description, with its id beside it
+    assert_eq!(rows_read["rows"][0]["userGroupIdText"], "AST_CANVAS", "{rows_read}");
+    assert_eq!(rows_read["rows"][0]["userGroupId"], "Canvas before", "{rows_read}");
     // a transition that writes is never read
     let (status, refused) = john.get("read", &format!("artifactId={artifact_id}&path={save}"));
     assert_eq!(status, 403, "{refused}");

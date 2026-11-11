@@ -47,7 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
             <row-col md="3"><container-box><box-header title="Users and groups"/><box-body>
                 <label text="Who can sign in, which groups they are in and what each group may do." type="p"/>
                 <link url="//apps/system/Security/UserAccount" url-type="screen" text="User accounts" icon="person"/>
-                <link url="//apps/system/Security/UserGroup" url-type="screen" text="User groups" icon="group"/>
+                <link url="//apps/system/Access/Groups" url-type="screen" text="User groups" icon="group"/>
             </box-body></container-box></row-col>
             <row-col md="3"><container-box><box-header title="Enumerations"/><box-body>
                 <label text="The coded lists the apps choose from: types, categories and reasons." type="p"/>

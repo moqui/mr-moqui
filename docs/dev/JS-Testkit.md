@@ -452,7 +452,7 @@ agentSpec({
             cleanup() { /* remove them */ },
             approvals: ["approve"],                  // scripted answers: "approve", { edit: {...} }, { reject: "why" }
             expect: {
-                path: "/apps/system/Security/UserGroup/UserGroupDetail",
+                path: "/apps/system/Access/GroupDetail",
                 parameters: { userGroupId: "AGENT_EVAL_GROUP" },
                 held: { transition: "updateUserGroup", text: /Renamed/, status: "executed" },
                 answer: /saved/i,
