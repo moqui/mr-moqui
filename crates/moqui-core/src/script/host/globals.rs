@@ -87,9 +87,45 @@ const GLOBALS_JS: &str = concat!(
     const factory = ec.factory || (ec.factory = {});
     factory.moquiVersion = hidden.moquiVersion();
     factory.hasFeature = hidden.hasFeature;
+    // Java's TransactionFacade (`transaction.rs`)
+    // body() in a transaction begun by `begin`: committed when it returns, rolled back (or, joined, marked
+    // rollback-only) when it throws, and what it threw is thrown on
+    const runIn = (begin) => (timeout, rollbackMessage, body) => {
+        if (typeof body !== "function") throw new TypeError("the body of a transaction is a function");
+        const began = begin(timeout ?? null);
+        let result;
+        try {
+            result = body();
+        } catch (err) {
+            ec.transaction.rollback(began, rollbackMessage ?? "Error in transaction", err);
+            throw err;
+        }
+        hidden.commit(began);
+        return result;
+    };
+    const statusNames = { 0: "Active", 1: "Marked Rollback-Only", 6: "No Transaction" };
     ec.transaction = {
         isTransactionInPlace: hidden.isTransactionInPlace,
-        isTransactionCacheActive: hidden.isTransactionCacheActive
+        isTransactionCacheActive: hidden.isTransactionCacheActive,
+        begin: (timeout) => hidden.begin(timeout ?? null),
+        commit: hidden.commit,
+        // rollback(began, message, error) and rollback(message, error)
+        rollback: function (first, second, third) {
+            const text = (value) => value == null ? null : String(value instanceof Error ? value.message : value);
+            if (typeof first === "boolean") return hidden.rollback(first, text(second), text(third));
+            return hidden.rollback(true, text(first), text(second));
+        },
+        setRollbackOnly: (message, error) => hidden.setRollbackOnly(message == null ? null : String(message),
+            error == null ? null : String(error instanceof Error ? error.message : error)),
+        suspend: hidden.suspend,
+        resume: hidden.resume,
+        getStatus: hidden.getStatus,
+        getStatusString: () => { const status = hidden.getStatus(); return statusNames[status] + " (" + status + ")"; },
+        runUseOrBegin: runIn(hidden.begin),
+        runRequireNew: runIn(hidden.beginNew),
+        // Java's transaction cache calls: the entity facade's here
+        initTransactionCache: (readOnly) => ec.entity.startTxCacheDb(readOnly === true),
+        flushAndDisableTransactionCache: () => ec.entity.stopTxCache()
     };
     if (ec.entity) ec.entity.databaseTimeZone = "UTC";
     const resource = ec.resource || (ec.resource = {});
@@ -240,6 +276,15 @@ pub(crate) static SHIM: Shim = Shim {
             leaf,
             transaction_cache_active
         ),
+        // Java's TransactionFacade (`transaction.rs`): a commit runs its hooks, so not leaves
+        method!("ec.transaction", "begin", [OptValue], super::transaction::begin),
+        method!("ec.transaction", "commit", [OptValue], super::transaction::commit),
+        method!("ec.transaction", "rollback", [OptValue, OptValue, OptValue], super::transaction::rollback),
+        method!("ec.transaction", "setRollbackOnly", [OptValue, OptValue], super::transaction::set_rollback_only),
+        method!("ec.transaction", "suspend", [], super::transaction::suspend),
+        method!("ec.transaction", "resume", [], super::transaction::resume),
+        method!("ec.transaction", "getStatus", [], None, leaf, super::transaction::status),
+        method!("ec.transaction", "beginNew", [OptValue], super::transaction::begin_new),
         // they read the entities, so not leaves
         method!("UserSecurityChecks", "assertPrivilegedGroupMembership", [OptValue], None, assert_privileged_group),
         method!("UserSecurityChecks", "assertSealedPermissionGrant", [OptValue], None, assert_sealed_grant),

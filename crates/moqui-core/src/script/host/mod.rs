@@ -51,6 +51,7 @@ mod sftp;
 mod sri;
 mod theme;
 mod tools;
+mod transaction;
 pub(crate) mod upload;
 mod urls;
 mod user;

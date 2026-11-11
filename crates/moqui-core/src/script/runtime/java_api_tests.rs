@@ -14,11 +14,19 @@
 
 //! The members of Moqui Java's `ec` API a ported script calls, as scripts call them (docs/dev/JS-Core-API.md).
 
-use crate::context::ExecutionContextFactory;
+use crate::context::{ExecutionContext, ExecutionContextFactory};
 use crate::script::{clear_context_stack, eval_condition, run_script};
 
 fn holds(expression: &str) {
     assert!(eval_condition(expression).unwrap(), "{expression}");
+}
+
+/// A context over an empty test database.
+fn database() -> ExecutionContext {
+    clear_context_stack();
+    let context = ExecutionContextFactory::test_context();
+    context.factory().set_entity(crate::testing::open());
+    context
 }
 
 #[test]
@@ -248,5 +256,84 @@ fn cache_artifact_stack_factory_and_resource_forms() {
         r#"ec.web.pathInfoList.length === 0 && ec.web.requestUrl === null && typeof ec.web.sendBytesResponse === "function""#,
     );
     holds(r#"ec.web.getFieldValidationErrors("nothing").length === 0"#);
+    clear_context_stack();
+}
+
+#[test]
+fn transactions_begin_commit_and_roll_back_as_in_java() {
+    let context = database();
+    let _entered = context.enter();
+    let count = r#"ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", "like", "JTX%").count()"#;
+    // each script makes its rows with this function, declared at its start
+    let holds = |script: &str| {
+        let make = r#"const makeType = (id) => { const type = ec.entity.makeValue("moqui.basic.EnumerationType"); type.enumTypeId = id; type.create(); };"#;
+        holds(&script.replacen("(function () {", &format!("(function () {{ {make}"), 1));
+    };
+    holds(r#"ec.transaction.getStatus() === 6 && ec.transaction.getStatusString() === "No Transaction (6)""#);
+    // the usual Java shape: begin, work, commit what was begun
+    holds(
+        r#"(function () {
+            const began = ec.transaction.begin(null);
+            const inPlace = ec.transaction.isTransactionInPlace() && ec.transaction.getStatus() === 0;
+            const joined = ec.transaction.begin(30);
+            makeType("JTX1");
+            ec.transaction.commit(joined);
+            const still = ec.transaction.isTransactionInPlace();
+            ec.transaction.commit(began);
+            return began === true && joined === false && inPlace && still && !ec.transaction.isTransactionInPlace();
+        })()"#,
+    );
+    assert!(eval_condition(&format!("{count} === 1")).unwrap());
+    // a rollback of what was begun discards the work; a joined rollback marks the transaction
+    holds(
+        r#"(function () {
+            const began = ec.transaction.begin(null);
+            makeType("JTX2");
+            ec.transaction.rollback(false, "joined work failed", null);
+            const marked = ec.transaction.getStatus() === 1 && ec.transaction.getStatusString() === "Marked Rollback-Only (1)";
+            ec.transaction.rollback(began, "giving up", new Error("why"));
+            return marked && !ec.transaction.isTransactionInPlace();
+        })()"#,
+    );
+    assert!(eval_condition(&format!("{count} === 1")).unwrap());
+    // runUseOrBegin commits and gives the body's value; a throw rolls back and is thrown on
+    holds(
+        r#"(function () {
+            return ec.transaction.runUseOrBegin(null, "failed", () => { makeType("JTX3"); return 7; }) === 7;
+        })()"#,
+    );
+    holds(
+        r#"(function () {
+            try { ec.transaction.runUseOrBegin(60, "failed", () => { makeType("JTX4"); throw new Error("stop here"); }); }
+            catch (err) { return String(err.message).includes("stop here") && !ec.transaction.isTransactionInPlace(); }
+            return false;
+        })()"#,
+    );
+    assert!(eval_condition(&format!("{count} === 2")).unwrap());
+    // runRequireNew commits its own work whatever becomes of the transaction around it
+    holds(
+        r#"(function () {
+            const began = ec.transaction.begin(null);
+            makeType("JTX5");
+            ec.transaction.runRequireNew(null, "failed", () => makeType("JTX6"));
+            ec.transaction.rollback(began, "outer rolled back", null);
+            return true;
+        })()"#,
+    );
+    assert!(eval_condition(&format!("{count} === 3")).unwrap());
+    holds(r#"ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", "JTX6").one() != null"#);
+    // suspend and resume around work outside the transaction
+    holds(
+        r#"(function () {
+            const began = ec.transaction.begin(null);
+            const suspended = ec.transaction.suspend();
+            const outside = !ec.transaction.isTransactionInPlace();
+            ec.transaction.resume();
+            const back = ec.transaction.isTransactionInPlace();
+            ec.transaction.setRollbackOnly("no", null);
+            ec.transaction.rollback(began, "done", null);
+            return suspended === true && outside && back;
+        })()"#,
+    );
     clear_context_stack();
 }

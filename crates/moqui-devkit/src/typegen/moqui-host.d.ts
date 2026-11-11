@@ -987,6 +987,36 @@ interface MoquiScreenFacade {
     testRender(options: MoquiScreenRenderOptions & { method?: string; baseScreenPath?: string }): { output: string | null; errorMessages: string[]; renderTime: number; status: number | null };
 }
 
+/** `ec.transaction`: the transaction of the default entity group, as Java's `TransactionFacade`. */
+interface MoquiTransactionFacade {
+    isTransactionInPlace(): boolean;
+    isTransactionCacheActive(): boolean;
+    /** Whether this call began a transaction: false when one is in place, which it joins. Timeout in seconds. */
+    begin(timeout?: number | null): boolean;
+    /** Commits when `began` is true or not given; nothing when it is false. */
+    commit(began?: boolean): void;
+    /** Rolls back when `began`, else marks the transaction in place rollback-only. */
+    rollback(began: boolean, message?: string | null, error?: unknown): void;
+    /** Rolls back the transaction in place. */
+    rollback(message?: string | null, error?: unknown): void;
+    setRollbackOnly(message?: string | null, error?: unknown): void;
+    /** Whether a transaction was suspended. */
+    suspend(): boolean;
+    resume(): void;
+    /** 0 active, 1 marked rollback-only, 6 no transaction. */
+    getStatus(): number;
+    readonly status: number;
+    getStatusString(): string;
+    readonly statusString: string;
+    /** `body()` in the transaction in place, or in one of its own: committed when it returns, rolled back when it throws. */
+    runUseOrBegin<T>(timeout: number | null, rollbackMessage: string | null, body: () => T): T;
+    /** `body()` in a new transaction, the one in place suspended until it ends. */
+    runRequireNew<T>(timeout: number | null, rollbackMessage: string | null, body: () => T): T;
+    /** The same as `ec.entity.startTxCacheDb(readOnly)` and `ec.entity.stopTxCache()`. */
+    initTransactionCache(readOnly?: boolean): void;
+    flushAndDisableTransactionCache(): void;
+}
+
 /** A named framework cache, from `ec.cache.getCache(name)`. Keys are text. */
 interface MoquiCache {
     get(key: string): unknown;
@@ -1191,6 +1221,8 @@ interface MoquiServerEc {
     getArtifactExecution(): MoquiServerEc["artifactExecution"];
     /** The signed-in user's notification messages, of one topic or all, as plain objects. */
     getNotificationMessages(topic?: string | null): MoquiMap[];
+    readonly transaction: MoquiTransactionFacade;
+    getTransaction(): MoquiTransactionFacade;
     /** A notification builder: `ec.makeNotificationMessage().topic("T").message({..}).userIds([..]).send()`. */
     makeNotificationMessage(): MoquiNotificationMessage;
     readonly search: { [method: string]: (...args: unknown[]) => unknown };
