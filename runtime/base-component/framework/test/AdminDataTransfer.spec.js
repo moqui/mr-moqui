@@ -360,6 +360,19 @@ feature("each row is on its own and only failed rows are retried: an applied row
             out.byeAudits = audits("Spec transfer bye")
             out.afterApply = translation("Spec transfer greeting", "es")
             out.failedOnly = step("get#Transfer", {operationKey: out.staged.operationKey, errorsOnly: true})
+            // a retry writes no more than the apply would: the row whose source changed is reviewed again first
+            out.retryStale = step("retry#ImportItems", {operationKey: out.staged.operationKey, itemSeqIdList: [1]})
+            out.afterStale = translation("Spec transfer greeting", "es")
+            out.revalidated = step("validate#Import", {
+                operationKey: out.staged.operationKey,
+                mappingRevision: out.staged.mappingRevision
+            })
+        })
+        // a row whose apply did not end: failed, its source as the preview read it
+        const stopped = ec.entity.makeValue("moqui.server.TransferItem")
+        stopped.setFields({transferId: out.staged.operationKey, itemSeqId: 1, result: "failed"}, true, null, null)
+        stopped.update()
+        as(users.run, () => {
             out.retry = step("retry#ImportItems", {
                 operationKey: out.staged.operationKey,
                 itemSeqIdList: [1, 2, 6, 99],
@@ -375,6 +388,10 @@ feature("each row is on its own and only failed rows are retried: an applied row
         })
         out.clean = invoke(T + "clean#TransferBatches")
         out.view = as(users.view, () => step("retry#ImportItems", {operationKey: out.staged.operationKey, itemSeqIdList: [1]}))
+        // who staged it reads it only while they hold the target's permissions
+        find("moqui.security.UserGroupMember", {userGroupId: groups.run, userId: users.run}).deleteAll()
+        out.former = as(users.run, () => step("get#Transfer", {operationKey: out.staged.operationKey}))
+        out.formerReport = as(users.run, () => step("get#ImportReport", {operationKey: out.staged.operationKey}))
     },
     then() {
         const r = context.rows
@@ -399,6 +416,15 @@ feature("each row is on its own and only failed rows are retried: an applied row
         r.afterApply == "Saludo de otro"
         translation("Spec transfer bye", "es") == "Adios"
         r.failedOnly.shownCount == 5
+        // a retry of the row whose source changed writes nothing; validated again, it is ready at the source's new revision
+        // and the row that repeats an applied row is still a repeat
+        r.retryStale.applied == false
+        resultOf(r.retryStale, 1).reasonCode == "STALE_SOURCE"
+        r.afterStale == "Saludo de otro"
+        rowOf(r.revalidated, 1).result == "valid"
+        rowOf(r.revalidated, 2).result == "applied"
+        rowOf(r.revalidated, 3).result == "invalid"
+        has(rowOf(r.revalidated, 3).errorMessage, /Repeats row 3/)
         // the retry: the failed row is validated again and applied; an applied, an invalid and an unknown row are named
         r.retry.applied == true
         r.retry.appliedCount == 1
@@ -415,6 +441,8 @@ feature("each row is on its own and only failed rows are retried: an applied row
         r.after.appliedCount == 2
         r.after.state == "partial"
         has(r.view.error, /ADMIN_TRANSFER_RUN is required/)
+        has(r.former.error, /not available/)
+        has(r.formerReport.error, /not available/)
         // retention leaves a batch within its days as it is
         r.clean.removedCount == 0
         r.clean.purgedCount == 0

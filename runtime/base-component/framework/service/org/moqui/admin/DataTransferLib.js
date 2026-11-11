@@ -5,7 +5,8 @@
 // without one, and no service, entity or field name comes from a request. An owner's service is called through
 // call#TargetService, by the step's name in the registration, as the caller: that service's ALL_USERS ALLOW is not
 // inheritable, so the dispatching service's own grant does not carry into the owner's service, which is authorized for the
-// caller as a direct call is. The registration adds no right. ADMIN_TRANSFER_VIEW reads the catalog of targets and every
+// caller as a direct call is (below an app screen its inheritable ALWAYS grant covers it, as everything there: an owner
+// registers only services that check the caller's permission and scope themselves). The registration adds no right. ADMIN_TRANSFER_VIEW reads the catalog of targets and every
 // target's runs; a target's own permissions and its owner's checks decide what is staged and applied. A refusal a person can
 // act on is answered as a reason (refused true, reasonCode, reason), never written. No dependency on Mantle or an app.
 const lib = ec.resource.script("component://framework/service/org/moqui/admin/OperationLib.js")

@@ -9,9 +9,10 @@
 // stored. A row carries only the target's registered fields, by a mapping from the file's headers; nothing else of a row is
 // given to the owner's services.
 //
-// Who reads a batch. The user who staged it; and a holder of the target's view permission whom the target's scope service
-// admits to the batch's scope. Only the user who staged it changes or applies it, while they still hold the target's import
-// permission and its scope: every row is applied under that user's own authority. Anyone else is told it is not available.
+// Who reads a batch. The user who staged it, while they hold the target's import permission (or its view permission) and
+// its scope; and a holder of the target's view permission whom the target's scope service admits to the batch's scope. Only
+// the user who staged it changes or applies it, while they still hold the target's import permission and its scope: every row
+// is applied under that user's own authority. Anyone else is told it is not available.
 //
 // Revisions. A mapping change names the mapping revision it read. A validation changes nothing of the owner's: each row is
 // given to the target's validateRowService, and its answer (the values an apply would be given, the source's revision) is
@@ -70,13 +71,19 @@ function batchOf(target, operationKey, need, lock = false) {
     if (!row || row.targetId !== target.targetId) throw notAvailable()
     const own = row.userId === ec.user.userId
     const scopeKey = text(row.scopeKey)
+    let admitted = null
     const scoped = () => {
-        const found = scopesOf(target)
-        return scopeKey ? found.scopeList.some(scope => scope.scopeKey === scopeKey) : !!found.unscoped
+        if (admitted == null) {
+            const found = scopesOf(target)
+            admitted = scopeKey ? found.scopeList.some(scope => scope.scopeKey === scopeKey) : !!found.unscoped
+        }
+        return admitted
     }
     const canEdit = own && lib.holdsAll(target.importPermission) && scoped()
     if (need === "edit" && !canEdit) throw notAvailable()
-    if (need === "read" && !own && !(text(target.viewPermission) && lib.holdsAll(target.viewPermission) && scoped()))
+    // who staged it reads it as anyone else does once they no longer hold the target's import permission: with its view
+    // permission and its scope (the rows of a file are people's names and addresses, and results of the owner's)
+    if (need === "read" && !canEdit && !((own || text(target.viewPermission)) && lib.holdsAll(target.viewPermission) && scoped()))
         throw notAvailable()
     return {row: map(row), request: lib.json(row.requestJson, {}), canEdit, own}
 }
@@ -424,7 +431,13 @@ function validate(target, p) {
         return refusal("STALE_MAPPING", "The mapping changed since it was read; read it again and validate")
     const keyFields = lib.names(target.keyFields)
     const seen = new Map()
-    for (const item of itemsOf(batch.row.transferId)) {
+    const items = itemsOf(batch.row.transferId)
+    // a row applied before keeps its key: a row that repeats it stays a repeat when the rest is validated again
+    for (const item of items) {
+        const done = item.result === "applied" && keyFields.length ? lib.json(item.previewJson, null)?.values : null
+        if (done) seen.set(JSON.stringify(keyFields.map(field => done[field] ?? "")), item.rowNumber)
+    }
+    for (const item of items) {
         if (item.result === "applied") continue
         const source = lib.json(item.sourceJson, {sourceValues: {}})
         let result = "invalid"
@@ -472,7 +485,8 @@ function validate(target, p) {
 const itemKey = (transferId, item, values) =>
     "tr." + sha([transferId, item.itemSeqId, JSON.stringify(values)].join("|")).slice(0, 40)
 // apply#TransferItem: one row in a transaction of its own, the row locked. A valid row (or, for a retry, a failed one) is
-// validated again and given to the target's apply service only if the source is as the preview read it.
+// validated again and given to the target's apply service only if the source is as the preview read it, at a retry as at
+// the apply; a row with nothing left to do is skipped.
 function applyItem(p) {
     const target = lib.targetOf(p.targetId, "import")
     const row = one(BATCH, {transferId: text(p.operationKey)})
@@ -526,15 +540,15 @@ function applyItem(p) {
         ec.message.clearErrors()
         return failed("INVALID", String(error?.message ?? error))
     }
-    if (!now.valid)
-        return failed(
-            now.skip ? "NOTHING_TO_DO" : "INVALID",
-            now.errors.join("; ") || now.warnings[0] || "The row is no longer valid"
-        )
-    if (
-        !retry &&
-        (!before || now.sourceRevision !== before.sourceRevision || JSON.stringify(now.values) !== JSON.stringify(before.values))
-    )
+    if (!now.valid && now.skip) {
+        // what the row would change is already so (another's change, or this row's own apply whose result was not kept)
+        const reason = lineText(now.warnings[0] || now.errors[0], 250) || "Nothing to change"
+        mark({result: "skipped", reasonCode: null, errorMessage: reason})
+        return {applied: false, reasonCode: "NOTHING_TO_DO", reason}
+    }
+    if (!now.valid) return failed("INVALID", now.errors.join("; ") || now.warnings[0] || "The row is no longer valid")
+    // a retry too writes only what its preview showed: a row whose source changed is validated and reviewed again
+    if (!before || now.sourceRevision !== before.sourceRevision || JSON.stringify(now.values) !== JSON.stringify(before.values))
         return failed("STALE_SOURCE", "What this row would change was changed since the preview; validate and review it again")
     const operationKey = itemKey(row.transferId, item, now.values)
     const asked = lib.stepApart(target, "applyRow", {
@@ -823,11 +837,12 @@ function sample(target) {
 }
 
 // ===== runs =====
-// The batches of a target the caller may read, newest first: their own, and with the target's view permission those of the
-// scopes its scope service admits. Summaries only.
+// The batches of a target the caller may read, newest first, of the scopes its scope service admits: their own while they
+// hold its import or view permission, and with its view permission the others'. Summaries only.
 function runsOf(target, filter) {
     const scopes = scopesOf(target)
     const viewer = !!text(target.viewPermission) && lib.holdsAll(target.viewPermission) && !scopes.failure
+    const importer = lib.holdsAll(target.importPermission) || lib.holdsAll(target.viewPermission)
     const scopeKeys = scopes.scopeList.map(scope => scope.scopeKey)
     const titles = new Map(scopes.scopeList.map(scope => [scope.scopeKey, scope.title]))
     let query = find(BATCH, {targetId: target.targetId})
@@ -836,7 +851,10 @@ function runsOf(target, filter) {
     const found = Array.from(query.orderBy("-stagedDate").list()).filter(row => {
         const scopeKey = text(row.scopeKey)
         if (filter.scopeKey && scopeKey !== filter.scopeKey) return false
-        return row.userId === ec.user.userId || (viewer && (scopeKey ? scopeKeys.includes(scopeKey) : !!scopes.unscoped))
+        return (
+            ((row.userId === ec.user.userId && importer) || viewer) &&
+            (scopeKey ? scopeKeys.includes(scopeKey) : !!scopes.unscoped)
+        )
     })
     const names = new Map()
     return found.slice(0, filter.maxRows).map(row => {
@@ -872,7 +890,9 @@ function clean() {
     for (const row of Array.from(find(BATCH).condition("purgedDate", "equals", null).list())) {
         const days = Math.max(Number(targets.get(row.targetId)?.retentionDays) || 30, 1)
         const last = ms(row.completedDate) ?? ms(row.appliedDate) ?? ms(row.stagedDate) ?? 0
-        if (now - last < days * 86400000 || row.state === "applying") continue
+        // an apply under way is left alone; one that stopped (nothing kept of it for a day) is cleaned as any other
+        if (now - last < days * 86400000 || (row.state === "applying" && now - (ms(row.lastUpdatedStamp) ?? 0) < 86400000))
+            continue
         try {
             const items = itemsOf(row.transferId)
             if (!items.some(item => item.result === "applied")) {
