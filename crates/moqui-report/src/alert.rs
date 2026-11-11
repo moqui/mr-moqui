@@ -678,6 +678,7 @@ fn notify(
     body: &Json,
     events: &[Json],
     now: i64,
+    audience: Option<&super::alert_delivery::Pass<'_>>,
 ) -> Result<Vec<moqui_core::entity::EntityValue>, Error> {
     let entity = ec
         .factory()
@@ -718,7 +719,12 @@ fn notify(
                 .collect();
             let hash = moqui_lib::json::canonical_sha256(&json!(state_key));
             let resolved = events.iter().all(|event| event["state"] == "Normal");
-            let payload = json!({"ruleId":id,"title":definition["title"],"labels":labels,"events":events,"link":format!("/apps/dashboards/Alerts?definitionId={id}")});
+            // the mounting app's rule screen where the rule names one (detailLink), Tools' list otherwise
+            let link = format!(
+                "{}?definitionId={id}",
+                text(body, "detailLink", "/apps/dashboards/Alerts")
+            );
+            let payload = json!({"ruleId":id,"title":definition["title"],"labels":labels,"events":events,"link":link});
             let result = (|| -> Result<moqui_core::entity::EntityValue, Error> {
                 let existing = {
                     let _storage = ec.disable_authz();
@@ -747,7 +753,15 @@ fn notify(
                         ("groupId", Value::string(&group)),
                         ("stateHash", Value::string(&hash)),
                         ("firstPending", stamp(first)?),
-                        ("payloadJson", Value::string(payload.to_string())),
+                        // a business rule's values are kept in no notification row
+                        (
+                            "payloadJson",
+                            Value::string(if audience.is_some() {
+                                json!({ "ruleId": id }).to_string()
+                            } else {
+                                payload.to_string()
+                            }),
+                        ),
                     ] {
                         row.set(k, v);
                     }
@@ -762,7 +776,13 @@ fn notify(
                     row.set("lastSent", stamp(now)?);
                     row.set("lastSentHash", Value::string(&hash));
                     record_notification(ec, &entity, &row)?;
-                    if let Err(error) = send_contact(contact, &payload) {
+                    // a business rule tells each recipient of its audience separately, each checked first
+                    // (alert_delivery.rs); one who was told this state is not told again when a failed one is retried
+                    let sent = match audience {
+                        Some(audience) => audience.send(contact, &payload, &group, &hash, now, repeat),
+                        None => send_contact(contact, &payload),
+                    };
+                    if let Err(error) = sent {
                         tracing::error!(rule=id,contact=%contact_id,%error,"alert delivery failed; will retry");
                         row.set("lastSent", previous.0.unwrap_or(Value::Null));
                         row.set("lastSentHash", previous.1.unwrap_or(Value::Null));
@@ -1150,8 +1170,14 @@ fn evaluate_claimed(
 ) -> Result<Outcome, Error> {
     let id = text(definition, "id", "");
     let body = &definition["body"];
+    let business = super::alert_delivery::is_business(ec, definition);
     let result = super::execute_query(ec, &body["query"]);
     let mut query_failed = result.is_err();
+    if business && !query_failed && super::alert_delivery::stale_source(ec, body) {
+        // a source whose index is older than its fields gives no valid reading: Error, never Normal
+        query_failed = true;
+        tracing::error!(rule = id, "alert source index is stale; the rule has no valid reading");
+    }
     let result = match result {
         Ok(result) => result,
         Err(error) => {
@@ -1319,11 +1345,17 @@ fn evaluate_claimed(
             ),
             ("labelsJson", Value::string(labels.to_string())),
             ("missingCount", Value::I64(missing_count)),
+            // the reading this state came from, for the rule's owner and its equivalent recipients (get#AlertState)
+            ("lastValue", moqui_lib::json::from_json(&json!(value))),
         ] {
             row.set(k, v);
         }
         outcome.saved.push(row);
-        if changed {
+        if changed && business {
+            // a business rule's history is its state and its deliveries: no marker on the shared time series and no
+            // Monitor incident carries its title or series
+            outcome.changed += 1;
+        } else if changed {
             outcome.changed += 1;
             let annotation = json!({"_id":format!("alert:{id}:{key}:{now}"),"time":jiff::Timestamp::from_millisecond(now).map_err(fail)?.to_string(),"source":"alert","text":format!("{}: {}",text(definition,"title",id),state.as_str().unwrap_or("Error")),"scope":"dashboard","dashboard":body["dashboardId"],"panel":body["panelId"],"rule_id":id,"series_id":key,"state":state,"labels":labels});
             if let Value::Map(document) = moqui_lib::json::from_json(&annotation) {
@@ -1351,9 +1383,17 @@ fn evaluate_claimed(
             "alert series missing for {prune_after} evaluations were removed"
         );
     }
-    if !events.is_empty() {
+    if !events.is_empty() && business {
+        let effective = effective_body(ec, id, &super::alert_delivery::contact_body(body), silences);
+        let audience = super::alert_delivery::Pass::new(ec, definition);
+        outcome
+            .saved
+            .extend(notify(ec, definition, &effective, &events, now, Some(&audience))?);
+    } else if !events.is_empty() {
         let effective = effective_body(ec, id, body, silences);
-        outcome.saved.extend(notify(ec, definition, &effective, &events, now)?);
+        outcome
+            .saved
+            .extend(notify(ec, definition, &effective, &events, now, None)?);
     }
     Ok(outcome)
 }
@@ -1376,10 +1416,22 @@ fn evaluate_rule(
             .find("moqui.security.UserAccount")?
             .eq("userId", Value::string(owner))
             .one()?
-            .ok_or_else(|| fail("alert owner account no longer exists"))?
     };
-    moqui_core::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or(""))
-        .map_err(fail)?;
+    let signed_in = account
+        .as_ref()
+        .ok_or_else(|| fail("alert owner account no longer exists"))
+        .and_then(|account| {
+            moqui_core::user::internal_login_user(account.get("username").and_then(Value::as_str).unwrap_or(""))
+                .map_err(fail)
+        });
+    if let Err(error) = signed_in {
+        // a business rule whose owner cannot sign in tells nobody: it pauses until a new owner takes it
+        if super::alert_delivery::is_business(&context, definition) {
+            super::alert_delivery::pause_for_owner(&context, text(definition, "id", ""));
+            return Ok((0, Vec::new()));
+        }
+        return Err(error);
+    }
     context.set_effective_time(Some(now));
     evaluate_owned(&context, definition, now, silences)
 }

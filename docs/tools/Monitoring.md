@@ -597,6 +597,59 @@ owner mode, to one address line.
 The code is `crates/moqui-report/src/delivery.rs` (and `schedule.rs` for the run); the regression spec is
 `framework/test/ReportAudience.spec.js`.
 
+### Business alerts
+
+An alert rule is evaluated once, as its owner. A **business rule** tells that one state and its values to another user only
+when it is what that user would have read: when their scope fingerprint for the rule equals the owner's, the check of
+[Report delivery](#report-delivery). A rule is a business one when its body names an `audience`, or when its query reads a
+business dataset or any other dataset whose rows depend on the viewer (a `rowFilterService`, `contextFilters`), whatever
+wrote its row. A technical rule (telemetry and other datasets that give every reader the same rows, with no audience) is
+evaluated and delivered to its contact points as before.
+
+- **The audience in place of contact points.** A business rule is saved through `save#Definition` with
+  `audience`: `recipientUserIds`, `recipientGroupIds`, `channels` (`notification`, the default, a private in-app
+  notification on `topic`, `ReportAlert` without one; and `email`, the recipient's own account address through
+  `emailTemplateId`), `recipientCap`, and the grouping and timing a contact point has (`groupBy`, `groupWaitSeconds`,
+  `repeatSeconds`). Nobody named is the owner alone; the owner is told only when named or alone. A contact point, a shared
+  contact reference, a webhook or any other audience field (an address, a URL) refuses the save
+  (`BUSINESS_CONTACT_REFUSED`, `BUSINESS_AUDIENCE_REFUSED`). The server sets `audience.deliveryMode`: `personal` when the
+  owner is the only recipient, `group` otherwise. A rule may also name `detailLink`, a plain path on this server its
+  notifications link to with `?definitionId=` (an app's own rule screen), in place of Tools' Alerts.
+- **At save.** An active business rule is saved only when every recipient passes the check as it stands for the rule
+  (`RECIPIENT_REFUSED`, naming each with its reason code; a missing address refuses only where `email` is a channel) and
+  the audience is within the cap (`RECIPIENT_CAP`, the cap and ceiling of report delivery); recipients other than the owner
+  need `org.moqui.report.delivery.group`. `check#ReportAudience` answers the same for an alert rule the viewer reads. As
+  for a schedule, a recipient must read the rule itself (`not-shared` otherwise: share it with a group they are in). A
+  paused rule may be saved with a recipient to be mended.
+- **Inactive until its owner activates it.** `copy#Definition` and `import#Definitions` of a business rule drop its contact
+  points and save it paused (`pausedReason` `not-validated`). Its owner activates it by saving it with `paused` false,
+  which is the save above.
+- **At each notification** every recipient is checked again and told separately, one notification or message a recipient;
+  one whose scope changed is skipped with `scope-differs` (and the other codes of report delivery), one past the cap with
+  `over-cap`, and one whose message fails is recorded and tried again at the next evaluation, while a recipient already told
+  that state is not told it again until the repeat interval. Each recipient's last outcome for a notification group on a
+  channel is a `moqui.report.AlertRecipientDelivery` row: the state's name, the outcome and a safe reason code, never a
+  value or a series label. A business rule's notification row keeps no payload.
+- **No Data, Error and stale are never Normal.** As for every rule, an empty result is `NoData` and a failed or incomplete
+  query is `Error`; for a business rule so is a source whose index is older than its fields (the admission check `index`).
+  A business rule's state changes write no marker on the shared time series (`monitor_annotations`) and open no incident.
+- **Reads.** `get#AlertState` answers a rule the viewer reads with each series' labels, state, times and last value
+  (`AlertInstance.lastValue`): for a business rule to its owner, and to a recipient of its audience whose fingerprint equals
+  the owner's now; anyone else gets `available` false with a reason code. Any other rule's state is answered to a reader of
+  the rule who also reads its sources. `find#AlertDeliveries` lists the last outcome of each recipient of the rules the viewer
+  owns, with `received` the deliveries to the viewer, and with `administrative`, for a holder of `ADMIN_TRANSFER_VIEW`, every
+  owner's business rules as counters (sent, skipped, failed, paused, last evaluated) with no title, series, recipient or
+  value.
+- **Ownership.** A business rule whose owner cannot sign in pauses (`owner-disabled`) at its next evaluation and tells
+  nobody. `find#OwnedAlertRules`, `pause#OwnedAlertRules` and `transfer#AlertRuleOwner` carry the owned-resource contract, as
+  the schedule services do, for the user themselves or a holder of `REPORT_OWNER_CHANGE`. A transfer hands one rule, with the
+  shared silences and mute timings it names that the leaving owner owns, to an active internal user who may save
+  definitions, reads its sources and, for a group audience, may deliver to a group (`NEW_OWNER_REFUSED`); it stays paused
+  (`transfer-pending`) until the new owner saves it active, which checks the audience against the new owner's fingerprint.
+
+The code is `crates/moqui-report/src/alert_delivery.rs` (with `alert.rs` for the evaluation); the regression spec is
+`framework/test/BusinessAlerts.spec.js`.
+
 ## Regressions and incidents
 
 The `detect_Regressions_5min` job (`detect#Regressions`) compares each service version that served requests in the
@@ -757,7 +810,8 @@ ends. The services are `org.moqui.monitor.MonitorServices.list#RuntimeSettings`,
   only the datasets they should read.
 - Alerts and scheduled reports run as their owner, whose access is checked at each run; recipients do not set what
   the report may read. A schedule over business data goes only to recipients whose scope equals the owner's, one message
-  each ([Report delivery](#report-delivery)).
+  each ([Report delivery](#report-delivery)), and so does an alert over business data, which takes no contact point,
+  address or webhook ([Business alerts](#business-alerts)).
 - Queries have row, bucket and time limits, and a timeout. Exports and scheduled deliveries are logged to the
   `moqui.report.audit` target, so they show in Monitor Logs.
 - Regressions and incidents need `MONITOR_INCIDENT`; approving, refusing, completing, cancelling and reverting
@@ -815,6 +869,12 @@ take the index refresh interval to appear.
   reads a business dataset sends each recipient their own message, and only to recipients whose scope equals its owner's;
   and a screen schedule that names a user group stops sending to the group until its screen path is registered as a
   `ReportLegacyAdapter` (its user's own delivery continues).
+- **Business alerts** (Insights P8): the entity check creates `moqui.report.AlertRecipientDelivery` and adds `lastValue` to
+  `AlertInstance`; no seed data changes. From then on a saved alert rule whose query reads a business dataset, or another
+  whose rows depend on the viewer, tells its owner alone in the app until it is saved with an audience: the contact points
+  its row holds (a notification to a group, an email address, a webhook) are no longer delivered to, a save that still
+  names one is refused, and its state changes no longer write a marker on the time series or open an incident. Rules
+  over telemetry are as they were.
 - **Retired:** the ArtifactHit and ArtifactHitBin entities and their report view, the System Artifact Summary,
   Artifact Bins, Log Viewer and DataDocument Search screens, the hit REST resources, and the shipping of logs to
   `moqui_logs` and `moqui_http_log`. Startup pauses the old `clean_ArtifactData_daily`,

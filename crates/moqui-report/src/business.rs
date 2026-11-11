@@ -82,6 +82,21 @@ fn row_text(row: Option<&moqui_core::entity::EntityValue>, field: &str) -> Json 
         .map_or(Json::Null, Json::from)
 }
 
+/// Whether a business dataset's fields changed after its index was last built, so what it answers is not what its definition
+/// says (the admission check `index`): an alert over it has no valid reading until the index is rebuilt (alert_delivery.rs).
+pub(super) fn index_stale(ec: &ExecutionContext, id: &str) -> bool {
+    let Ok(row) = admission_row(ec, id) else {
+        return false;
+    };
+    millis(row.as_ref(), "fieldsChangedDate")
+        .as_i64()
+        .is_some_and(|changed| {
+            millis(row.as_ref(), "lastIndexedDate")
+                .as_i64()
+                .is_none_or(|built| built < changed)
+        })
+}
+
 /// The engine's check before a business dataset is read: admitted with a registered scope policy still bound (a shipped
 /// definition can change under its admission with a component update), or read by its steward. A business dataset reads its
 /// one document: an index or a service in its body would read past what was admitted, so either is refused to everyone.
