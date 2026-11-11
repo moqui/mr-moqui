@@ -213,8 +213,10 @@ pub(super) fn send_template(
     }
     if let Err(err) = deliver(facade, &letter, &server, &email_message_id) {
         note_message(format!("Error sending email: {err}"));
+        let outcome = delivery_outcome(&server, &err);
+        record_send_failure(facade, &email_message_id, &err, outcome);
         let mut out = ids(&email_message_id, "");
-        out.insert("deliveryOutcome".into(), Value::string(delivery_outcome(&server, &err)));
+        out.insert("deliveryOutcome".into(), Value::string(outcome));
         return Ok(out);
     }
     if !email_message_id.is_empty() {
@@ -365,8 +367,14 @@ pub(super) fn send_message(
         return Ok(send_failed(&email_message_id, &err));
     }
     if let Err(err) = deliver(facade, &letter, &server, &email_message_id) {
+        let outcome = delivery_outcome(&server, &err);
+        // a client message's result is the mail client's to write (record#SendResult, which keeps the outcome too): its
+        // row may be locked by the transaction this runs in
+        if !client {
+            record_send_failure(facade, &email_message_id, &err, outcome);
+        }
         let mut out = send_failed(&email_message_id, &err);
-        out.insert("deliveryOutcome".into(), Value::string(delivery_outcome(&server, &err)));
+        out.insert("deliveryOutcome".into(), Value::string(outcome));
         return Ok(out);
     }
     if status == "ES_READY" || status == "ES_BOUNCED" {
@@ -712,8 +720,34 @@ fn mark_sent(facade: &EntityFacade, id: &str, message_id: &str) -> Result<(), Li
     set_text(&mut row, "messageId", message_id);
     row.set("sentDate", now_stamp());
     row.set("sendClaimDate", Value::Null);
+    row.set("sendOutcome", Value::Null);
     row.update(facade)?;
     Ok(())
+}
+
+/// A delivery that failed, kept on the stored message for whoever reconciles it (Admin's mail queue,
+/// `org.moqui.admin.OperationServices.find#MailOutcomes`): `sendOutcome` is the `deliveryOutcome` answered (retryable:
+/// nothing was sent; permanent: refused for good; uncertain: it may have gone, so it is never sent again on its own),
+/// with the error's text as `sendError`. A mail client's message gets both from record#SendResult instead. In a
+/// transaction of its own, as the Sent status is; a message with no row, or a write that fails, is logged and the send's
+/// answer stands.
+fn record_send_failure(facade: &EntityFacade, id: &str, error: &Error, outcome: &str) {
+    if id.is_empty() {
+        return;
+    }
+    let written = force_new(facade, || {
+        let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
+        let mut row = facade.make_value(MESSAGE)?;
+        set_text(&mut row, "emailMessageId", id);
+        set_text(&mut row, "sendOutcome", outcome);
+        let text: String = error.message().chars().take(4000).collect();
+        set_text(&mut row, "sendError", &text);
+        row.update(facade)?;
+        Ok(())
+    });
+    if let Err(err) = written {
+        tracing::error!(email_message = %id, error = %err, "The outcome of a failed send could not be kept on its message");
+    }
 }
 
 pub(super) fn force_new<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<T, LibError>) -> Result<T, LibError> {

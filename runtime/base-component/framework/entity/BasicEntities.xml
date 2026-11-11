@@ -589,6 +589,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="archivedDate" type="date-time"/>
         <field name="sendError" type="text-long"><description>Why the last send failed; the message waits in the Outbox
             for a retry</description></field>
+        <field name="sendOutcome" type="text-short"><description>What the last failed send left (send#EmailTemplate's and
+            send#EmailMessage's deliveryOutcome): retryable (nothing was sent), permanent (refused for good) or uncertain
+            (it may have gone: reconciled by its owner, never sent again on its own); empty for a message that was sent
+            or never tried. Admin's mail queue reads it (org.moqui.admin.OperationServices.find#MailOutcomes).</description></field>
         <field name="sendClaimDate" type="date-time"><description>When a mail client send claimed the message (ES_READY
             without a sendError, being sent); cleared with its result. A claim left long past this without one is a send
             that stopped, and send#DueDrafts gives it a sendError so it shows in the Outbox.</description></field>

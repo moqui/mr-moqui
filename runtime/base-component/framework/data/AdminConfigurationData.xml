@@ -184,4 +184,160 @@ along with this software (see the LICENSE.md file). If not, see
             description="A printer on a print server (NetworkPrinter)"/>
     <moqui.server.ConnectionAdapter adapterKey="relay" title="Mail relay" adapterGroup="mail" creatable="Y" sequenceNum="10"
             description="An outgoing mail server no mail account owns (EmailServer)"/>
+
+    <!-- ========== Admin P12 (mr-boss plan/impl-admin.md P12): protocols and the mail queue ========== -->
+    <!-- The protocol services for every signed-in user: get#ProtocolReadiness checks ADMIN_CONNECTION_VIEW,
+        ADMIN_SETTINGS_VIEW or ADMIN_OPERATION_VIEW, test#Protocol ADMIN_CONNECTION_MANAGE. Inheritable, so their calls of
+        the server's own get#ProtocolFacts and probe#ProtocolTarget (which check the same permissions, and which no group is
+        authorized to call directly) run as them. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminProtocolServices" description="Admin protocol services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminProtocolServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ConfigurationServices\.(get#ProtocolReadiness|test#Protocol)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminProtocolServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminProtocolServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- The operation services (org.moqui.admin.OperationServices; the mail queue in P12) for every signed-in user: each
+        checks ADMIN_OPERATION_VIEW to read and ADMIN_OPERATION_MANAGE to act. Inheritable, so a retry's claim, the mail
+        service's send of the stored message and a registered owner's own services run as it; no group is authorized to call
+        those directly here. A service a later part adds is named here by that part. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminOperationServices" description="Admin operation services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminOperationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.OperationServices\.(find#MailOutcomes|retry#MailOutcome|reconcile#MailOutcome)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminOperationServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminOperationServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- The configuration each protocol runs with (design-admin §9 EffectiveProtocolSettings), shown read only: nonsecret
+        default-properties of the conf, in the groups named "Protocols: ..." that the integration administrator and the
+        operations operator read too. No key, host key, key file or shared secret is registered. -->
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.listenPort" title="SMTP listener port" settingGroup="Protocols: mail reception"
+            description="The port the listener for hosted and shared mail accounts binds; empty keeps it off" valueTypeEnumId="IsvText"
+            propertyName="smtp_listen_port" restartRequired="Y" sequenceNum="3010"
+            operatorNote="Set smtp_listen_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.listenHost" title="SMTP listener address" settingGroup="Protocols: mail reception"
+            description="The address the listener binds; this machine only by default" valueTypeEnumId="IsvText"
+            propertyName="smtp_listen_host" restartRequired="Y" sequenceNum="3020"
+            operatorNote="Set smtp_listen_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.allowedAddresses" title="Gateway addresses allowed" settingGroup="Protocols: mail reception"
+            description="The addresses and ranges of the edge gateway, the only ones that may deliver; empty never starts the listener" valueTypeEnumId="IsvText"
+            propertyName="smtp_allowed_addresses" restartRequired="Y" sequenceNum="3030"
+            operatorNote="Set smtp_allowed_addresses in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.authservId" title="Gateway authentication name" settingGroup="Protocols: mail reception"
+            description="The authserv-id of the gateway's Authentication-Results, the only ones kept; empty keeps them all as they came" valueTypeEnumId="IsvText"
+            propertyName="smtp_authserv_id" restartRequired="Y" sequenceNum="3040"
+            operatorNote="Set smtp_authserv_id in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.hostname" title="SMTP greeting name" settingGroup="Protocols: mail reception"
+            description="The name in the greeting and the Received field; the public host name when empty" valueTypeEnumId="IsvText"
+            propertyName="smtp_hostname" restartRequired="Y" sequenceNum="3050"
+            operatorNote="Set smtp_hostname in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.internet" title="Mail taken from the internet" settingGroup="Protocols: mail reception"
+            description="Whether the listener takes mail from any sender and checks it itself, with no gateway in front" valueTypeEnumId="IsvText"
+            propertyName="smtp_internet" restartRequired="Y" sequenceNum="3060"
+            operatorNote="Set smtp_internet in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.smtp.tlsCertFile" title="SMTP certificate file" settingGroup="Protocols: mail reception"
+            description="The certificate the listener offers for STARTTLS" valueTypeEnumId="IsvText"
+            propertyName="smtp_tls_cert_file" restartRequired="Y" sequenceNum="3070"
+            operatorNote="Set smtp_tls_cert_file in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.port" title="SSH port" settingGroup="Protocols: SSH and Git"
+            description="The port of the built-in SSH server (SFTP, the terminal client, git over SSH); empty keeps it off" valueTypeEnumId="IsvText"
+            propertyName="ssh_port" restartRequired="Y" sequenceNum="3080"
+            operatorNote="Set ssh_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.host" title="SSH address" settingGroup="Protocols: SSH and Git"
+            description="The address the SSH server binds" valueTypeEnumId="IsvText"
+            propertyName="ssh_host" restartRequired="Y" sequenceNum="3090"
+            operatorNote="Set ssh_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.publicHost" title="SSH public host" settingGroup="Protocols: SSH and Git"
+            description="The host clone URLs show; the public host name when empty" valueTypeEnumId="IsvText"
+            propertyName="ssh_public_host" restartRequired="Y" sequenceNum="3100"
+            operatorNote="Set ssh_public_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.ssh.publicPort" title="SSH public port" settingGroup="Protocols: SSH and Git"
+            description="The port clone URLs show; the SSH port when empty" valueTypeEnumId="IsvText"
+            propertyName="ssh_public_port" restartRequired="Y" sequenceNum="3110"
+            operatorNote="Set ssh_public_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.git.publicUrl" title="Git public URL" settingGroup="Protocols: SSH and Git"
+            description="The base of the clone URLs shown; made from the public host name when empty" valueTypeEnumId="IsvText"
+            propertyName="git_public_url" restartRequired="Y" sequenceNum="3120"
+            operatorNote="Set git_public_url in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.xmpp.domain" title="XMPP domain" settingGroup="Protocols: chat"
+            description="The domain of the users' chat addresses; empty keeps XMPP off" valueTypeEnumId="IsvText"
+            propertyName="xmpp_domain" restartRequired="Y" sequenceNum="3130"
+            operatorNote="Set xmpp_domain in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.xmpp.port" title="XMPP port" settingGroup="Protocols: chat"
+            description="The STARTTLS port for chat apps" valueTypeEnumId="IsvText"
+            propertyName="xmpp_port" restartRequired="Y" sequenceNum="3140"
+            operatorNote="Set xmpp_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.xmpp.host" title="XMPP address" settingGroup="Protocols: chat"
+            description="The address the XMPP ports bind" valueTypeEnumId="IsvText"
+            propertyName="xmpp_host" restartRequired="Y" sequenceNum="3150"
+            operatorNote="Set xmpp_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.xmpp.tlsPort" title="XMPP direct TLS port" settingGroup="Protocols: chat"
+            description="The direct TLS port for chat apps" valueTypeEnumId="IsvText"
+            propertyName="xmpp_tls_port" restartRequired="Y" sequenceNum="3160"
+            operatorNote="Set xmpp_tls_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaPort" title="Call media port" settingGroup="Protocols: calls"
+            description="The UDP port of call media; empty keeps calls' media off" valueTypeEnumId="IsvText"
+            propertyName="rtc_media_port" restartRequired="Y" sequenceNum="3170"
+            operatorNote="Set rtc_media_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaHost" title="Call media address" settingGroup="Protocols: calls"
+            description="The address call media binds" valueTypeEnumId="IsvText"
+            propertyName="rtc_media_host" restartRequired="Y" sequenceNum="3180"
+            operatorNote="Set rtc_media_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.rtc.publicAddress" title="Call media public address" settingGroup="Protocols: calls"
+            description="The address browsers are told, for a server behind address translation" valueTypeEnumId="IsvText"
+            propertyName="rtc_public_address" restartRequired="Y" sequenceNum="3190"
+            operatorNote="Set rtc_public_address in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.rtc.mediaTcpPort" title="Call media TCP port" settingGroup="Protocols: calls"
+            description="A TCP port for browsers that cannot reach the UDP one" valueTypeEnumId="IsvText"
+            propertyName="rtc_media_tcp_port" restartRequired="Y" sequenceNum="3200"
+            operatorNote="Set rtc_media_tcp_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.turn.port" title="TURN port" settingGroup="Protocols: calls"
+            description="The relay's UDP and TCP port; empty keeps it off" valueTypeEnumId="IsvText"
+            propertyName="turn_port" restartRequired="Y" sequenceNum="3210"
+            operatorNote="Set turn_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.turn.tlsPort" title="TURN TLS port" settingGroup="Protocols: calls"
+            description="The relay's TLS port" valueTypeEnumId="IsvText"
+            propertyName="turn_tls_port" restartRequired="Y" sequenceNum="3220"
+            operatorNote="Set turn_tls_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.turn.publicHost" title="TURN public host" settingGroup="Protocols: calls"
+            description="The name or address browsers are given for the relay" valueTypeEnumId="IsvText"
+            propertyName="turn_public_host" restartRequired="Y" sequenceNum="3230"
+            operatorNote="Set turn_public_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.turn.externalUrls" title="External TURN servers" settingGroup="Protocols: calls"
+            description="TURN servers run elsewhere that browsers are also given" valueTypeEnumId="IsvText"
+            propertyName="turn_external_urls" restartRequired="Y" sequenceNum="3240"
+            operatorNote="Set turn_external_urls in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.calls.recordingEnabled" title="Call recording" settingGroup="Protocols: calls"
+            description="Whether a call's host may record it" valueTypeEnumId="IsvText"
+            propertyName="call_recording_enabled" restartRequired="Y" sequenceNum="3250"
+            operatorNote="Set call_recording_enabled in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.calls.recordingRetentionDays" title="Days a recording is kept" settingGroup="Protocols: calls"
+            description="Recordings are deleted this long after they start; 0 keeps them" valueTypeEnumId="IsvText"
+            propertyName="call_recording_retention_days" restartRequired="Y" sequenceNum="3260"
+            operatorNote="Set call_recording_retention_days in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.calls.captionsEnabled" title="Live captions" settingGroup="Protocols: calls"
+            description="Whether someone in a call may turn captions on" valueTypeEnumId="IsvText"
+            propertyName="call_captions_enabled" restartRequired="Y" sequenceNum="3270"
+            operatorNote="Set call_captions_enabled in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.port" title="SIP port" settingGroup="Protocols: phone"
+            description="The UDP and TCP port for trunks and phones; empty with the TLS port keeps phone calls off" valueTypeEnumId="IsvText"
+            propertyName="sip_port" restartRequired="Y" sequenceNum="3280"
+            operatorNote="Set sip_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.host" title="SIP address" settingGroup="Protocols: phone"
+            description="The address the SIP ports bind" valueTypeEnumId="IsvText"
+            propertyName="sip_host" restartRequired="Y" sequenceNum="3290"
+            operatorNote="Set sip_host in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.tlsPort" title="SIP TLS port" settingGroup="Protocols: phone"
+            description="The TLS port for trunks and phones" valueTypeEnumId="IsvText"
+            propertyName="sip_tls_port" restartRequired="Y" sequenceNum="3300"
+            operatorNote="Set sip_tls_port in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.publicAddress" title="SIP public address" settingGroup="Protocols: phone"
+            description="The address trunks reach, when it is not the bound one" valueTypeEnumId="IsvText"
+            propertyName="sip_public_address" restartRequired="Y" sequenceNum="3310"
+            operatorNote="Set sip_public_address in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.registrarEnabled" title="Phone registrar" settingGroup="Protocols: phone"
+            description="Whether desk and soft phones may register" valueTypeEnumId="IsvText"
+            propertyName="sip_registrar_enabled" restartRequired="Y" sequenceNum="3320"
+            operatorNote="Set sip_registrar_enabled in the environment or the runtime conf and restart"/>
+    <moqui.server.InstanceSetting settingKey="protocol.sip.domain" title="SIP domain" settingGroup="Protocols: phone"
+            description="The domain phones register to" valueTypeEnumId="IsvText"
+            propertyName="sip_domain" restartRequired="Y" sequenceNum="3330"
+            operatorNote="Set sip_domain in the environment or the runtime conf and restart"/>
 </entity-facade-xml>

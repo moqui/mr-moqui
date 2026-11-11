@@ -53,6 +53,7 @@ mod inline_tests;
 mod jobs;
 pub mod mail_capture;
 pub mod pool;
+mod protocol_admin;
 mod recent_auth;
 mod remote;
 mod request_pool;

@@ -3353,7 +3353,7 @@ along with this software (see the LICENSE.md file). If not, see
             const fields = {statusId: 'ES_DRAFT', emailAccountId: emailAccountId, emailFolderId: draftsFolderId,
                 emailIdentityId: identity ? identity.emailIdentityId : null, emailServerId: account.emailServerId,
                 fromAddress: identity?.emailAddress || account.emailAddress, fromName: identity ? (identity.displayName ?? null) : (account.accountName ?? null),
-                fromUserId: draft?.fromUserId || ec.user.userId, isRead: 'Y', sendError: null,
+                fromUserId: draft?.fromUserId || ec.user.userId, isRead: 'Y', sendError: null, sendOutcome: null,
                 sendClaimDate: null, scheduledSendDate: null}
             if (saveRef != null && saveRef !== '') fields.lastSaveRef = String(saveRef).substring(0, 255)
             // the draft's stamp (draftStamp) moves with a save of its content, not with one of its attachments alone
@@ -3563,7 +3563,7 @@ along with this software (see the LICENSE.md file). If not, see
             }
             const drafts = ec.entity.find('moqui.basic.email.EmailFolder').condition('emailAccountId', message.emailAccountId)
                     .condition('folderKindEnumId', 'EfkDrafts').orderBy('sequenceNum,emailFolderId').limit(1).list()
-            message.setFields({statusId: 'ES_DRAFT', scheduledSendDate: null, sendError: null, sendClaimDate: null,
+            message.setFields({statusId: 'ES_DRAFT', scheduledSendDate: null, sendError: null, sendOutcome: null, sendClaimDate: null,
                 messageDate: ec.user.nowTimestamp, emailFolderId: drafts.length ? drafts[0].emailFolderId : null}, true, null, null)
             message.update()
             statusId = 'ES_DRAFT'
@@ -3594,7 +3594,7 @@ along with this software (see the LICENSE.md file). If not, see
             // a Ready message without an error is being sent (since its sendClaimDate)
             if (message.statusId === 'ES_READY' && !message.sendError) return
             const account = message.emailAccountId ? ec.entity.find('moqui.basic.email.EmailAccount').condition('emailAccountId', message.emailAccountId).one() : null
-            message.setFields({statusId: toStatusId, emailFolderId: null, sendError: null,
+            message.setFields({statusId: toStatusId, emailFolderId: null, sendError: null, sendOutcome: null,
                 sendClaimDate: toStatusId === 'ES_READY' ? ec.user.nowTimestamp : null,
                 scheduledSendDate: toStatusId === 'ES_SCHEDULED' ? scheduledSendDate : message.scheduledSendDate,
                 messageDate: toStatusId === 'ES_SCHEDULED' ? scheduledSendDate : ec.user.nowTimestamp,
@@ -3654,7 +3654,7 @@ along with this software (see the LICENSE.md file). If not, see
                 sendError = result?.sendError || (messageId ? null : 'The message was not sent')
                 deliveryOutcome = sendError ? (result?.deliveryOutcome || null) : null
                 const recorded = ec.service.sync().name('org.moqui.mail.EmailClientServices.record#SendResult').parameters({
-                    emailMessageId: emailMessageId, messageId: messageId, sendError: sendError}).call()
+                    emailMessageId: emailMessageId, messageId: messageId, sendError: sendError, deliveryOutcome: deliveryOutcome}).call()
                 if (ec.message.hasError()) return
                 sent = sendError == null
                 statusId = recorded.statusId ?? null
@@ -3698,7 +3698,7 @@ along with this software (see the LICENSE.md file). If not, see
             }
             // 3. the result, in a new transaction, while the claim is still the message's
             const recorded = ec.service.sync().name('org.moqui.mail.EmailClientServices.record#SendResult').parameters({
-                emailMessageId: emailMessageId, messageId: messageId, sendError: sendError, claimDate: sendClaimDate}).requireNewTransaction(true).call()
+                emailMessageId: emailMessageId, messageId: messageId, sendError: sendError, deliveryOutcome: deliveryOutcome, claimDate: sendClaimDate}).requireNewTransaction(true).call()
             if (ec.message.hasError()) {
                 ec.logger.log('error', `The result of the send of email message ${emailMessageId} (${sendError ? 'not sent: ' + sendError : 'sent'}) could not be recorded; it waits as being sent until send#DueDrafts shows it in the Outbox: ${ec.message.errorsString}`)
                 return
@@ -3733,6 +3733,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="emailMessageId" required="true"/>
             <parameter name="messageId" allow-html="any"/>
             <parameter name="sendError" allow-html="any"/>
+            <parameter name="deliveryOutcome"><description>send#EmailMessage's, kept as the message's sendOutcome beside a
+                sendError (retryable, permanent or uncertain)</description></parameter>
             <parameter name="claimDate" type="Timestamp"/>
         </in-parameters>
         <out-parameters>
@@ -3753,6 +3755,7 @@ along with this software (see the LICENSE.md file). If not, see
             recorded = true
             if (sendError) {
                 message.setFields({sendError: String(sendError).substring(0, 4000), emailFolderId: null, sendClaimDate: null}, true, null, null)
+                if (['retryable', 'permanent', 'uncertain'].includes(deliveryOutcome)) message.set('sendOutcome', deliveryOutcome)
                 if (message.statusId !== 'ES_SENT') message.set('statusId', 'ES_READY')
                 message.update()
                 statusId = message.statusId
@@ -3761,7 +3764,7 @@ along with this software (see the LICENSE.md file). If not, see
             const sentFolders = ec.entity.find('moqui.basic.email.EmailFolder').condition('emailAccountId', message.emailAccountId)
                     .condition('folderKindEnumId', 'EfkSent').orderBy('sequenceNum,emailFolderId').limit(1).list()
             message.setFields({statusId: 'ES_SENT', emailFolderId: sentFolders.length ? sentFolders[0].emailFolderId : null, isRead: 'Y',
-                sendError: null, sendClaimDate: null, scheduledSendDate: null, messageDate: message.sentDate || ec.user.nowTimestamp,
+                sendError: null, sendOutcome: null, sendClaimDate: null, scheduledSendDate: null, messageDate: message.sentDate || ec.user.nowTimestamp,
                 sentDate: message.sentDate || ec.user.nowTimestamp}, true, null, null)
             if (messageId && !message.messageId) message.set('messageId', messageId)
             message.update()
