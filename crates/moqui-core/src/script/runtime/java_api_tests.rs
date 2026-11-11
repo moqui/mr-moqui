@@ -121,6 +121,11 @@ fn a_getter_and_its_method_form_are_both_there() {
             && ec.factory.getMoquiVersion() === ec.factory.moquiVersion
             && ec.entity.getConditionFactory() === ec.entity.conditionFactory"#,
     );
+    // a boolean `isX()` reads as the property `x`, as Groovy reads it
+    holds(
+        r#"typeof Object.getOwnPropertyDescriptor(ec.transaction, "transactionInPlace").get === "function"
+            && ec.factory.destroyed === false"#,
+    );
     // a get method that needs an argument is not read as a property
     holds(r#"!("preference" in ec.user) && typeof ec.user.getPreference === "function""#);
     // the methods object the shims were lent is not left as a global
@@ -487,7 +492,9 @@ fn finds_conditions_and_the_entity_facade_take_javas_forms() {
     ids(r#"(function () {
         const toField = cf.makeConditionToField("enumId", "not-equals", "enumTypeId");
         return find().condition(toField).count() === 3 && find().conditionToField("enumId", "equals", "enumTypeId").count() === 0
-            && String(cf.getTrueCondition()) === "1 = 1" && cf.comparisonOperatorFromEnumId("ENTCO_GTR_EQ") === "greater-equals";
+            && String(cf.getTrueCondition()) === "1 = 1"
+            && String(cf.makeCondition("sequenceNum", cf.comparisonOperatorFromEnumId("ENTCO_NOT_BETWEEN"), [1, 2])) === "sequenceNum NOT BETWEEN 1 AND 2"
+            && cf.comparisonOperatorFromEnumId("ENTCO_GTR_EQ") === "greater-equals";
     })()"#);
     // a condition checked against a map or a value in memory
     ids(r#"(function () {

@@ -87,6 +87,13 @@ pub(crate) fn comparison(field: &str, operator: &str, value: Value) -> Result<Co
                 _ => return Err(moqui_lib::error::Error::new("between needs a low and a high value")),
             }
         }
+        "not-between" => {
+            let mut bounds = list_values(value).into_iter();
+            match (bounds.next(), bounds.next()) {
+                (Some(low), Some(high)) => Condition::not_between(field, low, high),
+                _ => return Err(moqui_lib::error::Error::new("not-between needs a low and a high value")),
+            }
+        }
         "is-null" => Condition::is_null(field),
         "is-not-null" => Condition::is_not_null(field),
         other => {

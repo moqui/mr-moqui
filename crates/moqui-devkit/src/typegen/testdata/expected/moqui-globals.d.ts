@@ -16,8 +16,10 @@ declare const WebUtilities: MoquiWebUtilities;
 declare const System: { getProperty(name: string): string | null };
 /** Java's `MNode` statics: an XML text or resource parsed, or a new element. */
 declare const MNode: {
-    parseText(location: string | null, text: string): MoquiNode;
-    parse(location: string): MoquiNode;
+    /** Null for text that does not parse. */
+    parseText(location: string | null, text: string): MoquiNode | null;
+    /** Null for a resource that is not there or does not parse. */
+    parse(location: string): MoquiNode | null;
     make(name: string, attributes?: Record<string, string> | null): MoquiNode;
 };
 
@@ -93,7 +95,13 @@ declare function basicConvert(value: unknown, type: string): unknown;
 /** A decimal from a decimal, a number or numeric text; anything else throws. */
 declare function toDecimal(value: Decimal | number | string): Decimal;
 declare function orderMapList(list: unknown[] | null, fields: string[]): void;
-declare function filterMapList(list: unknown[] | null, values: MoquiMap): void;
+/** The list keeps the maps that match every value, or with `exclude` drops them. */
+declare function filterMapList(list: unknown[] | null, values: MoquiMap, exclude?: boolean): void;
+/** A decimal, numeric text or number as a JavaScript number. */
+declare function toNumber(value: unknown): number;
+declare function numberToWords(number: number, useAnd?: boolean): string;
+declare function numberToWordsWithDecimal(number: unknown): string;
+declare function elasticQueryAutoWildcard(query: string, allFieldPrefix?: boolean): string;
 declare function filterMapListByDate(
     list: unknown[] | null,
     fromField: string,

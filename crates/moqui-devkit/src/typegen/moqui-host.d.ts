@@ -25,6 +25,9 @@ interface Decimal {
     scale(): number;
     /** Java's `divide(other, scale, roundingMode)`: the quotient rounded to `scale` places. The mode is a `RoundingMode` name or an old `ROUND_*` number. */
     divide(other: Decimal | number | string, scale: number, roundingMode?: string | number | null): Decimal;
+    divideScaled(other: Decimal | number | string, scale: number, roundingMode?: string | number | null): Decimal;
+    /** The plain text of the number, which `JSON.stringify` writes. */
+    toJSON(): string;
     /** Java's `setScale`. Without a mode a value that needs rounding is an error. */
     setScale(scale: number, roundingMode?: string | number | null): Decimal;
     /** A JavaScript number, with float rounding. */
@@ -34,7 +37,7 @@ interface Decimal {
     valueOf(): never;
 }
 
-/** A timestamp: ISO-8601 text, branded so a plain string is not taken for one. */
+/** A timestamp: text of epoch milliseconds on the server, branded so a plain string is not taken for one (docs/dev/JS-Globals.md). */
 type Timestamp = string & { readonly __moquiTimestamp: never };
 
 /** A value that converts to a decimal parameter: the host value, or text and numbers the validation converts. */
@@ -80,6 +83,7 @@ interface MoquiContext {
     clear(): void;
     /** One map for the execution context, shared by every service call in it. Values are copied in and out. */
     getSharedMap(): Record<string, unknown>;
+    toString(): string;
 }
 
 // ---- entities ----
@@ -198,6 +202,10 @@ interface EntityValueMethods<N extends string = string> {
     createOrUpdate(): this;
     /** `createOrUpdate()`. */
     store(): this;
+    /** A copy that shares nothing with this value. */
+    cloneValue(): EntityValue<N>;
+    /** The same entity with the same field values. */
+    equals(other: unknown): boolean;
     update(): this;
     delete(): this;
     deleteRelated(relationship: keyof MoquiRel<N> & string): void;
@@ -351,7 +359,7 @@ interface EntityCondition {
     toString(): string;
 }
 
-/** A find builder. Each chain method returns the builder; a builder runs once. */
+/** A find builder. Each chain method returns the builder; a run (`list()`, `one()`, `count()`) can be repeated. */
 interface EntityFind<N extends string = string> {
     condition(field: MoquiFieldName<N>, value: unknown): EntityFind<N>;
     /** The operator is a name of Java's factory: `equals`, `not-equals`, `less-than`, `greater`, `<=`, `like`, `in`, `between`, `is-null` and the rest. An unknown one is an error. */
@@ -1633,8 +1641,9 @@ interface MoquiCollectionUtilities {
     /** Sets `{list}Count`, `{list}PageIndex`, `{list}PageSize`, `{list}PageMaxIndex`, `{list}PageRangeLow`, `{list}PageRangeHigh` on `context`. */
     paginateParameters(count: number, listName: string, context: MoquiMap): MoquiMap;
     getMapArrayListValues(list: MoquiMap[], field: string, skipNull: boolean): unknown[];
-    /** The list ordered in place by the fields, `-` for descending. */
-    orderMapList(list: MoquiMap[] | EntityList, fields: string[]): void;
+    /** The list ordered in place by the fields, `-` for descending; the list. */
+    orderMapList<T extends MoquiMap[] | EntityList>(list: T, fields: string[]): T;
+    paginateList(listName: string, pageListName: string | null, context: MoquiMap): void;
     /** The list keeps the maps that match every value, or with `exclude` drops them. */
     filterMapList(list: MoquiMap[] | EntityList, values: MoquiMap, exclude?: boolean): void;
     filterMapListByDate(list: MoquiMap[] | EntityList, fromField: string, thruField: string, moment?: TimestampInput | null, ignoreIfEmpty?: boolean): void;
@@ -1676,8 +1685,14 @@ interface MoquiStringUtilities {
     decodeFromXml(text: string | null): string | null;
     escapeElasticQueryString(query: string): string;
     toStringCleanBom(text: string): string;
-    elasticQueryAutoWildcard(query: string, allWords?: boolean): string;
-    numberToWords(number: number, capitalize?: boolean): string;
+    elasticQueryAutoWildcard(query: string, allFieldPrefix?: boolean): string;
+    cleanHtml(text: string | null): string;
+    urlEncodeIfNeeded(text: string | null): string;
+    encodeAsciiFilename(filename: string | null): string;
+    /** A formatter of a mask (`#` digit, `U`/`L` letter, `A` letter or digit, `?` letter, `H` hex, `*` any), or null for no mask. */
+    masker(mask: string | null, placeholder?: string | null): { valueToString(value: unknown): string } | null;
+    getYearList(...args: unknown[]): unknown[];
+    numberToWords(number: number, useAnd?: boolean): string;
     numberToWordsWithDecimal(number: unknown): string;
 }
 
@@ -1689,6 +1704,7 @@ interface MoquiWebUtilities {
     isSafeSinglePathSegment(segment: string): boolean;
     isSameOriginRedirect(url: string, host?: string | null): boolean;
     lastPathSegment(path: string): string;
+    isRestrictedGenericEntity(entityName: string): boolean;
     /** The response text of a POST of the body, or of a GET with none. */
     simpleHttpStringRequest(location: string, requestBody?: string | null, contentType?: string | null): string | null;
     /** The response text of a POST of the parameters as a form. */

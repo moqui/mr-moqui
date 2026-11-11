@@ -140,7 +140,7 @@ const FREEZE_HOST_GLOBALS_JS: &str = r#"(function (builtins) {
 
 /// Run once the shims are in: the property and method forms of each `ec` member's getters, as Groovy reads a Java
 /// getter either way (`ec.user.userId` and `ec.user.getUserId()`), so a member bound in one form has both. A getter or
-/// plain value `x` gets `getX()`; a `getX` that needs no argument gets the property `x`; `ec.getUser()` and the like
+/// plain value `x` gets `getX()`; a `getX` or `isX` that needs no argument gets the property `x`; `ec.getUser()` and the like
 /// return `ec`'s members. Nothing that is already there is replaced. `ec.context` is the stack, with its own methods.
 const EC_TWINS_JS: &str = r#"(function (ec) {
     const upper = (name) => name.charAt(0).toUpperCase() + name.slice(1);
@@ -151,7 +151,8 @@ const EC_TWINS_JS: &str = r#"(function (ec) {
                 if (seen.has(name)) continue;
                 seen.add(name);
                 const held = Object.getOwnPropertyDescriptor(level, name);
-                const method = /^get([A-Z])(\w*)$/.exec(name);
+                // Groovy reads a boolean `isX()` as the property `x` too
+                const method = /^(?:get|is)([A-Z])(\w*)$/.exec(name);
                 if (typeof held.value === "function") {
                     if (!method || held.value.length !== 0) continue;
                     const property = method[1].toLowerCase() + method[2];
