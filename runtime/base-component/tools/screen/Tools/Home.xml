@@ -51,7 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- the entity chosen in the jump row: its records in the grid, or its definition (the conditions exclude each
-        other: of two that hold, the later response is taken) -->
+        other: of two that hold, the first response is taken) -->
     <transition name="openEntity">
         <actions><set field="openDefinition" from="jumpTo == 'definition'"/></actions>
         <conditional-response url="../Schema/Entity"><condition><expression>entityName &amp;&amp; openDefinition</expression></condition>

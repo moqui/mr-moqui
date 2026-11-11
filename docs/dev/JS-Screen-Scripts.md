@@ -104,8 +104,8 @@ from the `<actions>`, since the call returns when it leaves an error and that mu
 The response is chosen after the actions (`pick_response`):
 
 1. With an error or a validation error in `ec.message`, the `error-response` when there is one.
-2. Else the `conditional-response` whose condition holds. When more than one holds, the last one in the file is
-   taken, so write conditions that exclude each other.
+2. Else the first `conditional-response`, in the order of the file, whose condition holds. The conditions after it
+   are not evaluated. (Moqui Java takes the last that holds.)
 3. Else the `default-response`.
 
 The response's `url` is a `${}` template, and its `parameter` elements and `parameter-map` are evaluated in the
@@ -358,7 +358,8 @@ does something other than the Groovy it came from.
   Read the record in `actions`.
 - A transition's `<actions>` run even when its `service-call` failed. Test `ec.message.hasError()` first when they
   must not.
-- Two `conditional-response` conditions that both hold give the later response.
+- Two `conditional-response` conditions that both hold give the first response, in document order; the conditions
+  after it are not evaluated. Moqui Java takes the last that holds.
 - A widget that fails renders its error into the page, with status 200. A test checks the output for
   `Error rendering`.
 - In a static screen `context.x` and `ec.web.parameters.x` are violations: a request parameter is a bare name of the
