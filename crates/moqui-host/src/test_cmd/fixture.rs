@@ -240,6 +240,9 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
     tracing::warn!("Loading the test database (all data types) in {}", scratch.display());
     let flags = crate::LoadFlags {
         data_types: Some(vec!["all".to_string()]),
+        // a snapshot keeps the artifact index of a dev instance, so each spec's server does not build it again from
+        // every component's files (the dev-aide specs; moqui-devkit index)
+        build_artifact_index: matches!(mode, DbMode::Snapshot),
         ..crate::LoadFlags::default()
     };
     crate::load_data(scratch, framework, &cluster, &flags)?;
@@ -294,6 +297,8 @@ fn prune_snapshots(save: &Path, kept: &Path) {
 fn data_hash(scratch: &Path, framework: &Path) -> Result<u64, Error> {
     let mut hasher = DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut hasher);
+    // what a snapshot holds besides the data: the artifact index of a dev instance since this mark
+    "artifact-index".hash(&mut hasher);
     // The day of the load, local: the demo data is dated from it (a task due today, an invoice ten days overdue), so a
     // snapshot of yesterday's load reads as a day old to the specs that count on it.
     jiff::Zoned::now().date().to_string().hash(&mut hasher);

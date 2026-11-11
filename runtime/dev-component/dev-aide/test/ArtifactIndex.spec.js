@@ -11,9 +11,12 @@ spec({
 
 feature("the index builds from the components' files", {
     expect() {
+        // the index the test snapshot holds (a server without one builds it at first use), brought up to date with
+        // the files changed since: a full rebuild reads every file of every component again, the same build
         const started = Date.now()
-        const result = svc("rebuild#ArtifactIndex").parameters({ full: true }).call()
-        const report = result.report
+        svc("rebuild#ArtifactIndex").call()
+        const count = (entityName) => ec.entity.find("moqui.devtools." + entityName).disableAuthz().count()
+        const report = { files: count("DevArtifactFile"), artifacts: count("DevArtifact"), refs: count("DevArtifactRef") }
         const users = svc("get#ArtifactRefs").parameters({ artifactId: "entity:moqui.example.Example" }).call().refs
         const uses = svc("get#ArtifactRefs")
             .parameters({ artifactId: "screen:component://example/screen/Gallery/ExampleDetail.xml", direction: "out" })
@@ -21,8 +24,8 @@ feature("the index builds from the components' files", {
         ec.logger.info("artifact index: " + JSON.stringify(report) + " in " + (Date.now() - started) + " ms")
         !ec.message.hasError()
         // Bounds a framework-only runtime (no addons under runtime/component) also meets: its base and dev components
-        // have about 900 indexed files. With the addons of this checkout: read 3232, artifacts 109880, refs 40469.
-        report.read > 500
+        // have about 900 indexed files. With the addons of this checkout: files 3232, artifacts 109880, refs 40469.
+        report.files > 500
         report.artifacts > 10000
         report.refs > 5000
         users.some((ref) => ref.refType == "entity-find-one" && ref.from.startsWith("screen:component://example/"))

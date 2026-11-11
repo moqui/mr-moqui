@@ -997,6 +997,9 @@ pub struct LoadFlags {
     pub disable_data_feed: bool,
     /// Extra service files registered before the load. Not a CLI flag. The path must not contain `/service/`.
     pub service_files: Vec<std::path::PathBuf>,
+    /// After the data, build a dev instance's artifact index into the database (moqui-devkit `index`). Not a CLI flag:
+    /// a test snapshot keeps the index, so each spec's server starts with it and reads only the files changed since.
+    pub build_artifact_index: bool,
 }
 
 /// Counts from one [`load_data`] call.
@@ -1261,8 +1264,31 @@ fn load_with_factory(
     // The data feed indexes on service workers after each commit; let that work finish before the database closes, so it
     // is not cut off mid-statement. Rows it does not deliver stay pending for the feed job either way.
     wait_for_workers(factory, std::time::Duration::from_secs(120));
+    if flags.build_artifact_index && outcome.is_ok() {
+        build_artifact_index(factory);
+    }
     drop(facade);
     outcome
+}
+
+/// A dev instance's artifact index, built into the database a load filled ([`LoadFlags::build_artifact_index`]). A
+/// failure is logged and the load stands: a server builds the index at its first use as it would have.
+fn build_artifact_index(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>) {
+    if !moqui_devkit::index::enabled(factory) {
+        return;
+    }
+    let started = std::time::Instant::now();
+    match moqui_devkit::index::build(factory) {
+        Ok(report) => tracing::info!(
+            "Artifact index built into the loaded database in {:.1}s: {} files, {} artifacts",
+            started.elapsed().as_secs_f64(),
+            report.files,
+            report.artifacts
+        ),
+        Err(err) => tracing::error!(
+            "Artifact index: not built into the loaded database, a server builds it at first use: {err}"
+        ),
+    }
 }
 
 /// Wait until the service workers have nothing running or queued, or `limit` passes.
