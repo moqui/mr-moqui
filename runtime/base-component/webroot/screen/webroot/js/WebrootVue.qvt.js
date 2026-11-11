@@ -7820,6 +7820,32 @@
             icon: sign > 0 ? "sym_o_trending_up" : sign < 0 ? "sym_o_trending_down" : "sym_o_trending_flat" };
     };
 
+    // Whether a page that reads itself again on a timer may do so now: it is in view, no dialog or menu is open over it, and
+    // the user is not typing in a field. Pure over the document, for the node tests.
+    moqui.pageRefreshDue = (doc) => {
+        if (!doc || doc.visibilityState === "hidden") return false;
+        if (doc.querySelector && doc.querySelector(".q-dialog, .q-menu")) return false;
+        const active = doc.activeElement;
+        return !(active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || ""));
+    };
+
+    // m-page-refresh: a screen that shows live readings (the System home) puts one in its page to be read again every
+    // `seconds` (ten at least), through the shell's reloadSubscreens, while moqui.pageRefreshDue allows it. It draws nothing,
+    // and its timer ends with the page it is in.
+    component("m-page-refresh", {
+        name: "mPageRefresh",
+        props: { seconds: [Number, String] },
+        template: '<span class="m-page-refresh" hidden></span>',
+        mounted() {
+            const seconds = Number(this.seconds);
+            if (!(seconds > 0)) return;
+            this.timer = setInterval(() => {
+                if (moqui.pageRefreshDue(document) && this.$root && this.$root.reloadSubscreens) this.$root.reloadSubscreens();
+            }, Math.max(10, seconds) * 1000);
+        },
+        beforeUnmount() { if (this.timer) clearInterval(this.timer); }
+    });
+
     // The number-card element (style-guide §8.2): a q-card flat bordered with the title as text-overline, the value (text-h5 for
     // size md, h6 for sm, h4 for lg), the delta in the tone of numberCardDelta, a sparkline of its recent values (numbers with
     // commas, drawn with moqui.sparklinePath) and the icon; with href the whole card is a link,

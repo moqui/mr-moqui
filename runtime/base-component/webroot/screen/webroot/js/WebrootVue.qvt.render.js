@@ -6079,6 +6079,16 @@
               }, 8, ["href", "class"]))
             }
         } },
+        "m-page-refresh": { hash: "6846ad46", make: function (Vue) {
+            const { openBlock: _openBlock, createElementBlock: _createElementBlock } = Vue
+
+            return function render(_ctx, _cache) {
+              return (_openBlock(), _createElementBlock("span", {
+                class: "m-page-refresh",
+                hidden: ""
+              }))
+            }
+        } },
         "m-push-item": { hash: "599d267d", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode } = Vue
 

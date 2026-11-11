@@ -177,6 +177,10 @@ feature("the System home shows the instance, its listeners or their absence, and
         page.output.includes('id="NavGroupBoxes"')
         !page.output.includes("Loaded components")
         !page.output.includes("Database connections</h5>")
+        // auto refresh is offered, off by default (it is in the address); a reading that is a share has its meter
+        page.output.includes(">Auto refresh</a>")
+        !page.output.includes('http-equiv="refresh"')
+        processCpu == null || page.output.includes('<progress max="100"')
     }
 })
 

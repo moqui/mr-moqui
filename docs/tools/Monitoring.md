@@ -245,6 +245,11 @@ It is mostly dashboards shipped from `tools/report/` and Explore presets. It has
 (`MONITOR_INCIDENT`, `MONITOR_REPLAY`, `MONITOR_SETTINGS` and the others) each gate one thing inside it. "Monitor › X"
 is the short name of its screens.
 
+The System home shows the shipped `system-home` dashboard as its Activity strip. To show another there, set
+`system_home_dashboard` to that dashboard's definition id (a conf property, so System › Configuration or the
+environment): it gets the home's period and, as its `instance` variable, this server. A reader who may not read it sees
+the shipped one.
+
 | Screen | What it shows |
 | --- | --- |
 | Overview | Request rate and duration, job runs, top error groups and telemetry loss |

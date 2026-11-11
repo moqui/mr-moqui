@@ -127,6 +127,13 @@ along with this software (see the LICENSE.md file). If not, see
             // the screens are counted by a walk of every screen, two seconds the first time in a process: the service
             // answers the count it kept and has it counted on a worker when it has none or the one it has is old
             const screens = read('screen count', () => ec.service.sync().name('moqui.tools.ToolsHomeServices.get#ScreenCount').call() || {}, {})
+            // the last Check Tables run of this process (Schema › Entities keeps it): the differences it found and changed
+            const tableCheck = read('table check', () => JSON.parse(ec.cache.getCache('tools.home.counts').get('checkTables') || 'null'), null)
+            tableCheckShown = !!tableCheck
+            tableCheckText = tableCheck ? number(tableCheck.statements) : ''
+            tableCheckTitle = tableCheck ? L('Schema differences') + ' · ' + L('checked') + ' ' + ec.l10n.format(new Date(Number(tableCheck.time)), 'HH:mm') +
+                (tableCheck.failed ? ' · ' + number(tableCheck.failed) + ' ' + L('failed') : '') : ''
+            tableCheckStyle = tableCheck && tableCheck.failed ? 'text-warning' : ''
             screenCountText = screens.screenCount != null ? number(screens.screenCount) : '…'
             screenCountTitle = screens.screenCount != null ? L('Screens') : L('Screens') + ' · ' + L('being counted')
             databaseSizeText = facts.databaseSize != null ? bytes(facts.databaseSize) : DASH
@@ -305,6 +312,8 @@ along with this software (see the LICENSE.md file). If not, see
             <number-card id="ServicesCard" title="Services" value="${serviceCountText}" icon="sym_o_bolt" link="../Service/ServiceReference"/>
             <number-card id="ScreensCard" title="${screenCountTitle}" value="${screenCountText}" icon="sym_o_web_asset" link="../ArtifactStats"/>
             <number-card id="EcaRulesCard" title="ECA rules" value="${ecaCountText}" icon="sym_o_rule" link="../ArtifactStats"/>
+            <number-card id="TableCheckCard" title="${tableCheckTitle}" value="${tableCheckText}" icon="sym_o_difference" style="${tableCheckStyle}"
+                    link="../Schema/Entities" condition="tableCheckShown"/>
             <number-card id="DatabaseSizeCard" title="${databaseSizeTitle}" value="${databaseSizeText}" icon="sym_o_database" link="../Database/Overview"/>
         </dashboard>
 

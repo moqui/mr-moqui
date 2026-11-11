@@ -658,6 +658,15 @@ test("a number card's delta has the tone of its sign against delta-good, and the
     assert.equal(computed({ sparkline: "0,,10,10" }).sparkPath, "M0.00,22.00  M66.67,2.00 L100.00,2.00");
 });
 
+test("a page reads itself again only in view, with no dialog or menu open and no field in use", () => {
+    const doc = (over) => Object.assign({ visibilityState: "visible", querySelector: () => null, activeElement: { tagName: "BODY" } }, over);
+    assert.equal(moqui.pageRefreshDue(doc({})), true);
+    assert.equal(moqui.pageRefreshDue(doc({ visibilityState: "hidden" })), false);
+    assert.equal(moqui.pageRefreshDue(doc({ querySelector: (selector) => (selector.includes(".q-dialog") ? {} : null) })), false);
+    assert.equal(moqui.pageRefreshDue(doc({ activeElement: { tagName: "INPUT" } })), false);
+    assert.equal(moqui.pageRefreshDue(null), false);
+});
+
 test("a nav card is a link only with an href, and its title is the one link of the card", () => {
     const card = qvt.components["m-nav-card"];
     const computed = (props) => {

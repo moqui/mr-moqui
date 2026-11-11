@@ -22,6 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-index="1" menu-image="sym_o_home" menu-image-type="icon" default-menu-title="Home">
 
     <parameter name="period"/>
+    <parameter name="refresh"/>
 
     <actions>
         <!-- users today: those with a visit since midnight in the user's time zone, counted to a thousand -->
@@ -67,8 +68,22 @@ along with this software (see the LICENSE.md file). If not, see
                 {id: '24h', label: L('last 24 hours')}, {id: '7d', label: L('last 7 days')}]
             period = periodOptions.some(option => option.id === period) ? period : '1h'
             periodFrom = 'now-' + period
+            // auto refresh: seconds from the address, a minute at least (the metric documents' own pace), none by default
+            refreshSeconds = Number(refresh) > 0 ? Math.max(60, Math.round(Number(refresh))) : 0
             instanceId = read('instance id', () => ec.factory.getInstanceId(), null)
             activityVariables = instanceId ? {instance: instanceId} : {}
+            // The dashboard of the Activity strip: the administrator's own (the system_home_dashboard setting, a definition
+            // id) when it is there for this reader, else the shipped system-home. One that is not there is logged.
+            activityDashboard = 'system-home'
+            const ownDashboard = String(System.getProperty('system_home_dashboard') || '').trim()
+            if (ownDashboard && ownDashboard !== activityDashboard) {
+                let own = null
+                try { own = ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId: ownDashboard}).call()?.definition }
+                catch (error) { own = null }
+                if (ec.message.hasError()) { own = null; ec.message.clearErrors() }
+                if (own && own.type === 'dashboard') activityDashboard = ownDashboard
+                else ec.logger.warn('System home: the dashboard of system_home_dashboard, ' + ownDashboard + ', is not one this user may read; the shipped one is shown')
+            }
 
             // ---- identity and state ----
             const report = read('runtime report', () => ec.factory.getStartupReport(), null) || {}
@@ -204,6 +219,25 @@ along with this software (see the LICENSE.md file). If not, see
                 : DASH, files.Level, 'process.unix.file_descriptor.count', '')
             if (Number(swap.TotalBytes || 0) > 0) resource(L('Swap'), percent(swap.UsedPercent) + ' ' + L('of') + ' ' + bytes(swap.TotalBytes) + ' ' + L('used'),
                 swap.Level, '', '')
+            // a meter beside each reading that is a share: how full, by its row's name
+            const shares = {}
+            shares[L('CPU load')] = cpu.LoadPercent
+            shares[L('This process, CPU')] = cpu.ProcessPercent
+            shares[L('This process, memory')] = memory.ProcessPercent
+            shares[L('Machine memory')] = memory.AvailablePercent != null ? 100 - Number(memory.AvailablePercent) : null
+            for (const filesystem of filesystems) shares[L('Disk') + ' ' + filesystem.mountPoint] = filesystem.usedPercent
+            shares[L('Open files')] = files.Count != null && Number(files.Limit) > 0 ? 100 * Number(files.Count) / Number(files.Limit) : null
+            shares[L('Swap')] = swap.UsedPercent
+            for (const row of resourceRows) {
+                const share = shares[row.name]
+                row.meterShown = share != null && isFinite(Number(share))
+                const filled = row.meterShown ? Math.min(1, Math.max(0, Number(share) / 100)) : 0
+                row.meterValue = filled.toFixed(3)
+                row.meterPercent = Math.round(filled * 100)
+                // ten cells in the terminal
+                row.meterBar = row.meterShown ? '█'.repeat(Math.round(filled * 10)) + '░'.repeat(10 - Math.round(filled * 10)) : ''
+                row.meterColor = ['warning', 'negative'].includes(row.levelColor) ? row.levelColor : 'primary'
+            }
 
             // ---- database ----
             const BACKUP_SERVICE = 'org.moqui.impl.ServerServices.backup#EmbeddedDatabase'
@@ -325,11 +359,22 @@ along with this software (see the LICENSE.md file). If not, see
                 <label text="Period" type="span" style="m-muted"/>
                 <section-iterate name="PeriodLinks" list="periodOptions" entry="periodOption"><widgets>
                     <label text="${periodOption.id}" type="strong" condition="periodOption.id == period" tooltip="${periodOption.label}"/>
-                    <link url="." text="${periodOption.id}" link-type="anchor" parameter-map="{period: periodOption.id}"
+                    <link url="." text="${periodOption.id}" link-type="anchor" parameter-map="{period: periodOption.id, refresh: refresh}"
                             condition="periodOption.id != period" tooltip="${periodOption.label}"/>
                 </widgets></section-iterate>
                 <label text="Updated ${nowText}" type="span" style="m-muted"/>
-                <link url="." text="Refresh" icon="sym_o_refresh" parameter-map="{period: period}"/>
+                <link url="." text="Refresh" icon="sym_o_refresh" parameter-map="{period: period, refresh: refresh}"/>
+                <!-- auto refresh is in the address, as the period is, so the page still writes nothing: the browser reads the
+                    page again each minute while it is in view (m-page-refresh); the terminal has F5 -->
+                <link url="." text="Auto refresh" link-type="anchor" parameter-map="{period: period, refresh: '60'}" condition="!refreshSeconds"
+                        tooltip="Read this page again each minute"/>
+                <link url="." text="Auto refresh is on" link-type="anchor" parameter-map="{period: period}" condition="refreshSeconds"
+                        tooltip="This page is read again each minute while it is in view; choose this to stop"/>
+                <section name="AutoRefresh" condition="refreshSeconds"><widgets><render-mode>
+                    <text type="qvt"><![CDATA[<m-page-refresh seconds="${refreshSeconds}"></m-page-refresh>]]></text>
+                    <text type="tui" template="false">[]</text>
+                    <text type="html"><![CDATA[<meta http-equiv="refresh" content="${refreshSeconds}">]]></text>
+                </render-mode></widgets></section>
                 <button-menu text="More" icon="more_horiz">
                     <container-dialog id="RequestDetails" button-text="Request details">
                         <label text="${requestDetails}" type="pre"/>
@@ -362,7 +407,7 @@ along with this software (see the LICENSE.md file). If not, see
 
         <!-- activity: the shipped system-home dashboard over the period, narrowed to this instance -->
         <section name="SystemActivity" condition="telemetryOn"><widgets>
-            <report-embed id="SystemActivityEmbed" definition-id="system-home" from="${periodFrom}" thru="now" variables="activityVariables"/>
+            <report-embed id="SystemActivityEmbed" definition-id="${activityDashboard}" from="${periodFrom}" thru="now" variables="activityVariables"/>
         </widgets><fail-widgets>
             <container id="SystemActivityOff" style="q-pa-sm">
                 <label text="${telemetryOffText}" type="span" style="m-muted"/>
@@ -400,6 +445,12 @@ along with this software (see the LICENSE.md file). If not, see
                             <label text="${name}" condition="!metricName"/>
                         </default-field></field>
                         <field name="text"><default-field title="Now"><label text="${text}" tooltip="${tooltip}"/></default-field></field>
+                        <!-- how full, as a bar: q-linear-progress in the browser, ten cells in the terminal, a progress element in html -->
+                        <field name="meterValue"><default-field title="Share"><render-mode>
+                            <text type="qvt"><![CDATA[${meterShown ? '<q-linear-progress :value="' + meterValue + '" color="' + meterColor + '" track-color="grey-5" rounded size="6px" class="m-resource-meter" aria-label="' + meterPercent + ' %"></q-linear-progress>' : ''}]]></text>
+                            <text type="tui"><![CDATA[${JSON.stringify(meterShown ? {t: "text", text: meterBar} : [])}]]></text>
+                            <text type="html"><![CDATA[${meterShown ? '<progress max="100" value="' + meterPercent + '"></progress>' : ''}]]></text>
+                        </render-mode></default-field></field>
                         <field name="levelText"><default-field title="Level"><render-mode>
                             <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${levelColor}">${levelText}</q-chip>]]></text>
                             <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: levelText})}]]></text>
@@ -407,7 +458,7 @@ along with this software (see the LICENSE.md file). If not, see
                         </render-mode></default-field></field>
                         <columns type="mobile">
                             <column><field-ref name="name"/><field-ref name="text"/></column>
-                            <column><field-ref name="levelText"/></column>
+                            <column><field-ref name="levelText"/><field-ref name="meterValue"/></column>
                         </columns>
                     </form-list>
                 </box-body-nopad></container-box>

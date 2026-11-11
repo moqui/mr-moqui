@@ -37,7 +37,7 @@ actions:
 | --- | --- |
 | Instance | `ec.factory.getStartupReport()` (the purpose; a production instance gets one banner line), `get#DatabaseList` and `get#Capabilities` of the selected database (kind and version) with the picker of `template/DatabaseParts.xml`, and `ec.user.hasPermission` for `SQL_RUNNER_WEB`, `DATABASE_ADMIN`, `DATABASE_EXTERNAL` and `LOAD_RUNNER` (a missing one is muted, its tooltip naming the permission) |
 | Jump | Two server-search drop-downs over the `searchNames` transition (entity names, or the known service names, that hold the term; fifty at most). An entity opens in Data › Grid, or its definition; a service opens its detail, which has Run |
-| Counters | `ec.entity.getAllEntityInfo`, `ec.service.getKnownServiceNames`, the EECA and SECA rule counts, the database size of `get#Capabilities`, and the screens from `moqui.tools.ToolsHomeServices.get#ScreenCount`, which answers the count it kept and has `count#Screens` count again on a worker (the walk loads every screen: about two seconds the first time in a process), so the page never waits for it |
+| Counters | The last Check Tables run of this process, when there was one (what it changed and what failed, kept by Schema › Entities in the `tools.home.counts` cache); `ec.entity.getAllEntityInfo`, `ec.service.getKnownServiceNames`, the EECA and SECA rule counts, the database size of `get#Capabilities`, and the screens from `moqui.tools.ToolsHomeServices.get#ScreenCount`, which answers the count it kept and has `count#Screens` count again on a worker (the walk loads every screen: about two seconds the first time in a process), so the page never waits for it |
 | Main tools, More | The navigation catalog (`navCatalog`, below under System). SQL is left out without `SQL_RUNNER_WEB`, Load testing without `LOAD_RUNNER`; Dev AIDE is linked when its app is mounted |
 | Pick up where you left off | The preference `tools.recent` (the entities the user opened last in Data › Grid, twenty names, `template/ToolsRecent.js`), `find#GridViews`, and with `SQL_RUNNER_WEB` `find#SavedQueries` and `find#SqlHistory`; ten rows, hidden when empty |
 | Running and recent | `get#EtlRuns`, `get#DatabaseJobs` and, with `LOAD_RUNNER`, `find#LoadRuns`: five of each, newest first, hidden when empty |
@@ -69,15 +69,16 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
 
 **Home** (`System/Home.xml`, [plans/Tools-Fancy.md](../../../plans/Tools-Fancy.md) §3) answers whether the instance is
 healthy, what it is, what it has been doing, what is switched on, what needs an administrator and where to go. It
-writes nothing, so it works for a view-only administrator. Each block is read in its actions:
+writes nothing, so it works for a view-only administrator; Auto refresh (`refresh=60` in the address) reads it again
+each minute in the browser. Each block is read in its actions:
 
 | Block | Reads |
 | --- | --- |
 | Identity and state | `ec.factory.getStartupReport()` (version, package, purpose, role, the time to ready) and `ec.factory.getStatusMap(true)` (host, OS, processors, start, `Ready` and `Draining`); the count of loaded components |
-| Counters | The status map's `Resources` (the 5-minute load, memory, the fullest filesystem), `ec.factory.workerPool`, the `DataSources` pool numbers, and the users with a `moqui.server.VisitUserSummary` row today. A counter at a warning or critical level takes that color and says the level in its title |
-| Activity | A `report-embed` of the shipped `system-home` dashboard over the `period` URL parameter (`1h`, `6h`, `24h`, `7d`), narrowed to this instance; one line in its place when telemetry is off or not in the build |
+| Counters | The status map's `Resources` (the 5-minute load, memory, the fullest filesystem), `ec.factory.workerPool`, the `DataSources` pool numbers, and the users with a `moqui.server.VisitUserSummary` row today. A counter at a warning or critical level takes that color and says the level in its title. With telemetry on each has a sparkline of its gauge over the period (`get#CounterSeries`) |
+| Activity | A `report-embed` of the shipped `system-home` dashboard, or of the one the `system_home_dashboard` setting names, over the `period` URL parameter (`1h`, `6h`, `24h`, `7d`), narrowed to this instance; one line in its place when telemetry is off or not in the build |
 | Needs attention | `moqui.tools.SystemHomeServices.get#SystemAttention` (below) |
-| Resources | The status map's `Resources` ([resource watch](../../../docs/Run-Deploy.md#resource-watch)): each reading with its level and a link to its series in Monitor › Metrics; a reading the platform does not report is "—" |
+| Resources | The status map's `Resources` ([resource watch](../../../docs/Run-Deploy.md#resource-watch)): each reading with its level, a meter when it is a share, and a link to its series in Monitor › Metrics; a reading the platform does not report is "—" |
 | Database | The `DataSources` by connection pool, `get#Capabilities` (kind, version, size) and the embedded database's backup job; the `moqui.server.ClusterMember` rows when there is more than one |
 | Listeners and integrations | The runtime report: each listener and integration with its state and detail (failed and skipped first) and the screen that configures it, the tool factories, what the build leaves out, and the routes in a dialog |
 | Navigation | The navigation catalog |

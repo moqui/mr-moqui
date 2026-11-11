@@ -30,6 +30,9 @@ along with this software (see the LICENSE.md file). If not, see
             for (const failure of check.failed) ec.message.addMessage(`${failure.entityName} not checked: ${failure.error}`, 'warning')
             for (const ddl of check.ddl.slice(0, 100)) ec.message.addMessage(ddl, 'info')
             if (check.ddl.length > 100) ec.message.addMessage(`and ${check.ddl.length - 100} more; the server log has them all`, 'info')
+            // kept for the Tools home: what the last check found to change, and what it could not
+            ec.cache.getCache('tools.home.counts').put('checkTables', JSON.stringify({statements: check.ddl.length,
+                failed: Number(check.errors || 0) + check.failed.length, time: Date.now(), groups: groupNames}))
         ]]></script></actions>
         <default-response url="."/>
     </transition>

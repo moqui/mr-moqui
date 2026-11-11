@@ -28,6 +28,9 @@
     <default-property name="webapp_https_port" value=""/>
     <default-property name="webapp_https_enabled" value="false"/>
     <default-property name="telemetry_enabled" value="true"/>
+    <!-- The dashboard the System home shows as its Activity strip, by its definition id, in place of the shipped
+        system-home; empty for that one. It gets the period of the home and, as its instance variable, this server. -->
+    <default-property name="system_home_dashboard" value=""/>
     <!-- The share of traces whose spans below the request or job root are kept, decided from the trace id. At 0 every
         root span is kept, and the whole trace of an error or a slow root (the tail rule); 1 keeps every span. -->
     <default-property name="telemetry_sample_ratio" value="0"/>
