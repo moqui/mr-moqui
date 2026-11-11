@@ -6,8 +6,8 @@
 //   moqui test tools --agents --replay runtime/base-component/tools/test/agent/replay-small
 // The tasks make their own rows (a user group, visits, a note, a user with no permissions) and remove them after. The user
 // group tasks are on System › Access (Groups, and GroupDetail with its instance administrator's "All settings" form, whose
-// transition is updateUserGroup): the recordings of those tasks in replay/ and replay-small/ still drive the User Groups
-// screens that Access replaced (plans/Admin-Screens-Down.md A3) and fail until their replies are written again.
+// transition is updateUserGroup): a group a task makes has no type, so it is neither a registered bundle nor a custom
+// group and its Profile form is not offered; "All settings" is the one form that changes it.
 
 const visitPrefix = "/agent-eval/"
 const daysAgo = (days) => new Date(Date.now() - days * 24 * 60 * 60 * 1000)

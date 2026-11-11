@@ -358,12 +358,19 @@ Findings:
 - F20. The Groups list shows a group by its description in the `userGroupId` field and its id in `userGroupIdText`: what
   an agent's read of the list answers. The canvas tests (`it/assist.rs`, `gate3_browser.rs`) and the `vue-sfc` skill's
   example read those fields, with `text` as the find parameter.
-- F21. The recorded agent replays are not changed. Their model replies are hand-authored and drive the User Groups
-  screens by more than a path (the list's `where`, "Create User Group", "User Group ID", "Update"), so a change of paths
-  alone does not replay: with the task files on the new screens 15 of 24 tasks of `replay/` and 7 of 9 of `replay-small/`
-  pass, and the 9 and 2 recordings that name `Security/UserGroup` fail until their replies are written again (and their
-  tool lines taken from that run's transcripts). At the commit before this phase all 24 passed and the run still failed
-  against `baseline-replay.json`: every task's tokens are 32 to 78 percent over the baseline's.
+- F21. The recorded agent replays drove the User Groups screens by more than a path (the list's `where`, "Create User
+  Group", "User Group ID", "Update"), so a change of paths alone did not replay: with the task files on the new screens
+  15 of 24 tasks of `replay/` and 7 of 9 of `replay-small/` passed. The 9 and 2 recordings that named
+  `Security/UserGroup` are written again by hand for the new screens, each with the steps it had: a read of the Groups
+  list by `text`; the "New custom group" dialog's Identifier and Description (CreateGroup) for the hand-off; Name and
+  Find for the follow-up; and for the writes GroupDetail's "All settings" form (Description, "Update group",
+  `updateUserGroup`), since a group a task makes has no type, is neither a registered bundle nor a custom group, and so
+  has no Profile form. Their `user`, `model` and `tool` lines are the transcripts' of the replay that played them, the
+  headers kept. Both sets pass (24 of 24, 9 of 9) and the rewritten recordings replay with no drift; the task files'
+  checks are unchanged. The baselines were stale before this phase: at the commit before it all 24 passed and the run
+  still failed against `baseline-replay.json`, every task's tokens 32 to 78 percent over the baseline's (22 to 78 percent
+  over in `replay/` and 67 to 83 in `replay-small/` with the rewritten recordings). Both are written again from the
+  passing replays (`--write-baseline`, at the user's word), and each set then replays with exit 0.
 - F22. The opt-in `gate3` and `gate3_browser` tests had failures before this phase that are not its own: three of
   `gate3` (goldens of SYSTEM_APP's and TOOLS_APP's members, an html page read with its chunk size) and four of
   `gate3_browser` (the gallery's dialog and tray, Dev AIDE's service writer and screen builder), the same before and

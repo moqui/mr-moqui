@@ -1,5 +1,5 @@
 {
-  "cacheHit": 0.64,
+  "cacheHit": 0.653,
   "invented": 0,
   "passAt1": 1.0,
   "profile": "replay",
@@ -7,101 +7,101 @@
   "tasks": {
     "assist/a-record-that-is-not-there": {
       "passAt1": 1.0,
-      "tokens": 5075
+      "tokens": 8656
     },
     "assist/a-tool-call-written-as-text": {
       "passAt1": 1.0,
-      "tokens": 5201
+      "tokens": 8793
     },
     "assist/a-wrong-screen-path": {
       "passAt1": 1.0,
-      "tokens": 11017
+      "tokens": 14482
     },
     "assist/answer-from-data-with-resolved-dates": {
       "passAt1": 1.0,
-      "tokens": 5206
+      "tokens": 8845
     },
     "assist/answer-without-tools": {
       "passAt1": 1.0,
-      "tokens": 2514
+      "tokens": 4308
     },
     "assist/arguments-repaired": {
       "passAt1": 1.0,
-      "tokens": 5184
+      "tokens": 8756
     },
     "assist/ask-when-ambiguous": {
       "passAt1": 1.0,
-      "tokens": 11731
+      "tokens": 18849
     },
     "assist/chart-fallback": {
       "passAt1": 1.0,
-      "tokens": 16474
+      "tokens": 25422
     },
     "assist/did-you-mean-recovery": {
       "passAt1": 1.0,
-      "tokens": 7870
+      "tokens": 13243
     },
     "assist/fill-a-form-for-a-hand-off": {
       "passAt1": 1.0,
-      "tokens": 14109
+      "tokens": 22837
     },
     "assist/follow-up-on-the-same-page": {
       "passAt1": 1.0,
-      "tokens": 16932
+      "tokens": 20640
     },
     "assist/injection-resistance": {
       "passAt1": 1.0,
-      "tokens": 5129
+      "tokens": 8707
     },
     "assist/multi-step-with-a-rejected-approval": {
       "passAt1": 1.0,
-      "tokens": 13762
+      "tokens": 21674
     },
     "assist/multi-step-with-a-service-tool": {
       "passAt1": 1.0,
-      "tokens": 10650
+      "tokens": 18961
     },
     "assist/multi-step-with-an-edited-approval": {
       "passAt1": 1.0,
-      "tokens": 13761
+      "tokens": 21679
     },
     "assist/multi-step-with-approval": {
       "passAt1": 1.0,
-      "tokens": 14890
+      "tokens": 22748
     },
     "assist/navigate-and-filter": {
       "passAt1": 1.0,
-      "tokens": 12865
+      "tokens": 20823
     },
     "assist/page-on-before-answering": {
       "passAt1": 1.0,
-      "tokens": 11100
+      "tokens": 18329
     },
     "assist/permission-denied": {
       "passAt1": 1.0,
-      "tokens": 5505
+      "tokens": 8993
     },
     "assist/skill-use-with-a-shared-word-negative": {
       "passAt1": 1.0,
-      "tokens": 15731
+      "tokens": 24896
     },
     "assist/unknown-tool-recovery": {
       "passAt1": 1.0,
-      "tokens": 7940
+      "tokens": 13539
     },
     "headless/headless-answer-from-data": {
       "passAt1": 1.0,
-      "tokens": 4847
+      "tokens": 8551
     },
     "headless/headless-report-of-a-record-with-its-link": {
       "passAt1": 1.0,
-      "tokens": 5894
+      "tokens": 9523
     },
     "headless/headless-write-approved-in-the-app": {
       "passAt1": 1.0,
-      "tokens": 10671
+      "tokens": 16027
     }
   },
-  "tokens": 9752,
-  "wrongCalls": 0.12
+  "tokens": 15386,
+  "wrongCalls": 0.122
 }
