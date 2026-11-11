@@ -669,4 +669,21 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationMessageTypes.js').execute('storeMessageType', context))</script></actions>
     </service>
+
+    <!-- ========== The import of message translations (ConfigurationLocalization.js; impl-admin P15) ========== -->
+    <!-- The row services of the import target messageTranslations (data/AdminConfigurationData.xml), called by
+        org.moqui.admin.DataTransferServices for each row of a staged file, as the importer. -->
+    <service verb="validate" noun="MessageTranslationRow" allow-remote="false">
+        <implements service="org.moqui.admin.DataTransferServices.validate#TargetRow"/>
+        <description>Whether a row (original, locale, localized) may be saved as a message translation, by the rules of
+            store#LocalizedMessage, changing nothing: sourceRevision is the translation's revision now, and a row that
+            is already so is skipped. Needs ADMIN_SETTINGS_MANAGE.</description>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('validateMessageTranslationRow', context))</script></actions>
+    </service>
+    <service verb="apply" noun="MessageTranslationRow" allow-remote="false">
+        <implements service="org.moqui.admin.DataTransferServices.apply#TargetRow"/>
+        <description>Save a row's translation at the revision its validation read (sourceRevision), as
+            store#LocalizedMessage does and with its refusals. Needs ADMIN_SETTINGS_MANAGE.</description>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('applyMessageTranslationRow', context))</script></actions>
+    </service>
 </services>
