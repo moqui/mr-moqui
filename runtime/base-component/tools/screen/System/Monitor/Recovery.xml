@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- Recovery (plans/Monitoring.md, Later: Recovery): the emergency stop, the policies (which incidents, which actions least
+    disruptive first, advisory, approval or automatic), the adapters that carry actions out, and the newest actions.
+    Seeing it needs MONITOR_INCIDENT; changing policies, adapters and the stop MONITOR_RECOVER_ADMIN, which the services check. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Recovery" default-menu-index="16" menu-image="sym_o_healing" menu-image-type="icon">
+    <parameter name="editPolicyId"/>
+    <parameter name="editAdapterId"/>
+    <transition name="setStop">
+        <service-call name="org.moqui.monitor.MonitorServices.set#RecoveryStop"/>
+        <default-response url="."/>
+    </transition>
+    <transition name="storePolicy">
+        <actions>
+            <script><![CDATA[
+                // The explicit New form must not silently update an existing ID. Other callers retain upsert behavior. Only
+                // an administrator learns whether an ID exists; anyone else gets the store service's own refusal.
+                if (recoveryPolicyMode === 'create' && policyId && ec.user.hasPermission('MONITOR_RECOVER_ADMIN') &&
+                        ec.entity.find('moqui.monitor.RecoveryPolicy').condition('policyId', policyId).disableAuthz().one())
+                    ec.message.addError(ec.l10n.localize('Policy ID already exists. Close this dialog and choose Edit on that row.'))
+            ]]></script>
+            <check-errors/>
+            <service-call name="org.moqui.monitor.MonitorServices.store#RecoveryPolicy"/>
+        </actions>
+        <error-response url="." parameter-map="{editPolicyId:editPolicyId || '',editAdapterId:editAdapterId || '',_openDialog:'PolicyDialog'}"/>
+        <default-response url="." parameter-map="{editPolicyId:'',editAdapterId:'',_openDialog:''}"/>
+    </transition>
+    <transition name="storeAdapter">
+        <actions>
+            <script><![CDATA[
+                // As for policies: an explicit New form does not update an existing adapter, and only an administrator learns it exists.
+                if (recoveryAdapterMode === 'create' && adapterId && ec.user.hasPermission('MONITOR_RECOVER_ADMIN') &&
+                        ec.entity.find('moqui.monitor.RecoveryAdapter').condition('adapterId', adapterId).disableAuthz().one())
+                    ec.message.addError(ec.l10n.localize('Adapter ID already exists. Close this dialog and choose Edit on that row.'))
+            ]]></script>
+            <check-errors/>
+            <service-call name="org.moqui.monitor.MonitorServices.store#RecoveryAdapter"/>
+        </actions>
+        <error-response url="." parameter-map="{editPolicyId:editPolicyId || '',editAdapterId:editAdapterId || '',_openDialog:'AdapterDialog'}"/>
+        <default-response url="." parameter-map="{editPolicyId:'',editAdapterId:'',_openDialog:''}"/>
+    </transition>
+    <transition name="incident"><default-response url="../IncidentDetail"/></transition>
+    <actions><script><![CDATA[
+        incidentAllowed = ec.user.hasPermission('MONITOR_INCIDENT')
+        adminAllowed = ec.user.hasPermission('MONITOR_RECOVER_ADMIN')
+        policyList = []
+        adapterList = []
+        actionList = []
+        recoveryStopped = false
+        if (incidentAllowed) {
+            const result = ec.service.sync().name('org.moqui.monitor.MonitorServices.list#Recovery').call()
+            policyList = result.policies || []
+            adapterList = result.adapters || []
+            actionList = result.actions || []
+            recoveryStopped = !!result.stopped
+        }
+        const tr = value => ec.l10n.localize(value)
+        const stepNames = {'observe':'Observe','escalate':'Escalate','pause-job':'Pause job','pause-alert-rule':'Pause alert rule',
+            'disable-artifact':'Disable artifact','isolate-instance':'Isolate instance','pause-rollout':'Pause rollout',
+            'restart':'Restart','rollback':'Roll back','promote':'Promote'}
+        policyList = policyList.map(row => {
+            let stepsText
+            try {
+                const steps = JSON.parse(row.ladderJson || '[]')
+                stepsText = Array.isArray(steps) ? steps.map(step => tr(stepNames[step.action] || step.action || 'Unknown action') +
+                    (step.target ? ': ' + step.target : '') + (step.adapterId ? ' (' + step.adapterId + ')' : '')).join(' → ') : tr('Review steps JSON')
+            } catch (_) { stepsText = tr('Review steps JSON') }
+            return Object.assign({}, row, {stepsText:stepsText || tr('No steps'),
+                enabledText:tr(row.enabled === 'N' ? 'No' : 'Yes'), serviceText:row.serviceName || tr('Any service')})
+        })
+        // Action times as the viewer reads them (epoch milliseconds or date text from the service)
+        const displayTime = value => {
+            if (value == null || value === '') return tr('Not recorded')
+            const date = new Date(/^-?\d+$/.test(String(value)) ? Number(value) : value)
+            return Number.isNaN(date.getTime()) ? tr('Unavailable') : ec.l10n.format(date, 'yyyy-MM-dd HH:mm:ss')
+        }
+        actionList = actionList.map(row => Object.assign({}, row, {createdText: displayTime(row.createdDate)}))
+        const errors = ec.web ? ec.web.errorParameters || {} : {}
+        selectedPolicy = adminAllowed && editPolicyId ? policyList.find(row => row.policyId === editPolicyId) || null : null
+        selectedAdapter = adminAllowed && editAdapterId ? adapterList.find(row => row.adapterId === editAdapterId) || null : null
+        policyMissing = adminAllowed && !!editPolicyId && !selectedPolicy
+        adapterMissing = adminAllowed && !!editAdapterId && !selectedAdapter
+        const formValues = (record, defaults, names, formName) => {
+            const values = {}
+            for (const name of names) {
+                const value = record ? record[name] : defaults[name]
+                // Text inputs must round-trip numeric configuration without locale grouping or rounding.
+                values[name] = value == null ? '' : String(value)
+                // The shared field fallback omits empty error values; keep an intentionally cleared field too.
+                if (errors.moquiFormName === formName && Object.prototype.hasOwnProperty.call(errors, name)) values[name] = errors[name]
+            }
+            return values
+        }
+        policyForm = formValues(selectedPolicy, {enabled:'Y',minSeverity:'major',mode:'advisory',ladderJson:'[]'},
+            ['policyId','description','enabled','sequenceNum','serviceName','minSeverity','mode','ladderJson','adapterId','contactJson',
+                'minConfidence','cooldownMinutes','maxActionsPerDay','deadlineMinutes','verifyMinutes','maxRollbackRate'], 'StorePolicy')
+        adapterForm = formValues(selectedAdapter, {adapterType:'manual',allowInternal:'N'},
+            ['adapterId','description','adapterType','url','urlProperty','statusUrl','secretProperty','headerPropertiesJson','allowInternal','instructions'], 'StoreAdapter')
+        policyTitle = selectedPolicy ? tr('Edit policy') + ': ' + selectedPolicy.policyId : tr('New policy')
+        adapterTitle = selectedAdapter ? tr('Edit adapter') + ': ' + selectedAdapter.adapterId : tr('New adapter')
+    ]]></script></actions>
+    <widgets>
+        <label text="Recovery" type="h4"/>
+        <section name="NotAllowed" condition="!incidentAllowed"><widgets>
+            <label text="Recovery needs the MONITOR_INCIDENT permission." type="p"/>
+        </widgets><fail-widgets>
+            <label text="Advisory by default: an action runs only when approved on its incident (MONITOR_RECOVER), or under an automatic policy when telemetry recovery allow-automatic is true. Escalation always runs. No action reverses committed business transactions." type="p"/>
+            <section name="Stop" condition="recoveryStopped"><widgets>
+                <label text="The emergency stop is on: no recovery action runs or starts." type="p"/>
+                <link url="setStop" text="Turn the emergency stop off" condition="adminAllowed" parameter-map="{stopped:'N'}"/>
+            </widgets><fail-widgets>
+                <container-dialog id="StopDialog" button-text="Emergency stop" condition="adminAllowed">
+                    <form-single name="StopRecovery" transition="setStop">
+                        <field name="stopped"><default-field><hidden default-value="Y"/></default-field></field>
+                        <field name="reason"><default-field title="Reason"><text-line size="60"/></default-field></field>
+                        <field name="submit"><default-field><submit text="Stop all recovery actions"/></default-field></field>
+                    </form-single>
+                </container-dialog>
+            </fail-widgets></section>
+
+            <container-box>
+                <box-header title="Policies"/>
+                <box-toolbar>
+                    <container-dialog id="PolicyDialog" button-text="${selectedPolicy ? 'Edit selected policy' : 'New policy'}"
+                            title="${policyTitle}" width="1120" icon="sym_o_edit" condition="adminAllowed &amp;&amp; !policyMissing">
+                        <label text="${selectedPolicy ? 'Update this policy. Its ID stays the same.' : 'Use a new ID, or leave it empty to generate one. Choose Edit on an existing policy to change it.'}" type="p" style="m-muted"/>
+                        <form-single name="StorePolicy" transition="storePolicy" map="policyForm">
+                            <field name="editPolicyId" from="editPolicyId || ''"><default-field><hidden/></default-field></field>
+                            <field name="recoveryPolicyMode" from="selectedPolicy ? 'edit' : 'create'"><default-field><hidden/></default-field></field>
+                            <field name="policyId">
+                                <conditional-field condition="selectedPolicy" title="Policy ID"><display/></conditional-field>
+                                <default-field title="Policy ID" tooltip="Leave empty to generate a new ID."><text-line/></default-field>
+                            </field>
+                            <field name="description"><default-field title="Description"><text-line size="60"/></default-field></field>
+                            <field name="enabled"><default-field title="Enabled"><drop-down no-current-selected-key="Y"><option key="Y" text="Yes"/><option key="N" text="No"/></drop-down></default-field></field>
+                            <field name="sequenceNum"><default-field title="Match order" tooltip="The first enabled matching policy applies."><text-line size="8"/></default-field></field>
+                            <field name="serviceName"><default-field title="Service pattern" tooltip="Regular expression; empty matches any service."><text-line/></default-field></field>
+                            <field name="minSeverity"><default-field title="Minimum severity"><drop-down allow-empty="true">
+                                <option key="minor" text="Minor"/><option key="major" text="Major"/><option key="critical" text="Critical"/>
+                            </drop-down></default-field></field>
+                            <field name="mode"><default-field title="Mode"><drop-down no-current-selected-key="advisory">
+                                <option key="advisory" text="Advisory"/><option key="approval" text="Approval"/><option key="automatic" text="Automatic"/>
+                            </drop-down></default-field></field>
+                            <field name="ladderJson"><default-field title="Steps JSON" tooltip="Ordered list of {action, target, adapterId}; least disruptive first."><text-area rows="4" cols="80"/></default-field></field>
+                            <field name="adapterId"><default-field title="Default adapter"><drop-down allow-empty="true">
+                                <list-options list="adapterList" key="${adapterId}" text="${description ? description + ' (' + adapterId + ')' : adapterId}"/>
+                            </drop-down></default-field></field>
+                            <field name="contactJson"><default-field title="Escalation contact JSON" tooltip="Empty uses a notification to the ADMIN group."><text-area rows="2" cols="80"/></default-field></field>
+                            <field name="minConfidence"><default-field title="Minimum confidence" tooltip="0.99 when empty."><text-line size="8"/></default-field></field>
+                            <field name="cooldownMinutes"><default-field title="Cooldown minutes"><text-line size="8"/></default-field></field>
+                            <field name="maxActionsPerDay"><default-field title="Actions per day"><text-line size="8"/></default-field></field>
+                            <field name="deadlineMinutes"><default-field title="Deadline minutes"><text-line size="8"/></default-field></field>
+                            <field name="verifyMinutes"><default-field title="Verify after minutes"><text-line size="8"/></default-field></field>
+                            <field name="maxRollbackRate"><default-field title="Maximum rollback rate" tooltip="0.05 when empty."><text-line size="8"/></default-field></field>
+                            <field name="submit"><default-field><submit text="Save policy"/></default-field></field>
+                            <field-layout>
+                                <field-ref name="editPolicyId"/><field-ref name="recoveryPolicyMode"/>
+                                <field-group title="Policy identity" box="true">
+                                    <field-row><field-ref name="policyId"/><field-ref name="description"/></field-row>
+                                    <field-row><field-ref name="enabled"/><field-ref name="sequenceNum"/><field-ref name="mode"/></field-row>
+                                </field-group>
+                                <field-group title="Match incidents" box="true">
+                                    <field-row><field-ref name="serviceName"/><field-ref name="minSeverity"/><field-ref name="minConfidence"/></field-row>
+                                </field-group>
+                                <field-group title="Recovery steps and escalation" box="true">
+                                    <field-ref name="ladderJson"/>
+                                    <field-row><field-ref name="adapterId"/><field-ref name="contactJson"/></field-row>
+                                </field-group>
+                                <field-group title="Limits and verification" box="true">
+                                    <field-row><field-ref name="cooldownMinutes"/><field-ref name="maxActionsPerDay"/><field-ref name="deadlineMinutes"/></field-row>
+                                    <field-row><field-ref name="verifyMinutes"/><field-ref name="maxRollbackRate"/></field-row>
+                                </field-group>
+                                <field-ref name="submit"/>
+                            </field-layout>
+                        </form-single>
+                    </container-dialog>
+                    <link url="." text="New policy" icon="sym_o_add" condition="adminAllowed &amp;&amp; (selectedPolicy || policyMissing)"
+                            parameter-map="{editPolicyId:'',editAdapterId:'',_openDialog:'PolicyDialog'}"/>
+                </box-toolbar>
+                <box-body-nopad>
+                    <label text="Policy not found. Choose Edit on a listed policy, or create a new one." type="p" style="q-pa-md" condition="policyMissing"/>
+                    <section name="PoliciesAvailable" condition="policyList.length &gt; 0"><widgets>
+                        <form-list name="PolicyList" list="policyList" skip-form="true">
+                            <field name="policyId"><default-field title="Policy"><display/></default-field></field>
+                            <field name="description"><default-field title="Description"><display/></default-field></field>
+                            <field name="enabled"><default-field title="Enabled"><display text="${enabledText}"/></default-field></field>
+                            <field name="serviceName"><default-field title="Service"><display text="${serviceText}"/></default-field></field>
+                            <field name="minSeverity"><default-field title="Minimum severity"><display/></default-field></field>
+                            <field name="mode"><default-field title="Mode"><display/></default-field></field>
+                            <field name="ladderJson"><default-field title="Steps"><display text="${stepsText}"/></default-field></field>
+                            <field name="adapterId"><default-field title="Adapter"><display/></default-field></field>
+                            <field name="edit"><default-field title=""><link url="." text="Edit" icon="sym_o_edit" condition="adminAllowed"
+                                    parameter-map="{editPolicyId:policyId,editAdapterId:'',_openDialog:'PolicyDialog'}"/></default-field></field>
+                        </form-list>
+                    </widgets><fail-widgets>
+                        <label text="No recovery policies are configured." type="p" style="q-pa-md m-muted"/>
+                    </fail-widgets></section>
+                </box-body-nopad>
+            </container-box>
+
+            <container-box>
+                <box-header title="Adapters"/>
+                <box-toolbar>
+                    <container-dialog id="AdapterDialog" button-text="${selectedAdapter ? 'Edit selected adapter' : 'New adapter'}"
+                            title="${adapterTitle}" width="960" icon="sym_o_edit" type="default" condition="adminAllowed &amp;&amp; !adapterMissing">
+                        <label text="${selectedAdapter ? 'Update this adapter. Its ID stays the same.' : 'Use a new ID. Choose Edit on an existing adapter to change it.'}" type="p" style="m-muted"/>
+                        <label text="Expand the settings for the selected type. Values for other types are retained. Signing keys and header values stay in server properties; enter property names only." type="p" style="m-muted"/>
+                        <form-single name="StoreAdapter" transition="storeAdapter" map="adapterForm">
+                            <field name="editAdapterId" from="editAdapterId || ''"><default-field><hidden/></default-field></field>
+                            <field name="recoveryAdapterMode" from="selectedAdapter ? 'edit' : 'create'"><default-field><hidden/></default-field></field>
+                            <field name="adapterId">
+                                <conditional-field condition="selectedAdapter" title="Adapter ID"><display/></conditional-field>
+                                <default-field title="Adapter ID"><text-line/></default-field>
+                            </field>
+                            <field name="description"><default-field title="Description"><text-line size="60"/></default-field></field>
+                            <field name="adapterType"><default-field title="Type"><drop-down>
+                                <option key="manual" text="Manual"/><option key="in-process" text="In process"/><option key="webhook" text="Webhook"/>
+                            </drop-down></default-field></field>
+                            <field name="url"><default-field title="URL" tooltip="HTTP or HTTPS URL without credentials; use URL property instead when configured there."><text-line size="60"/></default-field></field>
+                            <field name="urlProperty"><default-field title="URL property"><text-line/></default-field></field>
+                            <field name="statusUrl"><default-field title="Status URL"><text-line size="60"/></default-field></field>
+                            <field name="secretProperty"><default-field title="Signing secret property" tooltip="Property name only; never paste the secret value."><text-line/></default-field></field>
+                            <field name="headerPropertiesJson"><default-field title="Header properties JSON" tooltip="Map header names to server property names; never paste header secrets."><text-area rows="2" cols="80"/></default-field></field>
+                            <field name="allowInternal"><default-field title="Allow private addresses"><drop-down allow-empty="true"><option key="N" text="No"/><option key="Y" text="Yes"/></drop-down></default-field></field>
+                            <field name="instructions"><default-field title="Operator instructions"><text-area rows="3" cols="80"/></default-field></field>
+                            <field name="submit"><default-field><submit text="Save adapter"/></default-field></field>
+                            <field-layout>
+                                <field-ref name="editAdapterId"/><field-ref name="recoveryAdapterMode"/>
+                                <field-group title="Adapter identity" box="true">
+                                    <field-row><field-ref name="adapterId"/><field-ref name="adapterType"/></field-row>
+                                    <field-ref name="description"/>
+                                </field-group>
+                                <field-accordion active="false">
+                                    <field-group title="Manual: operator instructions"><field-ref name="instructions"/></field-group>
+                                    <field-group title="Webhook: connection and signing">
+                                        <field-row><field-ref name="url"/><field-ref name="urlProperty"/></field-row>
+                                        <field-row><field-ref name="statusUrl"/><field-ref name="allowInternal"/></field-row>
+                                        <field-ref name="secretProperty"/><field-ref name="headerPropertiesJson"/>
+                                    </field-group>
+                                </field-accordion>
+                                <field-ref name="submit"/>
+                            </field-layout>
+                        </form-single>
+                    </container-dialog>
+                    <link url="." text="New adapter" icon="sym_o_add" condition="adminAllowed &amp;&amp; (selectedAdapter || adapterMissing)"
+                            parameter-map="{editPolicyId:'',editAdapterId:'',_openDialog:'AdapterDialog'}"/>
+                </box-toolbar>
+                <box-body-nopad>
+                    <label text="Adapter not found. Choose Edit on a listed adapter, or create a new one." type="p" style="q-pa-md" condition="adapterMissing"/>
+                    <section name="AdaptersAvailable" condition="adapterList.length &gt; 0"><widgets>
+                        <form-list name="AdapterList" list="adapterList" skip-form="true">
+                            <field name="adapterId"><default-field title="Adapter"><display/></default-field></field>
+                            <field name="adapterType"><default-field title="Type"><display/></default-field></field>
+                            <field name="description"><default-field title="Description"><display/></default-field></field>
+                            <field name="url"><default-field title="URL"><display/></default-field></field>
+                            <field name="allowInternal"><default-field title="Private addresses"><display/></default-field></field>
+                            <field name="edit"><default-field title=""><link url="." text="Edit" icon="sym_o_edit" condition="adminAllowed"
+                                    parameter-map="{editPolicyId:'',editAdapterId:adapterId,_openDialog:'AdapterDialog'}"/></default-field></field>
+                        </form-list>
+                    </widgets><fail-widgets>
+                        <label text="No recovery adapters are configured." type="p" style="q-pa-md m-muted"/>
+                    </fail-widgets></section>
+                </box-body-nopad>
+            </container-box>
+
+            <container-box>
+                <box-header title="Newest actions"/>
+                <box-body-nopad>
+                    <section name="ActionsAvailable" condition="actionList.length &gt; 0"><widgets>
+                    <form-list name="ActionList" list="actionList" skip-form="true">
+                        <field name="createdDate"><default-field title="Created"><display text="${createdText}"/></default-field></field>
+                        <field name="action"><default-field title="Action"><display/></default-field></field>
+                        <field name="target"><default-field title="Target"><display/></default-field></field>
+                        <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                        <field name="verificationStatus"><default-field title="Verification"><display/></default-field></field>
+                        <field name="incidentId"><default-field title="Incident"><link url="incident" text="${incidentId}" parameter-map="{incidentId:incidentId}" link-type="anchor"/></default-field></field>
+                    </form-list>
+                    </widgets><fail-widgets>
+                        <label text="No recovery actions have been recorded. Recommendations and actions appear here when a policy matches an incident." type="p" style="q-pa-md m-muted"/>
+                    </fail-widgets></section>
+                </box-body-nopad>
+            </container-box>
+        </fail-widgets></section>
+    </widgets>
+</screen>

@@ -27,6 +27,7 @@ fn artifact(id: &str, kind: &str, name: &str) -> ArtifactRow {
         summary: String::new(),
         parent: None,
         origin: String::new(),
+        marks: String::new(),
     }
 }
 

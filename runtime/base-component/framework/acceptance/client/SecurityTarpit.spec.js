@@ -24,7 +24,7 @@ feature("A01 the dashboard is 429 after the ALL_SCREENS burst", {
         if (login.status != 200) skip("could not log in for tarpit velocity")
         let res = null
         for (let n = 0; n < 130; n++) {
-            res = s.get("/apps/tools/dashboard")
+            res = s.get("/apps/tools/Home")
             if (res.status == 429) break
         }
         return { res }

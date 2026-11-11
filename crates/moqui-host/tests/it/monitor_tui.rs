@@ -171,7 +171,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
       <moqui.security.UserAccount userId="MONITOR_ONLY" username="monitor.only" disabled="N"/>
       <moqui.security.UserGroup userGroupId="MONITOR_ONLY" description="Monitor app only"/>
       <moqui.security.UserGroupMember userGroupId="MONITOR_ONLY" userId="MONITOR_ONLY" fromDate="0"/>
-      <moqui.security.ArtifactAuthz artifactAuthzId="MONITOR_ONLY_APP" artifactGroupId="MONITOR_APP" userGroupId="MONITOR_ONLY" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+      <moqui.security.ArtifactAuthz artifactAuthzId="MONITOR_ONLY_APP" artifactGroupId="SYSTEM_APP" userGroupId="MONITOR_ONLY" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
       <moqui.monitor.MonitorIncident incidentId="TUI_INCIDENT" title="TUI incident" severity="major" statusId="Open" source="user" serviceName="monitor-tui" version="2.0" causeStatus="hypothesis"/>
       <moqui.monitor.MonitorIncidentCause incidentId="TUI_INCIDENT" causeSeqId="01" causeRank="1" kind="release" refId="monitor-tui:2.0" title="Release 2.0 (tui)" score="0.9" supportingJson='["every instance of 2.0 regressed"]' contradictingJson="[]" statusId="hypothesis"/>
       <moqui.monitor.MonitorIncidentEvidence incidentId="TUI_INCIDENT" evidenceSeqId="01" evidenceDate="2026-10-30 12:00:00" kind="trace" refId="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" summary="TUI monitored request failed"/>
@@ -227,52 +227,52 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     }
     let link = HostLink::as_user(factory, "john.doe");
     let cases = [
-        ("Monitor/dashboard", "/apps/monitor/dashboard?from=now-1h&thru=now"),
-        ("Monitor/Services", "/apps/monitor/Services?from=now-1h&thru=now"),
-        ("Monitor/Operations", "/apps/monitor/Operations?from=now-1h&thru=now"),
-        ("Monitor/Releases", "/apps/monitor/Releases"),
-        ("Monitor/ReleaseDetail", "/apps/monitor/ReleaseDetail?serviceName=monitor-tui&version=1.0"),
-        ("Monitor/Incidents", "/apps/monitor/Incidents"),
-        ("Monitor/IncidentDetail", "/apps/monitor/IncidentDetail?incidentId=TUI_INCIDENT"),
-        ("Monitor/Recovery", "/apps/monitor/Recovery"),
+        ("Monitor/Overview", "/apps/system/Monitor/Overview?from=now-1h&thru=now"),
+        ("Monitor/Services", "/apps/system/Monitor/Services?from=now-1h&thru=now"),
+        ("Monitor/Operations", "/apps/system/Monitor/Operations?from=now-1h&thru=now"),
+        ("Monitor/Releases", "/apps/system/Monitor/Releases"),
+        ("Monitor/ReleaseDetail", "/apps/system/Monitor/ReleaseDetail?serviceName=monitor-tui&version=1.0"),
+        ("Monitor/Incidents", "/apps/system/Monitor/Incidents"),
+        ("Monitor/IncidentDetail", "/apps/system/Monitor/IncidentDetail?incidentId=TUI_INCIDENT"),
+        ("Monitor/Recovery", "/apps/system/Monitor/Recovery"),
         // its subscreens are walked by evals_screens_work_in_the_terminal
-        ("Monitor/Evals", "/apps/monitor/Evals"),
-        ("Monitor/Settings", "/apps/monitor/Settings"),
-        ("Monitor/Artifacts", "/apps/monitor/Artifacts?from=now-1h&thru=now"),
+        ("Llm/Evals", "/apps/system/Llm/Evals"),
+        ("Monitor/Settings", "/apps/system/Monitor/Settings"),
+        ("Monitor/Artifacts", "/apps/system/Monitor/Artifacts?from=now-1h&thru=now"),
         (
             "Monitor/Traces",
-            "/apps/monitor/Traces?from=now-1h&thru=now&serviceName=monitor-tui&spanName=TUI*&statusCode=ERROR&minDuration=1&maxDuration=500",
+            "/apps/system/Monitor/Traces?from=now-1h&thru=now&serviceName=monitor-tui&spanName=TUI*&statusCode=ERROR&minDuration=1&maxDuration=500",
         ),
         (
             "Monitor/TraceDetail",
-            "/apps/monitor/TraceDetail?traceId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&from=now-1h&thru=now",
+            "/apps/system/Monitor/TraceDetail?traceId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&from=now-1h&thru=now",
         ),
-        ("Monitor/Logs", "/apps/monitor/Logs?from=now-1h&thru=now"),
-        ("Monitor/AgentTraces", "/apps/monitor/AgentTraces?from=now-1h&thru=now"),
-        ("Monitor/Checks", "/apps/monitor/Checks"),
+        ("Monitor/Logs", "/apps/system/Monitor/Logs?from=now-1h&thru=now"),
+        ("Monitor/AgentTraces", "/apps/system/Monitor/AgentTraces?from=now-1h&thru=now"),
+        ("Monitor/Checks", "/apps/system/Monitor/Checks"),
         (
             "Monitor/Metrics",
-            "/apps/monitor/Metrics?from=now-1h&thru=now&metricName=http.server.request.duration&metricStat=p95&groupBy=service.version",
+            "/apps/system/Monitor/Metrics?from=now-1h&thru=now&metricName=http.server.request.duration&metricStat=p95&groupBy=service.version",
         ),
-        ("Monitor/Errors", "/apps/monitor/Errors?from=now-1h&thru=now"),
+        ("Monitor/Errors", "/apps/system/Monitor/Errors?from=now-1h&thru=now"),
         (
             "Monitor/ErrorDetail",
-            "/apps/monitor/ErrorDetail?fingerprint=tui-error&from=now-1h&thru=now",
+            "/apps/system/Monitor/ErrorDetail?fingerprint=tui-error&from=now-1h&thru=now",
         ),
-        ("Monitor/Sources", "/apps/monitor/Sources"),
-        ("Monitor/Browser", "/apps/monitor/Browser?from=now-1h&thru=now"),
-        ("Monitor/Replays", "/apps/monitor/Replays"),
+        ("Monitor/Sources", "/apps/system/Monitor/Sources"),
+        ("Monitor/Browser", "/apps/system/Monitor/Browser?from=now-1h&thru=now"),
+        ("Monitor/Replays", "/apps/system/Monitor/Replays"),
         (
             "Monitor/ReplayDetail",
-            "/apps/monitor/ReplayDetail?replayId=0123abcd-tui-replay-fixture",
+            "/apps/system/Monitor/ReplayDetail?replayId=0123abcd-tui-replay-fixture",
         ),
         (
             "Monitor/LogContext",
-            "/apps/monitor/LogContext?datasetId=otel_logs&documentType=otel_logs&documentId=tui-log-1&from=now-1h&thru=now",
+            "/apps/system/Monitor/LogContext?datasetId=otel_logs&documentType=otel_logs&documentId=tui-log-1&from=now-1h&thru=now",
         ),
         (
             "Monitor/Split",
-            "/apps/monitor/Split?leftVersion=1.0&rightVersion=2.0&from=now-1h&thru=now",
+            "/apps/system/Monitor/Split?leftVersion=1.0&rightVersion=2.0&from=now-1h&thru=now",
         ),
         ("Dashboards/Home", "/apps/dashboards/Home"),
         (
@@ -321,14 +321,16 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     let covered: BTreeSet<_> = cases.iter().map(|(name, _)| name.to_string()).collect();
     let mut actual = BTreeSet::new();
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/tools/screen");
-    for directory in ["Monitor", "Dashboards"] {
-        for file in std::fs::read_dir(root.join(directory)).unwrap() {
+    for (directory, folder) in [("Monitor", "System/Monitor"), ("Dashboards", "Dashboards")] {
+        for file in std::fs::read_dir(root.join(folder)).unwrap() {
             let file = file.unwrap().path();
             if file.extension().is_some_and(|extension| extension == "xml") {
                 actual.insert(format!("{directory}/{}", file.file_stem().unwrap().to_string_lossy()));
             }
         }
     }
+    // Evals is under LLM and Agents; its screens have their own test below.
+    actual.insert("Llm/Evals".to_string());
     assert_eq!(covered, actual, "every new screen needs a fixture and native traversal");
     let mut seen = BTreeSet::new();
     let mut failures = Vec::new();
@@ -337,7 +339,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             // a tab panel opens on its default tab
             let mut view = match name {
-                "Monitor/Evals" => open_at(&link, path, "/apps/monitor/Evals/Experiments"),
+                "Llm/Evals" => open_at(&link, path, "/apps/system/Llm/Evals/Experiments"),
                 _ => open(&link, path),
             };
             for (id, info) in &view.session().index().components {
@@ -376,7 +378,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         assert!(seen.contains(name), "specialized twin {name} was not reachable");
     }
     // The AI screen groups LLM calls by trace and names each by its agent frame.
-    let ai = open(&link, "/apps/monitor/AgentTraces?from=now-1h&thru=now").screen_text(220, 80);
+    let ai = open(&link, "/apps/system/Monitor/AgentTraces?from=now-1h&thru=now").screen_text(220, 80);
     assert!(
         ai.contains("agent:tui-helper") && ai.contains("tui-model") && ai.contains("120"),
         "{ai}"
@@ -384,7 +386,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     // Log patterns group the fixture's three lines into one template.
     let patterns = open(
         &link,
-        "/apps/monitor/Logs?from=now-1h&thru=now&showPatterns=Y&queryString=body%3Atui-marker",
+        "/apps/system/Monitor/Logs?from=now-1h&thru=now&showPatterns=Y&queryString=body%3Atui-marker",
     )
     .screen_text(220, 120);
     assert!(patterns.contains("tui-marker line <*>"), "{patterns}");
@@ -477,7 +479,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     assert!(playlist.session().timer(&moqui_tui::Timer::Component(id)).is_none());
     let mut trace = open(
         &link,
-        "/apps/monitor/TraceDetail?traceId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&from=now-1h&thru=now",
+        "/apps/system/Monitor/TraceDetail?traceId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&from=now-1h&thru=now",
     );
     let id = component(&trace, "trace-waterfall");
     focus(&mut trace, &id);
@@ -525,29 +527,29 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     // Monitor Logs includes Explore: its row links, tail and forms resolve under the Monitor screen.
     let mut logs = open(
         &link,
-        "/apps/monitor/Logs?from=now-1h&thru=now&queryString=body%3Atui-marker",
+        "/apps/system/Monitor/Logs?from=now-1h&thru=now&queryString=body%3Atui-marker",
     );
     let tail = props(&logs, "log-tail");
     assert!(
         tail["source"]
             .as_str()
-            .is_some_and(|url| url.starts_with("/apps/monitor/Logs/tail")),
+            .is_some_and(|url| url.starts_with("/apps/system/Monitor/Logs/tail")),
         "{tail}"
     );
     let traces = row_urls(&logs, "ExploreDocuments", "TraceDetail");
     assert!(
-        !traces.is_empty() && traces.iter().all(|url| url.starts_with("/apps/monitor/TraceDetail?")),
+        !traces.is_empty() && traces.iter().all(|url| url.starts_with("/apps/system/Monitor/TraceDetail?")),
         "{traces:?}"
     );
     let contexts = row_urls(&logs, "ExploreDocuments", "LogContext");
     assert!(
-        !contexts.is_empty() && contexts.iter().all(|url| url.starts_with("/apps/monitor/LogContext?")),
+        !contexts.is_empty() && contexts.iter().all(|url| url.starts_with("/apps/system/Monitor/LogContext?")),
         "{contexts:?}"
     );
     logs.session_mut().navigate(&traces[0], true);
     logs.run_requests();
     assert!(
-        logs.session().path().ends_with("/monitor/TraceDetail"),
+        logs.session().path().ends_with("/Monitor/TraceDetail"),
         "{}: {}",
         logs.session().path(),
         logs.session().message()
@@ -566,10 +568,10 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     );
 
     // A Monitor dashboard inspects and exports through its own transitions; Esc leaves the single-panel view.
-    let mut overview = open(&link, "/apps/monitor/dashboard?panelId=errors&from=now-1h&thru=now");
+    let mut overview = open(&link, "/apps/system/Monitor/Overview?panelId=errors&from=now-1h&thru=now");
     assert_eq!(
         props(&overview, "report-dashboard")["dashboard"]["screenUrl"],
-        "/apps/monitor/dashboard"
+        "/apps/system/Monitor/Overview"
     );
     let id = component(&overview, "report-dashboard");
     focus(&mut overview, &id);
@@ -594,7 +596,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     );
     press(&mut overview, Key::Escape);
     overview.run_requests();
-    assert_eq!(overview.session().path(), "/apps/monitor/dashboard");
+    assert_eq!(overview.session().path(), "/apps/system/Monitor/Overview");
     assert!(
         !overview.session().parameters().contains_key("panelId"),
         "{:?}",
@@ -620,7 +622,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     assert_eq!(dashboard["panelId"], "c-notes", "{dashboard}");
 
     // A new ingest key shows its token once, in the transition's message.
-    let mut sources = open(&link, "/apps/monitor/Sources");
+    let mut sources = open(&link, "/apps/system/Monitor/Sources");
     set_field(&mut sources, "CreateIngestKey.source", "tui-token-check");
     press(&mut sources, Key::Enter);
     sources.run_requests();
@@ -629,12 +631,12 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         message.contains("for tui-token-check") && message.contains("token: mqi_"),
         "{message}"
     );
-    assert!(sources.session().path().ends_with("/monitor/Sources"));
+    assert!(sources.session().path().ends_with("/Monitor/Sources"));
 
     // The Metrics picker charts the picked metric's percentile split by the chosen attribute.
     let metrics = open(
         &link,
-        "/apps/monitor/Metrics?from=now-1h&thru=now&metricName=http.server.request.duration&metricStat=p95&groupBy=service.version",
+        "/apps/system/Monitor/Metrics?from=now-1h&thru=now&metricName=http.server.request.duration&metricStat=p95&groupBy=service.version",
     );
     let chart = all_props(&metrics, "report-panel")
         .into_iter()
@@ -664,16 +666,16 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     // The structured trace search narrows by service, name, status and duration.
     let traces = open(
         &link,
-        "/apps/monitor/Traces?from=now-1h&thru=now&serviceName=monitor-tui&spanName=TUI*&statusCode=ERROR&minDuration=1&maxDuration=500",
+        "/apps/system/Monitor/Traces?from=now-1h&thru=now&serviceName=monitor-tui&spanName=TUI*&statusCode=ERROR&minDuration=1&maxDuration=500",
     );
     assert_eq!(traces.session().list_page("TraceList").len(), 1);
     for narrowed in ["statusCode=OK", "minDuration=20", "serviceName=other-service"] {
-        let view = open(&link, &format!("/apps/monitor/Traces?from=now-1h&thru=now&{narrowed}"));
+        let view = open(&link, &format!("/apps/system/Monitor/Traces?from=now-1h&thru=now&{narrowed}"));
         assert!(view.session().list_page("TraceList").is_empty(), "{narrowed}");
     }
 
     // Errors charts the failed request spans over time.
-    let errors = open(&link, "/apps/monitor/Errors?from=now-1h&thru=now");
+    let errors = open(&link, "/apps/system/Monitor/Errors?from=now-1h&thru=now");
     let chart = all_props(&errors, "report-panel")
         .into_iter()
         .find(|props| props["panel"]["title"] == "Failed requests and jobs over time")
@@ -683,7 +685,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     // Services drills from a service to its endpoints and instances by data links; an endpoint leaves the artifact panels whole.
     let services = open(
         &link,
-        "/apps/monitor/Services?from=now-1h&thru=now&var-service=monitor-tui",
+        "/apps/system/Monitor/Services?from=now-1h&thru=now&var-service=monitor-tui",
     );
     let dashboard = props(&services, "report-dashboard")["dashboard"].clone();
     let panels = &dashboard["panels"];
@@ -720,12 +722,12 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     );
     let links = serde_json::to_string(&panels["endpoints"]).unwrap();
     assert!(
-        links.contains("/apps/monitor/Services?var-service=${service}&var-endpoint=${endpoint}"),
+        links.contains("/apps/system/Monitor/Services?var-service=${service}&var-endpoint=${endpoint}"),
         "{links}"
     );
     let endpoint = open(
         &link,
-        "/apps/monitor/Services?from=now-1h&thru=now&var-service=monitor-tui&var-endpoint=%2Fnative-monitor&var-instance=tui-canary",
+        "/apps/system/Monitor/Services?from=now-1h&thru=now&var-service=monitor-tui&var-endpoint=%2Fnative-monitor&var-instance=tui-canary",
     );
     let panels = props(&endpoint, "report-dashboard")["dashboard"]["panels"].clone();
     assert_eq!(
@@ -736,7 +738,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     );
     let other = open(
         &link,
-        "/apps/monitor/Services?from=now-1h&thru=now&var-endpoint=%2Fno-such-endpoint",
+        "/apps/system/Monitor/Services?from=now-1h&thru=now&var-endpoint=%2Fno-such-endpoint",
     );
     let panels = props(&other, "report-dashboard")["dashboard"]["panels"].clone();
     // The server's own artifact metrics join the fixture's, so this is at least the fixture's hits.
@@ -749,7 +751,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     // Compare draws rate, errors and duration for each version side by side.
     let split = open(
         &link,
-        "/apps/monitor/Split?leftVersion=1.0&rightVersion=2.0&from=now-1h&thru=now",
+        "/apps/system/Monitor/Split?leftVersion=1.0&rightVersion=2.0&from=now-1h&thru=now",
     );
     let charts = all_props(&split, "report-panel");
     let chart = |title: &str| {
@@ -765,21 +767,21 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     assert_eq!(field_sum(&chart("Server errors (5xx) · 1.0")["frame"], "errors"), 0.0);
     assert!(field_sum(&chart("Duration percentiles · 2.0")["frame"], "latency.p50") > 0.0);
 
-    // With only MONITOR_APP, Logs, its surrounding entries and Compare work through the Monitor mounts.
+    // With only SYSTEM_APP (no DASHBOARDS_APP), Logs, its surrounding entries and Compare work through the Monitor mounts.
     let monitor_only = HostLink::as_user(factory, "monitor.only");
     let mut logs = open(
         &monitor_only,
-        "/apps/monitor/Logs?from=now-1h&thru=now&queryString=body%3Atui-marker",
+        "/apps/system/Monitor/Logs?from=now-1h&thru=now&queryString=body%3Atui-marker",
     );
     let contexts = row_urls(&logs, "ExploreDocuments", "LogContext");
     assert!(
-        !contexts.is_empty() && contexts.iter().all(|url| url.starts_with("/apps/monitor/LogContext?")),
+        !contexts.is_empty() && contexts.iter().all(|url| url.starts_with("/apps/system/Monitor/LogContext?")),
         "{contexts:?}"
     );
     logs.session_mut().navigate(&contexts[0], true);
     logs.run_requests();
     assert!(
-        logs.session().path().ends_with("/monitor/LogContext") && !logs.session().message_is_error(),
+        logs.session().path().ends_with("/Monitor/LogContext") && !logs.session().message_is_error(),
         "{}: {}",
         logs.session().path(),
         logs.session().message()
@@ -788,7 +790,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
     assert!(text.contains("tui-marker line"), "{text}");
     let split = open(
         &monitor_only,
-        "/apps/monitor/Split?leftVersion=1.0&rightVersion=2.0&from=now-1h&thru=now",
+        "/apps/system/Monitor/Split?leftVersion=1.0&rightVersion=2.0&from=now-1h&thru=now",
     );
     let errors = all_props(&split, "report-panel")
         .into_iter()
@@ -874,7 +876,7 @@ fn link_url(view: &AppView<HostLink>, fragment: &str) -> String {
     found.unwrap_or_else(|| panic!("no {fragment} link on {}", view.session().path()))
 }
 
-/// Monitor › Evals in the terminal; the gate above covers only its tab panel. Each screen is drawn once, but where a
+/// LLM and Agents › Evals in the terminal; the gate above covers only its tab panel. Each screen is drawn once, but where a
 /// form's answer comes back to it: the tabs, the row links to the detail screens, and every form (start an experiment,
 /// a review, compare, create a dataset, add and remove an item, remove and attach a scorer, create a scorer, live
 /// scoring, find, score and save a run).
@@ -922,10 +924,10 @@ fn evals_screens_work_in_the_terminal() {
     };
     assert_eq!(experiments.len(), 2, "{experiments:?}");
     let link = HostLink::as_user(factory, "john.doe");
-    const E: &str = "/apps/monitor/Evals/";
+    const E: &str = "/apps/system/Llm/Evals/";
 
     // Experiments, the tab panel's default: its rows link to each experiment and to Compare from it.
-    let mut view = open_at(&link, "/apps/monitor/Evals", &format!("{E}Experiments"));
+    let mut view = open_at(&link, "/apps/system/Llm/Evals", &format!("{E}Experiments"));
     let text = view.screen_text(100, 40);
     assert!(
         text.contains("1:Experiments") && text.contains("4:Runs") && text.contains("TUI baseline"),

@@ -923,7 +923,7 @@ agentSpec({
     tasks: [
         {
             name: "multi-step with approval",
-            start: "/apps/system/dashboard",         // the page the user is on; also { path, parameters, title }
+            start: "/apps/system/Home",              // the page the user is on; also { path, parameters, title }
             say: "Change the description of the user group AGENT_EVAL_GROUP to Renamed.",
             setup() { /* rows the task needs, with ec and the spec helpers */ },
             cleanup() { /* remove them */ },

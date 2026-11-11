@@ -7840,6 +7840,35 @@
             '</component>'
     });
 
+    // The nav-card element (plans/Tools-Fancy.md B6): a q-card flat bordered with the icon in a tonal avatar, the title
+    // (text-subtitle1, medium) and one line of text (text-caption, muted); size lg has the larger avatar. With href the title is
+    // the card's link, m-link for a screen (the shell's setUrl) and a plain anchor when external, and it covers the whole card
+    // (m-nav-card-link in the style sheet), so the card is one link; the default slot holds the element's child links, text
+    // links along the bottom that stay above the card's own.
+    component("m-nav-card", {
+        name: "mNavCard",
+        props: { title: String, text: String, icon: String, href: String, external: Boolean, size: { type: String, default: "md" } },
+        computed: {
+            wrapper() { return this.href ? (this.external ? "a" : "m-link") : "div"; },
+            large() { return this.size === "lg"; },
+            avatarSize() { return this.large ? "48px" : "36px"; },
+            iconSize() { return this.large ? "md" : "sm"; }
+        },
+        template:
+            '<q-card flat bordered class="m-nav-card column no-wrap" :class="[\'m-nav-card-\' + size, {\'m-nav-card-link\': !!href}]">' +
+                '<q-card-section class="col row no-wrap q-pa-md" :class="large ? \'items-start\' : \'items-center\'">' +
+                    '<q-avatar v-if="icon" rounded :size="avatarSize" class="m-nav-card-avatar q-mr-md">' +
+                        '<m-menu-icon :name="icon" :size="iconSize"></m-menu-icon>' +
+                    '</q-avatar>' +
+                    '<div class="col m-nav-card-body">' +
+                        '<component :is="wrapper" :href="href || undefined" class="m-nav-card-title text-subtitle1 text-weight-medium">{{title}}</component>' +
+                        '<div v-if="text" class="text-caption m-muted m-nav-card-text">{{text}}</div>' +
+                    '</div>' +
+                '</q-card-section>' +
+                '<div v-if="$slots.default" class="m-nav-card-links row items-center q-px-md q-pb-sm"><slot></slot></div>' +
+            '</q-card>'
+    });
+
     // The screen context of the suite shell (the context element of a screen): while mounted it registers recordEntity, recordId,
     // title and selectionForm with the root, again when one changes, and takes them back when unmounted. The root's screenContext
     // is the latest registration of the screens shown (a dialog's over the page's).

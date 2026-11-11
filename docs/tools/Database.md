@@ -344,8 +344,8 @@ Load into… call.
     conf value.
 - **Connections** (`Database/Connections.xml`): the external databases (`find#`, `store#`, `delete#`,
   `test#DatabaseConnection`); see [External databases](#external-databases).
-  - It is not in the menu. Overview and the Tools dashboard link to it ("External databases") only when the server
-    offers external databases to the user.
+  - It is not in the menu. Overview links to it ("External databases") only when the server offers external
+    databases to the user.
   - Saving replaces a connection whole, under the password-clearing rule.
 - **Speed Test:** Java's entity speed test, as it was.
 

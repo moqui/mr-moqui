@@ -268,7 +268,7 @@ impl Write for FrameWriter {
     }
 }
 
-/// Whether `username` may read Monitor Logs: view the Monitor app (`component://tools/screen/Monitor.xml`, which its
+/// Whether `username` may read Monitor Logs: view the System app (`component://tools/screen/System.xml`, which Monitor and its
 /// Logs screen inherits) and the `otel_logs` dataset that screen reads, checked on the request pool as that user. A
 /// check that fails is a no. Blocks until the pool answers.
 fn may_read_log_now(factory: &Weak<ExecutionContextFactory>, username: &str) -> bool {
@@ -280,7 +280,7 @@ fn may_read_log_now(factory: &Weak<ExecutionContextFactory>, username: &str) -> 
     let Ok(rx) = factory.request_pool().try_submit(owner, move || {
         moqui_core::user::internal_login_user(&username)?;
         Ok(
-            moqui_core::user::authorize("AT_XML_SCREEN", "component://tools/screen/Monitor.xml", "view").is_ok()
+            moqui_core::user::authorize("AT_XML_SCREEN", "component://tools/screen/System.xml", "view").is_ok()
                 && moqui_core::user::authorize("AT_SERVICE", "org.moqui.report.dataset.otel_logs", "view").is_ok(),
         )
     }) else {

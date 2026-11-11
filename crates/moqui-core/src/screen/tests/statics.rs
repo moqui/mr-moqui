@@ -609,6 +609,28 @@ fn mobile_columns_of_a_static_template_are_chosen_by_the_ui_type_in_the_client()
     assert!(cells(phone) < cells(desktop), "{html}");
 }
 
+/// A nav-card of a server-static screen is bound over the scope as a number-card is, and its child links are the text
+/// links of its slot.
+#[test]
+fn a_nav_card_is_bound_over_the_scope_in_a_static_template() {
+    let (html, _) = static_fixture("Dashboard");
+    for expected in [
+        // the title and the text localized, the link the screen's path (over a parameter of the target screen from the scope),
+        // the child links text links in the slot
+        r#"<m-nav-card :title="ec.l10n.localize('Orders')" :text="ec.l10n.localize('Find {{x}} &amp; open orders')" icon="sym_o_receipt_long" :href="$mq.url('/Orders',{},$mq.merge({'statusId':$scope['statusId']},null))" size="lg"><m-link :href="$mq.url('/Orders',{},$mq.merge({'statusId':'Open'},null))""#,
+        r#"class="m-link-text"><span v-text="ec.l10n.localize('Open ones')"></span></m-link>"#,
+        r#"class="m-link-text" :aria-disabled="#,
+        // a condition is a v-if, of a child link and of a card
+        r#"<template v-if="(showHidden)"><m-link"#,
+        r#"<template v-if="(showHidden)"><m-nav-card :title="ec.l10n.localize('Hidden tile')""#,
+        r#"</m-nav-card></template>"#,
+        r#"<m-nav-card id="Late" :title="ec.l10n.localize('Late')""#,
+        r#":text="ec.resource.expand('${openCount} open',{'openCount':()=&gt;(openCount)})""#,
+    ] {
+        assert!(html.contains(expected), "{expected} in {html}");
+    }
+}
+
 /// A number-card of a server-static screen is bound over the scope as a label is: the value and delta expressions are
 /// the scope's, the title localized, the link the screen's path with its query, and a condition a v-if. A link url with
 /// `${}` (a card's or a link's) is bound too and resolved against the screen's path in the browser (`$mq.link`).

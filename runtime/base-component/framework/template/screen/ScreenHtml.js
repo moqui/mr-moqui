@@ -766,7 +766,7 @@
                 const load = l.load;
                 return "<a" + A({
                     href: load ? parts.url.getUrlWithParams() : href, id: formId || null, target: l.target || null,
-                    "data-confirm": confirmation || null, class: style, "data-btn": l.btn === undefined ? btnAttr(n) : l.btn, title: tooltip, "data-load-into": load || null
+                    "data-confirm": confirmation || null, class: style, "data-btn": st.textLinks ? null : l.btn === undefined ? btnAttr(n) : l.btn, title: tooltip, "data-load-into": load || null
                 }) + ">" + body + "</a>";
             }
             if (!formId) return "";
@@ -1727,6 +1727,31 @@
                 "</" + tag + ">\n");
         };
 
+        // A nav-card as plain markup: the icon, the title (the card's anchor when it has a link) and the text; its child links
+        // follow in div.nav-card-links as plain anchors (st.textLinks). False, and nothing, for a false condition.
+        const navCardOpen = (n, hasLinks) => {
+            if (at(n, "condition") && !cond(at(n, "condition"))) return false;
+            const value = (text) => (text && text !== "null" ? text : "");
+            let href = null;
+            if (at(n, "link")) {
+                const url = sri.makeUrlByType(at(n, "link"), "transition", n, "true");
+                if (!url.getDisableLink()) href = url.getUrlWithParams();
+            }
+            const text = value(x(at(n, "text")));
+            const tag = href ? "a" : "span";
+            w("<div" + A({ id: nodeId(n) || null, class: cls("nav-card", xn(at(n, "style")) || null), "data-size": at(n, "size") || null }) + ">" +
+                icon(xn(at(n, "icon"))) +
+                "<" + tag + A({ href, class: "nav-card-title" }) + ">" + e(value(x(at(n, "title")))) + "</" + tag + ">" +
+                (text ? '<span class="nav-card-text">' + e(text) + "</span>" : "") +
+                (hasLinks ? '<div class="nav-card-links">' : ""));
+            st.textLinks = true;
+            return true;
+        };
+        const navCardClose = (hasLinks) => {
+            st.textLinks = false;
+            w((hasLinks ? "</div>" : "") + "</div>\n");
+        };
+
         // ---- container-split ----
 
         // Two columns from 1024 px and stacked below (moqui-html.css .split); a selection in the URL (select-parameter) shows only the
@@ -1819,7 +1844,7 @@
             accordion: (id, active) => { st.accordion = id; st.accIndex = 0; st.accActive = active; },
             endAccordion: () => { st.accordion = ""; },
             labelCols: (value) => { st.labelCols = value || ""; },
-            numberCard, chatter, recordFiles, splitOpen, splitMain, htmlView, markdownView, statusBar,
+            numberCard, navCardOpen, navCardClose, chatter, recordFiles, splitOpen, splitMain, htmlView, markdownView, statusBar,
             codeView
         };
         Object.defineProperty(globalThis, "$mqHtml", { value: h, configurable: true });
@@ -2226,6 +2251,17 @@
         sri.write("</div>");
     `);
 
+    // A nav-card: the card, then its child links.
+    const navCardMacro = stmt((node, children) => {
+        const hasLinks = node.children.some((kid) => kid.name === "link");
+        return js`
+            if ($h.navCardOpen(${wlit(node, false)}, ${hasLinks})) {
+                ${children}
+                $h.navCardClose(${hasLinks});
+            }
+        `;
+    });
+
     // A dashboard: its children in a grid of columns at least min-width px wide (moqui-html.css), each in a cell.
     const dashboardMacro = stmt((node) => {
         const minWidth = parseInt(attr(node, "min-width") || "", 10);
@@ -2359,6 +2395,7 @@
         "context": stmt(() => ""),
         "dashboard": dashboardMacro,
         "number-card": widget("numberCard", false),
+        "nav-card": navCardMacro,
         "status-bar": widget("statusBar", true),
         "chatter": widget("chatter", false),
         "record-files": widget("recordFiles", false),

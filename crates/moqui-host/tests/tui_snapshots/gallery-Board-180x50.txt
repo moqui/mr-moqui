@@ -19,8 +19,8 @@
      Message             │   410000 · JD · Counter offer due Monday
      Views               │ Won · 2
      Handheld            │   Zeta Partners add-on
- ▾ Home                  │   9800 · AK · Kickoff scheduled
-                         │   Eta Foods seasonal order
+     Nav cards           │   9800 · AK · Kickoff scheduled
+ ▾ Home                  │   Eta Foods seasonal order
                          │   32000 · JD · Invoice INV-2201 paid
                          │ Lost · 1
                          │   Theta Systems migration

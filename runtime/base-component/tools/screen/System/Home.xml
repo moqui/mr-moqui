@@ -1,0 +1,497 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The System home (plans/Tools-Fancy.md §3): is this instance healthy, what is it, what has it been doing, what is
+    switched on, what needs an administrator, and where to go from here. Every block is read in the actions as data:
+    the runtime report and the status map with its resource readings (in-process), the attention service, and the
+    navigation catalog of template/HomeParts.xml. The period of the Activity strip is the `period` URL parameter;
+    nothing is written, so the page works for a view-only administrator. A reading the platform does not report is
+    "—" with a tooltip, never zero. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-index="1" menu-image="sym_o_home" menu-image-type="icon" default-menu-title="Home">
+
+    <parameter name="period"/>
+
+    <actions>
+        <!-- users today: those with a visit since midnight in the user's time zone, counted to a thousand -->
+        <set field="todayStart" from="(ec.user.getPeriodRange('day', '0') || [])[0] || null"/>
+        <entity-find entity-name="moqui.server.VisitUserSummary" list="usersTodayList" limit="1000">
+            <econdition field-name="fromDate" operator="greater-equals" from="todayStart" ignore-if-empty="true"/>
+            <econdition field-name="userId" operator="is-not-null"/>
+            <select-field field-name="userId"/>
+        </entity-find>
+        <script><![CDATA[
+            const L = text => ec.l10n.localize(text)
+            const number = (value, pattern) => ec.l10n.format(Number(value), pattern || '#,##0')
+            const DASH = '—'
+            const notReported = L('Not reported by this platform')
+            const bytes = value => {
+                if (value === null || value === undefined) return DASH
+                const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+                let amount = Number(value), unit = 0
+                while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit++ }
+                return number(amount, amount >= 100 || unit === 0 ? '#,##0' : '#,##0.#') + ' ' + units[unit]
+            }
+            const percent = value => value === null || value === undefined ? DASH : number(value, '#,##0') + ' %'
+            const duration = milliseconds => {
+                const minutes = Math.max(Math.floor(milliseconds / 60000), 0)
+                const days = Math.floor(minutes / 1440), hours = Math.floor((minutes % 1440) / 60)
+                if (days > 0) return days + ' d ' + hours + ' h'
+                if (hours > 0) return hours + ' h ' + (minutes % 60) + ' min'
+                return minutes + ' min'
+            }
+            // a level as a word and a theme color; a reading with no level (not reported) has neither
+            const LEVELS = {ok: {text: L('OK'), color: 'positive'}, warning: {text: L('Warning'), color: 'warning'},
+                critical: {text: L('Critical'), color: 'negative'}}
+            const levelOf = name => LEVELS[name] || {text: DASH, color: 'grey-6'}
+            const flagged = name => name === 'warning' || name === 'critical'
+            const worse = (first, second) => [first, second].includes('critical') ? 'critical' : [first, second].includes('warning') ? 'warning' : first || second
+            // each read on its own: a failure is logged and the rest of the page still shows
+            const read = (name, body, fallback) => {
+                try { return body() } catch (error) { ec.logger.error('System home: ' + name + ' failed: ' + String(error)); return fallback }
+            }
+
+            // ---- period ----
+            periodOptions = [{id: '1h', label: L('last hour')}, {id: '6h', label: L('last 6 hours')},
+                {id: '24h', label: L('last 24 hours')}, {id: '7d', label: L('last 7 days')}]
+            period = periodOptions.some(option => option.id === period) ? period : '1h'
+            periodFrom = 'now-' + period
+            instanceId = read('instance id', () => ec.factory.getInstanceId(), null)
+            activityVariables = instanceId ? {instance: instanceId} : {}
+
+            // ---- identity and state ----
+            const report = read('runtime report', () => ec.factory.getStartupReport(), null) || {}
+            const status = read('status map', () => ec.factory.getStatusMap(true), null) || {}
+            const system = status.System || {}, runtime = status.Runtime || {}, readings = status.Resources || {}
+            identityText = ['MR Moqui ' + (report.version || ec.factory.moquiVersion), report.package, report.purpose,
+                report.role ? L('role') + ' ' + report.role : ''].filter(part => part).join(' · ')
+            const startMillis = runtime.Start != null ? Number(String(runtime.Start)) : NaN
+            const facts = [(status.Web || {}).HostName, [system.OsName, system.OsVersion].filter(part => part).join(' '), system.CPU,
+                system.Processors ? number(system.Processors) + ' ' + L('processors') : '']
+            if (Number.isFinite(startMillis)) facts.push(L('up') + ' ' + duration(Date.now() - startMillis) + ' (' + L('since') + ' ' +
+                ec.l10n.format(runtime.Start, 'MMM d, HH:mm') + ')')
+            if (report.readySeconds != null) facts.push(L('ready in') + ' ' + number(report.readySeconds, '#,##0.0') + ' s')
+            factsText = facts.filter(part => part).join(' · ')
+            const componentCount = read('components', () => Array.from(ec.factory.getComponentInfoList() || []).length, 0)
+            componentsText = number(componentCount) + ' ' + (componentCount === 1 ? L('component') : L('components'))
+            systemState = status.Draining === true ? {text: L('Draining'), color: 'warning'}
+                : status.Ready === true ? {text: L('Ready'), color: 'positive'} : {text: L('Not ready'), color: 'negative'}
+            nowText = ec.l10n.format(ec.user.nowTimestamp, 'HH:mm:ss')
+            requestDetails = read('request details', () => ec.web.getRequestDetails(), '')
+            const statusIps = String(System.getProperty('webapp_status_ips') || '').trim()
+            statusReadersText = statusIps
+                ? L('Both answer only requests from this machine and from these addresses (webapp_status_ips):') + ' ' + statusIps
+                : L('Both answer only requests from this machine; webapp_status_ips names other addresses that may read them.')
+
+            // ---- needs attention ----
+            const SEVERITIES = {critical: {text: L('Critical'), color: 'negative'}, warning: {text: L('Warning'), color: 'warning'},
+                info: {text: L('Note'), color: 'info'}}
+            // the service writes absolute routes; a System screen is linked from here, since another app mounts System too
+            const screenLink = link => !link ? '' : link.startsWith('/apps/system/') ? '../' + link.slice('/apps/system/'.length) : '/' + link
+            attentionAvailable = false; attentionItems = []; attentionCount = 0; attentionCheckedText = ''
+            read('attention', () => {
+                const out = ec.service.sync().name('moqui.tools.SystemHomeServices.get#SystemAttention').call() || {}
+                if (ec.message.hasError()) {
+                    const errors = ec.message.getErrorsString()
+                    ec.message.clearErrors()
+                    throw new Error(errors)
+                }
+                attentionItems = Array.from(out.items || []).map(item => {
+                    const severity = SEVERITIES[item.severity] || SEVERITIES.info
+                    return {severityText: severity.text, severityColor: severity.color, itemText: String(item.text || ''),
+                        itemLink: screenLink(item.link), itemParameters: item.parameters || {}}
+                })
+                attentionCount = attentionItems.length
+                attentionCheckedText = out.checkedDate != null ? ec.l10n.format(out.checkedDate, 'HH:mm:ss') : nowText
+                attentionAvailable = true
+            })
+            attentionCountText = attentionCount === 1 ? L('1 needs attention') : number(attentionCount) + ' ' + L('need attention')
+
+            // ---- counters ----
+            const cpu = readings.Cpu || {}, memory = readings.Memory || {}, swap = readings.Swap || {}, files = readings.OpenFiles || {}
+            const filesystems = Array.from(readings.Filesystems || [])
+            // a counter at a warning or critical level takes that color, and says the level in its title
+            const card = (title, value, level) => ({title: flagged(level) ? title + ' · ' + levelOf(level).text : title, value,
+                style: flagged(level) ? 'text-' + levelOf(level).color : ''})
+            loadCard = card(L('Load, 5 minutes'), percent(cpu.LoadPercent), cpu.Level)
+            memoryCard = card(memory.ProcessPercent != null && memory.LimitBytes != null
+                ? L('Memory') + ' · ' + percent(memory.ProcessPercent) + ' ' + L('of') + ' ' + bytes(memory.LimitBytes) : L('Memory'),
+                bytes(memory.ProcessBytes), memory.Level)
+            const fullest = filesystems.filter(filesystem => filesystem.usedPercent != null)
+                .sort((first, second) => Number(second.usedPercent) - Number(first.usedPercent))[0]
+            diskCard = card(fullest ? L('Disk') + ' ' + fullest.mountPoint : L('Disk'), fullest ? percent(fullest.usedPercent) : DASH,
+                fullest ? fullest.level : null)
+            const workers = read('worker pool', () => {
+                const pool = ec.factory.workerPool
+                return {active: pool.activeCount, maximum: pool.maximumPoolSize, queued: pool.queueSize, capacity: pool.remainingCapacity}
+            }, null)
+            workersCard = workers
+                ? card(L('Workers') + ' · ' + number(workers.queued) + ' ' + L('queued'), number(workers.active) + ' ' + L('of') + ' ' + number(workers.maximum),
+                    workers.maximum > 0 && (workers.active >= workers.maximum || workers.capacity <= 0) ? 'warning' : null)
+                : card(L('Workers'), DASH, null)
+            // one row per connection pool: entity groups on one database share it
+            const pools = []
+            for (const source of Array.from(status.DataSources || [])) {
+                let pool = pools.find(candidate => candidate.uniqueName === source.uniqueName)
+                if (!pool) { pool = Object.assign({groups: []}, source); pools.push(pool) }
+                pool.groups.push(String(source.group))
+            }
+            const sum = name => pools.reduce((total, pool) => total + Number(pool[name] || 0), 0)
+            poolCard = pools.length
+                ? card(L('Database connections') + ' · ' + number(sum('waiting')) + ' ' + L('waiting'),
+                    number(sum('checkedOut')) + ' ' + L('of') + ' ' + number(sum('max')), sum('waiting') > 0 ? 'warning' : null)
+                : card(L('Database connections'), DASH, null)
+            const usersToday = Array.from(usersTodayList).length
+            usersTodayText = usersToday >= 1000 ? '1,000+' : number(usersToday)
+
+            // ---- activity ----
+            const integrations = Array.from(report.integrations || []), listeners = Array.from(report.listeners || [])
+            const notBuilt = Array.from(report.notBuilt || []).map(entry => String(entry && entry.name ? entry.name : entry))
+            const telemetry = integrations.find(entry => entry.name === 'Telemetry')
+            // a process that reported no Telemetry entry (a test, a command) follows the setting
+            const telemetryState = notBuilt.includes('Telemetry') ? 'notBuilt' : telemetry ? telemetry.state
+                : String(System.getProperty('telemetry_enabled') || '') === 'false' ? 'off' : 'on'
+            telemetryOn = telemetryState === 'on'
+            telemetryOffText = telemetryState === 'notBuilt' ? L('Telemetry is not in this build, so there is no history.')
+                : L('Telemetry is off, so there is no history.') + ' ' + (telemetry && telemetry.detail ? telemetry.detail
+                    : L('The setting is telemetry_enabled.'))
+
+            // ---- resources ----
+            resourceRows = []
+            const resource = (name, text, level, metricName, tooltip) => resourceRows.push({name, text, levelText: levelOf(level).text,
+                levelColor: levelOf(level).color, metricName: metricName || '', tooltip: text === DASH ? notReported : tooltip || ''})
+            resource(L('CPU load'), cpu.LoadPercent != null
+                ? percent(cpu.LoadPercent) + ' ' + L('of') + ' ' + number(cpu.Processors) + ' ' + L('processors') + ' · ' +
+                    [cpu.Load1, cpu.Load5, cpu.Load15].map(load => number(load, '#,##0.00')).join(', ') + ' ' + L('over 1, 5 and 15 minutes')
+                : DASH, cpu.Level, 'moqui.system.cpu.load.utilization', L('The level follows the 5-minute load as a share of the processors'))
+            resource(L('This process, CPU'), cpu.ProcessPercent != null ? percent(cpu.ProcessPercent) + ' ' + L('of the processors') : DASH, null,
+                'process.cpu.utilization', L('The share of the processors this process used since the readings were last taken'))
+            resource(L('This process, memory'), memory.ProcessBytes != null
+                ? bytes(memory.ProcessBytes) + (memory.LimitBytes != null ? ' ' + L('of') + ' ' + bytes(memory.LimitBytes) + ' (' + percent(memory.ProcessPercent) + ')' : '') +
+                    (memory.ProcessPeakBytes != null ? ' · ' + L('peak') + ' ' + bytes(memory.ProcessPeakBytes) : '')
+                : DASH, memory.Level, 'moqui.process.memory.utilization',
+                memory.LimitSource === 'container' ? L('The limit in force is the container\'s') : L('The limit in force is the machine\'s memory'))
+            resource(L('Machine memory'), memory.AvailableBytes != null
+                ? bytes(memory.AvailableBytes) + ' ' + L('of') + ' ' + bytes(memory.TotalBytes) + ' ' + L('available') + ' (' + percent(memory.AvailablePercent) + ')'
+                : DASH, memory.AvailableLevel, 'system.linux.memory.available', '')
+            for (const filesystem of filesystems) {
+                const inodes = flagged(filesystem.inodesLevel) ? ' · ' + percent(filesystem.inodesUsedPercent) + ' ' + L('of its file entries used') : ''
+                const holds = Array.from(filesystem.holds || []).join(', ')
+                resource(L('Disk') + ' ' + filesystem.mountPoint, filesystem.usedPercent != null
+                    ? percent(filesystem.usedPercent) + ' ' + L('of') + ' ' + bytes(filesystem.totalBytes) + ', ' + bytes(filesystem.availableBytes) + ' ' + L('free') + inodes +
+                        (holds ? ' · ' + holds : '')
+                    : DASH, worse(filesystem.level, filesystem.inodesLevel), 'system.filesystem.utilization',
+                    L('The space the server\'s user may still write, and what of the instance is on this filesystem'))
+            }
+            if (!filesystems.length) resource(L('Disk'), DASH, null, '', '')
+            resource(L('Open files'), files.Count != null
+                ? number(files.Count) + (files.Limit != null ? ' ' + L('of') + ' ' + number(files.Limit) : '')
+                : DASH, files.Level, 'process.unix.file_descriptor.count', '')
+            if (Number(swap.TotalBytes || 0) > 0) resource(L('Swap'), percent(swap.UsedPercent) + ' ' + L('of') + ' ' + bytes(swap.TotalBytes) + ' ' + L('used'),
+                swap.Level, '', '')
+
+            // ---- database ----
+            const BACKUP_SERVICE = 'org.moqui.impl.ServerServices.backup#EmbeddedDatabase'
+            const backupText = pools.some(pool => pool.embedded === true) ? read('backup job', () => {
+                const jobs = Array.from(ec.entity.find('moqui.service.job.ServiceJob').condition('serviceName', BACKUP_SERVICE).limit(20).list())
+                if (!jobs.length) return L('no backup job')
+                return jobs.some(job => job.paused !== 'Y' && job.cronExpression) ? L('backup scheduled') : L('backup paused')
+            }, DASH) : ''
+            databaseRows = pools.map(pool => {
+                const db = 'group:' + pool.groups[0]
+                // what the database says of itself, kept five minutes by the service; left out for a user who may not ask
+                const facts = read('database ' + db, () => {
+                    const out = ec.service.sync().name('org.moqui.dev.DatabaseServices.get#Capabilities').parameters({db}).call() || {}
+                    if (ec.message.hasError()) { ec.message.clearErrors(); return {} }
+                    return out
+                }, {})
+                ec.message.clearErrors()
+                // "PostgreSQL 18.6 on x86_64-pc-linux-gnu, compiled by ..." is shown as its name and number
+                const product = /^[A-Za-z]+ [0-9][0-9.]*/.exec(String(facts.version || ''))
+                return {db, groupsText: pool.groups.join(', '),
+                    kindText: [pool.embedded === true ? L('embedded') : '', product ? product[0] : [pool.database, facts.version].filter(part => part).join(' ')]
+                        .filter(part => part).join(' '),
+                    sizeText: facts.databaseSize != null ? bytes(facts.databaseSize) : DASH,
+                    sizeTooltip: facts.databaseSize != null ? '' : L('The database did not report its size to this user'),
+                    poolText: number(pool.checkedOut || 0) + ' ' + L('of') + ' ' + number(pool.max || 0) + ' · ' + number(pool.waiting || 0) + ' ' + L('waiting'),
+                    backupText: pool.embedded === true ? backupText : L('external')}
+            })
+
+            // ---- cluster members: only when there is more than one (the Cluster listener is on for every server) ----
+            clusterRows = read('cluster members', () => {
+                const members = Array.from(ec.entity.find('moqui.server.ClusterMember').limit(50).list())
+                if (members.length < 2) return []
+                return members.map(member => ({instanceId: String(member.instanceId) + (member.instanceId === instanceId ? ' (' + L('this server') + ')' : ''),
+                    clusterBaseUrl: member.clusterBaseUrl || DASH,
+                    heartbeatText: member.heartbeat != null ? duration(Date.now() - Number(String(member.heartbeat))) + ' ' + L('ago') : DASH}))
+            }, [])
+
+            // ---- listeners and integrations: failed and skipped first, each with the screen that configures it ----
+            const STATES = {failed: {text: L('Failed'), color: 'negative', order: 0}, skipped: {text: L('Skipped'), color: 'warning', order: 1},
+                on: {text: L('On'), color: 'positive', order: 2}, off: {text: L('Off'), color: 'grey-6', order: 3}}
+            const fullPath = Array.from(sri.getScreenUrlInfo().fullPathNameList || [])
+            const mounted = new Set(read('system menu', () => Array.from(sri.getMenuItems('/' + fullPath.slice(0, -1).join('/')) || [])
+                .map(item => String(item.name)), []))
+            const SCREENS = [[/^search/i, '//apps/tools/Data/Documents'], [/^telemetry/i, '../Monitor/Sources'], [/^(llm|mcp|a2a)/i, '../Llm'],
+                [/^edge/i, '../EdgeNode'], [/^schedul/i, '../ServiceJob'], [/^(pdf|ipp|print)/i, '../Print'],
+                [/^(call|sip|turn)/i, mounted.has('Voice') ? '../Voice' : '../Conf'], [/^(xmpp|chat)/i, mounted.has('ChatBridges') ? '../ChatBridges' : '../Conf'],
+                [/^sso/i, '../Security']]
+            const entryRows = entries => entries.map((entry, index) => {
+                const state = STATES[entry.state] || {text: String(entry.state || DASH), color: 'grey-6', order: 4}
+                const screen = SCREENS.find(candidate => candidate[0].test(String(entry.name)))
+                return {name: String(entry.name), detail: String(entry.detail || ''), stateText: state.text, stateColor: state.color,
+                    order: state.order * 1000 + index, screenLink: screen ? screen[1] : '../Conf'}
+            }).sort((first, second) => first.order - second.order)
+            listenerRows = entryRows(listeners)
+            integrationRows = entryRows(integrations)
+            toolsText = Array.from(report.tools || []).map(tool => String(tool && tool.name ? tool.name : tool)).join(', ')
+            notBuiltText = notBuilt.join(', ')
+            routesText = Array.from(report.routes || []).join('\n')
+
+            // ---- navigation: the catalog of template/HomeParts.xml (a component adds entries with an actions-extend) ----
+            const featured = (path, title, text) => ({path, title, text, featured: true})
+            const entry = (group, path, title, icon) => ({group, path, title, icon})
+            const server = L('Server'), monitor = L('Monitor'), security = L('Security and history'), integration = L('Integration'),
+                ai = L('AI'), content = L('Content')
+            navOptions = {otherTitle: L('More')}
+            navCatalog = [
+                featured('Monitor', '', L('Traces, logs, errors, metrics and incidents')),
+                featured('Security', L('Users and access'), L('Accounts, groups and what each may reach')),
+                featured('ServiceJob', L('Service jobs'), L('Schedules, runs and their results')),
+                featured('Conf', '', L('Settings and the file each came from')),
+                featured('Components', '', L('What is loaded; deploy and update')),
+
+                entry(server, 'Cache'), entry(server, 'ThreadList'), entry(server, 'ServiceJob/JobRuns', L('Job history'), 'sym_o_history'),
+                entry(server, 'Print/Printer', '', 'sym_o_print'), entry(server, 'Print/PrintJob', '', 'sym_o_receipt_long'), entry(server, 'Instance'),
+
+                entry(monitor, 'Monitor/Services'), entry(monitor, 'Monitor/Traces'), entry(monitor, 'Monitor/Logs'), entry(monitor, 'Monitor/Errors'),
+                entry(monitor, 'Monitor/Metrics'), entry(monitor, 'Monitor/Incidents'), entry(monitor, 'Monitor/Checks'), entry(monitor, 'Monitor/Settings'),
+                entry(monitor, 'Monitor', L('All of Monitor')),
+
+                entry(security, 'Security/UserAccount', '', 'sym_o_person'), entry(security, 'Security/UserGroup', '', 'sym_o_groups'),
+                entry(security, 'Security/ArtifactGroup', '', 'sym_o_key'), entry(security, 'Security/ActiveUsers', '', 'sym_o_person_check'),
+                entry(security, 'AuditLog'), entry(security, 'Visit'),
+
+                entry(integration, 'SystemMessage/Message', L('System messages'), 'sym_o_mail'),
+                entry(integration, 'SystemMessage/Remote', L('Remote systems'), 'sym_o_dns'),
+                entry(integration, 'SystemMessage/Type', L('Message types'), 'sym_o_category'),
+                entry(integration, 'EntitySync'), entry(integration, 'EdgeNode'), entry(integration, 'EdgeClients'),
+                entry(integration, 'Voice', '', 'sym_o_call'), entry(integration, 'ChatBridges', '', 'sym_o_forum'),
+
+                entry(ai, 'Llm/Dashboard', L('Overview'), 'sym_o_dashboard'), entry(ai, 'Llm/Models', '', 'sym_o_model_training'),
+                entry(ai, 'Llm/Tools', '', 'sym_o_construction'), entry(ai, 'Llm/Runs', '', 'sym_o_play_circle'),
+                entry(ai, 'Llm/Approvals', '', 'sym_o_approval'), entry(ai, 'Llm/Usage', '', 'sym_o_payments'),
+                entry(ai, 'Llm/Traces', '', 'sym_o_timeline'), entry(ai, 'Llm/Evals', '', 'sym_o_grading'), entry(ai, 'Constitution'),
+
+                entry(content, 'Localization/Messages', L('Localized messages'), 'sym_o_translate'),
+                entry(content, 'Localization/EntityFields', L('Localized entity fields'), 'sym_o_text_fields'), entry(content, 'Resource')
+            ]
+        ]]></script>
+    </actions>
+    <widgets>
+        <!-- identity and state -->
+        <container id="SystemIdentity" style="q-mb-sm">
+            <container id="SystemTitle" style="row items-center q-gutter-x-sm">
+                <label text="${identityText}" type="h5" style="q-my-none"/>
+                <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="m-tonal text-${systemState.color}">]]></text><text type="tui" template="false">[]</text></render-mode>
+                <label text="${systemState.text}" type="span"/>
+                <render-mode><text type="qvt"><![CDATA[</q-chip>]]></text><text type="tui" template="false">[]</text></render-mode>
+                <section name="AttentionCount" condition="attentionCount &gt; 0"><widgets>
+                    <render-mode><text type="qvt"><![CDATA[<q-chip dense square class="m-tonal text-warning">]]></text><text type="tui" template="false">[]</text></render-mode>
+                    <label text="${attentionCountText}" type="span"/>
+                    <render-mode><text type="qvt"><![CDATA[</q-chip>]]></text><text type="tui" template="false">[]</text></render-mode>
+                </widgets></section>
+            </container>
+            <container id="SystemFacts" style="text-caption m-muted">
+                <label text="${factsText} ·" type="span"/>
+                <link url="../Components" text="${componentsText}" link-type="anchor"/>
+            </container>
+            <container id="SystemPeriod" style="row items-center q-gutter-x-sm q-mt-xs">
+                <label text="Period" type="span" style="m-muted"/>
+                <section-iterate name="PeriodLinks" list="periodOptions" entry="periodOption"><widgets>
+                    <label text="${periodOption.id}" type="strong" condition="periodOption.id == period" tooltip="${periodOption.label}"/>
+                    <link url="." text="${periodOption.id}" link-type="anchor" parameter-map="{period: periodOption.id}"
+                            condition="periodOption.id != period" tooltip="${periodOption.label}"/>
+                </widgets></section-iterate>
+                <label text="Updated ${nowText}" type="span" style="m-muted"/>
+                <link url="." text="Refresh" icon="sym_o_refresh" parameter-map="{period: period}"/>
+                <button-menu text="More" icon="more_horiz">
+                    <container-dialog id="RequestDetails" button-text="Request details">
+                        <label text="${requestDetails}" type="pre"/>
+                    </container-dialog>
+                    <link url="../ThreadList" text="Threads"/>
+                    <container-dialog id="StatusAddresses" button-text="Health and metrics addresses">
+                        <label text="/health answers whether this instance is ready: 200 when it is, 503 while it starts or drains." type="p"/>
+                        <label text="/metrics answers its counters as lines of text, or as Prometheus text for a scrape." type="p"/>
+                        <label text="${statusReadersText}" type="p"/>
+                    </container-dialog>
+                </button-menu>
+            </container>
+        </container>
+
+        <!-- counters -->
+        <dashboard id="SystemCounters" min-width="180">
+            <number-card id="LoadCard" title="${loadCard.title}" value="${loadCard.value}" icon="sym_o_speed" style="${loadCard.style}"
+                    link="../Monitor/Metrics?metricName=moqui.system.cpu.load.utilization"/>
+            <number-card id="MemoryCard" title="${memoryCard.title}" value="${memoryCard.value}" icon="sym_o_memory" style="${memoryCard.style}"
+                    link="../Monitor/Metrics?metricName=process.memory.usage"/>
+            <number-card id="DiskCard" title="${diskCard.title}" value="${diskCard.value}" icon="sym_o_hard_drive" style="${diskCard.style}"
+                    link="../Monitor/Metrics?metricName=system.filesystem.utilization"/>
+            <number-card id="WorkersCard" title="${workersCard.title}" value="${workersCard.value}" icon="sym_o_engineering" style="${workersCard.style}"
+                    link="../ThreadList"/>
+            <number-card id="PoolCard" title="${poolCard.title}" value="${poolCard.value}" icon="sym_o_database" style="${poolCard.style}"
+                    link="//apps/tools/Database/Activity"/>
+            <number-card id="UsersTodayCard" title="Users today" value="${usersTodayText}" icon="sym_o_group"
+                    link="../Security/ActiveUsers?fromDate_period=day&amp;fromDate_poffset=0"/>
+        </dashboard>
+
+        <!-- activity: the shipped system-home dashboard over the period, narrowed to this instance -->
+        <section name="SystemActivity" condition="telemetryOn"><widgets>
+            <report-embed id="SystemActivityEmbed" definition-id="system-home" from="${periodFrom}" thru="now" variables="activityVariables"/>
+        </widgets><fail-widgets>
+            <container id="SystemActivityOff" style="q-pa-sm">
+                <label text="${telemetryOffText}" type="span" style="m-muted"/>
+                <link url="../Conf" text="Configuration" link-type="anchor"/>
+            </container>
+        </fail-widgets></section>
+
+        <container-row id="SystemBlocks">
+            <row-col md="6">
+                <section name="SystemAttention" condition="attentionAvailable"><widgets>
+                    <container-box id="SystemAttention"><box-header title="Needs attention"/><box-body-nopad>
+                        <section name="AttentionItems" condition="attentionItems?.length"><widgets>
+                            <form-list name="AttentionList" list="attentionItems" skip-form="true" skip-header="true" paginate="false">
+                                <field name="severityText"><default-field title="Level"><render-mode>
+                                    <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${severityColor}">${severityText}</q-chip>]]></text>
+                                    <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: severityText})}]]></text>
+                                    <text type="html"><![CDATA[<span data-level>${severityText}</span>]]></text>
+                                </render-mode></default-field></field>
+                                <field name="itemText"><default-field title="What">
+                                    <link url="${itemLink}" text="${itemText}" link-type="anchor" parameter-map="itemParameters" condition="itemLink"/>
+                                    <label text="${itemText}" condition="!itemLink"/>
+                                </default-field></field>
+                            </form-list>
+                            <label text="Checked ${attentionCheckedText}" type="div" style="text-caption m-muted q-pa-sm"/>
+                        </widgets><fail-widgets>
+                            <label text="Nothing needs attention. Checked ${attentionCheckedText}." type="div" style="q-pa-sm"/>
+                        </fail-widgets></section>
+                    </box-body-nopad></container-box>
+                </widgets></section>
+
+                <container-box id="SystemResources"><box-header title="Resources"/><box-body-nopad>
+                    <form-list name="ResourceList" list="resourceRows" skip-form="true" skip-header="true" paginate="false">
+                        <field name="name"><default-field title="Reading">
+                            <link url="../Monitor/Metrics" text="${name}" link-type="anchor" parameter-map="{metricName: metricName}" condition="metricName"/>
+                            <label text="${name}" condition="!metricName"/>
+                        </default-field></field>
+                        <field name="text"><default-field title="Now"><label text="${text}" tooltip="${tooltip}"/></default-field></field>
+                        <field name="levelText"><default-field title="Level"><render-mode>
+                            <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${levelColor}">${levelText}</q-chip>]]></text>
+                            <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: levelText})}]]></text>
+                            <text type="html"><![CDATA[<span data-level>${levelText}</span>]]></text>
+                        </render-mode></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="name"/><field-ref name="text"/></column>
+                            <column><field-ref name="levelText"/></column>
+                        </columns>
+                    </form-list>
+                </box-body-nopad></container-box>
+
+                <section name="SystemDatabase" condition="databaseRows?.length"><widgets>
+                    <container-box id="SystemDatabase"><box-header title="Database"/><box-toolbar>
+                        <link url="//apps/tools/Database/Overview" text="Database tools"/>
+                    </box-toolbar><box-body-nopad>
+                        <form-list name="DatabaseList" list="databaseRows" skip-form="true" paginate="false">
+                            <field name="groupsText"><default-field title="Entity groups">
+                                <link url="//apps/tools/Database/Overview" text="${groupsText}" link-type="anchor" parameter-map="{db: db}"/>
+                            </default-field></field>
+                            <field name="kindText"><default-field title="Database"><display/></default-field></field>
+                            <field name="sizeText"><default-field title="Size"><label text="${sizeText}" tooltip="${sizeTooltip}"/></default-field></field>
+                            <field name="poolText"><default-field title="Connections in use"><display/></default-field></field>
+                            <field name="backupText"><default-field title="Backup"><display/></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="groupsText"/><field-ref name="kindText"/></column>
+                                <column><field-ref name="sizeText"/><field-ref name="poolText"/><field-ref name="backupText"/></column>
+                            </columns>
+                        </form-list>
+                        <section name="ClusterMembers" condition="clusterRows?.length"><widgets>
+                            <label text="Cluster members" type="div" style="text-subtitle2 q-pa-sm"/>
+                            <form-list name="ClusterMemberList" list="clusterRows" skip-form="true" paginate="false">
+                                <field name="instanceId"><default-field title="Instance"><display/></default-field></field>
+                                <field name="clusterBaseUrl"><default-field title="Address"><display/></default-field></field>
+                                <field name="heartbeatText"><default-field title="Last heartbeat"><display/></default-field></field>
+                                <columns type="mobile">
+                                    <column><field-ref name="instanceId"/><field-ref name="clusterBaseUrl"/></column>
+                                    <column><field-ref name="heartbeatText"/></column>
+                                </columns>
+                            </form-list>
+                        </widgets></section>
+                    </box-body-nopad></container-box>
+                </widgets></section>
+            </row-col>
+            <row-col md="6">
+                <container-box id="SystemListeners"><box-header title="Listeners and integrations"/><box-toolbar>
+                    <container-dialog id="SystemRoutes" button-text="Routes" condition="routesText">
+                        <label text="${routesText}" type="pre"/>
+                    </container-dialog>
+                </box-toolbar><box-body-nopad>
+                    <label text="Listeners" type="div" style="text-subtitle2 q-pa-sm"/>
+                    <section name="SystemListenerRows" condition="listenerRows?.length"><widgets>
+                        <form-list name="ListenerList" list="listenerRows" skip-form="true" skip-header="true" paginate="false">
+                            <field name="name"><default-field title="Listener">
+                                <link url="${screenLink}" text="${name}" link-type="anchor"/>
+                            </default-field></field>
+                            <field name="detail"><default-field title="Detail"><display/></default-field></field>
+                            <field name="stateText"><default-field title="State"><render-mode>
+                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateText}</q-chip>]]></text>
+                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                <text type="html"><![CDATA[<span data-level>${stateText}</span>]]></text>
+                            </render-mode></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="name"/><field-ref name="detail"/></column>
+                                <column><field-ref name="stateText"/></column>
+                            </columns>
+                        </form-list>
+                    </widgets><fail-widgets>
+                        <label text="This process reported no listeners: it is not serving requests." type="div" style="m-muted q-px-sm q-pb-sm"/>
+                    </fail-widgets></section>
+                    <section name="SystemIntegrationRows" condition="integrationRows?.length"><widgets>
+                        <label text="Integrations" type="div" style="text-subtitle2 q-pa-sm"/>
+                        <form-list name="IntegrationList" list="integrationRows" skip-form="true" skip-header="true" paginate="false">
+                            <field name="name"><default-field title="Integration">
+                                <link url="${screenLink}" text="${name}" link-type="anchor"/>
+                            </default-field></field>
+                            <field name="detail"><default-field title="Detail"><display/></default-field></field>
+                            <field name="stateText"><default-field title="State"><render-mode>
+                                <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${stateText}</q-chip>]]></text>
+                                <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateText})}]]></text>
+                                <text type="html"><![CDATA[<span data-level>${stateText}</span>]]></text>
+                            </render-mode></default-field></field>
+                            <columns type="mobile">
+                                <column><field-ref name="name"/><field-ref name="detail"/></column>
+                                <column><field-ref name="stateText"/></column>
+                            </columns>
+                        </form-list>
+                    </widgets></section>
+                    <label text="Tools: ${toolsText}" type="div" style="q-pa-sm" condition="toolsText"/>
+                    <label text="Not in this build: ${notBuiltText}" type="div" style="m-muted q-px-sm q-pb-sm" condition="notBuiltText"/>
+                </box-body-nopad></container-box>
+            </row-col>
+        </container-row>
+
+        <!-- navigation: the featured screens, then everything else in groups -->
+        <section-include name="NavFeatured" location="component://tools/template/HomeParts.xml"/>
+        <section-include name="NavGroups" location="component://tools/template/HomeParts.xml"/>
+    </widgets>
+</screen>

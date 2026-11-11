@@ -212,8 +212,11 @@ pub fn hash_of(text: &str) -> String {
     // ext items, widget templates, data records, service includes, a screen-extend's own transitions and forms, and ECA
     // keys by rule name or target, 5 the references' operations and origins, the bindings and the primary key mark of a
     // field, 6 screen paths (links, responses, forms' transitions, default items), directory subscreens, a subscreens
-    // item's no-sub-path mark, the services a transition passes the request to, and the bindings of a form's fields.
-    let digest = Sha256::digest(format!("6\n{text}").as_bytes());
+    // item's no-sub-path mark, the services a transition passes the request to, and the bindings of a form's fields,
+    // 7 the marks of what a service, form or transition declares to be filled in (auto-parameters, implements,
+    // auto-fields, extends, a transition's calls and field-maps), and the references of auto-parameters and extends.
+    // 8 a screen's allow-extra-path mark, and a form's bindings by the path it posts to, its own screen's transition too.
+    let digest = Sha256::digest(format!("8\n{text}").as_bytes());
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -514,7 +517,9 @@ impl MemoryIndex {
     /// of the ones derived before), and resolve every reference and binding; the files are changed now.
     pub fn resolve_all(&mut self, exists: &dyn Fn(&str) -> bool) {
         self.artifacts
-            .retain(|artifact| artifact.origin != extract::ORIGIN_DERIVED);
+            .retain(|artifact| artifact.origin != extract::ORIGIN_DERIVED && !extract::is_expanded(&artifact.origin));
+        self.bindings
+            .retain(|(_, binding)| !extract::is_expanded(&binding.origin));
         let mut resolver = Resolver::default();
         for artifact in &self.artifacts {
             resolver.add(artifact);
@@ -524,12 +529,41 @@ impl MemoryIndex {
             resolver.add(artifact);
         }
         self.artifacts.extend(derived);
+        // what the services and forms declare to be filled in: in their files, from the artifacts known now
+        for owner in resolver.expandable() {
+            let expansion = resolver.expand(&owner);
+            let Some(path) = resolver.owner_path(&owner) else {
+                continue;
+            };
+            for (id, summary) in &expansion.summaries {
+                for artifact in self
+                    .artifacts
+                    .iter_mut()
+                    .filter(|artifact| artifact.id == *id && artifact.path == path)
+                {
+                    artifact.summary.clone_from(summary);
+                }
+            }
+            for artifact in &expansion.artifacts {
+                resolver.add(artifact);
+            }
+            self.artifacts.extend(expansion.artifacts);
+            self.bindings
+                .extend(expansion.bindings.into_iter().map(|binding| (path.clone(), binding)));
+        }
         for (_, row) in &mut self.refs {
             resolver.resolve(row, exists);
         }
-        for (_, binding) in &mut self.bindings {
-            resolver.resolve_binding(binding);
+        let mut bindings = Vec::with_capacity(self.bindings.len());
+        for (path, binding) in std::mem::take(&mut self.bindings) {
+            bindings.extend(
+                resolver
+                    .resolve_bindings(vec![binding])
+                    .into_iter()
+                    .map(|binding| (path.clone(), binding)),
+            );
         }
+        self.bindings = bindings;
         self.resolver = resolver;
         self.position();
         self.changed_millis = now_millis();
@@ -952,6 +986,8 @@ struct IndexState {
     builds: AtomicU64,
     /// When a refresh of the sources last logged its failure, in epoch milliseconds: at most once a minute.
     logged_at: AtomicI64,
+    /// The services and forms whose expanded rows were not all written: written again at the next update.
+    retry: Mutex<HashSet<String>>,
 }
 
 impl IndexState {
@@ -1124,6 +1160,7 @@ pub struct BuildReport {
     pub stale: usize,
     pub artifacts: usize,
     pub refs: usize,
+    pub bindings: usize,
     /// Reading and parsing the files.
     pub read_millis: u128,
     /// Writing the rows.
@@ -1184,6 +1221,7 @@ pub fn build_files(
             .select_field("summary")
             .select_field("parentArtifactId")
             .select_field("origin")
+            .select_field("marks")
             .select_field("filePath")
             .list()?;
         for row in list.into_values() {
@@ -1245,7 +1283,7 @@ pub fn build_files(
     state.built.store(true, Ordering::SeqCst);
     report.millis = started.elapsed().as_millis();
     tracing::info!(
-        "Artifact index built in {} ms: {} files ({} read, {} unchanged, {} removed, {} stale), {} artifacts and {} references written",
+        "Artifact index built in {} ms: {} files ({} read, {} unchanged, {} removed, {} stale), {} artifacts, {} references and {} bindings written",
         report.millis,
         report.files,
         report.read,
@@ -1253,7 +1291,8 @@ pub fn build_files(
         report.removed,
         report.stale,
         report.artifacts,
-        report.refs
+        report.refs,
+        report.bindings
     );
     refresh_locked(factory, &facade, &state);
     Ok(report)
@@ -1563,9 +1602,14 @@ fn apply(
     let mut changed_paths: HashSet<String> = HashSet::new();
     // the entities whose fields changed, by id: their derived entity-auto services are derived again
     let mut changed_entities: HashSet<String> = HashSet::new();
+    // the entities, services and forms whose declarations changed: the expansions that read them are made again
+    let mut touched: HashSet<String> = HashSet::new();
+    let rewrites: Vec<Rewrite>;
     let derived: Derived;
     // whether a screen, subscreens item or transition was added, changed or removed: every screen path is walked again
     let screens_changed: bool;
+    // the names of the screens, items and transitions that changed: only the paths through one are walked again
+    let walk_names: HashSet<String>;
     // ids another file defines too (an entity defined again): their row is replaced, the later definition winning
     let shared: HashSet<String>;
     // the files that have rows: only theirs are read and removed first
@@ -1597,7 +1641,7 @@ fn apply(
         // services): a path goes elsewhere only when they differ
         let walked = |artifact: &ArtifactRow| {
             matches!(artifact.kind.as_str(), "screen" | "subscreen" | "transition")
-                .then(|| (artifact.id.clone(), artifact.summary.clone()))
+                .then(|| (artifact.id.clone(), format!("{}|{}", artifact.summary, artifact.marks)))
         };
         let mut walked_before: HashSet<(String, String)> = HashSet::new();
         let mut walked_after: HashSet<(String, String)> = HashSet::new();
@@ -1617,6 +1661,7 @@ fn apply(
                 Ok(old_rows) => {
                     for old in old_rows {
                         walked_before.extend(walked(&old));
+                        touched.extend(declared_id(&old));
                         resolver.remove(&old);
                         if old.kind == "field" {
                             changed_entities.extend(old.parent.clone());
@@ -1632,6 +1677,7 @@ fn apply(
                 for artifact in &index.artifacts {
                     resolver.add(artifact);
                     walked_after.extend(walked(artifact));
+                    touched.extend(declared_id(artifact));
                     if artifact.kind == "field" {
                         changed_entities.extend(artifact.parent.clone());
                     }
@@ -1641,9 +1687,39 @@ fn apply(
             }
         }
         screens_changed = walked_before != walked_after;
+        walk_names = walked_before
+            .symmetric_difference(&walked_after)
+            .flat_map(|(id, _)| resolver.names_walked(id))
+            .collect();
         let waiting = waiting_refs(facade, &added, &changed_paths);
         derived = derive_in(&mut resolver, &changes, &waiting, &changed_entities, &added, &mut gone);
         added.extend(derived.rows.iter().cloned());
+        touched.extend(derived.dropped.iter().cloned());
+        touched.extend(
+            derived
+                .rows
+                .iter()
+                .filter(|row| row.kind == "service")
+                .map(|row| row.id.clone()),
+        );
+        // an entity by its short name too, as a reader names it once the entity is gone; a screen-extend's form as the
+        // base form it adds fields to
+        let aliases: Vec<String> = touched
+            .iter()
+            .filter_map(|id| {
+                if let Some(entity) = id.strip_prefix("entity:") {
+                    let short = entity.rsplit('.').next().unwrap_or(entity);
+                    return (short != entity).then(|| format!("entity:{short}"));
+                }
+                let (location, name) = id.strip_prefix("form:")?.rsplit_once('#')?;
+                location
+                    .contains("/screen-extend/")
+                    .then(|| format!("form:{}#{name}", extract::extended_location(location)))
+            })
+            .collect();
+        touched.extend(aliases);
+        let retry = std::mem::take(&mut *lock(&state.retry));
+        let mut made = expand_in(&mut resolver, &mut changes, &touched, &retry, &mut added, &mut gone);
         // an id another file still defines is not gone
         gone.retain(|id| !resolver.has(id));
         shared = added
@@ -1657,11 +1733,13 @@ fn apply(
                 for row in &mut index.refs {
                     resolver.resolve(row, &exists);
                 }
-                for binding in &mut index.bindings {
-                    resolver.resolve_binding(binding);
-                }
+                index.bindings = resolver.resolve_bindings(std::mem::take(&mut index.bindings));
             }
         }
+        for rewrite in &mut made {
+            rewrite.expansion.bindings = resolver.resolve_bindings(std::mem::take(&mut rewrite.expansion.bindings));
+        }
+        rewrites = made;
     }
     if factory.is_shutting_down() {
         tracing::info!(
@@ -1675,6 +1753,17 @@ fn apply(
     // before the files' rows: a file that now defines a derived service's id takes its row
     if let Err(err) = tx.run(TransactionAttribute::ForceNew, None, || write_derived(facade, &derived)) {
         tracing::error!("Artifact index: the derived entity-auto services were not written: {err}");
+    }
+    // each owner's expansion in a transaction of its own: one that fails is that owner's alone
+    for rewrite in &rewrites {
+        if let Err(err) = tx.run(TransactionAttribute::ForceNew, None, || write_expanded(facade, rewrite)) {
+            // the rows are written without a transaction of their own: the next update writes all of them again
+            lock(&state.retry).insert(rewrite.owner.clone());
+            tracing::error!(
+                "Artifact index: the expansion of {} was not written, it is written again at the next update: {err}",
+                rewrite.owner
+            );
+        }
     }
     // files a hundred to a transaction; a batch that fails is written again file by file, so one file's failure is
     // that file's alone
@@ -1724,6 +1813,7 @@ fn apply(
                     report.read += 1;
                     report.artifacts += index.artifacts.len();
                     report.refs += index.refs.len();
+                    report.bindings += index.bindings.len();
                 }
                 (Ok(()), Change::Stale { .. }) => report.stale += 1,
                 (Ok(()), Change::Removed(_)) => report.removed += 1,
@@ -1746,9 +1836,183 @@ fn apply(
         .filter(|change| matches!(change, Change::Read { .. }))
         .count();
     if screens_changed && usize::try_from(facade.find(FILE)?.count()?).unwrap_or(0) > read_now {
-        walk_again(factory, facade, state, &tx, &changed_paths)?;
+        walk_again(factory, facade, state, &tx, &changed_paths, &walk_names)?;
     }
     report.write_millis = writing.elapsed().as_millis();
+    Ok(())
+}
+
+/// The id an artifact's declaration counts toward for the expansions that read it ([`Resolver::dependents`]): an
+/// entity, service or form itself, the entity of a field, the service of a parameter, the form of a form field. None for
+/// a row expanded itself.
+fn declared_id(artifact: &ArtifactRow) -> Option<String> {
+    if extract::is_expanded(&artifact.origin) {
+        return None;
+    }
+    match artifact.kind.as_str() {
+        "entity" | "view-entity" | "service" | "form" => Some(artifact.id.clone()),
+        "field" | "parameter" | "form-field" => artifact.parent.clone(),
+        _ => None,
+    }
+}
+
+/// The expansion of a service or form of a file not read now, written in place of its rows.
+struct Rewrite {
+    owner: String,
+    path: String,
+    expansion: resolve::Expansion,
+    /// The files its rows were in before (another, when the definition the expansions read moved to another file).
+    before: BTreeSet<String>,
+}
+
+/// The expansions an update makes ([`Resolver::expand`]): of each service and form the files read now define, added to
+/// their files' rows; and of each one elsewhere that reads what changed (`touched`, [`Resolver::dependents`]) and
+/// expands to other rows than before, answered to be written in place of its rows ([`write_expanded`]). The resolver
+/// knows the new rows, and the ids no more are `gone`.
+fn expand_in(
+    resolver: &mut Resolver,
+    changes: &mut [Change],
+    touched: &HashSet<String>,
+    retry: &HashSet<String>,
+    added: &mut Vec<ArtifactRow>,
+    gone: &mut BTreeSet<String>,
+) -> Vec<Rewrite> {
+    let mut read_owners: HashSet<String> = HashSet::new();
+    for change in changes.iter_mut() {
+        let Change::Read { file, index, .. } = change else {
+            continue;
+        };
+        let path = file.path.display().to_string();
+        // of a service defined in two files, the expansion is the definition's the expansions read, in its file
+        let owners: Vec<String> = index
+            .artifacts
+            .iter()
+            .filter(|artifact| resolver.is_expandable(&artifact.id))
+            .filter(|artifact| resolver.owner_path(&artifact.id).as_deref() == Some(path.as_str()))
+            .map(|artifact| artifact.id.clone())
+            .collect();
+        for owner in owners {
+            let expansion = resolver.expand(&owner);
+            for artifact in &expansion.artifacts {
+                resolver.add(artifact);
+                gone.remove(&artifact.id);
+                added.push(artifact.clone());
+            }
+            for (id, summary) in &expansion.summaries {
+                for artifact in index.artifacts.iter_mut().filter(|artifact| artifact.id == *id) {
+                    artifact.summary.clone_from(summary);
+                }
+                resolver.set_stored_summary(id, summary);
+            }
+            index.artifacts.extend(expansion.artifacts);
+            index.bindings.extend(expansion.bindings);
+            read_owners.insert(owner);
+        }
+    }
+    if touched.is_empty() && retry.is_empty() {
+        return Vec::new();
+    }
+    // those that read what changed, those whose own definition changed elsewhere (an override gone), and those whose
+    // rows were not all written last time
+    let mut candidates: HashSet<String> = resolver.dependents(touched);
+    candidates.extend(touched.iter().filter(|id| resolver.is_expandable(id)).cloned());
+    candidates.extend(retry.iter().cloned());
+    let mut dependents: Vec<String> = candidates
+        .into_iter()
+        .filter(|owner| !read_owners.contains(owner))
+        .collect();
+    dependents.sort();
+    let mut rewrites = Vec::new();
+    for owner in dependents {
+        let before = resolver.expanded_rows(&owner).to_vec();
+        let expansion = resolver.expand(&owner);
+        let same = before.len() == expansion.artifacts.len()
+            && expansion.summaries.is_empty()
+            && before.iter().all(|old| {
+                expansion
+                    .artifacts
+                    .iter()
+                    .any(|new| new.id == old.id && new.summary == old.summary && new.origin == old.origin)
+            });
+        if same && !retry.contains(&owner) {
+            continue;
+        }
+        let Some(path) = resolver
+            .owner_path(&owner)
+            .or_else(|| before.first().map(|row| row.path.clone()))
+        else {
+            continue;
+        };
+        for old in &before {
+            resolver.remove(old);
+            gone.insert(old.id.clone());
+        }
+        for new in &expansion.artifacts {
+            resolver.add(new);
+            gone.remove(&new.id);
+            added.push(new.clone());
+        }
+        for (id, summary) in &expansion.summaries {
+            resolver.set_stored_summary(id, summary);
+        }
+        rewrites.push(Rewrite {
+            owner,
+            path,
+            expansion,
+            before: before.iter().map(|row| row.path.clone()).collect(),
+        });
+    }
+    rewrites
+}
+
+/// Replace the expanded rows of a service or form of a file not read now ([`expand_in`]): its artifacts and bindings of
+/// an expanded origin.
+fn write_expanded(facade: &EntityFacade, rewrite: &Rewrite) -> Result<(), Error> {
+    let origins: Vec<Value> = extract::EXPANDED_ORIGINS
+        .iter()
+        .map(|origin| Value::string(*origin))
+        .collect();
+    for path in rewrite.before.iter().filter(|path| **path != rewrite.path) {
+        for (entity, owner_field) in [(ARTIFACT, "parentArtifactId"), (BINDING, "fromArtifactId")] {
+            facade
+                .find(entity)?
+                .eq("filePath", Value::string(path))
+                .eq(owner_field, Value::string(&rewrite.owner))
+                .condition(Condition::is_in("origin", origins.clone()))
+                .delete_all()?;
+        }
+    }
+    // the declared parameters whose summaries the merge changed
+    for (id, summary) in &rewrite.expansion.summaries {
+        if let Some(mut row) = facade.find(ARTIFACT)?.eq("artifactId", Value::string(id)).one()? {
+            row.set("summary", Value::string(summary));
+            row.update(facade)?;
+        }
+    }
+    facade
+        .find(ARTIFACT)?
+        .eq("filePath", Value::string(&rewrite.path))
+        .eq("parentArtifactId", Value::string(&rewrite.owner))
+        .condition(Condition::is_in("origin", origins.clone()))
+        .delete_all()?;
+    facade
+        .find(BINDING)?
+        .eq("filePath", Value::string(&rewrite.path))
+        .eq("fromArtifactId", Value::string(&rewrite.owner))
+        .condition(Condition::is_in("origin", origins))
+        .delete_all()?;
+    // another row of an id is replaced, as a file's later definition replaces it
+    let ids: HashSet<String> = rewrite.expansion.artifacts.iter().map(|row| row.id.clone()).collect();
+    write_artifacts(facade, &rewrite.path, &rewrite.expansion.artifacts, &ids)?;
+    // sequence ids of the owner's own, apart from the file's numbered ones
+    let tag: String = hash_of(&rewrite.owner).chars().take(8).collect();
+    for (sequence, binding) in rewrite.expansion.bindings.iter().enumerate() {
+        let mut row = facade.make_value(BINDING)?;
+        row.set("filePath", Value::string(&rewrite.path));
+        row.set("bindingSeqId", Value::string(format!("{tag}{sequence:04}")));
+        fill_binding(&mut row, binding);
+        row.create(facade)?;
+    }
     Ok(())
 }
 
@@ -1962,6 +2226,9 @@ fn write_artifacts(
         row.set("sequenceNum", Value::I64(i64::try_from(sequence).unwrap_or(0)));
         if !artifact.origin.is_empty() {
             row.set("origin", Value::string(&artifact.origin));
+        }
+        if !artifact.marks.is_empty() {
+            row.set("marks", Value::string(&artifact.marks));
         }
         if shared.contains(&artifact.id) {
             facade
@@ -2183,21 +2450,43 @@ fn update_rows(
 }
 
 /// Every screen path and directory subscreen reference of the files not read now walked again against the screens,
-/// items and transitions known now, resolved or not, and every form field's binding into a transition by its path: a
-/// renamed or removed item, an item's new location, an item over a directory subscreen or a transition's new service
-/// changes where a path goes, though no name it is written with changed. One read of the references (the columns a
-/// walk needs) and one of the bindings; each walk is lookups in memory, and only the rows whose target changed are
-/// written.
+/// items and transitions known now, resolved or not; each reference to a transition of its own screen by a name in
+/// `names` (the screens, items and transitions that changed: a subscreen of that name may now come before it); and each
+/// form field's binding by the path its form posts to (its own screen's transition by its name too) that has a segment
+/// of those names, a `..` or a sparse search: a renamed or removed item, an item's new location, an item over a
+/// directory subscreen or a transition's new service changes where a path goes, though no name it is written with
+/// changed. One read of the references (the columns a walk needs) and one of the bindings, narrowed by the names in the
+/// database; each walk is lookups in memory, and only the rows whose target changed are written.
 fn walk_again(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
     state: &IndexState,
     tx: &moqui_core::transaction::TransactionManager,
     changed: &HashSet<String>,
+    names: &HashSet<String>,
 ) -> Result<(), Error> {
-    // by the kind's index: the directory subscreens are among the screen references
+    // many names (a pull of many screens): every path, as reading each name's would cost more
+    let narrow = names.len() <= 200;
+    // by the kind's index: the directory subscreens are among the screen references; and the transitions by the names
+    // that changed (`<name>:<method>`), which a subscreen of the name (a directory subscreen, a mount) may now take
     let kinds = [ToKind::ScreenPath, ToKind::Screen].map(|kind| Value::string(kind.as_str()));
-    let mut find = facade.find(REF)?.condition(Condition::is_in("toKind", kinds.to_vec()));
+    let mut by_kind = vec![Condition::is_in("toKind", kinds.to_vec())];
+    let transition = Condition::equals("toKind", Value::string(ToKind::Transition.as_str()));
+    if narrow {
+        let named: Vec<Value> = names
+            .iter()
+            .flat_map(|name| {
+                ["any", "get", "post", "put", "patch", "delete", "head", "options"]
+                    .map(|method| Value::string(format!("{name}:{method}")))
+            })
+            .collect();
+        if !named.is_empty() {
+            by_kind.push(Condition::and(vec![transition, Condition::is_in("toName", named)]));
+        }
+    } else {
+        by_kind.push(transition);
+    }
+    let mut find = facade.find(REF)?.condition(Condition::or(by_kind));
     for field in [
         "filePath",
         "refSeqId",
@@ -2212,18 +2501,41 @@ fn walk_again(
         find = find.select_field(field);
     }
     let rows = find.list()?.into_values();
-    let bindings = facade
-        .find(BINDING)?
-        .condition(Condition::is_not_null("toPath"))
-        .select_field("filePath")
-        .select_field("bindingSeqId")
-        .select_field("toId")
-        .select_field("toPath")
-        .list()?
-        .into_values();
+    // each form field's bindings by a path, by its file, form and written id (two forms of a screen may post a field of
+    // a name to one path), in slot order
+    let mut paths: BTreeMap<(String, String, String), Vec<(usize, EntityValue)>> = BTreeMap::new();
+    let mut bindings = facade.find(BINDING)?.condition(Condition::is_not_null("toPath"));
+    if narrow {
+        // a path with a segment of a name (`#name`, `/name`, `name.<mode>` among them), one that goes up, a sparse search
+        let mut through: Vec<Condition> = ["%..%", "%#//%"]
+            .iter()
+            .map(|pattern| Condition::like("toPath", Value::string(*pattern)))
+            .collect();
+        for name in names {
+            for pattern in [format!("%#{name}%"), format!("%/{name}%")] {
+                through.push(Condition::like("toPath", Value::string(pattern)));
+            }
+        }
+        bindings = bindings.condition(Condition::or(through));
+    }
+    for row in bindings.list()?.into_values() {
+        let file = text(&row, "filePath");
+        if changed.contains(&file) {
+            continue;
+        }
+        let binding = binding_of(&row).binding;
+        if let Some((written, slot)) = resolve::path_seed(&binding) {
+            paths
+                .entry((file, binding.from, written))
+                .or_default()
+                .push((slot, row));
+        }
+    }
     let exists = |location: &str| location_exists(factory, location);
     let mut moved = Vec::new();
     let mut rebound = Vec::new();
+    let mut unbound = Vec::new();
+    let mut bound = Vec::new();
     {
         let resolver = lock(&state.resolver);
         for mut row in rows {
@@ -2245,21 +2557,54 @@ fn walk_again(
                 moved.push(row);
             }
         }
-        for mut row in bindings {
-            if changed.contains(&text(&row, "filePath")) {
+        // a transition reached that calls other services: a binding for each, the slots added or removed
+        for ((file, _, _), mut slots) in paths {
+            slots.sort_by_key(|(slot, _)| *slot);
+            let Some((_, first)) = slots.first() else {
                 continue;
+            };
+            let first_seq = text(first, "bindingSeqId");
+            let now = resolver.path_bindings(&binding_of(first).binding);
+            let mut old = slots.into_iter().map(|(_, row)| row);
+            for (at, binding) in now.iter().enumerate() {
+                match old.next() {
+                    Some(mut row) => {
+                        if text(&row, "toId") != binding.to_id
+                            || binding.to_path.as_deref() != Some(text(&row, "toPath").as_str())
+                        {
+                            row.set("toId", Value::string(&binding.to_id));
+                            row.set("toPath", binding.to_path.as_deref().map_or(Value::Null, Value::string));
+                            rebound.push(row);
+                        }
+                    }
+                    None => {
+                        let mut row = facade.make_value(BINDING)?;
+                        row.set("filePath", Value::string(&file));
+                        row.set("bindingSeqId", Value::string(format!("{first_seq}-{at}")));
+                        fill_binding(&mut row, binding);
+                        bound.push(row);
+                    }
+                }
             }
-            let mut binding = binding_of(&row).binding;
-            let before = binding.to_id.clone();
-            resolver.resolve_binding(&mut binding);
-            if binding.to_id != before {
-                row.set("toId", Value::string(&binding.to_id));
-                rebound.push(row);
-            }
+            unbound.extend(old);
         }
     }
     update_rows(facade, tx, moved, "reference");
     update_rows(facade, tx, rebound, "binding");
+    if !unbound.is_empty() || !bound.is_empty() {
+        let written = tx.run(TransactionAttribute::ForceNew, None, || {
+            for row in &unbound {
+                row.clone().delete(facade)?;
+            }
+            for row in &bound {
+                row.clone().create(facade)?;
+            }
+            Ok(())
+        });
+        if let Err(err) = written {
+            tracing::error!("Artifact index: the bindings of a transition's services were not written again: {err}");
+        }
+    }
     Ok(())
 }
 
@@ -2290,6 +2635,7 @@ fn artifact_of(row: &EntityValue) -> ArtifactRow {
         summary: text(row, "summary"),
         parent: (!parent.is_empty()).then_some(parent),
         origin: text(row, "origin"),
+        marks: text(row, "marks"),
     }
 }
 
@@ -2995,6 +3341,9 @@ mod parameter_tests;
 
 #[cfg(test)]
 mod kinds_tests;
+
+#[cfg(test)]
+mod derive_tests;
 
 #[cfg(test)]
 mod operation_tests;

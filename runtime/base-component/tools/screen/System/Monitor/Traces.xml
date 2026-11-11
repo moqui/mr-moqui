@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Traces" default-menu-index="4" menu-image="sym_o_timeline" menu-image-type="icon">
+    <parameter name="from"/><parameter name="thru"/><parameter name="queryString"/>
+    <parameter name="pageIndex"/><parameter name="pageSize"/><parameter name="order"/><parameter name="spanKind"/>
+    <parameter name="serviceName"/><parameter name="spanName"/><parameter name="statusCode"/><parameter name="minDuration"/><parameter name="maxDuration"/><parameter name="userId"/>
+    <transition name="traceDetail"><default-response url="//apps/system/Monitor/TraceDetail"/></transition>
+    <transition name="logs"><default-response url="//apps/system/Monitor/Logs"/></transition>
+    <actions><script><![CDATA[
+        from = from || 'now-7d'; thru = thru || 'now'
+        queryNotices = []
+        // Requests by default: their SERVER spans, one a trace for a request this service received.
+        const filters = spanKind === 'all' ? [] : [{field:{name:'kind',op:'eq',value:'SERVER'}}]
+        // The structured fields add to the query; a name with * matches as a wildcard.
+        if (serviceName) filters.push({field:{name:'service.name',op:'eq',value:String(serviceName)}})
+        if (spanName) filters.push({field:{name:'name',op:String(spanName).includes('*') ? 'wildcard' : 'eq',value:String(spanName)}})
+        if (statusCode) filters.push({field:{name:'status_code',op:'eq',value:String(statusCode)}})
+        if (userId) filters.push({field:{name:'user.id',op:'eq',value:String(userId)}})
+        const millis = (value, label) => {
+            if (value == null || String(value).trim() === '') return null
+            const number = Number(String(value).trim())
+            if (!Number.isFinite(number) || number < 0) { queryNotices.push(label+' is not a number of milliseconds and is ignored.'); return null }
+            return Math.round(number * 1000000)
+        }
+        const minimum = millis(minDuration, 'Minimum duration'), maximum = millis(maxDuration, 'Maximum duration')
+        if (minimum != null || maximum != null) filters.push({field:Object.assign({name:'duration_nano',op:'range'},minimum != null ? {gte:minimum} : {},maximum != null ? {lte:maximum} : {})})
+        serviceOptions = []
+        try {
+            const services = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:{datasetId:'otel_spans',from,thru,
+                aggregations:[{id:'service',type:'terms',role:'x-axis',params:{field:'service.name',size:200}}]}}).call()
+            const frame = (services.frames || [])[0] || {fields:[]}, field = (frame.fields || []).find(field=>field.name==='service')
+            serviceOptions = (field ? field.values : []).filter(value=>value != null).map(value=>({value:String(value),text:String(value)}))
+        } catch (error) { ec.logger.error('Trace service options failed: '+String(error)); queryNotices.push(String(error)) }
+        if (serviceName && !serviceOptions.some(item=>item.value===serviceName)) serviceOptions.unshift({value:serviceName,text:serviceName})
+        const result = ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters({
+            datasetId: 'otel_spans', from, thru, queryString: queryString || '', filters,
+            sort: [order === 'oldest' ? 'time' : '-time'], pageIndex: parseInt(pageIndex || '0', 10), pageSize: parseInt(pageSize || '50', 10)
+        }).call()
+        documentList = (result.hits || []).map(hit => Object.assign({documentId:hit.documentId || hit.id},hit.body || {}))
+        documentListCount = result.total || 0
+        documentListPageIndex = parseInt(pageIndex || '0', 10)
+        documentListPageSize = parseInt(pageSize || '50', 10)
+        documentListPageMaxIndex = Math.max(0,Math.ceil(documentListCount / documentListPageSize)-1)
+        documentListPageRangeLow = documentList.length ? documentListPageIndex*documentListPageSize+1 : 0
+        documentListPageRangeHigh = documentListPageIndex*documentListPageSize+documentList.length
+        queryNotices.push(...(result.notices || []).map(notice=>typeof notice==='string'?notice:notice.message || JSON.stringify(notice)))
+    ]]></script></actions>
+    <widgets>
+        <label text="Search traces by service, span name (* matches any text), status, duration in milliseconds and user, or with a query on any span field such as trace_id. Requests lists the SERVER span of each request; All spans lists every span. Missing spans may reflect sampling or telemetry loss." type="p"/>
+        <form-single name="SearchOptions" transition=".">
+            <field name="serviceName"><default-field title="Service"><drop-down allow-empty="true"><list-options list="serviceOptions" key="${value}" text="${text}"/></drop-down></default-field></field>
+            <field name="spanName"><default-field title="Name"><text-line size="40"/></default-field></field>
+            <field name="statusCode"><default-field title="Status"><drop-down allow-empty="true"><option key="ERROR" text="Error"/><option key="OK" text="OK"/><option key="UNSET" text="Unset"/></drop-down></default-field></field>
+            <field name="minDuration"><default-field title="Minimum duration (ms)"><text-line size="10"/></default-field></field>
+            <field name="maxDuration"><default-field title="Maximum duration (ms)"><text-line size="10"/></default-field></field>
+            <field name="userId"><default-field title="User"><text-line size="20"/></default-field></field>
+            <field name="queryString"><default-field title="Query"><text-line size="70"/></default-field></field>
+            <field name="from"><default-field title="From"><text-line default-value="now-7d"/></default-field></field>
+            <field name="thru"><default-field title="Through"><text-line default-value="now"/></default-field></field>
+            <field name="spanKind"><default-field title="Spans"><drop-down><option key="requests" text="Requests"/><option key="all" text="All spans"/></drop-down></default-field></field>
+            <field name="order"><default-field title="Order"><drop-down><option key="newest" text="Newest first"/><option key="oldest" text="Oldest first"/></drop-down></default-field></field>
+            <field name="pageSize"><default-field title="Page size"><drop-down><option key="50"/><option key="100"/><option key="250"/></drop-down></default-field></field>
+            <field name="find"><default-field><submit text="Search"/></default-field></field>
+            <field-layout>
+                <field-group title="Find requests and spans">
+                    <field-row><field-ref name="serviceName"/><field-ref name="spanName"/><field-ref name="statusCode"/></field-row>
+                    <field-row><field-ref name="minDuration"/><field-ref name="maxDuration"/><field-ref name="userId"/></field-row>
+                    <field-ref name="queryString"/>
+                </field-group>
+                <field-group title="Time range and results">
+                    <field-row><field-ref name="from"/><field-ref name="thru"/><field-ref name="spanKind"/></field-row>
+                    <field-row><field-ref name="order"/><field-ref name="pageSize"/></field-row>
+                </field-group>
+                <field-row-big><field-ref name="find"/></field-row-big>
+            </field-layout>
+        </form-single>
+        <section-iterate name="QueryNotices" list="queryNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
+        <form-list name="TraceList" list="documentList" skip-form="true" show-page-size="true" select-columns="true">
+            <field name="start"><default-field title="Started"><display format="yyyy-MM-dd HH:mm:ss.SSS"/></default-field></field>
+            <field name="name"><default-field><display/></default-field></field>
+            <field name="serviceName"><default-field title="Service"><display text="${context['service.name'] || ''}"/></default-field></field>
+            <field name="kind"><default-field><display/></default-field></field>
+            <field name="status_code"><default-field title="Status"><display/></default-field></field>
+            <field name="duration_nano"><default-field title="Duration"><display text="${ec.l10n.format(Number(duration_nano || 0)/1000000,'0.00')} ms"/></default-field></field>
+            <field name="userId"><default-field title="User"><display text="${context['user.id'] || ''}"/></default-field></field>
+            <field name="trace_id"><default-field title="Trace"><link url="traceDetail" text="${trace_id}" link-type="anchor"><parameter name="traceId" from="trace_id"/><parameter name="from"/><parameter name="thru"/></link></default-field></field>
+            <field name="logs"><default-field title="Logs"><link url="logs" text="Logs" link-type="anchor" parameter-map="{queryString:'trace_id:'+trace_id,from:from,thru:thru}"/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

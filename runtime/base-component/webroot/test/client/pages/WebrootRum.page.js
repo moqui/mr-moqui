@@ -132,7 +132,7 @@ test("with RUM on, a request carries a traceparent and its CLIENT span is posted
             script.src = "/js/WebrootRum.js?rum-on"; script.onload = resolve; script.onerror = reject;
             document.head.appendChild(script);
         });
-        const result = await moqui.request("/apps/system/dashboard?x=1", { method: "get" });
+        const result = await moqui.request("/apps/system/Home?x=1", { method: "get" });
         assert.match(result.options.headers.traceparent, /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
         moqui.sessionToken = "token-1";
         moqui.rum.flush();
@@ -143,7 +143,7 @@ test("with RUM on, a request carries a traceparent and its CLIENT span is posted
         const span = body.resourceSpans[0].scopeSpans[0].spans.find((item) => item.name === "GET");
         assert.equal(span.kind, 3);
         assert.equal(span.traceId + "-" + span.spanId, result.options.headers.traceparent.slice(3, 52));
-        assert.ok(span.attributes.some((item) => item.key === "url.path" && item.value.stringValue === "/apps/system/dashboard"));
+        assert.ok(span.attributes.some((item) => item.key === "url.path" && item.value.stringValue === "/apps/system/Home"));
         moqui.rum.error(new TypeError("rum fixture"), "test");
         moqui.rum.flush();
         const logs = sent.find((item) => item.url === "/rum/logs");

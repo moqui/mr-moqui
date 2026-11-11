@@ -54,7 +54,7 @@ agentSpec({
     user: "john.doe",
     tasks: [{
         name: "ping",
-        start: "/apps/system/dashboard",
+        start: "/apps/system/Home",
         say: "Say pong.",
         expect: { answer: /pong/, noWrite: true },
     }],
@@ -262,7 +262,7 @@ fn live_on_the_fake(factory: &Arc<ExecutionContextFactory>, out: &std::path::Pat
                 Step::Tool {
                     id: "s1".to_string(),
                     name: "screen".to_string(),
-                    arguments: r#"{"go": "/apps/system/dashboard"}"#.to_string(),
+                    arguments: r#"{"go": "/apps/system/Home"}"#.to_string(),
                     pieces: 2,
                 },
                 Step::Finish("tool_calls".to_string()),

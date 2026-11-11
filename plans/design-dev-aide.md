@@ -732,9 +732,16 @@ the command until then.
     reaches one artifact; each segment is a subscreen (a `SubscreensItem` row, else a conf mount, else a
     `subscreens-item` of the screen or of a `screen-extend` of it, else the directory subscreen), entered through a
     `no-sub-path` item that holds it (the item's summary ends `, no-sub-path`), or a transition, which ends the path
-    (the rest is extra path); `Name.<mode>` is the screen or transition `Name`; `/...` is walked from the webroot
-    screen, and `//...` is searched for under it as Moqui's `findSubscreenPath` searches. An expression, a URL with a
-    scheme, `.`, and a URL that is only a query or a fragment make none; a path that cannot be walked stays unresolved;
+    (the rest is extra path); `Name.<mode>` is the screen or transition `Name`; at a screen with `allow-extra-path`
+    (its artifact's mark) a segment it has no child for ends the path there, the rest extra path, as Moqui's walk ends
+    (a sparse `//...` search is as before); a transition of several methods is the one of the request's method, else
+    the one of any method, else the first: `get` for a link, a response and a default item, `post` for a form; `/...` is walked from
+    the webroot screen, and `//...` is searched for under it as Moqui's `findSubscreenPath` searches. An expression, a
+    URL with a scheme, `.`, and a URL that is only a query or a fragment make none; a path that cannot be walked stays
+    unresolved;
+  - a `link`, response or form naming a transition of its own screen is a `transition` reference, and a subscreen of
+    that name the file does not show (a directory subscreen, a conf mount, a row) comes before it: the reference
+    resolves to the screen, and is walked again when the screens change;
   - a screen `Foo/Bar.xml` beside `Foo.xml` is a directory subscreen of it: a `subscreens-item` reference from
     `screen:<Foo.xml>` to the screen, read from `Bar.xml`, with origin `directory` (resolved while `Foo.xml` itself is
     there; an explicit item of the same name is the one Moqui uses);
@@ -751,23 +758,47 @@ the command until then.
   - a screen's default subscreen (its `subscreens@default-item`, the conf's `default-subscreen`, a row's `makeDefault`)
     is a `screen-path` reference from the screen with `refType` `default-item`, and each `conditional-default` one
     with `refType` `conditional-default`: a path that ends at the screen goes on through it;
-  - when an update changes the screens, subscreens items or transitions (their ids and summaries differ before and
-    after it), every `screen-path` and directory reference of the other files, and every form field's binding into a
-    transition by its path, is walked again (one read of each, lookups in memory), so a renamed or moved item, an item
-    over a directory subscreen, or a transition's new service moves what goes through it; a build that read every file
-    walked each as it read it;
+  - when an update changes the screens, subscreens items or transitions (their ids, summaries and marks differ before
+    and after it: a transition's calls and field-maps, a screen's `allow-extra-path`), every `screen-path`, directory
+    and same-screen `transition` reference of the other files, and every form field's binding by a path, is walked
+    again (one read of each, lookups in memory), so a renamed or moved item, an item over a directory subscreen, or a
+    transition's new service moves what goes through it; a build that read every file walked each as it read it;
   - each field of a form the user fills (not one with only a `header-field` or a `submit`) is a binding from the form
-    to an in-parameter of each service the form's transition passes the request's parameters to: its `service-call`
-    with no `in-map`, `in-map="true"` or `in-map="context"`, and each `service-call` of its actions with
+    to an in-parameter of each service the transition it posts to passes the request's parameters to: its
+    `service-call` with no `in-map`, `in-map="true"` or `in-map="context"`, and each `service-call` of its actions with
     `in-map="true"` or `in-map="context"` (the transition's summary says them: `calls <service>`, `own in-map`,
-    `request to <service>`). The parameter is the field's name, or the `field-name` of a `field-map` whose `from` is
-    the field's name (a call with an `in-map` of its own too). `sourceKind` is `form-field`, the field's `form-field:`
-    id in `sourceId`. A form whose transition is a path (`../Tasks/save`) binds each field to the first service the
-    transition it reaches passes the request to; the binding keeps the path's id in `toPath` and is resolved again with
-    the screen paths, and that transition's `field-map`s are not seen. Not yet:
-    the fields of `auto-fields-service`, `auto-fields-entity` and a form's `extends`, which the index does not expand.
-    With the transition's parameters and `field-map` bindings and the parameters' defaults, a reader checks that each
-    required in-parameter is given.
+    `request to <service>`; its marks list each call with its `field-map`s). The parameter is the field's name, or the
+    `field-name` of a `field-map` whose `from` is the field's name (a call with an `in-map` of its own too).
+    `sourceKind` is `form-field`, the field's `form-field:` id in `sourceId`. The binding is written by the path the
+    form posts to (a transition of its own screen is a path of its name), `parameter:screen-path:<screen>#<path>@in.<field>`,
+    and the resolver makes one row for each service the transition reached takes it in, each with its slot in
+    `toPath` (`<id>#<k>`), and one naming the path while it reaches none; when the screens change the slots are
+    walked again, added and removed;
+  - what a service or form declares to be filled in from elsewhere is expanded into rows of its own file, with the
+    origin it comes from (`auto-parameters`, `implements`, `auto-fields-entity`, `auto-fields-service`, `extends`), as
+    Moqui fills it in: a service's parameters from its implemented services (first; a `required="disabled"` one left
+    out, `required` set when the `implements` says) and its `auto-parameters` (the entity's fields by `include` and
+    `exclude`; with no entity the implementing service's noun), merged by name as Moqui's `merge_param` merges, each
+    setting only what it gives (a declared parameter's row then says the merged type and `required`); a form's fields
+    from the form it extends (and the fields `screen-extend`s add to that form; a `DbForm` it extends is left out),
+    its `auto-fields-entity` (`all`, `pk` or `nonpk`, `exclude`, no `lastUpdatedStamp`, a form-list without the very
+    long text types) and `auto-fields-service` (`in`, `out` or `all`; an entity-auto name the noun's fields), its own
+    fields winning (one with no widget, or an empty `default-field`, keeps the widget and binding of the field it
+    merges into), each field with its binding. What each declares is kept in the artifact's marks
+    (`DevArtifact.marks`), by definition (of a service defined twice, the file that sorts last); the expansions are
+    made from the declarations alone, never from rows expanded before, and when an update changes an entity's fields,
+    a service's parameters or a form's fields, every service and form that reads them, in turn, is expanded again, and
+    its rows written again in its file when they differ (a write that fails is written again at the next update).
+    Not yet: a view entity's `alias-all` aliases and an alias's key and type (its fields are its `alias` elements, none
+    a key); a declared parameter written before an `auto-parameters` element of its name is merged as if after it;
+  - an entity-auto name no file defines a service for is a derived service of the entity (`derived:entity-auto`) with
+    the in and out parameters its runner takes;
+  - `moqui check --extensions` warns of a form whose transition calls a service with a required in-parameter that has
+    no default and that nothing the form posts gives (`reference.required`): no field, `field-map`, `parameter` of the
+    transition or its screen, `hidden-parameters`, or the row ids of a `row-selection` it is in; a form with
+    `pass-through-parameters`, one whose transition has a call with an `in-map` of its own, and a service the index
+    knows no parameters of are not checked. An `in-map` expression or a parameter of the URL may still give it.
+  - Not yet: the bindings of a REST method into its service, and artifact groups' members.
 - **Observed calls.** On a dev instance the artifact stack (`core/context/artifact.rs`) counts each pair of a frame
   and the frame pushed on it (screen, transition, service, entity): what static reading cannot see (a name made at run
   time) and what really runs. The counts are kept per thread and merged each second, so a push costs one map update,
@@ -1524,21 +1555,23 @@ are independent of P4 and may run beside it.
   the loader or whose id is longer than 255 characters is not indexed. An ECA rule's key is its `id`, else its
   `rule-name`, else its target and event (`seca:<file>#<service>:<when>`, `eeca:<file>#<entity>:create+update`), with
   `:2`, `:3` from the second rule on the same one. A `service-include` is a `service:` artifact by the including file's
-  name, summary `includes <service>`, with a `service-include` reference to the included service. A `link` or response URL is a reference when it
-  is a transition of the same screen. Parameters have IDs `parameter:<owner>@<in|out|path>.<dotted-name>`;
+  name, summary `includes <service>`, with a `service-include` reference to the included service. A `link`, a response URL and a form's
+  `transition` are references since: a transition of the same screen, else a screen path (§7.1). Parameters have IDs `parameter:<owner>@<in|out|path>.<dotted-name>`;
   their parent is the owner or enclosing parameter, and their summary records type and requiredness. Service in/out,
   screen and transition inputs, and REST path parameters are indexed. REST methods are `rest:<path>:<method>` under
   their resource; path variables appear as `{name}` and are indexed as each method’s `@path` parameters. Transitions are
   `transition:<screen>#<name>:<method>` (lowercase, default `any`). Unknown-method transition references reach every
   overload; explicit methods prefer their overload then `any`. Field maps reference the called service's input
-  parameter; missing declarations remain unresolved, and so do the field maps to a service whose inputs are not
-  written out in it (entity-auto, `auto-parameters`, `implements`), for now. A parameter's name is its owner's with the
+  parameter; missing declarations remain unresolved. A service whose inputs are not written out in it has them since:
+  an entity-auto name's derived service, and the parameters of `auto-parameters` and `implements` (§7.1). A
+  parameter's name is its owner's with the
   direction (`a.B.save#Order@in.quantity`), so a find of `quantity` gives an entity's field first; refs of a service or a
   caller leave out the field maps, which refs of the parameter list. An observed call names a transition without its
   method and counts on its `any` overload, else its first. Service parameters are not copied to REST methods or transitions;
-  implicit parameter passing (REST to service, transition to service, and `in-map="context"`) is a later gap. Relative
-  screen paths and artifact group patterns are not indexed yet. Screen anchors are every named widget outside a form,
-  as `check --extensions` read them before.
+  what passes from a transition to its services (the request with no `in-map`, `in-map="true"` or `"context"`, and
+  the field-maps) is read since, as form fields' bindings (§7.1); from a REST method to its service is a later gap.
+  Screen paths, relative and absolute, are walked since (§7.1); artifact group patterns are not indexed yet. Screen
+  anchors are every named widget outside a form, as `check --extensions` read them before.
 - **When.** A `moqui run` server builds it in the background at start (`Artifact index built in …` in the log); a test's
   server builds it at first use, or with `rebuild#ArtifactIndex`. Each reload's files are read again through
   `on_reload`; a pull reloads the files it changed at once and answers the site's extensions it broke.
@@ -1637,7 +1670,8 @@ are independent of P4 and may run beside it.
   as `data-m-src` (a `template` passed over), and answers `frame-ancestors 'self'`; MoquiLib carries `moquiAide` from a
   frame's URL on its requests as it does `moquiPreview`. Stamped: the containers, boxes, rows and columns, panels,
   dialogs, menus, trees, links, images, labels and the other widgets that write an element of their own, forms and their
-  fields; a section writes none and is not. DbForm fields are not stamped yet, and the server-static path neither.
+  fields; a section writes none and is not. A DbForm's fields are stamped `dbform:<formId>` (see the later passes
+  below), and a server-static template is built with stamping paused.
 - **The canvas** renders the tab's buffers through F14: `put#CanvasBuffer` keeps a user's unsaved texts under a buffer
   id, and the frame's `buffer:<id>` token renders them (an empty buffer renders the files), under the read fence. A
   frame whose source changes no longer warns of the requests it cut off.
@@ -1891,7 +1925,18 @@ the `.qvue` buffer, not an unsaved sibling XML.
   the `screen-extend` merges of F16 (prepend and append, a field into a layout, a column after another, two
   components' order); the restart re-exec; the model swap under concurrent finds (when F5 lands); the lossless XML
   vectors; the digest of every XSD; the reference rules on fixture files; the index's references, origins and
-  extension anchors, its per-file replacement after a reload, and that a restart keeps it.
+  extension anchors, its per-file replacement after a reload, and that a restart keeps it; the screen paths
+  (`index::extract::tests`: items, directories, mounts, `no-sub-path`, `allow-extra-path`, modes, sparse search); a
+  project's index with its components' conf mounts (`index::tests`); the expansions (`index::derive_tests`:
+  `auto-parameters` and `implements` merged as Moqui merges them, `auto-fields` and `extends` with their bindings, a
+  declared field with no widget, a path form bound to each service by its field-maps, a link to a `get` and a form to a
+  `post` transition, a directory subscreen before a transition of its name, a service defined twice, the field order
+  of an entity read again, readers of an entity by its short name, and `reference.required`); on a running server
+  (`it::devaide::the_index_follows_reloads_and_extensions`: a conf reload's mount and a `SubscreensItem` row resolving
+  `/apps/...` at once with no build, `allow-extra-path` turned on and off, a directory subscreen added beside a
+  transition, two forms of a screen posting to one path; `it::devaide::the_index_rows_derive_entity_auto_services`: an
+  entity's new field reaching a service's `auto-parameters` and a form's `auto-fields-service` in other files).
+  Not tested: an expansion's write failing and written again at the next update, which needs a fault hook.
 - **Client, in the page** (`moqui test-client runtime/dev-component/dev-aide --offline`, headless Chromium; node is not
   a test dependency): the `xml-op` client (and the WASM module when built) against the vectors; the outline is the
   server's (`get#XmlOutline`, P5); the browser's layout; the composer's sentence table against the digest; the `.qvue`

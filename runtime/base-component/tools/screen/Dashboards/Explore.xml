@@ -24,7 +24,7 @@
             if (String(queryString || '').trim()) ec.user.setPreference('REPORT_HISTORY_'+dataset,JSON.stringify([queryString,...history.filter(query=>query!==queryString)].slice(0,20)))
         ]]></script></actions><default-response url="." parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:filtersJson}"/>
     </transition>
-    <transition name="trace"><default-response url="//apps/monitor/TraceDetail"/></transition>
+    <transition name="trace"><default-response url="//apps/system/Monitor/TraceDetail"/></transition>
     <transition name="user"><default-response url="//apps/system/Security/UserAccount/UserAccountDetail"/></transition>
     <transition name="context"><default-response url="${ec.context.get('reportLinks')?.logContext ?? '//apps/dashboards/LogContext'}"/></transition>
     <transition name="visit"><default-response url="//apps/system/Visit/VisitList"/></transition>

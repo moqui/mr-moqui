@@ -19,13 +19,13 @@ body.m-theme-green-screen { --m-card-radius:0; --m-btn-radius:0; --m-card-shadow
 
 /* boxes: the panels, cards, tables, menus and dialogs are boxes of double rules with square corners. The corners are square only
    while the user has not asked for more rounded ones in Appearance (m-radius-round), which wins as in WebrootVue.qvt.css. */
-body.m-theme-green-screen:not(.m-radius-round) :is(.m-container-box, .m-number-card, .m-card, .q-table__card, .q-card, .q-menu, .q-tooltip,
+body.m-theme-green-screen:not(.m-radius-round) :is(.m-container-box, .m-number-card, .m-nav-card, .m-card, .q-table__card, .q-card, .q-menu, .q-tooltip,
     .q-chip, .q-badge, .q-btn-group, .q-btn-toggle, .q-linear-progress, .q-banner, .q-notification, .q-field__control) { border-radius:0; }
 /* (a pseudo-element cannot be in :is) */
 body.m-theme-green-screen:not(.m-radius-round) .q-field--outlined .q-field__control::before,
 body.m-theme-green-screen:not(.m-radius-round) .q-field--outlined.q-field--focused .q-field__control::after,
 body.m-theme-green-screen:not(.m-radius-round) .q-btn--outline::before { border-radius:0; }
-body.m-theme-green-screen :is(.m-container-box, .m-number-card, .m-card, .q-table__card) { border:3px double var(--m-border); }
+body.m-theme-green-screen :is(.m-container-box, .m-number-card, .m-nav-card, .m-card, .q-table__card) { border:3px double var(--m-border); }
 body.m-theme-green-screen :is(.q-menu, .q-dialog .q-card, .q-tooltip) { border:3px double var(--m-border); box-shadow:var(--m-gs-window-shadow); }
 body.m-theme-green-screen .q-tooltip { background:var(--m-panel-bg); color:var(--m-text); border-width:1px; border-style:solid; }
 body.m-theme-green-screen .q-layout .q-drawer--left { border-right:3px double var(--m-border); }

@@ -299,7 +299,7 @@
         const st = {};
         const saved = [];
         const reset = () => {
-            Object.assign(st, { formName: "", fieldForm: "", owner: "", inForm: false, inRow: false, inCard: false, inList: false, listName: "", multi: false, accordion: "", accIndex: 0, accActive: "", selectedForm: false });
+            Object.assign(st, { formName: "", fieldForm: "", owner: "", inForm: false, inRow: false, inCard: false, inList: false, listName: "", multi: false, accordion: "", accIndex: 0, accActive: "", selectedForm: false, textLinks: false });
             saved.length = 0;
         };
         reset();
@@ -1000,8 +1000,9 @@
                 const href = dynamic ? (noParam ? dynamicPath(n, "url") : urlOfPath(n, dynamicPath(n, "url"), null, null)) :
                     found ? (noParam ? sq(navPath) : urlOf(n, navPath, null, navParams)) : exp(at(n, "url"), n, "url", false);
                 const tag = toScreen ? "m-link" : "a";
-                // A screen link in a form-list cell is text (as is link-type anchor anywhere); the others are tonal buttons.
-                const textLink = linkType === "anchor" || (st.inList && linkType !== "anchor-button");
+                // A screen link in a form-list cell is text (as is link-type anchor anywhere, and every link of a nav-card); the
+                // others are tonal buttons.
+                const textLink = st.textLinks || linkType === "anchor" || (st.inList && linkType !== "anchor-button");
                 const attrs = Object.assign({ ":href": href, ":disable": disable, ":aria-label": accessibleLabel, target: at(n, "target-window") || null, "load-id": at(n, "dynamic-load-id") || null, class: textLink ? cls("m-link-text", style) : null }, confirmAttr);
                 if (!toScreen) {
                     attrs[":href"] = "(" + disable + ")?undefined:(" + href + ")";
@@ -2239,14 +2240,7 @@
 
         // A number-card as ScreenQvt.js writes it, its attributes bound over the scope as a label's text is: the title localized,
         // the value, delta and icon expanded, the link a screen link (a plain anchor, external, to something other than a screen).
-        const numberCard = (n) => {
-            const out = {};
-            plainAttr(out, "id", at(n, "id"), n);
-            textAttr(out, "title", at(n, "title"), n, true);
-            plainAttr(out, "value", at(n, "value"), n);
-            plainAttr(out, "delta", at(n, "delta"), n);
-            if (at(n, "delta-good")) out["delta-good"] = at(n, "delta-good");
-            plainAttr(out, "icon", at(n, "icon"), n);
+        const cardLink = (out, n) => {
             if (at(n, "link") && isDynamic(at(n, "link"))) {
                 // known only in the browser: resolved against this screen there; m-link follows an external one as an anchor
                 out[":href"] = dynamicPath(n, "link");
@@ -2258,9 +2252,38 @@
                 out[":href"] = found ? urlOf(n, navPath, null, navParams) : exp(at(n, "link"), n, "link", false);
                 if (!(found && found.screenUrl)) out.external = true;
             }
+        };
+        const numberCard = (n) => {
+            const out = {};
+            plainAttr(out, "id", at(n, "id"), n);
+            textAttr(out, "title", at(n, "title"), n, true);
+            plainAttr(out, "value", at(n, "value"), n);
+            plainAttr(out, "delta", at(n, "delta"), n);
+            if (at(n, "delta-good")) out["delta-good"] = at(n, "delta-good");
+            plainAttr(out, "icon", at(n, "icon"), n);
+            cardLink(out, n);
             if (at(n, "size")) out.size = at(n, "size");
             plainAttr(out, "class", at(n, "style"), n);
             w(withCondition(n, "<m-number-card" + A(out) + "></m-number-card>\n"));
+        };
+        // A nav-card as ScreenQvt.js writes it, bound over the scope as a number-card: the title and the text localized, the link
+        // a screen link; its child links follow in the default slot, each a text link (st.textLinks), and a condition is a v-if
+        // around the card.
+        const navCardOpen = (n) => {
+            const out = {};
+            plainAttr(out, "id", at(n, "id"), n);
+            textAttr(out, "title", at(n, "title"), n, true);
+            textAttr(out, "text", at(n, "text"), n, true);
+            plainAttr(out, "icon", at(n, "icon"), n);
+            cardLink(out, n);
+            if (at(n, "size")) out.size = at(n, "size");
+            plainAttr(out, "class", at(n, "style"), n);
+            w((at(n, "condition") ? '<template v-if="' + e(X(at(n, "condition"), n, "condition")) + '">' : "") + "<m-nav-card" + A(out) + ">");
+            st.textLinks = true;
+        };
+        const navCardClose = (n) => {
+            st.textLinks = false;
+            w("</m-nav-card>" + (at(n, "condition") ? "</template>" : "") + "\n");
         };
         // status-bar as ScreenQvt.js writes it, the attributes bound over the scope; the browser asks the root screen's statusBar
         // transition for the flow of the status (m-status-bar barUrl), as the data is not in the template.
@@ -2325,7 +2348,7 @@
             containerDialog, dynamicDialog, dynamicContainer, tree, subscreensPanel, subscreensTabs, image, label: labelWidget,
             link: (n, inField) => link(n, inField), editable, formSingle, formList, rowOpen, colOpen, fieldGroup, fieldGroupClose, quasarColor,
             split, js: js_, widgetFns, imageTag, xmlCondition, sectionPaginate, sectionIterateOpen, buttonMenuOpen, buttonMenuItem, buttonMenuClose, screenContext,
-            numberCard, dashboardOpen, chatter, recordFiles, splitOpen, htmlView, markdownView, statusBar,
+            numberCard, navCardOpen, navCardClose, dashboardOpen, chatter, recordFiles, splitOpen, htmlView, markdownView, statusBar,
             codeView, reportWidget
         };
         Object.defineProperty(globalThis, "$mqQvtS", { value: h, configurable: true });
@@ -2479,6 +2502,8 @@
 
     const linkMacro = stmt((node) => `$s.link(${wlit(node, true)}, ${!!(node.parent && node.parent.name.endsWith("-field"))});\n`);
     const widget = (name, withChildren) => stmt((node) => call(name, node, withChildren));
+    // A nav-card: the card, then its child links in its default slot.
+    const navCardMacro = stmt((node, children) => `$s.navCardOpen(${wlit(node, false)});\n${children}$s.navCardClose(${wlit(node, false)});\n`);
     const noteMacro = (kind, what) => stmt((node) => `sri.staticNote(${lit(kind)}, ${lit(node.name)}, ${lit(what + " " + (attr(node, "name") || attr(node, "location")) + " was not resolved")});\n`);
 
     const macros = Object.assign({}, noops(S.allElements), noops(["condition", "actions"]), {
@@ -2534,6 +2559,7 @@
         "report-embed": stmt(() => { throw new Error("report-embed renders data for the viewer, which a static template does not hold"); }),
         "dashboard": dashboardMacro,
         "number-card": widget("numberCard", false),
+        "nav-card": navCardMacro,
         "status-bar": widget("statusBar", true),
         "chatter": widget("chatter", false),
         "record-files": widget("recordFiles", false),

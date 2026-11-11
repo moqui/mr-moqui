@@ -573,13 +573,20 @@ const UP_APP: &str = r#"<screen><subscreens>
 const UP_LINKS: &str = r#"<screen><widgets>
     <link url="../Other" text="Other"/><link url="../Detail" text="Detail"/><link url="../Mounted" text="Mounted"/>
     <form-single name="Save" transition="../Other/save"><field name="thingId"><default-field><text-line/></default-field></field></form-single>
+    <form-single name="Again" transition="../Other/save"><field name="thingId"><default-field><text-line/></default-field></field></form-single>
 </widgets></screen>"#;
 /// A screen whose transition `save` passes the request to `service`.
 fn up_save(service: &str) -> String {
     format!(
-        r#"<screen><transition name="save"><service-call name="{service}"/><default-response url="."/></transition></screen>"#
+        r#"<screen><transition name="save"><service-call name="{service}"/><default-response url="."/></transition>
+    <widgets><link url="save" text="Save"/>
+        <form-single name="Edit" transition="save"><field name="thingId"><default-field><text-line/></default-field></field></form-single>
+    </widgets></screen>"#
     )
 }
+/// A path past the end of a screen that has no child of its name.
+const DEEP_LINKS: &str =
+    r#"<screen><widgets><link url="/apps/UpApp/Detail/more/path" text="Past Detail"/></widgets></screen>"#;
 /// Paths through mounts of the apps root that the conf and a `SubscreensItem` row add while the server runs.
 const APPS_LINKS: &str = r#"<screen><widgets>
     <link url="/apps/UpApp/Detail" text="By the conf"/><link url="/apps/UpRow/Detail" text="By a row"/>
@@ -662,6 +669,7 @@ fn the_index_follows_reloads_and_extensions() {
         ),
         ("component/my-site/MoquiConf.xml", SITE_MOUNTS),
         ("component/upstream-app/screen/Elsewhere/Apps.xml", APPS_LINKS),
+        ("component/upstream-app/screen/Elsewhere/Deep.xml", DEEP_LINKS),
     ];
     let gate = start_with_files_and_links(
         "dev-aide-index",
@@ -766,7 +774,7 @@ fn the_index_follows_reloads_and_extensions() {
     assert_eq!(listed[0]["refType"], "anchor");
     // and back: the anchor resolves again
     std::fs::write(&detail, UPSTREAM_SCREEN).unwrap();
-    moqui_devkit::reload_paths(&factory, &[detail]);
+    moqui_devkit::reload_paths(&factory, std::slice::from_ref(&detail));
     let fixed = call(
         &factory,
         "john.doe",
@@ -831,15 +839,21 @@ fn the_index_follows_reloads_and_extensions() {
             ("../Other", "Elsewhere/Other.xml"),
         ])
     );
-    // the form's field flows into the service of the transition its path reaches
-    let bound = || {
+    // the form's field flows into the service of the transition its path reaches; another form of the screen posting
+    // a field of that name to that path has its own binding, walked again as the first's
+    let bound_of = |form: &str| {
         let rows = moqui_devkit::index::bindings(
             &factory,
-            Some("form:component://upstream-app/screen/UpApp/Links.xml#Save"),
+            Some(&format!("form:component://upstream-app/screen/UpApp/Links.xml#{form}")),
             None,
         )
         .unwrap();
         rows.iter().map(|row| row.binding.to_id.clone()).collect::<Vec<_>>()
+    };
+    let bound = || {
+        let save = bound_of("Save");
+        assert_eq!(bound_of("Again"), save);
+        save
     };
     assert_eq!(bound(), ["parameter:service:mysite.Things.get#Thing@in.thingId"]);
     let up_app = gate.runtime.join("component/upstream-app/screen/UpApp.xml");
@@ -1029,6 +1043,72 @@ fn the_index_follows_reloads_and_extensions() {
     );
     // the conf's and the row's updates, not a build
     assert_eq!(moqui_devkit::index::builds(&factory), builds);
+
+    // a screen's allow-extra-path: a path past it, where it has no child of the name, ends at it, and not once it is off
+    let out_of = |screen: &str| -> Vec<(String, String)> {
+        let out = call(
+            &factory,
+            "john.doe",
+            &format!("{DT}get#ArtifactRefs"),
+            &[("artifactId", screen), ("direction", "out")],
+        )
+        .unwrap();
+        json(&out, "refs")
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["refType"] == "link")
+            .map(|r| {
+                (
+                    r["toName"].as_str().unwrap().to_string(),
+                    r["toId"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect()
+    };
+    let deep = "screen:component://upstream-app/screen/Elsewhere/Deep.xml";
+    let past = || out_of(deep).first().map(|(_, to)| to.clone()).unwrap_or_default();
+    assert_eq!(past(), "");
+    let toggle = |on: bool| {
+        let text = if on {
+            UPSTREAM_SCREEN.replacen("<screen>", r#"<screen allow-extra-path="true">"#, 1)
+        } else {
+            UPSTREAM_SCREEN.to_string()
+        };
+        std::fs::write(&detail, text).unwrap();
+        moqui_devkit::reload_paths(&factory, std::slice::from_ref(&detail));
+    };
+    toggle(true);
+    assert_eq!(past(), format!("{up}UpApp/Detail.xml"));
+    toggle(false);
+    assert_eq!(past(), "");
+
+    // a directory subscreen named like a transition of its screen: the screen's link and form by that name reach it, as
+    // Moqui walks the path, though the screen's file is not read again
+    let other = "component://upstream-app/screen/Elsewhere/Other.xml";
+    let edit_bound = || {
+        moqui_devkit::index::bindings(&factory, Some(&format!("form:{other}#Edit")), None)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.binding.to_id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        out_of(&format!("screen:{other}")),
+        [("save:any".to_string(), format!("transition:{other}#save:any"))]
+    );
+    assert_eq!(edit_bound(), ["parameter:service:mysite.Things.get#Thing@in.thingId"]);
+    let beside = gate
+        .runtime
+        .join("component/upstream-app/screen/Elsewhere/Other/save.xml");
+    std::fs::create_dir_all(beside.parent().unwrap()).unwrap();
+    std::fs::write(&beside, "<screen/>").unwrap();
+    moqui_devkit::reload_paths(&factory, std::slice::from_ref(&beside));
+    assert_eq!(
+        out_of(&format!("screen:{other}")),
+        [("save:any".to_string(), format!("{up}Elsewhere/Other/save.xml"))]
+    );
+    assert_eq!(edit_bound(), [format!("parameter:screen-path:{other}#save@in.thingId")]);
 }
 
 const AUTO_ENTITIES: &str = r#"<entities>
@@ -1047,6 +1127,17 @@ const AUTO_CALLS: &str = r#"<services>
     </service>
 </services>
 "#;
+/// A service whose parameters are the entity's fields, and a form whose fields are that service's: expanded in their
+/// own files, and expanded again when the entity changes.
+const AUTO_SAVE: &str = r#"<services>
+    <service verb="save" noun="Widget"><in-parameters><auto-parameters entity-name="acme.Widget" include="nonpk"/></in-parameters></service>
+</services>
+"#;
+const AUTO_SCREEN: &str = r#"<screen>
+    <transition name="save"><service-call name="acme.SaveServices.save#Widget"/><default-response url="."/></transition>
+    <widgets><form-single name="Edit" transition="save"><auto-fields-service service-name="acme.SaveServices.save#Widget"/></form-single></widgets>
+</screen>
+"#;
 const AUTO_DEFINED: &str = r#"<services>
     <service verb="create" noun="acme.Widget"><in-parameters><parameter name="only"/></in-parameters></service>
 </services>
@@ -1064,6 +1155,8 @@ fn the_index_rows_derive_entity_auto_services() {
         ("component/acme-site/component.xml", r#"<component name="acme-site"/>"#),
         ("component/acme-site/entity/AcmeEntities.xml", AUTO_ENTITIES),
         ("component/acme-site/service/acme/WidgetServices.xml", AUTO_CALLS),
+        ("component/acme-site/service/acme/SaveServices.xml", AUTO_SAVE),
+        ("component/acme-site/screen/Widgets.xml", AUTO_SCREEN),
     ];
     let gate = crate::common::start_with_files("dev-aide-derived", None, &[("instance_purpose", "dev")], &files);
     let factory = Arc::clone(gate.server.factory());
@@ -1116,6 +1209,36 @@ fn the_index_rows_derive_entity_auto_services() {
         Some("parameter:service:acme.WidgetServices.make#Widget@in.name")
     );
 
+    // the parameters of auto-parameters and the fields of auto-fields-service, in their own files, the fields bound
+    let form = "form:component://acme-site/screen/Widgets.xml#Edit";
+    let expanded = |factory: &Arc<ExecutionContextFactory>, id: &str| {
+        index::describe(factory, id)
+            .unwrap()
+            .map(|row| (row.origin, row.path.rsplit('/').next().unwrap_or_default().to_string()))
+    };
+    let save_param = "parameter:service:acme.SaveServices.save#Widget@in.";
+    assert_eq!(
+        expanded(&factory, &format!("{save_param}widgetName")),
+        Some(("auto-parameters".to_string(), "SaveServices.xml".to_string()))
+    );
+    assert_eq!(
+        expanded(
+            &factory,
+            "form-field:component://acme-site/screen/Widgets.xml#Edit@widgetName"
+        ),
+        Some(("auto-fields-service".to_string(), "Widgets.xml".to_string()))
+    );
+    let form_bound = |factory: &Arc<ExecutionContextFactory>| -> Vec<String> {
+        let mut ids: Vec<String> = index::bindings(factory, Some(form), None)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.binding.to_id)
+            .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(form_bound(&factory), [format!("{save_param}widgetName")]);
+
     // a field added: the derived rows are made again
     let entities = site.join("entity/AcmeEntities.xml");
     std::fs::write(
@@ -1127,6 +1250,15 @@ fn the_index_rows_derive_entity_auto_services() {
     assert_eq!(
         parameters(&factory),
         ["in.color", "in.widgetId", "in.widgetName", "out.widgetId"]
+    );
+    // and the files not read again: the service that reads the entity, and the form that reads the service
+    assert_eq!(
+        expanded(&factory, &format!("{save_param}color")),
+        Some(("auto-parameters".to_string(), "SaveServices.xml".to_string()))
+    );
+    assert_eq!(
+        form_bound(&factory),
+        [format!("{save_param}color"), format!("{save_param}widgetName")]
     );
 
     // a file defining the id: its service and parameters answer, the derived rows are gone
@@ -1289,8 +1421,34 @@ fn the_index_scales() {
         let started = std::time::Instant::now();
         let found = index::find(&factory, "OrdHdr", &[], &[], 20).unwrap();
         let find_millis = started.elapsed().as_millis();
+        // a screen file whose transitions change: every path of the other files is walked again
+        let probe = gate
+            .runtime
+            .join(format!("probe/{}/screen/Probe.xml", label.replace(' ', "-")));
+        std::fs::create_dir_all(probe.parent().unwrap()).unwrap();
+        let screen = index::Located {
+            path: probe.clone(),
+            component: "probe".to_string(),
+            location: "component://probe/screen/Probe.xml".to_string(),
+            kind: moqui_devkit::ArtifactKind::Screen,
+        };
+        let mut walk_millis = Vec::new();
+        for name in ["first", "second", "third"] {
+            std::fs::write(
+                &probe,
+                format!(r#"<screen><transition name="{name}"><default-response url="."/></transition></screen>"#),
+            )
+            .unwrap();
+            let started = std::time::Instant::now();
+            index::update_located(&factory, std::slice::from_ref(&screen)).unwrap();
+            walk_millis.push(started.elapsed().as_millis());
+        }
+        // the same text again: read and written, no path walked again
+        let started = std::time::Instant::now();
+        index::update_located(&factory, std::slice::from_ref(&screen)).unwrap();
+        let unwalked_millis = started.elapsed().as_millis();
         eprintln!(
-            "{label}: {count} files, {} artifacts, {} references; build {} ms (read {} ms, write {} ms); per-file update {update_millis} ms ({} artifacts); find {find_millis} ms ({} found)",
+            "{label}: {count} files, {} artifacts, {} references; build {} ms (read {} ms, write {} ms); per-file update {update_millis} ms ({} artifacts); per-screen update walking the paths again {walk_millis:?} ms, without {unwalked_millis} ms; find {find_millis} ms ({} found)",
             report.artifacts, report.refs, report.millis, report.read_millis, report.write_millis, update.artifacts, found.len()
         );
     };

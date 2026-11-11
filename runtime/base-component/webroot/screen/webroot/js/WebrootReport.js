@@ -4,6 +4,8 @@
     "use strict";
     const moqui = root.moqui;
     const report = moqui.report = {};
+    // The route of System › Monitor, where a trace opens.
+    const MONITOR_PATH = "/apps/system/Monitor";
     const finite = (v) => v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v));
     // Opt in only the native elements created by this renderer. Embedded Quasar/Markdown controls keep their own styles.
     const nativeTags = new Set(["button", "input", "select", "textarea", "summary"]);
@@ -1169,7 +1171,7 @@
                         return h("details", { key: hit.documentId + ":" + hit.id, class: "q-py-xs" }, [
                             h("summary", { style: { color: Number(doc.severity_number) >= 17 ? "var(--q-negative)" : undefined } },
                                 report.format(doc.timestamp || doc.start, { type: "time" }) + " " + (doc.severity_text || "") + " " + String(doc.body || doc.name || "").slice(0, 500)),
-                            trace ? h("a", { href: report.appPath("/apps/monitor/TraceDetail?traceId=" + encodeURIComponent(trace)) }, "Open trace") : null,
+                            trace ? h("a", { href: report.appPath(MONITOR_PATH + "/TraceDetail?traceId=" + encodeURIComponent(trace)) }, "Open trace") : null,
                             h("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, JSON.stringify(doc, null, 2)) ]);
                     }) : [h("p", "No new telemetry. This does not establish health.")]) : null ]);
         }

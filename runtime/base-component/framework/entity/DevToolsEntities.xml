@@ -47,7 +47,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="parentArtifactId" type="text-medium"><description>A field's entity, a transition's or form's screen</description></field>
         <field name="sequenceNum" type="number-integer"><description>Its order in its file</description></field>
         <field name="origin" type="text-short"><description>Where it comes from when not a file's definition: derived
-            (an entity-auto service and its parameters, from the entity's fields)</description></field>
+            (an entity-auto service and its parameters, from the entity's fields); auto-parameters, implements,
+            auto-fields-entity, auto-fields-service or extends (a parameter or form field expanded from what its service or
+            form declares)</description></field>
+        <field name="marks" type="text-long"><description>What a service, form or transition declares to be filled in
+            from elsewhere (auto-parameters, implements, auto-fields, extends, a transition's calls and field-maps), for
+            the parameters and fields the index expands from it</description></field>
         <index name="DEVARTIFACT_FILE_LINE"><index-field name="filePath"/><index-field name="lineNumber"/></index>
         <index name="DEV_ARTIFACT_KIND"><index-field name="artifactKind"/><index-field name="shortName"/></index>
         <index name="DEV_ARTIFACT_COMP"><index-field name="component"/></index>

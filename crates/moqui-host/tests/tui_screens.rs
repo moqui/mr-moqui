@@ -61,6 +61,7 @@ const GALLERY: &[&str] = &[
     "RecordFiles",
     "Search",
     "Handheld",
+    "NavCards",
 ];
 
 #[test]

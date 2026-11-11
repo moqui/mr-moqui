@@ -192,7 +192,7 @@ fn inspector_fetches_authorized_steps_with_the_visible_panel_scope() {
 }
 #[test]
 fn an_including_screen_takes_the_panel_requests_and_esc_leaves_the_single_panel_view() {
-    let props = json!({"dashboard":{"definitionId":"monitor-overview","screenUrl":"/apps/monitor/dashboard","panelId":"p","absoluteTime":{"from":"2026-01-01T00:00:00Z","thru":"2026-01-02T00:00:00Z"},"variableValues":{"service":"erp"},"panels":{"p":{"title":"Errors"}}},"frames":{}});
+    let props = json!({"dashboard":{"definitionId":"monitor-overview","screenUrl":"/apps/system/Monitor/Overview","panelId":"p","absoluteTime":{"from":"2026-01-01T00:00:00Z","thru":"2026-01-02T00:00:00Z"},"variableValues":{"service":"erp"},"panels":{"p":{"title":"Errors"}}},"frames":{}});
     let mut state = ComponentState::default();
     let text = ReportDashboard
         .lines(&props, &state, 120, false)
@@ -205,7 +205,7 @@ fn an_including_screen_takes_the_panel_requests_and_esc_leaves_the_single_panel_
         .key(&props, &mut state, &KeyPress::plain(Key::Char('c')), false)
         .unwrap();
     assert!(
-        matches!(&acts[0],Act::DownloadReport(url)if url.starts_with("/apps/monitor/dashboard/exportPanel?")&&url.contains("panelId=p")),
+        matches!(&acts[0],Act::DownloadReport(url)if url.starts_with("/apps/system/Monitor/Overview/exportPanel?")&&url.contains("panelId=p")),
         "{acts:?}"
     );
     // a time shift keeps the single-panel view and the variables
@@ -214,7 +214,7 @@ fn an_including_screen_takes_the_panel_requests_and_esc_leaves_the_single_panel_
         .key(&props, &mut state, &KeyPress::plain(Key::Left), false)
         .unwrap();
     assert!(
-        matches!(&acts[0],Act::Follow(url)if url.starts_with("/apps/monitor/dashboard?")&&url.contains("panelId=p")&&url.contains("var-service=erp")),
+        matches!(&acts[0],Act::Follow(url)if url.starts_with("/apps/system/Monitor/Overview?")&&url.contains("panelId=p")&&url.contains("var-service=erp")),
         "{acts:?}"
     );
     // Esc closes the inspector first, then shows all the panels
@@ -227,7 +227,7 @@ fn an_including_screen_takes_the_panel_requests_and_esc_leaves_the_single_panel_
         .key(&props, &mut state, &KeyPress::plain(Key::Escape), false)
         .unwrap();
     assert!(
-        matches!(&acts[0],Act::Follow(url)if url.starts_with("/apps/monitor/dashboard?")&&!url.contains("panelId")&&url.contains("var-service=erp")),
+        matches!(&acts[0],Act::Follow(url)if url.starts_with("/apps/system/Monitor/Overview?")&&!url.contains("panelId")&&url.contains("var-service=erp")),
         "{acts:?}"
     );
     // without a single-panel view Esc is the session's
@@ -341,7 +341,7 @@ fn kiosk_mode_scrolls_by_panel_and_by_page() {
 }
 #[test]
 fn data_links_carry_the_dashboard_time_range() {
-    let frame = json!({"fields":[{"name":"service","values":["shop"],"link":"/apps/monitor/Services?var-service=${service}&from=${__from}&thru=${__thru}"}]});
+    let frame = json!({"fields":[{"name":"service","values":["shop"],"link":"/apps/system/Monitor/Services?var-service=${service}&from=${__from}&thru=${__thru}"}]});
     let dashboard = json!({"absoluteTime":{"from":"2026-10-27T00:00:00Z","thru":"2026-10-28T00:00:00Z"}});
     let mut state = ComponentState {
         choosing: Some(0),
@@ -357,7 +357,7 @@ fn data_links_carry_the_dashboard_time_range() {
     assert_eq!(
         acts,
         Some(vec![Act::Follow(
-            "/apps/monitor/Services?var-service=shop&from=2026-10-27T00%3A00%3A00Z&thru=2026-10-28T00%3A00%3A00Z"
+            "/apps/system/Monitor/Services?var-service=shop&from=2026-10-27T00%3A00%3A00Z&thru=2026-10-28T00%3A00%3A00Z"
                 .into()
         )])
     );

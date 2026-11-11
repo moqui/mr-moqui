@@ -246,7 +246,7 @@
         const reset = () => {
             Object.assign(st, {
                 formName: "", fieldForm: "", owner: "", entry: "", multi: false, skipForm: false, inForm: false, inList: false, rowTexts: null,
-                accordion: "", accIndex: 0, accActive: "", disabled: false, selectedForm: false
+                accordion: "", accIndex: 0, accActive: "", disabled: false, selectedForm: false, textLinks: false
             });
             saved.length = 0;
         };
@@ -1067,9 +1067,9 @@
             const accessibleLabel = iconOnlyLabel(n, parts);
             const linkType = l.linkType;
             const btnType = xn(l.btnType);
-            // A screen link in a form-list cell is text (as is link-type anchor anywhere); the others are tonal buttons, or the filled
-            // primary button with btn-type="primary".
-            const textLink = linkType === "anchor" || (st.inList && linkType !== "anchor-button");
+            // A screen link in a form-list cell is text (as is link-type anchor anywhere, and every link of a nav-card); the others
+            // are tonal buttons, or the filled primary button with btn-type="primary".
+            const textLink = st.textLinks || linkType === "anchor" || (st.inList && linkType !== "anchor-button");
             if (parts.disabled) {
                 if (parts.anchor && textLink) return '<span class="text-grey-5">' + linkBody(n, parts.text, parts.img) + "</span>";
                 return "<span><q-btn" + A({
@@ -2356,9 +2356,7 @@
         // A number-card (style-guide §8.2): an m-number-card with the title localized, the value and delta as expanded, and the
         // link as a screen link resolves (a path or transition of this screen, with its query); a link to something other than a
         // screen is a plain anchor (external). Nothing for a false condition.
-        const numberCard = (n) => {
-            if (at(n, "condition") && !cond(at(n, "condition"))) return;
-            const value = (text) => (text && text !== "null" ? text : null);
+        const cardLink = (n) => {
             let href = null;
             let external = null;
             if (at(n, "link")) {
@@ -2369,11 +2367,34 @@
                     external = screen ? null : true;
                 }
             }
+            return { href, external };
+        };
+        const numberCard = (n) => {
+            if (at(n, "condition") && !cond(at(n, "condition"))) return;
+            const value = (text) => (text && text !== "null" ? text : null);
+            const { href, external } = cardLink(n);
             w("<m-number-card" + A({
                 id: nodeId(n) || null, title: value(x(at(n, "title"))), value: value(xn(at(n, "value"))), delta: value(xn(at(n, "delta"))),
                 "delta-good": at(n, "delta-good") || null, icon: value(xn(at(n, "icon"))), href, external, size: at(n, "size") || null,
                 class: xn(at(n, "style")) || null
             }) + "></m-number-card>\n");
+        };
+        // A nav-card (plans/Tools-Fancy.md B6): an m-nav-card with the title and the text localized and the link as a number-card's;
+        // its child links follow in the default slot, each a text link (st.textLinks). False, and nothing, for a false condition.
+        const navCardOpen = (n) => {
+            if (at(n, "condition") && !cond(at(n, "condition"))) return false;
+            const value = (text) => (text && text !== "null" ? text : null);
+            const { href, external } = cardLink(n);
+            w("<m-nav-card" + A({
+                id: nodeId(n) || null, title: value(x(at(n, "title"))), text: value(x(at(n, "text"))), icon: value(xn(at(n, "icon"))),
+                href, external, size: at(n, "size") || null, class: xn(at(n, "style")) || null
+            }) + ">");
+            st.textLinks = true;
+            return true;
+        };
+        const navCardClose = () => {
+            st.textLinks = false;
+            w("</m-nav-card>\n");
         };
 
         const h = {
@@ -2385,7 +2406,7 @@
             formList, rowCellOpen, rowCellClose, valueText, sectionPaginate, headerCell,
             accordion: (id, active) => { st.accordion = id; st.accIndex = 0; st.accActive = active; },
             endAccordion: () => { st.accordion = ""; },
-            quasarColor, icon, iconTag, tooltipTag, tonal, btnKind, js: js_, screenContext, numberCard, chatter, recordFiles, splitOpen, htmlView, statusBar,
+            quasarColor, icon, iconTag, tooltipTag, tonal, btnKind, js: js_, screenContext, numberCard, navCardOpen, navCardClose, chatter, recordFiles, splitOpen, htmlView, statusBar,
             markdownView,
             codeView
         };
@@ -2956,6 +2977,13 @@
         const inField = node.parent && node.parent.name.endsWith("-field");
         return `$v.link(${wlit(node, true)}, ${inField});\n`;
     });
+    // A nav-card: the card, then its child links in its default slot.
+    const navCardMacro = stmt((node, children) => js`
+        if ($v.navCardOpen(${wlit(node, false)})) {
+            ${children}
+            $v.navCardClose();
+        }
+    `);
 
     const submitMacro = stmt((node) => `$v.submit(${wlit(node, true)});\n`);
     const resetMacro = stmt((node) => `$v.reset_(${wlit(node, false)});\n`);
@@ -3021,6 +3049,7 @@
         "report-embed": reportWidget,
         "dashboard": dashboardMacro,
         "number-card": widget("numberCard", false),
+        "nav-card": navCardMacro,
         "chatter": widget("chatter", false),
         "record-files": widget("recordFiles", false),
         "html-view": widget("htmlView", false),

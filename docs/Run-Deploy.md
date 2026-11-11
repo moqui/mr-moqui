@@ -168,6 +168,8 @@ by the prefix of each part (`./moq r-p` is `run-production`).
   firewall it unless cluster members use it ([ports](#ports)).
 - **Backups**: run the embedded database's backup job, or back up the external database
   ([backups](#backups)).
+- **Disk and memory**: the thresholds at which the System home warns are `resource-watch`'s; copy the disk, memory
+  and CPU alert rules so someone is told ([resource watch](#resource-watch)).
 - **Listeners**: SSH, inbound SMTP, A2A, MCP and the LLM gateway are off by default. Turn on only the ones that are used.
 - **CORS**: leave `webapp_allow_origins` empty. The dev conf sets `*`.
 - **Lock-down**: the full list is in [Attack-Surface.md, Heavy lock-down](security/Attack-Surface.md#heavy-lock-down).
@@ -307,6 +309,39 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 
 The database properties are in [Database and search](#database-and-search), and the cluster properties in
 [Cluster](#cluster).
+
+### Resource watch
+
+The server reads what the machine and its own process have left: the CPU load, memory, the filesystems it writes to
+(the runtime directory, its `db`, `log`, `tmp`, `txlog` and `opensearch` directories where they are mounted apart, and
+the system temp directory), open files and swap. Each reading has a level, `ok`, `warning` or `critical`, from the
+conf's `resource-watch` element:
+
+| Reading | Attributes | Warning | Critical |
+| --- | --- | --- | --- |
+| A filesystem's space used | `disk-warning`, `disk-critical`, `disk-free-critical` | 80 % | 90 %, or under `disk-free-critical` bytes left (1 GiB) on a filesystem larger than that |
+| A filesystem's file entries (inodes) used | `inodes-warning`, `inodes-critical` | 80 % | 90 % |
+| The server's memory, of the memory it may use | `memory-warning`, `memory-critical` | 80 % | 90 % |
+| The machine's memory still available | `memory-available-warning`, `memory-available-critical` | 10 % left | 5 % left |
+| The 5-minute load, of the processors | `cpu-load-warning`, `cpu-load-critical` | 80 % | 100 % |
+| Open files, of the soft limit | `open-files-warning`, `open-files-critical` | 80 % | 95 % |
+| Swap in use | `swap-warning`, `swap-critical` | 50 % | none |
+
+```xml
+<resource-watch disk-warning="70" disk-critical="85" swap-warning=""/>
+```
+
+An empty value turns that level off; an attribute left out keeps its default, and a conf reload applies a change. The
+memory the server may use is its container's or service unit's limit (the cgroup's `memory.max`) when one is set
+below the machine's memory, else the machine's.
+
+The levels are in the status map (`ec.factory.getStatusMap()`, its `Resources`), which the System app shows, and the
+attention list of the System home names every reading that is not `ok`
+(`moqui.tools.SystemHomeServices.get#SystemAttention`). With telemetry on, the readings are also recorded each minute
+as gauges ([Monitoring](tools/Monitoring.md)), and three alert rule templates in the System folder of Dashboards ›
+Alerts (low disk space, high memory use, high CPU load) send a notification once an administrator saves a copy with
+its contact points. Linux reports every reading; macOS the filesystems only; Windows none, and a reading that is not
+reported has no level.
 
 ## Command line
 

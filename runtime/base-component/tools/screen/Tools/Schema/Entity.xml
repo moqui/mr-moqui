@@ -78,6 +78,22 @@ along with this software (see the LICENSE.md file). If not, see
                     names: type.actual + ' (model ' + type.expected + ')'})
             }
             canPlan = ec.user.hasPermission('DATABASE_ADMIN')
+
+            // Monitor's numbers are shown to a reader of the telemetry only (the otel_metrics dataset, granted with System):
+            // to anyone else a report-embed says "Not available", so it is left out. list#Datasets leaves out, without an
+            // error, the datasets the user may not read.
+            monitorMetrics = false
+            try {
+                monitorMetrics = (ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call()?.datasets || [])
+                    .some((dataset) => dataset.id === 'otel_metrics')
+            } catch (e) { ec.logger.warn('The report datasets could not be listed: ' + String(e)) }
+            // entity operations are recorded only while the AT_ENTITY artifact type's metrics are on (Monitor › Settings)
+            entityMetrics = false
+            if (monitorMetrics) {
+                const settings = ec.service.sync().name('org.moqui.monitor.MonitorServices.list#RuntimeSettings').call()?.settings || []
+                entityMetrics = String(settings.find((setting) => setting.key === 'telemetry/artifact[AT_ENTITY]@metrics')?.effective) === 'true'
+                ec.message.clearErrors()
+            }
         ]]></script>
     </actions>
     <widgets>
@@ -103,6 +119,13 @@ along with this software (see the LICENSE.md file). If not, see
             <row-col md="3"><label text="Entity Audit Default: ${entityNode.attribute('enable-audit-log') || 'false'}" type="strong"/></row-col>
         </container-row>
         <label text="${entityDescription}" condition="entityDescription"/>
+        <!-- this entity's operations over seven days, from Monitor › Artifacts' dashboard (report/monitor-artifacts.json) -->
+        <section name="ActivitySection" condition="entityMetrics"><widgets>
+            <link url="//apps/system/Monitor/Artifacts" text="Performance in Monitor" icon="sym_o_deployed_code" link-type="anchor"
+                    parameter-map="{'var-artifactType': 'AT_ENTITY', 'var-artifactName': entityDefinition.fullEntityName, from: 'now-7d', thru: 'now'}"/>
+            <report-embed id="EntityActivityEmbed" definition-id="monitor-artifacts" panel-id="activity" from="now-7d"
+                    variables="{artifactType: 'AT_ENTITY', artifactName: entityDefinition.fullEntityName}"/>
+        </widgets></section>
 
         <section name="TableDiffSection" condition="!entityDefinition.isViewEntity"><widgets>
             <container-box><box-header title="The table against the model"/>

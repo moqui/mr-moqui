@@ -119,6 +119,7 @@ along with this software (see the LICENSE.md file). If not, see
         <container-row>
             <row-col lg="5">
                 <link url="visitList" text="Visits" parameter-map="{userId:userId}"/>
+                <link url="//apps/system/Monitor/Traces" text="Requests by this user" icon="sym_o_timeline" parameter-map="{userId:userId}"/>
                 <container-dialog id="UpdatePassword" button-text="Change Password">
                     <form-single name="UpdatePasswordForm" transition="updatePassword">
                         <field name="userId"><default-field><hidden/></default-field></field>

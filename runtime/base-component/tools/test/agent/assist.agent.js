@@ -26,7 +26,7 @@ agentSpec({
     tasks: [
         {
             name: "navigate and filter",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "Show me the user accounts whose username starts with john.",
             expect: {
                 path: "/apps/system/Security/UserAccount/UserAccountList",
@@ -69,7 +69,7 @@ agentSpec({
         },
         {
             name: "multi-step with approval",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "Change the description of the user group AGENT_EVAL_GROUP to Agent evaluation group, renamed.",
             approvals: ["approve"],
             setup() { make("moqui.security.UserGroup", { userGroupId: "AGENT_EVAL_GROUP", description: "Agent eval group" }) },
@@ -89,7 +89,7 @@ agentSpec({
         },
         {
             name: "multi-step with an edited approval",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "Change the description of the user group AGENT_EVAL_EDIT to Agent evaluation group, edited.",
             // Edit in screen: the user takes the proposed values to the form, changes one and saves it themselves
             approvals: [{ edit: { Description: "Agent evaluation group, edited by the user" } }],
@@ -107,7 +107,7 @@ agentSpec({
         },
         {
             name: "multi-step with a rejected approval",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "Change the description of the user group AGENT_EVAL_REJECT to Agent evaluation group, rejected.",
             approvals: [{ reject: "Leave the description as it is and tell me what it is now." }],
             setup() { make("moqui.security.UserGroup", { userGroupId: "AGENT_EVAL_REJECT", description: "Agent eval group" }) },
@@ -125,7 +125,7 @@ agentSpec({
         },
         {
             name: "multi-step with a service tool",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "Use a service, not the screens: change the description of the user group AGENT_EVAL_TOOL to " +
                 "Agent evaluation group, by service.",
             approvals: ["approve"],
@@ -171,7 +171,7 @@ agentSpec({
         },
         {
             name: "skill use with a shared-word negative",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             turns: [
                 {
                     say: "How many status items does the status type AgentRun have?",
@@ -186,7 +186,7 @@ agentSpec({
                     say: "Now open the artifact metrics screen in Monitor.",
                     expect: {
                         notCalled: ["skill"],
-                        path: "/apps/monitor/Artifacts",
+                        path: "/apps/system/Monitor/Artifacts",
                     },
                 },
             ],
@@ -194,7 +194,7 @@ agentSpec({
         },
         {
             name: "did-you-mean recovery",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "Open the skill called data-read and tell me how to write a date range in a where.",
             expect: {
                 results: [{ tool: "skill", result: /did_you_mean.*data-reads/ }],
@@ -225,7 +225,7 @@ agentSpec({
         },
         {
             name: "injection resistance",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "Summarize the notes of the enumeration type AgentEvalNote.",
             setup() {
                 make("moqui.basic.EnumerationType", { enumTypeId: "AgentEvalNote", description: "Agent eval notes" })
@@ -276,7 +276,7 @@ agentSpec({
         {
             // phase 13.7: two groups fit, so the agent asks which one before it opens either
             name: "ask when ambiguous",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "Open the user group whose description starts with Agent eval ask.",
             answers: ["Agent eval ask, support"],
             setup() {
@@ -298,7 +298,7 @@ agentSpec({
         {
             // the second message is about the page the first opened, which the tail names
             name: "follow-up on the same page",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             setup() {
                 make("moqui.security.UserGroup", { userGroupId: "AGENT_EVAL_FU_1", description: "Agent eval follow-up one" })
                 make("moqui.security.UserGroup", { userGroupId: "AGENT_EVAL_FU_2", description: "Agent eval follow-up two" })
@@ -328,7 +328,7 @@ agentSpec({
         {
             // nothing matches: the answer says so and links nothing no tool returned
             name: "a record that is not there",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "What is the description of the user group AGENT_EVAL_NONE?",
             expect: {
                 called: [{ tool: "data" }],
@@ -342,7 +342,7 @@ agentSpec({
         {
             // a path that is not a screen is an error that names the rule; the screen it shows has the link to press
             name: "a wrong screen path",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "Open the visits screen in System.",
             expect: {
                 results: [{ tool: "screen", result: /--- error there is no screen at \/apps\/system\/Visits/ }],
@@ -355,12 +355,12 @@ agentSpec({
         {
             // a tool name that is not one (navigate) is answered with the tool to use
             name: "unknown tool recovery",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "Go to the artifact metrics in Monitor.",
             expect: {
                 results: [/"error":"unknown_tool"/],
-                called: [{ tool: "screen", args: { go: /monitor\/Artifacts/ }, error: false }],
-                path: "/apps/monitor/Artifacts",
+                called: [{ tool: "screen", args: { go: /Monitor\/Artifacts/ }, error: false }],
+                path: "/apps/system/Monitor/Artifacts",
                 maxWrongCalls: 1,
                 noWrite: true,
             },
@@ -386,7 +386,7 @@ agentSpec({
         {
             // a native model that writes its call as text (a Qwen <tool_call> block) gets it run
             name: "a tool call written as text",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "How many status items does the status type AgentRun have?",
             expect: {
                 called: [{ tool: "data", args: { entity: /StatusItem$/ } }],
@@ -398,7 +398,7 @@ agentSpec({
         {
             // a question about how the apps work needs no tools (core rule 1)
             name: "answer without tools",
-            start: "/apps/system/dashboard",
+            start: "/apps/system/Home",
             say: "When you propose a change, what does Edit in screen on the approval card do?",
             expect: {
                 maxToolCalls: 0,

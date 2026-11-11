@@ -351,8 +351,8 @@ fn resolve_together(files: &mut [FileIndex]) -> Resolver {
     for row in files.iter_mut().flat_map(|file| &mut file.refs) {
         resolver.resolve(row, &|_| false);
     }
-    for binding in files.iter_mut().flat_map(|file| &mut file.bindings) {
-        resolver.resolve_binding(binding);
+    for file in files.iter_mut() {
+        file.bindings = resolver.resolve_bindings(std::mem::take(&mut file.bindings));
     }
     resolver
 }
@@ -496,7 +496,7 @@ fn screen_paths_walk_subscreens_items_and_directories() {
 #[test]
 fn a_forms_fields_flow_into_its_transitions_service() {
     let location = "component://c/screen/Order.xml";
-    let file = read(
+    let mut files = [read(
         ArtifactKind::Screen,
         location,
         r#"<screen>
@@ -514,7 +514,13 @@ fn a_forms_fields_flow_into_its_transitions_service() {
         <form-list name="Lines" list="lines" transition="ship"><field name="orderItemSeqId"><default-field><display/></default-field></field></form-list>
     </widgets>
 </screen>"#,
-    );
+    )];
+    // each field binds by the path the form posts to, its transition's name, which the resolver walks
+    assert!(files[0].bindings.iter().all(|binding| binding
+        .to_id
+        .starts_with("parameter:screen-path:component://c/screen/Order.xml#")));
+    resolve_together(&mut files);
+    let file = &files[0];
     let flows: Vec<(&str, &str, &str, &str, Option<&str>)> = file
         .bindings
         .iter()
@@ -564,7 +570,7 @@ fn a_forms_fields_flow_into_its_transitions_service() {
         .any(|row| row.from == "form:component://c/screen/Order.xml#ShipForm"
             && row.to_kind == ToKind::Transition
             && row.to_name == "ship:any"));
-    assert!(ids(&file).contains(&"form-field:component://c/screen/Order.xml#ShipForm@carrierPartyId"));
+    assert!(ids(file).contains(&"form-field:component://c/screen/Order.xml#ShipForm@carrierPartyId"));
 }
 
 /// A screen item a conf mounts (`@conf`) or a `SubscreensItem` row mounts (`@row`), as [`super::super::rows`] makes it.
@@ -581,6 +587,7 @@ fn mount(screen: &str, name: &str, location: &str, mark: &str) -> ArtifactRow {
         summary: location.to_string(),
         parent: Some(format!("screen:{screen}")),
         origin: String::new(),
+        marks: String::new(),
     }
 }
 
@@ -618,6 +625,8 @@ fn screen_paths_walk_as_moqui_walks_a_url() {
         <link url="/apps/Order/Detail" text="Absolute"/>
         <link url="Mounted" text="A conf mount"/>
         <link url="Extra" text="A screen-extend's item"/>
+        <link url="Docs/guide/intro" text="Past a screen with allow-extra-path"/>
+        <link url="Order/nothing/here" text="Past a screen without it"/>
     </widgets>
 </screen>"##,
         ),
@@ -644,6 +653,11 @@ fn screen_paths_walk_as_moqui_walks_a_url() {
             r#"<screen/>"#,
         ),
         read(ArtifactKind::Screen, "component://c/screen/Extra.xml", r#"<screen/>"#),
+        read(
+            ArtifactKind::Screen,
+            "component://c/screen/App/Docs.xml",
+            r#"<screen allow-extra-path="true"/>"#,
+        ),
         read(
             ArtifactKind::ScreenExtend,
             "component://site/screen-extend/c/screen/App.xml",
@@ -680,6 +694,9 @@ fn screen_paths_walk_as_moqui_walks_a_url() {
             ("/apps/Order/Detail", Some(detail)),
             ("Mounted", Some("screen:component://c/screen/Elsewhere.xml")),
             ("Extra", Some("screen:component://c/screen/Extra.xml")),
+            // nothing of the name under a screen with allow-extra-path: the path ends at it; without it, none
+            ("Docs/guide/intro", Some("screen:component://c/screen/App/Docs.xml")),
+            ("Order/nothing/here", None),
         ]
     );
     let edges: Vec<(&str, &str, Option<&str>)> = files[1]
@@ -857,7 +874,8 @@ fn form_fields_flow_through_paths_actions_and_field_maps() {
         crate::index::resolve::request_services(&update.summary),
         ["a.OrderServices.note#Order"]
     );
-    // the path's binding keeps the id it was written with, and names it again while the path reaches no transition
+    // the path's binding keeps the id it was written with and its slot, and names it again while the path reaches no
+    // transition
     let mut path_binding = files[0]
         .bindings
         .iter()
@@ -865,7 +883,7 @@ fn form_fields_flow_through_paths_actions_and_field_maps() {
         .unwrap()
         .clone();
     let written = "parameter:screen-path:component://c/screen/App/Order.xml#../Tasks/save@in.taskName";
-    assert_eq!(path_binding.to_path.as_deref(), Some(written));
+    assert_eq!(path_binding.to_path, Some(format!("{written}#0")));
     let mut resolver = resolve_together(&mut files);
     for artifact in &files[1].artifacts {
         resolver.remove(artifact);

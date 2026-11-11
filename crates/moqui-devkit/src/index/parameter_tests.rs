@@ -411,6 +411,7 @@ fn an_id_defined_twice_describes_as_its_first_row() {
         summary: String::new(),
         parent: None,
         origin: String::new(),
+        marks: String::new(),
     };
     let mut index = MemoryIndex {
         artifacts: vec![row("/first.xml"), row("/second.xml")],

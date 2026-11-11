@@ -22,22 +22,34 @@
 //! `~name=value` segments are dropped, `..` goes up to the screen's parent, and each other segment is a subscreen of the
 //! screen reached (its mount in the conf or a `SubscreensItem` row, its `subscreens-item`, else the directory
 //! subscreen: `Foo/Bar.xml` of `Foo.xml`), through a `no-sub-path` item that holds it, or a transition of it, which
-//! ends the path (the rest is extra path). `Name.<mode>` is the screen or transition `Name` in a render mode. A path
-//! starting with `/` is walked from the webroot screen, and one starting with `//` is searched for under it as Moqui's
-//! `findSubscreenPath` does. A path that cannot be walked, or that `..` walks from more than one parent to different
-//! artifacts, stays unresolved.
+//! ends the path (the rest is extra path). `Name.<mode>` is the screen or transition `Name` in a render mode. At a
+//! screen with `allow-extra-path` a segment it has nothing for ends the path there, the rest extra path. A transition of
+//! several methods is the request's ([`Method`]: `get` for a link or response, `post` for a form), else the one of any
+//! method, else the first. A path starting with `/` is walked from the webroot screen, and one starting with `//` is
+//! searched for under it as Moqui's `findSubscreenPath` does. A path that cannot be walked, or that `..` walks from more
+//! than one parent to different artifacts, stays unresolved. A reference to a transition of its own screen by name goes
+//! to a subscreen of that name first, as the walk does.
 //!
 //! An entity-auto name (`create#moqui.example.Example`) that no file defines a service for gets a derived service
 //! ([`Resolver::derive`], origin `derived`), with the in and out parameters the entity-auto runner takes and gives
 //! (`moqui_core::service::call::run_entity`), so a call's `field-map`s resolve to its parameters as to a defined
 //! service's.
+//!
+//! What an artifact declares to be filled in from elsewhere is expanded here too ([`Resolver::expand`], `expand.rs`):
+//! a service's parameters from its `auto-parameters` and `implements`, a form's fields from its `auto-fields-entity`,
+//! `auto-fields-service` and `extends`, with their bindings; and every form's fields, bound by the path the form posts
+//! to (its own screen's transition by its name too), to every service the transition reached passes the request to or
+//! maps the field into ([`Resolver::path_bindings`]).
+
+mod expand;
+
+pub use expand::{path_seed, Expansion, FormCall};
 
 use std::collections::{HashMap, HashSet};
 
 use super::extract::{
     parameter_id, parameter_name, short_of, ArtifactRow, BindingRow, RefRow, ToKind, CALLS_MARK, CONF_ITEM,
     DERIVED_PATH, NO_SUB_PATH_MARK, ORIGIN_DERIVED, OWN_IN_MAP_MARK, PK_MARK, REQUEST_MARK, ROW_ITEM,
-    SCREEN_PATH_OWNER,
 };
 
 /// A field of an entity, as the entity-auto services take it.
@@ -47,6 +59,10 @@ struct AutoField {
     /// The field's type (`id`, `text-medium`), or what an alias names.
     kind: String,
     pk: bool,
+    /// Its file and line, for an order that does not depend on the order the rows were read in
+    /// ([`Resolver::ordered_fields`]).
+    path: String,
+    line: u32,
 }
 
 /// The ids of the artifacts known, with what resolving needs besides.
@@ -73,6 +89,22 @@ pub struct Resolver {
     transitions: HashMap<String, Vec<String>>,
     /// A transition's id to the services it passes the request's parameters to ([`request_services`]).
     requests: HashMap<String, Vec<String>>,
+    /// The screens with `allow-extra-path`: a path that goes on past one where nothing is ends at it.
+    extra_path: HashSet<String>,
+    /// The services, forms and transitions whose summaries carry marks of what is derived from them
+    /// ([`super::extract::ArtifactRow::marks`]), by id.
+    /// Each definition of one (an override defines it again), by id.
+    owners: HashMap<String, Vec<expand::Owner>>,
+    /// A service's declared top-level parameters, of each file that defines it, by the service's id.
+    params: HashMap<String, Vec<expand::Param>>,
+    /// A form's declared fields, by the form's id.
+    form_fields: HashMap<String, Vec<expand::DeclaredField>>,
+    /// The fields the forms of `screen-extend`s add to a base screen's form, by the base form's id.
+    form_extensions: HashMap<String, Vec<expand::DeclaredField>>,
+    /// The files that define an entity (not its `extend-entity`s), by its full name.
+    entity_paths: HashMap<String, Vec<String>>,
+    /// The rows expanded for each owner ([`Self::expand`]) as they were written, by the owner's id.
+    expanded: HashMap<String, Vec<ArtifactRow>>,
 }
 
 /// One subscreens item of a screen.
@@ -97,6 +129,16 @@ impl Resolver {
     /// Know `artifact`.
     pub fn add(&mut self, artifact: &ArtifactRow) {
         *self.ids.entry(artifact.id.clone()).or_insert(0) += 1;
+        if super::extract::is_expanded(&artifact.origin) {
+            if let Some(owner) = &artifact.parent {
+                let rows = self.expanded.entry(owner.clone()).or_default();
+                if !rows.iter().any(|row| row.id == artifact.id) {
+                    rows.push(artifact.clone());
+                }
+            }
+            return;
+        }
+        self.add_declared(artifact);
         if artifact.origin == ORIGIN_DERIVED {
             let service = match artifact.kind.as_str() {
                 "service" => Some(artifact.id.clone()),
@@ -124,6 +166,9 @@ impl Resolver {
             "screen" => {
                 if let Some(tail) = screen_tail(&artifact.name) {
                     self.screens.insert(tail.to_string(), artifact.name.clone());
+                }
+                if super::extract::split_marks(&artifact.marks).contains(&"allow-extra-path") {
+                    self.extra_path.insert(artifact.name.clone());
                 }
                 if let Some(parent) = directory_parent(&artifact.name) {
                     let children = self.directory.entry(parent).or_default();
@@ -167,6 +212,8 @@ impl Resolver {
                             name: artifact.short_name.clone(),
                             kind: kind.to_string(),
                             pk,
+                            path: artifact.path.clone(),
+                            line: artifact.line,
                         });
                     }
                 }
@@ -190,6 +237,7 @@ impl Resolver {
             summary: String::new(),
             parent: None,
             origin: String::new(),
+            marks: String::new(),
         });
     }
 
@@ -206,6 +254,14 @@ impl Resolver {
             }
             None => false,
         };
+        if super::extract::is_expanded(&artifact.origin) {
+            if let Some(owner) = &artifact.parent {
+                remove_one(&mut self.expanded, owner, |known| known.id == artifact.id);
+            }
+            return;
+        }
+        // what one file declared goes with it, though another file defines the id too
+        self.remove_declared(artifact);
         if artifact.origin == ORIGIN_DERIVED {
             // forgotten as derived even while a file defines the id too (the file's then answers)
             if artifact.kind == "service" {
@@ -229,6 +285,7 @@ impl Resolver {
                 if let Some(tail) = screen_tail(&artifact.name) {
                     self.screens.remove(tail);
                 }
+                self.extra_path.remove(&artifact.name);
                 if let Some(parent) = directory_parent(&artifact.name) {
                     remove_one(&mut self.directory, &parent, |known| *known == artifact.name);
                 }
@@ -310,7 +367,7 @@ impl Resolver {
             let base = self.screen(&reference.to_scope);
             reference.to_id = base
                 .as_deref()
-                .and_then(|base| self.base_transition(base, &reference.to_name));
+                .and_then(|base| self.base_transition(base, &reference.to_name, Method::Get));
             reference.resolved = base.is_some();
             return;
         }
@@ -340,7 +397,15 @@ impl Resolver {
                 .screen(&reference.to_name)
                 .filter(|_| reference.to_scope.is_empty() || self.has(&format!("screen:{}", reference.to_scope)))
                 .map(|location| format!("screen:{location}")),
-            ToKind::ScreenPath => self.screen_path(&reference.to_scope, &reference.to_name),
+            // a form posts; a link, a response and a default item get
+            ToKind::ScreenPath => {
+                let method = if reference.ref_type == "form" {
+                    Method::Post
+                } else {
+                    Method::Get
+                };
+                self.screen_path_as(&reference.to_scope, &reference.to_name, method)
+            }
             ToKind::Location => {
                 // a widget-template-include names `<file>#<template>`
                 let found = ["screen", "script", "data", "skill", "widget-template"]
@@ -355,15 +420,27 @@ impl Resolver {
                 found
             }
             ToKind::Transition => {
-                let id = format!("transition:{}#{}", reference.to_scope, reference.to_name);
-                self.has(&id).then_some(id)
+                // a subscreen of the name comes first, as Moqui walks a path: a directory subscreen or a conf mount the
+                // file of the reference does not show
+                let plain = reference
+                    .to_name
+                    .rsplit_once(':')
+                    .map_or(reference.to_name.as_str(), |(name, _)| name);
+                match self.step(&reference.to_scope, plain, Method::Get) {
+                    // through a `no-sub-path` item too, as the path the form's binding is walked by
+                    Some(Step::Screen(child)) => Some(format!("screen:{child}")),
+                    _ => {
+                        let id = format!("transition:{}#{}", reference.to_scope, reference.to_name);
+                        self.has(&id).then_some(id)
+                    }
+                }
             }
             ToKind::Anchor => self.screen(&reference.to_scope).and_then(|base| {
                 ["form", "anchor", "transition"]
                     .iter()
                     .map(|kind| format!("{kind}:{base}#{}", reference.to_name))
                     .find(|id| self.has(id))
-                    .or_else(|| self.base_transition(&base, &reference.to_name))
+                    .or_else(|| self.base_transition(&base, &reference.to_name, Method::Get))
             }),
             ToKind::TransitionAnchor => None,
             ToKind::Parameter => self.service_parameter(&reference.to_scope, "in", &reference.to_name),
@@ -387,18 +464,16 @@ impl Resolver {
     /// `binding`'s target as the index knows it: the derived service's parameter of an entity-auto name named by the
     /// entity's short name (`create#Example`). Left as it is otherwise.
     ///
-    /// A form field's binding into a transition by its path (`parameter:screen-path:<screen>#<path>@in.<field>`)
-    /// keeps that id in [`BindingRow::to_path`] and names the parameter of the first service the transition reached
-    /// passes the request to, or the path's id again while it reaches none; it is resolved again from `to_path`.
+    /// A form field's binding into a transition by its path (`parameter:screen-path:<screen>#<path>@in.<field>`) is one
+    /// of a list ([`Self::path_bindings`]): it is given the target of its slot (`#<k>` at the end of its
+    /// [`BindingRow::to_path`]), else the first's.
     pub fn resolve_binding(&self, binding: &mut BindingRow) {
-        if let Some(written) = binding.to_path.clone().or_else(|| {
-            binding
-                .to_id
-                .starts_with(&format!("parameter:{SCREEN_PATH_OWNER}"))
-                .then(|| binding.to_id.clone())
-        }) {
-            binding.to_id = self.path_parameter(&written).unwrap_or_else(|| written.clone());
-            binding.to_path = Some(written);
+        if let Some((_, slot)) = expand::path_seed(binding) {
+            let mut found = self.path_bindings(binding);
+            let at = if slot < found.len() { slot } else { 0 };
+            let chosen = found.swap_remove(at);
+            binding.to_id = chosen.to_id;
+            binding.to_path = chosen.to_path;
             return;
         }
         if self.has(&binding.to_id) {
@@ -413,19 +488,6 @@ impl Resolver {
         {
             binding.to_id = found;
         }
-    }
-
-    /// The parameter a form field's binding into a transition by its path names: of the first service the transition
-    /// the path reaches passes the request to.
-    fn path_parameter(&self, written: &str) -> Option<String> {
-        let (owner, direction, name) = super::extract::parse_parameter_id(written)?;
-        let (from, path) = owner.strip_prefix(SCREEN_PATH_OWNER)?.split_once('#')?;
-        let transition = self.screen_path(from, path)?;
-        let service = self.requests.get(&transition)?.first()?;
-        Some(
-            self.service_parameter(service, direction, name)
-                .unwrap_or_else(|| parameter_id(&format!("service:{service}"), direction, name)),
-        )
     }
 
     /// The id of the derived service of an entity-auto name, by the entity's full name (`service:create#a.B`), when
@@ -511,6 +573,7 @@ impl Resolver {
                 summary,
                 parent: Some(parent),
                 origin: ORIGIN_DERIVED.to_string(),
+                marks: String::new(),
             };
         let mut rows = vec![row(
             id.to_string(),
@@ -531,8 +594,8 @@ impl Resolver {
                 id.to_string(),
             ));
         };
-        let fields: &[AutoField] = self.fields.get(full).map_or(&[], Vec::as_slice);
-        let keys: Vec<&AutoField> = fields.iter().filter(|field| field.pk).collect();
+        let fields: Vec<&AutoField> = self.ordered_fields(full);
+        let keys: Vec<&AutoField> = fields.iter().copied().filter(|field| field.pk).collect();
         for (at, key) in keys.iter().enumerate() {
             let required = match verb {
                 "update" | "delete" => true,
@@ -560,21 +623,29 @@ impl Resolver {
     }
 
     /// The screen or transition the screen path `path` names, written in the screen at `from` (see the module doc):
-    /// `screen:<location>` or `transition:<location>#<name>:<method>`. The query and fragment are not part of it.
+    /// `screen:<location>` or `transition:<location>#<name>:<method>`, as a link or response reaches it (a `get`
+    /// transition first, [`Method`]). The query and fragment are not part of it.
     #[must_use]
     pub fn screen_path(&self, from: &str, path: &str) -> Option<String> {
+        self.screen_path_as(from, path, Method::Get)
+    }
+
+    /// [`Self::screen_path`] for a request of `method`: a transition of several methods is the one of that method, else
+    /// the one of any method, as Moqui matches a request.
+    #[must_use]
+    pub fn screen_path_as(&self, from: &str, path: &str, method: Method) -> Option<String> {
         let path = path.trim();
         let path = path.split(['?', '#']).next().unwrap_or_default();
         if let Some(rest) = path.strip_prefix("//") {
             let names = path_segments(rest, false);
-            return self.sparse(&self.screen(WEBROOT_SCREEN)?, &names, 0, &mut HashSet::new());
+            return self.sparse(&self.screen(WEBROOT_SCREEN)?, &names, 0, &mut HashSet::new(), method);
         }
         let (start, segments) = match path.strip_prefix('/') {
             Some(rest) => (self.screen(WEBROOT_SCREEN)?, path_segments(rest, false)),
             None => (self.screen(from)?, path_segments(path, true)),
         };
         let mut found = Vec::new();
-        self.walk(&start, &segments, 0, &mut found);
+        self.walk(&start, &segments, 0, &mut found, method);
         match found.len() {
             1 => found.pop(),
             _ => None,
@@ -583,7 +654,7 @@ impl Resolver {
 
     /// Walk `segments` from the screen at `at`, adding each artifact a walk ends at to `found` (more than one only when
     /// a `..` goes up to several parents).
-    fn walk(&self, at: &str, segments: &[&str], depth: usize, found: &mut Vec<String>) {
+    fn walk(&self, at: &str, segments: &[&str], depth: usize, found: &mut Vec<String>, method: Method) {
         if depth > FIND_DEPTH || found.len() > 1 {
             return;
         }
@@ -596,14 +667,21 @@ impl Resolver {
         };
         if *first == ".." {
             for parent in self.parents(at) {
-                self.walk(&parent, rest, depth + 1, found);
+                self.walk(&parent, rest, depth + 1, found, method);
             }
             return;
         }
-        match self.step(at, first) {
-            Some(Step::Screen(child)) => self.walk(&child, rest, depth + 1, found),
+        match self.step(at, first, method) {
+            Some(Step::Screen(child)) => self.walk(&child, rest, depth + 1, found, method),
             // a transition ends the path: the rest is extra path
             Some(Step::Transition(id)) if !found.contains(&id) => found.push(id),
+            // nothing of the name under a screen with `allow-extra-path`: the path ends at it, the rest extra path
+            None if self.extra_path.contains(at) => {
+                let id = format!("screen:{at}");
+                if !found.contains(&id) {
+                    found.push(id);
+                }
+            }
             Some(Step::Transition(_)) | None => {}
         }
     }
@@ -611,7 +689,7 @@ impl Resolver {
     /// Where the segment `name` goes from the screen at `at`, as Moqui's walk takes it: into a `no-sub-path` item
     /// that holds a child of that name first, then a subscreen, else a transition, else `Name.<mode>`'s screen or
     /// transition `Name`.
-    fn step(&self, at: &str, name: &str) -> Option<Step> {
+    fn step(&self, at: &str, name: &str, method: Method) -> Option<Step> {
         let before = name
             .split_once('.')
             .map(|(before, _)| before)
@@ -629,19 +707,19 @@ impl Resolver {
         if let Some(child) = self.subscreen(at, name) {
             return Some(Step::Screen(child));
         }
-        if let Some(transition) = self.base_transition(at, name) {
+        if let Some(transition) = self.base_transition(at, name, method) {
             return Some(Step::Transition(transition));
         }
         let before = before?;
         if let Some(child) = self.subscreen(at, before) {
             return Some(Step::Screen(child));
         }
-        self.base_transition(at, before).map(Step::Transition)
+        self.base_transition(at, before, method).map(Step::Transition)
     }
 
     /// Whether the screen at `screen` has a subscreen or a transition named `name`.
     fn has_child(&self, screen: &str, name: &str) -> bool {
-        self.subscreen(screen, name).is_some() || self.base_transition(screen, name).is_some()
+        self.subscreen(screen, name).is_some() || self.base_transition(screen, name, Method::Get).is_some()
     }
 
     /// The artifact a sparse path (`//Commons/Party`, `names` its segments) names, searched for under the screen at
@@ -656,6 +734,7 @@ impl Resolver {
         names: &[&str],
         depth: usize,
         tried: &mut HashSet<(String, usize)>,
+        method: Method,
     ) -> Option<String> {
         let (first, rest) = names.split_first()?;
         if depth >= FIND_DEPTH || !tried.insert((screen.to_string(), names.len())) {
@@ -665,19 +744,19 @@ impl Resolver {
             if rest.is_empty() {
                 return Some(format!("screen:{child}"));
             }
-            return self.sparse(&child, rest, depth + 1, tried);
+            return self.sparse(&child, rest, depth + 1, tried, method);
         }
-        if let Some(transition) = self.base_transition(screen, first) {
+        if let Some(transition) = self.base_transition(screen, first, method) {
             return Some(transition);
         }
         if let Some(grand) = self.children(screen).find_map(|child| self.subscreen(&child, first)) {
             if rest.is_empty() {
                 return Some(format!("screen:{grand}"));
             }
-            return self.sparse(&grand, rest, depth + 1, tried);
+            return self.sparse(&grand, rest, depth + 1, tried, method);
         }
         self.children(screen)
-            .find_map(|child| self.sparse(&child, names, depth + 1, tried))
+            .find_map(|child| self.sparse(&child, names, depth + 1, tried, method))
     }
 
     /// The locations of the subscreens of the screen at `screen`: its items' (the screens indexed; of several of a
@@ -737,8 +816,9 @@ impl Resolver {
         parents
     }
 
-    /// The transition `name` of the screen at `base`, by its plain id or its method-qualified one.
-    fn base_transition(&self, base: &str, name: &str) -> Option<String> {
+    /// The transition `name` of the screen at `base`, by its plain id or its method-qualified one: the one of `method`,
+    /// else the one of any method, else the first.
+    fn base_transition(&self, base: &str, name: &str, method: Method) -> Option<String> {
         let plain = format!("transition:{base}#{name}");
         if self.has(&plain) {
             return Some(plain);
@@ -746,12 +826,45 @@ impl Resolver {
         // Extension anchors identify a named XML element, independent of request dispatch.
         // Keep them navigable after transitions acquire method-qualified IDs.
         let ids = self.transitions.get(&plain)?;
-        let any = format!("{plain}:any");
-        if ids.contains(&any) {
-            Some(any)
-        } else {
-            ids.iter().min().cloned()
+        [method.as_str(), "any"]
+            .iter()
+            .map(|method| format!("{plain}:{method}"))
+            .find(|id| ids.contains(id))
+            .or_else(|| ids.iter().min().cloned())
+    }
+
+    /// The names a path walks by that a screen, subscreens item or transition `id` answers to: a transition's and an
+    /// item's own name, a screen's as a directory subscreen and the name of each item that mounts it; a path through one
+    /// of them may go elsewhere when it changes ([`super::walk_again`]).
+    #[must_use]
+    pub fn names_walked(&self, id: &str) -> Vec<String> {
+        let name_after = |rest: &str| rest.rsplit_once('#').map(|(_, name)| name.to_string());
+        if let Some(location) = id.strip_prefix("screen:") {
+            let mut names = vec![file_stem(location).to_string()];
+            for items in self.items.values() {
+                for item in items {
+                    let mounts = item.location == location || self.screen(&item.location).as_deref() == Some(location);
+                    if mounts && !names.contains(&item.name) {
+                        names.push(item.name.clone());
+                    }
+                }
+            }
+            return names;
         }
+        if let Some(rest) = id.strip_prefix("subscreen:") {
+            // `<screen>#<name>`, `@conf` or `@row[:group]` after a mount's
+            return name_after(rest)
+                .map(|name| name.split('@').next().unwrap_or_default().to_string())
+                .into_iter()
+                .collect();
+        }
+        if let Some(rest) = id.strip_prefix("transition:") {
+            return name_after(rest)
+                .map(|name| name.split(':').next().unwrap_or_default().to_string())
+                .into_iter()
+                .collect();
+        }
+        Vec::new()
     }
 
     /// The names a reference to one of `ids` would carry, for finding the unresolved references an added artifact may
@@ -819,6 +932,26 @@ impl Resolver {
 fn entity_auto(name: &str) -> Option<(&str, &str)> {
     let (verb, noun) = name.split_once('#')?;
     (matches!(verb, "create" | "update" | "store" | "delete") && !noun.is_empty()).then_some((verb, noun))
+}
+
+/// The method of the request a screen path is walked for: a transition of several methods is the one of the request's
+/// method, else the one of any method.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Method {
+    /// A link, a response, a redirect.
+    Get,
+    /// A form's submit.
+    Post,
+}
+
+impl Method {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Get => "get",
+            Self::Post => "post",
+        }
+    }
 }
 
 /// Where a step of a screen path goes.

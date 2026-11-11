@@ -41,7 +41,7 @@ MOQUI_CONF=conf/MoquiProductionConf.xml \
 ./moq test-client framework --acceptance --spec SecurityTarpit --server "$(cat /tmp/moqui-tarpit.url)"
 ```
 
-Stop the server when the client exits (its standard input is the terminal). The screen proof is the demo `ALL_SCREENS` row (120 hits in 60 seconds) on `GET /apps/tools/dashboard` as `john.doe`. The transition proof is `sec.tap.user`, 3 hits in 60 seconds, on `POST /apps/setPreference`.
+Stop the server when the client exits (its standard input is the terminal). The screen proof is the demo `ALL_SCREENS` row (120 hits in 60 seconds) on `GET /apps/tools/Home` as `john.doe`. The transition proof is `sec.tap.user`, 3 hits in 60 seconds, on `POST /apps/setPreference`.
 
 ## Catalog
 

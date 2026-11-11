@@ -65,7 +65,7 @@ test("report widgets render with Vue runtime and escape document values", () => 
 test("data links reject executable and protocol-relative URLs", () => {
     assert.equal(report.safeLink("javascript:alert(1)"), "");
     assert.equal(report.safeLink("//foreign.example/path"), "");
-    assert.equal(report.safeLink("/apps/monitor/Traces"), "/apps/monitor/Traces");
+    assert.equal(report.safeLink("/apps/system/Monitor/Traces"), "/apps/system/Monitor/Traces");
 });
 test("field overrides, thresholds and links preserve typed values", () => {
     const fields = report.configuredFields({ fields: [{ name: "latency", type: "number", values: [2] }] }, {
@@ -218,7 +218,7 @@ test("session replay preserves the JSON transition mount in the Material shell",
     const target=document.createElement('div');document.body.appendChild(target);
     const previous={request:moqui.request,loadScript:moqui.loadScript,loadStylesheet:moqui.loadStylesheet,
         appRoot:report.appRoot,rrweb:window.rrweb};
-    const url='/apps/monitor/ReplayDetail/events?replayId=ui-review-replay-0001';
+    const url='/apps/system/Monitor/ReplayDetail/events?replayId=ui-review-replay-0001';
     const events=[{type:4,timestamp:1000,data:{}},{type:2,timestamp:2000,data:{}}];
     let requested,received,destroyed=false;
     report.appRoot=()=>'/qapps';
@@ -532,8 +532,8 @@ test('bucket clicks use exact server predicates for normal Missing and Other row
     assert.deepEqual(clicks[0].query,filters[1]);assert.equal(clicks[0].negated,false);assert.deepEqual(clicks[1].query,filters[2]);assert.equal(clicks[1].negated,true);assert.equal(report.bucketPill(frame,{},0,0,false).query.field.value,'(Missing)');
     const url=new URL(report.filterUrl(clicks[0],{dashboardId:'sales',filters:[],range:{from:'2026-01-01T00:00:00Z',thru:'2026-01-02T00:00:00Z'}},'https://example.test/apps/dashboards/Dashboard?definitionId=sales&cursor=old'));
     assert.equal(url.searchParams.has('cursor'),false);assert.equal(JSON.parse(url.searchParams.get('filtersJson'))[0].datasetId,'orders');assert.equal(url.searchParams.get('from'),'2026-01-01T00:00:00Z');
-    const monitor=new URL(report.filterUrl(clicks[0],{dashboardId:'monitor-services',filters:[]},'https://example.test/qapps/monitor/Services?serviceName=fixture'));
-    assert.equal(monitor.pathname,'/qapps/monitor/Services');assert.equal(monitor.searchParams.get('serviceName'),'fixture');
+    const monitor=new URL(report.filterUrl(clicks[0],{dashboardId:'monitor-services',filters:[]},'https://example.test/qapps/system/Monitor/Services?serviceName=fixture'));
+    assert.equal(monitor.pathname,'/qapps/system/Monitor/Services');assert.equal(monitor.searchParams.get('serviceName'),'fixture');
     assert.deepEqual(JSON.parse(monitor.searchParams.get('filtersJson'))[0].query,filters[1]);
 });
 test('sorting table rows retains the original bucket predicate when clicking values',async()=>{
@@ -571,22 +571,22 @@ test('stat and gauge cards resolve integer metrics per numeric bucket series wit
     const target=document.createElement('div');document.body.appendChild(target);const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame:{fields:Array.from({length:51},(_,at)=>({name:'metric'+at,type:'integer',values:[at]}))},panel:{visualization:'stat'}});app.mount(target);await Vue.nextTick();assert.equal(target.querySelectorAll('.m-report-stat-series').length,50);assert.equal(target.textContent.includes('Showing 50 of 51 series.'),true);app.unmount();target.remove();
 });
 test('page links open in the current shell and panel requests use the rendering screen transitions',async()=>{
-    assert.equal(report.appPath('/apps/dashboards/Definition?definitionId=x','https://moqui.test/qapps/monitor/dashboard'),'/qapps/dashboards/Definition?definitionId=x');
-    assert.equal(report.appPath('/apps/monitor/TraceDetail?traceId=t','https://moqui.test/apps/monitor/Logs'),'/apps/monitor/TraceDetail?traceId=t');
+    assert.equal(report.appPath('/apps/dashboards/Definition?definitionId=x','https://moqui.test/qapps/system/Monitor/Overview'),'/qapps/dashboards/Definition?definitionId=x');
+    assert.equal(report.appPath('/apps/system/Monitor/TraceDetail?traceId=t','https://moqui.test/apps/system/Monitor/Logs'),'/apps/system/Monitor/TraceDetail?traceId=t');
     assert.equal(report.appPath('/apps','https://moqui.test/qapps'),'/qapps');
-    assert.equal(report.appPath('/rest/s1/moqui/reports','https://moqui.test/qapps/monitor'),'/rest/s1/moqui/reports');
-    assert.equal(report.appPath('/applications/x','https://moqui.test/qapps/monitor'),'/applications/x');
-    assert.equal(new URL(report.allPanelsUrl('https://moqui.test/qapps/monitor/dashboard?definitionId=d&panelId=p&var-service=a')).search,'?definitionId=d&var-service=a');
+    assert.equal(report.appPath('/rest/s1/moqui/reports','https://moqui.test/qapps/system/Monitor'),'/rest/s1/moqui/reports');
+    assert.equal(report.appPath('/applications/x','https://moqui.test/qapps/system/Monitor'),'/applications/x');
+    assert.equal(new URL(report.allPanelsUrl('https://moqui.test/qapps/system/Monitor/Overview?definitionId=d&panelId=p&var-service=a')).search,'?definitionId=d&var-service=a');
     const target=document.createElement('div');document.body.appendChild(target);
     const previousFetch=window.fetch;const requests=[];
     window.fetch=async url=>{requests.push(String(url));return {ok:true,json:async()=>({dashboard:{panels:{jobs:{inspection:[]}}}})};};
-    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{dashboardId:'monitor-overview',panelId:'jobs',screenUrl:'/apps/monitor/dashboard',panel:{title:'Job runs by outcome',visualization:'table'},
+    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{dashboardId:'monitor-overview',panelId:'jobs',screenUrl:'/apps/system/Monitor/Overview',panel:{title:'Job runs by outcome',visualization:'table'},
         frame:{fields:[{name:'outcome',type:'string',values:['success']}]},range:{from:'2026-01-01T00:00:00Z',thru:'2026-01-02T00:00:00Z'}});
     try {
         const panel=app.mount(target);await Vue.nextTick();
         for(const label of ['Export Job runs by outcome as CSV','Export Job runs by outcome as XLSX','Inspect Job runs by outcome'])assert.notEqual(target.querySelector('button[aria-label="'+label+'"]'),null,label);
         await panel.inspect();
-        assert.equal(new URL(requests[0],window.location.href).pathname,'/apps/monitor/dashboard/inspectPanel');
+        assert.equal(new URL(requests[0],window.location.href).pathname,'/apps/system/Monitor/Overview/inspectPanel');
         assert.equal(new URL(requests[0],window.location.href).searchParams.get('panelId'),'jobs');
     } finally {app.unmount();target.remove();window.fetch=previousFetch;}
 });

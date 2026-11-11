@@ -281,6 +281,13 @@ const $formList = (name, cols) => {
             const condition = attr(node, "condition");
             return condition ? `if (${condition}) {\n${line}}\n` : line;
         }),
+        // a nav-card as "Title: text" (its child links are not written, as no link outside a field is)
+        "nav-card": stmt((node) => {
+            const text = expandExpr(attr(node, "text") || "");
+            const line = pad(`${expandExpr(attr(node, "title") || "")} + (String(${text}).trim() ? ": " + ${text} : "")`) + `sri.write("\\n");\n`;
+            const condition = attr(node, "condition");
+            return condition ? `if (${condition}) {\n${line}}\n` : line;
+        }),
         "dashboard": stmt((node, children) => children),
         // a status-bar as "Status: In Progress", the current status's description
         "status-bar": stmt((node) => {

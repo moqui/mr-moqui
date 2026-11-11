@@ -510,6 +510,11 @@ impl Pool {
         Ok(())
     }
 
+    /// The configured `max`: every connection, the reserve among them.
+    pub fn max(&self) -> u32 {
+        self.inner.config.max
+    }
+
     pub fn stats(&self) -> PoolStats {
         let state = lock(&self.inner.state);
         PoolStats {

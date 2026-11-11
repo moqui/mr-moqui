@@ -50,6 +50,7 @@ pub const STAMPED: &[&str] = &[
     "report-embed",
     "dashboard",
     "number-card",
+    "nav-card",
     "chatter",
     "record-files",
     "html-view",

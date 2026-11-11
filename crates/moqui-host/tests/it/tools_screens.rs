@@ -90,10 +90,10 @@ const DETAILS: &[&str] = &[
     "/System/Resource/GitRepositoryDetail?repositoryId=GATE_GIT",
     "/System/Visit/VisitDetail?visitId=GATE_VISIT",
     "/System/Instance/InstanceDetail?appInstanceId=GATE_AI",
-    "/System/DataDocument/Edit/EditDataDocument?dataDocumentId=GateDoc",
-    "/System/DataDocument/Edit/ViewDataDocument?dataDocumentId=GateDoc",
-    "/System/DataDocument/Edit/DataDocFields?dataDocumentId=GateDoc",
-    "/System/DataDocument/Edit/DataDocFields/FieldList?dataDocumentId=GateDoc",
+    "/Tools/Data/Documents/Edit/EditDataDocument?dataDocumentId=GateDoc",
+    "/Tools/Data/Documents/Edit/ViewDataDocument?dataDocumentId=GateDoc",
+    "/Tools/Data/Documents/Edit/DataDocFields?dataDocumentId=GateDoc",
+    "/Tools/Data/Documents/Edit/DataDocFields/FieldList?dataDocumentId=GateDoc",
     "/System/Cache/CacheList?filterRegexp=l10n",
     "/System/Llm/Models/ModelDetail?modelId=default",
     "/System/Llm/Models/EndpointDetail?endpointId=default",
@@ -296,7 +296,7 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
     // The obsolete Groovy shell has no screen or placeholder route.
     let (status, shell) = get(address, &john, "/Tools/GroovyShell");
     assert_eq!(status, 404, "{shell}");
-    let (status, logs) = get(address, &john, "/apps/monitor/Logs");
+    let (status, logs) = get(address, &john, "/apps/system/Monitor/Logs");
     assert_eq!(status, 200, "{logs}");
     assert!(!logs.contains("Error rendering"), "{logs}");
 
@@ -593,7 +593,7 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         page.contains("moqui.basic.StatusType"),
         "Monitor Artifacts query missing the entity create: {page}"
     );
-    assert_page(address, &john, "/apps/monitor/Artifacts", &["Artifact statistics"]);
+    assert_page(address, &john, "/apps/system/Monitor/Artifacts", &["Artifact statistics"]);
     let (status, page) = rest_get(address, &john, "/rest/s1/moqui/basic/geos/USA");
     assert_eq!(status, 200, "{}", failure("geos/USA", status, &page));
     for text in ["United States", "Country"] {

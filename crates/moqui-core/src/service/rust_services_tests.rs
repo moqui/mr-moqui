@@ -95,6 +95,7 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::shell::get_shell_counts",
         "moqui_core::service::shell::publish_shell_counts",
         "moqui_core::service::shell::set_user_screen_theme",
+        "moqui_core::service::sign_in_policy::get_sign_in_policy_values",
         "moqui_core::service::sip_credential::make_sip_credential",
         "moqui_core::service::sign_in_policy::get_sign_in_policy_values",
         "moqui_core::service::sip_credential::claim_sip_digest_nonce",
