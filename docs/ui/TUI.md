@@ -102,11 +102,15 @@ moqui> apps                                 from the admin shell; quitting the a
 The account menu (the user's name in the header) has **Terminal UI**, for every signed in user: `/qapps/Terminal`, the
 same client in xterm.js, on the `/termws` WebSocket (`crates/moqui-host/src/termws.rs`). It runs as the browser's user
 with no login of its own, and the apps alone, as a dialog login over SSH does. The socket is checked by origin and
-session cookie as `/notws` is; a logout closes it within a minute. The limits, the idle close, the files and the log are
-as over SSH. When the socket closes, its reason shows with Reconnect. `enabled="false"` on the webapp's `/termws` `endpoint` in
-the conf turns the socket and the menu item off. While the terminal has focus it takes the keys, except those a browser keeps (Ctrl+W, Ctrl+T, Ctrl+N,
-and in some browsers Ctrl+Q); leaving the page ends the session as Ctrl+Q does. A link the client writes (`o`) opens
-in a new tab.
+session cookie as `/notws` is. The limits, the idle close, the files and the log are as over SSH. `enabled="false"` on
+the webapp's `/termws` `endpoint` in the conf turns the socket and the menu item off. While the terminal has focus it
+takes the keys, except those a browser keeps (Ctrl+W, Ctrl+T, Ctrl+N, and in some browsers Ctrl+Q) and the terminal's
+own Ctrl+Shift chords. A link the client writes (`o`) opens in a new tab.
+
+The Terminal is a workspace of sessions in tabs and splits that outlive the page, with the `moqui>` command line and
+shells on the server for a user who may on a dev instance, floating terminals and a status per session: an apps
+session left by a reload or a dropped connection is kept two minutes and draws itself again for the next window, and a
+logout leaves it. See [Terminal](Terminal.md).
 
 ## For agents
 

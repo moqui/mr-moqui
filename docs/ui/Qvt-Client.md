@@ -443,7 +443,9 @@ shell, so its components are precompiled; its tests are `test/client/WebrootFloa
   The windows keep below the header (`#top`) and inside the viewport when it is resized. **Dock** puts the content back and
   shows it there; **Close** puts it back and does not show it: closing a float ends nothing.
 - **A kind** is what floats: `moqui.floats.register(kind, {title, icon, badge, dot, defaultSize: {w, h}, minSize: {w, h},
-  place: "right" | "center", dock(shown, key, float), inReach, focus(key, bodyEl), gatherLabel})`. `title`, `icon`,
+  place: "right" | "center", dock(shown, key, float), inReach, focus(key, bodyEl), gatherLabel, actions})`. `actions`
+  (a list, or a function of the key) are buttons of the kind's own on the title bar before Minimize: `{id, icon, label,
+  run(key, float)}` (a terminal's Pop out and End session). `title`, `icon`,
   `badge` and `dot` are values or functions of the key, read at each render. `open(kind, key, {title, rect, restore})`
   answers the window's id (`kind:key`), or false; `close(id)`, `dock(id)`, `hide(id)` (still a float, drawn nowhere),
   `show(id)`, `focus(id)`, `minimize(id)`, `maximize(id)`, `toggle(kind, key)` (shows a hidden or minimized window,
@@ -461,8 +463,23 @@ shell, so its components are precompiled; its tests are `test/client/WebrootFloa
   `canFloat()` is false (an owner hides its Undock button), and what floats docks, closed.
 - **Assist's reach** (§10.7): `floats.reach()` is the ids of the shown bodies of a kind with `inReach`, which the root adds
   to `assistReach`. An element with `data-assist-self` is never in reach, wherever it is.
-- **The kinds of this version**: `assist` (the Assist drawer's body, [Assist](../ai/Assist.md#the-drawer)) and `tray` (a
-  tab of the tray, above); the Terminal adds `terminal`.
+- **The kinds of this version**: `assist` (the Assist drawer's body, [Assist](../ai/Assist.md#the-drawer)), `tray` (a
+  tab of the tray, above) and `terminal` (below).
+
+## The terminal store
+
+`js/WebrootTerminal.js`, loaded for a signed-in user when the server serves `/termws`, holds `moqui.terminal`
+([Terminal](Terminal.md)): the user's sessions as the server lists them (`state.sessions`, `state.order`, reactive), the
+options they may open, their settings, and per session, not reactive, its xterm.js instance, socket and element. A
+view (`m-terminal-view`: a pane of the Terminal screen, or a floating window's body) moves the session's element into
+itself when mounted and out when unmounted without disposing it, so one terminal moves between places and nothing
+reconnects; past 12 live terminals the one shown longest ago is let go and replays when shown again. `open(kind,
+{profileName, directory, resume})`, `close(id)`, `rename(id, title)`, `refresh()`, `float(id)`, `unfloat(id)`,
+`toggleQuick()`, `showInScreen(id)`, `jumpPrompt(key, back)`, `find(key, text, back)`, `paste(key, text)`. It registers
+the `terminal` float kind, the quick terminal's key (Ctrl+\`), the header's `m-terminal-button`, the terminal's
+command palette actions (`moqui.shellPalette.registerActions`, rows with `run()`), and a listener of the
+`TerminalAttention` topic; at a load it restores floating terminals only in a browser that has had one. Its spec is
+`test/client/WebrootTerminal.spec.js`.
 
 ## Preferences
 

@@ -164,6 +164,19 @@ Guides [Git-Hosting](../docs/interfaces/Git-Hosting.md), [Revision-Management](.
 | Live checks: the browser terminal's keys and paste in Chrome, Firefox and Safari; the mouse (clicks, the wheel and drag to copy in kitty and GNOME Terminal over SSH, in local mode, and OSC 52 in the browser terminal in Chrome and Firefox); F-keys, Alt and paste in xterm, kitty, GNOME Terminal, tmux and the Linux console | [Screen-TUI-Impl](archive/Screen-TUI-Impl.md) §5 Phase 4 findings, §7 |
 | Per-user key bindings and a screen for them (D11); a two-way rich-text editor (3.8; Markdown is styled source); a `diagram` component (Revue's Mermaid widget does not draw a status flow); board sums and the calendar's create and resize in list views; the upstream Revue asks of §7 | same |
 
+## Browser terminal
+
+Built Nov 11, 2026 ([Terminal-Fancy](Terminal-Fancy.md), guide [Terminal](../docs/ui/Terminal.md)); what is left:
+
+| Item | Source |
+|---|---|
+| Live checks on devices: the Desktop app (node in process, and as a client of a remote dev server) and the Android app open a command line and a shell, the key bar types Esc, Tab and Ctrl+C, the visual viewport fit, pinch and long press on a phone | Terminal-Fancy §12, P7 |
+| Live checks through a deployed edge node in both modes: a shell survives a dropped link | Terminal-Fancy P8 |
+| zsh's shell integration run against a real zsh (bash's is tested; zsh was not installed where it was built); the hook lines for Claude Code and Codex run against each agent | Terminal-Fancy §11.2, P6 |
+| The Desktop app's crate (`crates/moqui-desktop`, outside the workspace) built with the `terminal_helper` call in its main | Terminal-Fancy §7.2 |
+| `moqui-mail`'s dead code under the Lite feature set (`force_cache`, `Payload::Raw`) fails `scripts/check-packages.sh`'s Lite clippy; it predates the terminal | found while checking the terminal's feature gates |
+| Later (§15): Windows host sessions (ConPTY); a server-side emulator for the screen as text; sessions driven by a program; the kitty keyboard protocol; mirrored viewers; `attach <id>` over SSH; a per-person OS account; named workspaces; worktrees per agent; images, ligatures, WebGL; a native window per terminal in the Desktop app; recording; more kinds of float; docking by drag | Terminal-Fancy §15 |
+
 ## Tooling: lint and XSD
 
 | Item | Source |

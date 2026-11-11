@@ -37,6 +37,7 @@ Screens, forms, templates and the clients.
 | [Desktop-Client.md](ui/Desktop-Client.md) | The desktop app as a client of a server: accounts, device modes and `<client-conf>`, the offline store, the outbox, the bundled Comms screens, crypto and calls |
 | [Mobile-Client.md](ui/Mobile-Client.md) | The Android app as a client of a server: what differs from the desktop client |
 | [TUI.md](ui/TUI.md) | The terminal UI: `moqui tui`, the `tui` render mode, the apps over SSH, and agents driving it |
+| [Terminal.md](ui/Terminal.md) | The browser terminal: sessions in tabs and splits that outlive the page, the `moqui>` command line and shells on the server on a dev instance, floating terminals, attention from agents, the apps and the edge node |
 | [Db-Forms.md](ui/Db-Forms.md) | Forms kept in the database: dated fields and options read as of a date, drafts, successor fields, and dependencies as `visible-when` and `require-when` |
 | [Themes.md](ui/Themes.md) | Merchant themes on the locked renderer: the package, `ec.resource.theme` validate and render, typed settings, the markup, URL and CSS checks, and the budgets |
 

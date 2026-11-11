@@ -248,6 +248,8 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `webapp_client_ip_header` | empty | The header those proxies put the client address in |
 | `webapp_status_ips` | `127.0.0.1` | Addresses, besides loopback, that `/health` answers |
 | `scheduled_job_check_time` | `60` | Seconds between job checks; `0` runs no scheduled jobs |
+| `terminal_command_line`, `terminal_host_sessions` | `dev` | The browser terminal's `moqui>` command line, and programs on the server's operating system: `dev` on a dev instance, `false` off, empty on for any purpose ([Terminal](ui/Terminal.md#conf)) |
+| `terminal_remote` | `false` | `true` lets those be reached from other machines, over HTTPS with a recent sign-in; `terminal_remote=true` in `runtime/.env` is the lightest way ([Terminal](ui/Terminal.md#who-may-open-what-and-from-where)) |
 | `moqui_chromium_path` | empty | The Chromium for PDF and the browser tests; empty looks in `runtime/chromium`, then for an installed Chromium, Google Chrome or Microsoft Edge (the PATH and the OS's install locations) |
 | `load_runner_targets`, `load_runner_max_runs`, `load_runner_max_users` | empty, `1`, `1000` | Load runs from Tools: the URL prefixes a run may reach besides this server and loopback (any URL on a dev instance; plain http to another machine only when listed), the loads at once, and the users a run |
 | `ssh_port`, `ssh_host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh_port` is empty (`2222` in the dev conf) |
@@ -787,6 +789,11 @@ beside the edge node), chat providers' webhooks and MMS files, and mr-pass's pub
 their PASS authority, the media of calls, with TURN, whose recordings come back to the local node, XMPP
 clients through its tunnel ports, and phone calls (SIP trunks and outside phones), with a voicemail fallback while the
 local node is away.
+
+The browser terminal goes through too, in both web access modes: a client of the edge node is another machine to the
+local node, so a dev local node's command line and shells need `terminal_remote=true` and a recent sign-in there, and a
+dropped link resumes each terminal by the count of what it drew ([Terminal](ui/Terminal.md#the-desktop-and-mobile-apps-and-phones)).
+Each terminal is one of the link's forwarded sockets.
 
 **Attach a local node in one sitting.**
 1. Set up the edge node (below): its `.env` (`webapp_http_host`, the mail settings, `edge_public_addresses`), a WebPKI

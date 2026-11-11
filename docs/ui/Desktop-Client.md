@@ -45,8 +45,11 @@ app window has the sockets, the outbox and the drafts of its own account, and `o
 scheme pages as local, so the capabilities name the windows. Each window's navigation stays on its origin: the web
 opens in the system browser, a server page from the shell in an app window.
 
-**Sockets.** A page's `/notws` or `/callws` (`moquiDesktop.socket`, which `moqui.openSocket` uses) is held by the host
-with the key, and its frames are handed to the page.
+**Sockets.** A page's `/notws`, `/callws` or the terminal's `/termws` (`moquiDesktop.socket`, which `moqui.openSocket`
+uses) is held by the host with the key, and its frames are handed to the page. The terminal's are binary (in base64
+between the page and the host), every one the page sends is kept, and it is not connected again by the host: the page
+attaches again itself with how far it got, and the close's reason reaches it. A command line or a shell on a remote
+server asks for the password in the app first ([Terminal](Terminal.md#the-desktop-and-mobile-apps-and-phones)).
 
 **Downloads.** An attachment or a large file is saved by the host, streamed, as for the node in process; a small one is
 Chromium's. An event stream is answered 503.
