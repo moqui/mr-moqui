@@ -125,7 +125,7 @@ fn tools_services_run_on_postgres() {
         "org.moqui.impl.PrintServices.print#ScreenDocument",
         &[
             ("networkPrinterId", "GATE_PRINTER"),
-            ("screenLocation", "component://tools/screen/System/dashboard.xml"),
+            ("screenLocation", "component://tools/screen/System/Home.xml"),
         ],
     );
     if browser.is_none() {

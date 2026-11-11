@@ -88,7 +88,7 @@ feature("the Tools, Data, Database and Service menus leave the stubs out", {
         // the menus the browser shell reads
         const menu = (path) => String(ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml")
             .render("menuData/apps/tools/" + path, {}, null).output)
-        const tools = menu("dashboard")
+        const tools = menu("Home")
         const data = menu("Data")
         const database = menu("Database")
         const service = menu("Service")

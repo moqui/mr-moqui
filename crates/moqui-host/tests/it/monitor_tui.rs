@@ -876,7 +876,7 @@ fn link_url(view: &AppView<HostLink>, fragment: &str) -> String {
     found.unwrap_or_else(|| panic!("no {fragment} link on {}", view.session().path()))
 }
 
-/// Monitor › Evals in the terminal; the gate above covers only its tab panel. Each screen is drawn once, but where a
+/// LLM and Agents › Evals in the terminal; the gate above covers only its tab panel. Each screen is drawn once, but where a
 /// form's answer comes back to it: the tabs, the row links to the detail screens, and every form (start an experiment,
 /// a review, compare, create a dataset, add and remove an item, remove and attach a scorer, create a scorer, live
 /// scoring, find, score and save a run).
