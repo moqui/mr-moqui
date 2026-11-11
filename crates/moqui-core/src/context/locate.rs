@@ -169,6 +169,7 @@ mod tests {
             ("NOTIFICATION", "NotificationEmail.xml"),
             ("NOTIFICATION_DIGEST", "NotificationDigestEmail.xml"),
             ("SCREEN_RENDER", "ScreenRenderEmail.xml"),
+            ("ACCOUNT_SIGN_IN", "AccountSignInEmail.xml"),
         ];
         assert_eq!(templates.len(), expected.len());
         for (id, file) in expected {
