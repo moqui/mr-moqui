@@ -22,6 +22,7 @@ const ids = {
     held: "SPEC_MQ_HELD",
     sent: "SPEC_MQ_SENT",
     outside: "SPEC_MQ_OUTSIDE",
+    claimed: "SPEC_MQ_CLAIMED",
     reset: "SPEC_MQ_RESET",
     draft: "SPEC_MQ_DRAFT"
 }
@@ -235,6 +236,8 @@ feature(
         when() {
             // settled below, then sent by another caller of the mail service (as BasicComms' resend); of no list here
             message(ids.outside, {emailServerId: "SPEC_MQ_NOWHERE", sendOutcome: "uncertain"})
+            // a bounced message whose retry is under way (claimed): held as a Ready one is, not settled meanwhile
+            message(ids.claimed, {statusId: "ES_BOUNCED", sendOutcome: "uncertain", sendClaimDate: ec.user.nowTimestamp})
             const out = {before: count()}
             capture.clear()
             as(users.manage, () => {
@@ -307,6 +310,8 @@ feature(
                 out.abandoned = reconcile(ids.closed, "abandon")
                 out.sendsEnd = capture.count()
                 out.outsideSettled = reconcile(ids.outside, "delivered")
+                out.claimedState = row(ids.claimed).state
+                out.claimedSettled = reconcile(ids.claimed, "delivered")
             })
             // a send from outside the queue asks for no settlement and is not refused one: the mail service clears the
             // settlement as the send begins, and the result is the transport's
@@ -415,6 +420,8 @@ feature(
             out.closedRow.statusId === "ES_CANCELLED"
             out.accountRow.statusId === "ES_READY"
             out.sendsEnd === 2
+            out.claimedState === "sending"
+            out.claimedSettled.reasonCode === "IN_PROGRESS"
             out.outsideSettled.state === "settled"
             out.outsideBefore.sendSettlement === "delivered"
             out.outsideSend.error === ""

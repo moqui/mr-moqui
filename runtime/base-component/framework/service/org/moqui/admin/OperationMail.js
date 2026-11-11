@@ -96,10 +96,11 @@ function stateOf(message) {
     if (message.statusId === "ES_SENT") return "sent"
     if (message.statusId === "ES_CANCELLED") return "cancelled"
     const unknown = settlementOf(message) ? "settled" : "uncertain"
-    // a bounced message whose retry was claimed and never answered may have gone again
-    if (message.statusId === "ES_BOUNCED") return message.sendOutcome === "uncertain" ? unknown : "bounced"
+    // a retry's claim holds a bounced message as it holds a Ready one: nothing is settled or sent again while it is sent
     const claimed = ms(message.sendClaimDate)
     if (claimed != null && ms(ec.user.nowTimestamp) - claimed < sendingMinutes * 60000) return "sending"
+    // a bounced message whose retry was claimed and never answered may have gone again
+    if (message.statusId === "ES_BOUNCED") return message.sendOutcome === "uncertain" ? unknown : "bounced"
     if (!text(message.sendError)) {
         // Ready with no result: just made (being sent), or a send that stopped; a settled one was last written by its
         // settlement, not by a send
