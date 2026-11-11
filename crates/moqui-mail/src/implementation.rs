@@ -1697,11 +1697,27 @@ fn smtp_transport(
     // Every SMTP connection starts here, so nothing reaches a mail server under the read fence.
     moqui_core::entity::fence::check_effect(moqui_core::entity::fence::Effect::Mail, &host)?;
     let port = parse_port(&field_text(server, "smtpPort"), 25)?;
+    // A server an administrator disabled, or whose host, port or sign-in changed and has not passed a test since
+    // (org.moqui.admin.ConfigurationServices store#Connection), sends nothing; test#EmailServer tries it all the same.
+    if field_text(server, "disabled") == "Y" {
+        return Err(Error::new(format!(
+            "Email server {} is disabled until a test of it passes",
+            field_text(server, "emailServerId")
+        )));
+    }
+    // A server that may not use the private network (allowPrivateNetwork N: a delegated administrator's on a production
+    // instance) is looked up once here, refused when any of its addresses is internal, and connected to at the address
+    // found, so a second lookup cannot answer another; TLS still verifies the host's name.
+    let connect_host = if field_text(server, "allowPrivateNetwork") == "N" {
+        public_address(&host, port)?
+    } else {
+        host.clone()
+    };
     // smtpSsl is TLS from the start. smtpStartTls upgrades when the server offers it, as Java's setStartTLSEnabled
     // (not required), so a server without STARTTLS still takes the mail. Both trust `email-client` `tls-ca-file` too.
     use lettre::transport::smtp::authentication::{Credentials, Mechanism};
     use lettre::transport::smtp::client::Tls;
-    let mut builder = lettre::SmtpTransport::builder_dangerous(&host).port(port);
+    let mut builder = lettre::SmtpTransport::builder_dangerous(connect_host.as_str()).port(port);
     if field_text(server, "smtpSsl") == "Y" {
         builder = builder.tls(Tls::Wrapper(smtp_tls(&host)?));
     } else if field_text(server, "smtpStartTls") == "Y" {
@@ -1718,6 +1734,23 @@ fn smtp_transport(
             .authentication(vec![Mechanism::Xoauth2]),
     };
     Ok(builder.build())
+}
+
+/// The address to connect to for `host`, a server that may not use the private network: an error when the name does
+/// not resolve or any of its addresses is loopback, private, link-local or otherwise internal.
+fn public_address(host: &str, port: u16) -> Result<String, Error> {
+    let refused = || Error::new(format!("{host} is an internal address, which this server may not use"));
+    let addresses = moqui_lib::net::public_addresses(host, port).map_err(|err| {
+        if err.to_string().contains("internal address") {
+            refused()
+        } else {
+            Error::new(format!("{host} could not be looked up"))
+        }
+    })?;
+    addresses
+        .first()
+        .map(|address| address.ip().to_string())
+        .ok_or_else(|| Error::new(format!("{host} has no address")))
 }
 
 pub(super) fn build_lettre(letter: &Letter) -> Result<lettre::Message, Error> {
@@ -2050,6 +2083,8 @@ pub(super) fn test_server(
     let Some(mut server) = find_one(facade, SERVER, "emailServerId", &server_id)? else {
         return fail(format!("No EmailServer found for ID [{server_id}]"));
     };
+    // a server that is disabled until a test of it passes is tried all the same: this is the test
+    server.set("disabled", Value::Null);
     // an SMTP sign-in to try before it is stored: smtpUsername as given (empty for the store's), smtpPassword when given
     if let Some(user) = parameters.get("smtpUsername").filter(|value| !value.is_null()) {
         server.set("smtpUsername", Value::string(to_plain_string(user).trim()));

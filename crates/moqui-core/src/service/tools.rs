@@ -144,6 +144,9 @@ fn print_document(
     job.insert("document".to_string(), Value::Bytes(bytes));
     let mut send = BTreeMap::new();
     send.insert("printJob".to_string(), Value::Map(job.into_iter().collect()));
+    if matches!(parameters.get("connectionTest"), Some(Value::Bool(true))) {
+        send.insert("connectionTest".to_string(), Value::Bool(true));
+    }
     let sent = call(SEND_INTERNAL, &send, &CallOptions::default());
     if let Some(job_id) = sent.get("jobId") {
         out.insert("jobId".to_string(), job_id.clone());
@@ -289,6 +292,7 @@ fn server_of(printer: &moqui_lib::object::ValueMap) -> PrintServer {
     PrintServer {
         host: map_text(printer, "serverHost"),
         port: if port == 0 { IPP_PORT } else { port },
+        deny_internal: map_text(printer, "allowPrivateNetwork") == "N",
     }
 }
 
@@ -345,7 +349,9 @@ fn send_print_job_internal(
         .and_then(crate::script::value_map)
         .unwrap_or_default();
     let print_job_id = map_text(&job, "printJobId");
-    let (job_id, error) = match send_job(&job, facade)? {
+    // the test print of a printer that is disabled until a test of it passes (ConfigurationServices test#Connection)
+    let testing = matches!(parameters.get("connectionTest"), Some(Value::Bool(true)));
+    let (job_id, error) = match send_job(&job, facade, testing)? {
         Ok(result) => (result.job_id, result.error),
         Err(message) => (None, Some(message)),
     };
@@ -382,7 +388,23 @@ fn send_print_job_internal(
 fn send_job(
     job: &moqui_lib::object::ValueMap,
     facade: &EntityFacade,
+    testing: bool,
 ) -> Result<Result<crate::print::PrintResult, String>, LibError> {
+    // A printer an administrator disabled, or whose server changed and has not passed a test print since
+    // (org.moqui.admin.ConfigurationServices store#Connection), is sent nothing but that test print.
+    let network_printer_id = map_text(job, "networkPrinterId");
+    if !testing {
+        let disabled = facade
+            .find(NETWORK_PRINTER)?
+            .eq("networkPrinterId", Value::string(&network_printer_id))
+            .one()?
+            .is_some_and(|record| record.get("disabled").map(to_plain_string).as_deref() == Some("Y"));
+        if disabled {
+            return Ok(Err(format!(
+                "NetworkPrinter [{network_printer_id}] is disabled until a test print passes"
+            )));
+        }
+    }
     // A printer that cannot be had (no record, no such printer, no server or no client) is a failed send recorded on
     // the job; Java's `make#CupsPrinter` runs before its `try`, so its job stays `PtjNotSent` with no `errorMessage`
     // (accepted, P8a-39).
@@ -498,6 +520,7 @@ fn get_server_printers(
     let server = PrintServer {
         host: host.clone(),
         port,
+        deny_internal: false,
     };
     let printers = client.printers(&server).map_err(|err| LibError::new(err.message()))?;
     for printer in printers.into_iter().filter(|printer| !names.contains(&printer.name)) {

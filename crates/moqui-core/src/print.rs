@@ -30,6 +30,9 @@ pub const PRINTING_UNAVAILABLE: &str = "Network printing support not installed (
 pub struct PrintServer {
     pub host: String,
     pub port: u16,
+    /// The printer's `allowPrivateNetwork` is N (a delegated administrator's on a production instance): the client
+    /// sends nothing to a loopback, private or link-local address.
+    pub deny_internal: bool,
 }
 
 /// A printer a server has, as cups4j's `CupsPrinter`.

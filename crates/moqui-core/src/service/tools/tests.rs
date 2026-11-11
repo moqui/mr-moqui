@@ -135,6 +135,50 @@ impl crate::print::PrintClient for FakePrinter {
     }
 }
 
+/// Admin P11: a printer that is disabled until a test print passes takes no job but that test print
+/// (`connectionTest`), which `org.moqui.admin.ConfigurationServices.test#Connection` sends.
+#[test]
+fn a_disabled_printer_takes_only_its_connection_test() {
+    let _print = crate::print::print_test_lock();
+    let (facade, context) = setup();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    install(&["impl/PrintServices.xml"]);
+    let printer = std::sync::Arc::new(FakePrinter {
+        printed: std::sync::Mutex::new(Vec::new()),
+    });
+    crate::print::install_print_client(printer.clone());
+    crate::service::sync(
+        "create#moqui.basic.print.NetworkPrinter",
+        &params(&[
+            ("networkPrinterId", "OFF_PRINTER"),
+            ("serverHost", "localhost"),
+            ("printerName", "gate"),
+            ("disabled", "Y"),
+        ]),
+    )
+    .unwrap();
+    let mut call = params(&[("networkPrinterId", "OFF_PRINTER"), ("contentType", "text/plain")]);
+    call.insert("inputStream".to_string(), Value::Bytes(b"a page".to_vec()));
+    let out = crate::service::sync("org.moqui.impl.PrintServices.print#Document", &call).unwrap();
+    let id = to_plain_string(out.get("printJobId").unwrap());
+    assert!(
+        errors(&context).contains("is disabled until a test print passes"),
+        "{}",
+        errors(&context)
+    );
+    assert_eq!(job_field(&facade, &id, "statusId"), "PtjSendFailed");
+    assert!(printer.printed.lock().unwrap().is_empty());
+
+    context.message().clear();
+    call.insert("connectionTest".to_string(), Value::Bool(true));
+    let out = crate::service::sync("org.moqui.impl.PrintServices.print#Document", &call).unwrap();
+    assert_eq!(errors(&context), "");
+    assert_eq!(out.get("jobId"), Some(&Value::I32(42)));
+    assert_eq!(printer.printed.lock().unwrap().len(), 1);
+    crate::print::clear_print_client();
+}
+
 #[test]
 fn a_print_job_is_sent_through_the_print_client_and_its_status_follows_the_server() {
     let _print = crate::print::print_test_lock();

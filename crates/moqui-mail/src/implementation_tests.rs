@@ -116,6 +116,43 @@ fn a_server_not_reached_is_retryable() {
     );
 }
 
+/// Admin P11: a server that is disabled until a test of it passes sends nothing, and one that may not use the private
+/// network (`allowPrivateNetwork` N) is connected to at no internal address; both before any socket.
+#[test]
+fn a_disabled_server_and_an_internal_address_are_refused_before_a_connection() {
+    let _lock = lock_tests();
+    let (facade, context) = entered();
+    for (id, host, field) in [
+        ("OFF", "93.184.216.34", "disabled"),
+        ("INNER", "127.0.0.1", "allowPrivateNetwork"),
+        ("OUTER", "93.184.216.34", "allowPrivateNetwork"),
+    ] {
+        seed(
+            &facade,
+            &context,
+            "moqui.basic.email.EmailServer",
+            &[
+                ("emailServerId", id),
+                ("smtpHost", host),
+                ("smtpPort", "25"),
+                (field, if field == "disabled" { "Y" } else { "N" }),
+            ],
+        );
+    }
+    let transport = |id: &str| {
+        let server = super::find_one(&facade, super::SERVER, "emailServerId", id)
+            .unwrap()
+            .unwrap();
+        super::smtp_transport(&server, &super::SmtpAuth::None, None).map(|_| ())
+    };
+    let off = transport("OFF").unwrap_err().to_string();
+    assert!(off.contains("is disabled until a test of it passes"), "{off}");
+    let inner = transport("INNER").unwrap_err().to_string();
+    assert!(inner.contains("is an internal address"), "{inner}");
+    // a public address written out is taken as it is: no lookup, no connection yet
+    transport("OUTER").unwrap();
+}
+
 #[test]
 fn host_suffix_matches_on_a_dot_boundary() {
     assert!(host_in("", "smtp.example.com"));

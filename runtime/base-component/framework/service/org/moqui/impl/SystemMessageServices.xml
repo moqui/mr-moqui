@@ -162,6 +162,15 @@ along with this software (see the LICENSE.md file). If not, see
                 <set field="systemMessageRemote" from="systemMessage.findRelatedOne('moqui.service.message.SystemMessageRemote', null, null)"/>
                 <if condition="systemMessageRemote.get('sendServiceName')">
                     <set field="sendServiceName" from="systemMessageRemote.get('sendServiceName')"/></if>
+                <!-- MR Moqui only. A remote an administrator disabled, or whose address or sign-in changed and has not
+                    passed a test since (org.moqui.admin.ConfigurationServices.store#Connection), is sent nothing, whatever
+                    its send service: the message waits as it is, tried again after the retry time, its failures not
+                    counted (the message is not at fault). -->
+                <if condition="systemMessageRemote.get('disabled') == 'Y'">
+                    <service-call name="update#moqui.service.message.SystemMessage" transaction="force-new"
+                            in-map="{systemMessageId, lastAttemptDate:ec.user.nowTimestamp}"/>
+                    <return error="true" message="System message ${systemMessageId} not sent: its remote ${systemMessage.get('systemMessageRemoteId')} is disabled until a test of it passes"/>
+                </if>
             </if>
 
             <if condition="!sendServiceName">
