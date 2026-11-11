@@ -983,14 +983,18 @@ pub fn inbox(_factory: &ExecutionContextFactory, user_ids: &[String], title: &st
     if user_ids.is_empty() {
         return;
     }
-    let map = match moqui_lib::json::from_json(message) {
+    let mut map = match moqui_lib::json::from_json(message) {
         Value::Map(map) => map,
         _ => indexmap::IndexMap::default(),
     };
+    // A notification's title is a template expanded as a script when it is sent, and an inbox title quotes text a model
+    // or an administrator wrote (an approval's summary, an agent or trigger id): taken from the message by name, it is
+    // expanded once and nothing in it runs.
+    map.insert("inboxTitle".to_string(), Value::string(title));
     let sent = moqui_core::notify::NotificationMessage::new()
         .topic(INBOX_TOPIC)
         .user_ids(user_ids.iter().cloned())
-        .title(title)
+        .title("${inboxTitle}")
         .message_map(map)
         .send();
     if let Err(error) = sent {

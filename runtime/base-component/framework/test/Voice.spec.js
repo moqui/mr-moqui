@@ -320,9 +320,12 @@ feature("failed digest attempts block their source, not the account", {
         const blocks = admin("find#AuthBlocks")
         const cleared = admin("clear#AuthBlock", {sourceAddress: "203.0.113.5"})
         const alerts = sys(() => ec.entity.find("moqui.security.user.NotificationMessage").condition("topic", "VoiceAlert").count())
-        return {tries, elsewhere, engineBlocked, before, after, config, blocks, cleared, alerts}
+        // the alert's title names the source from the message (a title is expanded as a script when sent: never part of it)
+        const blockedTitle = sys(() => ec.entity.find("moqui.security.user.NotificationMessage").condition("topic", "VoiceAlert")
+            .condition("titleText", "like", "SIP source 203.0.113.5 %").count())
+        return {tries, elsewhere, engineBlocked, before, after, config, blocks, cleared, alerts, blockedTitle}
     },
-    then({tries, elsewhere, engineBlocked, before, after, config, blocks, cleared, alerts}) {
+    then({tries, elsewhere, engineBlocked, before, after, config, blocks, cleared, alerts, blockedTitle}) {
         tries[0].blocked == false
         tries[1].blocked == false
         tries[2].blocked == true
@@ -340,6 +343,7 @@ feature("failed digest attempts block their source, not the account", {
         blocks.blockList.find(b => b.sourceAddress == "203.0.113.5").blocked == true
         cleared.errors == ""
         alerts > 0
+        blockedTitle > 0
     }
 })
 
