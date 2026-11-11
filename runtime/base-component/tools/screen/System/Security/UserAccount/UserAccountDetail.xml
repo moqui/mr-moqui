@@ -53,8 +53,6 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="createUserAuthcFactorTotp"><service-call name="org.moqui.impl.UserServices.create#UserAuthcFactorTotp"/>
         <default-response url="."/></transition>
-    <transition name="verifyUserAuthcFactorTotp"><service-call name="org.moqui.impl.UserServices.verify#UserAuthcFactorTotp"/>
-        <default-response url="."/></transition>
     <transition name="createUserAuthcFactorSingleUse">
         <service-call name="org.moqui.impl.UserServices.create#SingleUseAuthcCodes" />
         <actions><script>ec.web.sessionAttributes.put("singleUseCodes", singleUseCodes)</script></actions>

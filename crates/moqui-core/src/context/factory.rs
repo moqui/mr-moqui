@@ -1138,10 +1138,26 @@ impl ExecutionContext {
     /// Push an artifact frame without any check, for a frame that is already authorized.
     pub fn push(&self, artifact_type: &str, name: &str, action: &str) {
         let errors = self.errors_at_push();
-        self.state
-            .artifacts
-            .borrow_mut()
-            .push_with(artifact_type, name, action, AuthInfo::default(), errors);
+        let wants_user =
+            self.state
+                .artifacts
+                .borrow_mut()
+                .push_with(artifact_type, name, action, AuthInfo::default(), errors);
+        self.note_activity_user(wants_user);
+    }
+
+    /// Tell the thread's activity mirror the user of the work it runs, when a push asked for it. The session is read
+    /// only if nothing holds it: a push inside a change of the session goes without, and a later one tells it.
+    fn note_activity_user(&self, wants_user: bool) {
+        if wants_user {
+            let user_id = self
+                .state
+                .session
+                .try_borrow()
+                .ok()
+                .and_then(|session| session.user_id().map(str::to_string));
+            super::activity::note_user(user_id);
+        }
     }
 
     fn errors_at_push(&self) -> super::artifact::ErrorsAtPush {
@@ -1200,10 +1216,12 @@ impl ExecutionContext {
             return Err(crate::user::denied(artifact_type, name, action, &info));
         }
         let errors = self.errors_at_push();
-        self.state
+        let wants_user = self
+            .state
             .artifacts
             .borrow_mut()
             .push_with(artifact_type, name, action, info, errors);
+        self.note_activity_user(wants_user);
         Ok(())
     }
 

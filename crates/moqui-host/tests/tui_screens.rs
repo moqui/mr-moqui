@@ -453,17 +453,17 @@ fn drive_tools(link: &HostLink) {
     assert!(lone_error(view.session().model()).is_none());
     // A link to a transition that leaves a message: the message comes with the screen the transition goes back to.
     let mut view = AppView::with_session(
-        Session::start("/apps/system/ThreadList/interruptThread?threadName=nobody"),
+        Session::start("/apps/system/Cache/CacheList/clearCache?cacheName=l10n.message"),
         link.clone(),
     );
     view.run_requests();
     assert!(
-        view.session().path().ends_with("ThreadList"),
+        view.session().path().ends_with("CacheList"),
         "{}",
         view.session().path()
     );
     assert!(
-        view.session().message().contains("not interrupted"),
+        view.session().message().contains("Cleared cache l10n.message"),
         "{}",
         view.session().message()
     );

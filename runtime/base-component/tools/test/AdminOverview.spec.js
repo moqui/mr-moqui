@@ -296,6 +296,26 @@ feature("thread counts and scheduler checks distinguish unavailable from zero an
     }
 })
 
+// One html render of Threads, which has logic of its own: the thread that renders it runs this screen, so its row has
+// what it runs and the artifact stack, whatever else the process is doing.
+feature("the thread list shows what a thread runs and offers nothing this server cannot do", {
+    when() {
+        return {page: render("ThreadList", "System", {show: "running"})}
+    },
+    then({page}) {
+        page.status == 200
+        page.errors == ""
+        !/Error rendering|Exception in render/.test(page.output)
+        page.output.includes("Service worker pool")
+        page.output.includes("Request pool")
+        page.output.includes("(xml screen)")
+        page.output.includes("ThreadList.xml")
+        page.output.includes("StackDialog_")
+        !page.output.includes("Interrupt")
+        !page.output.includes("Lock Owner")
+    }
+})
+
 feature("alert creation links discard an incoming notification record identity", {
     expect() {
         // One focused render of Alerts; a notification's definitionId must not turn any New action into Edit.

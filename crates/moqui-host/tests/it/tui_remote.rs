@@ -54,13 +54,17 @@ fn the_remote_link_logs_in_with_a_key_and_reads_screens() {
     // A posted transition, with the key and no session token.
     let posted = link
         .transition(
-            "/apps/system/ThreadList/interruptThread",
+            "/apps/system/Cache/CacheList/clearCache",
             "POST",
-            &BTreeMap::from([("threadName".to_string(), "nobody".to_string())]),
+            &BTreeMap::from([("cacheName".to_string(), "l10n.message".to_string())]),
         )
         .unwrap();
     assert!(
-        posted.messages.info.iter().any(|text| text.contains("not interrupted")),
+        posted
+            .messages
+            .info
+            .iter()
+            .any(|text| text.contains("Cleared cache l10n.message")),
         "{posted:?}"
     );
 

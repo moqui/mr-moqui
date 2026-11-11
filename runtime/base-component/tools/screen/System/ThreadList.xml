@@ -12,57 +12,75 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
+<!-- Threads: the worker and request pools, the job scheduler, and the threads of the process. A thread that runs a
+    request, a service or a job shows what it runs (ec.factory.getThreadList, context/activity.rs in moqui-core): the
+    work it began with and for how long, the artifact it is in now, its user, its trace in Monitor and the artifact
+    stack. This server has no thread interrupt, lock owners or native frames of another thread (Java's ThreadMXBean),
+    and the worker pool's size is the conf's, read when the server starts. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-index="7" default-menu-title="Threads" menu-image="sym_o_forum" menu-image-type="icon">
 
-    <transition name="interruptThread" authz-action="all">
-        <parameter name="threadName"/>
-        <!-- A Rust thread cannot be interrupted from outside, so this reports that -->
-        <actions><script>ec.message.addMessage(`Thread ${threadName} not interrupted: a thread cannot be interrupted in this server`, "warning")</script></actions>
-        <default-response url="."/>
-    </transition>
-    <transition name="setWorkerPoolSize" authz-action="all">
-        <!-- The worker pool size is the conf tools@worker-pool-max, set when the server starts -->
-        <actions><script>ec.message.addMessage(ec.l10n.localize("The worker pool size is set by the conf (tools worker-pool-max) when the server starts"), "warning")</script></actions>
-        <default-response url="."/>
-    </transition>
+    <parameter name="show"/>
+
+    <transition name="trace"><default-response url="../Monitor/TraceDetail"/></transition>
 
     <actions>
         <set field="workerPool" from="ec.factory.workerPool"/>
         <set field="jobRunner" from="ec.service.getJobRunner()"/>
         <set field="jobRunnerLastCheckText" from="jobRunner &amp;&amp; jobRunner.executeCount &gt; 0 ? (jobRunner.lastExecuteTime != null ? ec.l10n.format(jobRunner.lastExecuteTime, null) : ec.l10n.localize('Unavailable')) : ec.l10n.localize('Not run yet')"/>
-        <set field="processInfo" from="ec.factory.getStatusMap().Process"/>
+        <set field="statusMap" from="ec.factory.getStatusMap()"/>
+        <set field="processInfo" from="statusMap.Process"/>
+        <set field="requestPool" from="statusMap.RequestPool"/>
         <set field="threadCountText" from="processInfo.Threads != null ? ec.l10n.format(processInfo.Threads, '#,##0') : ec.l10n.localize('Unavailable')"/>
 
         <set field="orderByField" from="orderByField || 'threadName'"/>
 
-        <!-- Java reads a ThreadMXBean; the port reads the process's threads (Linux /proc), with no lock or stack detail -->
+        <!-- the process's threads (Linux /proc), each with what it runs when it runs an artifact -->
         <set field="threadMapList" from="ec.factory.getThreadList()"/>
-        <script>orderMapList(threadMapList, [orderByField])</script>
+        <script><![CDATA[
+            runningCount = threadMapList.filter(thread => thread.work).length
+            if (show == 'running') threadMapList = threadMapList.filter(thread => thread.work)
+            // how long as text: seconds under a minute, then minutes and seconds
+            const duration = seconds => seconds == null ? '' : seconds < 60 ? ec.l10n.format(seconds, '#,##0.0') + ' s'
+                : Math.floor(seconds / 60) + ' m ' + Math.floor(seconds % 60) + ' s'
+            for (const thread of threadMapList) {
+                thread.workText = thread.work ? thread.work + ' (' + thread.workType + ')' : ''
+                thread.workTimeText = duration(thread.workSeconds)
+                // the artifact it is in now, when that is not the one it began with
+                thread.runningText = thread.running && (thread.stackList || []).length > 1 ? thread.running + ' (' + thread.runningType + ')' : ''
+                thread.stackText = (thread.stackList || []).join('\n')
+            }
+            orderMapList(threadMapList, [orderByField])
+        ]]></script>
     </actions>
     <widgets>
-        <label text="Threads: ${threadCountText}" type="p"/>
+        <label text="Threads: ${threadCountText} · ${runningCount} running a request, service or job" type="p"/>
 
         <container-row>
-            <row-col md="6">
-                <container-box><box-header title="Worker pool"/><box-body>
-                    <container-row>
-                        <row-col sm="6">
-                            <label text="Threads" type="strong"/>
-                            <label text="Active: ${workerPool.activeCount}" type="div"
-                                    style="${workerPool.activeCount == workerPool.maximumPoolSize ? 'text-warning' : ''}"/>
-                            <label text="Current: ${workerPool.poolSize} · Maximum: ${workerPool.maximumPoolSize}" type="div"/>
-                        </row-col>
-                        <row-col sm="6">
-                            <label text="Queue" type="strong"/>
-                            <label text="Current: ${workerPool.queueSize}" type="div"/>
-                            <label text="Remaining capacity: ${workerPool.remainingCapacity}" type="div"
-                                    style="${workerPool.remainingCapacity == 0 ? 'text-danger' : (workerPool.queueSize &gt; workerPool.remainingCapacity ? 'text-warning' : '')}"/>
-                        </row-col>
-                    </container-row>
+            <row-col md="4">
+                <container-box><box-header title="Service worker pool"/><box-body>
+                    <label text="Active: ${workerPool.activeCount}" type="div"
+                            style="${workerPool.activeCount == workerPool.maximumPoolSize ? 'text-warning' : ''}"/>
+                    <label text="Current: ${workerPool.poolSize} · Maximum: ${workerPool.maximumPoolSize}" type="div"/>
+                    <label text="Queued: ${workerPool.queueSize}" type="div"/>
+                    <label text="Remaining queue capacity: ${workerPool.remainingCapacity}" type="div"
+                            style="${workerPool.remainingCapacity == 0 ? 'text-danger' : (workerPool.queueSize &gt; workerPool.remainingCapacity ? 'text-warning' : '')}"/>
+                    <label text="The size is the conf's (tools worker-pool-max), read when the server starts." type="div" style="m-muted"/>
                 </box-body></container-box>
             </row-col>
-            <row-col md="6">
+            <row-col md="4">
+                <container-box><box-header title="Request pool"/><box-body>
+                    <section name="RequestPoolInfo" condition="requestPool"><widgets>
+                        <label text="Busy: ${requestPool.Busy} of ${requestPool.Workers}" type="div"
+                                style="${requestPool.Workers &amp;&amp; requestPool.Busy == requestPool.Workers ? 'text-warning' : ''}"/>
+                        <label text="Queued: ${requestPool.Queued} of ${requestPool.QueueCap}" type="div"
+                                style="${requestPool.QueueCap &amp;&amp; requestPool.Queued == requestPool.QueueCap ? 'text-danger' : ''}"/>
+                    </widgets><fail-widgets>
+                        <label text="Not reported by this server." type="div" style="m-muted"/>
+                    </fail-widgets></section>
+                </box-body></container-box>
+            </row-col>
+            <row-col md="4">
                 <container-box><box-header title="Service job scheduler"/><box-body>
                     <section name="JobRunnerInfo" condition="jobRunner"><widgets>
                         <label text="Last check: ${jobRunnerLastCheckText}" type="div"/>
@@ -76,31 +94,41 @@ along with this software (see the LICENSE.md file). If not, see
             </row-col>
         </container-row>
 
+        <container id="ThreadShow" style="row items-center q-gutter-x-sm q-mb-sm">
+            <label text="Show" type="span" style="m-muted"/>
+            <link url="." text="All threads" link-type="anchor" condition="show == 'running'"/>
+            <link url="." text="Only those running something" link-type="anchor" parameter-map="{show: 'running'}" condition="show != 'running'"/>
+        </container>
         <section name="ThreadDetails" condition="threadMapList.length &gt; 0"><widgets>
-            <form-list name="ThreadList" list="threadMapList" skip-form="true" select-columns="true">
+            <form-list name="ThreadList" list="threadMapList" skip-form="true" select-columns="true" paginate="false">
                 <field name="threadName"><header-field title="Name" show-order-by="case-insensitive"/><default-field><display/></default-field></field>
                 <field name="threadId"><header-field title="ID" show-order-by="true"/><default-field><display/></default-field></field>
                 <field name="threadState"><header-field title="State" show-order-by="true"/><default-field><display/></default-field></field>
 
-                <field name="cpuTime"><header-field title="CPU Time" show-order-by="true"/><default-field>
-                    <display text="${ec.l10n.format(cpuTime/1E9, '#,##0.000')}s"/></default-field></field>
-                <field name="userTime"><header-field show-order-by="true"/><default-field>
-                    <display text="${ec.l10n.format(userTime/1E9, '#,##0.000')}s"/></default-field></field>
+                <field name="cpuTime"><header-field title="CPU time" show-order-by="true"/><default-field>
+                    <display text="${cpuTime != null ? ec.l10n.format(cpuTime/1E9, '#,##0.000') + 's' : ''}"/></default-field></field>
+                <field name="userTime"><header-field title="User time" show-order-by="true"/><default-field>
+                    <display text="${userTime != null ? ec.l10n.format(userTime/1E9, '#,##0.000') + 's' : ''}"/></default-field></field>
 
-                <field name="lockName"><header-field title="Lock" show-order-by="true"/><default-field><display/></default-field></field>
-                <field name="lockOwnerName"><header-field title="Lock Owner" show-order-by="true"/><default-field><display/></default-field></field>
-                <field name="lockOwnerId"><header-field title="Lock Owner ID" show-order-by="true"/><default-field><display/></default-field></field>
-
-                <field name="blockedTime"><header-field title="Blocked Total" show-order-by="true"/><default-field><display/></default-field></field>
-                <field name="waitedTime"><header-field title="Waited Total" show-order-by="true"/><default-field><display/></default-field></field>
-
-                <field name="stack"><default-field title="">
-                    <container-dialog id="StackListDialog" button-text="Stack" type="default" width="960">
-                        <label text="${(stackList || []).join('\n')}" type="pre"/>
-                    </container-dialog>
+                <field name="work"><header-field title="Running" show-order-by="true"/><default-field>
+                    <display text="${workText}"/>
+                    <label text="${runningText}" type="div" style="m-muted" condition="runningText"/>
                 </default-field></field>
-                <field name="interrupt"><default-field title="">
-                    <link url="interruptThread" text="Interrupt" confirmation="Really interrupt thread ${threadName}?" btn-type="danger"/>
+                <field name="workSeconds"><header-field title="For" show-order-by="true"/><default-field align="right">
+                    <display text="${workTimeText}"/></default-field></field>
+                <field name="userId"><header-field title="User" show-order-by="true"/><default-field>
+                    <display-entity entity-name="moqui.security.UserAccount" text="${username}" key-field-name="userId"/></default-field></field>
+                <field name="traceId"><default-field title="Trace">
+                    <link url="trace" text="Trace" link-type="anchor" condition="traceId" parameter-map="{traceId: traceId}"
+                            tooltip="The spans this work has finished so far, in Monitor"/>
+                </default-field></field>
+                <field name="stack"><default-field title="">
+                    <section name="ThreadStack" condition="stackText"><widgets>
+                        <container-dialog id="StackDialog_${threadId || threadName}" button-text="Stack" type="default" width="960"
+                                title="What ${threadName} runs, the latest first">
+                            <label text="${stackText}" type="pre"/>
+                        </container-dialog>
+                    </widgets></section>
                 </default-field></field>
 
                 <form-list-column><field-ref name="threadName"/></form-list-column>
@@ -108,11 +136,18 @@ along with this software (see the LICENSE.md file). If not, see
                 <form-list-column><field-ref name="threadState"/></form-list-column>
                 <form-list-column><field-ref name="cpuTime"/></form-list-column>
                 <form-list-column><field-ref name="userTime"/></form-list-column>
-                <form-list-column><field-ref name="stack"/></form-list-column>
-                <form-list-column><field-ref name="interrupt"/></form-list-column>
+                <form-list-column><field-ref name="work"/></form-list-column>
+                <form-list-column><field-ref name="workSeconds"/></form-list-column>
+                <form-list-column><field-ref name="userId"/></form-list-column>
+                <form-list-column><field-ref name="traceId"/><field-ref name="stack"/></form-list-column>
+                <columns type="mobile">
+                    <column><field-ref name="threadName"/><field-ref name="work"/></column>
+                    <column><field-ref name="threadState"/><field-ref name="workSeconds"/><field-ref name="stack"/></column>
+                </columns>
             </form-list>
         </widgets><fail-widgets>
-            <label text="Thread details are unavailable on this server." type="p" style="m-muted"/>
+            <label text="No thread is running a request, service or job." type="p" style="m-muted" condition="show == 'running'"/>
+            <label text="Thread details are unavailable on this server." type="p" style="m-muted" condition="show != 'running'"/>
         </fail-widgets></section>
     </widgets>
 </screen>

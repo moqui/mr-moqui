@@ -186,7 +186,7 @@ along with this software (see the LICENSE.md file). If not, see
                 ? bytes(memory.AvailableBytes) + ' ' + L('of') + ' ' + bytes(memory.TotalBytes) + ' ' + L('available') + ' (' + percent(memory.AvailablePercent) + ')'
                 : DASH, memory.AvailableLevel, 'system.linux.memory.available', '')
             for (const filesystem of filesystems) {
-                const inodes = flagged(filesystem.inodesLevel) ? ' · ' + percent(filesystem.inodesUsedPercent) + ' ' + L('of its file entries used') : ''
+                const inodes = filesystem.inodesUsedPercent != null ? ' · ' + percent(filesystem.inodesUsedPercent) + ' ' + L('of its file entries used') : ''
                 const holds = Array.from(filesystem.holds || []).join(', ')
                 resource(L('Disk') + ' ' + filesystem.mountPoint, filesystem.usedPercent != null
                     ? percent(filesystem.usedPercent) + ' ' + L('of') + ' ' + bytes(filesystem.totalBytes) + ', ' + bytes(filesystem.availableBytes) + ' ' + L('free') + inodes +

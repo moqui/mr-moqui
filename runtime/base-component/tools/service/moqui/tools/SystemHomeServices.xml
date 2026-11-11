@@ -179,6 +179,9 @@ along with this software (see the LICENSE.md file). If not, see
                     : {key: 'backup', severity: 'warning', link: '/apps/system/ServiceJob/Jobs',
                         text: say('The embedded database has no running backup: there is no backup job')})
             })
+            // In error only. A send or consume whose outcome a person settled (SystemMessage.outcomeSettlement) stays
+            // Sending or Consuming, so it is never counted here; the failed and uncertain ones together, with what
+            // may be done about each, are the Admin app's (org.moqui.admin.OperationServices.find#Messages).
             check('systemMessages', () => {
                 if (!mayView('moqui.service.message.SystemMessage')) return
                 const errors = count(ec.entity.find('moqui.service.message.SystemMessage').condition('statusId', 'SmsgError'))

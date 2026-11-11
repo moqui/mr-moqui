@@ -14,6 +14,7 @@
 
 //! Factory, conf, components, resources, cache, messages, and the artifact stack.
 
+pub mod activity;
 mod anonymous;
 mod artifact;
 mod background;

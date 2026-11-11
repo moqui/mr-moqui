@@ -275,6 +275,13 @@ pub(crate) struct Memory {
     dirty_json: BTreeSet<String>,
 }
 
+impl Memory {
+    /// The session's user, for the thread's activity mirror (`context/activity.rs`).
+    pub(crate) fn user_id(&self) -> Option<&str> {
+        self.user_id.as_deref()
+    }
+}
+
 struct ThreadView {
     bound_id: Option<String>,
     factory: Option<Arc<ExecutionContextFactory>>,

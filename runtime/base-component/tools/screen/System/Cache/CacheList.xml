@@ -16,7 +16,10 @@ along with this software (see the LICENSE.md file). If not, see
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
 
     <transition name="clearCache" authz-action="update">
-        <actions><script>ec.cache.getCache(cacheName).clear()</script></actions>
+        <actions><script>
+            ec.cache.getCache(cacheName).clear()
+            ec.message.addMessage(ec.resource.expand('Cleared cache ${cacheName}', '', {cacheName: cacheName}))
+        </script></actions>
         <default-response url="."/>
     </transition>
     <transition name="clearArtifactCaches" authz-action="update">
@@ -30,11 +33,15 @@ along with this software (see the LICENSE.md file). If not, see
                 if (ec.cache.cacheExists(cacheName)) ec.cache.getCache(cacheName).clear()
             })
             // Java then warms the entity, service, and screen caches; the port loads definitions when first used
+            ec.message.addMessage(ec.l10n.localize('Cleared the artifact caches'))
         </script></actions>
         <default-response url="."/>
     </transition>
     <transition name="clearAllCaches" authz-action="update">
-        <actions><script>ec.cache.clearAllCaches()</script></actions>
+        <actions><script>
+            ec.cache.clearAllCaches()
+            ec.message.addMessage(ec.l10n.localize('Cleared all caches'))
+        </script></actions>
         <default-response url="."/>
     </transition>
     <transition name="cacheElements">

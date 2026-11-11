@@ -197,10 +197,76 @@ pub fn component_info_list(factory: &ExecutionContextFactory) -> Vec<moqui_lib::
         .collect()
 }
 
-/// The threads of this process for the thread list screen, from `/proc/self/task` on Linux (empty elsewhere): name,
-/// id, state (`RUNNABLE`, `WAITING`, ... from the kernel's state letter), and CPU and user time in nanoseconds. Java
-/// reads a `ThreadMXBean`; there are no lock or stack details here.
+/// The threads of this process for the thread list screen, from `/proc/self/task` on Linux: name, id, state
+/// (`RUNNABLE`, `WAITING`, ... from the kernel's state letter), and CPU and user time in nanoseconds. Java reads a
+/// `ThreadMXBean` for locks and stacks; here a thread that runs an artifact has what it runs instead
+/// ([`super::activity`]): `work` and `workSeconds` (the first frame and how long it has run), `running` (the top
+/// frame), `userId`, `traceId` and `stackList` (the artifact frames, top first). Where the platform lists no threads
+/// the rows are the threads that run an artifact, with no state or times.
 pub fn thread_list() -> Vec<moqui_lib::object::ValueMap> {
+    let mut rows = kernel_threads();
+    for activity in super::activity::running() {
+        let known = rows
+            .iter_mut()
+            .find(|row| activity.thread_id != 0 && row.get("threadId") == Some(&Value::I64(activity.thread_id)));
+        match known {
+            Some(row) => add_activity(row, &activity),
+            None => {
+                let mut row = IndexMap::default();
+                row.insert("threadName".to_string(), Value::string(&activity.thread_name));
+                if activity.thread_id != 0 {
+                    row.insert("threadId".to_string(), Value::I64(activity.thread_id));
+                }
+                add_activity(&mut row, &activity);
+                rows.push(row);
+            }
+        }
+    }
+    rows.sort_by_key(|row| match row.get("threadId") {
+        Some(Value::I64(id)) => *id,
+        _ => 0,
+    });
+    rows
+}
+
+/// What a thread runs, on its row of the thread list.
+fn add_activity(row: &mut moqui_lib::object::ValueMap, activity: &super::activity::ThreadActivity) {
+    // AT_XML_SCREEN_TRANS as "xml screen trans"
+    let kind = |artifact_type: &str| artifact_type.trim_start_matches("AT_").replace('_', " ").to_lowercase();
+    if let Some(first) = activity.frames.first() {
+        row.insert("work".to_string(), Value::string(&first.name));
+        row.insert("workType".to_string(), Value::string(kind(&first.artifact_type)));
+        row.insert("workSeconds".to_string(), Value::F64(first.seconds));
+    }
+    if let Some(top) = activity.frames.last() {
+        row.insert("running".to_string(), Value::string(&top.name));
+        row.insert("runningType".to_string(), Value::string(kind(&top.artifact_type)));
+    }
+    if let Some(user_id) = &activity.user_id {
+        row.insert("userId".to_string(), Value::string(user_id));
+    }
+    if let Some(trace_id) = &activity.trace_id {
+        row.insert("traceId".to_string(), Value::string(trace_id));
+    }
+    let stack = activity
+        .frames
+        .iter()
+        .rev()
+        .map(|frame| {
+            Value::string(format!(
+                "{} {} ({}) {:.3}s",
+                kind(&frame.artifact_type),
+                frame.name,
+                frame.action,
+                frame.seconds
+            ))
+        })
+        .collect();
+    row.insert("stackList".to_string(), Value::List(stack));
+}
+
+/// The kernel's threads of this process (`/proc/self/task`), none where there is no such list.
+fn kernel_threads() -> Vec<moqui_lib::object::ValueMap> {
     // USER_HZ is 100 on Linux, so a tick is ten milliseconds.
     const TICK_NANOS: i64 = 10_000_000;
     let Ok(entries) = std::fs::read_dir("/proc/self/task") else {
@@ -241,9 +307,5 @@ pub fn thread_list() -> Vec<moqui_lib::object::ValueMap> {
         row.insert("userTime".to_string(), Value::I64(user.saturating_mul(TICK_NANOS)));
         rows.push(row);
     }
-    rows.sort_by_key(|row| match row.get("threadId") {
-        Some(Value::I64(id)) => *id,
-        _ => 0,
-    });
     rows
 }
