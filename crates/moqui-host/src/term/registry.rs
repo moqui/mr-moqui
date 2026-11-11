@@ -255,7 +255,7 @@ impl Registry {
             session_id: spec.id.clone(),
         });
         #[cfg(not(unix))]
-        let host = ();
+        let host = crate::command::HostCommand;
         let (ours, theirs) = tokio::io::duplex(PIPE);
         let (output, input) = tokio::io::split(ours);
         let weak = Arc::downgrade(factory);

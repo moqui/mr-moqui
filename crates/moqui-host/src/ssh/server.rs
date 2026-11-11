@@ -654,7 +654,9 @@ impl Connection {
     }
 
     #[cfg(not(all(feature = "devtools", feature = "tui", unix)))]
-    fn host_access(&self, _channel: ChannelId, _username: &str) -> crate::command::HostCommand {}
+    fn host_access(&self, _channel: ChannelId, _username: &str) -> crate::command::HostCommand {
+        crate::command::HostCommand
+    }
 
     /// `apps` on `channel`: a pty, and a build with the client. It runs as the user logged in, or with the login
     /// dialog first, once per connection.

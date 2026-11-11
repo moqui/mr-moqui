@@ -30,7 +30,8 @@ pub(crate) mod shell;
 #[cfg(all(feature = "devtools", feature = "tui", unix))]
 pub(crate) type HostCommand = Option<host::HostAccess>;
 #[cfg(not(all(feature = "devtools", feature = "tui", unix)))]
-pub(crate) type HostCommand = ();
+#[derive(Default)]
+pub(crate) struct HostCommand;
 
 /// `sh`, `profiles` or `sessions`, when `text` is one: what it printed. `None` for any other line.
 #[cfg(all(feature = "devtools", feature = "tui", unix))]
