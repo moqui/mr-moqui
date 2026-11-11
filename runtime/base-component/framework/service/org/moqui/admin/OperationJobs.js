@@ -56,7 +56,10 @@ const defaultDays = 7
 const rangeDays = 92
 const maxItems = 200
 const valueTypes = ["integer", "decimal", "boolean", "option", "text"]
-const secretName = /pass(word|wd)?$|secret|token|credential|api[-_]?key|private[-_]?key|signature/i
+const secretName =
+    /pass(word|wd|code|phrase)?$|secret|token|credential|api[-_]?key|private[-_]?key|signature|\bpin$|pin(code|number)$/i
+// a stored text shown as a number: a count, a limit or a setting, never a long run of digits (an account, a card, a phone)
+const shortNumber = /^-?\d{1,9}(\.\d{1,6})?$/
 
 const now = () => ms(ec.user.nowTimestamp)
 const zone = () => text(ec.user.machineTimeZone) || "UTC"
@@ -425,7 +428,7 @@ function parameterRows(loaded) {
             description: null,
             valueType: null,
             value: null,
-            valueText: shownValue(row.parameterValue),
+            valueText: shownValue(row.parameterName, row.parameterValue),
             boundsText: "",
             optionList: [],
             required: false,
@@ -451,10 +454,12 @@ function boundsText(definition) {
             : kind
 }
 const maxLengthOf = definition => Math.min(Math.max(Number(definition.maxLength) || 60, 1), 255)
-// A value nobody registered as safe: a number or a yes or no is shown, anything else is not.
-const shownValue = value => {
+// A value nobody registered as safe: a short number or a yes or no is shown, anything else is not, and nothing of a
+// parameter named like a secret.
+const shownValue = (name, value) => {
     const found = text(value)
-    return /^-?\d+(\.\d+)?$/.test(found) || /^(true|false|Y|N)$/.test(found) ? found : found ? "(not shown)" : ""
+    if (!found) return ""
+    return !secretName.test(text(name)) && (shortNumber.test(found) || /^(true|false|Y|N)$/.test(found)) ? found : "(not shown)"
 }
 // Whether a user holds a permission now, by the user's groups (and ALL_USERS).
 function userHolds(userId, permission) {
@@ -603,6 +608,12 @@ const given = value => value !== undefined && value !== null
 // store#Job: the changes a registration allows, each checked before any is written; all or none.
 function storeJob(p) {
     lib.requireManage()
+    // the job's row is locked before it is read, so two changes at one revision are taken one after the other and the
+    // second finds the revision moved (its parameters and recipients are written only under this lock)
+    if (text(p.jobName) && !isQueued(p.jobName))
+        find(JOB, {jobName: text(p.jobName)})
+            .forUpdate(true)
+            .one()
     const loaded = loadJob(p.jobName)
     if (!loaded) throw new Error("No job " + text(p.jobName))
     const {job, registration} = loaded
@@ -652,7 +663,9 @@ function storeJob(p) {
         if (!/^\d{1,6}$/.test(text(p[name])) || Number(p[name]) < low || Number(p[name]) > high)
             return no("INVALID_VALUE", title + " is a whole number from " + low + " to " + high)
         const wanted = Number(p[name])
-        if (job[name] != null && Number(job[name]) === wanted) return null
+        // a wait that is not set is the framework's default, which a form posts back: no change
+        const current = job[name] != null ? Number(job[name]) : name === "minRetryTime" ? defaultRetryMinutes : null
+        if (current === wanted) return null
         if (!yes(registration[flag])) return no("NOT_EDITABLE", title + " is its owner's and is not changed here")
         jobFields[name] = wanted
         audits.push([name, job[name] == null ? null : String(Number(job[name])), String(wanted)])
@@ -891,8 +904,17 @@ function applyJobRecovery(p) {
     const name = text(p.step)
     if (!["check", "request"].includes(name)) throw new Error("Unknown recovery step " + name)
     if (isQueued(jobName)) return {taken: false}
-    const jobRow = one(JOB, {jobName})
+    // the job's row is locked too, so a pause or a change of its schedule (store#Job) is not made between this read and the mark
+    const jobRow = find(JOB, {jobName}).forUpdate(true).one()
     if (!jobRow) return {taken: false}
+    // whoever calls this step: a job is marked due only where its owner registered a native run
+    if (
+        name === "request" &&
+        text(
+            engine.descriptorFor(engine.descriptorsOf(recoveryKind.targetKind), {targetKey: jobName, direction: ""})?.retryMode
+        ) !== "native"
+    )
+        return {taken: false}
     const lockRow = find(LOCK, {jobName}).forUpdate(true).one()
     const nowMs = now()
     const target = targetOf(map(jobRow), lockRow ? map(lockRow) : null, nowMs)
@@ -926,8 +948,12 @@ function resultCounts(run) {
     if (results && typeof results === "object" && !Array.isArray(results))
         for (const name of Object.keys(results).slice(0, 60)) {
             const value = results[name]
-            if (typeof value === "number" || typeof value === "boolean") counts.push({name: safeText(name).slice(0, 60), value})
-            else if (typeof value === "string" && /^-?\d{1,15}(\.\d+)?$/.test(value))
+            // a result named like a secret is never a count, whatever it holds
+            if (secretName.test(name)) {
+                if (value != null) others.push(safeText(name).slice(0, 60))
+            } else if (typeof value === "number" || typeof value === "boolean")
+                counts.push({name: safeText(name).slice(0, 60), value})
+            else if (typeof value === "string" && shortNumber.test(value))
                 counts.push({name: safeText(name).slice(0, 60), value: Number(value)})
             else if (Array.isArray(value)) counts.push({name: safeText(name).slice(0, 60) + " (count)", value: value.length})
             else if (value != null) others.push(safeText(name).slice(0, 60))
@@ -1072,7 +1098,7 @@ function shownParameters(run, definitions) {
             const plain =
                 typeof value === "number" ||
                 typeof value === "boolean" ||
-                (typeof value === "string" && /^(-?\d{1,15}(\.\d+)?|true|false|Y|N)$/.test(value))
+                (typeof value === "string" && (shortNumber.test(value) || /^(true|false|Y|N)$/.test(value)))
             const shown = !secretName.test(name) && (plain || (registered.has(name) && typeof value === "string"))
             return {
                 name: safeText(name).slice(0, 60),

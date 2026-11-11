@@ -133,6 +133,17 @@ spec({
             parameterName: "fullEvery",
             parameterValue: "spec private deployment value"
         })
+        // deployed values that read as numbers: one named like a secret, one a long run of digits
+        make("moqui.service.job.ServiceJobParameter", {
+            jobName: jobs.config,
+            parameterName: "apiToken",
+            parameterValue: "48291377"
+        })
+        make("moqui.service.job.ServiceJobParameter", {
+            jobName: jobs.config,
+            parameterName: "accountNumber",
+            parameterValue: "378282246310005"
+        })
         make("moqui.server.JobRegistration", {
             jobName: jobs.config,
             ownerApp: "Spec owner",
@@ -203,8 +214,13 @@ spec({
             startTime: Date.now() - 3 * hour,
             endTime: Date.now() - 3 * hour + 4000,
             hasError: "N",
-            parameters: JSON.stringify({daysToKeep: "30", apiKey: "spec-aj-key-1", note: "spec private parameter"}),
-            results: JSON.stringify({sentCount: 3, failedCount: 2, note: "spec private result"}),
+            parameters: JSON.stringify({
+                daysToKeep: "30",
+                apiKey: "spec-aj-key-1",
+                note: "spec private parameter",
+                accountNumber: "378282246310005"
+            }),
+            results: JSON.stringify({sentCount: 3, failedCount: 2, note: "spec private result", sessionToken: 48291377}),
             messages: "spec private message line"
         })
         make(RUN, {
@@ -307,6 +323,9 @@ feature("a job is changed only where its owner registered it: never its service,
             out.nonsense = store(jobs.config, {cronExpression: "every day at noon"})
             out.cleared = store(jobs.config, {cronExpression: ""})
             out.stale = invoke(O + "store#Job", {jobName: jobs.config, expectedRevision: "1", paused: "N"})
+            // the wait a form posts back for a job that has none set is the default: no change, so no refusal
+            out.sameWait = store(jobs.config, {minRetryTime: "5"})
+            out.otherWait = store(jobs.config, {minRetryTime: "6"})
             out.untouched = JSON.stringify(job(jobs.config))
             // what was registered is taken, with the reason
             out.saved = store(jobs.config, {
@@ -338,6 +357,7 @@ feature("a job is changed only where its owner registered it: never its service,
         ;[out.everyMinute, out.nonsense, out.cleared].every(found => found.reasonCode == "INVALID_SCHEDULE")
         has(out.everyMinute.reason, /15 minutes/)
         out.stale.reasonCode == "STALE_REVISION"
+        out.sameWait.applied === true && out.sameWait.changedList.length == 0 && out.otherWait.reasonCode == "NOT_EDITABLE"
         // nothing of all that was written
         JSON.parse(out.untouched).cronExpression == "0 0 3 * * ?" && JSON.parse(out.untouched).paused == "Y"
         out.saved.applied === true && out.saved.changedList.length == 3
@@ -362,6 +382,11 @@ feature("a job is changed only where its owner registered it: never its service,
         out.detail.parameterList.find(row => row.parameterName == "dailyCount").value == "9"
         out.detail.parameterList.find(row => row.parameterName == "fullEvery").editable === false
         !JSON.stringify(out.detail).includes("spec private")
+        // nor a value named like a secret or a long run of digits, though each reads as a number
+        ;["apiToken", "accountNumber"].every(
+            name => out.detail.parameterList.find(row => row.parameterName == name).valueText == "(not shown)"
+        )
+        !has(JSON.stringify(out.detail), /48291377|378282246310005/)
         !out.detail.parameterList.some(row => row.parameterName == "serviceName")
         out.detail.recipientList.length == 1 && out.detail.recipientList[0].eligible === true
         out.listed.jobList.some(row => row.jobName == jobs.config && row.state == "paused" && row.ownerApp == "Spec owner")
@@ -392,6 +417,13 @@ feature("a run outside the schedule is asked of the scheduler under the job's lo
         const apply = () => invoke(O + "apply#JobRecovery", {jobName: jobs.twice, expectedRevision: revision, step: "request"})
         out.first = apply()
         out.second = apply()
+        // the step itself marks no job due whose owner registered no run, whoever calls it
+        out.plainLock = lock(jobs.plain)
+        out.unregisteredStep = invoke(O + "apply#JobRecovery", {
+            jobName: jobs.plain,
+            expectedRevision: as(users.manage, () => detail(jobs.plain).job.runRevision),
+            step: "request"
+        })
         return out
     },
     then(out) {
@@ -417,6 +449,7 @@ feature("a run outside the schedule is asked of the scheduler under the job's lo
         out.repeated.repeated === true && out.repeated.applied === true
         first(out.again).reasonCode == "ALREADY_DUE"
         out.first.taken === true && out.second.taken === false
+        out.unregisteredStep.taken === false && Number(lock(jobs.plain).lastRunTime) == Number(out.plainLock.lastRunTime)
     }
 })
 
@@ -446,7 +479,8 @@ feature("a run that ended without an error but with failed items is not a succes
         out.items.parameterList.find(row => row.name == "apiKey").valueText == "(not shown)"
         out.items.parameterList.find(row => row.name == "note").valueText == "(not shown)"
         out.items.itemsAvailable === false
-        !has(JSON.stringify(out.items), /spec private|spec-aj-key/)
+        out.items.run.otherResultList.includes("sessionToken")
+        !has(JSON.stringify(out.items), /spec private|spec-aj-key|48291377|378282246310005/)
         out.failed.run.state == "failed" && out.failed.run.errorLineCount == 2
         has(out.failed.run.errorLineList[0], /^Could not connect to https:\/\/files\.example\.test for \(address\)$/)
         // the framework's send job: the run has no error, and its owner's items say a message failed
