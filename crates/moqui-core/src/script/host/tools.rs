@@ -614,6 +614,10 @@ macro_rules! tools_js {
     ec.resource.isTextFilename = (filename) => host.isTextFilename(filename == null ? "" : String(filename));
     globalThis.ResourceReference = { isTextFilename: ec.resource.isTextFilename };
     ec.resource.getLocationReference = (location) => makeRef(String(location));
+    // Java's getUriReference takes a URI; a location is one here
+    ec.resource.getUriReference = (uri) => makeRef(String(uri));
+    // Java's getLocationStream: the file as a stream, null for a file that is not there
+    ec.resource.getLocationStream = (location) => makeRef(String(location)).openStream();
     // the line diff between two texts, as getVersionDiff returns it: {fromName, toName, unifiedDiff, html, stats, hunks}
     ec.resource.textDiff = (oldText, newText, fromName, toName) => host.textDiff(oldText == null ? "" : String(oldText),
         newText == null ? "" : String(newText), fromName == null ? "old" : String(fromName),
@@ -818,7 +822,19 @@ macro_rules! tools_js {
         // whether authorization is disabled now, changing nothing (disableAuthz to ask would hold a guard of its own)
         authzDisabled: host.authzDisabled,
         // Java's: disable returns whether tarpit counting was already disabled; it stays so until enable
-        disableTarpit: host.disableTarpit, enableTarpit: host.enableTarpit };
+        disableTarpit: host.disableTarpit, enableTarpit: host.enableTarpit,
+        // Java's stack: each frame as {name, typeEnumId, actionEnumId}, top first. No history is kept here: what ran
+        // is in the telemetry traces (docs/tools/Monitoring.md).
+        getStack: host.artifactStack, getStackArray: host.artifactStack,
+        peek: () => host.artifactStack()[0] ?? null,
+        // Java's push(name, type, action, requiresAuthz): the frame is checked as any is, and throws when the user may
+        // not; the caller pops it. The type and action are Java's enum ids (AT_OTHER, AUTHZA_VIEW) or the short forms.
+        push: (name, type, action, requiresAuthz) => host.artifactPush(String(name), type == null ? null : String(type),
+            action == null ? null : String(action), requiresAuthz !== false),
+        pop: host.artifactPop,
+        // Java's: what runs under the top frame is authorized for an anonymous user, for every action or for view
+        setAnonymousAuthorizedAll: () => host.artifactAnonymous(true),
+        setAnonymousAuthorizedView: () => host.artifactAnonymous(false) };
 
     // `Locale.getAvailableLocales()` with English display names. Java lists every JVM locale; the port has no locale
     // database, so this is a fixed list of the common ones.
@@ -872,6 +888,18 @@ macro_rules! tools_js {
     // ---- factory and web ----
     ec.factory.getStatusMap = host.getStatusMap;
     ec.factory.getComponentInfoList = host.getComponentInfoList;
+    // Java's getComponentBaseLocations: each component's location by its name, in load order
+    ec.factory.getComponentBaseLocations = () => {
+        const out = {};
+        for (const info of host.getComponentInfoList()) out[info.name] = info.location;
+        return out;
+    };
+    // the factory outlives every script it runs
+    ec.factory.isDestroyed = () => false;
+    // Java's factory-level facades: the same objects as ec's here, as there is one context per thread of work
+    for (const name of ["entity", "service", "l10n", "resource", "cache", "screen", "logger"]) {
+        Object.defineProperty(ec.factory, name, { get: () => ec[name], enumerable: false, configurable: true });
+    }
     // What the server reported when it became ready (moqui_core::startup): the listeners, integrations and tools.
     ec.factory.getStartupReport = host.getStartupReport;
     ec.factory.getRuntimePath = host.getRuntimePath;
@@ -1076,6 +1104,10 @@ static METHODS: &[Method] = &[
     method!("tools", "isPermitted", [Text, OptText, OptText], is_permitted),
     method!("tools", "disableEntityEca", [], disable_entity_eca),
     method!("tools", "enableEntityEca", [], enable_entity_eca),
+    method!("tools", "artifactStack", [], None, leaf, artifact_stack),
+    method!("tools", "artifactPush", [Text, OptValue, OptValue, OptValue], artifact_push),
+    method!("tools", "artifactPop", [], artifact_pop),
+    method!("tools", "artifactAnonymous", [Value], None, leaf, artifact_anonymous),
     method!("tools", "disableAuthz", [], disable_authz),
     method!("tools", "enableAuthz", [], enable_authz),
     method!("tools", "authzDisabled", [], authz_disabled),
@@ -2870,6 +2902,61 @@ fn stack_name_string(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::from(with_ec(
         crate::context::ExecutionContext::artifact_stack_names,
     )?))
+}
+
+/// `ec.artifactExecution.getStack()`: each frame as `{name, typeEnumId, actionEnumId}`, top first.
+fn artifact_stack(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let frames = with_ec(crate::context::ExecutionContext::artifact_stack_frames)?;
+    let rows = frames
+        .into_iter()
+        .map(|(name, artifact_type, action)| {
+            let mut row = moqui_lib::object::ValueMap::default();
+            row.insert("name".to_string(), Value::String(name));
+            row.insert("typeEnumId".to_string(), Value::String(artifact_type));
+            row.insert("actionEnumId".to_string(), Value::String(action));
+            row
+        })
+        .collect();
+    Ok(list(rows))
+}
+
+/// `ec.artifactExecution.push(name, type, action, requiresAuthz)`: a frame checked as a push checks any, an error
+/// when the user is not authorized. The type defaults to `AT_OTHER` and the action to `AUTHZA_VIEW`.
+fn artifact_push(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.text_or_empty(0);
+    let artifact_type = call.opt_text(1).filter(|text| !text.is_empty());
+    let action = call.opt_text(2).filter(|text| !text.is_empty());
+    let artifact_type = artifact_type.unwrap_or_else(|| "AT_OTHER".to_string());
+    let action = action.unwrap_or_else(|| "AUTHZA_VIEW".to_string());
+    let requires_authz = call.value(3).is_none_or(super::truthy);
+    let pushed = with_ec(|ec| {
+        ec.push_checked(
+            &artifact_type,
+            &name,
+            &action,
+            crate::context::Authz::required_if(requires_authz),
+            crate::context::Tarpit::Count,
+            None,
+        )
+    })?;
+    pushed.map_err(|err| HostError::message(err.message()))?;
+    Ok(Ret::Undefined)
+}
+
+fn artifact_pop(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    with_ec(crate::context::ExecutionContext::pop)?.map_err(|err| HostError::message(err.message()))?;
+    Ok(Ret::Undefined)
+}
+
+/// `setAnonymousAuthorizedAll()` (true) and `setAnonymousAuthorizedView()`: the grant on the top frame.
+fn artifact_anonymous(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let access = if call.value(0).is_some_and(super::truthy) {
+        crate::context::AnonymousAccess::All
+    } else {
+        crate::context::AnonymousAccess::View
+    };
+    with_ec(|ec| ec.grant_anonymous(access, None))?;
+    Ok(Ret::Undefined)
 }
 
 fn entity_eca_disabled(_call: &mut Call<'_>) -> Result<Ret, HostError> {

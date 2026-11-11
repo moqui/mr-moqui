@@ -105,6 +105,8 @@ macro_rules! files_js {
         host.filesRestoreVersion(String(location), String(versionName), note == null ? null : String(note));
     ec.resource.getVersionBytes = (location, versionName) => host.filesVersionBytes(String(location), String(versionName));
     ec.resource.contentTypeOf = (filename) => host.filesContentType(filename == null ? "" : String(filename));
+    // Java's name for it
+    ec.resource.getContentType = ec.resource.contentTypeOf;
     ec.resource.makeGrant = (key, subject, ttlSeconds) =>
         host.filesMakeGrant(String(key), String(subject), ttlSeconds == null ? 3600 : Number(ttlSeconds));
     ec.resource.checkGrant = (key, subject, token) =>

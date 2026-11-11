@@ -52,3 +52,48 @@ feature("ec.message lists are arrays", {
         ec.message.errors.length === 0 && ec.message.messages.length === 0;
     }
 });
+
+feature("the user's currency, notification messages and anonymous login", {
+    when() {
+        seen = {};
+        login("john.doe");
+        seen.before = ec.user.currencyUomId;
+        ec.user.setCurrencyUomId("EUR");
+        seen.set = ec.user.getCurrencyUomId();
+        ec.user.setCurrencyUomId(seen.before);
+        seen.notices = ec.getNotificationMessages(null);
+        seen.anonymousWithUser = ec.user.loginAnonymousIfNoUser();
+        seen.badKey = ec.user.loginUserKey("not-a-login-key");
+        ec.message.clearErrors();
+    },
+    then() {
+        seen.set === "EUR" && ec.user.currencyUomId === seen.before;
+        Array.isArray(seen.notices);
+        seen.anonymousWithUser === false && seen.badKey === false;
+    },
+    cleanup() { logout(); }
+});
+
+feature("the cache, artifact stack and logger members of Java's facades", {
+    when() {
+        seen = {};
+        const cache = ec.cache.getCache("EcApi.spec");
+        cache.clear();
+        seen.cache = cache.putIfAbsent("a", 1) && cache.getAndPut("a", 2) === 1 && cache.keySet().join() === "a"
+            && cache.size() === 1 && ec.cache.getCacheNames().includes("EcApi.spec");
+        ec.cache.clearCachesByPrefix("EcApi.");
+        seen.cleared = cache.size() === 0;
+        const depth = ec.artifactExecution.getStack().length;
+        ec.artifactExecution.push("EcApi.spec.Frame", "AT_OTHER", "AUTHZA_VIEW", false);
+        seen.top = ec.artifactExecution.peek().name;
+        ec.artifactExecution.pop();
+        seen.popped = ec.artifactExecution.stack.length === depth;
+        ec.logger.log(ec.logger.INFO_INT, "EcApi spec logged at INFO_INT");
+    },
+    then() {
+        seen.cache && seen.cleared;
+        seen.top === "EcApi.spec.Frame" && seen.popped;
+        ec.logger.WARN_INT === 300 && ec.logger.logEnabled("error") === true;
+        ec.factory.entity === ec.entity && typeof ec.factory.getComponentBaseLocations().framework === "string";
+    }
+});

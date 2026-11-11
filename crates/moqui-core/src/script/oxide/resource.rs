@@ -99,7 +99,35 @@ fn thrown_on(scope: &mut Scope<'_>, err: RuntimeError) -> Conv {
 /// `ec.resource.script(location)`: the file's value (what it returns, or its last expression statement), run in the
 /// caller's names. A file whose top level only declares gives the same value each time, so the value it gave earlier
 /// in this outermost run is given again (`parse::module_is_inert`).
+///
+/// Java's other forms: `script(location, method)` calls the function of that name on the file's value, with no
+/// arguments, and gives what it returns (the file's value itself when it has no such function);
+/// `script(location, method, additionalContext)` runs both with the map's entries in a context frame of their own.
 fn script(scope: &mut Scope<'_>) -> Result<Value, Conv> {
+    let method = match scope.arg(1) {
+        Value::String(text) => Some(text.to_utf8_lossy()).filter(|name| !name.is_empty()),
+        _ => None,
+    };
+    if method.is_none() && !matches!(scope.arg(2), Value::Object(_)) {
+        return script_value(scope);
+    }
+    with_additional(scope, false, |scope| {
+        let value = script_value(scope)?;
+        let (Some(method), Value::Object(module)) = (&method, &value) else {
+            return Ok(value);
+        };
+        let Value::Object(function) = scope.get_property(module, &key(method)?)? else {
+            return Ok(value);
+        };
+        match scope.as_callable(&function)? {
+            Some(function) => Ok(scope.call(&function, value.clone(), &[])?),
+            None => Ok(value),
+        }
+    })
+}
+
+/// The value of the script file at argument 0.
+fn script_value(scope: &mut Scope<'_>) -> Result<Value, Conv> {
     let location = match scope.arg(0) {
         Value::String(text) => text.to_utf8_lossy(),
         other => scope.to_js_string(&other)?.to_utf8_lossy(),
@@ -188,8 +216,10 @@ fn or_in_widget_check<T>(result: Result<T, Conv>, none: impl FnOnce() -> T) -> R
     }
 }
 
-/// `ec.resource.expand(template, location, map)`, localized first when `localize`, and `expandNoL10n`.
+/// `ec.resource.expand(template, location, map)`, localized first when `localize`, and `expandNoL10n`. Java's fourth
+/// argument, `expand(template, location, map, false)`, is `expandNoL10n`.
 fn expand(scope: &mut Scope<'_>, localize: bool) -> Result<Value, Conv> {
+    let localize = localize && !matches!(scope.arg(3), Value::Bool(false));
     let template = text_arg(scope, 0)?;
     if template.is_empty() {
         return Ok(text_value(""));

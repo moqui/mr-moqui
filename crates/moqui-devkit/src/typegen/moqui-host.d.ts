@@ -546,7 +546,15 @@ interface MoquiResourceFacade {
     expandNoL10n(text: string, location?: string | null, map?: MoquiMap | null): string;
     expression(expression: string, location?: string | null, map?: MoquiMap | null): unknown;
     condition(expression: string, location?: string | null, map?: MoquiMap | null): boolean;
-    script(location: string): void;
+    /**
+     * The value of the script file (what it returns, or its last expression). With `method`, the function of that
+     * name on the value is called and its result given. With `additionalContext`, its entries are in a context frame
+     * of their own while the script runs.
+     */
+    script(location: string, method?: string | null, additionalContext?: MoquiMap | null): unknown;
+    getContentType(filename: string): string | null;
+    getLocationStream(location: string): unknown;
+    getUriReference(uri: string): unknown;
     template(location: string, data?: MoquiMap | null): string;
     /** PDF bytes of an `html-print` (old name `xsl-fo`) document. `xslt` must be null and `out` is ignored. Throws when PDF is not available. */
     xslFoTransform(document: string, xslt?: null, out?: unknown, contentType?: string | null): Uint8Array;
@@ -621,9 +629,16 @@ interface MoquiL10nFacade {
     localize(text: string): string;
     format(value: unknown, pattern?: string | null): string;
     roundCurrency(amount: unknown, uomId?: string | null, precise?: boolean, roundingMode?: string | number | null): Decimal | null;
-    formatCurrency(amount: unknown, uomId?: string | null, fractionDigits?: number | null): string;
+    formatCurrency(amount: unknown, uomId?: string | null, fractionDigits?: number | null, locale?: string | null, hideSymbol?: boolean): string;
     formatCurrencyNoSymbol(amount: unknown, uomId?: string | null, fractionDigits?: number | null): string;
-    parseTimestamp(text: string, format?: string | null): Timestamp | null;
+    /** Text that names no offset is read in `timeZone`, else the user's. The locale is not used. */
+    parseTimestamp(text: string, format?: string | null, locale?: string | null, timeZone?: string | null): Timestamp | null;
+    parseDateTime(text: string, format?: string | null): Timestamp | null;
+    parseDate(text: string, format?: string | null): unknown;
+    parseTime(text: string, format?: string | null): unknown;
+    parseNumber(text: string, format?: string | null): Decimal | null;
+    formatNumber(value: unknown, pattern?: string | null): string;
+    formatValue(value: unknown, pattern?: string | null): string;
 }
 
 interface MoquiMessageFacade {
@@ -678,13 +693,46 @@ interface MoquiValidationError {
 }
 
 interface MoquiLoggerFacade {
+    /** The level is a name or one of the level numbers below. */
     log(level: string | number, message: string, thrown?: unknown): void;
-    warn(message: string): void;
+    trace(message: string, thrown?: unknown): void;
+    debug(message: string, thrown?: unknown): void;
+    info(message: string, thrown?: unknown): void;
+    warn(message: string, thrown?: unknown): void;
+    error(message: string, thrown?: unknown): void;
+    /** Whether a message at the level would be written. */
+    logEnabled(level: string | number): boolean;
+    readonly OFF_INT: 0;
+    readonly FATAL_INT: 100;
+    readonly ERROR_INT: 200;
+    readonly WARN_INT: 300;
+    readonly INFO_INT: 400;
+    readonly DEBUG_INT: 500;
+    readonly TRACE_INT: 600;
+    readonly ALL_INT: 2147483647;
 }
 
 interface MoquiUserFacade {
     readonly userId: string | null;
+    getUserId(): string | null;
     readonly username: string | null;
+    getUsername(): string | null;
+    /** The currency of the signed-in user's account, or null. */
+    readonly currencyUomId: string | null;
+    getCurrencyUomId(): string | null;
+    setCurrencyUomId(uomId: string | null): void;
+    readonly visitorId: string | null;
+    getVisitorId(): string | null;
+    /** The user of the visit, which a later login in the same visit does not change. */
+    getVisitUserId(): string | null;
+    /** Whether the login key logged its user in; a key that does not adds an error message. */
+    loginUserKey(loginKey: string): boolean;
+    /** With nobody logged in the session becomes anonymous; whether this call did that. */
+    loginAnonymousIfNoUser(): boolean;
+    /** Such as "This Month (2026-11-01 to 2026-11-30)". */
+    getPeriodDescription(period: string, poffset?: string | number | null, pdate?: string | null): string;
+    /** The effective time as a Date. */
+    getNowCalendar(): Date;
     readonly locale: string;
     getLocale(): string;
     readonly timeZone: string;
@@ -731,6 +779,16 @@ interface MoquiPageMessage {
 }
 
 interface MoquiWebFacade {
+    /** The request's URL, path after the servlet path, its parts, body text and session; null (or empty) outside a request. */
+    readonly requestUrl: string | null;
+    readonly pathInfo: string | null;
+    readonly pathInfoList: string[];
+    readonly requestBodyText: string | null;
+    readonly requestAttributes: MoquiMap;
+    /** The validation errors of one field, of the submit that led here and of this request. */
+    getFieldValidationErrors(fieldName: string): MoquiValidationError[];
+    /** The bytes as the response. With no content type PDF, PNG, GIF and JPEG are told from the first bytes. */
+    sendBytesResponse(bytes: Uint8Array | string | null, contentType?: string | null, inline?: boolean, filename?: string | null): void;
     readonly parameters: MoquiMap;
     readonly requestParameters: MoquiMap;
     readonly multiPartParameters: MoquiMap;
@@ -929,6 +987,36 @@ interface MoquiScreenFacade {
     testRender(options: MoquiScreenRenderOptions & { method?: string; baseScreenPath?: string }): { output: string | null; errorMessages: string[]; renderTime: number; status: number | null };
 }
 
+/** A named framework cache, from `ec.cache.getCache(name)`. Keys are text. */
+interface MoquiCache {
+    get(key: string): unknown;
+    put(key: string, value: unknown): void;
+    /** Whether the key was there. */
+    remove(key: string): boolean;
+    containsKey(key: string): boolean;
+    clear(): void;
+    getAndPut(key: string, value: unknown): unknown;
+    getAndRemove(key: string): unknown;
+    /** Whether the value was put. */
+    putIfAbsent(key: string, value: unknown): boolean;
+    /** Puts only when the key is there; whether it was. */
+    replace(key: string, value: unknown): boolean;
+    getAll(keys: string[]): MoquiMap;
+    putAll(entries: MoquiMap): void;
+    /** Those keys, or every entry with no argument. */
+    removeAll(keys?: string[] | null): void;
+    keySet(): string[];
+    getName(): string;
+    size(): number;
+}
+
+/** A frame of the artifact stack. */
+interface MoquiArtifactFrame {
+    name: string;
+    typeEnumId: string;
+    actionEnumId: string;
+}
+
 /** `ec.context`: the context stack, the same object as the name `context`. */
 type MoquiEcContext = MoquiContext;
 
@@ -1014,6 +1102,18 @@ interface MoquiServerEc {
     readonly context: MoquiEcContext;
     readonly factory: {
         readonly moquiVersion: string;
+        getMoquiVersion(): string;
+        /** Each component's location by its name, in load order. */
+        getComponentBaseLocations(): Record<string, string>;
+        isDestroyed(): boolean;
+        /** The same objects as `ec.entity`, `ec.service` and the rest. */
+        readonly entity: MoquiEntityFacade;
+        readonly service: MoquiServerEc["service"];
+        readonly l10n: MoquiL10nFacade;
+        readonly resource: MoquiResourceFacade;
+        readonly cache: MoquiServerEc["cache"];
+        readonly screen: MoquiScreenFacade;
+        readonly logger: MoquiLoggerFacade;
         /** Whether this binary has a build feature, as `moqui version` lists them (`git`, `imap`, `smtp`; `mail` is both of those). */
         hasFeature(name: string): boolean;
         /** Wait up to `retryLimit` (default 50) times 100 ms for async service work to finish; whether the pool is empty. */
@@ -1025,7 +1125,16 @@ interface MoquiServerEc {
         getToolFactory<K extends keyof MoquiToolMap>(name: K): MoquiToolFactory<MoquiToolMap[K]> | null;
         getToolFactory(name: string): MoquiToolFactory | null;
     };
-    readonly cache: { getCache(name: string): { get(key: string): unknown; put(key: string, value: unknown): void; remove(key: string): boolean; containsKey(key: string): boolean; clear(): void } };
+    readonly cache: {
+        getCache(name: string): MoquiCache;
+        getLocalCache(name: string): MoquiCache;
+        getDistributedCache(name: string): MoquiCache;
+        cacheExists(name: string): boolean;
+        getCacheNames(): string[];
+        readonly cacheNames: string[];
+        clearAllCaches(): void;
+        clearCachesByPrefix(prefix: string): void;
+    };
     /**
      * The tools calls (phase 11): cache admin, the entity and service model, screen statistics, the server status,
      * the SQL runner, the data writer and loader. They are outside the Server host methods list and typed loosely.
@@ -1051,6 +1160,17 @@ interface MoquiServerEc {
         /** No hit of this execution context is counted against a tarpit until `enableTarpit()`. Returns whether it was already disabled. */
         disableTarpit(): boolean;
         enableTarpit(): void;
+        /** The frames of the artifact stack, top first. No history is kept: what ran is in the telemetry traces. */
+        getStack(): MoquiArtifactFrame[];
+        readonly stack: MoquiArtifactFrame[];
+        getStackArray(): MoquiArtifactFrame[];
+        peek(): MoquiArtifactFrame | null;
+        /** A frame checked as any is; throws when the user is not authorized. The caller pops it. */
+        push(name: string, typeEnumId?: string | null, actionEnumId?: string | null, requiresAuthz?: boolean): void;
+        pop(): void;
+        /** What runs under the top frame is authorized for an anonymous user, for every action or for view. */
+        setAnonymousAuthorizedAll(): void;
+        setAnonymousAuthorizedView(): void;
     };
     /** The root map of the context stack. */
     readonly contextRoot: MoquiMap;

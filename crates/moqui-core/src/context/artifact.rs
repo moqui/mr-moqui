@@ -236,6 +236,21 @@ impl ArtifactStack {
             .join(", ")
     }
 
+    /// Each frame's name, type and action, top first: Java's `getStack`.
+    pub(super) fn frames(&self) -> Vec<(String, String, String)> {
+        self.frames
+            .iter()
+            .rev()
+            .map(|frame| {
+                (
+                    frame.name.to_string(),
+                    frame.artifact_type.to_string(),
+                    frame.action.to_string(),
+                )
+            })
+            .collect()
+    }
+
     /// Whether the top frame is a service's and no screen render began since it was pushed: code running now is that
     /// service's own, not a widget expression of a render (`runAsSystem`'s rule, docs/security/Attack-Surface.md).
     pub(super) fn top_is_service_body(&self) -> bool {

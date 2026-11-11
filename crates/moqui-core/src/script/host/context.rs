@@ -55,11 +55,12 @@ macro_rules! context_js {
     ec.getNotificationMessages = (topic) => {
         const userId = ec.user.userId;
         if (!userId) return [];
-        return ec.artifactExecution.runAsSystem(() => {
+        const already = ec.artifactExecution.disableAuthz();
+        try {
             const find = ec.entity.find("moqui.security.user.NotificationMessageByUser").condition("userId", userId);
             if (topic) find.condition("topic", String(topic));
             return Array.from(find.list(), (row) => row.getMap());
-        });
+        } finally { if (!already) ec.artifactExecution.enableAuthz(); }
     };
 })"#
     };

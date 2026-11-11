@@ -158,3 +158,95 @@ fn message_lists_are_arrays_as_in_java() {
     );
     clear_context_stack();
 }
+
+#[test]
+fn logger_levels_and_user_and_l10n_forms() {
+    clear_context_stack();
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    holds(
+        r#"ec.logger.ERROR_INT === 200 && ec.logger.WARN_INT === 300 && ec.logger.INFO_INT === 400
+            && ec.logger.DEBUG_INT === 500 && ec.logger.TRACE_INT === 600 && ec.logger.OFF_INT === 0
+            && ec.logger.logEnabled(ec.logger.OFF_INT) === false && typeof ec.logger.logEnabled("error") === "boolean""#,
+    );
+    run_script(r#"ec.logger.log(ec.logger.ERROR_INT, "an error"); ec.logger.log(ec.logger.TRACE_INT, "a trace")"#)
+        .unwrap();
+    // the locale and hide-symbol arguments of formatCurrency, and the zone of parseTimestamp
+    holds(
+        r#"ec.l10n.formatCurrency(1234.5, "USD", 2, "en_US", true) === ec.l10n.formatCurrencyNoSymbol(1234.5, "USD", 2)
+            && ec.l10n.formatCurrency(1234.5, "USD", 2, "en_US").includes("1,234.50")"#,
+    );
+    holds(
+        r#"ec.user.timestampMillis(ec.l10n.parseTimestamp("2026-03-01 12:00", "yyyy-MM-dd HH:mm", null, "UTC"))
+            - ec.user.timestampMillis(ec.l10n.parseTimestamp("2026-03-01 12:00", "yyyy-MM-dd HH:mm", null, "America/New_York"))
+            === -5 * 60 * 60 * 1000"#,
+    );
+    holds(r#"ec.user.visitorId === ec.user.getVisitorId() && ec.user.getVisitUserId() === null"#);
+    holds(r#"ec.user.currencyUomId === null && ec.user.getNowCalendar() instanceof Date"#);
+    // with no database the `##period` suffix of the localized "to" stays: the text has no message row to read
+    holds(
+        r#"/^This Month \(\d{4}-\d\d-01 to(##period)? \d{4}-\d\d-\d\d\)$/.test(ec.user.getPeriodDescription("month", "0", null))
+            && ec.user.getPeriodDescription("7d", "-1", null).startsWith("Last 7 Days (")"#,
+    );
+    clear_context_stack();
+}
+
+#[test]
+fn cache_artifact_stack_factory_and_resource_forms() {
+    clear_context_stack();
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    holds(
+        r#"(function () {
+            const cache = ec.cache.getCache("java.api.test");
+            cache.clear();
+            const first = cache.putIfAbsent("a", 1) === true && cache.putIfAbsent("a", 2) === false && cache.get("a") === 1;
+            const swapped = cache.getAndPut("a", 3) === 1 && cache.replace("a", 4) === true && cache.replace("zz", 1) === false;
+            cache.putAll({b: 5, c: 6});
+            const all = cache.getAll(["a", "c", "nope"]);
+            const read = all.a === 4 && all.c === 6 && !("nope" in all) && cache.size() === 3
+                && cache.keySet().sort().join() === "a,b,c" && cache.getName() === "java.api.test";
+            cache.removeAll(["b"]);
+            const removed = cache.getAndRemove("c") === 6 && cache.size() === 1;
+            cache.removeAll();
+            return first && swapped && read && removed && cache.size() === 0
+                && ec.cache.getCacheNames().includes("java.api.test") && ec.cache.cacheNames.includes("java.api.test");
+        })()"#,
+    );
+    holds(
+        r#"(function () {
+            ec.cache.getCache("java.api.prefix.one").put("k", 1);
+            ec.cache.getCache("java.api.other").put("k", 1);
+            ec.cache.clearCachesByPrefix("java.api.prefix");
+            return ec.cache.getCache("java.api.prefix.one").size() === 0 && ec.cache.getCache("java.api.other").size() === 1;
+        })()"#,
+    );
+    holds(
+        r#"(function () {
+            const before = ec.artifactExecution.getStack().length;
+            ec.artifactExecution.push("java.api.Frame", "AT_OTHER", "AUTHZA_VIEW", false);
+            const top = ec.artifactExecution.peek();
+            const during = ec.artifactExecution.stack.length === before + 1 && top.name === "java.api.Frame"
+                && top.typeEnumId === "AT_OTHER" && ec.artifactExecution.getStackNameString().startsWith("java.api.Frame");
+            ec.artifactExecution.pop();
+            return during && ec.artifactExecution.getStackArray().length === before;
+        })()"#,
+    );
+    holds(
+        r#"ec.factory.entity === ec.entity && ec.factory.getService() === ec.service && ec.factory.isDestroyed() === false
+            && typeof ec.factory.getComponentBaseLocations() === "object""#,
+    );
+    holds(r#"ec.resource.getContentType("a.pdf") === ec.resource.contentTypeOf("a.pdf")"#);
+    holds(
+        r#"typeof ec.resource.getLocationStream === "function" && typeof ec.resource.getUriReference === "function""#,
+    );
+    // Java's fourth argument of expand: no localization
+    holds(
+        r#"ec.resource.expand("a ${1 + 1}", "", null, false) === "a 2" && ec.resource.expand("a ${1 + 1}", "") === "a 2""#,
+    );
+    holds(
+        r#"ec.web.pathInfoList.length === 0 && ec.web.requestUrl === null && typeof ec.web.sendBytesResponse === "function""#,
+    );
+    holds(r#"ec.web.getFieldValidationErrors("nothing").length === 0"#);
+    clear_context_stack();
+}
