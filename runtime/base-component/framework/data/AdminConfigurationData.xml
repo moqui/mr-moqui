@@ -406,4 +406,40 @@ along with this software (see the LICENSE.md file). If not, see
         their own (the topic's default is not to). Its audience is who may be a job's recipient here. -->
     <moqui.server.TopicRegistration topic="ServiceJobError" ownerApp="Framework" purpose="A job run ended with an error: sent to the job's recipients"
             editableFields="showAlert,alertNoAutoHide,emailNotifications,digestDefault" subscriptionPermission="ADMIN_OPERATION_MANAGE" sequenceNum="10"/>
+
+    <!-- Business data transfer (org.moqui.admin.DataTransferServices; impl-admin P15), named service by service. Each
+        checks the caller itself: find#ImportTargets and find#Transfers ADMIN_TRANSFER_VIEW; the steps of an import the
+        permissions its target's registration names, and its owner's services their own. Inheritable, so the services'
+        own reads and writes of a batch kept here run as them; an owner's service is reached only through
+        call#TargetService, whose ALLOW is not inheritable (AdminTransferCall), so it is authorized for the caller as a
+        direct call is and the registration adds no right. apply#TransferItem, fail#TransferItem and
+        clean#TransferBatches are granted to no group. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminTransferServices" description="Admin data transfer services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminTransferServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.DataTransferServices\.(find#ImportTargets|get#ImportTarget|stage#Import|configure#Import|validate#Import|apply#Import|get#Transfer|retry#ImportItems|get#ImportReport|get#ImportSample|find#Transfers)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminTransferServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminTransferServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <moqui.security.ArtifactGroup artifactGroupId="AdminTransferCall" description="Admin data transfer target call"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminTransferCall" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="N"
+            artifactName="org.moqui.admin.DataTransferServices.call#TargetService"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminTransferCallALL" userGroupId="ALL_USERS" artifactGroupId="AdminTransferCall"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- The framework's own import target (an app's are its own seed rows): message translations, a batch kept here
+        whose rows are saved by store#LocalizedMessage's rules, each at the revision its preview read. Its row services
+        check ADMIN_SETTINGS_MANAGE themselves; the registration asks for the transfer permission besides. -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminConfigurationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ConfigurationServices\.(validate|apply)#MessageTranslationRow"/>
+    <moqui.server.TransferTarget targetId="messageTranslations" direction="import" targetMode="rows" title="Message translations"
+            description="Translations of the messages people see, by original text and locale"
+            effectsNote="Each row saves one translation, replacing the one there; none is removed. The audit log keeps the text before and after."
+            ownerApp="Framework" targetVersion="1" fieldLabel="Translation field"
+            columnsJson="[{&quot;name&quot;:&quot;original&quot;,&quot;label&quot;:&quot;Original&quot;,&quot;required&quot;:true},{&quot;name&quot;:&quot;locale&quot;,&quot;label&quot;:&quot;Locale&quot;,&quot;required&quot;:true},{&quot;name&quot;:&quot;localized&quot;,&quot;label&quot;:&quot;Translation&quot;,&quot;required&quot;:true}]"
+            keyFields="original,locale"
+            validateRowService="org.moqui.admin.ConfigurationServices.validate#MessageTranslationRow"
+            applyRowService="org.moqui.admin.ConfigurationServices.apply#MessageTranslationRow"
+            maxRows="2000" retentionDays="30" importPermission="ADMIN_TRANSFER_RUN,ADMIN_SETTINGS_MANAGE"
+            viewPermission="ADMIN_TRANSFER_VIEW,ADMIN_SETTINGS_VIEW" ownerRoute="adminLocalization" sequenceNum="900"/>
+    <!-- The retention of the batches kept here: staged rows are removed after each target's retentionDays -->
+    <moqui.service.job.ServiceJob jobName="clean_TransferBatches_daily" description="Clean staged data transfer batches"
+            serviceName="org.moqui.admin.DataTransferServices.clean#TransferBatches" cronExpression="0 20 2 * * ?" paused="N"/>
 </entity-facade-xml>
