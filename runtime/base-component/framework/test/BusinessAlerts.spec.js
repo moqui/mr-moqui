@@ -201,8 +201,12 @@ feature("one evaluation as the owner tells each equivalent recipient separately 
                 fromDate: new Date(Date.now() - 60000)
             })
         )
+        // and has subscribed to every message of the topic, which is never access to an alert's values
+        const subscription = {topic: "ReportAlert", userId: "RDA_OTHER"}
+        sys(() => make("moqui.security.user.NotificationTopicUser", Object.assign({allNotifications: "Y"}, subscription)))
         notes.clear()
         const run = evaluate("rda.next", "rba-rule")
+        sys(() => ec.entity.find("moqui.security.user.NotificationTopicUser").condition(subscription).one().delete())
         const messages = told()
         const owned = as("rda.next", "find#AlertDeliveries", {definitionId: "rba-rule"})
         const deliveries = Array.from(owned.out?.deliveries || [])
@@ -258,7 +262,7 @@ feature("one evaluation as the owner tells each equivalent recipient separately 
         runError == ""
         run.evaluated == 1
         run.failed == 0
-        // one state, three notifications, one user each
+        // one state, three notifications, one user each: the subscriber to the whole topic is in none
         states == "Firing,Normal,Normal"
         to == "RDA_EQUAL,RDA_FRENCH,RDA_NEXT"
         first.title.includes("Firing")
@@ -269,6 +273,8 @@ feature("one evaluation as the owner tells each equivalent recipient separately 
         sent == 3
         other.statusId == "RptDlvSkipped"
         other.reasonCode == "scope-differs"
+        // one skipped is not told the state either, in the row they read as their own
+        other.alertState == ""
         !/RDR_|RDA_GROUP|enumCode/.test(other.reason)
         disabled.reasonCode == "inactive"
         // evidence only: the state's name, no value and no series label
@@ -315,26 +321,50 @@ feature(
                 row.update()
             })
             // a rule whose query finds nothing has no data, which is not health
-            as(
-                "rda.next",
-                "save#Definition",
-                rule("rba-empty", {audience: {groupWaitSeconds: 0}}, {queryString: "relatedEnumId:nowhere"})
-            )
+            // its title is text: what looks like an expression in it is never run when the notification's title is made
+            const emptyRule = rule("rba-empty", {audience: {groupWaitSeconds: 0}}, {queryString: "relatedEnumId:nowhere"})
+            emptyRule.definition.title = "Nothing sold ${1 + 1}"
+            as("rda.next", "save#Definition", emptyRule)
             notes.clear()
             const empty = evaluate("rda.next", "rba-empty")
+            const emptyStates = states("rba-empty")
+            const emptyTitles = told()
+                .map(message => message.to + ":" + message.title)
+                .join("|")
+            // the rule then reads real series, so its placeholder series is removed: nobody is told it became Normal
+            const found = as("rda.next", "get#Definition", {definitionId: "rba-empty"}).out.definition
+            delete found.body.query.queryString
+            found.body.pruneAfterMissing = 1
+            const mended = as("rda.next", "save#Definition", {definition: found})
+            notes.clear()
+            evaluate("rda.next", "rba-empty")
             return {
+                mendedError: mended.error || "",
+                removedStates: states("rba-empty"),
+                removedTitles: told()
+                    .map(message => message.title.split(" — ")[0])
+                    .join("|"),
                 repeated,
                 outageError: outage.error || "",
                 outageStates,
                 outageTitles,
                 emptyError: empty.error || "",
-                emptyStates: states("rba-empty"),
-                emptyTitles: told()
-                    .map(message => message.to + ":" + message.title)
-                    .join("|")
+                emptyStates,
+                emptyTitles
             }
         },
-        then({repeated, outageError, outageStates, outageTitles, emptyError, emptyStates, emptyTitles}) {
+        then({
+            repeated,
+            outageError,
+            outageStates,
+            outageTitles,
+            emptyError,
+            emptyStates,
+            emptyTitles,
+            mendedError,
+            removedStates,
+            removedTitles
+        }) {
             repeated == 0
             outageError == ""
             outageStates == "Error,Error,Error"
@@ -343,6 +373,10 @@ feature(
             emptyError == ""
             emptyStates == "NoData"
             emptyTitles.startsWith("RDA_NEXT:No data")
+            emptyTitles.endsWith("Nothing sold ${1 + 1}")
+            mendedError == ""
+            removedStates == "Firing,Normal,Normal"
+            removedTitles == "Firing"
         }
     }
 )
@@ -398,6 +432,8 @@ feature("a copy waits for its owner, and a leaving owner's rule is paused and ha
         })
         const transferred = transfer("john.doe", "RDA_EQUAL")
         const handed = body("rba-rule")
+        // the leaving owner's readings are not the new owner's: the rule's state starts again
+        const handedStates = states("rba-rule")
         const pending = [
             one("moqui.report.Definition", {definitionId: "rba-rule"}).ownerId,
             handed.paused,
@@ -436,6 +472,7 @@ feature("a copy waits for its owner, and a leaving owner's rule is paused and ha
             transferError: transferred.error || "",
             transferred: transferred.out || {},
             pending,
+            handedStates,
             resumeRefused: resumeRefused.error || "",
             resumed: resumed.error || "",
             after: [after.paused, after.pausedReason || "", after.audience.deliveryMode].join(",")
@@ -455,6 +492,7 @@ feature("a copy waits for its owner, and a leaving owner's rule is paused and ha
         transferError,
         transferred,
         pending,
+        handedStates,
         resumeRefused,
         resumed,
         after
@@ -473,6 +511,7 @@ feature("a copy waits for its owner, and a leaving owner's rule is paused and ha
         transferError == ""
         transferred.transferred == true
         pending == "RDA_EQUAL,true,transfer-pending"
+        handedStates == ""
         resumeRefused.includes("RECIPIENT_REFUSED")
         resumed == ""
         after == "false,,group"

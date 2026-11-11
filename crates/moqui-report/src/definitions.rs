@@ -247,6 +247,17 @@ fn references(value: &Json, out: &mut BTreeSet<String>) {
 
 /// Save a definition read from a synced git file, as the sync's user.
 pub(super) fn save_pulled(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Error> {
+    // A pulled business alert rule that is not already active here notifies nobody until its owner activates it, as a
+    // copy and an import (alert_delivery.rs): a file does not start delivery.
+    if definition["type"] == "alert" {
+        let active =
+            read_unchecked(ec, text(definition, "id", ""))?.is_some_and(|stored| stored["body"]["paused"] != true);
+        if !active {
+            let mut definition = definition.clone();
+            super::alert_delivery::prepare_copy(ec, &mut definition["body"]);
+            return save(ec, &definition, note);
+        }
+    }
     save(ec, definition, note)
 }
 /// Save a definition as the viewer, with the owner, reference and dataset-save checks of `save#Definition`: a business

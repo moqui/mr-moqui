@@ -105,7 +105,7 @@ fn channels(body: &Json) -> Vec<&str> {
 }
 
 /// A path on this server a notification may link to: the mounting app's rule screen.
-fn server_path(link: &str) -> bool {
+pub(super) fn server_path(link: &str) -> bool {
     link.starts_with('/')
         && !link.starts_with("//")
         && link.len() <= 255
@@ -133,6 +133,12 @@ pub(super) fn prepare(ec: &ExecutionContext, body: &mut Json) -> Result<bool, Er
     }
     if !body["audience"].is_null() && !body["audience"].is_object() {
         return Err(fail("an alert audience must be an object"));
+    }
+    // a rule saved active is paused for no reason any more (one resumed by a new owner, or after its owner returned)
+    if body["paused"] != true {
+        if let Some(map) = body.as_object_mut() {
+            map.remove("pausedReason");
+        }
     }
     if !body_business(ec, body) {
         return Ok(false);
@@ -256,11 +262,6 @@ pub(super) fn prepare(ec: &ExecutionContext, body: &mut Json) -> Result<bool, Er
         }
     }
     body["audience"] = audience;
-    if body["paused"] != true {
-        if let Some(map) = body.as_object_mut() {
-            map.remove("pausedReason");
-        }
-    }
     Ok(true)
 }
 
@@ -542,8 +543,9 @@ impl<'a> Pass<'a> {
                         json!({"type": "email", "emailTemplateId": audience["emailTemplateId"],
                             "toAddresses": recipient.address})
                     } else {
+                        // to this one user: nobody receives it by a subscription to the whole topic
                         json!({"type": "notification", "topic": jtext(audience, "topic", DEFAULT_TOPIC),
-                            "userId": recipient.user_id})
+                            "userId": recipient.user_id, "direct": true})
                     };
                     match crate::alert::send_contact(&target, payload) {
                         Ok(()) => {
@@ -640,7 +642,12 @@ fn record(
             }
         };
         row.set("stateHash", Value::string(key.hash));
-        row.set("alertState", Value::string(key.state));
+        // the state's name is part of the owner's reading: kept for one it was sent to (or would have been, but for the
+        // transport), never for one skipped, who reads their own row (find#AlertDeliveries received)
+        row.set(
+            "alertState",
+            Value::string(if status == delivery::SKIPPED { "" } else { key.state }),
+        );
         row.set("statusId", Value::string(status));
         row.set("reasonCode", Value::string(reason));
         row.set("scopeHash", Value::string(scope_hash));
@@ -997,6 +1004,28 @@ fn transfer_alert_rule_owner(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Par
         Some(to.to_owned())
     })?;
     moved.push(id.to_owned());
+    // The state its series hold (labels and last values) and what its notification groups were sent are the leaving
+    // owner's readings, not the new owner's to read (get#AlertState) or to have told on as No data: the rule starts
+    // again from nothing. An evaluation still running as the leaving owner loses its claim, so it saves nothing.
+    {
+        let _authz = ec.disable_authz();
+        for dependent in [INSTANCE, "moqui.report.AlertNotification"] {
+            facade
+                .find(dependent)?
+                .eq("definitionId", Value::string(id))
+                .delete_all()?;
+        }
+        if let Some(mut lock) = facade
+            .find(RULE_LOCK)?
+            .eq("definitionId", Value::string(id))
+            .for_update(true)
+            .one()?
+        {
+            lock.set("claimToken", Value::Null);
+            lock.set("claimedUntil", Value::Null);
+            lock.update(&facade)?;
+        }
+    }
     // qualified: the new owner reads the rule and every source it names (an error rolls the moves back)
     if delivery::scope_as(ec, &new_owner.username, id)?.denied {
         return Err(fail(

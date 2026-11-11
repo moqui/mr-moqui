@@ -622,16 +622,20 @@ evaluated and delivered to its contact points as before.
   for a schedule, a recipient must read the rule itself (`not-shared` otherwise: share it with a group they are in). A
   paused rule may be saved with a recipient to be mended.
 - **Inactive until its owner activates it.** `copy#Definition` and `import#Definitions` of a business rule drop its contact
-  points and save it paused (`pausedReason` `not-validated`). Its owner activates it by saving it with `paused` false,
-  which is the save above.
+  points and save it paused (`pausedReason` `not-validated`), and so does a git sync's pull of a rule that is not already
+  active here. Its owner activates it by saving it with `paused` false, which is the save above.
 - **At each notification** every recipient is checked again and told separately, one notification or message a recipient;
   one whose scope changed is skipped with `scope-differs` (and the other codes of report delivery), one past the cap with
   `over-cap`, and one whose message fails is recorded and tried again at the next evaluation, while a recipient already told
   that state is not told it again until the repeat interval. Each recipient's last outcome for a notification group on a
-  channel is a `moqui.report.AlertRecipientDelivery` row: the state's name, the outcome and a safe reason code, never a
-  value or a series label. A business rule's notification row keeps no payload.
+  channel is a `moqui.report.AlertRecipientDelivery` row: the outcome, a safe reason code and, for one it was sent to, the
+  state's name; never a value or a series label, and no state for one skipped. A business rule's notification row keeps no
+  payload. The in-app notification goes to that one user: a subscription to every message of the topic
+  (`NotificationTopicUser.allNotifications`) receives none of them (`NotificationMessage::direct_only`).
 - **No Data, Error and stale are never Normal.** As for every rule, an empty result is `NoData` and a failed or incomplete
   query is `Error`; for a business rule so is a source whose index is older than its fields (the admission check `index`).
+  A series removed after going missing (`pruneAfterMissing`) is told as Normal to a technical rule's contacts; a business
+  rule's recipients are told nothing more of it (its last word is No data) and it leaves the rule's state.
   A business rule's state changes write no marker on the shared time series (`monitor_annotations`) and open no incident.
 - **Reads.** `get#AlertState` answers a rule the viewer reads with each series' labels, state, times and last value
   (`AlertInstance.lastValue`): for a business rule to its owner, and to a recipient of its audience whose fingerprint equals
@@ -646,6 +650,8 @@ evaluated and delivered to its contact points as before.
   shared silences and mute timings it names that the leaving owner owns, to an active internal user who may save
   definitions, reads its sources and, for a group audience, may deliver to a group (`NEW_OWNER_REFUSED`); it stays paused
   (`transfer-pending`) until the new owner saves it active, which checks the audience against the new owner's fingerprint.
+  A transfer removes the rule's series states and sent-notification records, which were the leaving owner's readings: the
+  new owner's first evaluation starts from nothing.
 
 The code is `crates/moqui-report/src/alert_delivery.rs` (with `alert.rs` for the evaluation); the regression spec is
 `framework/test/BusinessAlerts.spec.js`.

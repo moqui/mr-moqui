@@ -562,6 +562,14 @@ pub(crate) fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> 
     match text(contact, "type", "notification") {
         "notification" => {
             let (title, tone) = notification_presentation(payload);
+            // A notification's title is a template, expanded as a script when it is sent. A rule's title is its
+            // owner's text, never a script: one that holds a `$` is taken from the message by name, which is expanded
+            // once, so nothing in it runs.
+            let name = text(payload, "title", "");
+            let title = match title.strip_suffix(name) {
+                Some(states) if name.contains('$') => format!("{states}${{title}}"),
+                _ => title,
+            };
             let mut note = moqui_core::notify::NotificationMessage::new();
             note.topic(text(contact, "topic", "ReportAlert"))
                 .title(title)
@@ -575,6 +583,8 @@ pub(crate) fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> 
             if let Some(group) = contact["userGroupId"].as_str() {
                 note.user_group_id(group);
             }
+            // a business rule's message is its one recipient's: a subscription to the whole topic receives none
+            note.direct_only(contact["direct"] == true);
             note.send().map_err(fail)?;
             Ok(())
         }
@@ -720,9 +730,13 @@ fn notify(
             let hash = moqui_lib::json::canonical_sha256(&json!(state_key));
             let resolved = events.iter().all(|event| event["state"] == "Normal");
             // the mounting app's rule screen where the rule names one (detailLink), Tools' list otherwise
+            // (checked again here: the link is expanded as a template, and a row may be written past the save)
             let link = format!(
                 "{}?definitionId={id}",
-                text(body, "detailLink", "/apps/dashboards/Alerts")
+                body["detailLink"]
+                    .as_str()
+                    .filter(|link| super::alert_delivery::server_path(link))
+                    .unwrap_or("/apps/dashboards/Alerts")
             );
             let payload = json!({"ruleId":id,"title":definition["title"],"labels":labels,"events":events,"link":link});
             let result = (|| -> Result<moqui_core::entity::EntityValue, Error> {
@@ -1288,8 +1302,10 @@ fn evaluate_claimed(
                 outcome.removed.push(row.clone());
             }
             pruned += 1;
-            if instance.state != State::Normal {
-                // Removing a series that was not normal resolves it for its contacts.
+            // Removing a series that was not normal resolves it for its contacts. A business rule's recipients are not
+            // told Normal for a series that only stopped being read: its last word stays No data, and it is gone from
+            // the rule's state (design-insights §8.1: no fabricated recovery).
+            if instance.state != State::Normal && !business {
                 events.push(json!({"seriesId":key,"state":"Normal","labels":labels,"value":Json::Null,"pruned":true}));
             }
             continue;
