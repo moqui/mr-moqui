@@ -554,7 +554,9 @@ in `runtime/db/backup`, or the directory in `embedded_db_backup_dir`.
 - **Not included**: `.env` and the field-encryption key are not in the archive. Keep them with the backup.
 
 The details are in [plans/archive/PostgresBackup.md](../plans/archive/PostgresBackup.md). The job does not back up an
-external database.
+external database. `org.moqui.admin.BackupServices` reads the job's runs and the archive directory for an application's
+backup screen (IronStone Admin › Data › Backups): coverage as the runs recorded it, the archives as names and sizes, and
+a backup asked for now with the job's own parameters ([Attack-Surface](security/Attack-Surface.md)).
 
 ## HTTPS, ports and proxies
 

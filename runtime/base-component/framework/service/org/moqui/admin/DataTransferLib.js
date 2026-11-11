@@ -9,12 +9,17 @@
 // registers only services that check the caller's permission and scope themselves). The registration adds no right. ADMIN_TRANSFER_VIEW reads the catalog of targets and every
 // target's runs; a target's own permissions and its owner's checks decide what is staged and applied. A refusal a person can
 // act on is answered as a reason (refused true, reasonCode, reason), never written. No dependency on Mantle or an app.
+//
+// A target's direction is import or export (impl-admin P16). An export target's mode is file (its owner writes a file of its
+// own format), rows (its owner answers rows and the file is written here, a formula cell as text) or wizard (its owner's own
+// place, only listed); its fields are the registration's, each with the permission that reads it, and its owner's one
+// service is the export step.
 const lib = ec.resource.script("component://framework/service/org/moqui/admin/OperationLib.js")
 const {rows, one, map, text} = lib
 const VIEW = "ADMIN_TRANSFER_VIEW"
 const RUN = "ADMIN_TRANSFER_RUN"
 const TARGET = "moqui.server.TransferTarget"
-const modes = ["steps", "rows", "wizard"]
+const directions = ["import", "export"]
 
 const requireView = () =>
     ec.resource.script("component://framework/service/org/moqui/admin/ConfigurationLib.js").requireView(VIEW, RUN)
@@ -112,6 +117,14 @@ const contracts = {
         requiredIn: ["targetId"],
         requiredOut: ["runList"],
         allowed: ["targetId", "scopeKey", "fromDate", "thruDate", "maxRows"]
+    },
+    // an export target's one service (DataTransferServices.run#TargetExport): the scope, the registered selection and the
+    // fields the caller may read and chose; nothing else of a request reaches it
+    export: {
+        field: "exportService",
+        requiredIn: ["targetId", "fieldList"],
+        requiredOut: ["rowCount"],
+        allowed: ["targetId", "scopeKey", "selection", "fieldList", "countOnly", "maxRows", "fixedValues"]
     }
 }
 const modeSteps = {
@@ -119,6 +132,14 @@ const modeSteps = {
     rows: {required: ["validateRow", "applyRow"], optional: ["scopes"]},
     wizard: {required: [], optional: ["runs"]}
 }
+// What an export target registers, by its mode.
+const exportModeSteps = {
+    file: {required: ["export"], optional: ["scopes"]},
+    rows: {required: ["export"], optional: ["scopes"]},
+    wizard: {required: [], optional: []}
+}
+// The steps of a registration's direction, by mode: an import target has no export step and an export target no other.
+const stepsFor = target => (text(target.direction) === "export" ? exportModeSteps : modeSteps)
 // Why a registered service cannot be called for a step, or "".
 function contractProblem(serviceName, contract) {
     const definition = ec.service.getServiceDefinition(serviceName)
@@ -138,8 +159,14 @@ function contractProblem(serviceName, contract) {
 function checked(row) {
     const target = map(row)
     const mode = text(target.targetMode)
-    const steps = modeSteps[mode]
-    let problem = !Object.hasOwn(modeSteps, mode) ? "names a mode that is not " + modes.join(", ") : ""
+    const exporting = text(target.direction) === "export"
+    const table = stepsFor(target)
+    const steps = table[mode]
+    let problem = !directions.includes(text(target.direction))
+        ? "names a direction that is not " + directions.join(" or ")
+        : !Object.hasOwn(table, mode)
+          ? "names a mode that is not " + Object.keys(table).join(", ")
+          : ""
     if (!problem)
         for (const step of steps.required.concat(steps.optional)) {
             const serviceName = text(target[contracts[step].field])
@@ -150,17 +177,26 @@ function checked(row) {
         }
     let columns = []
     let options = []
-    if (!problem && mode === "rows") {
+    let fields = []
+    if (!problem && (mode === "rows" || (exporting && mode === "file"))) {
         columns = list(json(target.columnsJson, [])).filter(column => /^[A-Za-z][A-Za-z0-9]{0,39}$/.test(text(column?.name)))
         options = list(json(target.optionsJson, [])).filter(option => /^[A-Za-z][A-Za-z0-9]{0,39}$/.test(text(option?.name)))
-        if (!columns.length) problem = "names no columns"
+        if (exporting) {
+            fields = exportFields(target, columns)
+            columns = []
+            if (!fields.length) problem = "names no fields"
+        } else if (!columns.length) problem = "names no columns"
     }
+    for (const permission of exporting && !problem ? names(target.exportPermission) : [])
+        if (!one("moqui.security.UserPermission", {userPermissionId: permission}))
+            problem = "names the unknown permission " + permission
     if (problem) {
         ec.logger.error("Transfer target " + target.targetId + " " + problem + "; left out")
         return null
     }
     return Object.assign(target, {
         targetMode: mode,
+        fields,
         columns: columns.map(column => ({
             name: text(column.name),
             label: lineText(column.label, 60) || text(column.name),
@@ -188,6 +224,44 @@ function checked(row) {
             )
         ).slice(0, 24)
     })
+}
+// The fields of an export target as its registration names them (columnsJson: name, label, permission, required,
+// selected): permission is what a caller must hold to have the field written, comma separated, none for a field every
+// exporter of the target reads; required is written whenever it may be read; selected false is left out unless asked for. A
+// field naming a permission that does not exist is logged and left out (so nobody is given it).
+function exportFields(target, columns) {
+    const found = []
+    for (const column of columns) {
+        const name = text(column.name)
+        if (found.some(field => field.name === name)) continue
+        const permissions = names(column.permission)
+        const unknown = permissions.find(
+            permission =>
+                !/^[A-Za-z0-9_.-]{1,60}$/.test(permission) ||
+                !one("moqui.security.UserPermission", {userPermissionId: permission})
+        )
+        if (unknown) {
+            ec.logger.error(
+                "Transfer target " +
+                    target.targetId +
+                    " field " +
+                    name +
+                    " names the unknown permission " +
+                    unknown +
+                    "; left out"
+            )
+            continue
+        }
+        found.push({
+            name,
+            label: lineText(column.label, 60) || name,
+            permission: permissions.join(","),
+            required: column.required === true,
+            selected: column.selected !== false,
+            sensitive: permissions.length > 0
+        })
+    }
+    return found
 }
 function targetsOf(direction) {
     return rows(TARGET, {direction})
@@ -217,7 +291,7 @@ function callTargetService(p) {
     const target = row && row.disabled !== "Y" ? checked(row) : null
     if (!target) throw new Error("Unknown transfer target " + id)
     const contract = contracts[step]
-    const steps = modeSteps[target.targetMode]
+    const steps = stepsFor(target)[target.targetMode]
     const serviceName = text(target[contract.field])
     if (!serviceName || !steps.required.concat(steps.optional).includes(step))
         throw new Error(lineText(target.title) + " registers no " + step + " step")
@@ -388,6 +462,7 @@ function described(target) {
         ownerRoute: /^[A-Za-z][A-Za-z0-9]*$/.test(text(target.ownerRoute)) ? text(target.ownerRoute) : null,
         runsKept: target.targetMode === "rows" || hasStep(target, "runs"),
         importPermission: text(target.importPermission) || null,
+        exportPermission: text(target.exportPermission) || null,
         viewPermission: text(target.viewPermission) || null
     }
 }

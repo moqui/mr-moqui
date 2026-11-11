@@ -442,4 +442,34 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- The retention of the batches kept here: staged rows are removed after each target's retentionDays -->
     <moqui.service.job.ServiceJob jobName="clean_TransferBatches_daily" description="Clean staged data transfer batches"
             serviceName="org.moqui.admin.DataTransferServices.clean#TransferBatches" cronExpression="0 20 2 * * ?" paused="N"/>
+
+    <!-- Exports (org.moqui.admin.DataTransferServices; impl-admin P16), named service by service in the same group as
+        the imports: find#ExportTargets asks ADMIN_TRANSFER_VIEW; get#ExportFields, preview#Export and run#Export the
+        permissions the target's registration names, and its owner's export service its own (it is reached only through
+        call#TargetService, as an import's steps are). Inheritable, so the record of an export is written as them. -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminTransferServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.DataTransferServices\.(find#ExportTargets|get#ExportFields|preview#Export|run#Export)"/>
+    <!-- The framework's own export target (an app's are its own seed rows): message translations as the import of
+        translations reads them, written here as delimited text. Its service checks ADMIN_SETTINGS_VIEW itself; the
+        registration asks for the transfer permission besides. No field is restricted: a translation is what people see. -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminConfigurationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="N"
+            artifactName="org.moqui.admin.ConfigurationServices.export#MessageTranslationRows"/>
+    <moqui.server.TransferTarget targetId="messageTranslationsExport" direction="export" targetMode="rows" title="Message translations"
+            description="The translations of the messages people see, by original text and locale, as a file the import of translations reads"
+            ownerApp="Framework" targetVersion="1"
+            columnsJson="[{&quot;name&quot;:&quot;original&quot;,&quot;label&quot;:&quot;Original&quot;,&quot;required&quot;:true},{&quot;name&quot;:&quot;locale&quot;,&quot;label&quot;:&quot;Locale&quot;,&quot;required&quot;:true},{&quot;name&quot;:&quot;localized&quot;,&quot;label&quot;:&quot;Translation&quot;}]"
+            optionsJson="[{&quot;name&quot;:&quot;locale&quot;,&quot;label&quot;:&quot;Locale (empty for every locale)&quot;,&quot;type&quot;:&quot;text&quot;,&quot;maxLength&quot;:20}]"
+            exportService="org.moqui.admin.ConfigurationServices.export#MessageTranslationRows"
+            maxRows="50000" maxBytes="16777216" exportPermission="ADMIN_TRANSFER_RUN,ADMIN_SETTINGS_VIEW"
+            viewPermission="ADMIN_TRANSFER_VIEW,ADMIN_SETTINGS_VIEW" ownerRoute="adminLocalization" sequenceNum="900"/>
+
+    <!-- Backups (org.moqui.admin.BackupServices; impl-admin P16), named service by service. Each checks the caller
+        itself: get#Coverage and find#Archives ADMIN_BACKUP_VIEW or ADMIN_BACKUP_RUN, run#Backup ADMIN_BACKUP_RUN. None
+        takes a path, a file, a mode or a destination; there is no download. Inheritable, so their reads of the backup
+        job's records and the run they start are made as them. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminBackupServices" description="Admin backup services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminBackupServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.BackupServices\.(get#Coverage|find#Archives|run#Backup)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminBackupServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminBackupServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>
