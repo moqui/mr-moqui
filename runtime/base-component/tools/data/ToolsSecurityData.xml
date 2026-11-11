@@ -37,6 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
         <artifacts artifactName="component://tools/screen/System.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
         <!-- The System home's attention list (plans/Tools-Fancy.md B5): what it reads is the System administrator's -->
         <artifacts artifactName="moqui.tools.SystemHomeServices.get#SystemAttention" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+        <artifacts artifactName="moqui.tools.SystemHomeServices.get#CounterSeries" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
         <!-- Monitor (System › Monitor): the telemetry datasets, its services and entities; the screen is under System.xml -->
         <artifacts artifactName="org.moqui.report.dataset.otel_.*" artifactTypeEnumId="AT_SERVICE" nameIsPattern="Y"/>
         <artifacts artifactName="org.moqui.report.dataset.monitor_annotations" artifactTypeEnumId="AT_SERVICE"/>

@@ -167,6 +167,10 @@ along with this software (see the LICENSE.md file). If not, see
                 : L('Telemetry is off, so there is no history.') + ' ' + (telemetry && telemetry.detail ? telemetry.detail
                     : L('The setting is telemetry_enabled.'))
 
+            // the counters' sparklines: each gauge's values over the period, when there is telemetry to read
+            counterSeries = telemetryOn ? read('counter series', () => ec.service.sync().name('moqui.tools.SystemHomeServices.get#CounterSeries')
+                .parameters({from: periodFrom, instanceId: instanceId}).call()?.series || {}, {}) : {}
+
             // ---- resources ----
             resourceRows = []
             const resource = (name, text, level, metricName, tooltip) => resourceRows.push({name, text, levelText: levelOf(level).text,
@@ -342,15 +346,15 @@ along with this software (see the LICENSE.md file). If not, see
 
         <!-- counters -->
         <dashboard id="SystemCounters" min-width="180">
-            <number-card id="LoadCard" title="${loadCard.title}" value="${loadCard.value}" icon="sym_o_speed" style="${loadCard.style}"
+            <number-card id="LoadCard" title="${loadCard.title}" value="${loadCard.value}" sparkline="${counterSeries.load || ''}" icon="sym_o_speed" style="${loadCard.style}"
                     link="../Monitor/Metrics?metricName=moqui.system.cpu.load.utilization"/>
-            <number-card id="MemoryCard" title="${memoryCard.title}" value="${memoryCard.value}" icon="sym_o_memory" style="${memoryCard.style}"
+            <number-card id="MemoryCard" title="${memoryCard.title}" value="${memoryCard.value}" sparkline="${counterSeries.memory || ''}" icon="sym_o_memory" style="${memoryCard.style}"
                     link="../Monitor/Metrics?metricName=process.memory.usage"/>
-            <number-card id="DiskCard" title="${diskCard.title}" value="${diskCard.value}" icon="sym_o_hard_drive" style="${diskCard.style}"
+            <number-card id="DiskCard" title="${diskCard.title}" value="${diskCard.value}" sparkline="${counterSeries.disk || ''}" icon="sym_o_hard_drive" style="${diskCard.style}"
                     link="../Monitor/Metrics?metricName=system.filesystem.utilization"/>
-            <number-card id="WorkersCard" title="${workersCard.title}" value="${workersCard.value}" icon="sym_o_engineering" style="${workersCard.style}"
+            <number-card id="WorkersCard" title="${workersCard.title}" value="${workersCard.value}" sparkline="${counterSeries.workers || ''}" icon="sym_o_engineering" style="${workersCard.style}"
                     link="../ThreadList"/>
-            <number-card id="PoolCard" title="${poolCard.title}" value="${poolCard.value}" icon="sym_o_database" style="${poolCard.style}"
+            <number-card id="PoolCard" title="${poolCard.title}" value="${poolCard.value}" sparkline="${counterSeries.pool || ''}" icon="sym_o_database" style="${poolCard.style}"
                     link="//apps/tools/Database/Activity"/>
             <number-card id="UsersTodayCard" title="Users today" value="${usersTodayText}" icon="sym_o_group"
                     link="../Security/ActiveUsers?fromDate_period=day&amp;fromDate_poffset=0"/>

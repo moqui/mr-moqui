@@ -73,9 +73,22 @@ feature("a menu item no entry names is in the last group, and a link outside the
         const complete = build(CATALOG.concat([{path: "Voice", group: "Server"}]), {otherTitle: "Other"})
         // a hidden entry names its screen and shows nothing: no card, and not in the last group
         const hidden = build(CATALOG.concat([{path: "Voice", featured: true, hidden: true}]), {otherTitle: "Other"})
-        return {nav, last, elsewhere, complete, hidden}
+        // a menu group (menu-group): an entry with no group of its own is in it, and a menu item no entry names joins
+        // the catalog's group of that title, or the last group when the catalog has none
+        const grouped = ec.resource.script(MODULE).build(
+            [{path: "Cache"}, {path: "Security", group: "Access"}],
+            path => (path ? [] : [
+                {name: "Cache", title: "Caches", group: "Server"},
+                {name: "Security", title: "Security", group: "Server"},
+                {name: "Threads", title: "Threads", group: "Server"},
+                {name: "Voice", title: "Voice", group: "Integration"}
+            ]),
+            {otherTitle: "Other"})
+        return {nav, last, elsewhere, complete, hidden, grouped}
     },
-    then({nav, last, elsewhere, complete, hidden}) {
+    then({nav, last, elsewhere, complete, hidden, grouped}) {
+        grouped.groups.map(group => group.title + ": " + titles(group.items)).join("; ") == "Server: Caches, Threads; Access: Security; Other: Voice"
+        !("menuGroup" in grouped.groups[0].items[0])
         // Voice, mounted by another component, is not missing; the home itself and the named screens are not repeated
         last.title == "Other"
         titles(last.items) == "Voice"

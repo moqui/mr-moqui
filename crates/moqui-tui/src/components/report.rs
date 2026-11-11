@@ -533,6 +533,12 @@ fn trend_lines(frame: &Value, panel: &Value, width: usize, stat: bool) -> Vec<Li
 
 fn sparkline(values: &[Value], width: usize) -> String {
     let values: Vec<Option<f64>> = values.iter().map(number).collect();
+    bars(&values, width)
+}
+
+/// Numbers as a row of bars at most `width` wide, the lowest the shortest, a space where there is none: a report's
+/// sparkline and a number card's.
+pub(crate) fn bars(values: &[Option<f64>], width: usize) -> String {
     let min = values.iter().flatten().copied().fold(f64::INFINITY, f64::min);
     let max = values.iter().flatten().copied().fold(f64::NEG_INFINITY, f64::max);
     let bars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];

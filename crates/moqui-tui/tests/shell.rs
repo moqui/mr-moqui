@@ -81,8 +81,10 @@ fn shell() -> ShellInfo {
                 url: "/apps/app/Orders".to_string(),
                 children: Vec::new(),
                 disabled: false,
+                group: String::new(),
             }],
             disabled: false,
+            group: String::new(),
         }],
         user: "john.doe".to_string(),
         apps: vec![
@@ -91,24 +93,28 @@ fn shell() -> ShellInfo {
                 url: "/qapps/sales?from=palette&note=A%20B".to_string(),
                 children: Vec::new(),
                 disabled: false,
+                group: String::new(),
             },
             MenuItem {
                 title: "Tools".to_string(),
                 url: "/apps/tools".to_string(),
                 children: Vec::new(),
                 disabled: false,
+                group: String::new(),
             },
             MenuItem {
                 title: "Archive".to_string(),
                 url: "/qapps-archive/tools".to_string(),
                 children: Vec::new(),
                 disabled: false,
+                group: String::new(),
             },
             MenuItem {
                 title: "Outside".to_string(),
                 url: "https://example.invalid/qapps/help".to_string(),
                 children: Vec::new(),
                 disabled: false,
+                group: String::new(),
             },
         ],
         quick_create: vec![ShellAction {
@@ -363,10 +369,12 @@ fn a_disabled_menu_item_is_a_drawer_row_without_a_link() {
                 title: "Locked".to_string(),
                 url: "/apps/app/Locked".to_string(),
                 disabled: true,
+                group: String::new(),
                 ..MenuItem::default()
             },
         ],
         disabled: false,
+        group: String::new(),
     }];
     let rows = moqui_tui::drawer_rows(&menu);
     let shown: Vec<(&str, &str, bool)> = rows
@@ -380,6 +388,55 @@ fn a_disabled_menu_item_is_a_drawer_row_without_a_link() {
             ("Orders", "/apps/app/Orders", false),
             ("Locked", "", true)
         ]
+    );
+}
+
+/// A menu item's group (a `menu-group`) is a heading above the first of each run of items that share it; an item with
+/// no group has none, and a heading is not a link.
+#[test]
+fn a_menu_group_is_a_heading_above_its_run_of_items() {
+    let item = |title: &str, group: &str| MenuItem {
+        title: title.to_string(),
+        url: format!("/apps/system/{title}"),
+        group: group.to_string(),
+        ..MenuItem::default()
+    };
+    let menu = vec![MenuItem {
+        title: "System".to_string(),
+        url: "/apps/system".to_string(),
+        children: vec![
+            item("Home", ""),
+            item("Caches", "Server"),
+            item("Threads", "Server"),
+            item("Users", "Security"),
+            item("Print", ""),
+            item("Jobs", "Server"),
+        ],
+        ..MenuItem::default()
+    }];
+    let rows = moqui_tui::drawer_rows(&menu);
+    let shown: Vec<(&str, bool)> = rows
+        .iter()
+        .map(|row| (row.title.as_str(), row.url.is_empty()))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("System", false),
+            ("Home", false),
+            ("Server", true),
+            ("Caches", false),
+            ("Threads", false),
+            ("Security", true),
+            ("Users", false),
+            ("Print", false),
+            ("Server", true),
+            ("Jobs", false),
+        ]
+    );
+    assert!(
+        rows.iter().filter(|row| row.url.is_empty()).all(|row| row.depth == 1),
+        "a heading at its items' level"
     );
 }
 
@@ -400,10 +457,12 @@ fn enter_on_a_disabled_drawer_row_keeps_the_drawer_open() {
                 title: "Locked".to_string(),
                 url: "/apps/app/Locked".to_string(),
                 disabled: true,
+                group: String::new(),
                 ..MenuItem::default()
             },
         ],
         disabled: false,
+        group: String::new(),
     }]);
     if session.top_overlay() != Some(&Overlay::Drawer(0)) {
         press(&mut session, &link, Key::F(9));

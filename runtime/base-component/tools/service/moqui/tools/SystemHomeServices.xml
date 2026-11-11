@@ -248,4 +248,50 @@ along with this software (see the LICENSE.md file). If not, see
             checkedDate = ec.user.nowTimestamp
         ]]></script></actions>
     </service>
+
+    <service verb="get" noun="CounterSeries" transaction="ignore">
+        <description>The recent history of the System home's counters, for their sparklines: for each of load, memory,
+            disk, workers and pool the values of its gauge over the period (from, such as now-1h), one a bucket of the
+            range, oldest first, null where there is none; disk is the fullest filesystem's in each bucket. Read from
+            the otel_metrics dataset through the report engine as the user, narrowed to instanceId when one is given.
+            A series that cannot be read (telemetry off, the dataset not the user's to read, a query that fails) is
+            logged, when it is a failure, and left out; the others still come back. Refuses nothing.</description>
+        <in-parameters>
+            <parameter name="from" default-value="now-1h"/>
+            <parameter name="instanceId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="series" type="Map"><description>load, memory, disk, workers, pool: each a list of numbers</description></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const GAUGES = {
+                load: 'moqui.system.cpu.load.utilization', memory: 'moqui.process.memory.utilization',
+                disk: 'system.filesystem.utilization', workers: 'moqui.service.pool.active', pool: 'moqui.db.pool.checked_out'
+            }
+            series = {}
+            let readable = false
+            try {
+                readable = (ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call()?.datasets || [])
+                    .some((dataset) => dataset.id === 'otel_metrics')
+            } catch (error) { ec.logger.warn('System home: the report datasets could not be listed: ' + String(error)) }
+            if (ec.message.hasError()) ec.message.clearErrors()
+            if (readable) for (const [key, metric] of Object.entries(GAUGES)) {
+                try {
+                    const query = {datasetId: 'otel_metrics', metricGranularity: 'auto', from: String(context.from || 'now-1h'), thru: 'now',
+                        queryString: 'name:' + JSON.stringify(metric) + (instanceId ? ' AND service.instance.id:' + JSON.stringify(String(instanceId)) : ''),
+                        aggregations: [
+                            {id: 'time', type: 'date_histogram', role: 'x-axis', params: {field: 'bucket_start', fixed_interval: 'auto', min_doc_count: 0}},
+                            {id: 'value', type: 'max', role: 'metric', params: {field: 'max'}}]}
+                    const output = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query}).call() || {}
+                    if (ec.message.hasError()) { ec.logger.error('System home: the series of ' + metric + ' failed: ' + ec.message.errorsString); ec.message.clearErrors(); continue }
+                    const field = Array.from(((output.frames || [])[0] || {}).fields || []).find((candidate) => candidate.name === 'value')
+                    const values = Array.from((field && field.values) || []).map((value) => value === null || value === undefined || value === '' ? null : Number(value))
+                    if (values.some((value) => value !== null)) series[key] = values
+                } catch (error) {
+                    ec.logger.error('System home: the series of ' + metric + ' failed: ' + String(error))
+                    if (ec.message.hasError()) ec.message.clearErrors()
+                }
+            }
+        ]]></script></actions>
+    </service>
 </services>

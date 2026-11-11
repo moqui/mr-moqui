@@ -2263,6 +2263,7 @@
             plainAttr(out, "icon", at(n, "icon"), n);
             cardLink(out, n);
             if (at(n, "size")) out.size = at(n, "size");
+            plainAttr(out, "sparkline", at(n, "sparkline"), n);
             plainAttr(out, "class", at(n, "style"), n);
             w(withCondition(n, "<m-number-card" + A(out) + "></m-number-card>\n"));
         };

@@ -307,17 +307,8 @@
         }
         return color;
     };
-    report.sparkline = (values) => {
-        const nums = (values || []).filter(finite).map(Number);
-        if (!nums.length) return "";
-        const min = Math.min(...nums), max = Math.max(...nums), length = values.length;
-        let open = false;
-        return values.map((value, at) => {
-            if (!finite(value)) { open = false; return ""; }
-            const point = (100 * at / Math.max(1, length - 1)).toFixed(2) + "," + (max === min ? 12 : 22 - 20 * (Number(value) - min) / (max - min)).toFixed(2);
-            const command = open ? "L" : "M"; open = true; return command + point;
-        }).join(" ");
-    };
+    // the path of a sparkline, in a 100 by 24 box: MoquiLib.js has it, for the number card too
+    report.sparkline = (values) => moqui.sparklinePath(values);
     // A calculation over a field's values, as the server's reduce does: sum, mean, min, max, count, first, last, delta, pNN.
     report.reduce = (values, calculation) => {
         const all = values || [], nums = all.filter(finite).map(Number);

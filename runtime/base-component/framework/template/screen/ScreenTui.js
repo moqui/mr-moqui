@@ -1612,7 +1612,10 @@ ${regionCode(node, child(node, "box-toolbar"), "toolbar")}${body}$closeChildren(
         // A number-card's link is a screen link, as a nav-card's: no url for a card without one or one the user may not follow.
         "number-card": stmt((node) => guarded(node, `{
     const $made = ${attr(node, "link") ? `sri.makeUrlByType(${jsString(attr(node, "link"))}, "transition", ${S.nodeLit(node, false)}, "true")` : "null"};
-    $emit({t:"numberCard",id:$uid(${jsString(idOf(node))}),title:String(${S.expandExpr(attr(node, "title") || "")} || ""),value:String(${S.expandNoL10nExpr(attr(node, "value") || "")} || ""),url:$made && !$made.getDisableLink() ? $made.getUrlWithParams() || "" : ""});
+    // the sparkline's numbers (an empty place is a gap), left out of the node when there is none
+    const $sparkText = String(${S.expandNoL10nExpr(attr(node, "sparkline") || "")} || "");
+    const $spark = $sparkText ? {spark: $sparkText.split(",").map((text) => text.trim() === "" || text.trim() === "null" ? null : Number(text)).filter((value) => value === null || Number.isFinite(value))} : {};
+    $emit({t:"numberCard",id:$uid(${jsString(idOf(node))}),title:String(${S.expandExpr(attr(node, "title") || "")} || ""),value:String(${S.expandNoL10nExpr(attr(node, "value") || "")} || ""),...$spark,url:$made && !$made.getDisableLink() ? $made.getUrlWithParams() || "" : ""});
 }
 `)),
         // A nav-card is a container of a link (the title, the card's link; a text without one), the text and the child links.

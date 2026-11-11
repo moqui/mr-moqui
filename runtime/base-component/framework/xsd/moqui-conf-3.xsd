@@ -1097,6 +1097,9 @@ along with this software (see the LICENSE.md file). If not, see
                             <xs:attribute name="location" type="xs:string"/>
                             <xs:attribute name="menu-title" type="xs:string"/>
                             <xs:attribute name="menu-index" type="xs:positiveInteger"/>
+                            <xs:attribute name="menu-group" type="xs:string"><xs:annotation><xs:documentation>The group the
+                                item is in, in the menu of the screen it is mounted in, as the menu-group of a screen's
+                                subscreens-item.</xs:documentation></xs:annotation></xs:attribute>
                             <xs:attribute name="menu-include" type="xs:string" default="true">
                                 <xs:annotation><xs:documentation>true, false, or an expression evaluated per request</xs:documentation></xs:annotation></xs:attribute>
                             <xs:attribute name="no-sub-path" type="boolean" default="false"/>

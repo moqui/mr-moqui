@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Checks" default-menu-index="13" menu-image="sym_o_fact_check" menu-image-type="icon">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Checks" default-menu-index="13" default-menu-group="Health" menu-image="sym_o_fact_check" menu-image-type="icon">
     <transition name="createTarget" method="post" authz-action="create">
         <service-call name="create#moqui.monitor.ScrapeTarget" in-map="{targetId:targetId,url:url,serviceName:serviceName,intervalSeconds:intervalSeconds || 60,timeoutSeconds:timeoutSeconds || 10,bearerToken:bearerToken,enabled:'Y'}"/>
         <default-response url="."/>

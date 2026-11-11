@@ -43,6 +43,10 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:attribute>
         <xs:attribute name="default-menu-title" type="xs:string"/>
         <xs:attribute name="default-menu-index" type="xs:nonNegativeInteger"/>
+        <xs:attribute name="default-menu-group" type="xs:string"><xs:annotation><xs:documentation>
+            The group this screen is in, in its parent's menu, when the subscreens-item that mounts it has no menu-group
+            (see there). Localized.
+        </xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="default-menu-include" type="xs:string" default="true">
             <xs:annotation><xs:documentation>
                 Set this to false to not automatically appear in the parent's subscreens menu based on the directory
@@ -874,6 +878,13 @@ along with this software (see the LICENSE.md file). If not, see
             If empty this item will be added to the end of the list (after the directory load, before the
             entity load).
         </xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="menu-group" type="xs:string"><xs:annotation><xs:documentation>
+            The group this item is in (Security, Integration), localized: a long flat menu is drawn with the group's name
+            as a caption above the first of each run of items that share one, in the drawer of the browser and of the
+            terminal. It does not order the items: give the items of a group menu indexes that follow each other. An
+            item with no group has no caption; a menu where no item has one is drawn as before. Defaults to the
+            default-menu-group of the screen at location. The menu data has it as each item's group.
+        </xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="menu-include" type="xs:string" default="true"><xs:annotation><xs:documentation>
             true, false, or an expression evaluated per request. An expression is JavaScript run when a menu is built,
             in the context disable-when has (for example ec.user.hasPermission('LOAD_RUNNER')); when it is false the
@@ -1505,6 +1516,10 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:attribute>
         <xs:attribute name="icon" type="xs:string"><xs:annotation><xs:documentation>A Quasar icon name, Material Symbols
             outlined (sym_o_receipt_long) or Material Icons, or CSS classes when it has a space.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="sparkline" type="xs:string"><xs:annotation><xs:documentation>The value's recent history, drawn
+            small under it: numbers with commas, oldest first, as a list expands (${loadSeries}); an empty place is a gap,
+            and fewer than two numbers draw nothing. A line in qvt, bars in tui; html, text and print show the value
+            alone.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="link" type="xs:string"><xs:annotation><xs:documentation>Where the card goes: a screen path or
             transition of this screen, as the url of a link with url-type transition, with a query string for the filter
             (../Tasks?dueToday=true); a link to something other than a screen is a plain anchor.</xs:documentation></xs:annotation></xs:attribute>

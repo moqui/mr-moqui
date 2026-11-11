@@ -180,3 +180,20 @@ fn exit_nodes_parse_and_a_password_keeps_no_value() {
     assert_eq!(model, again);
     assert!(!serde_json::to_string(&model).unwrap().contains("s3cret"));
 }
+
+/// A number card's sparkline is its recent values with a gap where there is none, and a card without one writes no
+/// `spark`.
+#[test]
+fn a_number_card_reads_its_sparkline_and_writes_none_when_it_has_none() {
+    let text = r#"{"v":1,"screen":{"path":"/p","title":"P"},"c":[
+        {"t":"numberCard","id":"load","title":"Load","value":"31 %","spark":[10,null,31.5]},
+        {"t":"numberCard","id":"plain","title":"Users","value":"12"}
+    ]}"#;
+    let model = ScreenModel::from_json(text).unwrap_or_else(|err| panic!("{err}"));
+    let Node::NumberCard { spark, .. } = &model.c[0] else {
+        panic!("{:?}", model.c[0]);
+    };
+    assert_eq!(spark, &[Some(10.0), None, Some(31.5)]);
+    let written = serde_json::to_string(&model.c[1]).unwrap();
+    assert!(!written.contains("spark"), "{written}");
+}

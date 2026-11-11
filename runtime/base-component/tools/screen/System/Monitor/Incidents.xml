@@ -2,7 +2,7 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- Incidents (plans/Monitoring.md, Later: Regressions and incidents): opened by the regression detector, by an alert rule
     labelled incident="true", or by hand; open ones by default. MONITOR_INCIDENT is checked by the services. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Incidents" default-menu-index="15" menu-image="sym_o_warning" menu-image-type="icon">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Incidents" default-menu-index="15" default-menu-group="Health" menu-image="sym_o_warning" menu-image-type="icon">
     <parameter name="statusId"/><parameter name="serviceName"/>
     <transition name="incidentDetail"><default-response url="../IncidentDetail"/></transition>
     <transition name="createIncident">

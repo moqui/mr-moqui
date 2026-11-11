@@ -840,7 +840,13 @@ fn place_one(node: &Node, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
             pieces.extend(references(id, links, width));
             pieces
         }
-        Node::NumberCard { id, title, value, url } => {
+        Node::NumberCard {
+            id,
+            title,
+            value,
+            url,
+            spark,
+        } => {
             let body = if url.is_empty() {
                 Piece::Text(LaidText {
                     id: format!("{id}.value"),
@@ -856,13 +862,22 @@ fn place_one(node: &Node, ctx: &Ctx<'_>, width: u16) -> Vec<Piece> {
                     button: false,
                 }])
             };
+            let mut body = vec![body];
+            // the sparkline, as bars: nothing for fewer than two numbers
+            if spark.iter().flatten().count() > 1 {
+                body.push(Piece::Text(LaidText {
+                    id: format!("{id}.spark"),
+                    style: "muted".to_string(),
+                    lines: vec![crate::components::report::bars(spark, 24)],
+                }));
+            }
             vec![Piece::Box(LaidBox {
                 id: format!("{id}.card"),
                 title: title.clone(),
                 kind: String::new(),
                 w: width.min(30),
                 toolbar: Vec::new(),
-                body: vec![body],
+                body,
                 collapsible: false,
                 collapsed: false,
             })]

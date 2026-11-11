@@ -5427,7 +5427,8 @@
     // with no subscreens and a screen after it has that one as its child; the last screen's saved finds are its children. A screen
     // on the path whose active subscreen has its title (its own list) gives way to it, its subtree a level up. Each row:
     // {key, kind (app, screen or find), level, title, image, imageType, to (none for a disabled link), onPath, current (the
-    // screen shown, or its active saved find), inApp (a row of the open app, its own row too)}. Pure, for the node tests.
+    // screen shown, or its active saved find), inApp (a row of the open app, its own row too), group, and caption on the first
+    // row of a run of siblings in one group}. Pure, for the node tests.
     moqui.drawerRows = (navMenuList) => {
         const list = Array.isArray(navMenuList) ? navMenuList.filter(Boolean) : [];
         const rows = [];
@@ -5442,7 +5443,7 @@
             kind: kind || (index === appIndex ? "app" : "screen"), level: Math.max(0, index - appIndex),
             title: entry.title || entry.name || "", image: entry.image || "", imageType: entry.imageType || "",
             to: entry.disableLink ? "" : (entry.pathWithParams || entry.path || ""), onPath: !!onPath, current: !!current,
-            inApp: !!onPath && index >= appIndex
+            inApp: !!onPath && index >= appIndex, group: kind === "find" ? "" : (entry.group || "")
         });
         const walk = (index) => {
             const entry = list[index];
@@ -5476,6 +5477,16 @@
             for (let j = i; j < end - 1; j++) rows[j].level--;
             i--;
         }
+        // a menu group (the menu data's group, a menu-group): the first row of each run of siblings that share one has it as
+        // its caption, drawn above it; a row with no group has none
+        rows.forEach((item, i) => {
+            if (!item.group) return;
+            let before = null;
+            for (let j = i - 1; j >= 0 && rows[j].level >= item.level; j--) {
+                if (rows[j].level === item.level) { before = rows[j]; break; }
+            }
+            if (!before || before.kind !== item.kind || before.group !== item.group) item.caption = item.group;
+        });
         return rows;
     };
 
@@ -5486,7 +5497,9 @@
         props: { mini: Boolean },
         template:
             '<q-list dense class="m-drawer" :class="{\'m-drawer-mini\': mini}">' +
-                '<q-item v-for="row in shownRows" :key="row.key" :to="row.to || undefined" :clickable="!!row.to" :title="mini ? undefined : row.title" @keydown.enter.prevent' +
+                '<template v-for="row in shownRows" :key="row.key">' +
+                '<q-item-label v-if="row.caption && !mini" header class="m-drawer-group" :class="{\'m-drawer-in-app\': row.inApp}" :style="rowStyle(row)">{{row.caption}}</q-item-label>' +
+                '<q-item :to="row.to || undefined" :clickable="!!row.to" :title="mini ? undefined : row.title" @keydown.enter.prevent' +
                         ' :class="rowClass(row)" :style="rowStyle(row)">' +
                     '<q-item-section v-if="row.kind === \'app\' || row.image || row.kind === \'find\'" avatar>' +
                         '<q-icon v-if="row.kind === \'find\' && !row.image" name="sym_o_bookmark" size="xs"></q-icon>' +
@@ -5497,6 +5510,7 @@
                     '<q-item-section v-if="!mini"><div class="ellipsis">{{row.title}}</div></q-item-section>' +
                     '<q-tooltip v-if="mini" anchor="center right" self="center left">{{row.title}}</q-tooltip>' +
                 '</q-item>' +
+                '</template>' +
             '</q-list>',
         computed: {
             rows() { return moqui.drawerRows(this.$root.navMenuList); },
@@ -7807,14 +7821,21 @@
     };
 
     // The number-card element (style-guide §8.2): a q-card flat bordered with the title as text-overline, the value (text-h5 for
-    // size md, h6 for sm, h4 for lg), the delta in the tone of numberCardDelta and the icon; with href the whole card is a link,
+    // size md, h6 for sm, h4 for lg), the delta in the tone of numberCardDelta, a sparkline of its recent values (numbers with
+    // commas, drawn with moqui.sparklinePath) and the icon; with href the whole card is a link,
     // m-link for a screen (the shell's setUrl) and a plain anchor when external.
     component("m-number-card", {
         name: "mNumberCard",
         props: { title: String, value: [String, Number], delta: [String, Number], deltaGood: { type: String, default: "up" },
-            icon: String, href: String, external: Boolean, size: { type: String, default: "md" } },
+            icon: String, href: String, external: Boolean, size: { type: String, default: "md" }, sparkline: [String, Array] },
         computed: {
             deltaInfo() { return moqui.numberCardDelta(this.delta, this.deltaGood); },
+            // the sparkline's numbers (a list, or its text with commas; an empty place is a gap) as a path, none under two numbers
+            sparkPath() {
+                const values = Array.isArray(this.sparkline) ? this.sparkline : String(this.sparkline || "").split(",").map((text) => text.trim());
+                const numbers = values.map((value) => (value === "" || value === null || value === "null" ? null : Number(value)));
+                return numbers.filter((value) => value !== null && Number.isFinite(value)).length > 1 ? moqui.sparklinePath(numbers) : "";
+            },
             deltaClass() {
                 const tone = this.deltaInfo ? this.deltaInfo.tone : "neutral";
                 return tone === "good" ? "text-positive" : tone === "bad" ? "text-negative" : "m-muted";
@@ -7833,6 +7854,8 @@
                             '<div v-if="deltaInfo" class="text-caption row no-wrap items-center m-number-card-delta" :class="deltaClass">' +
                                 '<q-icon :name="deltaInfo.icon" size="xs" class="q-mr-xs"></q-icon><span>{{delta}}</span>' +
                             '</div>' +
+                            '<svg v-if="sparkPath" class="m-number-card-spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">' +
+                                '<path :d="sparkPath" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"></path></svg>' +
                         '</div>' +
                         '<m-menu-icon v-if="icon" :name="icon" size="sm" class="m-number-card-icon"></m-menu-icon>' +
                     '</q-card-section>' +

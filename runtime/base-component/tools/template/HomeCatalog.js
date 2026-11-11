@@ -16,15 +16,17 @@
 //   `title`, and is kept as it is: the link itself is left out for a user who may not follow it.
 // - `featured: true` puts the entry in the featured cards and not in a group; `text` is the card's one line, and
 //   `links` its secondary links (the first three that are shown), each `{path | url, title, parameters}`.
-// - `group` is the title of the group of an entry that is not featured; the groups keep the order in which the
-//   catalog first names them. `parameters` is added to the link as a query string.
+// - `group` is the title of the group of an entry that is not featured, by default its menu item's group (the
+//   screen's `menu-group`, which the drawer shows too); the groups keep the order in which the catalog first names
+//   them. `parameters` is added to the link as a query string.
 // - `hidden: true` names the entry's screen and shows nothing for it: a screen the menu has that this home leaves out
 //   for this user (a tool whose permission the user does not hold), so it is not in the last group either.
 // - A menu item of the app root that no entry names (by the first name of a `path`, in an entry or in a card's
-//   links) goes in a last group, `otherTitle`, so a screen another component mounts is never missing.
+//   links) goes in the group its menu group names, when the catalog has that group, else in a last group,
+//   `otherTitle`, so a screen another component mounts is never missing.
 //
 // build(catalog, menuOf, options) is the rule, with nothing of the screen in it, so a spec calls it with a catalog and
-// menu items of its own: menuOf(parentPath) gives the menu items ({name, title, icon}) of the screen at parentPath
+// menu items of its own: menuOf(parentPath) gives the menu items ({name, title, icon, group}) of the screen at parentPath
 // ("" is the app root). options: homeName (the home's own menu item, never listed), linkPrefix (what a path is
 // written after, "../" from a home), otherTitle. It returns {featured: [{path, title, text, icon, link, links:
 // [{title, link}]}], groups: [{title, items: [{path, title, text, icon, link}]}]}.
@@ -79,7 +81,8 @@ function build(catalog, menuOf, options) {
             path: names.join("/"),
             title: String(entry.title || item.title || item.name),
             icon: entry.icon || item.icon || "",
-            link: settings.linkPrefix + names.join("/") + query
+            link: settings.linkPrefix + names.join("/") + query,
+            menuGroup: item.group || ""
         }
     }
 
@@ -103,10 +106,13 @@ function build(catalog, menuOf, options) {
         if (!shown || entry.hidden) continue
         shown.text = entry.text ? String(entry.text) : ""
         if (entry.featured) {
+            delete shown.menuGroup
             shown.links = links.map(link => ({title: link.title, link: link.link}))
             featured.push(shown)
         } else {
-            groupOf(String(entry.group || settings.otherTitle)).items.push(shown)
+            const group = String(entry.group || shown.menuGroup || settings.otherTitle)
+            delete shown.menuGroup
+            groupOf(group).items.push(shown)
         }
     }
 
@@ -116,15 +122,18 @@ function build(catalog, menuOf, options) {
         let other = groups.find(group => group.title === settings.otherTitle)
         if (other) groups.splice(groups.indexOf(other), 1)
         else other = {title: settings.otherTitle, items: []}
-        for (const item of unnamed)
-            other.items.push({
+        for (const item of unnamed) {
+            // with a menu group (menu-group) that the catalog has, it joins that group; else the last one
+            const own = item.group ? groups.find(group => group.title === item.group) : null
+            ;(own || other).items.push({
                 path: item.name,
                 title: String(item.title || item.name),
                 text: "",
                 icon: item.icon || "",
                 link: settings.linkPrefix + item.name
             })
-        groups.push(other)
+        }
+        if (other.items.length) groups.push(other)
     }
     return {featured, groups: groups.filter(group => group.items.length)}
 }
@@ -143,7 +152,8 @@ function forScreen(sri, ec, catalog, options) {
                 .map(item => ({
                     name: String(item.name),
                     title: String(ec.resource.expand(item.title, "") || item.name),
-                    icon: item.image && item.imageType === "icon" ? String(item.image) : ""
+                    icon: item.image && item.imageType === "icon" ? String(item.image) : "",
+                    group: item.group ? String(item.group) : ""
                 }))
         } catch (error) {
             ec.logger.error("Home navigation: the menu of " + (parentPath || "the app root") + " failed: " + String(error))

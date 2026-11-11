@@ -478,6 +478,9 @@ pub struct SubscreensItem {
     pub location: String,
     pub menu_title: String,
     pub menu_index: Option<i64>,
+    /// `menu-group`, else the target screen's `default-menu-group`: the caption its run of menu items is drawn under.
+    /// Empty for none.
+    pub menu_group: String,
     /// False when `menu-include` is `false`. An expression leaves it true and is kept in `menu_include_when`.
     pub menu_include: bool,
     /// A `menu-include` other than `true` or `false`: a JavaScript expression run when the menu is built, in the same
@@ -1609,6 +1612,7 @@ fn load_subscreens(
                 menu_index: root
                     .attribute("default-menu-index")
                     .and_then(|text| text.trim().parse().ok()),
+                menu_group: root.attribute("default-menu-group").unwrap_or_default(),
                 menu_include,
                 menu_include_when,
                 location: item_location,
@@ -1677,10 +1681,9 @@ fn load_subscreens(
                         continue;
                     };
                     let item_location = text("subscreenLocation").unwrap_or_else(|| format!("{base}/{name}.xml"));
-                    let menu_title = text("menuTitle").unwrap_or_else(|| {
-                        sources.push(Source::of(factory, &item_location));
-                        target_menu_title(factory, &item_location)
-                    });
+                    let target = target_menu(factory, &item_location);
+                    sources.push(Source::of(factory, &item_location));
+                    let menu_title = text("menuTitle").unwrap_or(target.title);
                     if text("makeDefault").as_deref() == Some("Y") {
                         subscreens.default_item = Some(name.clone());
                     }
@@ -1695,6 +1698,7 @@ fn load_subscreens(
                         name,
                         location: item_location,
                         menu_title,
+                        menu_group: target.group,
                     });
                 }
             }
@@ -1713,18 +1717,31 @@ fn load_subscreens(
     Ok((subscreens, rows_read))
 }
 
-/// The `default-menu-title` of the screen at `location`, else its pretty file name.
-fn target_menu_title(factory: &ExecutionContextFactory, location: &str) -> String {
-    factory
+/// What the screen at a location says of its own place in a menu.
+struct TargetMenu {
+    /// Its `default-menu-title`, else its pretty file name.
+    title: String,
+    /// Its `default-menu-group`, empty for none.
+    group: String,
+}
+
+fn target_menu(factory: &ExecutionContextFactory, location: &str) -> TargetMenu {
+    let root = factory
         .resource()
         .get(location)
         .ok()
         .filter(|resource| resource.exists() && resource.is_file())
         .and_then(|resource| resource.read_text().ok())
-        .and_then(|text| MNode::parse_root_only(location, &text).ok())
-        .and_then(|root| root.attribute("default-menu-title"))
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| pretty_menu_name(location))
+        .and_then(|text| MNode::parse_root_only(location, &text).ok());
+    let attribute = |name: &str| {
+        root.as_ref()
+            .and_then(|root| root.attribute(name))
+            .filter(|text| !text.is_empty())
+    };
+    TargetMenu {
+        title: attribute("default-menu-title").unwrap_or_else(|| pretty_menu_name(location)),
+        group: attribute("default-menu-group").unwrap_or_default(),
+    }
 }
 
 fn subscreens_item_of(
@@ -1740,14 +1757,17 @@ fn subscreens_item_of(
         .attribute("location")
         .filter(|text| !text.is_empty())
         .unwrap_or_else(|| format!("{base}/{name}.xml"));
-    let menu_title = item
-        .attribute("menu-title")
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| {
-            // The target's own default-menu-title, else the pretty file name. The title is read again when the target changes.
-            sources.push(Source::of(factory, &location));
-            target_menu_title(factory, &location)
-        });
+    let own_title = item.attribute("menu-title").filter(|text| !text.is_empty());
+    let own_group = item.attribute("menu-group").filter(|text| !text.is_empty());
+    // The target's own default-menu-title (else the pretty file name) and default-menu-group, for what the item does
+    // not say. They are read again when the target changes.
+    let target = (own_title.is_none() || own_group.is_none()).then(|| {
+        sources.push(Source::of(factory, &location));
+        target_menu(factory, &location)
+    });
+    let (target_title, target_group) = target.map_or((None, None), |target| (Some(target.title), Some(target.group)));
+    let menu_title = own_title.or(target_title).unwrap_or_default();
+    let menu_group = own_group.or(target_group).unwrap_or_default();
     let at = match item.file_location() {
         Some(file) => format!("{file}:{}", item.line()),
         None => format!("subscreens-item {name}"),
@@ -1761,6 +1781,7 @@ fn subscreens_item_of(
     Some(SubscreensItem {
         name,
         menu_title,
+        menu_group,
         menu_index: item.attribute("menu-index").and_then(|text| text.trim().parse().ok()),
         menu_include,
         menu_include_when,

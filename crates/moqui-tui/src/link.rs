@@ -96,6 +96,9 @@ pub struct MenuItem {
     pub children: Vec<MenuItem>,
     /// The menu data's `disableLink` (a `disable-when` that holds): shown dimmed, and not a link.
     pub disabled: bool,
+    /// The menu data's `group` (a `menu-group`): the first of a run of items that share one has it as a heading above
+    /// it. Empty for none.
+    pub group: String,
 }
 
 /// The shell data the client draws around the screens: the drawer of the current app, the user, and the theme's `tui`

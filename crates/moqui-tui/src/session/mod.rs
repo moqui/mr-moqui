@@ -1978,15 +1978,24 @@ impl DrawerRow {
     }
 }
 
-/// The drawer's rows: each app menu item and the items under it.
+/// The drawer's rows: each app menu item and the items under it. An item whose group is not that of the item before
+/// it, at its level, has the group as a heading above it.
 pub fn drawer_rows(menu: &[MenuItem]) -> Vec<DrawerRow> {
-    let mut rows = Vec::new();
-    for item in menu {
-        rows.push(DrawerRow::of_item(item, 0));
-        for child in &item.children {
-            rows.push(DrawerRow::of_item(child, 1));
+    fn level(items: &[MenuItem], depth: usize, rows: &mut Vec<DrawerRow>) {
+        let mut group = "";
+        for item in items {
+            if !item.group.is_empty() && item.group != group {
+                rows.push(DrawerRow::new(&item.group, "", depth));
+            }
+            group = &item.group;
+            rows.push(DrawerRow::of_item(item, depth));
+            if depth == 0 {
+                level(&item.children, 1, rows);
+            }
         }
     }
+    let mut rows = Vec::new();
+    level(menu, 0, &mut rows);
     rows
 }
 

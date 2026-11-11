@@ -65,6 +65,10 @@ fn subscreens_come_from_the_directory_and_from_subscreens_items() {
     assert_eq!(linked.menu_index, Some(1));
     assert!(linked.menu_include);
     assert_eq!(root.subscreens.get("Home").unwrap().menu_title, "Start");
+    // menu-group is the item's, else the default-menu-group of the screen it mounts; none is empty.
+    assert_eq!(linked.menu_group, "Linked group");
+    assert_eq!(root.subscreens.get("Home").unwrap().menu_group, "Start group");
+    assert_eq!(root.subscreens.get("Sub").unwrap().menu_group, "");
 
     let info = walk(context.factory(), "/Linked").unwrap();
     assert_eq!(names(&info), ["Root", "Other"]);

@@ -201,6 +201,12 @@ screens sit at the apps' own left edge, and each deeper screen is indented 12px 
 active saved find) gets a bar and a stronger tint. With `QUASAR_LEFT_MINI` the docked drawer is a 56px rail of app icons with their
 titles as tooltips; the button at its foot switches between the two. Below the breakpoint the drawer is an overlay, never a rail.
 
+**Menu groups.** A long flat menu is grouped with `menu-group` on a `subscreens-item` (or a conf mount), by default the
+`default-menu-group` of the screen it mounts. The menu data has it as each item's `group`, and the drawer writes it as a small caption
+above the first row of each run of siblings that share one (`row.caption`); the terminal's drawer writes the same heading. A group
+does not order the items: their menu indexes do. System and Monitor (tools) are grouped this way, and a home's navigation catalog
+(`tools/template/HomeCatalog.js`) puts an entry with no group of its own in its menu item's.
+
 **Menus anchored to hidden elements.** A `q-menu` (or `q-popup-proxy`) whose target is an element with `visibility: hidden` does not open in
 Chrome: an anchor revealed on hover (a row's actions) is hidden with `opacity: 0` (and `pointer-events: none` until shown), not `visibility`.
 No `m-*` component anchors a menu that way.

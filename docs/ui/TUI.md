@@ -377,6 +377,9 @@ they are. Where a screen has gone custom for the browser (a `.qvue` screen, or a
 needs a `tui` text of its own beside it to show in the terminal; until it has one, the terminal shows a placeholder with
 the browser address. `moqui lint --screens` lists those parts under "TUI worklist".
 
+A screen's `menu-group` (or its `default-menu-group`) is a heading in the drawer above the first of each run of menu
+items that share it, as the caption in the browser's drawer ([Qvt-Client](Qvt-Client.md), Menu groups).
+
 A `tui` text is one node or an array of nodes of the model, in JSON:
 
 ```xml

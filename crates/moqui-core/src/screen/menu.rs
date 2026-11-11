@@ -142,6 +142,10 @@ pub(super) fn subscreen_entry(
     entry.insert("pathWithParams".into(), text(&path_with_params(&url)));
     entry.insert("image".into(), image);
     entry.insert("imageType".into(), image_type);
+    // the caption its run of menu items is drawn under (menu-group), when it has one
+    if !item.menu_group.is_empty() {
+        entry.insert("group".into(), text(&l10n::localize(&item.menu_group)?));
+    }
     if in_menu {
         entry.insert("menuInclude".into(), Value::Bool(true));
     }

@@ -3,7 +3,7 @@
 <!-- Released versions (plans/Monitoring.md, Later: Regressions and incidents): each service's versions from the release
     markers, newest first, the instances on each now, and the regressions the detector found against the version before.
     MONITOR_INCIDENT is checked by the services. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Releases" default-menu-index="14" menu-image="sym_o_new_releases" menu-image-type="icon">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Releases" default-menu-index="14" default-menu-group="Health" menu-image="sym_o_new_releases" menu-image-type="icon">
     <parameter name="serviceName"/>
     <transition name="releaseDetail"><default-response url="../ReleaseDetail"/></transition>
     <transition name="compare"><default-response url="../Split"/></transition>

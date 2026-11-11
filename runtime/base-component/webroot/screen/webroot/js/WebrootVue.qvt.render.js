@@ -5776,10 +5776,11 @@
               ], 10, ["id", "onClick"]))
             }
         } },
-        "m-menu-drawer": { hash: "fd49ce92", make: function (Vue) {
-            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, withCtx: _withCtx, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withModifiers: _withModifiers, withKeys: _withKeys, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle } = Vue
+        "m-menu-drawer": { hash: "5f428abe", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle, withCtx: _withCtx, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, withModifiers: _withModifiers, withKeys: _withKeys, createVNode: _createVNode } = Vue
 
             return function render(_ctx, _cache) {
+              const _component_q_item_label = _resolveComponent("q-item-label")
               const _component_q_icon = _resolveComponent("q-icon")
               const _component_m_menu_icon = _resolveComponent("m-menu-icon")
               const _component_q_item_section = _resolveComponent("q-item-section")
@@ -5793,73 +5794,89 @@
               }, {
                 default: _withCtx(() => [
                   (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.shownRows, (row) => {
-                    return (_openBlock(), _createBlock(_component_q_item, {
-                      key: row.key,
-                      to: row.to || undefined,
-                      clickable: !!row.to,
-                      title: _ctx.mini ? undefined : row.title,
-                      onKeydown: _withKeys(_withModifiers(() => {}, ["prevent"]), ["enter"]),
-                      class: _normalizeClass(_ctx.rowClass(row)),
-                      style: _normalizeStyle(_ctx.rowStyle(row))
-                    }, {
-                      default: _withCtx(() => [
-                        (row.kind === 'app' || row.image || row.kind === 'find')
-                          ? (_openBlock(), _createBlock(_component_q_item_section, {
-                              key: 0,
-                              avatar: ""
-                            }, {
-                              default: _withCtx(() => [
-                                (row.kind === 'find' && !row.image)
-                                  ? (_openBlock(), _createBlock(_component_q_icon, {
-                                      key: 0,
-                                      name: "sym_o_bookmark",
-                                      size: "xs"
-                                    }))
-                                  : (row.image && row.imageType === 'icon')
-                                    ? (_openBlock(), _createBlock(_component_m_menu_icon, {
-                                        key: 1,
-                                        name: row.image,
-                                        size: row.kind === 'app' ? 'sm' : 'xs'
-                                      }, null, 8, ["name", "size"]))
-                                    : (row.image)
-                                      ? (_openBlock(), _createElementBlock("img", {
-                                          key: 2,
-                                          src: row.image,
-                                          alt: row.title,
-                                          height: row.kind === 'app' ? 18 : 14,
-                                          class: "invertible"
-                                        }, null, 8, ["src", "alt", "height"]))
-                                      : (_openBlock(), _createElementBlock("span", {
-                                          key: 3,
-                                          class: "m-drawer-letter"
-                                        }, _toDisplayString(row.title.charAt(0)), 1))
-                              ]),
-                              _: 2
-                            }, 1024))
-                          : _createCommentVNode("", true),
-                        (!_ctx.mini)
-                          ? (_openBlock(), _createBlock(_component_q_item_section, { key: 1 }, {
-                              default: _withCtx(() => [
-                                _createElementVNode("div", { class: "ellipsis" }, _toDisplayString(row.title), 1)
-                              ]),
-                              _: 2
-                            }, 1024))
-                          : _createCommentVNode("", true),
-                        (_ctx.mini)
-                          ? (_openBlock(), _createBlock(_component_q_tooltip, {
-                              key: 2,
-                              anchor: "center right",
-                              self: "center left"
-                            }, {
-                              default: _withCtx(() => [
-                                _createTextVNode(_toDisplayString(row.title), 1)
-                              ]),
-                              _: 2
-                            }, 1024))
-                          : _createCommentVNode("", true)
-                      ]),
-                      _: 2
-                    }, 1032, ["to", "clickable", "title", "onKeydown", "class", "style"]))
+                    return (_openBlock(), _createElementBlock(_Fragment, {
+                      key: row.key
+                    }, [
+                      (row.caption && !_ctx.mini)
+                        ? (_openBlock(), _createBlock(_component_q_item_label, {
+                            key: 0,
+                            header: "",
+                            class: _normalizeClass(["m-drawer-group", {'m-drawer-in-app': row.inApp}]),
+                            style: _normalizeStyle(_ctx.rowStyle(row))
+                          }, {
+                            default: _withCtx(() => [
+                              _createTextVNode(_toDisplayString(row.caption), 1)
+                            ]),
+                            _: 2
+                          }, 1032, ["class", "style"]))
+                        : _createCommentVNode("", true),
+                      _createVNode(_component_q_item, {
+                        to: row.to || undefined,
+                        clickable: !!row.to,
+                        title: _ctx.mini ? undefined : row.title,
+                        onKeydown: _withKeys(_withModifiers(() => {}, ["prevent"]), ["enter"]),
+                        class: _normalizeClass(_ctx.rowClass(row)),
+                        style: _normalizeStyle(_ctx.rowStyle(row))
+                      }, {
+                        default: _withCtx(() => [
+                          (row.kind === 'app' || row.image || row.kind === 'find')
+                            ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                key: 0,
+                                avatar: ""
+                              }, {
+                                default: _withCtx(() => [
+                                  (row.kind === 'find' && !row.image)
+                                    ? (_openBlock(), _createBlock(_component_q_icon, {
+                                        key: 0,
+                                        name: "sym_o_bookmark",
+                                        size: "xs"
+                                      }))
+                                    : (row.image && row.imageType === 'icon')
+                                      ? (_openBlock(), _createBlock(_component_m_menu_icon, {
+                                          key: 1,
+                                          name: row.image,
+                                          size: row.kind === 'app' ? 'sm' : 'xs'
+                                        }, null, 8, ["name", "size"]))
+                                      : (row.image)
+                                        ? (_openBlock(), _createElementBlock("img", {
+                                            key: 2,
+                                            src: row.image,
+                                            alt: row.title,
+                                            height: row.kind === 'app' ? 18 : 14,
+                                            class: "invertible"
+                                          }, null, 8, ["src", "alt", "height"]))
+                                        : (_openBlock(), _createElementBlock("span", {
+                                            key: 3,
+                                            class: "m-drawer-letter"
+                                          }, _toDisplayString(row.title.charAt(0)), 1))
+                                ]),
+                                _: 2
+                              }, 1024))
+                            : _createCommentVNode("", true),
+                          (!_ctx.mini)
+                            ? (_openBlock(), _createBlock(_component_q_item_section, { key: 1 }, {
+                                default: _withCtx(() => [
+                                  _createElementVNode("div", { class: "ellipsis" }, _toDisplayString(row.title), 1)
+                                ]),
+                                _: 2
+                              }, 1024))
+                            : _createCommentVNode("", true),
+                          (_ctx.mini)
+                            ? (_openBlock(), _createBlock(_component_q_tooltip, {
+                                key: 2,
+                                anchor: "center right",
+                                self: "center left"
+                              }, {
+                                default: _withCtx(() => [
+                                  _createTextVNode(_toDisplayString(row.title), 1)
+                                ]),
+                                _: 2
+                              }, 1024))
+                            : _createCommentVNode("", true)
+                        ]),
+                        _: 2
+                      }, 1032, ["to", "clickable", "title", "onKeydown", "class", "style"])
+                    ], 64))
                   }), 128))
                 ]),
                 _: 1
@@ -5982,7 +5999,7 @@
               }, 8, ["class"]))
             }
         } },
-        "m-number-card": { hash: "4e5c1196", make: function (Vue) {
+        "m-number-card": { hash: "3dd0e8f", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, normalizeClass: _normalizeClass, resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createBlock: _createBlock, withCtx: _withCtx, resolveDynamicComponent: _resolveDynamicComponent } = Vue
 
             return function render(_ctx, _cache) {
@@ -6024,6 +6041,23 @@
                                   }, null, 8, ["name"]),
                                   _createElementVNode("span", null, _toDisplayString(_ctx.delta), 1)
                                 ], 2))
+                              : _createCommentVNode("", true),
+                            (_ctx.sparkPath)
+                              ? (_openBlock(), _createElementBlock("svg", {
+                                  key: 1,
+                                  class: "m-number-card-spark",
+                                  viewBox: "0 0 100 24",
+                                  preserveAspectRatio: "none",
+                                  "aria-hidden": "true"
+                                }, [
+                                  _createElementVNode("path", {
+                                    d: _ctx.sparkPath,
+                                    fill: "none",
+                                    stroke: "currentColor",
+                                    "stroke-width": "1.5",
+                                    "vector-effect": "non-scaling-stroke"
+                                  }, null, 8, ["d"])
+                                ]))
                               : _createCommentVNode("", true)
                           ]),
                           (_ctx.icon)

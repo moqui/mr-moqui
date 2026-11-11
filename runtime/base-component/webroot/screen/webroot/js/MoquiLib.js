@@ -24,6 +24,22 @@
     const SOCKET_CLOSING = 2;
     const SOCKET_CLOSED = 3;
 
+    // The SVG path of a sparkline in a box 100 wide and 24 high (viewBox "0 0 100 24"): a line through the numbers of
+    // `values`, left to right, lowest at the bottom, broken where a value is not a number. A report's stat panel and
+    // table cells draw it (WebrootReport.js), and a number-card's sparkline (WebrootVue.qvt.js).
+    const finiteNumber = (v) => v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v));
+    moqui.sparklinePath = (values) => {
+        const nums = (values || []).filter(finiteNumber).map(Number);
+        if (!nums.length) return "";
+        const min = Math.min(...nums), max = Math.max(...nums), length = values.length;
+        let open = false;
+        return values.map((value, at) => {
+            if (!finiteNumber(value)) { open = false; return ""; }
+            const point = (100 * at / Math.max(1, length - 1)).toFixed(2) + "," + (max === min ? 12 : 22 - 20 * (Number(value) - min) / (max - min)).toFixed(2);
+            const command = open ? "L" : "M"; open = true; return command + point;
+        }).join(" ");
+    };
+
     Object.assign(moqui, {
         // Quasar language packs by language, for the locale of the user. The page loads the pack that matches.
         quasarLangs: ["en-US", "de", "es", "fr", "it", "pt-BR", "ja", "zh-CN", "ru", "nl"],

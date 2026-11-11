@@ -650,6 +650,12 @@ test("a number card's delta has the tone of its sign against delta-good, and the
     assert.equal(computed({ delta: "+3", deltaGood: "down" }).deltaClass, "text-negative");
     assert.equal(computed({ delta: "+3" }).deltaClass, "text-positive");
     assert.equal(computed({ delta: "0" }).deltaClass, "m-muted");
+    // the sparkline: numbers with commas or a list, a gap for an empty place, nothing for fewer than two numbers
+    assert.equal(computed({}).sparkPath, "");
+    assert.equal(computed({ sparkline: "5" }).sparkPath, "");
+    assert.equal(computed({ sparkline: "0,10" }).sparkPath, "M0.00,22.00 L100.00,2.00");
+    assert.equal(computed({ sparkline: [0, 10] }).sparkPath, "M0.00,22.00 L100.00,2.00");
+    assert.equal(computed({ sparkline: "0,,10,10" }).sparkPath, "M0.00,22.00  M66.67,2.00 L100.00,2.00");
 });
 
 test("a nav card is a link only with an href, and its title is the one link of the card", () => {
