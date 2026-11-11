@@ -215,7 +215,8 @@ pub fn hash_of(text: &str) -> String {
     // item's no-sub-path mark, the services a transition passes the request to, and the bindings of a form's fields,
     // 7 the marks of what a service, form or transition declares to be filled in (auto-parameters, implements,
     // auto-fields, extends, a transition's calls and field-maps), and the references of auto-parameters and extends.
-    let digest = Sha256::digest(format!("7\n{text}").as_bytes());
+    // 8 a screen's allow-extra-path mark, and a form's bindings by the path it posts to, its own screen's transition too.
+    let digest = Sha256::digest(format!("8\n{text}").as_bytes());
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -1607,6 +1608,8 @@ fn apply(
     let derived: Derived;
     // whether a screen, subscreens item or transition was added, changed or removed: every screen path is walked again
     let screens_changed: bool;
+    // the names of the screens, items and transitions that changed: only the paths through one are walked again
+    let walk_names: HashSet<String>;
     // ids another file defines too (an entity defined again): their row is replaced, the later definition winning
     let shared: HashSet<String>;
     // the files that have rows: only theirs are read and removed first
@@ -1684,6 +1687,10 @@ fn apply(
             }
         }
         screens_changed = walked_before != walked_after;
+        walk_names = walked_before
+            .symmetric_difference(&walked_after)
+            .flat_map(|(id, _)| resolver.names_walked(id))
+            .collect();
         let waiting = waiting_refs(facade, &added, &changed_paths);
         derived = derive_in(&mut resolver, &changes, &waiting, &changed_entities, &added, &mut gone);
         added.extend(derived.rows.iter().cloned());
@@ -1829,7 +1836,7 @@ fn apply(
         .filter(|change| matches!(change, Change::Read { .. }))
         .count();
     if screens_changed && usize::try_from(facade.find(FILE)?.count()?).unwrap_or(0) > read_now {
-        walk_again(factory, facade, state, &tx, &changed_paths)?;
+        walk_again(factory, facade, state, &tx, &changed_paths, &walk_names)?;
     }
     report.write_millis = writing.elapsed().as_millis();
     Ok(())
@@ -2443,21 +2450,43 @@ fn update_rows(
 }
 
 /// Every screen path and directory subscreen reference of the files not read now walked again against the screens,
-/// items and transitions known now, resolved or not, and every form field's binding into a transition by its path: a
-/// renamed or removed item, an item's new location, an item over a directory subscreen or a transition's new service
-/// changes where a path goes, though no name it is written with changed. One read of the references (the columns a
-/// walk needs) and one of the bindings; each walk is lookups in memory, and only the rows whose target changed are
-/// written.
+/// items and transitions known now, resolved or not; each reference to a transition of its own screen by a name in
+/// `names` (the screens, items and transitions that changed: a subscreen of that name may now come before it); and each
+/// form field's binding by the path its form posts to (its own screen's transition by its name too) that has a segment
+/// of those names, a `..` or a sparse search: a renamed or removed item, an item's new location, an item over a
+/// directory subscreen or a transition's new service changes where a path goes, though no name it is written with
+/// changed. One read of the references (the columns a walk needs) and one of the bindings, narrowed by the names in the
+/// database; each walk is lookups in memory, and only the rows whose target changed are written.
 fn walk_again(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
     state: &IndexState,
     tx: &moqui_core::transaction::TransactionManager,
     changed: &HashSet<String>,
+    names: &HashSet<String>,
 ) -> Result<(), Error> {
-    // by the kind's index: the directory subscreens are among the screen references
+    // many names (a pull of many screens): every path, as reading each name's would cost more
+    let narrow = names.len() <= 200;
+    // by the kind's index: the directory subscreens are among the screen references; and the transitions by the names
+    // that changed (`<name>:<method>`), which a subscreen of the name (a directory subscreen, a mount) may now take
     let kinds = [ToKind::ScreenPath, ToKind::Screen].map(|kind| Value::string(kind.as_str()));
-    let mut find = facade.find(REF)?.condition(Condition::is_in("toKind", kinds.to_vec()));
+    let mut by_kind = vec![Condition::is_in("toKind", kinds.to_vec())];
+    let transition = Condition::equals("toKind", Value::string(ToKind::Transition.as_str()));
+    if narrow {
+        let named: Vec<Value> = names
+            .iter()
+            .flat_map(|name| {
+                ["any", "get", "post", "put", "patch", "delete", "head", "options"]
+                    .map(|method| Value::string(format!("{name}:{method}")))
+            })
+            .collect();
+        if !named.is_empty() {
+            by_kind.push(Condition::and(vec![transition, Condition::is_in("toName", named)]));
+        }
+    } else {
+        by_kind.push(transition);
+    }
+    let mut find = facade.find(REF)?.condition(Condition::or(by_kind));
     for field in [
         "filePath",
         "refSeqId",
@@ -2475,12 +2504,21 @@ fn walk_again(
     // each form field's bindings by a path, by its file, form and written id (two forms of a screen may post a field of
     // a name to one path), in slot order
     let mut paths: BTreeMap<(String, String, String), Vec<(usize, EntityValue)>> = BTreeMap::new();
-    for row in facade
-        .find(BINDING)?
-        .condition(Condition::is_not_null("toPath"))
-        .list()?
-        .into_values()
-    {
+    let mut bindings = facade.find(BINDING)?.condition(Condition::is_not_null("toPath"));
+    if narrow {
+        // a path with a segment of a name (`#name`, `/name`, `name.<mode>` among them), one that goes up, a sparse search
+        let mut through: Vec<Condition> = ["%..%", "%#//%"]
+            .iter()
+            .map(|pattern| Condition::like("toPath", Value::string(*pattern)))
+            .collect();
+        for name in names {
+            for pattern in [format!("%#{name}%"), format!("%/{name}%")] {
+                through.push(Condition::like("toPath", Value::string(pattern)));
+            }
+        }
+        bindings = bindings.condition(Condition::or(through));
+    }
+    for row in bindings.list()?.into_values() {
         let file = text(&row, "filePath");
         if changed.contains(&file) {
             continue;

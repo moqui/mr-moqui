@@ -629,62 +629,44 @@ impl Resolver {
                     return expansion;
                 }
                 let screen = form_screen(owner);
+                // by the path the form posts to, a transition of its screen by its name ([`Self::path_bindings`]); of its
+                // screen, only a field one of its calls takes, as the file's own fields (extract.rs `form_bindings`)
                 let target = self.marks_of(owner).into_iter().find_map(|mark| match mark {
-                    Mark::Transition(name) => Some((false, name)),
-                    Mark::TransitionPath(path) => Some((true, path)),
+                    Mark::Transition(name) => Some((true, name)),
+                    Mark::TransitionPath(path) => Some((false, path)),
                     _ => None,
                 });
+                // the transition it posts to, as its path is walked: `post`, else any method, else the first
                 let same_screen_calls: Vec<FormCall> = match target {
-                    Some((false, name)) => self
-                        .transitions
-                        .get(&format!("transition:{screen}#{name}"))
-                        .into_iter()
-                        .flatten()
-                        .flat_map(|transition| self.calls_of(transition))
-                        .collect(),
+                    Some((true, name)) => self
+                        .base_transition(screen, name, Method::Post)
+                        .map(|transition| self.calls_of(&transition))
+                        .unwrap_or_default(),
                     _ => Vec::new(),
                 };
                 for field in fields {
                     let source_id = format!("form-field:{form_key}@{}", field.name);
-                    if field.bind {
-                        let mut targets: Vec<String> = Vec::new();
-                        if let Some((true, path)) = target {
-                            targets.push(parameter_id(
-                                &format!("{SCREEN_PATH_OWNER}{screen}#{path}"),
-                                "in",
-                                &field.name,
-                            ));
-                        }
-                        for call in &same_screen_calls {
-                            let mapped = call
-                                .maps
-                                .iter()
-                                .find(|(from, _)| *from == field.name)
-                                .map(|(_, to)| to.as_str());
-                            let parameter = match mapped {
-                                Some(parameter) => parameter,
-                                None if call.passes => field.name.as_str(),
-                                None => continue,
-                            };
-                            let id = parameter_id(&format!("service:{}", call.service), "in", parameter);
-                            if !targets.contains(&id) {
-                                targets.push(id);
-                            }
-                        }
-                        for to_id in targets {
-                            expansion.bindings.push(BindingRow {
-                                from: owner.to_string(),
-                                to_id,
-                                direction: "in".to_string(),
-                                source_kind: "form-field".to_string(),
-                                source_text: field.name.clone(),
-                                source_id: Some(source_id.clone()),
-                                to_path: None,
-                                origin: field.source.to_string(),
-                                origin_hash: String::new(),
-                                line: info.line,
-                            });
-                        }
+                    let taken = |name: &str| {
+                        same_screen_calls
+                            .iter()
+                            .any(|call| call.passes || call.maps.iter().any(|(from, _)| from == name))
+                    };
+                    let path = target
+                        .filter(|(same, _)| !same || taken(&field.name))
+                        .map(|(_, path)| path);
+                    if let Some(path) = path.filter(|_| field.bind) {
+                        expansion.bindings.push(BindingRow {
+                            from: owner.to_string(),
+                            to_id: parameter_id(&format!("{SCREEN_PATH_OWNER}{screen}#{path}"), "in", &field.name),
+                            direction: "in".to_string(),
+                            source_kind: "form-field".to_string(),
+                            source_text: field.name.clone(),
+                            source_id: Some(source_id.clone()),
+                            to_path: None,
+                            origin: field.source.to_string(),
+                            origin_hash: String::new(),
+                            line: info.line,
+                        });
                     }
                     if !field.origin.is_empty() {
                         expansion.artifacts.push(row(
@@ -1030,8 +1012,7 @@ impl Resolver {
     pub fn form_calls(&self, form: &str) -> Vec<FormCall> {
         let screen = form_screen(form);
         let transition = self.marks_of(form).into_iter().find_map(|mark| match mark {
-            Mark::Transition(name) => self.base_transition(screen, name, Method::Post),
-            Mark::TransitionPath(path) => self
+            Mark::Transition(path) | Mark::TransitionPath(path) => self
                 .screen_path_as(screen, path, Method::Post)
                 .filter(|id| id.starts_with("transition:")),
             _ => None,

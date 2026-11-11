@@ -22,10 +22,13 @@
 //! `~name=value` segments are dropped, `..` goes up to the screen's parent, and each other segment is a subscreen of the
 //! screen reached (its mount in the conf or a `SubscreensItem` row, its `subscreens-item`, else the directory
 //! subscreen: `Foo/Bar.xml` of `Foo.xml`), through a `no-sub-path` item that holds it, or a transition of it, which
-//! ends the path (the rest is extra path). `Name.<mode>` is the screen or transition `Name` in a render mode. A path
-//! starting with `/` is walked from the webroot screen, and one starting with `//` is searched for under it as Moqui's
-//! `findSubscreenPath` does. A path that cannot be walked, or that `..` walks from more than one parent to different
-//! artifacts, stays unresolved.
+//! ends the path (the rest is extra path). `Name.<mode>` is the screen or transition `Name` in a render mode. At a
+//! screen with `allow-extra-path` a segment it has nothing for ends the path there, the rest extra path. A transition of
+//! several methods is the request's ([`Method`]: `get` for a link or response, `post` for a form), else the one of any
+//! method, else the first. A path starting with `/` is walked from the webroot screen, and one starting with `//` is
+//! searched for under it as Moqui's `findSubscreenPath` does. A path that cannot be walked, or that `..` walks from more
+//! than one parent to different artifacts, stays unresolved. A reference to a transition of its own screen by name goes
+//! to a subscreen of that name first, as the walk does.
 //!
 //! An entity-auto name (`create#moqui.example.Example`) that no file defines a service for gets a derived service
 //! ([`Resolver::derive`], origin `derived`), with the in and out parameters the entity-auto runner takes and gives
@@ -34,9 +37,9 @@
 //!
 //! What an artifact declares to be filled in from elsewhere is expanded here too ([`Resolver::expand`], `expand.rs`):
 //! a service's parameters from its `auto-parameters` and `implements`, a form's fields from its `auto-fields-entity`,
-//! `auto-fields-service` and `extends`, with their bindings into the services its transition calls; and a form's
-//! fields bound into a transition another file has, by its path, to every service that transition passes the request
-//! to ([`Resolver::path_bindings`]).
+//! `auto-fields-service` and `extends`, with their bindings; and every form's fields, bound by the path the form posts
+//! to (its own screen's transition by its name too), to every service the transition reached passes the request to or
+//! maps the field into ([`Resolver::path_bindings`]).
 
 mod expand;
 
@@ -86,6 +89,8 @@ pub struct Resolver {
     transitions: HashMap<String, Vec<String>>,
     /// A transition's id to the services it passes the request's parameters to ([`request_services`]).
     requests: HashMap<String, Vec<String>>,
+    /// The screens with `allow-extra-path`: a path that goes on past one where nothing is ends at it.
+    extra_path: HashSet<String>,
     /// The services, forms and transitions whose summaries carry marks of what is derived from them
     /// ([`super::extract::ArtifactRow::marks`]), by id.
     /// Each definition of one (an override defines it again), by id.
@@ -161,6 +166,9 @@ impl Resolver {
             "screen" => {
                 if let Some(tail) = screen_tail(&artifact.name) {
                     self.screens.insert(tail.to_string(), artifact.name.clone());
+                }
+                if super::extract::split_marks(&artifact.marks).contains(&"allow-extra-path") {
+                    self.extra_path.insert(artifact.name.clone());
                 }
                 if let Some(parent) = directory_parent(&artifact.name) {
                     let children = self.directory.entry(parent).or_default();
@@ -277,6 +285,7 @@ impl Resolver {
                 if let Some(tail) = screen_tail(&artifact.name) {
                     self.screens.remove(tail);
                 }
+                self.extra_path.remove(&artifact.name);
                 if let Some(parent) = directory_parent(&artifact.name) {
                     remove_one(&mut self.directory, &parent, |known| *known == artifact.name);
                 }
@@ -411,8 +420,20 @@ impl Resolver {
                 found
             }
             ToKind::Transition => {
-                let id = format!("transition:{}#{}", reference.to_scope, reference.to_name);
-                self.has(&id).then_some(id)
+                // a subscreen of the name comes first, as Moqui walks a path: a directory subscreen or a conf mount the
+                // file of the reference does not show
+                let plain = reference
+                    .to_name
+                    .rsplit_once(':')
+                    .map_or(reference.to_name.as_str(), |(name, _)| name);
+                match self.step(&reference.to_scope, plain, Method::Get) {
+                    // through a `no-sub-path` item too, as the path the form's binding is walked by
+                    Some(Step::Screen(child)) => Some(format!("screen:{child}")),
+                    _ => {
+                        let id = format!("transition:{}#{}", reference.to_scope, reference.to_name);
+                        self.has(&id).then_some(id)
+                    }
+                }
             }
             ToKind::Anchor => self.screen(&reference.to_scope).and_then(|base| {
                 ["form", "anchor", "transition"]
@@ -654,6 +675,13 @@ impl Resolver {
             Some(Step::Screen(child)) => self.walk(&child, rest, depth + 1, found, method),
             // a transition ends the path: the rest is extra path
             Some(Step::Transition(id)) if !found.contains(&id) => found.push(id),
+            // nothing of the name under a screen with `allow-extra-path`: the path ends at it, the rest extra path
+            None if self.extra_path.contains(at) => {
+                let id = format!("screen:{at}");
+                if !found.contains(&id) {
+                    found.push(id);
+                }
+            }
             Some(Step::Transition(_)) | None => {}
         }
     }
@@ -803,6 +831,40 @@ impl Resolver {
             .map(|method| format!("{plain}:{method}"))
             .find(|id| ids.contains(id))
             .or_else(|| ids.iter().min().cloned())
+    }
+
+    /// The names a path walks by that a screen, subscreens item or transition `id` answers to: a transition's and an
+    /// item's own name, a screen's as a directory subscreen and the name of each item that mounts it; a path through one
+    /// of them may go elsewhere when it changes ([`super::walk_again`]).
+    #[must_use]
+    pub fn names_walked(&self, id: &str) -> Vec<String> {
+        let name_after = |rest: &str| rest.rsplit_once('#').map(|(_, name)| name.to_string());
+        if let Some(location) = id.strip_prefix("screen:") {
+            let mut names = vec![file_stem(location).to_string()];
+            for items in self.items.values() {
+                for item in items {
+                    let mounts = item.location == location || self.screen(&item.location).as_deref() == Some(location);
+                    if mounts && !names.contains(&item.name) {
+                        names.push(item.name.clone());
+                    }
+                }
+            }
+            return names;
+        }
+        if let Some(rest) = id.strip_prefix("subscreen:") {
+            // `<screen>#<name>`, `@conf` or `@row[:group]` after a mount's
+            return name_after(rest)
+                .map(|name| name.split('@').next().unwrap_or_default().to_string())
+                .into_iter()
+                .collect();
+        }
+        if let Some(rest) = id.strip_prefix("transition:") {
+            return name_after(rest)
+                .map(|name| name.split(':').next().unwrap_or_default().to_string())
+                .into_iter()
+                .collect();
+        }
+        Vec::new()
     }
 
     /// The names a reference to one of `ids` would carry, for finding the unresolved references an added artifact may

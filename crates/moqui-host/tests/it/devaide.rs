@@ -578,9 +578,15 @@ const UP_LINKS: &str = r#"<screen><widgets>
 /// A screen whose transition `save` passes the request to `service`.
 fn up_save(service: &str) -> String {
     format!(
-        r#"<screen><transition name="save"><service-call name="{service}"/><default-response url="."/></transition></screen>"#
+        r#"<screen><transition name="save"><service-call name="{service}"/><default-response url="."/></transition>
+    <widgets><link url="save" text="Save"/>
+        <form-single name="Edit" transition="save"><field name="thingId"><default-field><text-line/></default-field></field></form-single>
+    </widgets></screen>"#
     )
 }
+/// A path past the end of a screen that has no child of its name.
+const DEEP_LINKS: &str =
+    r#"<screen><widgets><link url="/apps/UpApp/Detail/more/path" text="Past Detail"/></widgets></screen>"#;
 /// Paths through mounts of the apps root that the conf and a `SubscreensItem` row add while the server runs.
 const APPS_LINKS: &str = r#"<screen><widgets>
     <link url="/apps/UpApp/Detail" text="By the conf"/><link url="/apps/UpRow/Detail" text="By a row"/>
@@ -663,6 +669,7 @@ fn the_index_follows_reloads_and_extensions() {
         ),
         ("component/my-site/MoquiConf.xml", SITE_MOUNTS),
         ("component/upstream-app/screen/Elsewhere/Apps.xml", APPS_LINKS),
+        ("component/upstream-app/screen/Elsewhere/Deep.xml", DEEP_LINKS),
     ];
     let gate = start_with_files_and_links(
         "dev-aide-index",
@@ -767,7 +774,7 @@ fn the_index_follows_reloads_and_extensions() {
     assert_eq!(listed[0]["refType"], "anchor");
     // and back: the anchor resolves again
     std::fs::write(&detail, UPSTREAM_SCREEN).unwrap();
-    moqui_devkit::reload_paths(&factory, &[detail]);
+    moqui_devkit::reload_paths(&factory, std::slice::from_ref(&detail));
     let fixed = call(
         &factory,
         "john.doe",
@@ -1036,6 +1043,72 @@ fn the_index_follows_reloads_and_extensions() {
     );
     // the conf's and the row's updates, not a build
     assert_eq!(moqui_devkit::index::builds(&factory), builds);
+
+    // a screen's allow-extra-path: a path past it, where it has no child of the name, ends at it, and not once it is off
+    let out_of = |screen: &str| -> Vec<(String, String)> {
+        let out = call(
+            &factory,
+            "john.doe",
+            &format!("{DT}get#ArtifactRefs"),
+            &[("artifactId", screen), ("direction", "out")],
+        )
+        .unwrap();
+        json(&out, "refs")
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["refType"] == "link")
+            .map(|r| {
+                (
+                    r["toName"].as_str().unwrap().to_string(),
+                    r["toId"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect()
+    };
+    let deep = "screen:component://upstream-app/screen/Elsewhere/Deep.xml";
+    let past = || out_of(deep).first().map(|(_, to)| to.clone()).unwrap_or_default();
+    assert_eq!(past(), "");
+    let toggle = |on: bool| {
+        let text = if on {
+            UPSTREAM_SCREEN.replacen("<screen>", r#"<screen allow-extra-path="true">"#, 1)
+        } else {
+            UPSTREAM_SCREEN.to_string()
+        };
+        std::fs::write(&detail, text).unwrap();
+        moqui_devkit::reload_paths(&factory, std::slice::from_ref(&detail));
+    };
+    toggle(true);
+    assert_eq!(past(), format!("{up}UpApp/Detail.xml"));
+    toggle(false);
+    assert_eq!(past(), "");
+
+    // a directory subscreen named like a transition of its screen: the screen's link and form by that name reach it, as
+    // Moqui walks the path, though the screen's file is not read again
+    let other = "component://upstream-app/screen/Elsewhere/Other.xml";
+    let edit_bound = || {
+        moqui_devkit::index::bindings(&factory, Some(&format!("form:{other}#Edit")), None)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.binding.to_id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        out_of(&format!("screen:{other}")),
+        [("save:any".to_string(), format!("transition:{other}#save:any"))]
+    );
+    assert_eq!(edit_bound(), ["parameter:service:mysite.Things.get#Thing@in.thingId"]);
+    let beside = gate
+        .runtime
+        .join("component/upstream-app/screen/Elsewhere/Other/save.xml");
+    std::fs::create_dir_all(beside.parent().unwrap()).unwrap();
+    std::fs::write(&beside, "<screen/>").unwrap();
+    moqui_devkit::reload_paths(&factory, std::slice::from_ref(&beside));
+    assert_eq!(
+        out_of(&format!("screen:{other}")),
+        [("save:any".to_string(), format!("{up}Elsewhere/Other/save.xml"))]
+    );
+    assert_eq!(edit_bound(), [format!("parameter:screen-path:{other}#save@in.thingId")]);
 }
 
 const AUTO_ENTITIES: &str = r#"<entities>
@@ -1348,8 +1421,34 @@ fn the_index_scales() {
         let started = std::time::Instant::now();
         let found = index::find(&factory, "OrdHdr", &[], &[], 20).unwrap();
         let find_millis = started.elapsed().as_millis();
+        // a screen file whose transitions change: every path of the other files is walked again
+        let probe = gate
+            .runtime
+            .join(format!("probe/{}/screen/Probe.xml", label.replace(' ', "-")));
+        std::fs::create_dir_all(probe.parent().unwrap()).unwrap();
+        let screen = index::Located {
+            path: probe.clone(),
+            component: "probe".to_string(),
+            location: "component://probe/screen/Probe.xml".to_string(),
+            kind: moqui_devkit::ArtifactKind::Screen,
+        };
+        let mut walk_millis = Vec::new();
+        for name in ["first", "second", "third"] {
+            std::fs::write(
+                &probe,
+                format!(r#"<screen><transition name="{name}"><default-response url="."/></transition></screen>"#),
+            )
+            .unwrap();
+            let started = std::time::Instant::now();
+            index::update_located(&factory, std::slice::from_ref(&screen)).unwrap();
+            walk_millis.push(started.elapsed().as_millis());
+        }
+        // the same text again: read and written, no path walked again
+        let started = std::time::Instant::now();
+        index::update_located(&factory, std::slice::from_ref(&screen)).unwrap();
+        let unwalked_millis = started.elapsed().as_millis();
         eprintln!(
-            "{label}: {count} files, {} artifacts, {} references; build {} ms (read {} ms, write {} ms); per-file update {update_millis} ms ({} artifacts); find {find_millis} ms ({} found)",
+            "{label}: {count} files, {} artifacts, {} references; build {} ms (read {} ms, write {} ms); per-file update {update_millis} ms ({} artifacts); per-screen update walking the paths again {walk_millis:?} ms, without {unwalked_millis} ms; find {find_millis} ms ({} found)",
             report.artifacts, report.refs, report.millis, report.read_millis, report.write_millis, update.artifacts, found.len()
         );
     };

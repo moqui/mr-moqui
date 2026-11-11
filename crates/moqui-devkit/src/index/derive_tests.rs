@@ -613,3 +613,88 @@ fn a_reader_of_an_entity_by_its_short_name_is_found_after_the_entity_is_gone() {
     // the update names it by its short name too (mod.rs `apply`)
     assert_eq!(readers(&resolver, "entity:Example"), both);
 }
+
+#[test]
+fn a_directory_subscreen_named_like_a_transition_comes_before_it() {
+    let order = "component://c/screen/App/Order.xml";
+    let mut index = index_of(&[
+        (ArtifactKind::Screen, "component://c/screen/App.xml", "<screen/>"),
+        (
+            ArtifactKind::Screen,
+            order,
+            r#"<screen>
+    <transition name="ship"><service-call name="a.OrderServices.ship#Order"/><default-response url="."/></transition>
+    <widgets><link url="ship" text="Ship"/>
+        <form-single name="Ship" transition="ship"><field name="orderId"><default-field><text-line/></default-field></field></form-single>
+    </widgets></screen>"#,
+        ),
+    ]);
+    let reached = |index: &MemoryIndex| -> (Option<String>, Vec<String>) {
+        let link = index
+            .refs
+            .iter()
+            .map(|(_, row)| row)
+            .find(|row| row.ref_type == "link")
+            .and_then(|row| row.to_id.clone());
+        let bound = index
+            .bindings_of(&format!("form:{order}#Ship"), "")
+            .into_iter()
+            .map(|entry| entry.binding.to_id)
+            .collect();
+        (link, bound)
+    };
+    assert_eq!(
+        reached(&index),
+        (
+            Some(format!("transition:{order}#ship:any")),
+            vec!["parameter:service:a.OrderServices.ship#Order@in.orderId".to_string()]
+        )
+    );
+    // a directory subscreen of the name: the link and the form reach it, as Moqui walks the path; no service takes the
+    // field there, so its binding names its path
+    read_into(
+        &mut index,
+        ArtifactKind::Screen,
+        "component://c/screen/App/Order/ship.xml",
+        "<screen/>",
+    );
+    index.resolve_all(&|_| false);
+    assert_eq!(
+        reached(&index),
+        (
+            Some("screen:component://c/screen/App/Order/ship.xml".to_string()),
+            vec![format!("parameter:screen-path:{order}#ship@in.orderId")]
+        )
+    );
+}
+
+#[test]
+fn a_same_screen_form_binds_by_the_transition_it_posts_to_and_a_link_through_a_wrapper() {
+    let app = "component://c/screen/App.xml";
+    let index = index_of(&[
+        (
+            ArtifactKind::Screen,
+            app,
+            r#"<screen><subscreens><subscreens-item name="Wrap" location="component://c/screen/Wrap.xml" no-sub-path="true"/></subscreens>
+    <transition name="ship"><default-response url="."/></transition>
+    <transition name="save" method="get"><service-call name="a.S.view#Thing"/><default-response url="."/></transition>
+    <transition name="save" method="post"><service-call name="a.S.save#Thing" in-map="[a:1]"/><default-response url="."/></transition>
+    <widgets><link url="ship" text="Ship"/>
+        <form-single name="Save" transition="save"><field name="thingId"><default-field><text-line/></default-field></field></form-single>
+    </widgets></screen>"#,
+        ),
+        (ArtifactKind::Screen, "component://c/screen/Wrap.xml", "<screen/>"),
+        (ArtifactKind::Screen, "component://c/screen/Wrap/ship.xml", "<screen/>"),
+    ]);
+    // the link goes through the no-sub-path item that holds a child of its name, as the walk does
+    let link = index
+        .refs
+        .iter()
+        .map(|(_, row)| row)
+        .find(|row| row.ref_type == "link")
+        .and_then(|row| row.to_id.clone());
+    assert_eq!(link.as_deref(), Some("screen:component://c/screen/Wrap/ship.xml"));
+    // the form posts to the post transition, whose call takes none of the request: no binding, though the get one's
+    // call would take it
+    assert!(index.bindings_of(&format!("form:{app}#Save"), "").is_empty());
+}

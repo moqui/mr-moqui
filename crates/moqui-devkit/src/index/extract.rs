@@ -492,6 +492,10 @@ impl Reader<'_> {
                     .unwrap_or_default();
                 let id = format!("screen:{location}");
                 self.artifact(id.clone(), "screen", &location, Some(root), title, None);
+                // a path may go on past it: the rest is extra path ([`super::resolve::Resolver::screen_path`])
+                if root.attribute_is("allow-extra-path", "true") {
+                    self.mark_last(&["allow-extra-path".to_string()]);
+                }
                 // a directory subscreen of the screen of its directory's name
                 if let Some(parent) = super::resolve::directory_parent(&location) {
                     let from = format!("screen:{parent}");
@@ -1304,33 +1308,44 @@ impl Reader<'_> {
     }
 
     /// The bindings of a form that submits to the transition `transition`: each field the user fills (not one whose
-    /// only widgets are a `header-field` or a `submit`) flows into an in-parameter of each service the transition
-    /// passes the request's parameters to ([`request_calls`]): the parameter of its name, or the one a `field-map`
-    /// maps it to (`field-name` from the field's name). A field-map renames a field into a call with an `in-map` of its
-    /// own too. A field the service does not take still has its binding, to a parameter id no artifact has.
-    ///
-    /// A transition of this file (`same_screen`) is read here; one a path names (`../Order/save`) is another file's, so
-    /// each field gets one binding to `parameter:screen-path:<this screen>#<path>@in.<field>`, which the resolver names
-    /// the first service of ([`super::resolve::Resolver::resolve_binding`]); a `field-map` there is not seen.
+    /// only widgets are a `header-field` or a `submit`) has one binding by the path the form posts to,
+    /// `parameter:screen-path:<this screen>#<path>@in.<field>`, which the resolver makes a binding of for each service
+    /// the transition reached passes the request to or maps the field into with a `field-map`
+    /// ([`super::resolve::Resolver::path_bindings`]). A transition of this file (`same_screen`) is a path of its name: a
+    /// subscreen of that name, which the file alone does not show (a directory subscreen, a conf mount), comes before
+    /// it, as Moqui walks the path, and the screens changing walks it again; a field none of its calls takes
+    /// ([`request_calls`]) has none, as a subscreen of the name would take it no more.
     fn form_bindings(&mut self, form: &MNode, form_id: &str, transition: &str, same_screen: bool) {
         let transition = transition.trim();
-        let path_owner = (!same_screen && is_screen_path(transition)).then(|| {
-            let path = transition.split(['?', '#']).next().unwrap_or_default();
-            format!("{SCREEN_PATH_OWNER}{}#{path}", self.info.location)
-        });
-        let mut calls: Vec<RequestCall> = Vec::new();
-        if same_screen {
-            for node in self.transitions_named(form, transition) {
-                for call in request_calls(&node) {
-                    if !calls.iter().any(|known| known.service == call.service) {
-                        calls.push(call);
-                    }
-                }
-            }
-        }
-        if calls.is_empty() && path_owner.is_none() {
+        if !same_screen && !is_screen_path(transition) {
             return;
         }
+        // the transition a form posts to: its `post` one, else the one of any method, else the first, as the resolver
+        // walks its path (`Method::Post`)
+        let calls: Vec<RequestCall> = if same_screen {
+            let named = self.transitions_named(form, transition);
+            let method_of = |node: &MNode| node.attribute("method").map(|method| method.to_ascii_lowercase());
+            let chosen = named
+                .iter()
+                .find(|node| method_of(node).as_deref() == Some("post"))
+                .or_else(|| {
+                    named
+                        .iter()
+                        .find(|node| matches!(method_of(node).as_deref(), None | Some("any")))
+                })
+                .or_else(|| named.first());
+            chosen.map(request_calls).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let taken = |name: &str| {
+            !same_screen
+                || calls
+                    .iter()
+                    .any(|call| call.passes || call.maps.iter().any(|(from, _)| from == name))
+        };
+        let path = transition.split(['?', '#']).next().unwrap_or_default();
+        let owner = format!("{SCREEN_PATH_OWNER}{}#{path}", self.info.location);
         let Some(form_key) = form_id.strip_prefix("form:") else {
             return;
         };
@@ -1338,43 +1353,21 @@ impl Reader<'_> {
             let Some(name) = field.attribute("name").filter(|name| !name.is_empty()) else {
                 continue;
             };
-            if !is_filled(&field) {
+            if !is_filled(&field) || !taken(&name) {
                 continue;
             }
-            let mut targets: Vec<String> = Vec::new();
-            if let Some(owner) = &path_owner {
-                targets.push(parameter_id(owner, "in", &name));
-            }
-            for call in &calls {
-                let mapped = call
-                    .maps
-                    .iter()
-                    .find(|(from, _)| *from == name)
-                    .map(|(_, parameter)| parameter.as_str());
-                let parameter = match mapped {
-                    Some(parameter) => parameter,
-                    None if call.passes => name.as_str(),
-                    None => continue,
-                };
-                let id = parameter_id(&format!("service:{}", call.service), "in", parameter);
-                if !targets.contains(&id) {
-                    targets.push(id);
-                }
-            }
-            for to_id in targets {
-                self.index.bindings.push(BindingRow {
-                    from: form_id.to_string(),
-                    to_id,
-                    direction: "in".to_string(),
-                    source_kind: "form-field".to_string(),
-                    source_text: name.clone(),
-                    source_id: Some(format!("form-field:{form_key}@{name}")),
-                    to_path: None,
-                    origin: self.origin.to_string(),
-                    origin_hash: self.hash.clone(),
-                    line: field.line(),
-                });
-            }
+            self.index.bindings.push(BindingRow {
+                from: form_id.to_string(),
+                to_id: parameter_id(&owner, "in", &name),
+                direction: "in".to_string(),
+                source_kind: "form-field".to_string(),
+                source_text: name.clone(),
+                source_id: Some(format!("form-field:{form_key}@{name}")),
+                to_path: None,
+                origin: self.origin.to_string(),
+                origin_hash: self.hash.clone(),
+                line: field.line(),
+            });
         }
     }
 
