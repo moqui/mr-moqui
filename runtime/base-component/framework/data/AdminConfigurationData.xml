@@ -347,7 +347,8 @@ along with this software (see the LICENSE.md file). If not, see
         ADMIN_CONNECTION_MANAGE. Inheritable, so a recovery's own step (apply#MessageRecovery), the framework's send, consume,
         reset and cancel of that one message and a registered owner's services run as it; no group is authorized to call
         those directly here. The recovery descriptors (moqui.server.RecoveryDescriptor) and handlers
-        (moqui.server.MessageHandler) are their owners' seed rows: the framework registers none of its own. -->
+        (moqui.server.MessageHandler) are their owners' seed rows: the framework registers none of its own for a message (its
+        two message jobs' are below, P14). -->
     <moqui.security.ArtifactGroupMember artifactGroupId="AdminOperationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
             artifactName="org\.moqui\.admin\.OperationServices\.(find#Messages|get#Message|preview#Recovery|execute#Recovery)"/>
     <moqui.security.ArtifactGroup artifactGroupId="AdminMessageTypeServices" description="Admin message type services"/>
@@ -355,4 +356,54 @@ along with this software (see the LICENSE.md file). If not, see
             artifactName="org\.moqui\.admin\.ConfigurationServices\.(find#MessageTypes|get#MessageTypeUse|store#MessageType)"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="AdminMessageTypeServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminMessageTypeServices"
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- Jobs and notification topics (impl-admin P14), named service by service. find#Jobs, get#Job, find#JobRuns,
+        get#JobRun and get#JobRunItems check ADMIN_OPERATION_VIEW, store#Job ADMIN_OPERATION_MANAGE (and the owner's
+        permission a registration names); find#Topics and get#Topic ADMIN_OPERATION_VIEW or ADMIN_SETTINGS_VIEW,
+        store#TopicDefaults ADMIN_SETTINGS_MANAGE, store#TopicSubscription ADMIN_OPERATION_MANAGE. Inheritable, so a job's
+        registered items service and a run's own step (apply#JobRecovery, under execute#Recovery) run as it; no group is
+        authorized to call those directly here. -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminOperationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.OperationServices\.(find#Jobs|get#Job|store#Job|find#JobRuns|get#JobRun|get#JobRunItems|find#Topics|get#Topic|store#TopicDefaults|store#TopicSubscription)"/>
+
+    <!-- The framework's own registrations (it owns these jobs and this topic; an app's are its own seed rows). The two
+        system message jobs: their schedule, pause, priority and wait after an error, and the retry settings of a message
+        (design-admin §8 MessageContract's "retry settings" are these parameters, impl-admin F185): how long a failed
+        message waits and how many times it is tried. A run outside the schedule is safe to repeat: each message is claimed
+        by the send or consume that takes it (claim#SystemMessage). Their items are the messages a run tried. The run
+        history's cleanup: its schedule, pause and days kept. A recipient of any of them must hold
+        ADMIN_OPERATION_MANAGE: a job's notification carries the run's errors, parameters and results. -->
+    <moqui.server.JobRegistration jobName="send_AllProducedSystemMessages_frequent" ownerApp="Framework" title="Send produced system messages"
+            description="Sends the outgoing system messages that wait, and tries the failed ones again"
+            scheduleEditable="Y" minIntervalMinutes="1" pauseEditable="Y" priorityEditable="Y" retryEditable="Y"
+            recipientPermission="ADMIN_OPERATION_MANAGE" sequenceNum="10"/>
+    <moqui.server.JobParameterDefinition jobName="send_AllProducedSystemMessages_frequent" parameterName="retryMinutes"
+            title="Minutes before a failed message is sent again" valueType="decimal" minValue="1" maxValue="1440" sequenceNum="1"/>
+    <moqui.server.JobParameterDefinition jobName="send_AllProducedSystemMessages_frequent" parameterName="retryLimit"
+            title="Attempts before a message is failed for good" valueType="integer" minValue="1" maxValue="100" sequenceNum="2"/>
+    <moqui.server.RecoveryDescriptor descriptorKey="frameworkSendMessagesJob" title="Send produced system messages" ownerApp="Framework"
+            targetKind="ServiceJob" targetKey="send_AllProducedSystemMessages_frequent" retryMode="native"
+            itemsService="org.moqui.admin.OperationServices.find#MessageJobRunItems"
+            idempotencyNote="A run sends only messages that wait, and each is claimed by the send that takes it." sequenceNum="10"/>
+    <moqui.server.JobRegistration jobName="consume_AllReceivedSystemMessages_frequent" ownerApp="Framework" title="Consume received system messages"
+            description="Consumes the received system messages that wait, and tries the failed ones again"
+            scheduleEditable="Y" minIntervalMinutes="1" pauseEditable="Y" priorityEditable="Y" retryEditable="Y"
+            recipientPermission="ADMIN_OPERATION_MANAGE" sequenceNum="11"/>
+    <moqui.server.JobParameterDefinition jobName="consume_AllReceivedSystemMessages_frequent" parameterName="retryMinutes"
+            title="Minutes before a failed message is consumed again" valueType="decimal" minValue="1" maxValue="1440" sequenceNum="1"/>
+    <moqui.server.JobParameterDefinition jobName="consume_AllReceivedSystemMessages_frequent" parameterName="retryLimit"
+            title="Attempts before a message is failed for good" valueType="integer" minValue="1" maxValue="100" sequenceNum="2"/>
+    <moqui.server.RecoveryDescriptor descriptorKey="frameworkConsumeMessagesJob" title="Consume received system messages" ownerApp="Framework"
+            targetKind="ServiceJob" targetKey="consume_AllReceivedSystemMessages_frequent" retryMode="native"
+            itemsService="org.moqui.admin.OperationServices.find#MessageJobRunItems"
+            idempotencyNote="A run consumes only messages that wait, and each is claimed by the consume that takes it." sequenceNum="11"/>
+    <moqui.server.JobRegistration jobName="clean_ServiceJobRun_daily" ownerApp="Framework" title="Clean the job run history"
+            description="Removes job runs older than the days kept" scheduleEditable="Y" minIntervalMinutes="60" pauseEditable="Y"
+            recipientPermission="ADMIN_OPERATION_MANAGE" sequenceNum="20"/>
+    <moqui.server.JobParameterDefinition jobName="clean_ServiceJobRun_daily" parameterName="daysToKeep"
+            title="Days of job runs kept" valueType="integer" minValue="1" maxValue="366" required="Y" sequenceNum="1"/>
+    <!-- The job error topic: private, sent to a failed job's recipients, each of whom receives it only with a setting of
+        their own (the topic's default is not to). Its audience is who may be a job's recipient here. -->
+    <moqui.server.TopicRegistration topic="ServiceJobError" ownerApp="Framework" purpose="A job run ended with an error: sent to the job's recipients"
+            editableFields="showAlert,alertNoAutoHide,emailNotifications,digestDefault" subscriptionPermission="ADMIN_OPERATION_MANAGE" sequenceNum="10"/>
 </entity-facade-xml>
