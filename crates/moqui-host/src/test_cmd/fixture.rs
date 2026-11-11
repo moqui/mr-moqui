@@ -365,6 +365,10 @@ fn boot(runtime: &Path, framework: &Path) -> Result<Booted, Error> {
         }
     };
     let pdf = crate::install_pdf(&factory);
+    // the SSO client, as a server has it: a spec tests a provider's configuration through it (an OAuth flow with its
+    // endpoints given starts with no request; an OpenID discovery is the provider's to answer)
+    #[cfg(feature = "sso")]
+    crate::sso::install();
     factory.init_tools().map_err(Error::from)?;
     Ok((factory, facade, sim, search, pdf, db))
 }

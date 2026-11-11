@@ -115,18 +115,36 @@ fn create_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
         row.get("screenScheduledId").cloned().unwrap_or(Value::Null),
     )]))
 }
-fn list_schedules(ec: &ExecutionContext, _: &ServiceInfo<'_>, _: &Parameters) -> Result<Parameters, Error> {
+fn list_schedules(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Result<Parameters, Error> {
     let owner = viewer()?;
-    let _metadata = ec.disable_authz();
-    let rows = entity(ec)?
-        .find(SCHEDULE)?
-        .use_cache(false)
-        .eq("reportOwnerId", Value::string(owner))
-        .list()?;
-    let rows:Vec<Json>=rows.iter().map(|row|json!({"screenScheduledId":row.get("screenScheduledId").map(moqui_lib::json::to_json),"definitionId":row.get("reportDefinitionId").map(moqui_lib::json::to_json),"cronExpression":row.get("cronExpression").map(moqui_lib::json::to_json),"renderMode":row.get("renderMode").map(moqui_lib::json::to_json),"paused":row.get("paused").and_then(Value::as_str)==Some("Y")})).collect();
+    let facade = entity(ec)?;
+    let rows = {
+        let _metadata = ec.disable_authz();
+        let mut find = facade
+            .find(SCHEDULE)?
+            .use_cache(false)
+            .eq("reportOwnerId", Value::string(owner));
+        if !text(p, "screenScheduledId").is_empty() {
+            find = find.eq("screenScheduledId", Value::string(text(p, "screenScheduledId")));
+        }
+        find.order_by("screenScheduledId", false).list()?
+    };
+    // each schedule with its recipients, revision and last run (delivery.rs); one that cannot be described is named
+    // and the others are still listed
+    let rows: Vec<Json> = rows
+        .iter()
+        .filter(|row| !row.get("reportDefinitionId").and_then(Value::as_str).unwrap_or("").is_empty())
+        .filter_map(|row| match crate::delivery::describe(ec, &facade, row) {
+            Ok(described) => Some(described),
+            Err(error) => {
+                tracing::error!(schedule = ?row.get("screenScheduledId"), %error, "report schedule could not be described");
+                None
+            }
+        })
+        .collect();
     Ok(out(json!({"schedules":rows})))
 }
-fn owned(ec: &ExecutionContext, id: &str) -> Result<moqui_core::entity::EntityValue, Error> {
+pub(crate) fn owned(ec: &ExecutionContext, id: &str) -> Result<moqui_core::entity::EntityValue, Error> {
     let owner = viewer()?;
     let _metadata = ec.disable_authz();
     entity(ec)?
@@ -142,7 +160,23 @@ fn pause_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
     let paused = p
         .get("paused")
         .is_some_and(|v| matches!(v, Value::Bool(true)) || v.as_str() == Some("true") || v.as_str() == Some("Y"));
+    if !paused {
+        // a schedule waiting for a new owner, or a group schedule, resumes only once every recipient may be sent the
+        // owner's result (delivery.rs)
+        crate::delivery::check_resume(ec, &row)?;
+        row.set("pausedReason", Value::Null);
+    }
     row.set("paused", Value::string(if paused { "Y" } else { "N" }));
+    row.set(
+        "versionNumber",
+        Value::I64(
+            row.get("versionNumber")
+                .map(moqui_lib::object::to_plain_string)
+                .and_then(|version| version.parse::<i64>().ok())
+                .unwrap_or(0)
+                + 1,
+        ),
+    );
     let _metadata = ec.disable_authz();
     row.update(&entity(ec)?)?;
     Ok(Parameters::new())
@@ -154,7 +188,7 @@ fn require_file_delivery() -> Result<(), Error> {
         Err(fail("REPORT_SAVE_LOCATION permission is required for report files"))
     }
 }
-fn validate_mode(mode: &str) -> Result<(), Error> {
+pub(crate) fn validate_mode(mode: &str) -> Result<(), Error> {
     if matches!(mode, "pdf" | "png" | "csv" | "xlsx" | "html") {
         Ok(())
     } else {
@@ -162,17 +196,45 @@ fn validate_mode(mode: &str) -> Result<(), Error> {
     }
 }
 
-struct Rendered {
+pub(crate) struct Rendered {
     /// The output files, named: one per table panel for CSV, otherwise one.
-    files: Vec<(String, Vec<u8>)>,
-    mime: &'static str,
-    extension: &'static str,
-    empty: bool,
-    html: String,
-    title: String,
-    link: String,
+    pub(crate) files: Vec<(String, Vec<u8>)>,
+    pub(crate) mime: &'static str,
+    pub(crate) extension: &'static str,
+    pub(crate) empty: bool,
+    pub(crate) html: String,
+    pub(crate) title: String,
+    pub(crate) link: String,
     /// Data rows across all frames, for the export audit.
-    rows: usize,
+    pub(crate) rows: usize,
+}
+
+/// A render in a context of its own signed in as `username`, in `locale` when one is given: a schedule's owner in a
+/// recipient's language, or a recipient's own report.
+pub(crate) fn render_as(
+    ec: &ExecutionContext,
+    username: &str,
+    locale: Option<&str>,
+    definition_id: &str,
+    mode: &str,
+    skip_empty: bool,
+) -> Result<Rendered, Error> {
+    let context = ec.factory().new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user(username)?;
+    if locale.is_some() {
+        moqui_core::user::session::set_locale(locale);
+    }
+    render(&context, definition_id, mode, skip_empty, None)
+}
+
+/// A render as one download: its file, or several CSV tables as one zip.
+pub(crate) fn download(result: &Rendered) -> Result<(Vec<u8>, &'static str, String), Error> {
+    Ok(match result.files.as_slice() {
+        [(name, bytes)] => (bytes.clone(), result.mime, name.clone()),
+        [] => (Vec::new(), result.mime, format!("report.{}", result.extension)),
+        files => (zip_files(files)?, "application/zip", "report.zip".to_owned()),
+    })
 }
 fn render(
     ec: &ExecutionContext,
@@ -712,11 +774,23 @@ fn print_document(ec: &ExecutionContext, title: &str, dashboards: &[Json], optio
         "portrait"
     };
     let paper = if options["paper"] == "a4" { "A4" } else { "letter" };
+    // a report's own commentary (a digest's few words), as written: text, never markup
+    let commentary = options["commentary"]
+        .as_str()
+        .map(str::trim)
+        .filter(|commentary| !commentary.is_empty())
+        .map(|commentary| {
+            format!(
+                r#"<p class="commentary">{}</p>"#,
+                escape(commentary).replace('\n', "<br>")
+            )
+        })
+        .unwrap_or_default();
     Ok(format!(
         r#"<!doctype html><html><head><meta charset="UTF-8"><meta name="moqui-report" content="1"><title>{}</title>
 <style>@page{{size:{paper} {orientation};margin:12mm}}:root{{--q-primary:#1976d2;--q-positive:#218838;--q-warning:#b8860b;--q-info:#008c9e;--q-negative:#c62828;--q-secondary:#687580;--q-accent:#8e44ad}}
 body{{font:13px sans-serif;color:#222;background:white;color-scheme:light}}section,article{{break-inside:avoid;min-width:0}}.print-dashboard{{break-before:page}}.print-dashboard:first-child{{break-before:auto}}.print-auto{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}.print-grid{{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:12px}}.print-chart{{height:260px;overflow:hidden}}canvas{{max-width:100%;height:260px!important}}.m-report-panel{{padding:8px;border:1px solid #ddd;margin-bottom:12px}}.m-report-panel>div:first-child{{font-weight:bold;margin-bottom:8px}}.m-report-panel>div:first-child button,.m-report-panel>div:first-child a{{display:none}}.text-h4{{font-size:28px}}table{{border-collapse:collapse;width:100%;font-size:11px}}th,td{{border:1px solid #ddd;padding:4px;text-align:left;overflow-wrap:anywhere}}pre{{white-space:pre-wrap}}.range,.notice{{color:#555}}.appendix{{break-before:page}}</style>
-<script>window.moquiReportRendered=false;window.moqui={{}};window.moquiPrintData={data};window.addEventListener('error',event=>{{window.moquiReportError=String(event.message)}});</script>{scripts}</head><body><h1>{}</h1><div id="report"></div><script>{renderer}</script></body></html>"#,
+<script>window.moquiReportRendered=false;window.moqui={{}};window.moquiPrintData={data};window.addEventListener('error',event=>{{window.moquiReportError=String(event.message)}});</script>{scripts}</head><body><h1>{}</h1>{commentary}<div id="report"></div><script>{renderer}</script></body></html>"#,
         escape(title),
         escape(title)
     ))
@@ -742,18 +816,14 @@ fn preview_report(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) ->
     );
     let names: Vec<_> = result.files.iter().map(|(name, _)| name.clone()).collect();
     // Several CSV tables download together as one zip; one file downloads as itself.
-    let (bytes, mime, filename) = match result.files.as_slice() {
-        [(name, bytes)] => (bytes.clone(), result.mime, name.clone()),
-        [] => (Vec::new(), result.mime, format!("report.{}", result.extension)),
-        files => (zip_files(files)?, "application/zip", "report.zip".to_owned()),
-    };
+    let (bytes, mime, filename) = download(&result)?;
     Ok(out(
         json!({"contentBase64":base64::engine::general_purpose::STANDARD.encode(&bytes),"contentType":mime,"filename":filename,"files":names,"empty":result.empty}),
     ))
 }
 fn send_report(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Result<Parameters, Error> {
     let schedule = owned(ec, text(p, "screenScheduledId"))?;
-    deliver(ec, &schedule, false)
+    deliver(ec, &schedule, false, None)
 }
 fn run_scheduled(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Result<Parameters, Error> {
     // The internal ScreenScheduled runner is the caller; this service is never exposed remotely.
@@ -764,7 +834,7 @@ fn run_scheduled(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> 
         .one()?
         .ok_or_else(|| fail("schedule not found"))?;
     drop(_authz);
-    deliver(ec, &row, true)
+    deliver(ec, &row, true, None)
 }
 
 struct SuspendedGroups(Vec<moqui_core::transaction::TransactionManager>);
@@ -976,10 +1046,88 @@ fn renew_lease(
         },
     )
 }
-fn deliver(
+/// One message of a report: the rendered files attached, to the address line given (one recipient's own address for a
+/// business schedule), with the dashboard's picture inline when there is one.
+fn mail(
+    template: &str,
+    to: &str,
+    rendered: &Rendered,
+    schedule: &moqui_core::entity::EntityValue,
+    image: Option<Vec<u8>>,
+) -> Result<Parameters, Error> {
+    let image_id = "report-image@moqui";
+    let inline: Vec<Value> = image
+        .into_iter()
+        .map(|image| {
+            Value::Map(indexmap::IndexMap::from_iter([
+                ("contentId".into(), Value::string(image_id)),
+                ("fileName".into(), Value::string("dashboard.png")),
+                ("contentType".into(), Value::string("image/png")),
+                ("contentBytes".into(), Value::Bytes(image)),
+            ]))
+        })
+        .collect();
+    let attachments = rendered
+        .files
+        .iter()
+        .map(|(name, bytes)| {
+            Value::Map(indexmap::IndexMap::from_iter([
+                ("fileName".into(), Value::string(name)),
+                ("contentType".into(), Value::string(rendered.mime)),
+                ("contentBytes".into(), Value::Bytes(bytes.clone())),
+            ]))
+        })
+        .collect();
+    let mut body = indexmap::IndexMap::from_iter([
+        ("reportLink".into(), Value::string(&rendered.link)),
+        (
+            "title".into(),
+            Value::string(
+                schedule
+                    .get("emailSubject")
+                    .and_then(Value::as_str)
+                    .filter(|subject| !subject.is_empty())
+                    .unwrap_or(&rendered.title),
+            ),
+        ),
+        (
+            "emailSubject".into(),
+            schedule
+                .get("emailSubject")
+                .cloned()
+                .unwrap_or_else(|| Value::string(&rendered.title)),
+        ),
+    ]);
+    if !inline.is_empty() {
+        body.insert("reportImageCid".into(), Value::string(image_id));
+    }
+    Ok(moqui_core::service::call::sync_checked(
+        "org.moqui.mail.EmailServices.send#EmailTemplate",
+        &BTreeMap::from([
+            ("emailTemplateId".into(), Value::string(template)),
+            ("toAddresses".into(), Value::string(to)),
+            ("attachments".into(), Value::List(attachments)),
+            ("inlineAttachments".into(), Value::List(inline)),
+            ("createEmailMessage".into(), Value::Bool(false)),
+            ("bodyParameters".into(), Value::Map(body)),
+        ]),
+        &moqui_core::service::call::CallOptions {
+            ignore_transaction: Some(true),
+            require_new_transaction: Some(true),
+            no_remember_parameters: true,
+            ..Default::default()
+        },
+    )?)
+}
+
+/// Run a schedule: a cron occurrence (`scheduled`), the owner's Send now, or a retry of an occurrence's failed
+/// recipients. A business schedule (delivery.rs) sends each recipient their own message after checking each one, under
+/// an occurrence that records every outcome; a technical one sends as before.
+pub(crate) fn deliver(
     ec: &ExecutionContext,
     schedule: &moqui_core::entity::EntityValue,
     scheduled: bool,
+    retry: Option<&crate::delivery::Retry>,
 ) -> Result<Parameters, Error> {
     let facade = entity(ec)?;
     let id = schedule
@@ -991,6 +1139,8 @@ fn deliver(
     let expected_owner = if scheduled { None } else { Some(viewer()?) };
     let claimed = tx.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
         let _authz = ec.disable_authz();
+        // The cron instant this run is the occurrence of, which keys a business schedule's occurrence.
+        let mut instant = None;
         // Lock the existing parent even on the first run, when no lock row has been loaded yet.
         let current = facade
             .find(SCHEDULE)?
@@ -1006,6 +1156,18 @@ fn deliver(
         }
         if scheduled && current.get("paused").and_then(Value::as_str) == Some("Y") {
             return Ok(None);
+        }
+        // paused for its owner's sake (the owner disabled, or a transfer not yet taken up): nothing is sent, by Send
+        // now or a retry either, until the new owner resumes it, which checks the recipients again
+        if current
+            .get("pausedReason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| !reason.is_empty())
+            && current.get("paused").and_then(Value::as_str) == Some("Y")
+        {
+            return Err(fail(
+                "SCHEDULE_PAUSED: the report schedule is paused until its new owner resumes it",
+            ));
         }
         let now = database_now(&tx)?;
         if scheduled
@@ -1043,6 +1205,7 @@ fn deliver(
             {
                 return Ok(None);
             }
+            instant = Some(previous.timestamp().as_millisecond());
         }
         if lock.get("reportRunningUntil").is_some_and(|v| {
             moqui_lib::object::to_plain_string(v)
@@ -1055,11 +1218,23 @@ fn deliver(
         lock.set("reportRunningUntil", Value::I64(now + 600_000));
         lock.set("reportRunId", Value::string(&token));
         lock.update(&facade)?;
-        Ok(Some((current, now)))
+        Ok(Some((current, now, instant)))
     })?;
-    let Some((schedule, now)) = claimed else {
+    let Some((schedule, now, instant)) = claimed else {
         return Ok(out(json!({"skipped":true,"reason":"report already running"})));
     };
+    // A business schedule is held to owner equivalence and keeps an occurrence with each recipient's outcome.
+    let business = crate::delivery::business(ec, &schedule);
+    let occurrence: Result<Option<String>, Error> = if !business {
+        Ok(None)
+    } else if let Some(retry) = retry {
+        crate::delivery::reopen_occurrence(ec, &facade, &retry.occurrence_id)
+            .map(|()| Some(retry.occurrence_id.clone()))
+    } else {
+        crate::delivery::open_occurrence(ec, &facade, &schedule, instant, now).map(Some)
+    };
+    let occurrence_id = occurrence.as_ref().ok().cloned().flatten();
+    let mut renders = 0_i64;
     let lease = ReportLease::start(
         ec.factory(),
         id,
@@ -1070,6 +1245,14 @@ fn deliver(
     );
     let mut attempted = false;
     let result = with_suspended_groups(&facade, || -> Result<Parameters, Error> {
+        if let Err(error) = &occurrence {
+            return Err(fail(format!("report occurrence could not be recorded: {error}")));
+        }
+        // Its owner disabled or gone, a business schedule pauses until a transfer hands it to a new owner.
+        if business && crate::delivery::owner_inactive(ec, &facade, &schedule, now) {
+            crate::delivery::pause_for_owner(ec, &facade, id);
+            return Ok(out(json!({"skipped":true,"reason":"owner-inactive"})));
+        }
         lease.check()?;
         let owner = schedule
             .get("reportOwnerId")
@@ -1097,6 +1280,9 @@ fn deliver(
             schedule.get("noResultsAbort").and_then(Value::as_str) == Some("Y"),
             None,
         )?;
+        if business {
+            renders += 1;
+        }
         if rendered.empty && schedule.get("noResultsAbort").and_then(Value::as_str) == Some("Y") {
             return Ok(out(json!({"skipped":true,"reason":"empty report"})));
         }
@@ -1151,150 +1337,125 @@ fn deliver(
         {
             destinations += 1;
             lease.check()?;
-            let emailed = (|| -> Result<Vec<String>, Error> {
-                let mut recipients = Vec::new();
-                let _authz = context.disable_authz();
-                if let Some(user) = schedule.get("userId").and_then(Value::as_str) {
-                    if let Some(account) = facade
-                        .find("moqui.security.UserAccount")?
-                        .use_cache(false)
-                        .eq("userId", Value::string(user))
-                        .one()?
-                    {
-                        if account.get("disabled").and_then(Value::as_str) != Some("Y")
-                            && !account
-                                .get("terminateDate")
-                                .and_then(moqui_core::user::value_millis)
-                                .is_some_and(|date| date <= now)
-                        {
-                            if let Some(address) = account
-                                .get("emailAddress")
-                                .and_then(Value::as_str)
-                                .filter(|s| !s.is_empty())
-                            {
-                                recipients.push(address.to_owned());
-                            }
-                        }
-                    }
-                }
-                if let Some(group) = schedule.get("userGroupId").and_then(Value::as_str) {
-                    for account in facade
-                        .find("moqui.security.UserGroupMemberUser")?
-                        .use_cache(false)
-                        .eq("userGroupId", Value::string(group))
-                        .list()?
-                        .iter()
-                    {
-                        if account
-                            .get("fromDate")
-                            .and_then(moqui_core::user::value_millis)
-                            .is_some_and(|date| date > now)
-                            || account
-                                .get("thruDate")
-                                .and_then(moqui_core::user::value_millis)
-                                .is_some_and(|date| date <= now)
-                        {
-                            continue;
-                        }
-                        if account.get("disabled").and_then(Value::as_str) != Some("Y")
-                            && !account
-                                .get("terminateDate")
-                                .and_then(moqui_core::user::value_millis)
-                                .is_some_and(|date| date <= now)
-                        {
-                            if let Some(address) = account
-                                .get("emailAddress")
-                                .and_then(Value::as_str)
-                                .filter(|s| !s.is_empty())
-                            {
-                                recipients.push(address.to_owned());
-                            }
-                        }
-                    }
-                }
-                drop(_authz);
-                recipients.sort();
-                recipients.dedup();
-                if recipients.is_empty() {
-                    return Err(fail("report has no deliverable email recipients"));
-                }
-                let image = if let Some((_, bytes)) = rendered.files.first().filter(|_| rendered.extension == "png") {
-                    bytes.clone()
-                } else {
-                    moqui_core::screen::PdfRenderer::render_png(&rendered.html).map_err(fail)?
-                };
-                let image_id = "report-image@moqui";
-                let inline = Value::Map(indexmap::IndexMap::from_iter([
-                    ("contentId".into(), Value::string(image_id)),
-                    ("fileName".into(), Value::string("dashboard.png")),
-                    ("contentType".into(), Value::string("image/png")),
-                    ("contentBytes".into(), Value::Bytes(image)),
-                ]));
-                let attachments = rendered
-                    .files
-                    .iter()
-                    .map(|(name, bytes)| {
-                        Value::Map(indexmap::IndexMap::from_iter([
-                            ("fileName".into(), Value::string(name)),
-                            ("contentType".into(), Value::string(rendered.mime)),
-                            ("contentBytes".into(), Value::Bytes(bytes.clone())),
-                        ]))
-                    })
-                    .collect();
-                lease.check()?;
-                attempted = true;
-                let mail = moqui_core::service::call::sync_checked(
-                    "org.moqui.mail.EmailServices.send#EmailTemplate",
-                    &BTreeMap::from([
-                        ("emailTemplateId".into(), Value::string(template)),
-                        ("toAddresses".into(), Value::string(recipients.join(","))),
-                        ("attachments".into(), Value::List(attachments)),
-                        ("inlineAttachments".into(), Value::List(vec![inline])),
-                        ("createEmailMessage".into(), Value::Bool(false)),
-                        (
-                            "bodyParameters".into(),
-                            Value::Map(indexmap::IndexMap::from_iter([
-                                ("reportLink".into(), Value::string(&rendered.link)),
-                                (
-                                    "title".into(),
-                                    Value::string(
-                                        schedule
-                                            .get("emailSubject")
-                                            .and_then(Value::as_str)
-                                            .filter(|subject| !subject.is_empty())
-                                            .unwrap_or(&rendered.title),
-                                    ),
-                                ),
-                                (
-                                    "emailSubject".into(),
-                                    schedule
-                                        .get("emailSubject")
-                                        .cloned()
-                                        .unwrap_or_else(|| Value::string(&rendered.title)),
-                                ),
-                                ("reportImageCid".into(), Value::string(image_id)),
-                            ])),
-                        ),
-                    ]),
-                    &moqui_core::service::call::CallOptions {
-                        ignore_transaction: Some(true),
-                        require_new_transaction: Some(true),
-                        no_remember_parameters: true,
-                        ..Default::default()
+            let emailed = if business {
+                let owner_name = account.get("username").and_then(Value::as_str).unwrap_or("");
+                let mode = schedule.get("renderMode").and_then(Value::as_str).unwrap_or("pdf");
+                crate::delivery::send_each(
+                    &crate::delivery::Sending {
+                        ec: &context,
+                        facade: &facade,
+                        schedule: &schedule,
+                        occurrence_id: occurrence_id.as_deref().unwrap_or(""),
+                        now,
+                        only: retry.map(|retry| &retry.users),
+                        first: &rendered,
+                        render: &|locale| render_as(ec, owner_name, Some(locale), definition_id, mode, false),
+                        check: &|| lease.check(),
+                        // a picture or a document carries the dashboard's picture inline; a data export carries its files
+                        mail: &|address, rendered| {
+                            let image = match rendered.extension {
+                                "png" => rendered.files.first().map(|(_, bytes)| bytes.clone()),
+                                "pdf" => {
+                                    Some(moqui_core::screen::PdfRenderer::render_png(&rendered.html).map_err(fail)?)
+                                }
+                                _ => None,
+                            };
+                            mail(template, address, rendered, &schedule, image)
+                        },
                     },
-                )?;
-                if mail
-                    .get("sendError")
-                    .and_then(Value::as_str)
-                    .is_some_and(|message| !message.is_empty())
-                {
-                    return Err(fail("report email delivery failed"));
-                }
-                if mail.get("messageId").and_then(Value::as_str).is_none_or(str::is_empty) {
-                    return Err(fail("report email did not produce a delivery message id"));
-                }
-                Ok(recipients)
-            })();
+                    &mut attempted,
+                    &mut renders,
+                )
+            } else {
+                (|| -> Result<Vec<String>, Error> {
+                    let mut recipients = Vec::new();
+                    let _authz = context.disable_authz();
+                    if let Some(user) = schedule.get("userId").and_then(Value::as_str) {
+                        if let Some(account) = facade
+                            .find("moqui.security.UserAccount")?
+                            .use_cache(false)
+                            .eq("userId", Value::string(user))
+                            .one()?
+                        {
+                            if account.get("disabled").and_then(Value::as_str) != Some("Y")
+                                && !account
+                                    .get("terminateDate")
+                                    .and_then(moqui_core::user::value_millis)
+                                    .is_some_and(|date| date <= now)
+                            {
+                                if let Some(address) = account
+                                    .get("emailAddress")
+                                    .and_then(Value::as_str)
+                                    .filter(|s| !s.is_empty())
+                                {
+                                    recipients.push(address.to_owned());
+                                }
+                            }
+                        }
+                    }
+                    if let Some(group) = schedule.get("userGroupId").and_then(Value::as_str) {
+                        for account in facade
+                            .find("moqui.security.UserGroupMemberUser")?
+                            .use_cache(false)
+                            .eq("userGroupId", Value::string(group))
+                            .list()?
+                            .iter()
+                        {
+                            if account
+                                .get("fromDate")
+                                .and_then(moqui_core::user::value_millis)
+                                .is_some_and(|date| date > now)
+                                || account
+                                    .get("thruDate")
+                                    .and_then(moqui_core::user::value_millis)
+                                    .is_some_and(|date| date <= now)
+                            {
+                                continue;
+                            }
+                            if account.get("disabled").and_then(Value::as_str) != Some("Y")
+                                && !account
+                                    .get("terminateDate")
+                                    .and_then(moqui_core::user::value_millis)
+                                    .is_some_and(|date| date <= now)
+                            {
+                                if let Some(address) = account
+                                    .get("emailAddress")
+                                    .and_then(Value::as_str)
+                                    .filter(|s| !s.is_empty())
+                                {
+                                    recipients.push(address.to_owned());
+                                }
+                            }
+                        }
+                    }
+                    drop(_authz);
+                    recipients.sort();
+                    recipients.dedup();
+                    if recipients.is_empty() {
+                        return Err(fail("report has no deliverable email recipients"));
+                    }
+                    let image = if let Some((_, bytes)) = rendered.files.first().filter(|_| rendered.extension == "png")
+                    {
+                        bytes.clone()
+                    } else {
+                        moqui_core::screen::PdfRenderer::render_png(&rendered.html).map_err(fail)?
+                    };
+                    lease.check()?;
+                    attempted = true;
+                    let mail = mail(template, &recipients.join(","), &rendered, &schedule, Some(image))?;
+                    if mail
+                        .get("sendError")
+                        .and_then(Value::as_str)
+                        .is_some_and(|message| !message.is_empty())
+                    {
+                        return Err(fail("report email delivery failed"));
+                    }
+                    if mail.get("messageId").and_then(Value::as_str).is_none_or(str::is_empty) {
+                        return Err(fail("report email did not produce a delivery message id"));
+                    }
+                    Ok(recipients)
+                })()
+            };
             match emailed {
                 Ok(recipients) => delivered.extend(recipients),
                 Err(error) => {
@@ -1345,6 +1506,9 @@ fn deliver(
     });
     if let Err(error) = released {
         tracing::error!(schedule=id,%error,"could not release report schedule lease");
+    }
+    if let Some(occurrence_id) = &occurrence_id {
+        crate::delivery::close_occurrence(ec, &facade, occurrence_id, &result, renders);
     }
     result
 }
@@ -1468,7 +1632,7 @@ mod tests {
                 snapshot
             };
             tape.lock().unwrap().clear();
-            let result = deliver(&context, &snapshot, true).unwrap();
+            let result = deliver(&context, &snapshot, true, None).unwrap();
             assert_eq!(result.get("skipped"), Some(&Value::Bool(true)));
             let statements = tape.lock().unwrap();
             assert!(

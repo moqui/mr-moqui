@@ -9,4 +9,28 @@
     <moqui.basic.EnumerationType enumTypeId="ReportScopePolicy" description="Business dataset scope policy (a row-filter service)"/>
     <moqui.basic.Enumeration enumId="ReportUserGroups" enumTypeId="ReportScopePolicy"
             enumCode="org.moqui.report.ReportServices.get#UserGroupRowFilter" description="the viewer's user groups"/>
+    <!-- Business annotation sources (crates/moqui-report/src/annotations.rs; BOSS impl-insights P6): each a dataset (enumCode) over
+        the annotations that a domain component registers and scopes with its own row filter; a dashboard over business data
+        shows the business events of each source its viewer may read -->
+    <moqui.basic.EnumerationType enumTypeId="ReportAnnotationSource" description="Business annotation source (a dataset over the annotations)"/>
+    <!-- Owner-equivalent delivery (crates/moqui-report/src/delivery.rs; BOSS impl-insights P7, INS-06): the states of an
+        occurrence and of each recipient's delivery; the permission the lifecycle operations check for another user's
+        schedules (pause#OwnedSchedules, find#OwnedSchedules, transfer#DefinitionOwner); and the registered legacy adapters, each
+        a screen path (enumCode) whose screen schedule may be sent to a user group (org.moqui.impl.ScreenServices) -->
+    <moqui.basic.StatusType statusTypeId="ReportOccurrence" description="Report occurrence"/>
+    <moqui.basic.StatusItem statusId="RptOccRunning" statusTypeId="ReportOccurrence" sequenceNum="1" description="Running" statusColor="info"/>
+    <moqui.basic.StatusItem statusId="RptOccComplete" statusTypeId="ReportOccurrence" sequenceNum="2" description="Complete" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="RptOccIncomplete" statusTypeId="ReportOccurrence" sequenceNum="3" description="Incomplete" statusColor="warning"/>
+    <moqui.basic.StatusItem statusId="RptOccSkipped" statusTypeId="ReportOccurrence" sequenceNum="4" description="Skipped" statusColor="secondary"/>
+    <moqui.basic.StatusItem statusId="RptOccFailed" statusTypeId="ReportOccurrence" sequenceNum="5" description="Failed" statusColor="negative"/>
+    <moqui.basic.StatusType statusTypeId="ReportDelivery" description="Report recipient delivery"/>
+    <moqui.basic.StatusItem statusId="RptDlvPending" statusTypeId="ReportDelivery" sequenceNum="1" description="Pending" statusColor="secondary"/>
+    <moqui.basic.StatusItem statusId="RptDlvSending" statusTypeId="ReportDelivery" sequenceNum="2" description="Sending" statusColor="info"/>
+    <moqui.basic.StatusItem statusId="RptDlvSent" statusTypeId="ReportDelivery" sequenceNum="3" description="Sent" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="RptDlvSkipped" statusTypeId="ReportDelivery" sequenceNum="4" description="Skipped" statusColor="secondary"/>
+    <moqui.basic.StatusItem statusId="RptDlvFailed" statusTypeId="ReportDelivery" sequenceNum="5" description="Failed" statusColor="negative"/>
+    <moqui.basic.StatusItem statusId="RptDlvUncertain" statusTypeId="ReportDelivery" sequenceNum="6" description="Uncertain" statusColor="warning"/>
+    <moqui.security.UserPermission userPermissionId="REPORT_OWNER_CHANGE" description="Pause another user's report schedules and hand them, with the report definitions they own, to a new owner"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="REPORT_OWNER_CHANGE" fromDate="0"/>
+    <moqui.basic.EnumerationType enumTypeId="ReportLegacyAdapter" description="Screen schedule admitted for group delivery (a screen path)"/>
 </entity-facade-xml>

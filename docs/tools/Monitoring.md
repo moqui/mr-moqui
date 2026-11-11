@@ -216,6 +216,27 @@ alert state changes and notes.
 - A signed-in user or a script with a login key can post the same to `/rest/s1/moqui/monitor/annotations`.
 - Dashboards › Annotations lists them and adds notes by hand.
 
+### Business events
+
+A domain's event (a price list published, a promotion's dates, a fiscal period closed) is an annotation of source `business`,
+which a dashboard over business data draws like any other marker.
+
+- **Writing.** `ReportServices.create#Annotation` with `source: "business"`, `text` (a name of at most 255 bytes, never an
+  amount), `time` (and `timeEnd` for a band), `organizationPartyId`, `event` (the event's type), and optionally `recordType` and
+  `recordId` (the record behind it) or `link` (a path on this server). It needs the artifact
+  `org.moqui.report.annotation.business` (create), `ADMIN`'s; `MONITOR_INGEST` and the ingest keys do not write one. The owner
+  of an event writes it from its own service after its commit, with authorization off (mr-mantle's
+  `mantle.party.BusinessEventServices.record#BusinessEvent`, registered on commit by the publication, promotion and period close
+  services, reads the marker from the stored record). With an `eventKey` and the same `time` the event keeps one marker.
+- **Reading.** A domain registers a source: a `ReportAnnotationSource` enumeration whose `enumCode` is a dataset over the
+  annotations (`indexName: "monitor_annotations"`) with the domain's row filter (mr-mantle's `mantle-business-events`, scoped to
+  the viewer's organizations by `get#OrganizationRowFilter`). A dashboard with a panel over a business dataset reads each
+  registered source as the viewer and adds its `business` markers to every panel: the dataset's own artifact and row filter
+  decide, a source the viewer may not read adds nothing, and only `business` markers are taken from a source whatever its
+  dataset says. A marker carries `event`, `organizationPartyId`, `recordType`, `recordId` and `link`; an app resolves the record
+  to a screen by the viewer's own permissions. Technical dashboards show none, and the technical marker list leaves them out.
+- The regression spec is `framework/test/ReportAnnotations.spec.js`.
+
 ## Monitor
 
 Monitor is a section of the System app: `/apps/system/Monitor/<Screen>`, second in System's menu, opening on Overview.
@@ -430,7 +451,7 @@ The app's root sets, in its `always-actions` so that the transitions read them t
 
 | Context | What it does |
 |---|---|
-| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns) and `share`. Without the map the screens keep Tools' own (`//apps/dashboards/...`); a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and the editor's save keeps the saved group, whatever group is posted |
+| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns), `share` and `drill` (the app's drill screen, which each panel's menu then offers as Drill, in the browser and the terminal: it opens the screen with `definitionId`, `panelId`, `from`, `thru` and `variablesJson`; Tools mounts none). Without the map the screens keep Tools' own (`//apps/dashboards/...`); a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and the editor's save keeps the saved group, whatever group is posted |
 | `reportFixedVariables` | Dashboard variables the app fixes, such as the organization in scope: a viewer's `var-` parameter, carried value or panel export and inspect variables never replace one, and it is shown as a constant (set by the Dashboard screen's own `always-actions` when it depends on the request) |
 | `reportHiddenComponents` | Components whose shipped definitions the list leaves out (Insights: `tools`, the telemetry dashboards) |
 | `reportDefinitionTypes` | Set by an editor's screen in its `always-actions`: the definition types it offers, and the only ones its save and copy take |
@@ -490,6 +511,124 @@ by `crates/moqui-report/src/business.rs` (BOSS impl-insights P3, INS-03):
   dataset's update artifact (the steward of a saved one, `ADMIN`), so a view grant on such an artifact, by pattern or by mistake,
   reaches no unfiltered rows.
 - The regression spec is `framework/test/BusinessDatasets.spec.js`.
+
+### Semantic guards
+
+What a business dataset's `fieldDefaults` declare about a measure decides which aggregations of it mean something; the engine
+refuses the others with a coded reason, for every caller (a panel, Explore, `run#Query`, an alert, a schedule, a drill). A
+dataset that is not a business one is read as before.
+
+| Declared on a field | Refused | Until |
+|---|---|---|
+| `unitField` (an amount's currency, a quantity's unit) | `UNIT_MIXED`: a sum, average, least or greatest over records of several units (it was shown without a unit) | the query groups by the unit field (a terms aggregation of it above the amount, not beside it), or is filtered to one unit; a count of the field is in no unit; a measure the owner converts to one unit has a fixed `unit` and no `unitField`. Rows grouped by the unit are not added again: `subtotals`, a footer total (`totals`), or a `reduce`, `groupBy` or `pivot` step that adds across the unit is `UNIT_MIXED` too |
+| `ratio: {numerator, denominator}` (a stored rate) | `RATIO_AGGREGATE`: a sum or an average of it | the group's rate is computed from the summed numerator and denominator (a calculate step) |
+| `nonAdditive: [dimension, ...]` (a balance or snapshot) | `NONADDITIVE`: a sum across one of the dimensions | each is a group of the query, or pinned to one value by a filter |
+
+A document query returns a page: when more records match than were read, the result carries a `bounded_result` notice with
+`returned` and `total` (`sourceCount` stays the engine's own count of what matches), and a total, a `reduce`, a `groupBy` or a
+`pivot` of those rows is refused (`BOUNDED_RESULT`).
+
+A dataset whose definition says `rows: "restricted"` gives its readers aggregates only: its records (`query#Documents`, a
+query of mode `documents`, a top-hits aggregation, a drill's records) need the artifact `org.moqui.report.rows.<id>` (view),
+and are refused with `ROWS_RESTRICTED` otherwise. The rules are in `crates/moqui-report/src/semantics.rs`; the regression spec
+is `framework/test/ReportDrill.spec.js`.
+
+### Drill
+
+`ReportServices.get#Drill` goes from a value of a saved panel to a breakdown and the records behind it. The request names a
+definition the viewer reads (`definitionId`: a dashboard with `panelId`, or a library panel), one of the panel's queries
+(`queryReference`, its index, 0 by default), the `range` (or `from`, `thru`), the dashboard's `variables`, the buckets chosen
+(`selectedBuckets`: `field` and `value` as the panel showed them), an optional `breakdownDimension` and a page. It never takes a
+query, a dataset, an entity or a service.
+
+- The engine reads the definition as the viewer and runs the panel as its dashboard does: variables fill the saved variables
+  only, and each dataset's artifact, admission and row filter apply again.
+- Each chosen bucket's predicate is taken from the panel's own result, where the engine recorded it, so an "Other" bucket is
+  everything but the buckets shown and a missing bucket the records without the field. A bucket that is not in the result is
+  refused.
+- The answer is the saved query narrowed by those predicates: `selected`, `panelFrames` (the panel's result, whose buckets may
+  be chosen), `dimensions` (the dataset's aggregatable fields), `breakdown` (the saved measures by one of them, or `refused` with
+  a guard's reason), and `rows` with `columns` (the query's time, groups and measured fields), `total` and `bounded` (a page is
+  a sample). A page holds at most 100 records and the pages reach the first 10,000; past that the viewer chooses a bucket or
+  a shorter range.
+- A viewer who reads the dataset's aggregates and not its records gets `rowsAvailable` false with `rowsReason` and no record
+  (nothing is fetched). A panel the viewer cannot read, or whose value is not an aggregate of a dataset, answers `available`
+  false with its reason.
+
+A mount offers it from each panel's menu by naming its drill screen in `reportLinks` (above). The code is
+`crates/moqui-report/src/drill.rs`; the regression spec is `framework/test/ReportDrill.spec.js`.
+
+### Report delivery
+
+A schedule renders as its owner. A **business schedule** sends that result to another user only when it is what that user
+would see, and to each recipient in a message of their own. A schedule is a business one when `store#Schedule` saved it (its
+`deliveryMode` is `personal` or `group`) or when its definition reads a business dataset or any other dataset whose rows
+depend on the viewer (one with a `rowFilterService` or `contextFilters`, such as a business events dataset over the
+annotations), whatever wrote its row: one made by `create#Schedule`, or by an entity write, is held to the same check at each
+run. A technical schedule (telemetry and other datasets that give every reader the same rows) is delivered as before, in
+owner mode, to one address line.
+
+- **The scope fingerprint.** A user's fingerprint for a definition is a hash of what they read of the definition and of
+  everything it references (each dashboard and library panel, read or not), the documents of each dataset they may read, each
+  dataset's resolved row filter (`rowFilter`, `contextFilters` and the `rowFilterService`'s answer, in a form that does not
+  depend on the order of its values) and, for a dataset whose records are restricted, whether they hold them. What a
+  dashboard reads without naming it counts too: the telemetry dataset of a query that names none, the change markers
+  (`monitor_annotations`) and, over a business dataset, each registered source of business events. It is computed in
+  a context of its own signed in as that user, so a screen's inheritable grant or a disabled authorization never enters it.
+  Two users are owner-equivalent when their fingerprints are equal. A policy that names the viewer's own groups
+  (`ReportUserGroups`) gives users of different groups different filters, so different fingerprints; a policy that answers the
+  organizations a user works in gives every user of those organizations the same one. A definition over a service source is
+  not comparable (the service decides its scope in its own code), so it goes to its owner alone.
+- **`check#ReportAudience`** answers, for a definition the viewer would own a schedule of, each proposed recipient's result:
+  the named users and the members in date of the named groups, each `eligible` or not with a `reasonCode` and a `reason` in
+  words: `not-shared` (the definition, or a dashboard or panel it uses, is not theirs to read: its owner shares it),
+  `scope-differs`, `not-comparable`, `denied-source` (the owner does not read a source), `inactive`, `external`,
+  `no-address`. A reason never says what the other user holds. Recipients other than the viewer need the artifact
+  `org.moqui.report.delivery.group` (`REPORT_DELIVERY_ADMIN`, `ADMIN`'s; an app grants it to its distributors).
+- **`store#Schedule`** creates or changes a business schedule its viewer owns, delivered by email only (no save location). The
+  server sets the mode: `personal` when the owner is the only recipient, `group` otherwise, with its recipients in
+  `moqui.report.ReportScheduleRecipient`. An active group schedule is saved only when every recipient passes
+  (`RECIPIENT_REFUSED`, naming each with its reason code; a group's member without an address or an active account is not a
+  refusal, they are skipped at each run) and the audience is within the cap (`RECIPIENT_CAP`). The cap is `recipientCap`, 50
+  without one, held under the instance preference `report.groupRecipientCeiling` (Admin's, 200 by default). A change needs
+  the revision read (`expectedRevision`, `STALE_REVISION`). `pause#Schedule` resumes a group schedule only when its recipients
+  pass again.
+- **A run** opens a `moqui.report.ReportOccurrence` (a cron occurrence keyed by the schedule and the cron instant, or a Send
+  now), pins the owner, the schedule's revision and the definition's version, and for each recipient, just before their
+  message: checks the lease, the owner and the schedule again, computes the recipient's fingerprint again, and sends one
+  message to their one address, or records why not. Each recipient has a `moqui.report.ReportRecipientDelivery` row: `sent`
+  with its message id, `skipped` with a safe reason (`scope-differs`, `inactive`, `no-address`, `over-cap`,
+  `owner-unauthorized`, `delivery-blocked`, `schedule-changed`, `removed-audience`), `failed` (`transport-failure`,
+  `source-failure`) or `uncertain` (the transport does not know whether the message was accepted). One recipient's failure
+  does not stop the others. An occurrence that runs again (a run that ended before its schedule's last run time was
+  kept) sends to nobody whose delivery is `sent` or `uncertain`. One render serves every recipient of a locale (`renderCount`): they share the definition's
+  version and the fingerprint. A data export's message carries its files; a PDF's or a picture's also the dashboard inline.
+- **No row keeps a report.** An occurrence and its deliveries are evidence: who, when, which revision and version, what state
+  and which reason code. `find#ReportOccurrences` lists the viewer's own schedules' occurrences as status and counters; with
+  `received` the deliveries to the viewer; with `administrative`, for a holder of `ADMIN_TRANSFER_VIEW`, every owner's, without
+  titles. `get#ReportOccurrence` answers each recipient's outcome to the schedule's owner (and to that administrator), and to
+  a recipient their own delivery alone. `get#RecipientReport` renders a delivered report again as its recipient, and only
+  while their fingerprint is still the one the delivery was sent under (`scope-changed` otherwise); another user's delivery
+  id is refused as one that does not exist.
+- **Retry.** `retry#ReportRecipients` sends again to the failed deliveries named, for the schedule's owner, at the
+  occurrence's revision read, with each recipient checked again; a sent delivery is never replayed, and a schedule or
+  definition changed since the occurrence is refused (`DEFINITION_CHANGED`: send a new occurrence). An uncertain delivery is
+  never retried blind: `reconcile#ReportRecipient` records what a person found (sent, or failed and so retryable).
+- **Ownership.** A business schedule whose owner is disabled or gone pauses (`pausedReason` `owner-disabled`) at its next
+  run. `find#OwnedSchedules`, `pause#OwnedSchedules` and `transfer#DefinitionOwner` carry the owned-resource contract of
+  `org.moqui.admin.IdentityServices` for an account's lifecycle: the user's own, or another user's for a holder of
+  `REPORT_OWNER_CHANGE` (`ADMIN`'s). A transfer hands one schedule, with its definition and the definitions that references
+  which the leaving owner owns, to an active internal user who may store a schedule, reads every source and, for a group
+  schedule, may deliver to a group (`NEW_OWNER_REFUSED` otherwise). The schedule stays paused (`transfer-pending`) until the
+  new owner resumes it, which checks the recipients against the new owner's fingerprint; nothing is sent meanwhile, by Send
+  now or a retry either. The caller of these gains no report data.
+- **Screen schedules** (a `ScreenScheduled` with a `screenPath` and no report definition) render as their user. One that
+  names a `userGroupId` is sent to the group only when its screen path is registered as a `ReportLegacyAdapter` enumeration
+  (`enumCode` the path), then one message a member, and only to members the saved find is shared with; without a
+  registration the group is not sent to and the user's own delivery continues.
+
+The code is `crates/moqui-report/src/delivery.rs` (and `schedule.rs` for the run); the regression spec is
+`framework/test/ReportAudience.spec.js`.
 
 ## Regressions and incidents
 
@@ -651,7 +790,8 @@ changing needs `MONITOR_SETTINGS`, which ADMIN holds and the public demo ends. T
   filters are not translated automatically: write the dataset filters an organization needs, and grant business roles
   only the datasets they should read.
 - Alerts and scheduled reports run as their owner, whose access is checked at each run; recipients do not set what
-  the report may read.
+  the report may read. A schedule over business data goes only to recipients whose scope equals the owner's, one message
+  each ([Report delivery](#report-delivery)).
 - Queries have row, bucket and time limits, and a timeout. Exports and scheduled deliveries are logged to the
   `moqui.report.audit` target, so they show in Monitor Logs.
 - Regressions and incidents need `MONITOR_INCIDENT`; approving, refusing, completing, cancelling and reverting
@@ -703,6 +843,19 @@ take the index refresh interval to appear.
   for the `ReportScopePolicy` type and mr-mantle's `MonitoringSalesSecurityData.xml` for its policy. From then on a dataset with `signal`
   business is read only once admitted or by a holder of its update artifact (`ADMIN` holds them all), so a non-`ADMIN` reader of
   one sees it as not admitted until a steward admits it ([Business datasets](#business-datasets)).
+- **Business events, drill and the semantic guards** (Insights P6): load `ReportSetupData.xml` (the `ReportAnnotationSource`
+  type), `MonitoringSecurityData.xml` (`REPORT_BUSINESS_ADMIN`: the business annotation artifact and the restricted records
+  artifacts, `ADMIN`'s) and mr-mantle's `MonitoringSalesSecurityData.xml` (its source) again. The annotations index gains four
+  fields (`organizationPartyId`, `event`, `recordType`, `recordId`), added to an existing table in place. From then on a panel
+  over a business dataset that sums an amount across several currencies without grouping by the currency says so
+  (`UNIT_MIXED`) instead of showing a number without a unit: group it by its unit field or filter it to one.
+- **Report delivery** (Insights P7): the entity check creates `moqui.report.ReportScheduleRecipient`, `ReportOccurrence` and
+  `ReportRecipientDelivery` and adds `deliveryMode`, `recipientCap`, `pausedReason` and `versionNumber` to `ScreenScheduled`.
+  Load `ReportSetupData.xml` (the occurrence and delivery states, `REPORT_OWNER_CHANGE`, the `ReportLegacyAdapter` type) and
+  `MonitoringSecurityData.xml` (`REPORT_DELIVERY_ADMIN`) again. From then on an existing report schedule whose definition
+  reads a business dataset sends each recipient their own message, and only to recipients whose scope equals its owner's;
+  and a screen schedule that names a user group stops sending to the group until its screen path is registered as a
+  `ReportLegacyAdapter` (its user's own delivery continues).
 - **Retired:** the ArtifactHit and ArtifactHitBin entities and their report view, the System Artifact Summary,
   Artifact Bins, Log Viewer and DataDocument Search screens, the hit REST resources, and the shipping of logs to
   `moqui_logs` and `moqui_http_log`. Startup pauses the old `clean_ArtifactData_daily`,

@@ -21,7 +21,9 @@ along with this software (see the LICENSE.md file). If not, see
     EECAs decide each row and the authorization caches move here and on every live cluster member, and leaves before and after
     in the audit log. A refusal is answered (applied false, reasonCode, reason), never written; a malformed request is an error.
     The bodies are Access.js. ALL_USERS may call them (data/SecurityTypeData.xml AdminAccessServices): each refuses without its
-    permission. No dependency on Mantle or an app. -->
+    permission. No dependency on Mantle or an app.
+    P9 adds the read projections of AccessCapabilities.js (get#Capabilities, get#ScopeRules, get#GrantReview) and, in
+    preview#Grants and apply#Grants, a registered filter set bound to a registered artifact binding (a row rule). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="find" noun="Groups" allow-remote="false">
@@ -169,12 +171,18 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The effective change of a grant request on a group, nothing written: each permission or artifact binding added or
             ended, before and after, the kind and bundle it comes from, whether the actor may make it and why not
             (UNREGISTERED_GRANT, SEALED_PERMISSION, a group refusal), the current members it reaches, and the grant revision
-            apply#Grants expects. Needs ADMIN_ACCESS_VIEW.</description>
+            apply#Grants expects. A row rule (a filter set bound to a registered binding) is allowed only when a registered
+            bundle the actor may assign names the set for that artifact group (UNREGISTERED_SCOPE), the group has a binding of
+            the registered type or the request adds it (SCOPE_UNBOUND) that carries no filter set of its own
+            (SCOPE_CONFIGURED), and it is added: removing one widens what members read
+            and stays Tools' (SCOPE_REMOVAL). Needs ADMIN_ACCESS_VIEW.</description>
         <in-parameters>
             <parameter name="userGroupId" required="true"/>
             <parameter name="grantList" type="List" required="true"><description>Each a Map: action add or end, and
                 userPermissionId, artifactGroupId or bundleGroupId alone (each of the bundle's permissions and bindings); bundleGroupId
-                beside a permission or artifact group names the bundle it comes from; fromDate and thruDate optional</description></parameter>
+                beside a permission or artifact group names the bundle it comes from; fromDate and thruDate optional. With
+                entityFilterSetId beside artifactGroupId, a row rule: the filter set bound to the group's registered binding on
+                that artifact group (add only)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="changeList" type="List"/>
@@ -189,14 +197,17 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="apply" noun="Grants" allow-remote="false">
         <description>The previewed grant change: dated UserGroupPermission rows added or ended (never deleted) and registered artifact
-            bindings added (ArtifactAuthz with the bundle's filter sets) or removed (recorded in the audit log); refused as a
-            whole when any part is refused or the grants changed since the preview (expectedRevision). Needs
-            ADMIN_ACCESS_MANAGE.</description>
+            bindings added (ArtifactAuthz with the bundle's filter sets) or removed (recorded in the audit log), and registered
+            row rules bound (an ArtifactAuthzFilter on each of the group's bindings of the registered type, recorded in the
+            audit log); refused as a whole when any part is refused or the grants or their filter sets changed since the
+            preview (expectedRevision). Needs ADMIN_ACCESS_MANAGE.</description>
         <in-parameters>
             <parameter name="userGroupId" required="true"/>
             <parameter name="grantList" type="List" required="true"><description>Each a Map: action add or end, and
                 userPermissionId, artifactGroupId or bundleGroupId alone (each of the bundle's permissions and bindings); bundleGroupId
-                beside a permission or artifact group names the bundle it comes from; fromDate and thruDate optional</description></parameter>
+                beside a permission or artifact group names the bundle it comes from; fromDate and thruDate optional. With
+                entityFilterSetId beside artifactGroupId, a row rule: the filter set bound to the group's registered binding on
+                that artifact group (add only)</description></parameter>
             <parameter name="expectedRevision" required="true"/>
             <parameter name="reason"/>
         </in-parameters>
@@ -265,5 +276,121 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="bundleList" type="List"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('applyGrantProposal', context))</script></actions>
+    </service>
+
+    <!-- ===== P9: capabilities, row rules and the access review (AccessCapabilities.js; reads only) ===== -->
+    <service verb="get" noun="Capabilities" allow-remote="false">
+        <description>The capability matrix over the registry: the registered capabilities of an app (all apps when none) as rows,
+            each a launcher binding or a permission by its kind (launcher, view, edit, export, sensitive; one row each, so a
+            launcher is never read as a view or a change, nor a change as a view), against at most 8 groups (the app's first 6
+            registered bundles when none are named; moreGroupCount the rest). Each cell says what the group holds now (granted,
+            scheduled, none, or advanced: another rule on the artifact group, never changed here), a launcher's bound filter
+            sets and whether a registered one is missing, whether the actor may grant or end it and the reason when not, and
+            the change proposed for it (proposedList). cellList is the same cells one per row, the matrix's list. What a group
+            holds that no registered bundle describes is in unsupportedList, read only. Nothing is written or evaluated: the
+            framework's permissions and artifact authorizations decide access, and preview#Grants and apply#Grants each
+            change. Needs ADMIN_ACCESS_VIEW.</description>
+        <in-parameters>
+            <parameter name="appName"/>
+            <parameter name="userGroupIdList" type="List"/>
+            <parameter name="kind"><description>launcher, view, edit, export or sensitive</description></parameter>
+            <parameter name="text"/>
+            <parameter name="proposedList" type="List"><description>Each a Map: userGroupId, action add or end, and
+                userPermissionId or artifactGroupId; marks the cell, nothing more</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="appNames" type="List"/>
+            <parameter name="kindOptions" type="List"/>
+            <parameter name="groupList" type="List"/>
+            <parameter name="moreGroupCount" type="Integer"/>
+            <parameter name="maxGroups" type="Integer"/>
+            <parameter name="capabilityList" type="List"/>
+            <parameter name="cellList" type="List"/>
+            <parameter name="unsupportedList" type="List"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/AccessCapabilities.js').execute('getCapabilities', context))</script></actions>
+    </service>
+    <service verb="get" noun="ScopeRules" allow-remote="false">
+        <description>The row rules in effect: each EntityFilterSet bound to a group's artifact binding (ArtifactAuthzFilter), with the
+            entities it filters, whether a condition applies it, and its source (registered: the group's own bundle registers
+            it; bundle: another registered bundle does, as a grant copies it; configuration: deployed configuration or Tools).
+            A registered binding lacking a filter set its bundle registers (and carrying none of its own) is listed as missing, with whether the actor may
+            bind it through apply#Grants and the group's grant revision. A page (pageIndex from 0, pageSize up to 200) narrowed
+            by group, artifact group, filter set, state (bound, missing), source and text; filterSetList is every filter set.
+            A filter's expression and apply condition are never returned, and nothing is written: arbitrary filters, removing
+            one and raw entity rules stay Tools'. Needs ADMIN_ACCESS_VIEW.</description>
+        <in-parameters>
+            <parameter name="userGroupId"/>
+            <parameter name="artifactGroupId"/>
+            <parameter name="entityFilterSetId"/>
+            <parameter name="state"/>
+            <parameter name="source"/>
+            <parameter name="text"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="50"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ruleList" type="List"/>
+            <parameter name="ruleCount" type="Integer"/>
+            <parameter name="missingCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="filterSetList" type="List"/>
+            <parameter name="groupOptions" type="List"/>
+            <parameter name="artifactGroupOptions" type="List"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/AccessCapabilities.js').execute('getScopeRules', context))</script></actions>
+    </service>
+    <service verb="get" noun="GrantReview" allow-remote="false">
+        <description>The access and grant review of up to 60 groups (those named, or an app's registered bundles) as of a date and
+            time (now when empty), one projection for print and CSV: each group's permission grants open then (kind, dates,
+            the scope its services still check), its app gates (as they are now: an artifact binding has no dates) with their
+            filter sets, and its members then. Sealed permissions are left out and counted (sealedOmitted per group); allowed
+            IPs, preference values and filter expressions are never in it. The framework knows no organization: a caller
+            that scopes members filters memberList. Needs ADMIN_ACCESS_VIEW.</description>
+        <in-parameters>
+            <parameter name="userGroupIdList" type="List"/>
+            <parameter name="appName"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="asOfDate"/>
+            <parameter name="groupList" type="List"/>
+            <parameter name="entryList" type="List"/>
+            <parameter name="memberList" type="List"/>
+            <parameter name="sealedOmittedCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/AccessCapabilities.js').execute('getGrantReview', context))</script></actions>
+    </service>
+
+    <!-- Admin P10 (AccessSignIn.js): what a change of a group's sign-in rules would do, before store#Group makes it -->
+    <service verb="preview" noun="GroupSignInRules" allow-remote="false">
+        <description>The lockout preview of a group's sign-in rules (design-admin §6 GroupSignInRules), nothing written: for
+            the factor requirement and allowed addresses proposed, how many current members the group has, how many of them
+            have no confirmed factor (who could not finish a sign-in once a factor is required), whether the actor's own
+            address is admitted by the proposed addresses, and whether the change keeps an administration path (allowed,
+            else ADMINISTRATION_PATH with the reason, or the group refusal store#Group would give); counts only, no member
+            is named. Needs ADMIN_ACCESS_VIEW.</description>
+        <in-parameters>
+            <parameter name="userGroupId" required="true"/>
+            <parameter name="requireAuthcFactor"/>
+            <parameter name="ipAllowed"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="allowed" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="changed" type="Boolean"/>
+            <parameter name="memberCount" type="Integer"/>
+            <parameter name="membersWithoutFactor" type="Integer"/>
+            <parameter name="callerAdmitted" type="Boolean"/>
+            <parameter name="pathsBefore" type="Integer"/>
+            <parameter name="pathsAfter" type="Integer"/>
+            <parameter name="summary"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/AccessSignIn.js').execute('previewGroupSignInRules', context))</script></actions>
     </service>
 </services>

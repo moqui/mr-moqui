@@ -1226,3 +1226,24 @@ fn a_cached_find_answers_from_the_cache_alone_only_on_a_hit() {
         "a find one that narrows runs"
     );
 }
+
+/// The screen configuration generation moves again at the commit of a frame that wrote a `SubscreensItem`: a reader that
+/// saw the generation move at the write, while the frame was open, read the rows as they were, and reads them again.
+#[test]
+fn a_subscreens_item_commit_moves_the_screen_configuration_generation() {
+    let facade = testing::open();
+    facade.set_disable_fk_create(true);
+    let entity = "moqui.screen.SubscreensItem";
+    let tx = facade.transactions_for(entity).unwrap();
+    assert!(tx.begin(None).unwrap());
+    let mut value = facade.make_value(entity).unwrap();
+    value.set("screenLocation", Value::string("test.xml"));
+    value.set("subscreenName", Value::string("test"));
+    value.create(&facade).unwrap();
+    let written = super::screen_config_generation(&facade);
+    tx.commit().unwrap();
+    assert!(
+        super::screen_config_generation(&facade) > written,
+        "the commit moves it past what a reader saw while the frame was open"
+    );
+}

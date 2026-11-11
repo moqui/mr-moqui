@@ -18,7 +18,13 @@
 // as a reason (applied false, reasonCode, reason), never written; a malformed request is an error. The audit log keeps before
 // and after: the entities' audit-logged fields (UserGroupMember's and UserGroupPermission's dates, ArtifactAuthz's type,
 // UserGroup's factor and IP flags, UserGroupPreference's value) with the reason given, and an explicit row for a removed
-// artifact binding.
+// artifact binding and for a row rule bound to one.
+//
+// Row rules (P9, design §5 RowRules): a grant request may also bind a registered filter set to a group's registered artifact
+// binding (the SupportedScopeBinding): only a set a registered bundle the actor may assign names for that artifact group, only
+// on a binding of the registered type the group already has that carries no filter set of its own, and only added. Removing a
+// filter set, an apply condition and a filter's expression stay Tools'. The matrix, the scope rules and the review are
+// AccessCapabilities.js, over this module's lib.
 const identity = ec.resource.script("component://framework/service/org/moqui/admin/Identity.js")
 const GROUP = "moqui.security.UserGroup"
 const MEMBER = "moqui.security.UserGroupMember"
@@ -157,6 +163,14 @@ function groupSummary(group, context) {
         hasSealed: sealed.length > 0,
         requireAuthcFactor: group.requireAuthcFactor === "Y",
         ipLimited: !!text(group.ipAllowed),
+        ipAllowed: text(group.ipAllowed),
+        // whether the actor may change its profile and sign-in rules (store#Group), as groupRefusal decides: a privileged
+        // group only by a member, a bundle by who may assign it, else a custom group
+        canChange: context.privileged.has(groupId)
+            ? ec.user.isInGroup(groupId)
+            : bundle
+              ? delegable(bundle, context.privileged)
+              : custom,
         memberCount: context.counts.get(groupId) || 0,
         permissionCount: grants.length,
         appGates: (context.authz.get(groupId) || []).map(row => row.artifactGroupId),
@@ -225,13 +239,32 @@ function findGroups(p) {
     }
 }
 
-// The revision of a group's grants: its permission and artifact rows as they are, so a preview and its apply see the same set.
+// The filter sets bound to an artifact binding, and the ids a comma separated list names.
+const filterSetIds = artifactAuthzId =>
+    rows(AUTHZ_FILTER, {artifactAuthzId})
+        .map(filter => filter.entityFilterSetId)
+        .sort()
+const idList = value =>
+    text(value)
+        .split(",")
+        .map(id => id.trim())
+        .filter(Boolean)
+// The revision of a group's grants: its permission and artifact rows as they are, with each binding's filter sets, so a preview
+// and its apply see the same set.
 function grantRevision(groupId) {
     const grants = rows(GRANT, {userGroupId: groupId})
         .map(row => [row.userPermissionId, ms(row.fromDate), ms(row.thruDate), stamp(row)].join("|"))
         .sort()
     const authz = rows(AUTHZ, {userGroupId: groupId})
-        .map(row => [row.artifactAuthzId, row.artifactGroupId, row.authzTypeEnumId, stamp(row)].join("|"))
+        .map(row =>
+            [
+                row.artifactAuthzId,
+                row.artifactGroupId,
+                row.authzTypeEnumId,
+                stamp(row),
+                filterSetIds(row.artifactAuthzId).join("+")
+            ].join("|")
+        )
         .sort()
     return ec.user.singleUseCodeHash(JSON.stringify([grants, authz]))
 }
@@ -294,7 +327,7 @@ function getGroup(p) {
         description: one("moqui.security.ArtifactGroup", {artifactGroupId: row.artifactGroupId})?.description || "",
         authzTypeEnumId: row.authzTypeEnumId,
         authzActionEnumId: row.authzActionEnumId,
-        filterSetIds: rows(AUTHZ_FILTER, {artifactAuthzId: row.artifactAuthzId}).map(filter => filter.entityFilterSetId),
+        filterSetIds: filterSetIds(row.artifactAuthzId),
         registered: registeredArtifacts.get(row.artifactGroupId)?.authzTypeEnumId === row.authzTypeEnumId
     }))
     const keys = new Map(rows("moqui.basic.Enumeration", {enumTypeId: "UserPreferenceKey"}).map(row => [row.enumId, row]))
@@ -583,8 +616,8 @@ function endMembership(p) {
 }
 
 // ===== grants =====
-// The changes of a grant request, each a permission or an artifact binding of the group, added or ended; a bundle named alone
-// stands for each of its permissions and bindings.
+// The changes of a grant request, each a permission or an artifact binding of the group, added or ended, or a registered filter
+// set bound to one of its bindings (a row rule); a bundle named alone stands for each of its permissions and bindings.
 function requested(p) {
     const list = Array.isArray(p.grantList) ? p.grantList : Array.from(p.grantList || [])
     const changes = []
@@ -593,7 +626,10 @@ function requested(p) {
         const action = item.action === "end" ? "end" : "add"
         const base = {action, bundleGroupId: item.bundleGroupId || null, fromDate: item.fromDate, thruDate: item.thruDate}
         if (item.userPermissionId) changes.push(Object.assign({kind: "permission", id: item.userPermissionId}, base))
-        else if (item.artifactGroupId) changes.push(Object.assign({kind: "artifact", id: item.artifactGroupId}, base))
+        else if (item.entityFilterSetId) {
+            if (!item.artifactGroupId) throw new Error("A row rule names the artifact group it is bound to")
+            changes.push(Object.assign({kind: "scope", id: item.artifactGroupId, filterSetId: item.entityFilterSetId}, base))
+        } else if (item.artifactGroupId) changes.push(Object.assign({kind: "artifact", id: item.artifactGroupId}, base))
         else if (item.bundleGroupId && registry.has(item.bundleGroupId)) {
             for (const row of rows(BUNDLE_PERMISSION, {userGroupId: item.bundleGroupId}))
                 changes.push(Object.assign({kind: "permission", id: row.userPermissionId}, base))
@@ -604,7 +640,7 @@ function requested(p) {
     }
     const seen = new Set()
     return changes.filter(change => {
-        const key = change.kind + "|" + change.id + "|" + change.action
+        const key = [change.kind, change.id, change.filterSetId || "", change.action].join("|")
         if (seen.has(key)) return false
         seen.add(key)
         return true
@@ -658,6 +694,8 @@ function evaluate(group, changes) {
                 return refuse("SEALED_PERMISSION", change.id + " is sealed: only a holder of it may grant or end it")
             return result
         }
+        if (change.kind === "scope")
+            return evaluateScope(change, result, refuse, {registry, delegableBundles, authz, changes, registeredArtifact})
         // an artifact binding: only a registered one, added or ended with the type the bundle registers, never a deny
         const definition = registeredArtifact(change.id, change.bundleGroupId)
         result.label = one("moqui.security.ArtifactGroup", {artifactGroupId: change.id})?.description || change.id
@@ -674,6 +712,71 @@ function evaluate(group, changes) {
         else Object.assign(result, matching.length ? {after: "ended"} : {noChange: true, after: "not granted"})
         return result
     })
+}
+// A row rule: a registered filter set bound to the group's registered binding on an artifact group. Only a set a registered
+// bundle the actor may assign names for that artifact group; only on a binding of the registered type that carries no other
+// (deployed) filter set; only added (removing one widens what the members read, which stays Tools').
+function evaluateScope(change, result, refuse, context) {
+    const set = one("moqui.security.EntityFilterSet", {entityFilterSetId: change.filterSetId})
+    result.label = (set?.description || change.filterSetId) + " on " + change.id
+    if (change.action === "end")
+        return refuse(
+            "SCOPE_REMOVAL",
+            "Removing " + change.filterSetId + " would widen what the members read; an instance administrator does that in Tools"
+        )
+    const definition =
+        rows(BUNDLE_ARTIFACT, {artifactGroupId: change.id}).find(
+            row =>
+                context.registry.has(row.userGroupId) &&
+                (!change.bundleGroupId || row.userGroupId === change.bundleGroupId) &&
+                context.delegableBundles.some(bundle => bundle.userGroupId === row.userGroupId) &&
+                idList(row.entityFilterSetIds).includes(change.filterSetId)
+        ) || null
+    if (!definition || !set)
+        return refuse(
+            "UNREGISTERED_SCOPE",
+            change.filterSetId + " is not a row rule a registered bundle you may assign names for " + change.id
+        )
+    result.bundleGroupId = definition.userGroupId
+    result.authzTypeEnumId = definition.authzTypeEnumId
+    const bindings = context.authz.filter(
+        row => row.artifactGroupId === change.id && row.authzTypeEnumId === definition.authzTypeEnumId
+    )
+    // a binding the same request adds (of this type: the bundle it comes from may be another, registering another type or
+    // other filter sets) is bound after it is written, so the rule previewed is the rule bound
+    const adding = context.changes.some(
+        other =>
+            other.kind === "artifact" &&
+            other.id === change.id &&
+            other.action === "add" &&
+            context.registeredArtifact(other.id, other.bundleGroupId)?.authzTypeEnumId === definition.authzTypeEnumId
+    )
+    if (!bindings.length && !adding)
+        return refuse("SCOPE_UNBOUND", "The group has no registered binding on " + change.id + " to bind a row rule to")
+    // a binding that carries a filter set no registered bundle names for this artifact group was scoped on purpose (an
+    // administrator group's active-organization rule, a client group's own): it is not completed here
+    const registeredSets = new Set(
+        rows(BUNDLE_ARTIFACT, {artifactGroupId: change.id})
+            .filter(row => context.registry.has(row.userGroupId) && row.authzTypeEnumId === definition.authzTypeEnumId)
+            .flatMap(row => idList(row.entityFilterSetIds))
+    )
+    const configured = Array.from(
+        new Set(bindings.flatMap(row => filterSetIds(row.artifactAuthzId)).filter(id => !registeredSets.has(id)))
+    )
+    if (configured.length)
+        return refuse(
+            "SCOPE_CONFIGURED",
+            "The group's binding on " +
+                change.id +
+                " carries " +
+                configured.join(", ") +
+                ", a row rule no registered bundle names for it; an instance administrator changes it in Tools"
+        )
+    const missing = bindings.filter(row => !filterSetIds(row.artifactAuthzId).includes(change.filterSetId))
+    result.before = bindings.length && !missing.length ? "bound" : "not bound"
+    result.after = "bound"
+    if (bindings.length && !missing.length) result.noChange = true
+    return result
 }
 function grantPreview(p) {
     const group = one(GROUP, {userGroupId: p.userGroupId})
@@ -734,7 +837,12 @@ function applyGrants(p) {
     auditReason(reason, ["fromDate", "thruDate", "authzTypeEnumId"])
     let added = 0
     let ended = 0
-    for (const change of preview.changes.filter(change => !change.noChange)) {
+    // row rules last, so one on a binding this request adds finds it
+    const effective = preview.changes.filter(change => !change.noChange)
+    const ordered = effective
+        .filter(change => change.kind !== "scope")
+        .concat(effective.filter(change => change.kind === "scope"))
+    for (const change of ordered) {
         if (change.kind === "permission" && change.action === "add") {
             const fromDate = change.fromDate ? Math.max(ms(change.fromDate), now) : now
             const value = ec.entity.makeValue(GRANT)
@@ -764,6 +872,38 @@ function applyGrants(p) {
                 value.update()
             }
             ended++
+        } else if (change.kind === "scope") {
+            // a binding this request added with the set already (its bundle registers it) is left as written, not counted
+            let bound = false
+            for (const row of rows(AUTHZ, {
+                userGroupId: groupId,
+                artifactGroupId: change.id,
+                authzTypeEnumId: change.authzTypeEnumId
+            })) {
+                if (filterSetIds(row.artifactAuthzId).includes(change.filterSetId)) continue
+                const filter = ec.entity.makeValue(AUTHZ_FILTER)
+                filter.setFields({artifactAuthzId: row.artifactAuthzId, entityFilterSetId: change.filterSetId}, true, null, null)
+                filter.create()
+                // the filter rows are not audit-logged: the bound row rule is recorded here, none before, the set after
+                ec.service
+                    .sync()
+                    .name("create#moqui.entity.EntityAuditLog")
+                    .parameters({
+                        changedEntityName: AUTHZ_FILTER,
+                        changedFieldName: "entityFilterSetId",
+                        pkPrimaryValue: row.artifactAuthzId,
+                        pkSecondaryValue: change.filterSetId,
+                        oldValueText: null,
+                        newValueText: change.filterSetId,
+                        changedDate: ec.user.nowTimestamp,
+                        changedByUserId: ec.user.userId,
+                        changeReason: reason || "Row rule " + change.filterSetId + " bound to " + change.id + " of " + groupId
+                    })
+                    .disableAuthz()
+                    .call()
+                bound = true
+            }
+            if (bound) added++
         } else if (change.action === "add") {
             const definition = one(BUNDLE_ARTIFACT, {userGroupId: change.bundleGroupId, artifactGroupId: change.id})
             const value = ec.entity.makeValue(AUTHZ)
@@ -780,10 +920,7 @@ function applyGrants(p) {
             )
             value.setSequencedIdPrimary()
             value.create()
-            for (const filterSetId of text(definition.entityFilterSetIds)
-                .split(",")
-                .map(id => id.trim())
-                .filter(Boolean)) {
+            for (const filterSetId of idList(definition.entityFilterSetIds)) {
                 const filter = ec.entity.makeValue(AUTHZ_FILTER)
                 filter.setFields({artifactAuthzId: value.artifactAuthzId, entityFilterSetId: filterSetId}, true, null, null)
                 filter.create()
@@ -989,9 +1126,40 @@ const operations = {
     applyGrants,
     storeGroupPreference
 }
+// What AccessCapabilities.js (the matrix, the scope rules and the review) shares with these services.
+const lib = {
+    proposalBundles,
+    validIpAllowed,
+    find,
+    identity,
+    rows,
+    one,
+    map,
+    ms,
+    text,
+    open,
+    current,
+    stamp,
+    nowMs,
+    requireView,
+    bundles,
+    delegable,
+    privilegedIds,
+    sealedIds,
+    isCustom,
+    purposes,
+    groupRefusal,
+    listContext,
+    groupSummary,
+    grantRevision,
+    filterSetIds,
+    idList,
+    userLabel
+}
 ;({
     execute: (op, parameters) => {
         if (!operations[op]) throw new Error("Unknown access operation " + op)
         return operations[op](parameters)
-    }
+    },
+    lib
 })

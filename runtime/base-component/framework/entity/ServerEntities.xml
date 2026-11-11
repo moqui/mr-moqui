@@ -384,4 +384,83 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="type" type="text-short"/>
         <relationship type="one" related="moqui.server.instance.AppInstance"/>
     </entity>
+
+    <!-- ========== Instance settings (Admin P8) ========== -->
+    <!-- The instance setting registry and the instance preferences (mr-boss plan/design-admin.md §7 InstanceSettings, §17.2
+        InstancePreference; impl-admin P8), read and changed through org.moqui.admin.ConfigurationServices. A setting is
+        registered by seed data of the component that reads it: a preference (editable Y, its value an InstancePreference row
+        when one is set, else the conf property it names, else its default) or a deployment configuration value shown read
+        only (editable N, a default-property of the conf). The registration fixes the type, allowed values, limits and
+        default; there is no unregistered key, JSON or code value, and a secret is never a preference: a setting marked
+        secret, or whose property name reads as one, is never returned, only whether it is set. -->
+    <entity entity-name="InstanceSetting" package="moqui.server" use="configuration" cache="true">
+        <field name="settingKey" type="id-long" is-pk="true"><description>Stable, dotted: the area and the setting
+            (instance.displayName, report.groupRecipientCeiling)</description></field>
+        <field name="title" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="settingGroup" type="text-short"><description>The heading it is listed under (Presentation, Sign-in,
+            Reports, Deployment)</description></field>
+        <field name="valueTypeEnumId" type="id"><description>Text, whole number, yes or no, one of the allowed values, a
+            locale or a time zone</description></field>
+        <field name="allowedValues" type="text-long"><description>Comma separated, for a choice</description></field>
+        <field name="minValue" type="number-integer"><description>The least whole number</description></field>
+        <field name="maxValue" type="number-integer"><description>The greatest whole number</description></field>
+        <field name="maxLength" type="number-integer"><description>The longest text (255 when empty, never more)</description></field>
+        <field name="defaultValue" type="text-medium"><description>The value with no preference and no conf property</description></field>
+        <field name="propertyName" type="text-medium"><description>The conf default-property (or environment variable) that
+            holds the value of a configuration setting, or is a preference's value until one is set</description></field>
+        <field name="confAttribute" type="text-medium"><description>For a configuration setting no property holds: the conf
+            attribute it shows, one of those ConfigurationServices.get#SignInPolicyValues answers
+            (user-facade/password/@min-length, webapp/session-config/@timeout); the value is the one the server runs
+            with</description></field>
+        <field name="editable" type="text-indicator"><description>Y: an instance preference, changed at runtime through
+            store#InstancePreference; otherwise deployment configuration, read only</description></field>
+        <field name="isSecret" type="text-indicator"><description>Y: the value is never returned, only whether it is set;
+            never Y for a preference</description></field>
+        <field name="restartRequired" type="text-indicator"><description>Y: a change of the conf value is read at the next
+            start; a preference always applies at once</description></field>
+        <field name="managePermission" type="id-long"><description>A permission a change needs beside
+            ADMIN_SETTINGS_MANAGE, if any</description></field>
+        <field name="operatorNote" type="text-medium"><description>How an operator changes a configuration value</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"><description>Y leaves the setting out</description></field>
+        <relationship type="one" title="InstanceSettingValueType" related="moqui.basic.Enumeration">
+            <key-map field-name="valueTypeEnumId"/></relationship>
+        <relationship type="one-nofk" title="Manage" related="moqui.security.UserPermission">
+            <key-map field-name="managePermission" related="userPermissionId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Instance Setting Value Type" enumTypeId="InstanceSettingValueType"/>
+            <moqui.basic.Enumeration description="Text" enumId="IsvText" enumTypeId="InstanceSettingValueType" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Whole number" enumId="IsvInteger" enumTypeId="InstanceSettingValueType" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Yes or no" enumId="IsvBoolean" enumTypeId="InstanceSettingValueType" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Choice" enumId="IsvChoice" enumTypeId="InstanceSettingValueType" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="Locale" enumId="IsvLocale" enumTypeId="InstanceSettingValueType" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="Time zone" enumId="IsvTimeZone" enumTypeId="InstanceSettingValueType" sequenceNum="6"/>
+        </seed-data>
+    </entity>
+    <entity entity-name="InstancePreference" package="moqui.server" use="configuration" cache="true">
+        <description>The value of a registered instance preference (InstanceSetting, editable Y): text as its type reads it,
+            with who changed it, when and why. Its revision is lastUpdatedStamp; the audit log keeps each value, and a
+            removal is recorded there by the service. No row means the conf property or the registered default.</description>
+        <field name="settingKey" type="id-long" is-pk="true"/>
+        <field name="preferenceValue" type="text-medium" enable-audit-log="true"/>
+        <field name="changeReason" type="text-medium"/>
+        <field name="changedByUserId" type="id"/>
+        <field name="changedDate" type="date-time"/>
+        <relationship type="one" related="moqui.server.InstanceSetting"/>
+        <relationship type="one-nofk" title="ChangedBy" related="moqui.security.UserAccount">
+            <key-map field-name="changedByUserId" related="userId"/></relationship>
+    </entity>
+    <!-- A registered label target of delegated translation (design §7 Localization EntityTranslations; impl-admin P8): a field
+        whose values are labels, which ConfigurationServices.store#LocalizedEntityField may translate. A row is used only when
+        its field is enable-localization and not encrypted, on a configuration entity with one primary key field; another is
+        logged by name when read and left out, so translation access never reaches a business record or a sensitive value.
+        Each component seeds its own. -->
+    <entity entity-name="LocalizedLabelTarget" package="moqui.basic" use="configuration" cache="true">
+        <field name="entityName" type="text-medium" is-pk="true"/>
+        <field name="fieldName" type="text-short" is-pk="true"/>
+        <field name="title" type="text-medium"><description>What the labels are, in the translator's words (Status names)</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+    </entity>
 </entities>

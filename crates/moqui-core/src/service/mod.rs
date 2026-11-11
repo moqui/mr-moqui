@@ -63,6 +63,7 @@ mod schedule;
 mod script_ports_tests;
 mod seca;
 mod security_checks;
+mod sign_in_policy;
 mod sip_credential;
 mod speech;
 pub(crate) mod semaphore;

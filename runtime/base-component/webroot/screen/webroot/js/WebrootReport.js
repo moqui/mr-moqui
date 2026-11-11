@@ -1402,6 +1402,10 @@
             editPanel(){this.menu=false;const editor=report.appLink(this.links(),'definition','Definition');if(editor)report.navigate(editor+'?definitionId='+encodeURIComponent(this.dashboardId)+'&panelId='+encodeURIComponent(this.sourcePanelId()));},
             async sharePanel(){this.menu=false;this.shared=report.shareUrl(this.range,this.panelId,this.embedded?this.dashboardUrl():undefined);this.status=await report.copyText(this.shared)?'Link copied, with the time range made absolute.':'Copy this link to share the panel:';},
             explorePanel(){this.menu=false;const url=report.exploreUrl(this.panel,{filters:this.filters,range:this.range,appLinks:this.links()});if(url)report.navigate(url);},
+            // The drill screen of the app that mounts the dashboard (appLinks.drill; Tools mounts none): the panel, the range and
+            // the variable values as shown. The server reads the saved panel again and takes no query from here.
+            drillLink(){const links=this.links();return links && typeof links==='object' && links.drill?report.appLink(links,'drill',''):'';},
+            drillPanel(){this.menu=false;const path=this.drillLink();if(!path)return;const url=new root.URL(path,root.location.href);url.searchParams.set('definitionId',this.dashboardId);url.searchParams.set('panelId',this.sourcePanelId());if(this.range && this.range.from)url.searchParams.set('from',this.range.from);if(this.range && this.range.thru)url.searchParams.set('thru',this.range.thru);if(this.variables && Object.keys(this.variables).length)url.searchParams.set('variablesJson',JSON.stringify(this.variables));report.navigate(url.href);},
             async changePanel(action){
                 this.menu=false;
                 if(action==='removePanel'){
@@ -1464,7 +1468,7 @@
             const alerting = (this.panel.queries || []).some((query) => (query.aggregations || []).some((agg) => agg.role === "metric")), alertRule = report.appLink(this.links(), "alertRule", "AlertRule");
             const menu = this.menu ? h("div", { role: "menu", "aria-label": T("Panel menu for {0}", named), class: "row q-gutter-xs q-py-xs", onKeydown: (event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.menu = false; } } }, [
                 item(this.embedded ? "Open in Dashboards" : "View", this.viewPanel, this.embedded || !this.single), item("Edit", this.editPanel, !!report.serverLink(this.links(), "definition", "Definition")), item("Share", this.sharePanel),
-                item("Explore", this.explorePanel, !!report.firstQuery(this.panel) && !!report.serverLink(this.links(), "explore", "Explore")), item("Inspect", () => { this.menu = false; this.inspect(); }),
+                item("Explore", this.explorePanel, !!report.firstQuery(this.panel) && !!report.serverLink(this.links(), "explore", "Explore")), item("Inspect", () => { this.menu = false; this.inspect(); }), item("Drill", this.drillPanel, !!this.drillLink()),
                 item("Duplicate", () => this.changePanel("duplicatePanel"), this.editable && !!report.serverLink(this.links(), "dashboard", "Dashboard")), item("Remove", () => this.changePanel("removePanel"), this.editable && !!report.serverLink(this.links(), "dashboard", "Dashboard")),
                 alerting && alertRule ? h("a", { role: "menuitem", class: "m-report-native q-btn q-pa-xs", href: alertRule + "?dashboardId=" + encodeURIComponent(this.dashboardId) + "&panelId=" + encodeURIComponent(this.panelId) }, T("New alert rule")) : null]) : null;
             const shared = this.status ? h("p", { role: "status", class: "q-my-xs" }, [this.status, " ", this.shared ? h("input", { type: "text", readonly: true, value: this.shared, "aria-label": T("Panel link"), style: { width: "min(100%,40rem)" }, onFocus: (event) => event.target.select() }) : null,

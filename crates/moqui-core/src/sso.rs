@@ -112,6 +112,9 @@ pub enum FlowKind {
 pub struct FlowConfig {
     pub auth_flow_id: String,
     pub kind: FlowKind,
+    /// `AuthFlow.allowPrivateNetwork` is `N`: no request of the flow (discovery, token, keys, user info) goes to a
+    /// loopback, private or link-local address.
+    pub deny_internal: bool,
 }
 
 /// The redirect to the identity provider, and the state to keep in the session until the callback.
