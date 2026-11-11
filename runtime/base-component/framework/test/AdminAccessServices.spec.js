@@ -1,10 +1,11 @@
 // Delegated access administration, org.moqui.admin.AccessServices and IdentityServices.check#AdministrationPath (mr-boss
 // plan/impl-admin.md P3; design-admin §5, §1.1): a custom group is never privileged; grants only from a registered bundle and a
 // sealed one only by its holder; memberships only in a registered bundle or a custom group and a privileged one only by a member,
-// each dated and ended, never deleted, with a stale revision refused; the last administration path refused with a reason; and a
-// change seen at once by the session it changes. Each case with artifact authorization on, as a spec access administrator who
-// holds ADMIN_ACCESS_VIEW and ADMIN_ACCESS_MANAGE through a group of its own (not ADMIN), and as john.doe (ADMIN) where a holder
-// or a member is the point. The EECAs themselves are tested in cargo (service::eca_tests).
+// each dated and ended, never deleted, with a stale revision refused, and a grant proposal by the same rules; the last
+// administration path refused with a reason; and a change seen at once by the session it changes. Each case with artifact
+// authorization on, as a spec access administrator who holds ADMIN_ACCESS_VIEW and ADMIN_ACCESS_MANAGE through a group of its
+// own (not ADMIN), and as john.doe (ADMIN) where a holder or a member is the point. The EECAs themselves are tested in cargo
+// (service::eca_tests).
 // Run: ./moq test framework --spec AdminAccessServices
 const S = "org.moqui.admin.AccessServices."
 const adminUser = "spec.access.admin"
@@ -273,10 +274,18 @@ feature(
                     fromDate: "1265184000000",
                     expectedRevision: "x"
                 })
-                return {unregistered, privileged, sealed, added, overlapping, stale, ended, privilegedEnd}
+                // a grant proposal (an account an app provisions, an invitation) by the same rules, nothing written
+                const proposal = invoke(S + "check#GrantProposal", {
+                    bundleGroupIdList: [bundleId, "ADMIN_ADV", unregisteredId]
+                })
+                return {unregistered, privileged, sealed, added, overlapping, stale, ended, privilegedEnd, proposal}
             })
         },
-        then({unregistered, privileged, sealed, added, overlapping, stale, ended, privilegedEnd}) {
+        then({unregistered, privileged, sealed, added, overlapping, stale, ended, privilegedEnd, proposal}) {
+            const proposed = Object.fromEntries(Array.from(proposal.bundleList).map(row => [row.bundleGroupId, row]))
+            proposal.allowed == false && proposed[bundleId].allowed == true
+            proposed.ADMIN_ADV.allowed == false && proposed.ADMIN_ADV.reasonCode == "PRIVILEGED_GROUP"
+            proposed[unregisteredId].reasonCode == "UNREGISTERED_BUNDLE"
             unregistered.reasonCode == "UNREGISTERED_BUNDLE"
             privileged.reasonCode == "PRIVILEGED_GROUP"
             sealed.reasonCode == "SEALED_PERMISSION"
