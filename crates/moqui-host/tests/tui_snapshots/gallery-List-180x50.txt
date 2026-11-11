@@ -13,8 +13,8 @@
      Wizard              │ Type . . . . : [Email Type                               ▾]
      Dialog              │ Description  : [____________________]
      Report              │ < Find >
-     Panel               │       ID                           Description                       Type       State Code Seq Parent Changed          Row Actions
-     Widgets             │ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     Panel               │       ID                           Description                       Type       State Code Seq Parent Changed
+     Widgets             │ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
      Editor              │   [ ] EMT_ACCOUNT_INVITE           Account Invitation                Email Type Plain                 <stamp> Open
      Message             │                                                                                                                        Clone
      Views               │   [ ] EMT_ADDED_EMAIL_AUTHC_FACTOR Added Email Authentication Type   Email Type Child          System <stamp> Open
