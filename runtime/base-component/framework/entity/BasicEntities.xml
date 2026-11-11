@@ -593,6 +593,15 @@ along with this software (see the LICENSE.md file). If not, see
             send#EmailMessage's deliveryOutcome): retryable (nothing was sent), permanent (refused for good) or uncertain
             (it may have gone: reconciled by its owner, never sent again on its own); empty for a message that was sent
             or never tried. Admin's mail queue reads it (org.moqui.admin.OperationServices.find#MailOutcomes).</description></field>
+        <!-- The settlement of an uncertain send, kept apart from the message's status and sendOutcome, which only the
+            transport's own result sets (org.moqui.admin.OperationServices.reconcile#MailOutcome): what a person concluded,
+            who, when and why. It marks nothing as sent and no reader of statusId takes it for a delivery; it holds for
+            the send it was made for, and a retry's claim clears it (the audit log keeps it). -->
+        <field name="sendSettlement" type="text-short" enable-audit-log="true"><description>What a person reported of a send
+            that is uncertain: delivered or notDelivered. Empty for a message nobody settled.</description></field>
+        <field name="sendSettledByUserId" type="id"/>
+        <field name="sendSettledDate" type="date-time"/>
+        <field name="sendSettledReason" type="text-medium"/>
         <field name="sendClaimDate" type="date-time"><description>When a mail client send claimed the message (ES_READY
             without a sendError, being sent); cleared with its result. A claim left long past this without one is a send
             that stopped, and send#DueDrafts gives it a sendError so it shows in the Outbox.</description></field>

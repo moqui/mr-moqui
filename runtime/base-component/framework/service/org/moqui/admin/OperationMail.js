@@ -10,9 +10,17 @@
 // The outcome is the message's sendOutcome, which the mail services keep with a failed send (send#EmailTemplate's and
 // send#EmailMessage's deliveryOutcome):
 // - retryable or permanent: the server did not take it, so nothing was sent and it may be sent again;
-// - uncertain: the session was lost after it began, so it may have gone. It is never sent again from here: it is reconciled
-//   (someone looks at the relay's own log and says which it was), and only what is then known not sent may be retried;
+// - uncertain: the session was lost after it began, so it may have gone. It is never sent again from here until someone
+//   settles it (looks at the relay's own log and says which it was);
 // - none on a Ready message (a failure before this was kept, or a send that stopped part way): treated as uncertain.
+//
+// The settlement. A message's status and sendOutcome are what the transport knows, and no person sets them: a message is
+// Sent only when a send of it succeeded. What a person concluded about an uncertain send is kept apart, on the message's
+// sendSettlement (delivered or notDelivered: "reported", never known) with who, when and the reason, and in the audit log.
+// A settled message is its own state here (settled), out of "Needs attention" and never counted or shown as Sent; no reader
+// of statusId sees a delivery. Reported not delivered is the person's decision that it did not arrive, so the message may
+// then be sent again as a failed one may: through the retry's claim, which clears the settlement (it was of the send
+// before), and the transport's result of that send is then the message's state.
 //
 // Who acts. A message belongs to whoever sent it:
 // - a mail account's message (emailAccountId) is its sender's, in the Outbox of the mail client, which sends it again or takes
@@ -35,6 +43,11 @@ const CLAIM = "org.moqui.admin.OperationServices.claim#MailOutcomeRetry"
 const relayPermissions = ["ADMIN_CONNECTION_VIEW", "ADMIN_CONNECTION_MANAGE"]
 const outgoing = ["ES_READY", "ES_SENT", "ES_BOUNCED", "ES_CANCELLED"]
 const outcomes = ["retryable", "permanent", "uncertain"]
+// what a person may report of an uncertain send (EmailMessage.sendSettlement), and the owner contract's word for each
+const settlements = {
+    delivered: {text: "Reported delivered", ownerAction: "sent"},
+    notDelivered: {text: "Reported not delivered", ownerAction: "notSent"}
+}
 // a send under way longer than this stopped (as the mail client's fail#StoppedSend reads a claim)
 const sendingMinutes = 15
 // with no dates given, the list reads this far back
@@ -54,6 +67,8 @@ const states = {
         text: "May have been sent",
         next: "The session was lost part way. Look in the mail server's own log before anything is sent again."
     },
+    // told apart by its conclusion in described(): never "Sent"
+    settled: {text: "Settled", next: ""},
     sending: {text: "Being sent", next: "A send is under way."},
     sent: {text: "Sent", next: ""},
     cancelled: {text: "Cancelled", next: ""}
@@ -64,26 +79,33 @@ const stateList = [
     {state: "permanent", text: "Refused"},
     {state: "uncertain", text: "May have been sent"},
     {state: "bounced", text: "Bounced"},
+    {state: "settled", text: "Settled by a person"},
     {state: "sent", text: "Sent"},
     {state: "all", text: "All outgoing"}
 ]
 
 // ===== reading =====
-// The state of a message's last send.
+// The settlement a message carries, or "": what a person reported of its uncertain send.
+const settlementOf = message => (Object.hasOwn(settlements, text(message.sendSettlement)) ? text(message.sendSettlement) : "")
+// The state of a message's last send. Sent is the transport's alone (the status a successful send wrote); a settlement
+// is read only over a send that is uncertain, as "settled", and never as sent.
 function stateOf(message) {
     if (message.statusId === "ES_SENT") return "sent"
     if (message.statusId === "ES_CANCELLED") return "cancelled"
+    const unknown = settlementOf(message) ? "settled" : "uncertain"
     // a bounced message whose retry was claimed and never answered may have gone again
-    if (message.statusId === "ES_BOUNCED") return message.sendOutcome === "uncertain" ? "uncertain" : "bounced"
+    if (message.statusId === "ES_BOUNCED") return message.sendOutcome === "uncertain" ? unknown : "bounced"
     const claimed = ms(message.sendClaimDate)
     if (claimed != null && ms(ec.user.nowTimestamp) - claimed < sendingMinutes * 60000) return "sending"
     if (!text(message.sendError)) {
-        // Ready with no result: just made (being sent), or a send that stopped
+        // Ready with no result: just made (being sent), or a send that stopped; a settled one was last written by its
+        // settlement, not by a send
         const touched = ms(message.lastUpdatedStamp)
-        if (touched != null && ms(ec.user.nowTimestamp) - touched < sendingMinutes * 60000) return "sending"
-        return "uncertain"
+        if (unknown === "uncertain" && touched != null && ms(ec.user.nowTimestamp) - touched < sendingMinutes * 60000)
+            return "sending"
+        return unknown
     }
-    return outcomes.includes(message.sendOutcome) && message.sendOutcome !== "uncertain" ? message.sendOutcome : "uncertain"
+    return outcomes.includes(message.sendOutcome) && message.sendOutcome !== "uncertain" ? message.sendOutcome : unknown
 }
 const recipientCount = message =>
     [message.toAddresses, message.ccAddresses, message.bccAddresses]
@@ -150,20 +172,28 @@ function ownerClaims(emailMessageIds) {
     return {claims, unanswered}
 }
 // A message as the queue shows it, with its owner and what may be done here.
-function described(message, claim, unanswered, canManage, templates) {
+function described(message, claim, unanswered, canManage, templates, userNames = new Map()) {
     const state = stateOf(message)
     const account = !!text(message.emailAccountId)
-    const failed = ["retryable", "permanent", "bounced"].includes(state)
+    const settlement = state === "settled" ? settlementOf(message) : ""
+    // known not sent, or reported not delivered by the person who settled it: either may be sent again
+    const failed = ["retryable", "permanent", "bounced"].includes(state) || settlement === "notDelivered"
     const template = message.emailTemplateId ? templates.get(message.emailTemplateId) : null
     let ownerKind = "mailService"
     let ownerTitle = template ? template.description || template.emailTemplateId : "Mail service"
-    let nextStep = states[state].next
+    let nextStep =
+        settlement === "notDelivered"
+            ? "Someone reported that it did not arrive. It can be sent again."
+            : settlement
+              ? "Someone reported that it arrived. Nothing more is done here."
+              : states[state].next
     let retryEligible = failed
     let reconcileEligible = state === "uncertain"
     const signIn = !account && !claim && signInTemplates().includes(text(message.emailTemplateId))
     if (signIn) {
         retryEligible = false
-        if (failed) nextStep = "Sign-in mail is not sent again: the person asks for a new one. It can be closed."
+        if (failed)
+            nextStep = "Sign-in mail is not sent again: the person asks for a new one." + (settlement ? "" : " It can be closed.")
     }
     if (account) {
         ownerKind = "mailAccount"
@@ -179,7 +209,9 @@ function described(message, claim, unanswered, canManage, templates) {
         if (failed && !retryEligible)
             nextStep = claim.selfRetrying
                 ? "Its owner tries it again on its own."
-                : "Its owner keeps its attempts: nothing is sent from here."
+                : settlement
+                  ? "Settled with its owner, which keeps its attempts: nothing is sent from here."
+                  : "Its owner keeps its attempts: nothing is sent from here."
         if (state === "uncertain" && !reconcileEligible) nextStep = "Its owner reconciles it."
     } else if (unanswered.length && (failed || state === "uncertain")) {
         // an owner that cannot be asked may hold this message: nothing is sent or settled here until it answers
@@ -191,7 +223,17 @@ function described(message, claim, unanswered, canManage, templates) {
         emailMessageId: message.emailMessageId,
         statusId: message.statusId,
         state,
-        stateText: states[state].text,
+        stateText: settlement ? "Settled: " + settlements[settlement].text.toLowerCase() : states[state].text,
+        // the settlement, apart from the outcome: what a person reported, who and when; null on every other state
+        settlement: settlement || null,
+        settlementText: settlement ? settlements[settlement].text : null,
+        // a mail account's message is never settled here, so settlement fields found on one were written by something
+        // else: its row answers the state only, never a person or a reason
+        settledByUserId: settlement && !account ? message.sendSettledByUserId || null : null,
+        settledByName:
+            settlement && !account ? userNames.get(message.sendSettledByUserId) || message.sendSettledByUserId || null : null,
+        settledDate: settlement && !account ? iso(message.sendSettledDate) : null,
+        settledReason: settlement && !account ? text(message.sendSettledReason) || null : null,
         outcome:
             state === "sent" || state === "cancelled"
                 ? null
@@ -216,11 +258,25 @@ function described(message, claim, unanswered, canManage, templates) {
         ownerStateText: claim && !account ? claim.ownerStateText : null,
         retryEligible: canManage && retryEligible,
         reconcileEligible: canManage && reconcileEligible,
-        // a failed message of the mail service's own may be closed, so it is not offered again
-        abandonEligible: canManage && !account && !claim && !unanswered.length && (failed || state === "uncertain"),
+        // a failed or uncertain message of the mail service's own may be closed, so it is not offered again; a settled one
+        // is already out of the way
+        abandonEligible:
+            canManage && !account && !claim && !unanswered.length && !settlement && (failed || state === "uncertain"),
+        // an owner that cannot be asked may hold it: nothing of the mail service's own is acted on until it answers
+        ownerUnavailable: !account && !claim && unanswered.length > 0,
         nextStep,
         revision: stamp(message)
     }
+}
+// The names of the people who settled a page of messages, read in one find.
+function settlerNames(messages) {
+    const ids = Array.from(new Set(messages.map(message => message.sendSettledByUserId).filter(Boolean)))
+    if (!ids.length) return new Map()
+    return new Map(
+        Array.from(
+            find("moqui.security.UserAccount").condition("userId", "in", ids).selectField("userId,username,userFullName").list()
+        ).map(row => [row.userId, text(row.userFullName) || text(row.username) || row.userId])
+    )
 }
 // The templates of a page of messages, read in one find.
 function templatesOf(messages) {
@@ -246,11 +302,45 @@ function outcomeFind(p) {
             [factory.makeCondition("sendOutcome", "equals", "uncertain"), factory.makeCondition("sendOutcome", "equals", null)],
             "or"
         )
-    if (state === "attention") found = found.condition("statusId", "in", ["ES_READY", "ES_BOUNCED"])
+    // a settlement counts only over a send that is uncertain (stateOf): a message known not sent, or bounced since, is
+    // listed as that
+    const unsettled = () =>
+        factory.makeCondition(
+            [
+                factory.makeCondition("sendSettlement", "equals", null),
+                factory.makeCondition("sendOutcome", "in", ["retryable", "permanent"]),
+                factory.makeCondition(
+                    [
+                        factory.makeCondition("statusId", "equals", "ES_BOUNCED"),
+                        factory.makeCondition("sendOutcome", "equals", null)
+                    ],
+                    "and"
+                )
+            ],
+            "or"
+        )
+    const settled = () =>
+        factory.makeCondition(
+            [
+                factory.makeCondition([factory.makeCondition("statusId", "equals", "ES_READY"), noOutcome()], "and"),
+                factory.makeCondition(
+                    [
+                        factory.makeCondition("statusId", "equals", "ES_BOUNCED"),
+                        factory.makeCondition("sendOutcome", "equals", "uncertain")
+                    ],
+                    "and"
+                )
+            ],
+            "or"
+        )
+    if (state === "attention") found = found.condition("statusId", "in", ["ES_READY", "ES_BOUNCED"]).condition(unsettled())
     else if (state === "all") found = found.condition("statusId", "in", outgoing)
+    // Sent is the status a successful send wrote, and nothing else
     else if (state === "sent") found = found.condition("statusId", "ES_SENT")
-    else if (state === "bounced") found = found.condition("statusId", "ES_BOUNCED")
-    else if (state === "uncertain") found = found.condition("statusId", "ES_READY").condition(noOutcome())
+    else if (state === "bounced") found = found.condition("statusId", "ES_BOUNCED").condition(unsettled())
+    else if (state === "uncertain")
+        found = found.condition("statusId", "ES_READY").condition(noOutcome()).condition("sendSettlement", "equals", null)
+    else if (state === "settled") found = found.condition("sendSettlement", "in", Object.keys(settlements)).condition(settled())
     else found = found.condition("statusId", "ES_READY").condition("sendOutcome", state)
     if (text(p.emailMessageId)) found = found.condition("emailMessageId", text(p.emailMessageId))
     if (text(p.emailServerId)) found = found.condition("emailServerId", text(p.emailServerId))
@@ -291,9 +381,10 @@ function findMailOutcomes(given) {
     const open = messages.filter(message => !message.emailAccountId && !["sent", "cancelled"].includes(stateOf(message)))
     const {claims, unanswered} = ownerClaims(open.map(message => message.emailMessageId))
     const templates = templatesOf(messages)
+    const userNames = settlerNames(messages)
     return {
         outcomeList: messages.map(message =>
-            described(message, claims.get(message.emailMessageId), unanswered, canManage, templates)
+            described(message, claims.get(message.emailMessageId), unanswered, canManage, templates, userNames)
         ),
         outcomeCount,
         pageIndex,
@@ -330,11 +421,7 @@ function ownerRefusal(row, revision) {
         return refused("OWNER_ONLY", "This message is in a mail account's Outbox: its sender sends it again or takes it back", {
             revision
         })
-    if (
-        row.ownerKind === "mailService" &&
-        !row.abandonEligible &&
-        ["retryable", "permanent", "bounced", "uncertain"].includes(row.state)
-    )
+    if (row.ownerUnavailable && ["retryable", "permanent", "bounced", "uncertain", "settled"].includes(row.state))
         return refused("OWNER_UNAVAILABLE", row.nextStep, {revision})
     return null
 }
@@ -360,7 +447,8 @@ function ownerAction(claim, emailMessageId, action, reason, key) {
     return {applied: true, ownerStateText: text(asked.out.ownerStateText).slice(0, 120)}
 }
 
-// retry#MailOutcome: send a message that is known not sent again, through its owner; an uncertain one is never sent.
+// retry#MailOutcome: send again, through its owner, a message that is known not sent or that a person settled as not
+// delivered; an uncertain one that nobody settled, and one reported delivered, are never sent.
 function retryMailOutcome(p) {
     lib.requireManage()
     const key = lib.operationKey(p)
@@ -380,6 +468,8 @@ function retryMailOutcome(p) {
                     (row.reconcileEligible ? states.uncertain.next : row.nextStep),
                 {revision}
             )
+        if (row.settlement === "delivered")
+            return refused("SETTLED", "The message was settled as reported delivered: it is not sent again", {revision})
         const owned = ownerRefusal(row, revision)
         if (owned) return owned
         if (row.signIn) return refused("SIGN_IN_MAIL", row.nextStep, {revision})
@@ -406,9 +496,10 @@ function retryMailOutcome(p) {
         return Object.assign({applied: true, sent: true}, after)
     })
 }
-// The retry's claim, in a transaction of its own: the message locked, still at the revision read and still known not sent;
-// it is then marked uncertain with the claim's time, so a second request and a server that stops part way both find it
-// held. With release, the claim's time is cleared (the mail service has written the result, or nothing).
+// The retry's claim, in a transaction of its own: the message locked, still at the revision read and still known not sent
+// (or settled as not delivered); it is then marked uncertain with the claim's time, so a second request and a server that
+// stops part way both find it held, and a settlement is cleared: it was of the send before, and this send's result is
+// the transport's to give. With release, the claim's time is cleared (the mail service has written the result, or nothing).
 function claimMailOutcomeRetry(p) {
     if (!ec.artifactExecution.authzDisabled() && !ec.user.hasPermission(lib.MANAGE)) throw new Error(lib.MANAGE + " is required")
     const emailMessageId = text(p.emailMessageId)
@@ -425,12 +516,18 @@ function claimMailOutcomeRetry(p) {
     }
     const current = map(message)
     if (stamp(current) !== text(p.expectedRevision) || current.emailAccountId) return {claimed: false}
-    if (!["retryable", "permanent", "bounced"].includes(stateOf(current))) return {claimed: false}
+    const state = stateOf(current)
+    const settledNotDelivered = state === "settled" && settlementOf(current) === "notDelivered"
+    if (!["retryable", "permanent", "bounced"].includes(state) && !settledNotDelivered) return {claimed: false}
     message.setFields(
         {
             sendClaimDate: ec.user.nowTimestamp,
             sendOutcome: "uncertain",
-            sendError: "A retry of this message began and its result was not recorded"
+            sendError: "A retry of this message began and its result was not recorded",
+            sendSettlement: null,
+            sendSettledByUserId: null,
+            sendSettledDate: null,
+            sendSettledReason: null
         },
         true,
         null,
@@ -440,50 +537,66 @@ function claimMailOutcomeRetry(p) {
     return {claimed: true}
 }
 
-// reconcile#MailOutcome: what a person found for a message that may have been sent: sent (it is marked Sent), notSent (it is
-// then known not sent, and may be retried), or abandon (closed: it is not sent again). Nothing is sent.
+// reconcile#MailOutcome: what a person concluded about a message that may have been sent, kept apart from the message's
+// sent state: delivered or notDelivered is recorded as its settlement (who, when, the reason; the status and sendOutcome
+// stay what the transport left, so nothing reads it as Sent), and abandon closes a failed or uncertain message (Cancelled:
+// it is not sent again). Nothing is sent. One settlement for a send: a second is refused, or answered by its operation key.
 function reconcileMailOutcome(p) {
     lib.requireManage()
     const key = lib.operationKey(p)
     const emailMessageId = text(p.emailMessageId)
     const resolution = text(p.resolution)
-    if (!["sent", "notSent", "abandon"].includes(resolution)) throw new Error("A resolution is sent, notSent or abandon")
+    if (resolution !== "abandon" && !Object.hasOwn(settlements, resolution))
+        throw new Error("A resolution is delivered, notDelivered or abandon")
     const reason = lib.requiredReason(p)
     return lib.once(key, "mailReconcile", emailMessageId, () => {
         const found = actionable(p)
         if (found.answer) return found.answer
-        const {message, row, claim} = found
+        const {row, claim} = found
         const revision = row.revision
         if (["sent", "cancelled"].includes(row.state))
             return refused("NOT_FAILED", "The message is " + row.stateText.toLowerCase(), {revision})
         if (row.state === "sending") return refused("IN_PROGRESS", "A send of this message is under way", {revision})
+        if (row.state === "settled")
+            return refused("ALREADY_SETTLED", "The message is settled (" + row.settlementText.toLowerCase() + ")", {revision})
         const owned = ownerRefusal(row, revision)
         if (owned) return owned
         if (row.ownerKind === "registered") {
             if (resolution === "abandon" || !row.reconcileEligible) return refused("OWNER_RECONCILES", row.nextStep, {revision})
-            const done = ownerAction(claim, emailMessageId, resolution, reason, key)
+            const done = ownerAction(claim, emailMessageId, settlements[resolution].ownerAction, reason, key)
             if (!done.applied) return Object.assign(done, {revision})
         } else if (resolution !== "abandon" && row.state !== "uncertain")
-            return refused("NOT_UNCERTAIN", "Only a message that may have been sent is reconciled; this one was not sent", {
+            return refused("NOT_UNCERTAIN", "Only a message that may have been sent is settled; this one was not sent", {
                 revision
             })
-        // the message's own record: Sent by a person's word, known not sent, or closed; each with its audit row
+        // the message's own record: the settlement beside what the transport left, or closed; each with its audit row
         const locked = find(MESSAGE, {emailMessageId}).forUpdate(true).one()
         if (stamp(locked) !== revision)
             return refused("STALE_REVISION", "The message changed since it was read; read it again and repeat", {
                 revision: stamp(locked)
             })
         const fields =
-            resolution === "sent"
-                ? {statusId: "ES_SENT", sendOutcome: null, sendError: null, sendClaimDate: null}
-                : resolution === "abandon"
-                  ? {statusId: "ES_CANCELLED", sendClaimDate: null}
-                  : {sendOutcome: "retryable", sendClaimDate: null}
-        if (fields.statusId) lib.auditReason(reason, ["statusId"])
-        else lib.auditRow(MESSAGE, "sendOutcome", emailMessageId, null, message.sendOutcome || null, "retryable", reason)
+            resolution === "abandon"
+                ? {statusId: "ES_CANCELLED", sendClaimDate: null}
+                : {
+                      sendSettlement: resolution,
+                      sendSettledByUserId: ec.user.userId,
+                      sendSettledDate: ec.user.nowTimestamp,
+                      sendSettledReason: reason
+                  }
+        lib.auditReason(reason, [resolution === "abandon" ? "statusId" : "sendSettlement"])
         locked.setFields(fields, true, null, null)
         locked.update()
-        return Object.assign({applied: true, resolution}, answerOf(emailMessageId))
+        const after = map(one(MESSAGE, {emailMessageId}))
+        const answer = {applied: true, resolution, state: stateOf(after), revision: stamp(after)}
+        if (resolution !== "abandon")
+            Object.assign(answer, {
+                settlement: resolution,
+                settlementText: settlements[resolution].text,
+                settledByUserId: after.sendSettledByUserId,
+                settledDate: iso(after.sendSettledDate)
+            })
+        return answer
     })
 }
 
