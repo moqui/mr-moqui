@@ -321,6 +321,39 @@ test("playlist controls render authorized frames and reject stale or changed sel
         assert.equal(target.textContent,'');
     } finally {if(!unmounted)app.unmount();target.remove();moqui.request=previousRequest;window.setInterval=previousInterval;window.fetch=previousFetch;}
 });
+test("a kiosk playlist of one refreshes its dashboard each turn, retries a failure and reloads the page when refused", async () => {
+    const target=document.createElement('div');document.body.appendChild(target);
+    const previousRequest=moqui.request,previousInterval=window.setInterval,previousReload=report.reloadPage,pending=[];let rotate,reloads=0;
+    moqui.request=(url,options)=>new Promise((resolve,reject)=>pending.push({url,options,resolve,reject}));
+    window.setInterval=(callback,ms)=>{if(ms===3600000)rotate=callback;return previousInterval(callback,ms);};
+    report.reloadPage=()=>{reloads++;};
+    const app=Vue.createApp(moqui.qvtComponents['m-report-playlist'],{kiosk:true,seconds:3600,
+        source:'/apps/Insights/WallDisplay/data?definitionId=wall&from=now-30d&thru=now',
+        items:[{index:1,title:'Floor',url:'?definitionId=floor&from=now-30d&thru=now'}]});
+    const answer=value=>({json:{dashboard:{definitionId:'floor',panels:{total:{title:'Orders',visualization:'table'}}},
+        frames:{total:[{fields:[{name:'count',type:'number',values:[value]}]}]}}});
+    const settled=async()=>{await Promise.resolve();await Vue.nextTick();};
+    try {
+        const playlist=app.mount(target);await Vue.nextTick();
+        assert.equal(target.querySelector('a[href*="definitionId=floor"]'),null,'a kiosk offers no link out');
+        pending[0].resolve(answer(5));await settled();
+        assert.equal(target.querySelector('.m-report-embed').textContent.includes('5'),true);
+        assert.equal(target.querySelector('.m-report-embed button[aria-label^="Inspect"], .m-report-embed button[aria-label^="Export"], .m-report-embed button[aria-label^="Panel menu"]'),null,'a kiosk panel has no export, inspect or menu');
+        assert.equal(target.querySelector('.m-report-embed a'),null,'nor a link to open the dashboard');
+        rotate();await Vue.nextTick();
+        assert.equal(pending.length,2,'the only dashboard is loaded again at the turn');
+        assert.equal(new URL(pending[1].url,location.href).searchParams.get('index'),'1');
+        assert.equal(target.querySelector('.m-report-embed').textContent.includes('5'),true,'the shown frames stay until the new ones come');
+        pending[1].resolve(answer(7));await settled();
+        assert.equal(target.querySelector('.m-report-embed').textContent.includes('7'),true);
+        rotate();await Vue.nextTick();pending[2].reject({status:0});await settled();
+        assert.equal(playlist.paused,false,'a failure is tried again at the next turn');
+        assert.equal(target.querySelector('[role="alert"]').textContent,'Could not load this dashboard. It is tried again at the next turn.');
+        assert.equal(reloads,0);
+        rotate();await Vue.nextTick();pending[3].reject({status:403});await settled();
+        assert.equal(reloads,1,'a refused request loads the page again, which the server answers with its refusal');
+    } finally {app.unmount();target.remove();moqui.request=previousRequest;window.setInterval=previousInterval;report.reloadPage=previousReload;}
+});
 test("structural pills retain typed values, negation, disable, labels and user-scoped pins", async () => {
     const target=document.createElement('div');document.body.appendChild(target);
     const form={fields:Vue.reactive({queryString:'',filtersJson:'[]'})},props={datasetId:'pill-test',viewerId:'reader-test',fields:[{name:'duration',type:'number',searchable:true},{name:'status',type:'string',searchable:true}]};

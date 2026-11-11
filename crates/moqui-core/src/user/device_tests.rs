@@ -323,3 +323,24 @@ fn a_display_account_never_signs_in_and_must_stay_fit_for_its_device() {
     account.update(&facade).unwrap();
     assert_eq!(refusal(&cookie), Some(Refusal::Account), "disabled for good");
 }
+
+#[test]
+fn a_refused_display_gets_a_plain_page_with_nothing_of_the_instance() {
+    for refusal in [
+        Refusal::Unknown,
+        Refusal::Revoked,
+        Refusal::Stopped,
+        Refusal::Address,
+        Refusal::Account,
+    ] {
+        let page = refusal_page(refusal.page_text());
+        assert!(page.starts_with("<!DOCTYPE html>"));
+        assert!(page.contains(&crate::screen::encode_html(refusal.page_text())));
+        assert!(page.contains("href=\"/Device\""));
+        // no script, style sheet, image or other link of the instance's; no route group, device or account
+        for absent in ["<script", "<link", "<img", "INSIGHTS", "moqui"] {
+            assert!(!page.contains(absent), "{absent} in {page}");
+        }
+    }
+    assert!(refusal_page("<b>").contains("&lt;b&gt;"));
+}

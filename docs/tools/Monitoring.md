@@ -352,7 +352,10 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   with the time range (`now-6h`, `now/d`, `now-1M/M`, `now/fy`; `<report week-start fiscal-start-month
   fiscal-start-day/>` in the conf sets the week and fiscal year). Keys: `t-` zooms out, `t←`/`t→` shift the range,
   `e` edits, `v` views a panel, `i` inspects, `d k` toggles kiosk mode, and Esc leaves kiosk mode, then the single-panel
-  view (in the TUI it closes the inspector first). Playlists rotate dashboards in kiosk mode for a wall display.
+  view (in the TUI it closes the inspector first). Playlists rotate dashboards in kiosk mode for a wall display; a
+  playlist of one dashboard loads it again at each turn, and `m-report-playlist` with `kiosk` (a shared device's page, such as BOSS Insights' WallDisplay) offers no link out, retries a
+  failed load at the next turn instead of pausing, and reloads the page when a load is refused (401, 403), so the server's
+  plain refusal page replaces it ([Shared devices](../security/Shared-Devices.md)).
   The time picker has quick ranges, the viewer's recent ranges and an absolute range. Each panel's menu has view,
   edit, share (a link with the time made absolute), explore, inspect, duplicate, remove and new alert rule. The
   editor suggests visualizations from the query's or the data's columns. Tables can have footer calculations
