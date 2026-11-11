@@ -54,7 +54,7 @@ flowchart LR
 
 | Name | Full name | How |
 |---|---|---|
-| [Shop](../Shop.md) | `component://autodoc-shop/screen/Shop.xml` | subscreens-item in subscreen Orders |
+| [Shop](../Shop.md) | `component://autodoc-shop/screen/Shop.xml` | default-item, subscreens-item in subscreen Orders |
 
 ### Uses
 

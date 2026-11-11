@@ -31,13 +31,13 @@ pub mod rows;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use moqui_db::sql::Condition;
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, try_lock};
 use serde::Serialize;
 
 pub use self::extract::{ArtifactRow, BindingRow, FileIndex, FileInfo, RefRow, ToKind};
@@ -211,8 +211,9 @@ pub fn hash_of(text: &str) -> String {
     // 3 the transition anchors of a screen-extend, 4 relationships, indexes, view members, form fields, subscreens items,
     // ext items, widget templates, data records, service includes, a screen-extend's own transitions and forms, and ECA
     // keys by rule name or target, 5 the references' operations and origins, the bindings and the primary key mark of a
-    // field.
-    let digest = Sha256::digest(format!("5\n{text}").as_bytes());
+    // field, 6 screen paths (links, responses, forms' transitions, default items), directory subscreens, a subscreens
+    // item's no-sub-path mark, the services a transition passes the request to, and the bindings of a form's fields.
+    let digest = Sha256::digest(format!("6\n{text}").as_bytes());
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -292,6 +293,28 @@ pub fn synthetic(files: &[Located], dir: &Path, factor: usize) -> Result<Vec<Loc
         }
     }
     Ok(copies)
+}
+
+/// The directory of each component `files` are in, in the order they first come: a file's path less its path in the
+/// component. A file whose path does not end so (a copy written elsewhere) names none.
+fn component_roots(files: &[Located]) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for file in files {
+        let Some((_, relative)) = file
+            .location
+            .strip_prefix("component://")
+            .and_then(|rest| rest.split_once('/'))
+        else {
+            continue;
+        };
+        let Some(root) = file.path.ancestors().nth(relative.split('/').count()) else {
+            continue;
+        };
+        if root.join(relative) == file.path && !roots.iter().any(|known| known == root) {
+            roots.push(root.to_path_buf());
+        }
+    }
+    roots
 }
 
 /// Whether a resource location names something that exists.
@@ -408,21 +431,51 @@ impl MemoryIndex {
     /// Read every component file of `factory`.
     #[must_use]
     pub fn build(factory: &ExecutionContextFactory) -> Self {
-        Self::of_files(factory, &component_files(factory))
+        let mut index = Self::default();
+        // the conf's screen mounts, so a path through `/apps/...` walks them
+        let mounts = rows::conf_mounts(&moqui_core::screen::ScreenFacade::of(factory).conf().screens);
+        index.take(mounts.path.clone(), mounts.path, mounts.hash, mounts.index);
+        index.read_files(factory, &component_files(factory));
+        index
     }
 
-    /// Read `files`.
+    /// Read `files`, with the screen mounts of their components, so a path through `/apps/...` walks them as a server's
+    /// index does: when `factory` loaded every component the files are in (a project booted on its own runtime), the
+    /// mounts of its merged conf, which boot merged with the runtime conf; else (a plain directory read on its own)
+    /// those of the components' own `MoquiConf.xml`s ([`rows::directory_mounts`]).
     #[must_use]
     pub fn of_files(factory: &ExecutionContextFactory, files: &[Located]) -> Self {
         let mut index = Self::default();
+        let roots = component_roots(files);
+        let loaded = factory.components();
+        let all_loaded = !roots.is_empty()
+            && roots.iter().all(|root| {
+                let root = canonical(root);
+                loaded.iter().any(|component| canonical(&component.location) == root)
+            });
+        let mounts = if all_loaded {
+            Some(rows::conf_mounts(
+                &moqui_core::screen::ScreenFacade::of(factory).conf().screens,
+            ))
+        } else {
+            rows::directory_mounts(&roots)
+        };
+        if let Some(mounts) = mounts {
+            index.take(mounts.path.clone(), mounts.path, mounts.hash, mounts.index);
+        }
+        index.read_files(factory, files);
+        index
+    }
+
+    /// Read `files` into the index, and resolve everything.
+    fn read_files(&mut self, factory: &ExecutionContextFactory, files: &[Located]) {
         for file in files {
             match file.extract(factory) {
-                Ok((hash, read)) => index.take(file.path.display().to_string(), file.location.clone(), hash, read),
-                Err(problem) => index.problem(file, problem),
+                Ok((hash, read)) => self.take(file.path.display().to_string(), file.location.clone(), hash, read),
+                Err(problem) => self.problem(file, problem),
             }
         }
-        index.resolve_all(&|location: &str| location_exists(factory, location));
-        index
+        self.resolve_all(&|location: &str| location_exists(factory, location));
     }
 
     /// The stamp of the files read.
@@ -889,6 +942,16 @@ struct IndexState {
     stamp: Mutex<Option<IndexStamp>>,
     /// Moved on each time the rows change, so a stamp made of rows read before a change is not kept.
     generation: AtomicU64,
+    /// The entity facade's screen configuration generation ([`moqui_core::entity::screen_config_generation`]) when the
+    /// `SubscreensItem` rows were last read: when it moves, they are read again ([`source_changes`]).
+    screen_rows: AtomicU64,
+    /// A conf reload changed the screens while a build or update held the lock: the conf's mounts are read before it
+    /// lets go, or at the next use.
+    conf_pending: AtomicBool,
+    /// How many builds ran ([`builds`]).
+    builds: AtomicU64,
+    /// When a refresh of the sources last logged its failure, in epoch milliseconds: at most once a minute.
+    logged_at: AtomicI64,
 }
 
 impl IndexState {
@@ -943,11 +1006,29 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
     }
 }
 
-/// Keep the index current with each reload, once per factory.
-fn listen(factory: &ExecutionContextFactory) {
+/// Keep the index current with each reload, once per factory: the files a reload read, and the conf's screen mounts
+/// after each conf reload that changed the screens (every way the conf is reloaded: the watcher, `reload#Conf`,
+/// System › Conf, a pull, a component load, SIGHUP).
+fn listen(factory: &Arc<ExecutionContextFactory>) {
     if state(factory).listening.swap(true, Ordering::SeqCst) {
         return;
     }
+    let weak = Arc::downgrade(factory);
+    moqui_core::context::conf_reload::on_apply(
+        factory,
+        moqui_core::context::conf_reload::catalog::Group::Screens,
+        move |_| {
+            let Some(factory) = weak.upgrade() else {
+                return;
+            };
+            if factory.is_shutting_down() {
+                return;
+            }
+            // never waits on a build or update, which would hold the reload up: one that holds the lock reads them
+            state(&factory).conf_pending.store(true, Ordering::SeqCst);
+            refresh(&factory);
+        },
+    );
     super::reload::on_reload(factory, |factory, report| {
         if factory.is_shutting_down() || !state(factory).built.load(Ordering::SeqCst) {
             return;
@@ -971,6 +1052,11 @@ pub fn ensure(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
         ));
     }
     if state(factory).built.load(Ordering::SeqCst) {
+        // a conf reload left for later, or a SubscreensItem row written since the rows were read: read again before
+        // the query, unless a build or update has the lock (it reads them before it lets go)
+        if state(factory).conf_pending.load(Ordering::SeqCst) || screen_rows_moved(factory) {
+            refresh(factory);
+        }
         return Ok(());
     }
     listen(factory);
@@ -1066,12 +1152,15 @@ pub fn build_files(
 ) -> Result<BuildReport, Error> {
     let state = state(factory);
     let _running = lock(&state.running);
+    state.builds.fetch_add(1, Ordering::SeqCst);
     let started = std::time::Instant::now();
     let entered = factory.new_context();
     let _enter = entered.enter();
     let _authz = entered.disable_authz();
     let _lifted = fence::lift();
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
+    // before the SubscreensItem rows are read: a write while they are read moves it again
+    let screen_rows = moqui_core::entity::screen_config_generation(&facade);
     // what the rows hold: each file's hash, and the ids for resolving
     let mut hashes: HashMap<String, String> = HashMap::new();
     for row in facade
@@ -1124,26 +1213,25 @@ pub fn build_files(
         }
         changes.push(change_of(factory, file, &text));
     }
-    // the artifacts that are rows: service jobs, data documents, email templates, DbForm forms
-    for source in if rows { rows::read(&facade) } else { Vec::new() } {
+    // the artifacts that are rows: service jobs, data documents, email templates, DbForm forms, subscreens items; and
+    // the conf's screen mounts
+    let mut sources = Vec::new();
+    if rows {
+        sources = rows::read(&facade);
+        let mounts = rows::conf_mounts(&moqui_core::screen::ScreenFacade::of(factory).conf().screens);
+        on_disk.insert(mounts.path.clone());
+        sources.push(mounts);
+    }
+    for source in sources {
         if hashes.get(&source.path).is_some_and(|hash| *hash == source.hash) {
             report.unchanged += 1;
             continue;
         }
-        changes.push(Change::Read {
-            file: Located {
-                path: PathBuf::from(&source.path),
-                component: String::new(),
-                location: source.path,
-                kind: ArtifactKind::Other,
-            },
-            hash: source.hash,
-            index: source.index,
-        });
+        changes.push(source_change(source));
     }
     for path in hashes
         .keys()
-        .filter(|path| !path.starts_with("db:") && !on_disk.contains(*path))
+        .filter(|path| !path.starts_with("db:") && *path != extract::CONF_PATH && !on_disk.contains(*path))
     {
         changes.push(Change::Removed(path.clone()));
     }
@@ -1153,6 +1241,7 @@ pub fn build_files(
         // not marked built: what the build did not write is read again at the next start, by its file's hash
         return Ok(report);
     }
+    state.screen_rows.store(screen_rows, Ordering::SeqCst);
     state.built.store(true, Ordering::SeqCst);
     report.millis = started.elapsed().as_millis();
     tracing::info!(
@@ -1166,7 +1255,14 @@ pub fn build_files(
         report.artifacts,
         report.refs
     );
+    refresh_locked(factory, &facade, &state);
     Ok(report)
+}
+
+/// How many builds ran on this factory since it started (a full one, or one reading only the files changed).
+#[must_use]
+pub fn builds(factory: &ExecutionContextFactory) -> u64 {
+    state(factory).builds.load(Ordering::SeqCst)
 }
 
 /// Read `paths` again (each reload's files), replacing their rows; a path gone removes its rows.
@@ -1200,6 +1296,7 @@ pub fn update_files(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) -
         ..BuildReport::default()
     };
     apply(factory, &facade, &state, changes, &mut report)?;
+    refresh_locked(factory, &facade, &state);
     report.millis = started.elapsed().as_millis();
     Ok(report)
 }
@@ -1224,8 +1321,179 @@ pub fn update_located(factory: &Arc<ExecutionContextFactory>, files: &[Located])
         ..BuildReport::default()
     };
     apply(factory, &facade, &state, changes, &mut report)?;
+    refresh_locked(factory, &facade, &state);
     report.millis = started.elapsed().as_millis();
     Ok(report)
+}
+
+/// Read again the sources that changed when no build or update holds the index's lock (a conf reload's hook, a query):
+/// one that holds it reads them before it lets go ([`refresh_locked`]), so nothing waits behind it.
+fn refresh(factory: &Arc<ExecutionContextFactory>) {
+    let state = state(factory);
+    let Some(_running) = try_lock(&state.running) else {
+        return;
+    };
+    let entered = factory.new_context();
+    let _enter = entered.enter();
+    let _authz = entered.disable_authz();
+    let _lifted = fence::lift();
+    let Some(facade) = factory.entity() else {
+        return;
+    };
+    refresh_locked(factory, &facade, &state);
+}
+
+/// With the index's lock held: read again the conf's mounts when a conf reload is pending, and the `SubscreensItem`
+/// rows when one was written; what fails is left to be tried again at the next use, its failure logged at most once a
+/// minute.
+fn refresh_locked(factory: &ExecutionContextFactory, facade: &EntityFacade, state: &IndexState) {
+    let conf = state.conf_pending.swap(false, Ordering::SeqCst);
+    if let Err(err) = update_sources(factory, facade, state, conf) {
+        if conf {
+            state.conf_pending.store(true, Ordering::SeqCst);
+        }
+        log_throttled(
+            state,
+            &format!("Artifact index: the update of the conf mounts and SubscreensItem rows failed: {err}"),
+        );
+    }
+}
+
+/// With the index's lock held: replace the rows of the sources that changed ([`source_changes`]; with `conf`, the
+/// conf's screen mounts too); a mount added, moved or removed walks the screen paths again (`apply`). Nothing before
+/// the first build, which reads them all.
+fn update_sources(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    state: &IndexState,
+    conf: bool,
+) -> Result<BuildReport, Error> {
+    if !state.built.load(Ordering::SeqCst) || factory.is_shutting_down() {
+        return Ok(BuildReport::default());
+    }
+    let started = std::time::Instant::now();
+    let (changes, taken) = source_changes(factory, facade, state, conf);
+    let mut report = BuildReport {
+        files: changes.len(),
+        ..BuildReport::default()
+    };
+    if let Err(err) = apply(factory, facade, state, changes, &mut report) {
+        restore_screen_rows(state, taken);
+        return Err(err);
+    }
+    report.millis = started.elapsed().as_millis();
+    Ok(report)
+}
+
+/// Log `message` as an error unless one was logged in the last minute.
+fn log_throttled(state: &IndexState, message: &str) {
+    let now = now_millis();
+    let last = state.logged_at.load(Ordering::SeqCst);
+    if now - last >= 60_000
+        && state
+            .logged_at
+            .compare_exchange(last, now, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    {
+        tracing::error!("{message}");
+    }
+}
+
+/// Whether a `SubscreensItem` row was written since the index read them (a check of a counter, no lock).
+fn screen_rows_moved(factory: &ExecutionContextFactory) -> bool {
+    factory.entity().is_some_and(|facade| {
+        moqui_core::entity::screen_config_generation(&facade) != state(factory).screen_rows.load(Ordering::SeqCst)
+    })
+}
+
+/// The generation a refresh took in place of the one before it (old, new): put back when the refresh failed, so the
+/// next use tries again (not when another write moved it meanwhile).
+type Taken = Option<(u64, u64)>;
+
+fn restore_screen_rows(state: &IndexState, taken: Taken) {
+    if let Some((old, new)) = taken {
+        let _ = state
+            .screen_rows
+            .compare_exchange(new, old, Ordering::SeqCst, Ordering::SeqCst);
+    }
+}
+
+/// The sources whose rows are no longer what the index holds: with `conf`, the conf's screen mounts now
+/// ([`rows::conf_mounts`], read after a conf reload), and the `SubscreensItem` rows when one was written since they
+/// were read, with the generation taken for them. Each is compared with the hash of its pseudo file's row, so one that
+/// did not change writes nothing.
+fn source_changes(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    state: &IndexState,
+    conf: bool,
+) -> (Vec<Change>, Taken) {
+    let mut sources = Vec::new();
+    if conf {
+        sources.push(rows::conf_mounts(
+            &moqui_core::screen::ScreenFacade::of(factory).conf().screens,
+        ));
+    }
+    // taken before the rows are read: a write while they are read moves it again
+    let generation = moqui_core::entity::screen_config_generation(facade);
+    let old = state.screen_rows.swap(generation, Ordering::SeqCst);
+    let mut taken = None;
+    if old != generation {
+        match rows::read_entity(facade, rows::SUBSCREENS_ITEM) {
+            Ok(source) => {
+                sources.push(source);
+                taken = Some((old, generation));
+            }
+            Err(err) => {
+                restore_screen_rows(state, Some((old, generation)));
+                log_throttled(
+                    state,
+                    &format!("Artifact index: the SubscreensItem rows were not read: {err}"),
+                );
+            }
+        }
+    }
+    let mut changes = Vec::new();
+    for source in sources {
+        let stored = match stored_hash(facade, &source.path) {
+            Ok(hash) => hash,
+            Err(err) => {
+                // written again: its rows are replaced whole, so a write of the same rows changes nothing
+                tracing::error!("Artifact index: the hash of {} was not read: {err}", source.path);
+                None
+            }
+        };
+        if stored.as_deref() != Some(source.hash.as_str()) {
+            changes.push(source_change(source));
+        }
+    }
+    (changes, taken)
+}
+
+/// The hash the rows hold for the file or pseudo file `path`; none when it has no row.
+fn stored_hash(facade: &EntityFacade, path: &str) -> Result<Option<String>, Error> {
+    Ok(facade
+        .find(FILE)?
+        .eq("filePath", Value::string(path))
+        .select_field("fileHash")
+        .list()?
+        .values()
+        .first()
+        .map(|row| text(row, "fileHash")))
+}
+
+/// The change that writes the rows of `source`, a pseudo file of no component.
+fn source_change(source: rows::RowSource) -> Change {
+    Change::Read {
+        file: Located {
+            path: PathBuf::from(&source.path),
+            component: String::new(),
+            location: source.path,
+            kind: ArtifactKind::Other,
+        },
+        hash: source.hash,
+        index: source.index,
+    }
 }
 
 fn read_change(factory: &ExecutionContextFactory, file: &Located) -> Option<Change> {
@@ -1296,7 +1564,8 @@ fn apply(
     // the entities whose fields changed, by id: their derived entity-auto services are derived again
     let mut changed_entities: HashSet<String> = HashSet::new();
     let derived: Derived;
-    let fresh_screens: bool;
+    // whether a screen, subscreens item or transition was added, changed or removed: every screen path is walked again
+    let screens_changed: bool;
     // ids another file defines too (an entity defined again): their row is replaced, the later definition winning
     let shared: HashSet<String>;
     // the files that have rows: only theirs are read and removed first
@@ -1324,6 +1593,14 @@ fn apply(
         }
     }
     {
+        // the screens, items and transitions before and after, by id and summary (an item's location, a transition's
+        // services): a path goes elsewhere only when they differ
+        let walked = |artifact: &ArtifactRow| {
+            matches!(artifact.kind.as_str(), "screen" | "subscreen" | "transition")
+                .then(|| (artifact.id.clone(), artifact.summary.clone()))
+        };
+        let mut walked_before: HashSet<(String, String)> = HashSet::new();
+        let mut walked_after: HashSet<(String, String)> = HashSet::new();
         let mut resolver = lock(&state.resolver);
         for change in &changes {
             let path = match change {
@@ -1339,6 +1616,7 @@ fn apply(
             match old_artifacts(facade, &path) {
                 Ok(old_rows) => {
                     for old in old_rows {
+                        walked_before.extend(walked(&old));
                         resolver.remove(&old);
                         if old.kind == "field" {
                             changed_entities.extend(old.parent.clone());
@@ -1349,12 +1627,11 @@ fn apply(
                 Err(err) => tracing::error!("Artifact index: the old rows of {path} were not read: {err}"),
             }
         }
-        // the ids the files had: an added screen, subscreens item or transition not among them may answer a screen path
-        let old_ids = gone.clone();
         for change in &changes {
             if let Change::Read { index, .. } = change {
                 for artifact in &index.artifacts {
                     resolver.add(artifact);
+                    walked_after.extend(walked(artifact));
                     if artifact.kind == "field" {
                         changed_entities.extend(artifact.parent.clone());
                     }
@@ -1363,9 +1640,7 @@ fn apply(
                 }
             }
         }
-        fresh_screens = added.iter().any(|artifact| {
-            matches!(artifact.kind.as_str(), "screen" | "subscreen" | "transition") && !old_ids.contains(&artifact.id)
-        });
+        screens_changed = walked_before != walked_after;
         let waiting = waiting_refs(facade, &added, &changed_paths);
         derived = derive_in(&mut resolver, &changes, &waiting, &changed_entities, &added, &mut gone);
         added.extend(derived.rows.iter().cloned());
@@ -1464,7 +1739,15 @@ fn apply(
         left -= batch.len();
     }
     unresolve(facade, &tx, &gone, &changed_paths)?;
-    resolve_added(factory, facade, state, &tx, &added, fresh_screens, &changed_paths)?;
+    resolve_added(factory, facade, state, &tx, &added, &changed_paths)?;
+    // nothing to walk again when every file with rows was read now (a full build): each path was walked as it was read
+    let read_now = changes
+        .iter()
+        .filter(|change| matches!(change, Change::Read { .. }))
+        .count();
+    if screens_changed && usize::try_from(facade.find(FILE)?.count()?).unwrap_or(0) > read_now {
+        walk_again(factory, facade, state, &tx, &changed_paths)?;
+    }
     report.write_millis = writing.elapsed().as_millis();
     Ok(())
 }
@@ -1719,6 +2002,7 @@ fn fill_binding(row: &mut EntityValue, binding: &BindingRow) {
         "sourceId",
         binding.source_id.as_deref().map_or(Value::Null, Value::string),
     );
+    row.set("toPath", binding.to_path.as_deref().map_or(Value::Null, Value::string));
     row.set("origin", Value::string(&binding.origin));
     row.set("originHash", Value::string(&binding.origin_hash));
     row.set("lineNumber", Value::I64(i64::from(binding.line)));
@@ -1765,8 +2049,7 @@ fn remove_file(facade: &EntityFacade, path: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// The references elsewhere to artifacts no file defines any more, and the default subscreen references from a screen
-/// no file defines any more ([`extract::ORIGIN_DIRECTORY`]): unresolved now.
+/// The references elsewhere to artifacts no file defines any more: unresolved now.
 fn unresolve(
     facade: &EntityFacade,
     tx: &moqui_core::transaction::TransactionManager,
@@ -1776,45 +2059,32 @@ fn unresolve(
     let ids: Vec<&String> = gone.iter().collect();
     for chunk in ids.chunks(500) {
         let values: Vec<Value> = chunk.iter().map(|id| Value::string(id.as_str())).collect();
-        let mut rows = facade
+        let rows = facade
             .find(REF)?
-            .condition(Condition::is_in("toArtifactId", values.clone()))
+            .condition(Condition::is_in("toArtifactId", values))
             .list()?
             .into_values();
-        rows.extend(
-            facade
-                .find(REF)?
-                .condition(Condition::is_in("fromArtifactId", values))
-                .eq("origin", Value::string(extract::ORIGIN_DIRECTORY))
-                .eq("resolved", Value::string("Y"))
-                .list()?
-                .into_values(),
-        );
-        tx.run(TransactionAttribute::ForceNew, None, || {
-            for mut row in rows {
-                if changed.contains(&text(&row, "filePath")) {
-                    continue;
-                }
+        let rows: Vec<EntityValue> = rows
+            .into_iter()
+            .filter(|row| !changed.contains(&text(row, "filePath")))
+            .map(|mut row| {
                 row.set("toArtifactId", Value::Null);
                 row.set("resolved", Value::string("N"));
-                row.update(facade)?;
-            }
-            Ok(())
-        })?;
+                row
+            })
+            .collect();
+        update_rows(facade, tx, rows, "reference");
     }
     Ok(())
 }
 
-/// The unresolved references elsewhere that an added artifact may answer: resolved again. With `fresh_screens` (a
-/// screen, subscreens item or transition is new) the unresolved screen paths and screen references too, whose names
-/// are not the added artifacts' (a path walks through them, a default subscreen waits for its parent).
+/// The unresolved references elsewhere that an added artifact may answer: resolved again.
 fn resolve_added(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
     state: &IndexState,
     tx: &moqui_core::transaction::TransactionManager,
     added: &[ArtifactRow],
-    fresh_screens: bool,
     changed: &HashSet<String>,
 ) -> Result<(), Error> {
     if added.is_empty() {
@@ -1841,27 +2111,14 @@ fn resolve_added(
                     .into_values(),
             );
         }
-        if fresh_screens {
-            let kinds = [ToKind::ScreenPath, ToKind::Screen].map(|kind| Value::string(kind.as_str()));
-            lists.push(
-                facade
-                    .find(REF)?
-                    .eq("resolved", Value::string("N"))
-                    .condition(Condition::is_in("toKind", kinds.to_vec()))
-                    .list()?
-                    .into_values(),
-            );
-        }
         lists
     };
     let exists = |location: &str| location_exists(factory, location);
     let mut now_resolved = Vec::new();
-    let mut seen: HashSet<(String, String)> = HashSet::new();
     {
         let resolver = lock(&state.resolver);
         for row in lists.into_iter().flatten() {
-            let path = text(&row, "filePath");
-            if changed.contains(&path) || !seen.insert((path, text(&row, "refSeqId"))) {
+            if changed.contains(&text(&row, "filePath")) {
                 continue;
             }
             let mut reference = ref_of(&row);
@@ -1871,20 +2128,139 @@ fn resolve_added(
             }
         }
     }
-    if now_resolved.is_empty() {
-        return Ok(());
-    }
-    tx.run(TransactionAttribute::ForceNew, None, || {
-        for (mut row, reference) in now_resolved {
+    let rows = now_resolved
+        .into_iter()
+        .map(|(mut row, reference)| {
             row.set(
                 "toArtifactId",
                 reference.to_id.as_deref().map_or(Value::Null, Value::string),
             );
             row.set("resolved", Value::string("Y"));
-            row.update(facade)?;
+            row
+        })
+        .collect();
+    update_rows(facade, tx, rows, "reference");
+    Ok(())
+}
+
+/// Update `rows` (each changed already) in one transaction; when that fails, each in a transaction of its own, so a
+/// row that fails is logged and the others are written.
+fn update_rows(
+    facade: &EntityFacade,
+    tx: &moqui_core::transaction::TransactionManager,
+    rows: Vec<EntityValue>,
+    what: &str,
+) {
+    if rows.is_empty() {
+        return;
+    }
+    let all = tx.run(TransactionAttribute::ForceNew, None, || {
+        for row in &rows {
+            row.clone().update(facade)?;
         }
         Ok(())
-    })
+    });
+    match all {
+        Ok(()) => return,
+        Err(err) if rows.len() == 1 => {
+            tracing::error!(
+                "Artifact index: a {what} row of {} was not updated: {err}",
+                text(&rows[0], "filePath")
+            );
+            return;
+        }
+        // written again row by row
+        Err(_) => {}
+    }
+    for row in rows {
+        if let Err(err) = tx.run(TransactionAttribute::ForceNew, None, || row.clone().update(facade)) {
+            tracing::error!(
+                "Artifact index: a {what} row of {} was not updated: {err}",
+                text(&row, "filePath")
+            );
+        }
+    }
+}
+
+/// Every screen path and directory subscreen reference of the files not read now walked again against the screens,
+/// items and transitions known now, resolved or not, and every form field's binding into a transition by its path: a
+/// renamed or removed item, an item's new location, an item over a directory subscreen or a transition's new service
+/// changes where a path goes, though no name it is written with changed. One read of the references (the columns a
+/// walk needs) and one of the bindings; each walk is lookups in memory, and only the rows whose target changed are
+/// written.
+fn walk_again(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    state: &IndexState,
+    tx: &moqui_core::transaction::TransactionManager,
+    changed: &HashSet<String>,
+) -> Result<(), Error> {
+    // by the kind's index: the directory subscreens are among the screen references
+    let kinds = [ToKind::ScreenPath, ToKind::Screen].map(|kind| Value::string(kind.as_str()));
+    let mut find = facade.find(REF)?.condition(Condition::is_in("toKind", kinds.to_vec()));
+    for field in [
+        "filePath",
+        "refSeqId",
+        "fromArtifactId",
+        "toArtifactId",
+        "toKind",
+        "toName",
+        "toScope",
+        "resolved",
+        "origin",
+    ] {
+        find = find.select_field(field);
+    }
+    let rows = find.list()?.into_values();
+    let bindings = facade
+        .find(BINDING)?
+        .condition(Condition::is_not_null("toPath"))
+        .select_field("filePath")
+        .select_field("bindingSeqId")
+        .select_field("toId")
+        .select_field("toPath")
+        .list()?
+        .into_values();
+    let exists = |location: &str| location_exists(factory, location);
+    let mut moved = Vec::new();
+    let mut rebound = Vec::new();
+    {
+        let resolver = lock(&state.resolver);
+        for mut row in rows {
+            if changed.contains(&text(&row, "filePath")) {
+                continue;
+            }
+            let mut reference = ref_of(&row);
+            if reference.to_kind == ToKind::Screen && reference.origin != extract::ORIGIN_DIRECTORY {
+                continue;
+            }
+            let before = (reference.to_id.clone(), reference.resolved);
+            resolver.resolve(&mut reference, &exists);
+            if (reference.to_id.clone(), reference.resolved) != before {
+                row.set(
+                    "toArtifactId",
+                    reference.to_id.as_deref().map_or(Value::Null, Value::string),
+                );
+                row.set("resolved", Value::string(if reference.resolved { "Y" } else { "N" }));
+                moved.push(row);
+            }
+        }
+        for mut row in bindings {
+            if changed.contains(&text(&row, "filePath")) {
+                continue;
+            }
+            let mut binding = binding_of(&row).binding;
+            let before = binding.to_id.clone();
+            resolver.resolve_binding(&mut binding);
+            if binding.to_id != before {
+                row.set("toId", Value::string(&binding.to_id));
+                rebound.push(row);
+            }
+        }
+    }
+    update_rows(facade, tx, moved, "reference");
+    update_rows(facade, tx, rebound, "binding");
+    Ok(())
 }
 
 fn text(row: &EntityValue, field: &str) -> String {
@@ -1946,6 +2322,7 @@ fn binding_of(row: &EntityValue) -> BindingEntry {
             source_kind: text(row, "sourceKind"),
             source_text: text(row, "sourceText"),
             source_id: (!source_id.is_empty()).then_some(source_id),
+            to_path: Some(text(row, "toPath")).filter(|path| !path.is_empty()),
             origin: text(row, "origin"),
             origin_hash: text(row, "originHash"),
             line: u32::try_from(number(row, "lineNumber")).unwrap_or(0),

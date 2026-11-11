@@ -66,7 +66,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="toName" type="text-medium"/>
         <field name="toScope" type="text-medium"><description>What the name is relative to: a field's entity, an anchor's base screen</description></field>
         <field name="refType" type="text-short"><description>How it refers: entity-find, service-call, relationship, extend,
-            anchor, implements, subscreens-item, link, script and the rest</description></field>
+            anchor, implements, subscreens-item, link, default-item, conditional-default, script and the rest</description></field>
         <field name="lineNumber" type="number-integer"/>
         <field name="columnNumber" type="number-integer"/>
         <field name="resolved" type="text-indicator"/>
@@ -77,6 +77,8 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="DEV_AREF_TO"><index-field name="toArtifactId"/><index-field name="refType"/></index>
         <index name="DEV_AREF_FROM"><index-field name="fromArtifactId"/></index>
         <index name="DEV_AREF_NAME"><index-field name="toName"/><index-field name="resolved"/></index>
+        <!-- the screen paths and directory subscreens an update walks again -->
+        <index name="DEV_AREF_KIND"><index-field name="toKind"/></index>
     </entity>
     <entity entity-name="DevArtifactBinding" package="moqui.devtools" use="nontransactional" cache="never">
         <description>One value flowing into or out of a call's parameter: a service-call's field-map and the like, where it
@@ -90,6 +92,8 @@ along with this software (see the LICENSE.md file). If not, see
             form's field submitted to the transition calling the service)</description></field>
         <field name="sourceText" type="text-long"/>
         <field name="sourceId" type="text-medium"><description>The caller's parameter the value comes from, when known</description></field>
+        <field name="toPath" type="text-medium"><description>A form field's binding into a transition by its path: the id it
+            is written with (parameter:screen-path:screen#path@in.field), which toId is resolved from again</description></field>
         <field name="origin" type="text-short"/>
         <field name="originHash" type="text-short"/>
         <field name="lineNumber" type="number-integer"/>

@@ -160,3 +160,52 @@ fn the_ref_table_answers_as_the_memory_index() {
     }
     assert!(compared > 100, "{compared}");
 }
+
+/// A project's index (a directory read on its own) walks its components' conf mounts: `/apps/Shop/Detail` goes through
+/// the mount of `Shop` under `apps` in the component's `MoquiConf.xml`, as a server's index walks the merged conf's.
+#[test]
+fn a_project_index_walks_its_components_conf_mounts() {
+    let dir = std::env::temp_dir().join(format!("moqui-project-mounts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let write = |path: &str, text: &str| {
+        let path = dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("webroot/screen/webroot.xml", "<screen/>");
+    write("webroot/screen/webroot/apps.xml", "<screen/>");
+    write(
+        "shop/MoquiConf.xml",
+        r#"<moqui-conf><screen-facade><screen location="component://webroot/screen/webroot/apps.xml">
+            <subscreens-item name="Shop" location="component://shop/screen/Shop.xml"/>
+        </screen></screen-facade></moqui-conf>"#,
+    );
+    write("shop/screen/Shop.xml", "<screen/>");
+    write("shop/screen/Shop/Detail.xml", "<screen/>");
+    write(
+        "shop/screen/Links.xml",
+        r#"<screen><widgets><link url="/apps/Shop/Detail" text="Detail"/></widgets></screen>"#,
+    );
+    let mut files = directory_files("webroot", &dir.join("webroot"));
+    files.extend(directory_files("shop", &dir.join("shop")));
+    let ctx = moqui_core::context::ExecutionContextFactory::test_context();
+    let index = MemoryIndex::of_files(ctx.factory(), &files);
+    assert!(
+        index
+            .describe("subscreen:component://webroot/screen/webroot/apps.xml#Shop@conf")
+            .is_some(),
+        "{:?}",
+        index.artifacts.iter().map(|artifact| &artifact.id).collect::<Vec<_>>()
+    );
+    let link = index
+        .refs
+        .iter()
+        .map(|(_, row)| row)
+        .find(|row| row.to_name == "/apps/Shop/Detail")
+        .expect("the link");
+    assert_eq!(
+        link.to_id.as_deref(),
+        Some("screen:component://shop/screen/Shop/Detail.xml")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

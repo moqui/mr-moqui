@@ -2156,3 +2156,50 @@ fn a_step_reads_only_the_active_window_whatever_the_conversations_lifetime() {
     let seen = |conversation_id: &str| step::seen_references(&bed.facade, conversation_id).unwrap();
     assert_eq!(seen(&short), seen(&long));
 }
+
+#[test]
+fn an_external_runs_reported_turns_are_priced_rolled_up_once_and_its_budget_requests_a_cancel() {
+    let bed = bed("external-usage");
+    for (run_id, harness) in [("external-usage", Some("steward-t3")), ("native-usage", None)] {
+        let mut fields = vec![("runId", run_id), ("userId", USER), ("statusId", "AgrWorking"), ("maxCost", "0.01")];
+        if let Some(harness) = harness {
+            fields.push(("externalHarnessId", harness));
+        }
+        row(&bed.facade, RUN, &fields);
+    }
+    let turn = |seq: i64, model: &str| external::ExternalStep {
+        seq,
+        model: Some(model.to_string()),
+        usage: crate::usage::Usage {
+            input: 1000,
+            output: 500,
+            ..crate::usage::Usage::default()
+        },
+        ..external::ExternalStep::default()
+    };
+    // the provider's model name finds the model: (1000 × 2 + 500 × 8) / 1M
+    let first = external::record_usage(&bed.factory, "external-usage", &[turn(1, "fake-1")]).unwrap();
+    assert_eq!(first.cost, rust_decimal::Decimal::new(6, 3));
+    assert_eq!(first.exhausted, None);
+    assert!(!first.cancel_requested);
+    // the first turn again (a later poll) replaces its step; the second, by model id, passes the budget
+    let second = external::record_usage(
+        &bed.factory,
+        "external-usage",
+        &[turn(1, "fake-1"), turn(2, &bed.endpoint), turn(3, "mystery-model")],
+    )
+    .unwrap();
+    assert_eq!(second.step_count, 3);
+    assert_eq!(second.input_tokens, 3000);
+    assert_eq!(second.cost, rust_decimal::Decimal::new(12, 3));
+    assert_eq!(second.exhausted, Some(context::Exhausted::Cost));
+    assert!(second.cancel_requested);
+    assert_eq!(second.unpriced, vec!["mystery-model".to_string()]);
+    let run = run_row(&bed, "external-usage");
+    assert_eq!(crate::flag_of(&run, "cancelRequested"), Some(true));
+    assert_eq!(crate::int_of(&run, "inputTokens"), Some(3000));
+    assert_eq!(crate::int_of(&run, "stepCount"), Some(3));
+    assert!(crate::text_of(&run, "statusReason").unwrap().contains("cost budget"));
+    // the native engine records its own runs' usage
+    assert!(external::record_usage(&bed.factory, "native-usage", &[turn(1, "fake-1")]).is_err());
+}

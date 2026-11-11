@@ -1009,6 +1009,7 @@ fn the_runtime_registers_its_rust_services() {
         "moqui_llm::services::get_prompt_preview",
         "moqui_llm::services::preview_agent_approval",
         "moqui_llm::services::probe_model",
+        "moqui_llm::services::record_agent_run_usage",
         "moqui_llm::services::rollup_usage",
         "moqui_llm::services::set_model_capability",
         "moqui_llm::services::start_agent_run",

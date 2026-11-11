@@ -28,6 +28,7 @@
 
 pub mod context;
 pub mod events;
+pub mod external;
 pub mod hub;
 pub mod lease;
 pub mod observe;
