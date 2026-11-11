@@ -142,6 +142,11 @@ fn scan_shipped(factory: &moqui_core::context::ExecutionContextFactory) -> Vec<J
     out
 }
 
+/// Whether `id` is a component's shipped definition: its file is read before any saved row, and no save takes its id.
+pub(super) fn is_shipped(ec: &ExecutionContext, id: &str) -> bool {
+    shipped(ec).iter().any(|definition| text(definition, "id", "") == id)
+}
+
 pub(super) fn row_json(row: &moqui_core::entity::EntityValue) -> Result<Json, Error> {
     let body = row.get("bodyJson").and_then(Value::as_str).unwrap_or("{}");
     Ok(
@@ -403,7 +408,7 @@ fn save_definition_as(ec: &ExecutionContext, definition: &Json, note: &str, owne
     ) {
         return Err(fail(format!("unknown report definition type {kind}")));
     }
-    if shipped(ec).iter().any(|d| text(d, "id", "") == id) {
+    if is_shipped(ec, id) {
         return Err(fail("shipped definition is read-only; save as copy"));
     }
     // Dataset/service definitions can control authority; viewers need an explicit administration grant.
@@ -436,6 +441,10 @@ fn save_definition_as(ec: &ExecutionContext, definition: &Json, note: &str, owne
         }
     }
     let mut body = definition.get("body").cloned().unwrap_or_else(|| json!({}));
+    // an alias of a telemetry index or of a business dataset's document needs the source's own grant (alias.rs)
+    if kind == "dataset" {
+        super::alias::check_save(ec, id, &body)?;
+    }
     // a business alert rule (alert_delivery.rs): its audience in place of contact points, the delivery mode the server's
     let business_rule = kind == "alert" && super::alert_delivery::prepare(ec, &mut body)?;
     let serialized = serde_json::to_string(&body).map_err(fail)?;

@@ -38,6 +38,7 @@ moqui_core::extension::submit! {
 
 pub mod alert;
 pub mod alert_delivery;
+mod alias;
 pub mod annotations;
 pub mod browser;
 pub mod business;
@@ -241,11 +242,7 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
             telemetry: false,
         });
     }
-    let target = if let Some(index) = body["indexName"].as_str() {
-        Target::Index(index.into())
-    } else {
-        Target::Documents(vec![text(body, "documentType", id).into()])
-    };
+    let target = alias::target(id, body);
     let facade = search::current()?;
     let groups = moqui_core::user::user_group_ids(moqui_core::user::current_user_id().map_err(fail)?.as_deref())
         .map_err(fail)?;
@@ -267,6 +264,8 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
             {
                 return Err(fail("a telemetry dataset alias requires a server-owned row filter"));
             }
+            // and its index's own grant, the reader's or its owner's (alias.rs)
+            alias::check_telemetry(ec, id, &definition, &document)?;
             allowed.push(document);
             continue;
         }
