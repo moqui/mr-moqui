@@ -463,4 +463,60 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sequenceNum" type="number-integer"/>
         <field name="disabled" type="text-indicator"/>
     </entity>
+    <!-- The connection adapters of delegated connection administration (mr-boss plan/design-admin.md §8.1, §14 "Connection
+        adapter"; impl-admin P11): a registry over the native configuration records (SystemMessageRemote, EmailServer,
+        EmailOAuthProvider, NetworkPrinter here; Mantle's gateway configurations), which stay the records their owners
+        read. org.moqui.admin.ConfigurationServices find#Connections, get#Connection, store#Connection, test#Connection and
+        find#ConnectionConsumers work through it. The rows are trusted component definitions (seed data, each component
+        its own), never a name an administrator enters: a row naming a service that does not exist is logged by name
+        when read and left out. -->
+    <entity entity-name="ConnectionAdapter" package="moqui.server" use="configuration" cache="true">
+        <field name="adapterKey" type="id" is-pk="true"><description>The kind of connection: remote, relay, mailOAuth,
+            printer; paymentGateway, shippingGateway, taxGateway (Mantle's)</description></field>
+        <field name="title" type="text-medium"><description>What one is called (Remote system, Mail relay)</description></field>
+        <field name="description" type="text-medium"/>
+        <field name="adapterGroup" type="text-short"><description>The list it belongs to: integration (Connections) or mail
+            (MailRelays)</description></field>
+        <field name="adapterServiceName" type="text-medium"><description>The adapter's service, one implementing
+            org.moqui.admin.ConfigurationServices.run#ConnectionAdapter; empty for the framework's own kinds, which
+            ConfigurationConnections.js holds</description></field>
+        <field name="creatable" type="text-indicator"><description>Y: store#Connection starts a new one</description></field>
+        <field name="organizationBinding" type="text-indicator"><description>Y: its use is permitted per organization
+            (payment gateways: PaymentGatewayOrganization), a record its owner's service writes</description></field>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"><description>Y leaves the kind out</description></field>
+    </entity>
+    <entity entity-name="ConnectionConsumerProvider" package="moqui.server" use="configuration" cache="true">
+        <description>A service that answers where a connection of a kind is used, beside the kind's own answer: the owner
+            of the records that name it (Mantle's gateways and store integrations naming a remote, facilities naming a
+            printer). It implements org.moqui.admin.ConfigurationServices.find#AdapterConsumers; seed data, as
+            ConnectionAdapter.</description>
+        <field name="providerKey" type="id" is-pk="true"/>
+        <field name="adapterKey" type="id"/>
+        <field name="serviceName" type="text-medium"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="disabled" type="text-indicator"/>
+        <relationship type="one" related="moqui.server.ConnectionAdapter"/>
+    </entity>
+    <entity entity-name="ConnectionCheck" package="moqui.server" use="configuration" cache="never">
+        <description>What Admin knows of one connection beside its native record: the last explicit test
+            (test#Connection) with its safe diagnostics, the mark of a passing test (the fingerprint of the endpoint fields
+            it ran against, never a secret, by whom and when), whether the connection waits for a test because its
+            endpoint changed, and whether that change cleared a stored secret that has not been entered again (no test
+            sends anything until it is). Written by ConfigurationServices only.</description>
+        <field name="adapterKey" type="id" is-pk="true"/>
+        <field name="connectionKey" type="id-long" is-pk="true"/>
+        <field name="testedConfigHash" type="text-medium"/>
+        <field name="testedDate" type="date-time"/>
+        <field name="testedByUserId" type="id"/>
+        <field name="pendingTest" type="text-indicator"><description>Y: disabled by the endpoint-change rule (or new), so a
+            passing test enables it; a connection an administrator disabled stays disabled after a test</description></field>
+        <field name="secretCleared" type="text-indicator"><description>Y: an endpoint change cleared a stored secret and
+            none has been entered since</description></field>
+        <field name="lastCheckDate" type="date-time"/>
+        <field name="lastCheckPassed" type="text-indicator"/>
+        <field name="lastCheckByUserId" type="id"/>
+        <field name="lastCheckText" type="text-long"><description>The checks of the last test as JSON: each a name, ok or
+            failed and a text that names hosts and statuses, never a secret or a response body</description></field>
+    </entity>
 </entities>

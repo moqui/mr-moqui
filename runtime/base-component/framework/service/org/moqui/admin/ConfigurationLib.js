@@ -72,6 +72,41 @@ function page(list, p) {
     return {rows: list.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize), count: list.length, pageIndex, pageSize}
 }
 
+// ----- what the parts that store connection settings share (identity providers, connections) -----
+const controls = /[\u0000-\u001f\u007f]/
+function plainText(value, what, maxLength = 255) {
+    const found = text(value)
+    if (controls.test(found) || found.includes("${")) throw new Error(what + " may not hold control characters or ${")
+    if (found.length > maxLength) throw new Error(what + " is longer than " + maxLength + " characters")
+    return found
+}
+// An https URL with a host and no credentials or fragment; http only for this machine on an instance that is not
+// production (a provider run beside a development server), so a production server is never pointed at its own ports.
+function urlText(value, what) {
+    const found = plainText(value, what)
+    if (!found) return ""
+    const parts = /^(https?):\/\/([^\/?#@\s]+)(\/[^\s#]*)?(\?[^\s#]*)?$/.exec(found)
+    if (!parts) throw new Error(what + " is not an http(s) URL with a host and no credentials or fragment")
+    const host = parts[2].replace(/:\d+$/, "").toLowerCase()
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(host)
+    if (parts[1] === "http" && (!local || text(System.getProperty("instance_purpose")) === "production"))
+        throw new Error(what + " must be https")
+    return found
+}
+function enumValue(value, enumTypeId, what) {
+    const found = text(value)
+    if (found && !one("moqui.basic.Enumeration", {enumId: found, enumTypeId}))
+        throw new Error(what + " is not one of its options")
+    return found
+}
+// Create or update a row with the fields given (a null clears a field).
+function write(entityName, fields, create) {
+    const value = ec.entity.makeValue(entityName)
+    value.setFields(fields, true, null, null)
+    if (create) value.create()
+    else value.update()
+}
+
 ;({
     find,
     one,
@@ -88,5 +123,9 @@ function page(list, p) {
     reasonText,
     auditReason,
     auditRow,
-    page
+    page,
+    plainText,
+    urlText,
+    enumValue,
+    write
 })

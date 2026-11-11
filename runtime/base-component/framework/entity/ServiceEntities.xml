@@ -398,6 +398,16 @@ along with this software (see the LICENSE.md file). If not, see
 
         <field name="preAuthMessageRemoteId" type="id">
             <description>Remote system related to this remote system but for pre-auth purposes, like a separate single sign on server</description></field>
+        <field name="disabled" type="text-indicator" enable-audit-log="update"><description>Y: no message is sent to the
+            remote (send#ProducedSystemMessage and send#SystemMessageRest refuse it; a gateway whose connection it is
+            reports it as its problem); receiving is not affected. Set by an administrator, or by
+            org.moqui.admin.ConfigurationServices.store#Connection when the remote's address or sign-in changed, until a
+            test of it passes (mr-boss plan/design-admin.md §8.1)</description></field>
+        <field name="allowPrivateNetwork" type="text-indicator" enable-audit-log="update"><description>N:
+            send#SystemMessageRest sends nothing to a loopback, private or link-local address for this remote, redirects
+            included. store#Connection saves N for a remote a delegated administrator started or repointed on a
+            production instance and never changes it back: an instance administrator allows a remote on the instance's
+            own network. Empty or Y: as before. A send service of its own reads the flag itself.</description></field>
 
         <relationship type="one" title="SystemMessageAuthType" related="moqui.basic.Enumeration" short-alias="messageAuthEnum">
             <key-map field-name="messageAuthEnumId"/></relationship>

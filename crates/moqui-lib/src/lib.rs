@@ -32,6 +32,7 @@ pub mod histogram;
 pub mod http;
 pub mod json;
 pub mod markdown;
+pub mod net;
 pub mod node;
 pub mod object;
 pub mod reconnect;
