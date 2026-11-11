@@ -581,6 +581,7 @@ fn mount(screen: &str, name: &str, location: &str, mark: &str) -> ArtifactRow {
         summary: location.to_string(),
         parent: Some(format!("screen:{screen}")),
         origin: String::new(),
+        marks: String::new(),
     }
 }
 
@@ -857,7 +858,8 @@ fn form_fields_flow_through_paths_actions_and_field_maps() {
         crate::index::resolve::request_services(&update.summary),
         ["a.OrderServices.note#Order"]
     );
-    // the path's binding keeps the id it was written with, and names it again while the path reaches no transition
+    // the path's binding keeps the id it was written with and its slot, and names it again while the path reaches no
+    // transition
     let mut path_binding = files[0]
         .bindings
         .iter()
@@ -865,7 +867,7 @@ fn form_fields_flow_through_paths_actions_and_field_maps() {
         .unwrap()
         .clone();
     let written = "parameter:screen-path:component://c/screen/App/Order.xml#../Tasks/save@in.taskName";
-    assert_eq!(path_binding.to_path.as_deref(), Some(written));
+    assert_eq!(path_binding.to_path, Some(format!("{written}#0")));
     let mut resolver = resolve_together(&mut files);
     for artifact in &files[1].artifacts {
         resolver.remove(artifact);

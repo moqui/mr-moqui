@@ -60,8 +60,10 @@ On a dev server the same index answers the MCP tools `artifact` (find, describe,
 - The entity of the find around it has no field of this name.
 - The service called has no in-parameter of this name.
 - Nothing is at this location.
+- A required in-parameter of a service the form's transition calls is given by no field, field-map or parameter.
 
-A name with `${}` in it is made at run time and is not checked.
+A name with `${}` in it is made at run time and is not checked. The last is a warning, made from the artifact index
+(`moqui check --extensions`): an `in-map` expression or a parameter of the URL may give the value at run time.
 
 ## Expressions
 - Expressions and scripts are JavaScript, and this one does not parse.

@@ -60,6 +60,7 @@ pub const RULES: &[RefRule] = &[
     rule("member-entity", "entity-name", RefKind::Entity),
     rule("relationship", "related", RefKind::Entity),
     rule("auto-fields-entity", "entity-name", RefKind::Entity),
+    rule("auto-parameters", "entity-name", RefKind::Entity),
     rule("eeca", "entity", RefKind::Entity),
     rule("service-call", "name", RefKind::Service),
     rule("seca", "service", RefKind::Service),

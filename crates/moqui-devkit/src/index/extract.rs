@@ -57,6 +57,22 @@ pub struct ArtifactRow {
     /// service no file defines, with its parameters from the entity's fields.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub origin: String,
+    /// What a service, form or transition declares to be filled in from elsewhere, for the index's expansions
+    /// ([`super::resolve::Resolver::expand`]; [`join_marks`], [`split_marks`]), empty for any other artifact: a
+    /// service's `auto-parameters` and `implements`, a form's `auto-fields-entity`,
+    /// `auto-fields-service`, `extends` and transition, a transition's calls. Each mark is words separated by spaces, the
+    /// marks by `; `:
+    /// - `auto-parameters <in|out> <entity, - for the service's noun> <all|pk|nonpk> <required true|false> <excludes>`
+    /// - `implements <service> <required true|false|->`
+    /// - `auto-fields-entity <entity> <all|pk|nonpk> <field-type> <excludes>` and
+    ///   `auto-fields-service <service> <in|out|all> <field-type> <excludes>`
+    /// - `extends <location#form, or form of the same screen>`
+    /// - `transition <name>` (of the same screen) or `transition-path <screen path>`
+    /// - `call <service> <passes the request y|n> <field-maps from=to>`
+    ///
+    /// A list is comma separated, `-` when empty.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub marks: String,
 }
 
 /// The origin of an artifact or reference the index makes rather than reads (an entity-auto service and its
@@ -99,6 +115,44 @@ pub const SCREEN_PATH_OWNER: &str = "screen-path:";
 
 /// The pseudo file of the derived artifacts.
 pub const DERIVED_PATH: &str = "derived:entity-auto";
+
+/// The origins of the artifacts and bindings the index expands from what an artifact declares
+/// ([`super::resolve::Resolver::expand`]): a service's parameters from its `auto-parameters` and `implements`, a form's
+/// fields from its `auto-fields-entity`, `auto-fields-service` and `extends`.
+pub const EXPANDED_ORIGINS: [&str; 5] = [
+    "auto-parameters",
+    "implements",
+    "auto-fields-entity",
+    "auto-fields-service",
+    "extends",
+];
+
+/// Whether `origin` is one of [`EXPANDED_ORIGINS`].
+#[must_use]
+pub fn is_expanded(origin: &str) -> bool {
+    EXPANDED_ORIGINS.contains(&origin)
+}
+
+/// `marks` as an artifact keeps them ([`ArtifactRow::marks`]).
+#[must_use]
+pub fn join_marks(marks: &[String]) -> String {
+    marks.join("; ")
+}
+
+/// An artifact's marks, one by one ([`ArtifactRow::marks`]).
+#[must_use]
+pub fn split_marks(marks: &str) -> Vec<&str> {
+    marks.split("; ").filter(|mark| !mark.is_empty()).collect()
+}
+
+/// A list for a mark: comma separated, `-` when empty.
+fn mark_list(items: &[String]) -> String {
+    if items.is_empty() {
+        "-".to_string()
+    } else {
+        items.join(",")
+    }
+}
 
 /// What a reference names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
@@ -379,6 +433,7 @@ impl Reader<'_> {
             summary,
             parent,
             origin: String::new(),
+            marks: String::new(),
         });
     }
 
@@ -407,6 +462,13 @@ impl Reader<'_> {
             origin: self.origin.to_string(),
             origin_hash: self.hash.clone(),
         });
+    }
+
+    /// Set the marks of the artifact just made ([`ArtifactRow::marks`]).
+    fn mark_last(&mut self, marks: &[String]) {
+        if let Some(last) = self.index.artifacts.last_mut() {
+            last.marks = join_marks(marks);
+        }
     }
 
     /// Set the operation of the reference just made.
@@ -740,6 +802,7 @@ impl Reader<'_> {
                 let summary =
                     description(node).unwrap_or_else(|| node.attribute("type").unwrap_or_else(|| "inline".to_string()));
                 self.artifact(id.clone(), "service", &name, Some(node), summary, None);
+                self.mark_last(&service_marks(node));
                 Some(id)
             }
             (ArtifactKind::Service, "implements") => {
@@ -892,6 +955,20 @@ impl Reader<'_> {
                     summary.join(", "),
                     Some(parent_id),
                 );
+                // what it sets of a parameter of its name it merges into (an implemented service's, an auto one)
+                let given: Vec<String> = [
+                    ("type", node.attribute("type").is_some()),
+                    ("required", node.attribute("required").is_some()),
+                    (
+                        "default",
+                        node.attribute("default-value").is_some() || node.attribute("default").is_some(),
+                    ),
+                ]
+                .iter()
+                .filter(|(_, set)| *set)
+                .map(|(attribute, _)| (*attribute).to_string())
+                .collect();
+                self.mark_last(&[format!("given {}", mark_list(&given))]);
                 None
             }
             (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "parameter" | "path-parameter")
@@ -941,17 +1018,34 @@ impl Reader<'_> {
                     summary,
                     Some(self.screen_owner()),
                 );
+                self.mark_last(&call_marks(node));
                 Some(id)
             }
             (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "form-single" | "form-list") => {
                 let name = node.attribute("name")?;
                 let id = format!("form:{location}#{name}");
+                let mut marks = form_marks(node);
                 // a screen-extend's form may post to a transition of the base screen: not read as one of its own
                 if self.info.kind == ArtifactKind::Screen {
                     if let Some(transition) = node.attribute("transition") {
                         let same_screen = self.url_refs(node, &id, &transition, "form");
                         self.form_bindings(node, &id, &transition, same_screen);
+                        let transition = transition.trim();
+                        if same_screen {
+                            marks.push(format!("transition {transition}"));
+                        } else if is_screen_path(transition) {
+                            let path = transition.split(['?', '#']).next().unwrap_or_default();
+                            marks.push(format!("transition-path {path}"));
+                        }
                     }
+                }
+                // the form it extends, an edge for the browser
+                if let Some((base, form)) = node
+                    .attribute("extends")
+                    .as_deref()
+                    .and_then(|extends| extended_form(extends, location))
+                {
+                    self.reference(&id, ToKind::Anchor, &form, &base, "extends", node.line(), node.column());
                 }
                 self.artifact(
                     id.clone(),
@@ -961,6 +1055,7 @@ impl Reader<'_> {
                     element.to_string(),
                     Some(self.screen_owner()),
                 );
+                self.mark_last(&marks);
                 Some(id)
             }
             (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "field")
@@ -978,6 +1073,17 @@ impl Reader<'_> {
                     form_field_summary(node),
                     Some(from.to_string()),
                 );
+                // a field with no widget of its own (none, or an empty `default-field` that only sets a title) takes the
+                // widget of a field of its name it merges into, as Moqui merges a field's `default-field`
+                let widgets = node
+                    .child_iter()
+                    .filter(|child| matches!(child.name().as_str(), "default-field" | "conditional-field"))
+                    .any(|child| child.child_iter().next().is_some());
+                if !widgets {
+                    self.mark_last(&["no-widget".to_string()]);
+                } else if !is_filled(node) {
+                    self.mark_last(&["unfilled".to_string()]);
+                }
                 None
             }
             (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "subscreens-item") => {
@@ -1928,6 +2034,171 @@ fn transition_summary(transition: &MNode) -> String {
         }
     }
     parts.join(", ")
+}
+
+/// The marks of a service's `auto-parameters` (in its in-parameters and out-parameters) and `implements`
+/// ([`ArtifactRow::marks`]). One whose entity or service is an expression is left out.
+fn service_marks(service: &MNode) -> Vec<String> {
+    let mut marks = Vec::new();
+    for (list, direction) in [("in-parameters", "in"), ("out-parameters", "out")] {
+        let Some(parameters) = service.first_named(list) else {
+            continue;
+        };
+        for auto in parameters.named_iter("auto-parameters") {
+            let entity = auto.attribute("entity-name").filter(|name| !name.trim().is_empty());
+            if entity.as_deref().is_some_and(|name| !refs::is_literal(name)) {
+                continue;
+            }
+            let include = match auto.attribute("include").as_deref() {
+                Some("pk") => "pk",
+                Some("nonpk") => "nonpk",
+                _ => "all",
+            };
+            let excludes: Vec<String> = auto
+                .named_iter("exclude")
+                .filter_map(|exclude| exclude.attribute("field-name"))
+                .collect();
+            marks.push(format!(
+                "auto-parameters {direction} {} {include} {} {}",
+                entity.as_deref().unwrap_or("-"),
+                auto.attribute_is("required", "true"),
+                mark_list(&excludes)
+            ));
+        }
+    }
+    for implements in service.named_iter("implements") {
+        let Some(name) = implements.attribute("service").filter(|name| refs::is_literal(name)) else {
+            continue;
+        };
+        let required = match implements.attribute("required").as_deref() {
+            Some(value) if value.eq_ignore_ascii_case("true") => "true",
+            Some(value) if value.eq_ignore_ascii_case("false") => "false",
+            _ => "-",
+        };
+        marks.push(format!("implements {name} {required}"));
+    }
+    marks
+}
+
+/// The marks of a form's `auto-fields-entity`, `auto-fields-service` and `extends` ([`ArtifactRow::marks`]); its transition's
+/// is added by the caller. A `DbForm` it extends, and an entity or service named by an expression, are left out.
+fn form_marks(form: &MNode) -> Vec<String> {
+    let mut marks = Vec::new();
+    for child in form.child_iter() {
+        let (element, name_attribute, exclude_attribute, include, field_type) = match child.name().as_str() {
+            "auto-fields-entity" => ("auto-fields-entity", "entity-name", "field-name", "all", "find-display"),
+            "auto-fields-service" => ("auto-fields-service", "service-name", "parameter-name", "in", "edit"),
+            _ => continue,
+        };
+        let Some(name) = child.attribute(name_attribute).filter(|name| refs::is_literal(name)) else {
+            continue;
+        };
+        let include = child
+            .attribute("include")
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or_else(|| include.to_string());
+        let field_type = child
+            .attribute("field-type")
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or_else(|| field_type.to_string());
+        let excludes: Vec<String> = child
+            .named_iter("exclude")
+            .filter_map(|exclude| exclude.attribute(exclude_attribute))
+            .collect();
+        marks.push(format!(
+            "{element} {} {} {} {}",
+            name.trim(),
+            include.trim(),
+            field_type.trim(),
+            mark_list(&excludes)
+        ));
+    }
+    if let Some(extends) = form.attribute("extends").filter(|extends| refs::is_literal(extends)) {
+        let extends = extends.trim();
+        if !extends.starts_with("moqui.screen.form.DbForm#") && !extends.starts_with("DbForm#") {
+            marks.push(format!("extends {extends}"));
+        }
+    }
+    let given = form_given(form);
+    if !given.is_empty() {
+        marks.push(format!("given {}", mark_list(&given)));
+    }
+    if form.attribute_is("pass-through-parameters", "true") {
+        marks.push("pass-through".to_string());
+    }
+    marks
+}
+
+/// The parameters a form posts that are no field of it: the ids of the rows selected, for a form in a form-list's
+/// `row-selection` (its `parameter`, else its `id-field`), and its `hidden-parameters` (each `parameter` and each key of
+/// a `parameter-map`).
+fn form_given(form: &MNode) -> Vec<String> {
+    static MAP_KEY: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"[\[{,]\s*([A-Za-z_][A-Za-z0-9_]*)\s*:").expect("a valid parameter-map key pattern")
+    });
+    let mut given: Vec<String> = Vec::new();
+    let mut up = form.parent();
+    while let Some(ancestor) = up {
+        if ancestor.has_name("row-selection") {
+            let name = ancestor
+                .attribute("parameter")
+                .or_else(|| ancestor.attribute("id-field"))
+                .filter(|name| !name.trim().is_empty());
+            given.extend(name.map(|name| name.trim().to_string()));
+            break;
+        }
+        if matches!(ancestor.name().as_str(), "form-list" | "screen" | "widgets") {
+            break;
+        }
+        up = ancestor.parent();
+    }
+    for hidden in form.named_iter("hidden-parameters") {
+        given.extend(
+            hidden
+                .named_iter("parameter")
+                .filter_map(|parameter| parameter.attribute("name")),
+        );
+        if let Some(map) = hidden.attribute("parameter-map") {
+            given.extend(MAP_KEY.captures_iter(&map).map(|key| key[1].to_string()));
+        }
+    }
+    given.retain(|name| !name.contains([' ', ',', ';']));
+    given.sort();
+    given.dedup();
+    given
+}
+
+/// The screen location and form name a form's `extends` names, `location#form` or a form of the screen at `location`;
+/// none for a `DbForm` or an expression.
+#[must_use]
+pub fn extended_form(extends: &str, location: &str) -> Option<(String, String)> {
+    let extends = extends.trim();
+    if !refs::is_literal(extends) || extends.starts_with("moqui.screen.form.DbForm#") || extends.starts_with("DbForm#")
+    {
+        return None;
+    }
+    match extends.split_once('#') {
+        Some((base, form)) if !form.is_empty() => Some((base.to_string(), form.to_string())),
+        Some(_) => None,
+        None => Some((location.to_string(), extends.to_string())),
+    }
+}
+
+/// The marks of the services a transition passes the request to, or maps request parameters into, each with whether
+/// it takes the request and its `field-map`s ([`request_calls`], [`MARKS_OPEN`]).
+fn call_marks(transition: &MNode) -> Vec<String> {
+    request_calls(transition)
+        .into_iter()
+        .map(|call| {
+            let maps: Vec<String> = call.maps.iter().map(|(from, to)| format!("{from}={to}")).collect();
+            format!(
+                "call {} {} {}",
+                call.service,
+                if call.passes { "y" } else { "n" },
+                mark_list(&maps)
+            )
+        })
+        .collect()
 }
 
 /// Whether a form field is one the user fills: a widget in its `default-field` or a `conditional-field` that is not

@@ -573,6 +573,7 @@ const UP_APP: &str = r#"<screen><subscreens>
 const UP_LINKS: &str = r#"<screen><widgets>
     <link url="../Other" text="Other"/><link url="../Detail" text="Detail"/><link url="../Mounted" text="Mounted"/>
     <form-single name="Save" transition="../Other/save"><field name="thingId"><default-field><text-line/></default-field></field></form-single>
+    <form-single name="Again" transition="../Other/save"><field name="thingId"><default-field><text-line/></default-field></field></form-single>
 </widgets></screen>"#;
 /// A screen whose transition `save` passes the request to `service`.
 fn up_save(service: &str) -> String {
@@ -831,15 +832,21 @@ fn the_index_follows_reloads_and_extensions() {
             ("../Other", "Elsewhere/Other.xml"),
         ])
     );
-    // the form's field flows into the service of the transition its path reaches
-    let bound = || {
+    // the form's field flows into the service of the transition its path reaches; another form of the screen posting
+    // a field of that name to that path has its own binding, walked again as the first's
+    let bound_of = |form: &str| {
         let rows = moqui_devkit::index::bindings(
             &factory,
-            Some("form:component://upstream-app/screen/UpApp/Links.xml#Save"),
+            Some(&format!("form:component://upstream-app/screen/UpApp/Links.xml#{form}")),
             None,
         )
         .unwrap();
         rows.iter().map(|row| row.binding.to_id.clone()).collect::<Vec<_>>()
+    };
+    let bound = || {
+        let save = bound_of("Save");
+        assert_eq!(bound_of("Again"), save);
+        save
     };
     assert_eq!(bound(), ["parameter:service:mysite.Things.get#Thing@in.thingId"]);
     let up_app = gate.runtime.join("component/upstream-app/screen/UpApp.xml");
@@ -1047,6 +1054,17 @@ const AUTO_CALLS: &str = r#"<services>
     </service>
 </services>
 "#;
+/// A service whose parameters are the entity's fields, and a form whose fields are that service's: expanded in their
+/// own files, and expanded again when the entity changes.
+const AUTO_SAVE: &str = r#"<services>
+    <service verb="save" noun="Widget"><in-parameters><auto-parameters entity-name="acme.Widget" include="nonpk"/></in-parameters></service>
+</services>
+"#;
+const AUTO_SCREEN: &str = r#"<screen>
+    <transition name="save"><service-call name="acme.SaveServices.save#Widget"/><default-response url="."/></transition>
+    <widgets><form-single name="Edit" transition="save"><auto-fields-service service-name="acme.SaveServices.save#Widget"/></form-single></widgets>
+</screen>
+"#;
 const AUTO_DEFINED: &str = r#"<services>
     <service verb="create" noun="acme.Widget"><in-parameters><parameter name="only"/></in-parameters></service>
 </services>
@@ -1064,6 +1082,8 @@ fn the_index_rows_derive_entity_auto_services() {
         ("component/acme-site/component.xml", r#"<component name="acme-site"/>"#),
         ("component/acme-site/entity/AcmeEntities.xml", AUTO_ENTITIES),
         ("component/acme-site/service/acme/WidgetServices.xml", AUTO_CALLS),
+        ("component/acme-site/service/acme/SaveServices.xml", AUTO_SAVE),
+        ("component/acme-site/screen/Widgets.xml", AUTO_SCREEN),
     ];
     let gate = crate::common::start_with_files("dev-aide-derived", None, &[("instance_purpose", "dev")], &files);
     let factory = Arc::clone(gate.server.factory());
@@ -1116,6 +1136,36 @@ fn the_index_rows_derive_entity_auto_services() {
         Some("parameter:service:acme.WidgetServices.make#Widget@in.name")
     );
 
+    // the parameters of auto-parameters and the fields of auto-fields-service, in their own files, the fields bound
+    let form = "form:component://acme-site/screen/Widgets.xml#Edit";
+    let expanded = |factory: &Arc<ExecutionContextFactory>, id: &str| {
+        index::describe(factory, id)
+            .unwrap()
+            .map(|row| (row.origin, row.path.rsplit('/').next().unwrap_or_default().to_string()))
+    };
+    let save_param = "parameter:service:acme.SaveServices.save#Widget@in.";
+    assert_eq!(
+        expanded(&factory, &format!("{save_param}widgetName")),
+        Some(("auto-parameters".to_string(), "SaveServices.xml".to_string()))
+    );
+    assert_eq!(
+        expanded(
+            &factory,
+            "form-field:component://acme-site/screen/Widgets.xml#Edit@widgetName"
+        ),
+        Some(("auto-fields-service".to_string(), "Widgets.xml".to_string()))
+    );
+    let form_bound = |factory: &Arc<ExecutionContextFactory>| -> Vec<String> {
+        let mut ids: Vec<String> = index::bindings(factory, Some(form), None)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.binding.to_id)
+            .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(form_bound(&factory), [format!("{save_param}widgetName")]);
+
     // a field added: the derived rows are made again
     let entities = site.join("entity/AcmeEntities.xml");
     std::fs::write(
@@ -1127,6 +1177,15 @@ fn the_index_rows_derive_entity_auto_services() {
     assert_eq!(
         parameters(&factory),
         ["in.color", "in.widgetId", "in.widgetName", "out.widgetId"]
+    );
+    // and the files not read again: the service that reads the entity, and the form that reads the service
+    assert_eq!(
+        expanded(&factory, &format!("{save_param}color")),
+        Some(("auto-parameters".to_string(), "SaveServices.xml".to_string()))
+    );
+    assert_eq!(
+        form_bound(&factory),
+        [format!("{save_param}color"), format!("{save_param}widgetName")]
     );
 
     // a file defining the id: its service and parameters answer, the derived rows are gone

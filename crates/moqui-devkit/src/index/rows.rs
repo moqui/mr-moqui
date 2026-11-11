@@ -56,6 +56,7 @@ fn artifact(path: &str, id: String, kind: &str, name: &str, summary: String) -> 
         summary,
         parent: None,
         origin: String::new(),
+        marks: String::new(),
     }
 }
 
