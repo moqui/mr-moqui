@@ -188,6 +188,11 @@ feature("SMTP reception is trusted only while its allowlist and authserv-id hold
             empty: trust({allowedAddresses: ""}),
             v6: trust({allowedAddresses: "fd00::/8", listenHost: "fd00::2"}),
             v6Every: trust({allowedAddresses: "::/0"}),
+            // two halves of every address, and a bracketed address
+            halves: trust({allowedAddresses: "0.0.0.0/1 128.0.0.0/1"}),
+            bracketed: trust({allowedAddresses: "[fd00::1]", listenHost: "fd00::2"}),
+            // through a proxy on this machine, the proxy's own address must be allowed too
+            proxied: trust({allowedAddresses: "203.0.113.7", listenHost: "127.0.0.1", proxyProtocol: true}),
             internet: listening(Object.assign({}, gateway, {smtp_internet: "true", smtp_allowed_addresses: ""})),
             stopped: trust({allowedAddresses: "10.8.0.1", listening: false})
         }
@@ -211,6 +216,9 @@ feature("SMTP reception is trusted only while its allowlist and authserv-id hold
         out.empty.trusted === false
         out.v6.trusted === true
         out.v6Every.trusted === false
+        out.halves.trusted === false
+        out.bracketed.trusted === true
+        out.proxied.trusted === false
         // internet mail trusts no gateway: it runs, and is never called trusted reception
         out.internet.state === "ready"
         out.internet.trusted === false

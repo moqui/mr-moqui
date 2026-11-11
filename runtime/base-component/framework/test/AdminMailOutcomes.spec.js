@@ -18,6 +18,7 @@ const ids = {
     account: "SPEC_MQ_ACCOUNT",
     held: "SPEC_MQ_HELD",
     sent: "SPEC_MQ_SENT",
+    reset: "SPEC_MQ_RESET",
     draft: "SPEC_MQ_DRAFT"
 }
 const subject = "Spec queue private subject"
@@ -149,6 +150,8 @@ spec({
         message(ids.closed, {sendOutcome: "permanent"})
         message(ids.account, {emailAccountId: ids.account, emailTemplateId: null})
         message(ids.held)
+        // sign-in mail holds a credential of its moment
+        message(ids.reset, {emailTemplateId: "PASSWORD_RESET"})
         message(ids.sent, {statusId: "ES_SENT", sendError: null, sendOutcome: null})
         message(ids.draft, {statusId: "ES_DRAFT", sendError: null, sendOutcome: null})
         ec.artifactExecution.enableAuthz()
@@ -200,6 +203,8 @@ feature("a failed send is listed with its owner, its recipient count and no subj
         by(out.attention, ids.closed).state === "permanent"
         by(out.attention, ids.account).ownerKind === "mailAccount"
         by(out.attention, ids.account).binding === "account"
+        // a mail account's error is its sender's to read
+        by(out.attention, ids.account).errorText === ""
         // no subject, body or address in any answer
         !/private subject|private body|queue\.example\.test/.test(JSON.stringify(out))
         out.uncertain.outcomeList
@@ -231,6 +236,8 @@ feature("a message known not sent is sent again as itself, once; one that may ha
             out.lost = retry(ids.lost)
             out.account = retry(ids.account)
             out.accountSettle = reconcile(ids.account, "sent")
+            out.resetRow = row(ids.reset)
+            out.reset = retry(ids.reset)
             out.refusedSends = capture.count()
             out.retried = retry(ids.retry, {operationKey: "spec-mq-1"})
             out.sends = capture.count()
@@ -284,6 +291,10 @@ feature("a message known not sent is sent again as itself, once; one that may ha
         out.lost.reasonCode === "RECONCILE_REQUIRED"
         out.account.reasonCode === "OWNER_ONLY"
         out.accountSettle.reasonCode === "OWNER_ONLY"
+        // sign-in mail is never sent again from here, only closed
+        out.resetRow.retryEligible === false
+        out.resetRow.abandonEligible === true
+        out.reset.reasonCode === "SIGN_IN_MAIL"
         out.refusedSends === 0
         out.retried.applied === true
         out.retried.sent === true

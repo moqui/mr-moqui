@@ -87,7 +87,7 @@ function serverFacts() {
 // An entry of smtp_allowed_addresses: an address or a range (CIDR). {ok, every: a range of every address, loopback: it holds
 // this machine's own address}.
 function allowedNet(entry) {
-    const found = /^([0-9a-fA-F:.]+)(?:\/(\d{1,3}))?$/.exec(entry)
+    const found = /^\[?([0-9a-fA-F:.]+)\]?(?:\/(\d{1,3}))?$/.exec(entry)
     if (!found) return {ok: false}
     const [, address, bitsText] = found
     if (address.includes(":")) {
@@ -96,7 +96,8 @@ function allowedNet(entry) {
         if (bits > 128) return {ok: false}
         // ::1 itself, or a range from :: wide enough to hold it
         const holdsLoopback = /^[0:]*:0*1$/.test(address) || (/^[0:]+$/.test(address) && bits <= 127)
-        return {ok: true, every: bits === 0, loopback: bits === 0 || holdsLoopback}
+        // a range wider than /8 (here and of IPv4) is no gateway's: two halves are every address as one range is
+        return {ok: true, every: bits < 8, loopback: bits === 0 || holdsLoopback}
     }
     const octets = address.split(".").map(Number)
     if (octets.length !== 4 || octets.some(octet => !Number.isInteger(octet) || octet > 255)) return {ok: false}
@@ -106,7 +107,7 @@ function allowedNet(entry) {
     const size = 2 ** (32 - bits)
     const start = Math.floor(value / size) * size
     const loopbackStart = 127 * 2 ** 24
-    return {ok: true, every: bits === 0, loopback: start <= loopbackStart + 1 && start + size > loopbackStart + 1}
+    return {ok: true, every: bits < 8, loopback: start <= loopbackStart + 1 && start + size > loopbackStart + 1}
 }
 const loopbackHost = host => ["", "localhost", "::1", "[::1]"].includes(host) || /^127\./.test(host)
 // Whether SMTP reception may be called trusted, from what it is configured with: {trusted, state (trusted, direct: it takes
@@ -128,8 +129,11 @@ function smtpTrust(configured) {
     else if (nets.some(net => !net.ok)) problems.push("smtp_allowed_addresses has an entry that is no address or range")
     else {
         if (nets.some(net => net.every))
-            problems.push("smtp_allowed_addresses allows every address: anyone who connects could write the gateway's verdict")
-        if (loopbackHost(text(configured.listenHost)) && !configured.proxyProtocol && !nets.some(net => net.loopback))
+            problems.push(
+                "smtp_allowed_addresses allows every address, or a range too wide to be a gateway's: anyone in it who connects could write the gateway's verdict"
+            )
+        // with the PROXY protocol too: the proxy itself connects from an address that must be allowed
+        if (loopbackHost(text(configured.listenHost)) && !nets.some(net => net.loopback))
             problems.push(
                 "The listener is bound to this machine only (smtp_listen_host) and no allowed address is on it: the gateway cannot connect"
             )

@@ -39,6 +39,12 @@ const outcomes = ["retryable", "permanent", "uncertain"]
 const sendingMinutes = 15
 // with no dates given, the list reads this far back
 const defaultDays = 14
+// Sign-in mail (a reset password, a code, a verification link) holds a credential of its moment and is asked for again by the
+// person it is for: it is never sent again from here, only closed.
+const signInTemplates = () =>
+    ["PASSWORD_RESET", "SINGLE_USE_CODE", "ADDED_EMAIL_AUTHC_FACTOR", "EMAIL_AUTHC_FACTOR_SENT", "ACCOUNT_SIGN_IN"].concat(
+        [text(System.getProperty("pass_verification_template"))].filter(Boolean)
+    )
 
 const states = {
     retryable: {text: "Not sent", next: "Nothing was sent. It can be sent again."},
@@ -154,6 +160,11 @@ function described(message, claim, unanswered, canManage, templates) {
     let nextStep = states[state].next
     let retryEligible = failed
     let reconcileEligible = state === "uncertain"
+    const signIn = !account && !claim && signInTemplates().includes(text(message.emailTemplateId))
+    if (signIn) {
+        retryEligible = false
+        if (failed) nextStep = "Sign-in mail is not sent again: the person asks for a new one. It can be closed."
+    }
     if (account) {
         ownerKind = "mailAccount"
         ownerTitle = "Mail account"
@@ -190,7 +201,9 @@ function described(message, claim, unanswered, canManage, templates) {
         outcomeDate: iso(message.lastUpdatedStamp),
         sentDate: iso(message.sentDate),
         recipientCount: recipientCount(message),
-        errorText: state === "sent" ? "" : safeError(message.sendError),
+        // a mail account's error is its sender's to read (it can name an attachment or quote the message): the state says enough
+        errorText: state === "sent" || account ? "" : safeError(message.sendError),
+        signIn,
         emailServerId: message.emailServerId || null,
         emailTemplateId: message.emailTemplateId || null,
         emailTypeEnumId: message.emailTypeEnumId || null,
@@ -369,6 +382,7 @@ function retryMailOutcome(p) {
             )
         const owned = ownerRefusal(row, revision)
         if (owned) return owned
+        if (row.signIn) return refused("SIGN_IN_MAIL", row.nextStep, {revision})
         if (row.ownerKind === "registered") {
             if (!row.retryEligible) return refused("OWNER_RETRIES", row.nextStep, {revision})
             const done = ownerAction(claim, emailMessageId, "retry", lib.reasonText(p), key)
@@ -403,6 +417,8 @@ function claimMailOutcomeRetry(p) {
     if (p.release === true || p.release === "true") {
         if (message.sendClaimDate != null && !message.emailAccountId) {
             message.set("sendClaimDate", null)
+            // the claim's own text does not stay on a message that went
+            if (message.statusId === "ES_SENT") message.set("sendError", null)
             message.update()
         }
         return {claimed: false}
