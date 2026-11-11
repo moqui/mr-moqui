@@ -3,7 +3,8 @@
 // an address; a message known not sent is sent again as the same stored message, once for its operation key; a message that
 // may have been sent is settled and never sent from here, and its settlement (reported delivered, or not delivered) is kept
 // apart from its sent state: the message is never marked Sent by a person, is listed as settled and not as needing
-// attention or as sent, and one reported not delivered may then be sent again, whose result is the transport's; a mail
+// attention or as sent, and one reported not delivered may then be sent again, whose result is the transport's; a send
+// of a settled message from outside the queue clears its settlement as the queue's does (the mail service, F179); a mail
 // account's message is its sender's; and while a registered owner cannot be asked, nothing is retried. Mail is captured (no
 // connection), but for one server that has no address.
 // Run: ./moq test framework --spec AdminMailOutcomes
@@ -20,6 +21,7 @@ const ids = {
     account: "SPEC_MQ_ACCOUNT",
     held: "SPEC_MQ_HELD",
     sent: "SPEC_MQ_SENT",
+    outside: "SPEC_MQ_OUTSIDE",
     reset: "SPEC_MQ_RESET",
     draft: "SPEC_MQ_DRAFT"
 }
@@ -231,6 +233,8 @@ feature(
     "a message known not sent is sent again as itself, once; one that may have been sent is settled apart, never marked sent",
     {
         when() {
+            // settled below, then sent by another caller of the mail service (as BasicComms' resend); of no list here
+            message(ids.outside, {emailServerId: "SPEC_MQ_NOWHERE", sendOutcome: "uncertain"})
             const out = {before: count()}
             capture.clear()
             as(users.manage, () => {
@@ -302,7 +306,14 @@ feature(
                 out.lostRetried = retry(ids.lost)
                 out.abandoned = reconcile(ids.closed, "abandon")
                 out.sendsEnd = capture.count()
+                out.outsideSettled = reconcile(ids.outside, "delivered")
             })
+            // a send from outside the queue asks for no settlement and is not refused one: the mail service clears the
+            // settlement as the send begins, and the result is the transport's
+            out.outsideBefore = stored(ids.outside)
+            out.outsideSend = invoke("org.moqui.mail.EmailServices.send#EmailMessage", {emailMessageId: ids.outside})
+            out.outsideAfter = stored(ids.outside)
+            out.outsideAudit = audit("sendSettlement", ids.outside)
             out.after = count()
             out.retriedRow = stored(ids.retry)
             out.uncertainRow = stored(ids.uncertain)
@@ -395,11 +406,29 @@ feature(
             out.lostAfter.statusId === "ES_SENT"
             out.lostAfter.sendSettlement == null
             out.lostAfter.sendSettledByUserId == null
-            out.lostAudit.map(found => found.newValueText || "").join() === "notDelivered,"
+            // the settlement's row and the clearing's (in no order: they can carry one timestamp)
+            out.lostAudit
+                .map(found => found.newValueText || "")
+                .sort()
+                .join() === ",notDelivered"
             out.abandoned.applied === true
             out.closedRow.statusId === "ES_CANCELLED"
             out.accountRow.statusId === "ES_READY"
             out.sendsEnd === 2
+            out.outsideSettled.state === "settled"
+            out.outsideBefore.sendSettlement === "delivered"
+            out.outsideSend.error === ""
+            out.outsideAfter.statusId === "ES_SENT"
+            out.outsideAfter.sendSettlement == null
+            out.outsideAfter.sendSettledByUserId == null
+            out.outsideAfter.sendSettledDate == null
+            out.outsideAfter.sendSettledReason == null
+            // the audit log keeps what was concluded and that it was cleared
+            out.outsideAudit
+                .map(found => found.newValueText || "")
+                .sort()
+                .join() === ",delivered"
+            out.outsideAudit.some(found => found.newValueText === "delivered" && found.changedByUserId === users.manage)
         }
     }
 )

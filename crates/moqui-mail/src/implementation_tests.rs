@@ -145,6 +145,136 @@ fn a_failed_delivery_keeps_its_outcome_on_the_message() {
     assert_eq!(field_text(&message(), "sendOutcome"), "");
 }
 
+/// Admin P12 (F179): a send of a stored message that begins supersedes what was kept of the send before. A settlement
+/// (a person's report of an uncertain send) is cleared and a known outcome becomes uncertain before the transport is
+/// contacted, so a send lost part way leaves the message uncertain and unsettled; the audit log keeps the settlement.
+/// A refusal before any attempt (here a host that is not allowed) is no send and leaves the message as it was.
+#[test]
+fn a_send_that_begins_clears_the_settlement_of_the_send_before() {
+    use super::superseded_by_send;
+    // (the outcome is marked uncertain, a settlement is cleared)
+    assert_eq!(superseded_by_send("ES_READY", "retryable", ""), (true, false));
+    assert_eq!(
+        superseded_by_send("ES_READY", "permanent", "notDelivered"),
+        (true, true)
+    );
+    assert_eq!(superseded_by_send("ES_READY", "uncertain", "delivered"), (false, true));
+    assert_eq!(superseded_by_send("ES_READY", "", ""), (false, false));
+    assert_eq!(superseded_by_send("ES_BOUNCED", "", ""), (true, false));
+    assert_eq!(
+        superseded_by_send("ES_BOUNCED", "uncertain", "notDelivered"),
+        (false, true)
+    );
+    assert_eq!(superseded_by_send("ES_SENT", "retryable", "delivered"), (false, true));
+
+    let _lock = lock_tests();
+    let (facade, context) = entered_with(r#"<moqui-conf><email-client allowed-hosts="example.com"/></moqui-conf>"#);
+    let _entered = context.enter();
+    moqui_core::service::load_definitions().unwrap();
+    // the test database keeps no audit log unless asked
+    facade.set_disable_audit_log(false);
+    smtp_server(&facade, &context, "F179_SMTP");
+    seed(
+        &facade,
+        &context,
+        "moqui.basic.email.EmailServer",
+        &[("emailServerId", "F179_BAD"), ("smtpHost", "notexample.com")],
+    );
+    let settled = |id: &str, server: &str, outcome: &str, settlement: &str| {
+        seed(
+            &facade,
+            &context,
+            MESSAGE,
+            &[
+                ("emailMessageId", id),
+                ("statusId", "ES_READY"),
+                ("emailServerId", server),
+                ("fromAddress", "from@example.com"),
+                ("toAddresses", "to@example.com"),
+                ("subject", "Settled"),
+                ("bodyText", "Hello"),
+                ("sendOutcome", outcome),
+                ("sendError", "The SMTP session stopped before its end"),
+                ("sendSettlement", settlement),
+                ("sendSettledByUserId", "SETTLER"),
+                ("sendSettledReason", "The relay's log"),
+            ],
+        );
+    };
+    let message = |id: &str| {
+        let _authz = context.disable_authz();
+        super::find_one(&facade, MESSAGE, "emailMessageId", id)
+            .unwrap()
+            .unwrap()
+    };
+    let send = |id: &str| {
+        let _authz = context.disable_authz();
+        let sent = moqui_core::service::sync(
+            "org.moqui.mail.EmailServices.send#EmailMessage",
+            &BTreeMap::from([("emailMessageId".to_string(), Value::string(id))]),
+        );
+        (sent.unwrap_or_default(), context.message().errors().join("\n"))
+    };
+    let sink = SinkGuard::install();
+
+    // the start of a send alone, as a send lost part way leaves it: uncertain, and no settlement
+    settled("F179_LOST", "F179_SMTP", "retryable", "notDelivered");
+    super::begin_send(&facade, &message("F179_LOST")).unwrap();
+    let lost = message("F179_LOST");
+    assert_eq!(field_text(&lost, "statusId"), "ES_READY");
+    assert_eq!(field_text(&lost, "sendOutcome"), "uncertain");
+    for name in [
+        "sendSettlement",
+        "sendSettledByUserId",
+        "sendSettledDate",
+        "sendSettledReason",
+    ] {
+        assert_eq!(field_text(&lost, name), "", "{name}");
+    }
+    // the audit log keeps what was concluded
+    let audits = {
+        let _authz = context.disable_authz();
+        facade
+            .find("moqui.entity.EntityAuditLog")
+            .unwrap()
+            .eq("changedEntityName", Value::string(MESSAGE))
+            .eq("changedFieldName", Value::string("sendSettlement"))
+            .eq("pkPrimaryValue", Value::string("F179_LOST"))
+            .list()
+            .unwrap()
+    };
+    assert!(
+        audits
+            .values()
+            .iter()
+            .any(|row| field_text(row, "oldValueText") == "notDelivered" && field_text(row, "newValueText").is_empty()),
+        "{} audit rows",
+        audits.values().len()
+    );
+
+    // a whole send from outside the queue: the transport's result is the state, and the settlement is gone
+    settled("F179_SENT", "F179_SMTP", "uncertain", "delivered");
+    let (sent, errors) = send("F179_SENT");
+    assert_eq!(errors, "");
+    assert!(sent.contains_key("messageId"), "{sent:?}");
+    assert_eq!(sink.messages().len(), 1);
+    let went = message("F179_SENT");
+    assert_eq!(field_text(&went, "statusId"), "ES_SENT");
+    assert_eq!(field_text(&went, "sendOutcome"), "");
+    assert_eq!(field_text(&went, "sendSettlement"), "");
+    assert_eq!(field_text(&went, "sendSettledByUserId"), "");
+
+    // refused before any attempt: nothing began, so the person's conclusion stands
+    settled("F179_REFUSED", "F179_BAD", "uncertain", "notDelivered");
+    let (_, errors) = send("F179_REFUSED");
+    assert!(errors.contains("notexample.com"), "{errors}");
+    assert_eq!(sink.messages().len(), 1);
+    let refused = message("F179_REFUSED");
+    assert_eq!(field_text(&refused, "sendSettlement"), "notDelivered");
+    assert_eq!(field_text(&refused, "sendSettledByUserId"), "SETTLER");
+    assert_eq!(field_text(&refused, "sendOutcome"), "uncertain");
+}
+
 /// Admin P11: a server that is disabled until a test of it passes sends nothing, and one that may not use the private
 /// network (`allowPrivateNetwork` N) is connected to at no internal address; both before any socket.
 #[test]

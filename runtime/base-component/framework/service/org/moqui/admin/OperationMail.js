@@ -19,8 +19,11 @@
 // sendSettlement (delivered or notDelivered: "reported", never known) with who, when and the reason, and in the audit log.
 // A settled message is its own state here (settled), out of "Needs attention" and never counted or shown as Sent; no reader
 // of statusId sees a delivery. Reported not delivered is the person's decision that it did not arrive, so the message may
-// then be sent again as a failed one may: through the retry's claim, which clears the settlement (it was of the send
-// before), and the transport's result of that send is then the message's state.
+// then be sent again as a failed one may: through the retry's claim, and the transport's result of that send is then the
+// message's state. A settlement holds for the send it was made for: the mail service clears it when a send of the message
+// begins (send#EmailMessage, before the transport is contacted; the audit log keeps it), whoever sends it, here or from
+// another screen, so a send lost part way leaves the message uncertain and unsettled. A send refused before it began
+// (no server, a host not allowed) leaves the settlement: nothing superseded it.
 //
 // Who acts. A message belongs to whoever sent it:
 // - a mail account's message (emailAccountId) is its sender's, in the Outbox of the mail client, which sends it again or takes
@@ -498,8 +501,9 @@ function retryMailOutcome(p) {
 }
 // The retry's claim, in a transaction of its own: the message locked, still at the revision read and still known not sent
 // (or settled as not delivered); it is then marked uncertain with the claim's time, so a second request and a server that
-// stops part way both find it held, and a settlement is cleared: it was of the send before, and this send's result is
-// the transport's to give. With release, the claim's time is cleared (the mail service has written the result, or nothing).
+// stops part way both find it held. A settlement is not cleared here: the mail service clears it when the send begins, as
+// for every sender, so a claim whose send never began leaves the person's conclusion. With release, the claim's time is
+// cleared (the mail service has written the result, or nothing).
 function claimMailOutcomeRetry(p) {
     if (!ec.artifactExecution.authzDisabled() && !ec.user.hasPermission(lib.MANAGE)) throw new Error(lib.MANAGE + " is required")
     const emailMessageId = text(p.emailMessageId)
@@ -523,11 +527,7 @@ function claimMailOutcomeRetry(p) {
         {
             sendClaimDate: ec.user.nowTimestamp,
             sendOutcome: "uncertain",
-            sendError: "A retry of this message began and its result was not recorded",
-            sendSettlement: null,
-            sendSettledByUserId: null,
-            sendSettledDate: null,
-            sendSettledReason: null
+            sendError: "A retry of this message began and its result was not recorded"
         },
         true,
         null,
