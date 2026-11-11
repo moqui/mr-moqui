@@ -135,16 +135,31 @@
             if (this.onopen) this.onopen({ type: "open" });
         } else if (event.kind === "text") {
             if (this.onmessage) this.onmessage({ type: "message", data: event.text });
-        } else this.ended(event.kind === "revoked" ? 1008 : 1006);
+        } else if (event.kind === "binary") {
+            // the terminal's bytes, in base64 from the host; as binaryType arraybuffer
+            const raw = atob(String(event.data || ""));
+            const bytes = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+            if (this.onmessage) this.onmessage({ type: "message", data: bytes.buffer });
+        } else this.ended(event.kind === "revoked" ? 1008 : 1006, event.reason);
     };
-    HostSocket.prototype.ended = function (code) {
+    // the reason of a close the server gave (the terminal's: "opened elsewhere"), as a browser socket's close event has it
+    HostSocket.prototype.ended = function (code, reason) {
         if (this.readyState === 3) return;
         this.readyState = 3;
         if (this.id !== null) { delete sockets[this.id]; ended.add(this.id); invoke("socket_close", { id: this.id }); }
-        if (this.onclose) this.onclose({ type: "close", code, wasClean: code === 1000 });
+        if (this.onclose) this.onclose({ type: "close", code: reason ? 1000 : code, reason: reason || "", wasClean: code === 1000 || !!reason });
     };
     HostSocket.prototype.send = function (data) {
         if (this.readyState !== 1 || this.id === null) throw new Error("The socket is not open");
+        // the terminal's input, binary, in base64 for the host
+        if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+            const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            let raw = "";
+            for (let i = 0; i < bytes.length; i += 0x8000) raw += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            invoke("socket_send", { id: this.id, text: btoa(raw), binary: true });
+            return;
+        }
         invoke("socket_send", { id: this.id, text: String(data) });
     };
     HostSocket.prototype.close = function () {

@@ -1,7 +1,10 @@
 # Terminal: sessions, the command line, server shells and floating panels
 
-Nov 11, 2026 · Research and plan; nothing built. The decisions are in [§4](#4-decisions); those that want the user's
-word were all answered the same day ([§16](#16-open-questions)); none is open. Remote access is off by default
+Nov 11, 2026 · **Built** the same day, P0 to P9 ([§13](#13-phases)); the guide is [Terminal](../docs/ui/Terminal.md),
+and what is left (live checks on devices and through a deployed edge node, zsh's integration against a real zsh, the
+Later items of §15) is in [Remaining-Work](Remaining-Work.md#browser-terminal). The decisions are in
+[§4](#4-decisions); those that want the user's word were all answered the same day ([§16](#16-open-questions)); none is
+open. Remote access is off by default
 (D7); the order of the phases stands with the holder fifth (D14); the command line is behind `SSH_SHELL` and host
 sessions behind a new permission of their own on `ADMIN_ADV` (D6); a logout leaves sessions running (D2); the pty
 goes through `moqui term-exec` (D8); the feature is `devtools` (D15); and the apps get tabs, splits and floats on
@@ -753,6 +756,24 @@ and the like) need no script.
 
 Each phase ends with its focused tests green; the whole framework suite runs once at the end
 (`./moq test-framework`).
+
+**Built**, each phase a commit (Nov 11, 2026). Where the build went its own way:
+
+- P1: the session pump runs a `Program` (output, input, resize, redraw, hang-up, kill, end) on any byte stream, so the
+  apps, the command line, a host program and a holder's session are one model (D1).
+- P2: a request says how it reached the server (`RequestVia`: direct, the node in process, the edge link), set by the
+  host on each connection, which §8.2's place reads.
+- P3: the tracker is a scanner of our own, not `vte`. `term-exec` takes the program's argv in `MOQUI_TERM_EXEC`, not its
+  own arguments, since the Desktop app's binary reads a `--type=` argument as a browser helper.
+- P4a: floating terminals and the float layer (P4b with it, built beside the server phases).
+- P5: the holder speaks a line of JSON then raw bytes per connection; a holder of an earlier version keeps its own
+  socket (`hold-v<n>.sock`), and its sessions are listed "(earlier build)", to be ended only.
+- P6: prompt markers are set by the page itself (an OSC 133 handler of xterm.js) rather than from the server's state;
+  the page reports whether it looks at a session (`{"type":"view"}`), which decides "nobody looks".
+- P7: a device key keeps no session, so a recent sign-in from an app is a ticket of `confirm#TerminalUser` (the
+  password and code in one request) that the opening and the attach take.
+- P9: palettes are named schemes with their ANSI colors; the administrator's list is System › Terminal Sessions, its End
+  an audit row registered for `find#Changes`.
 
 | Phase | What | Done when |
 | --- | --- | --- |

@@ -31,7 +31,9 @@ own `/qapps`), never both:
   the shell's origin, and the nonce of the shell's current load, which the host hands the shell's document once it has
   loaded (only a document on the shell's origin takes it) and forgets at the next navigation or load, and which each
   shell command carries. A server page has the sockets, the outbox and the drafts of its account, as a desktop app
-  window does. The device key never reaches a page.
+  window does, the terminal's `/termws` with its binary frames among them (in base64 between the page and the host).
+  The device key never reaches a page. The Terminal on a phone has a key bar above the keyboard, fits above the
+  keyboard as it opens, and takes a pinch for its font size ([Terminal](Terminal.md#the-desktop-and-mobile-apps-and-phones)).
 - **Only the main frame has the IPC.** wry 0.57.1 on Android gave every frame Tauri's initialization scripts (the invoke
   key among them) and its IPC object, so a cross-origin iframe of a server page could have called the app's commands as
   the page. The app patches wry (`crates/moqui-mobile/patches`, through `[patch.crates-io]`, so it survives `cargo tauri

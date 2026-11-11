@@ -12,8 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The admin command shell of the built-in SSH server, for `ssh host command` and an interactive session. It replaces
-//! the Groovy shell; it is not a web endpoint. Every command runs on a request worker in a context logged in as the
+//! The commands of the `moqui>` command line, for `ssh host command`, SSH's interactive admin shell and the browser
+//! terminal's command line on a dev instance (plans/Terminal-Fancy.md §6). It replaces the Groovy shell; it is not a web
+//! endpoint. Every command runs on a request worker in a context logged in as the
 //! SSH user, so artifact authorization applies to each service and entity call the command makes. `service`, `entity`
 //! and `js` run inside the Tools app root screen, as the Groovy shell did, so they need the user's authorization for
 //! that app.
@@ -49,7 +50,7 @@ const HELP: &str = "Commands:
   exit                          end the session";
 
 /// What a command printed, and the exit status for `exec`.
-pub(super) struct Outcome {
+pub(crate) struct Outcome {
     pub text: String,
     pub status: u32,
     pub exit: bool,
@@ -74,12 +75,12 @@ impl Outcome {
 }
 
 /// True when `line` starts a multi-line `js` block.
-pub(super) fn starts_block(line: &str) -> bool {
+pub(crate) fn starts_block(line: &str) -> bool {
     line.trim() == "js"
 }
 
 /// Run one command line as `username`.
-pub(super) async fn run(factory: &Weak<ExecutionContextFactory>, username: &str, line: &str) -> Outcome {
+pub(crate) async fn run(factory: &Weak<ExecutionContextFactory>, username: &str, line: &str) -> Outcome {
     let line = line.trim();
     let (command, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
     let rest = rest.trim().to_string();

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal's audit (plans/Terminal-Fancy.md §5.7): one row per command line and host session of the browser terminal
+    (crates/moqui-host/src/term), written when it is opened and when it ends. What is typed and shown is never recorded.
+    clean#TerminalSessions removes rows older than 90 days, each day. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+    <entity entity-name="TerminalSession" package="moqui.terminal" use="transactional" cache="never">
+        <field name="terminalSessionId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="username" type="text-medium"/>
+        <!-- command or host -->
+        <field name="kind" type="text-short"/>
+        <field name="profileName" type="text-medium"/>
+        <!-- the program and its arguments, for a host session -->
+        <field name="commandLine" type="text-long"/>
+        <field name="directory" type="text-long"/>
+        <field name="clientIp" type="text-medium"/>
+        <!-- Y when it was opened from anywhere but the server's own machine -->
+        <field name="remote" type="text-indicator"/>
+        <field name="viaEdge" type="text-indicator"/>
+        <field name="visitId" type="id"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+        <field name="exitStatus" type="number-integer"/>
+        <field name="endReason" type="text-long"/>
+        <index name="TERM_SESS_USER"><index-field name="userId"/></index>
+        <index name="TERM_SESS_FROM"><index-field name="fromDate"/></index>
+        <relationship type="one" related="moqui.security.UserAccount"/>
+    </entity>
+</entities>

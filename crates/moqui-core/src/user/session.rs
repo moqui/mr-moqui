@@ -1606,6 +1606,13 @@ fn touch_session(factory: &ExecutionContextFactory, id: &str) {
     }
 }
 
+/// Count use of the session `id` that came without a request, such as typing in a browser terminal whose socket is the
+/// only traffic (plans/Terminal-Fancy.md §5.2), so the session does not time out while its user works. Only a session
+/// this node holds live is touched.
+pub fn note_use(factory: &ExecutionContextFactory, id: &str) {
+    touch_session(factory, id);
+}
+
 /// Keep the table within `session-config` `max`: drop the sessions used longest ago, down to nine
 /// tenths of the cap. A dropped session reloads from its row, so a dirty one is written first and
 /// dropped on the next pass. A failed write leaves the table over the cap until a later request.

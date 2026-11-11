@@ -666,6 +666,9 @@ fn is_known_command(name: &str) -> bool {
             | "test-load"
             | "serve"
             | "tui"
+            // the browser terminal's helper (`crate::terminal_helper`), hidden from the help
+            | "term-exec"
+            | "term-hold"
     )
 }
 

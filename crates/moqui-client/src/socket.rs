@@ -17,6 +17,11 @@
 //! host opens `/notws` (or `/callws`) with the device key on a thread of its own, hands the page each text frame and
 //! sends the page's. A dropped socket connects again, waiting longer each time up to a minute with jitter
 //! (`moqui_lib::reconnect`), as `moqui tui --server`'s does; a close for authentication (1008, the key revoked or expired) does not.
+//!
+//! `/termws`, the browser terminal (plans/Terminal-Fancy.md §12), carries binary frames both ways, keeps every frame the
+//! page sends (none is dropped: they are what the user typed), reads with a shorter poll, and is never connected again
+//! by the host: its page attaches again itself, saying how far it got, so nothing is repeated or lost. Its close
+//! reason goes to the page.
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -29,10 +34,12 @@ use moqui_lib::reconnect::Backoff;
 use moqui_lib::sync::lock;
 
 /// The paths a page may open a socket to.
-pub const PATHS: [&str; 2] = ["/notws", "/callws"];
+pub const PATHS: [&str; 3] = ["/notws", "/callws", "/termws"];
 
 /// How long a read waits before the thread looks for frames to send and for a close.
 const POLL: Duration = Duration::from_millis(50);
+/// The terminal's: a key pressed goes out within this.
+const TERMINAL_POLL: Duration = Duration::from_millis(10);
 
 /// How long the TLS and WebSocket handshakes, and a write, may take: a server that takes the connection and then stalls
 /// is dropped, and the thread can see that the host let go.
@@ -46,8 +53,12 @@ const QUEUE_LIMIT: usize = 200;
 pub enum Event {
     Open,
     Text(String),
+    /// A binary frame: the terminal's bytes.
+    Binary(Vec<u8>),
     /// Closed; the host connects again.
     Closed,
+    /// Closed with the server's reason, and not connected again: the terminal's page attaches again itself.
+    Ended(String),
     /// Closed for authentication (a 401 at the handshake, or `/notws`'s 1008 close), and not connected again. The server
     /// answers so also when it could not check the key (its database down), so before forgetting the key the host
     /// confirms with a request (`login::client_config`, `None` only on a 401).
@@ -60,18 +71,36 @@ pub type Sink = Box<dyn Fn(Event) + Send>;
 
 /// A socket the host holds for a page. Dropping it closes the socket and ends its thread.
 pub struct Socket {
-    outbox: Arc<Mutex<VecDeque<String>>>,
+    outbox: Arc<Mutex<VecDeque<Frame>>>,
     stop: Arc<AtomicBool>,
+    terminal: bool,
+}
+
+/// A frame for the server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Frame {
+    Text(String),
+    Binary(Vec<u8>),
 }
 
 impl Socket {
-    /// Send a text frame, now or once the socket is open; the oldest are dropped past the queue's limit.
+    /// Send a text frame, now or once the socket is open; the oldest are dropped past the queue's limit (not the
+    /// terminal's: they are what the user typed).
     pub fn send(&self, text: String) {
+        self.queue(Frame::Text(text));
+    }
+
+    /// Send a binary frame: the terminal's input.
+    pub fn send_binary(&self, bytes: Vec<u8>) {
+        self.queue(Frame::Binary(bytes));
+    }
+
+    fn queue(&self, frame: Frame) {
         let mut outbox = lock(&self.outbox);
-        if outbox.len() >= QUEUE_LIMIT {
+        if !self.terminal && outbox.len() >= QUEUE_LIMIT {
             outbox.pop_front();
         }
-        outbox.push_back(text);
+        outbox.push_back(frame);
     }
 
     pub fn close(&self) {
@@ -94,17 +123,24 @@ pub fn open(base: &str, key: &str, path: &str, sink: Sink) -> Result<Socket, Err
     let url = socket_url(base, path)?;
     let outbox = Arc::new(Mutex::new(VecDeque::new()));
     let stop = Arc::new(AtomicBool::new(false));
+    let terminal = is_terminal(path);
     let link = Link {
         url,
         key: key.to_string(),
         outbox: Arc::clone(&outbox),
         stop: Arc::clone(&stop),
+        terminal,
     };
     std::thread::Builder::new()
         .name("client-socket".to_string())
         .spawn(move || link.run(&sink))
         .map_err(|err| Error::new(format!("socket thread: {err}")))?;
-    Ok(Socket { outbox, stop })
+    Ok(Socket { outbox, stop, terminal })
+}
+
+/// Whether `path` is the terminal's socket.
+pub fn is_terminal(path: &str) -> bool {
+    path.split_once('?').map_or(path, |(bare, _)| bare) == "/termws"
 }
 
 /// `ws(s)://host:port/<base path><path>` of a page's socket path.
@@ -146,8 +182,10 @@ enum End {
 struct Link {
     url: String,
     key: String,
-    outbox: Arc<Mutex<VecDeque<String>>>,
+    outbox: Arc<Mutex<VecDeque<Frame>>>,
     stop: Arc<AtomicBool>,
+    /// The terminal's socket: never connected again by the host.
+    terminal: bool,
 }
 
 impl Link {
@@ -155,10 +193,17 @@ impl Link {
         let mut backoff = Backoff::new();
         while !self.stopped() {
             let mut opened = false;
-            match self.connect_and_serve(sink, &mut opened) {
+            let mut reason = String::new();
+            match self.connect_and_serve(sink, &mut opened, &mut reason) {
                 Ok(End::Final) => return,
                 Ok(End::Dropped) => {}
                 Err(err) => tracing::debug!("Client socket {}: {err}", self.url),
+            }
+            if self.terminal {
+                if !self.stopped() {
+                    sink(Event::Ended(reason));
+                }
+                return;
             }
             // a socket that was open starts its waits over: the next drop is new trouble, not the same
             if opened {
@@ -180,7 +225,7 @@ impl Link {
     }
 
     /// One connection until it closes or the host lets go; `opened` says whether it got as far as open.
-    fn connect_and_serve(&self, sink: &Sink, opened: &mut bool) -> Result<End, String> {
+    fn connect_and_serve(&self, sink: &Sink, opened: &mut bool, reason: &mut String) -> Result<End, String> {
         let uri: tungstenite::http::Uri = self
             .url
             .parse()
@@ -230,7 +275,8 @@ impl Link {
             Err(tungstenite::HandshakeError::Interrupted(_)) => return Err("handshake interrupted".to_string()),
         };
         // after the handshake, so it is not cut short by the poll
-        tcp.set_read_timeout(Some(POLL)).map_err(|err| err.to_string())?;
+        tcp.set_read_timeout(Some(if self.terminal { TERMINAL_POLL } else { POLL }))
+            .map_err(|err| err.to_string())?;
         *opened = true;
         sink(Event::Open);
         loop {
@@ -239,24 +285,34 @@ impl Link {
                 let _ = socket.flush();
                 return Ok(End::Final);
             }
-            let pending: Vec<String> = lock(&self.outbox).drain(..).collect();
+            let pending: Vec<Frame> = lock(&self.outbox).drain(..).collect();
             let mut pending = pending.into_iter();
-            while let Some(text) = pending.next() {
-                if let Err(err) = socket.send(tungstenite::Message::Text(text.clone().into())) {
+            while let Some(frame) = pending.next() {
+                let message = match &frame {
+                    Frame::Text(text) => tungstenite::Message::Text(text.clone().into()),
+                    Frame::Binary(bytes) => tungstenite::Message::Binary(bytes.clone().into()),
+                };
+                if let Err(err) = socket.send(message) {
                     // not sent: kept, in order, for the next connection
                     let mut outbox = lock(&self.outbox);
-                    for (at, unsent) in std::iter::once(text).chain(pending).enumerate() {
+                    for (at, unsent) in std::iter::once(frame).chain(pending).enumerate() {
                         outbox.insert(at, unsent);
                     }
-                    outbox.truncate(QUEUE_LIMIT);
+                    if !self.terminal {
+                        outbox.truncate(QUEUE_LIMIT);
+                    }
                     return Err(err.to_string());
                 }
             }
             match socket.read() {
                 Ok(tungstenite::Message::Text(text)) => sink(Event::Text(text.as_str().to_string())),
+                Ok(tungstenite::Message::Binary(bytes)) => sink(Event::Binary(bytes.to_vec())),
                 Ok(tungstenite::Message::Close(frame)) => {
                     // the reply to the close goes out before the socket drops
                     let _ = socket.flush();
+                    if let Some(frame) = &frame {
+                        reason.clone_from(&frame.reason.as_str().to_string());
+                    }
                     if frame.is_some_and(|frame| revoked(u16::from(frame.code), frame.reason.as_str())) {
                         sink(Event::Revoked);
                         return Ok(End::Final);

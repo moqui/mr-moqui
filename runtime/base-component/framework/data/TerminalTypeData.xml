@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal's seed data (plans/Terminal-Fancy.md §11.1). -->
+<entity-facade-xml type="seed">
+    <!-- A terminal session that wants its user while nobody looks at it: blocked (a permission, a question), done, a long
+        command finished, a bell, as the user's Terminal settings say (crates/moqui-host/src/term/notice.rs). Kept and
+        alerting, so Web Push takes it to a phone. -->
+    <moqui.security.user.NotificationTopic topic="TerminalAttention" inboxEnumId="NinNotifications" description="Terminal Attention"
+            typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" titleTemplate="${title || 'Terminal'}"/>
+    <!-- The terminal's services check their caller themselves, whatever calls them (each works on the caller's own sessions,
+        and the administrator's ask authorization on the System app), as the admin audit services do:
+        the group lets anyone call them, so the checks are the services' own. -->
+    <moqui.security.ArtifactGroup artifactGroupId="TerminalServices" description="Terminal services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="TerminalServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="Y"
+            artifactName="org\.moqui\.terminal\.TerminalServices\..*"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="TerminalServicesALL" userGroupId="ALL_USERS" artifactGroupId="TerminalServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- an administrator ended another user's session (end#TerminalSessionOf): who, whose and the reason, for
+        org.moqui.admin.AuditServices.find#Changes -->
+    <moqui.server.AuditProjection auditProjectionId="TerminalSessionEnded" changedEntityName="moqui.terminal.TerminalSession"
+            changedFieldName="endedBy" category="operation" description="Terminal session of another user ended" valueMode="show"
+            primaryKeyKind="plain" primaryKeyTitle="Session" secondaryKeyKind="user" secondaryKeyTitle="Its user" sequenceNum="900"/>
+</entity-facade-xml>

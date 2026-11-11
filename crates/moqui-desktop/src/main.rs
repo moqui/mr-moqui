@@ -20,6 +20,11 @@
 
 #[tauri_runtime_cef::cef_entry_point]
 fn main() {
+    // the browser terminal's helper: its node in process starts this executable for a host session's program
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(status) = moqui_host::terminal_helper(&args) {
+        std::process::exit(status);
+    }
     moqui_app::link();
     moqui_desktop::run();
 }

@@ -9,6 +9,11 @@
 
     <!-- recommended values: production, dev, test; any code may look at these Java System properties to vary behavior (System.getProperty("instance_purpose")) -->
     <default-property name="instance_purpose" value="production"/>
+    <!-- The browser terminal's command line and host sessions (the terminal element): dev for a dev instance only, false off,
+        empty on; and from anywhere but this machine, terminal_remote=true (plans/Terminal-Fancy.md D6, D7). -->
+    <default-property name="terminal_command_line" value="dev"/>
+    <default-property name="terminal_host_sessions" value="dev"/>
+    <default-property name="terminal_remote" value="false"/>
     <!-- Deploying a component from a git URL (System > Components) runs its code and loads its data: it needs the
         sealed COMPONENT_DEPLOY permission, and on a production instance also this set to true
         (docs/tools/Component-Deploy.md). -->
@@ -867,7 +872,7 @@
             to either list with authz child elements, privileged-group and sealed-permission, never by repeating the
             attribute, which would replace these defaults. -->
         <authz privileged-groups="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"
-                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD"/>
+                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,TERMINAL_HOST,LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD"/>
     </user-facade>
 
     <transaction-facade use-transaction-cache="${entity_tx_cache}" use-connection-stash="true" use-lock-track="${entity_lock_track}" use-statement-timeout="${entity_statement_timeout}">
@@ -1203,9 +1208,23 @@
     <ssh-server enabled="true" port="${ssh_port}" host="${ssh_host}" host-key="${ssh_host_key}" public-host="${ssh_public_host}"
             public-port="${ssh_public_port}" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
             git-password-auth="false" login-dialog="true"/>
-    <!-- The terminal client's sessions, over SSH and in the browser together: max-sessions at once, and
-        max-sessions-per-user of them for one user; a session in its login dialog counts toward the first only. -->
-    <terminal max-sessions="16" max-sessions-per-user="4"/>
+    <!-- The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8): max-sessions apps and
+        command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
+        the first only. A kept apps session with no window ends after detach-seconds, a command or host session after
+        host-detach-hours; a command or host session keeps replay-kb of its output for a window that comes back.
+        On a dev instance (terminal_command_line and terminal_host_sessions: dev by default, false off, empty on for any
+        purpose) the browser terminal offers the moqui> command line to a user with SSH_SHELL and programs on the server's
+        operating system (the host-profile elements, and the shell profile: the server user's own shell) to a user with
+        TERMINAL_HOST. From anywhere but this machine those need terminal_remote=true, HTTPS and a sign-in within
+        remote-reauth-minutes (docs/ui/Terminal.md). -->
+    <terminal max-sessions="16" max-sessions-per-user="4" detach-seconds="120" replay-kb="2048"
+            command-line="${terminal_command_line}" host-sessions="${terminal_host_sessions}" remote="${terminal_remote}"
+            remote-reauth-minutes="60" host-max-sessions="32" host-max-sessions-per-user="16" host-detach-hours="72"
+            host-directory="">
+        <host-profile name="shell" title="Shell" integration="true"/>
+        <host-profile name="bash" title="bash" command="bash" login="true" integration="true"/>
+        <host-profile name="zsh" title="zsh" command="zsh" login="true" integration="true"/>
+    </terminal>
 
     <!--
         The git server: clone, fetch and push of GitRepository repositories at <public-url>/git/<repositoryId>.git
@@ -1479,6 +1498,7 @@
         <load-entity location="component://framework/entity/CallEntities.xml"/>
         <load-entity location="component://framework/entity/VoiceEntities.xml"/>
         <load-entity location="component://framework/entity/ChatKeyEntities.xml"/>
+        <load-entity location="component://framework/entity/TerminalEntities.xml"/>
         <!-- in framework/data -->
         <load-data location="component://framework/data/CommonL10nData.xml"/>
         <load-data location="component://framework/data/CurrencyData.xml"/>
@@ -1507,6 +1527,8 @@
         <load-data location="component://framework/data/SftpDemoData.xml"/>
         <load-data location="component://framework/data/AdminConfigurationData.xml"/>
         <load-data location="component://framework/data/AdminAuditData.xml"/>
+        <load-data location="component://framework/data/TerminalTypeData.xml"/>
+        <load-data location="component://framework/data/TerminalSetupData.xml"/>
     </entity-facade>
     <database-list>
         <dictionary-type type="id" java-type="String" default-sql-type="VARCHAR(40)"/>

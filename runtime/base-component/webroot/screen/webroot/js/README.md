@@ -72,6 +72,8 @@ instead; the two never share a page (both define `window.moqui`). The full refer
 | `WebrootPush.js` | `moqui.push`: registers the service worker `/sw.js`, the account menu's Notifications on this device (`m-push-item`), and the Web Push subscription kept to the signed-in user ([Qvt-Client](../../../../../../docs/ui/Qvt-Client.md#install-and-web-push)) |
 | `WebrootCrypto.js` | `moqui.crypto`: this browser's crypto device (matrix-sdk-crypto's OlmMachine, loaded only when needed), its keys and Olm-encrypted to-device messages ([Chat keys](../../../../../../docs/interfaces/Chat-Keys.md)) |
 | `WebrootReAuth.js` | `moqui.reauth`: the recent sign-in check of sensitive actions, asking for the password and the second factor (or a fresh SSO sign-in) in a dialog ([Recent sign-in](../../../../../../docs/security/Recent-Auth.md)) |
+| `WebrootTerminal.js` | `moqui.terminal`: the browser terminal's sessions, their xterm.js instances and sockets, the views that show them (`m-terminal-view`, `m-terminal-node`), the header button, the key bar and the floating terminals ([Terminal](../../../../../../docs/ui/Terminal.md)) |
+| `WebrootFloats.js` | `moqui.floats`: the floating windows over the shell (`m-float-layer`, `m-float`) that Assist, the tray's tabs and a terminal undock into ([Qvt-Client](../../../../../../docs/ui/Qvt-Client.md#floats)) |
 | `WebrootAssist.js` | `moqui.assist`: the Assist drawer, its store, transport and follow ([Assist](../../../../../../docs/ai/Assist.md)) |
 | `MoquiQzComponent.js` | QZ Tray printing, loaded only when the user preference `qz.print.enabled` is `true` |
 | `../css/WebrootVue.qvt.css` | the styles of the shell, the div tables and the widgets |
@@ -93,6 +95,6 @@ Tests: `moqui test-client webroot --offline` runs the page specs under `test/cli
 needs a real browser is the Gate 3 Chromium smoke (`crates/moqui-host/tests/gate3_browser.rs`), in the acceptance suite.
 
 Sections of the reference: Page shell and settings · Loading a screen · The components the macros write · Shell data
-and providers · Preferences (and a screen's handheld density) · Appearance · Record panels, rich text, avatars and record
+and providers · Floats · Preferences (and a screen's handheld density) · Appearance · Record panels, rich text, avatars and record
 cards · List views: board, calendar and tree · Scan input · Layout panels: split, wizard and stack · Chat store and presence · Notification listeners ·
 In the desktop app · Collaborative editing · Mail sign-in popup · Server-static screens · The tui screen model · Not here.

@@ -606,9 +606,13 @@ test("the shell's hooks: the palette's Ask row and record rows, the form answers
     const shell = qvt.components["m-qapps-root"].template;
     assert.match(shell, /<m-assist-button v-if="assistOn && !handheld"><\/m-assist-button>\n {4}<\/q-toolbar><\/q-header>/);
     assert.match(shell, /<m-shell-assist v-if="assistOn"><\/m-shell-assist>/);
-    // the stable ids and data attributes the browser smoke drives
-    const drawer = assist.components["m-shell-assist"].template + assist.components["m-assist-composer"].template + assist.components["m-assist-card"].template;
-    ["m-assist-drawer", "m-assist-send", "m-assist-stop", "m-assist-follow-here", "m-assist-history", "m-assist-tasks"].forEach((id) =>
+    // the stable ids and data attributes the browser smoke drives; the drawer holds the body (m-assist-body) in a teleport that
+    // moves it into a float while undocked (plans/Terminal-Fancy.md §10.5), and the body has the mark that keeps it out of reach
+    const drawer = assist.components["m-shell-assist"].template + assist.components["m-assist-body"].template + assist.components["m-assist-composer"].template +
+        assist.components["m-assist-card"].template;
+    assert.match(assist.components["m-shell-assist"].template, /<q-drawer [^>]* id="m-assist-drawer" data-assist-drawer><teleport :to="floatTarget \|\| 'body'" :disabled="!floatTarget"><m-assist-body v-if="s.mounted" :floated="!!floatTarget"><\/m-assist-body><\/teleport><\/q-drawer>/);
+    assert.match(assist.components["m-assist-body"].template, /^<div class="m-assist-body column no-wrap fit" [^>]*data-assist-self="assist"/);
+    ["m-assist-drawer", "m-assist-undock", "m-assist-close", "m-assist-send", "m-assist-stop", "m-assist-follow-here", "m-assist-history", "m-assist-tasks"].forEach((id) =>
         assert.match(drawer, new RegExp('id="' + id + '"'), id));
     // the composer's id is the textarea's own (q-input puts its for on the native control), so focus and the smoke reach it
     assert.match(drawer, /for="m-assist-input"/);
@@ -822,7 +826,7 @@ test("the 13.14 features follow bootstrap and go away on a 501 or 404; their hoo
     } finally { Object.assign(s, before); }
     const thread = assist.components["m-assist-thread"].template;
     const composer = assist.components["m-assist-composer"].template;
-    const shell = assist.components["m-shell-assist"].template;
+    const shell = assist.components["m-assist-body"].template;
     const panes = assist.components["m-assist-memory"].template + assist.components["m-assist-skills"].template + assist.components["m-assist-skill-editor"].template;
     ["m-assist-attach", "m-assist-file", "m-assist-dictate", "m-assist-attachments", "m-assist-prompts"].forEach((id) => assert.match(composer, new RegExp('id="' + id + '"'), id));
     ["m-assist-context", "m-assist-remember-toggle", "m-assist-memory", "m-assist-skills"].forEach((id) => assert.match(shell, new RegExp('id="' + id + '"'), id));

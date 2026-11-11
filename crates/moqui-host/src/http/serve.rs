@@ -99,6 +99,8 @@ pub(crate) struct Peer {
     pub https: bool,
     /// The TLS session's exporter (RFC 9266), when the xmpp feature takes it at the handshake.
     pub exporter: Option<Arc<Vec<u8>>>,
+    /// How the request reached this server (plans/Terminal-Fancy.md §8.2).
+    pub via: moqui_core::web::RequestVia,
 }
 
 /// A terminate host's request on an edge node, taken from the request by the router's edge-forward layer, inside the
@@ -251,6 +253,7 @@ pub(crate) async fn serve_tunneled<S>(
         closing,
         exporter,
         hold: None,
+        via: moqui_core::web::RequestVia::Edge,
     };
     run_connection(stream, true, http, serving).await;
 }
@@ -265,6 +268,8 @@ pub(crate) struct Serving {
     pub exporter: Option<Arc<Vec<u8>>>,
     /// The listener's slots the connection holds, given back when its socket closes ([`WriteStall`]).
     pub hold: Option<ConnectionHold>,
+    /// How the connection reached this server.
+    pub via: moqui_core::web::RequestVia,
 }
 
 /// Serve one connection as `http` until it closes or `serving.closing` turns true, then shut it down gracefully.
@@ -289,6 +294,7 @@ where
         mut closing,
         exporter,
         hold,
+        via,
     } = serving;
     let io = WriteStall::new(Lingering::new(stream), web.limits.write, hold);
     let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
@@ -300,6 +306,7 @@ where
             secure,
             https,
             exporter: exporter.clone(),
+            via,
         };
         serve_request(&web, request, &peer)
     });
@@ -331,6 +338,7 @@ where
         mut closing,
         exporter,
         hold,
+        via,
         ..
     } = serving;
     let io = WriteStall::new(Lingering::new(stream), web.limits.write, hold);
@@ -344,7 +352,7 @@ where
         hyper::service::service_fn(move |mut request: hyper::Request<hyper::body::Incoming>| -> Answer {
             activity.started();
             h2_request_form(&mut request);
-            let answer = h2_answer(&web, request, remote, exporter.clone());
+            let answer = h2_answer(&web, request, remote, exporter.clone(), via);
             let (activity, close) = (Arc::clone(&activity), close.clone());
             Box::pin(async move {
                 let mut response = answer.await?;
@@ -399,6 +407,7 @@ fn h2_answer(
     request: hyper::Request<hyper::body::Incoming>,
     remote: SocketAddr,
     exporter: Option<Arc<Vec<u8>>>,
+    via: moqui_core::web::RequestVia,
 ) -> Answer {
     #[cfg(feature = "grpc")]
     if let Some(grpc) = grpc_routes(web, &request) {
@@ -420,6 +429,7 @@ fn h2_answer(
         secure: true,
         https: true,
         exporter,
+        via,
     };
     Box::pin(serve_request(web, request, &peer))
 }
@@ -470,6 +480,7 @@ where
     let _ = &peer.exporter;
     request.extensions_mut().insert(ConnectInfo(remote));
     request.extensions_mut().insert(ClientAddr(client));
+    request.extensions_mut().insert(peer.via);
     if peer.secure {
         request.extensions_mut().insert(TlsConnection);
     }

@@ -4806,6 +4806,7 @@ dependencies = [
  "rsipstack",
  "russh",
  "russh-sftp",
+ "rustix",
  "rustls",
  "rustls-webpki",
  "sasl",

@@ -1,0 +1,26 @@
+# MR Moqui terminal shell integration for zsh (plans/Terminal-Fancy.md §11.2), the .zshenv of the ZDOTDIR a zsh is
+# started with: it puts the user's own ZDOTDIR back (so their .zprofile and .zshrc are read as always), reads their
+# .zshenv, and adds hooks that write OSC 133 around each prompt and command and OSC 7 with the directory.
+if [[ -n "${MOQUI_ZDOTDIR+x}" ]]; then
+    ZDOTDIR=$MOQUI_ZDOTDIR
+else
+    builtin unset ZDOTDIR
+fi
+builtin unset MOQUI_ZDOTDIR
+[[ -r "${ZDOTDIR:-$HOME}/.zshenv" ]] && builtin source "${ZDOTDIR:-$HOME}/.zshenv"
+
+builtin autoload -Uz add-zsh-hook
+__moqui_ran=
+__moqui_precmd() {
+    local exit_status=$?
+    [[ -n $__moqui_ran ]] && builtin print -n "\e]133;D;${exit_status}\a"
+    __moqui_ran=
+    builtin print -n "\e]7;file://${HOST}${PWD// /%20}\a\e]133;A\a"
+    [[ $PS1 == *'133;B'* ]] || PS1="$PS1%{\e]133;B\a%}"
+}
+__moqui_preexec() {
+    __moqui_ran=1
+    builtin print -n "\e]133;C\a"
+}
+add-zsh-hook precmd __moqui_precmd
+add-zsh-hook preexec __moqui_preexec
