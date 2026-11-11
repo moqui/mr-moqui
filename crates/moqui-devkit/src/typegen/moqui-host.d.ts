@@ -506,10 +506,19 @@ interface ServiceCallOptions<Self> {
     softValidate(flag?: boolean): Self;
     /** Java sends the call to another server of the cluster; here it is the same call. */
     distribute(flag?: boolean): Self;
+    /** The call runs though the caller has error messages. */
+    ignorePreviousError(flag?: boolean): Self;
+    noRememberParameters(): Self;
+    getServiceName(): string;
+    /** The parameters set so far. */
+    getCurrentParameters(): MoquiMap;
 }
 
 interface ServiceCallSync extends ServiceCallOptions<ServiceCallSync> {
     name<S extends MoquiServiceName & string>(name: S): ServiceCallSyncNamed<S>;
+    /** Java's `name(verb, noun)` and `name(path, verb, noun)`; not typed by service. */
+    name(verb: string, noun: string): ServiceCallSyncNamed<string>;
+    name(path: string, verb: string, noun: string): ServiceCallSyncNamed<string>;
 }
 
 interface ServiceCallSyncNamed<S extends string> extends ServiceCallOptions<ServiceCallSyncNamed<S>> {
@@ -1137,6 +1146,82 @@ interface MoquiTransactionFacade {
     flushAndDisableTransactionCache(): void;
 }
 
+interface MoquiServiceCallSpecial {
+    name(name: string): MoquiServiceCallSpecial;
+    name(verb: string, noun: string): MoquiServiceCallSpecial;
+    name(path: string, verb: string, noun: string): MoquiServiceCallSpecial;
+    parameters(map: MoquiMap): MoquiServiceCallSpecial;
+    parameter(name: string, value: unknown): MoquiServiceCallSpecial;
+    registerOnCommit(): void;
+    registerOnRollback(): void;
+}
+
+/** `ec.service.rest()`, as Java's `RestClient`. */
+interface MoquiRestClient {
+    method(method: string): MoquiRestClient;
+    getMethod(): string;
+    uri(uri: string): MoquiRestClient;
+    /** A builder: `uri().protocol("https").host(h).port(443).path(p).parameter(n, v).fragment(f).build()` gives the client. */
+    uri(): MoquiRestUriBuilder;
+    getUri(): string | null;
+    getUriString(): string | null;
+    addHeader(name: string, value: string): MoquiRestClient;
+    addHeaders(headers: Record<string, string>): MoquiRestClient;
+    /** The Authorization header of HTTP basic authentication. */
+    basicAuth(username: string, password: string): MoquiRestClient;
+    contentType(contentType: string): MoquiRestClient;
+    acceptContentType(contentType: string): MoquiRestClient;
+    /** Named on the Content-Type of a text body; the text is sent as UTF-8. */
+    encoding(characterEncoding: string): MoquiRestClient;
+    text(body: string | null): MoquiRestClient;
+    jsonObject(body: unknown): MoquiRestClient;
+    addBodyParameter(name: string, value: unknown): MoquiRestClient;
+    addBodyParameters(parameters: MoquiMap): MoquiRestClient;
+    timeout(seconds: number): MoquiRestClient;
+    bodyBytes(bytes: Uint8Array | null): MoquiRestClient;
+    multipart(parts: unknown): MoquiRestClient;
+    streamFrom(): MoquiRestClient;
+    followRedirects(follow?: boolean): MoquiRestClient;
+    denyInternal(): MoquiRestClient;
+    call(): MoquiRestResponse;
+    /** As `call()`, with the headers only as given and the body left on the server until it is read or forwarded. */
+    send(): MoquiRestResponse;
+    /** The call is made now, on this thread; the future holds its response. */
+    callFuture(): { get(): MoquiRestResponse; isDone(): boolean };
+}
+
+interface MoquiRestUriBuilder {
+    protocol(protocol: string): MoquiRestUriBuilder;
+    host(host: string): MoquiRestUriBuilder;
+    port(port: number): MoquiRestUriBuilder;
+    path(path: string): MoquiRestUriBuilder;
+    parameter(name: string, value: unknown): MoquiRestUriBuilder;
+    parameters(parameters: MoquiMap): MoquiRestUriBuilder;
+    fragment(fragment: string | null): MoquiRestUriBuilder;
+    build(): MoquiRestClient;
+}
+
+interface MoquiRestResponse {
+    readonly statusCode: number;
+    getStatusCode(): number;
+    getReasonPhrase(): string | null;
+    /** Throws for a status outside 200 to 299; else the response. */
+    checkError(): MoquiRestResponse;
+    text(): string | null;
+    getBodyText(): string | null;
+    bytes(): Uint8Array | null;
+    jsonObject(): unknown;
+    /** The body parsed as XML. */
+    xmlNode(): unknown;
+    headerFirst(name: string): string | null;
+    headerList(name: string): string[];
+    /** The headers by lower case name, each with the list of its values. */
+    headers(): Record<string, string[]>;
+    getHeaders(): Record<string, string[]>;
+    getContentType(): string | null;
+    getUri(): string | null;
+}
+
 /** A named framework cache, from `ec.cache.getCache(name)`. Keys are text. */
 interface MoquiCache {
     get(key: string): unknown;
@@ -1236,6 +1321,12 @@ interface MoquiServerEc {
         };
         sync(): ServiceCallSync;
         async(): ServiceCallAsync;
+        /** A service run when the transaction in place commits or rolls back. */
+        special(): MoquiServiceCallSpecial;
+        /** A `ServiceJob` by name: `ec.service.job(name).parameters({..}).run()` gives its job run id. */
+        job(jobName: string): { parameters(map: MoquiMap): unknown; parameter(name: string, value: unknown): unknown; localOnly(flag?: boolean): unknown; run(): string };
+        /** An HTTP client: `ec.service.rest().method("POST").uri(url).jsonObject(body).call()`. */
+        rest(): MoquiRestClient;
         /** Epoch millis of the next time a Quartz cron expression (seconds first) is due after the moment, or null when never. */
         nextCronExecution(cron: string, after?: TimestampInput | null): number | null;
         /** English text; the locale and short format are not used. */

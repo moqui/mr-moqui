@@ -708,10 +708,25 @@ macro_rules! tools_js {
         try { return JSON.parse(this.body); }
         catch (e) { throw new Error("Error parsing JSON response from request to " + this.client.uriString + ": " + e.message); }
     };
+    // Java's checkError(): a status outside 200 to 299 throws; else the response, for a chain
+    RestResponse.prototype.checkError = function () {
+        if (this.statusCode < 200 || this.statusCode >= 300)
+            throw new Error("Error response " + this.statusCode + (this.reasonPhrase ? " " + this.reasonPhrase : "") +
+                " from request to " + this.client.uriString);
+        return this;
+    };
+    RestResponse.prototype.headers = function () { return this.headerMap; };
+    RestResponse.prototype.getClient = function () { return this.client; };
+    RestResponse.prototype.getUri = function () { return this.client.uriString; };
+    RestResponse.prototype.getBodyText = RestResponse.prototype.text;
+    RestResponse.prototype.getResponseText = RestResponse.prototype.text;
+    // the body parsed as XML, as an MNode
+    RestResponse.prototype.xmlNode = function () { this.loadBody(); return makeNode(host.parseNode(this.body)); };
     function RestUriBuilder(client) {
         this.client = client; this.protocolText = "http"; this.hostText = null; this.portNumber = 80; this.pathText = "";
-        this.parameterList = [];
+        this.parameterList = []; this.fragmentText = null;
     }
+    RestUriBuilder.prototype.fragment = function (fragment) { this.fragmentText = fragment == null ? null : String(fragment); return this; };
     RestUriBuilder.prototype.protocol = function (protocol) {
         if (!protocol) throw new Error("Empty protocol not allowed");
         this.protocolText = String(protocol); return this;
@@ -741,7 +756,7 @@ macro_rules! tools_js {
         if (!this.hostText) throw new Error("No host specified, call the host() method before build()");
         const query = restQuery(this.parameterList);
         return this.client.uri(this.protocolText + "://" + this.hostText + ":" + this.portNumber + (this.pathText || "/") +
-            (query ? "?" + query : ""));
+            (query ? "?" + query : "") + (this.fragmentText ? '#' + encodeURIComponent(this.fragmentText) : ""));
     };
     function RestClient() {
         this.methodName = "GET"; this.uriString = null; this.headerList = []; this.bodyText = null;
@@ -752,6 +767,23 @@ macro_rules! tools_js {
     RestClient.prototype.uri = function (uri) {
         if (arguments.length === 0) return new RestUriBuilder(this);
         this.uriString = String(uri); return this;
+    };
+    RestClient.prototype.getMethod = function () { return this.methodName; };
+    // Java's basicAuth(username, password): the Authorization header of HTTP basic authentication
+    RestClient.prototype.basicAuth = function (username, password) {
+        return this.addHeader("Authorization", "Basic " + su.base64Encode(String(username ?? "") + ":" + String(password ?? "")));
+    };
+    // Java's acceptContentType: the Accept header, where call() would send the content type
+    RestClient.prototype.acceptContentType = function (contentType) { return this.addHeader("Accept", contentType); };
+    // Java's encoding(characterEncoding): named on the Content-Type of a text body that names none; the text is sent
+    // as UTF-8 here whatever is named
+    RestClient.prototype.encoding = function (characterEncoding) {
+        this.encodingText = characterEncoding == null ? null : String(characterEncoding); return this;
+    };
+    // Java's callFuture(): the call is made now, on this thread, and the future holds its response
+    RestClient.prototype.callFuture = function () {
+        const response = this.call();
+        return { get: () => response, isDone: () => true, isCancelled: () => false, cancel: () => false };
     };
     RestClient.prototype.getUri = function () { return this.uriString; };
     RestClient.prototype.getUriString = function () { return this.uriString; };
@@ -805,7 +837,8 @@ macro_rules! tools_js {
         if (query) uri += (uri.includes("?") ? "&" : "?") + query;
         const headers = this.headerList.slice();
         const hasHeader = (name) => headers.some(([key]) => key.toLowerCase() === name);
-        if (this.bodyText && !hasHeader("content-type")) headers.push(["Content-Type", this.contentTypeText]);
+        if (this.bodyText && !hasHeader("content-type")) headers.push(["Content-Type", this.contentTypeText +
+            (this.encodingText && !/charset=/i.test(this.contentTypeText) ? "; charset=" + this.encodingText : "")]);
         if (!hasHeader("accept")) headers.push(["Accept", this.contentTypeText]);
         const sent = host.restSend({ method: this.methodName, uri: uri, headers: headers, body: this.bodyText,
             timeoutSeconds: this.timeoutSeconds, denyInternal: this.denyInternalFlag });

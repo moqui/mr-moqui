@@ -520,3 +520,37 @@ fn finds_conditions_and_the_entity_facade_take_javas_forms() {
     })()"#);
     clear_context_stack();
 }
+
+#[test]
+fn service_call_names_and_rest_client_members() {
+    clear_context_stack();
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    holds(
+        r#"ec.service.sync().name("create", "moqui.basic.Enumeration").getServiceName() === "create#moqui.basic.Enumeration"
+            && ec.service.sync().name("org.moqui.impl.UserServices", "update", "Password").getServiceName()
+                === "org.moqui.impl.UserServices.update#Password"
+            && ec.service.sync().name("a.b.do#Thing").getServiceName() === "a.b.do#Thing"
+            && ec.service.async().name("store", "x.Y").getServiceName() === "store#x.Y""#,
+    );
+    holds(
+        r#"(function () {
+            const call = ec.service.sync().name("a.do#It").parameter("one", 1).parameters({two: 2});
+            const held = call.getCurrentParameters();
+            return held.one === 1 && held.two === 2;
+        })()"#,
+    );
+    holds(
+        r#"(function () {
+            const client = ec.service.rest().method("post").basicAuth("user", "pass").acceptContentType("text/xml").encoding("UTF-8");
+            const built = ec.service.rest().uri().protocol("https").host("example.com").port(443).path("a/b")
+                .parameter("q", "x y").fragment("part").build();
+            return client.getMethod() === "POST"
+                && client.headerList.some(([name, value]) => name === "Authorization" && value === "Basic " + StringUtilities.base64Encode("user:pass"))
+                && client.headerList.some(([name, value]) => name === "Accept" && value === "text/xml")
+                && built.getUriString() === "https://example.com:443/a/b?q=x%20y#part"
+                && typeof client.callFuture === "function";
+        })()"#,
+    );
+    clear_context_stack();
+}

@@ -60,7 +60,8 @@ const SCREEN_JS: &str = r#"(function (proto) {
             webappName: (v) => { o.webappName = v; return b; },
             rootScreen: (v) => { o.rootScreen = v; return b; },
             rootScreenFromHost: (v) => { o.rootScreenFromHost = v; return b; },
-            screenPath: (v) => { o.screenPath = v; return b; },
+            // a path, or Java's list of path names
+            screenPath: (v) => { o.screenPath = Array.isArray(v) ? v.join("/") : v; return b; },
             renderMode: (v) => { o.renderMode = v; return b; },
             baseLinkUrl: (v) => { o.baseLinkUrl = v; return b; },
             lastStandalone: (v) => { o.lastStandalone = String(v); return b; },
@@ -80,6 +81,7 @@ const SCREEN_JS: &str = r#"(function (proto) {
             baseScreenPath: (v) => { o.baseScreenPath = v; return t; },
             renderMode: (v) => { o.renderMode = v; return t; },
             baseLinkUrl: (v) => { o.baseLinkUrl = v; return t; },
+            webappName: (v) => { o.webappName = v; return t; },
             // a request header of every render; clientModes("qvue,qjs") is X-Moqui-Client-Modes, as moqui.loadComponent sends it
             header: (name, value) => { o.headers = Object.assign({}, o.headers, { [String(name)]: String(value) }); return t; },
             clientModes: (modes) => t.header("X-Moqui-Client-Modes", Array.isArray(modes) ? modes.join(",") : modes),
@@ -128,6 +130,9 @@ const SCREEN_JS: &str = r#"(function (proto) {
                     assertContains: (text) => !!r.output && r.output.includes(text),
                     assertNotContains: (text) => !r.output || !r.output.includes(text),
                     assertNoErrors: () => r.errorMessages.length === 0,
+                    // Java's assertRegex: whether the output has a match of the pattern (text or a RegExp)
+                    assertRegex: (regex) => !!r.output && (regex instanceof RegExp ? regex : new RegExp(String(regex))).test(r.output),
+                    getJsonObject: () => str.jsonObject,
                     getOutput: () => r.output, getErrorMessages: () => r.errorMessages, getRenderTime: () => r.renderTime
                 };
                 // the response parsed as JSON, or null when it is not JSON
