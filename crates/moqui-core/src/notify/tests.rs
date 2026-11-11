@@ -429,7 +429,8 @@ fn job_error_publishes_danger_with_job_name() {
     let _entered = ctx.enter();
     let _authz = ctx.disable_authz();
     let job = unique("job");
-    let error = unique("broke");
+    // an error that quotes text with an expression in it: the title shows it as it is, nothing in it runs
+    let error = unique("broke") + " ${'run' + 'ning'}";
     let seen = Arc::new(Mutex::new(Vec::new()));
     let keep = Arc::clone(&seen);
     let watch = job.clone();
@@ -473,6 +474,8 @@ fn job_error_publishes_danger_with_job_name() {
     );
     let title = got[0].body.get("title").and_then(|value| value.as_str()).unwrap_or("");
     assert!(title.contains(&job), "{title}");
+    assert!(title.ends_with(&error), "{title}");
+    assert!(!title.contains("running"), "{title}");
     drop(got);
     let rows = facade
         .find(MESSAGE)

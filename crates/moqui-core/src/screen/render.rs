@@ -234,19 +234,37 @@ impl ScreenRender {
     /// # Errors
     ///
     /// Returns the error the render raised. Its kind says 401, 403, or 404 for the web layer.
-    pub fn render(self) -> Result<RenderOutput, Error> {
+    pub fn render(mut self) -> Result<RenderOutput, Error> {
         let owned = (!ExecutionContext::is_entered()).then(|| self.factory.new_context());
         let _entered = owned.as_ref().map(ExecutionContext::enter);
         let _tarpit = (!self.tarpit).then(TarpitOff::new);
-        let _web = web::install_with(self.parameters.clone(), self.base_url.clone());
-        for (name, value) in &self.session {
-            user::session::set_session_attribute(name, Some(&moqui_lib::object::to_plain_string(value)));
-        }
         let mut request = WebRequest::new(self.method.clone(), self.path.clone());
         for (name, value) in &self.headers {
             request.set_header(name.clone(), value.clone());
         }
         let request = Arc::new(request);
+        // a screen test's render with a device cookie among its headers is that device's request, checked as a served
+        // one is (user/device.rs): its display account, its route group, the parameter its registration fixed. Not again
+        // inside a device's request, whose guard would then end the outer one's scope with its own.
+        let _device = match (self.as_request && user::device::current_scope().is_none())
+            .then(|| user::device::begin_request(&request))
+            .transpose()?
+        {
+            Some(user::device::DeviceRequest::Active(device)) => {
+                if let Some((name, value)) = device.scope().parameter.clone() {
+                    self.parameters.insert(name, Value::String(value));
+                }
+                Some(device)
+            }
+            Some(user::device::DeviceRequest::Refused(refusal)) => {
+                return Err(Error::of_kind(ErrorKind::Unauthorized, refusal.message()));
+            }
+            _ => None,
+        };
+        let _web = web::install_with(self.parameters.clone(), self.base_url.clone());
+        for (name, value) in &self.session {
+            user::session::set_session_attribute(name, Some(&moqui_lib::object::to_plain_string(value)));
+        }
         // a screen test's render is the thread's request for the code it runs, as a served request is
         if self.as_request {
             web::set_request(Arc::clone(&request), bytes::Bytes::new());
@@ -749,6 +767,8 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
         info = ScreenUrlInfo::parse(factory, job.root, job.path, 1)?;
     }
     check_web_settings(&info)?;
+    // a shared device opens only its route group, before anything of the target runs (user/device.rs)
+    user::device::check_route(&info)?;
     if job.enforce_request_checks && (redirect_to_https(factory, job, &info) || redirect_to_login(factory, job, &info)?)
     {
         return Ok(());

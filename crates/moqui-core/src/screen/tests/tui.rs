@@ -1130,7 +1130,9 @@ fn stacked_columns_are_parts_and_no_cell_is_an_element_name() {
 }
 
 /// A container-dialog in a list cell (an Edit per row) is a dialog node of the row, its form filled from the row; a
-/// section in such a dialog cannot be captured and is an error node, with the rest of the document whole.
+/// section in such a dialog is its nodes, with its condition and the row's values (Contacts' contact info and Commerce's
+/// review decisions); a screen included in one cannot be captured and is an error node, with the rest of the document
+/// whole.
 #[test]
 fn a_container_dialog_in_a_list_cell_is_a_dialog_of_its_row() {
     let xml = format!(
@@ -1181,9 +1183,35 @@ fn a_container_dialog_in_a_list_cell_is_a_dialog_of_its_row() {
     assert!(body.contains("after the list"), "{body}");
     client_model(&body);
 
+    let sectioned = xml.replace(
+        r#"<form-single name="EditRow""#,
+        r#"<section name="Inner" condition="name == 'Beta'"><widgets><label text="inner ${name}"/></widgets>
+            <fail-widgets><label text="not for ${name}"/></fail-widgets></section><form-single name="EditRow""#,
+    );
+    let output = render("row-dialog-section", &sectioned, BTreeMap::new());
+    let body = output.body_text();
+    let doc = document(&output);
+    let list = list_named(&doc, "Rows");
+    let rows = list["rows"].as_array().unwrap();
+    let dialog = |row: usize| {
+        rows[row]["cells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|cell| cell["t"] == json!("dialog"))
+            .unwrap_or_else(|| panic!("no dialog in row {row}: {}", rows[row]))
+            .to_string()
+    };
+    assert!(dialog(0).contains("not for Alpha") && !dialog(0).contains("inner"), "{}", dialog(0));
+    assert!(dialog(1).contains("inner Beta") && !dialog(1).contains("not for"), "{}", dialog(1));
+    assert!(dialog(1).contains("\"qty\""), "{}", dialog(1));
+    assert!(!body.contains("\"error\""), "{body}");
+    assert!(body.contains("after the list"), "{body}");
+    client_model(&body);
+
     let nested = xml.replace(
         r#"<form-single name="EditRow""#,
-        r#"<section name="Inner"><widgets><label text="x"/></widgets></section><form-single name="EditRow""#,
+        r#"<include-screen location="component://none/screen/None.xml"/><form-single name="EditRow""#,
     );
     let output = render("row-dialog-nested", &nested, BTreeMap::new());
     let body = output.body_text();

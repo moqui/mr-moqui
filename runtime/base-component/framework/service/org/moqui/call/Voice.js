@@ -286,11 +286,13 @@ function missingText(missing) {
 function notifyEmergency(userId, location, callSessionId) {
   const pol = policy()
   const who = userId
-  const title = ec.resource.expand('Emergency call by ${who} from ${place}', '', { who, place: location.name || location.emergencyLocationId })
+  // a notification's title is a template expanded as a script when it is sent: the caller and the location's name (stored
+  // text) are taken from the message by name, so nothing in them runs
+  const place = location.name || location.emergencyLocationId
   try {
     ec.makeNotificationMessage().topic('VoiceAlert').userGroupId(pol.alertUserGroupId)
-      .message({ kind: 'emergencyCall', userId, emergencyLocationId: location.emergencyLocationId, callSessionId })
-      .title(title).send()
+      .message({ kind: 'emergencyCall', userId, emergencyLocationId: location.emergencyLocationId, callSessionId, who, place })
+      .title('Emergency call by ${who} from ${place}').send()
   } catch (err) {
     ec.logger.error(`Emergency call ${callSessionId}: the admins were not notified: ${err && err.message ? err.message : err}`)
   }
@@ -906,6 +908,8 @@ function engineConfig() {
   }
 }
 
+// title is a template whose ${names} are the message's: a trunk's name or a source address is never part of the template,
+// since a notification's title is expanded as a script when it is sent
 function alertAdmins(title, message) {
   try {
     ec.makeNotificationMessage().topic('VoiceAlert').userGroupId(policy().alertUserGroupId).message(message).title(title).send()
@@ -923,8 +927,8 @@ function trunkStatus(p) {
     lastStatusDate: ec.user.nowTimestamp }, true, null, null)
   trunk.update()
   if (statusId === 'VtsFailed' && was !== 'VtsFailed') {
-    alertAdmins(ec.resource.expand('Phone trunk ${name} failed', '', { name: trunk.name || trunk.voiceTrunkId }),
-      { kind: 'trunkFailed', voiceTrunkId: trunk.voiceTrunkId, errorText: trunk.lastErrorText })
+    alertAdmins('Phone trunk ${name} failed',
+      { kind: 'trunkFailed', voiceTrunkId: trunk.voiceTrunkId, errorText: trunk.lastErrorText, name: trunk.name || trunk.voiceTrunkId })
   }
   return {}
 }
@@ -960,7 +964,7 @@ function authFailure(p) {
     until = now + pol.authBlockSeconds * 1000
     fields.blockedUntilDate = new Date(until)
     fields.alertedDate = new Date(now)
-    alertAdmins(ec.resource.expand('SIP source ${source} blocked after ${count} failed sign-ins', '', { source, count }),
+    alertAdmins('SIP source ${sourceAddress} blocked after ${failureCount} failed sign-ins',
       { kind: 'sourceBlocked', sourceAddress: source, failureCount: count, lastUsername: fields.lastUsername, blockedUntil: until })
   }
   row.setFields(fields, true, null, null)
