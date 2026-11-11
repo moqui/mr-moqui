@@ -13,10 +13,10 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Business data transfer for delegated administration (mr-boss plan/design-admin.md §11, §14 "Import/export target",
-    §17.2; impl-admin P15 and later): the dispatch of an import to its registered target and the runs of every target. The
-    file grows by parts, each a section below with its bodies in a module of its own beside DataTransferLib.js, which they
-    share: imports (DataTransferImports.js, with DataTransferBatch.js for a target that has no batch of its owner's); exports
-    add theirs. A target is a moqui.server.TransferTarget its owner seeds: a request names a target by its id and never a
+    §17.2; impl-admin P15 and P16): the dispatch of an import to its registered target and the runs of every target, and
+    the export of a registered target to its caller. The file grows by parts, each a section below with its bodies in a
+    module of its own beside DataTransferLib.js, which they share: imports (DataTransferImports.js, with
+    DataTransferBatch.js for a target that has no batch of its owner's) and exports (DataTransferExports.js). A target is a moqui.server.TransferTarget its owner seeds: a request names a target by its id and never a
     service, an entity or a field the registration does not name. An owner's service is called as the caller
     (call#TargetService, whose ALL_USERS ALLOW is not inheritable), so the registration adds no right. ALL_USERS may call
     the services named in data/AdminConfigurationData.xml AdminTransferServices: each checks the caller itself
@@ -175,9 +175,40 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="runList" type="List"/></out-parameters>
     </service>
+    <service verb="run" noun="TargetExport" type="interface">
+        <description>An export target's one service (TransferTarget exportService), called as the caller: the owner's own
+            read, with its own permission and scope checks. scopeKey is one of the scopes the target's scope service
+            gave the caller (find#TargetScopes); selection holds values of the options the registration names, checked
+            against it; fieldList the names of the registered fields to write, already cut to those the caller holds the
+            registered permission for: the service writes no other field of the registration's. With countOnly it
+            answers rowCount alone and reads no more than it must. maxRows is the most rows one export holds: a service
+            may stop counting just past it, and its answer is then refused whole. A rows target answers rowList (a map
+            per row, by field name); a file target fileText in its own format with fileName and contentType (one that
+            writes delimited text writes a cell a spreadsheet would read as a formula as text). A refusal a person can
+            act on is answered (refused, reasonCode, reason). It sends nothing anywhere and keeps no file.</description>
+        <in-parameters>
+            <parameter name="targetId" required="true"/>
+            <parameter name="scopeKey"/>
+            <parameter name="selection" type="Map"/>
+            <parameter name="fieldList" type="List" required="true"/>
+            <parameter name="countOnly" type="Boolean"/>
+            <parameter name="maxRows" type="Integer"/>
+            <parameter name="fixedValues" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rowCount" type="Integer"/>
+            <parameter name="rowList" type="List"/>
+            <parameter name="fileText" allow-html="any"/>
+            <parameter name="fileName"/>
+            <parameter name="contentType"/>
+            <parameter name="refused" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+        </out-parameters>
+    </service>
     <service verb="call" noun="TargetService" allow-remote="false">
         <description>The service a target's registration names for a step (stage, configure, validate, apply, get,
-            report, sample, kinds, validateRow, applyRow, scopes, runs), with that step's parameters only, under the
+            report, sample, kinds, validateRow, applyRow, scopes, runs, export), with that step's parameters only, under the
             caller's own authorization: the service is read from the registration, never given, and must carry the
             step's contract. This service's ALL_USERS ALLOW (AdminTransferCall) is not inheritable, so the grant of the
             service that dispatches does not carry into the owner's service: one the caller is not authorized for is
@@ -314,7 +345,12 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferImports.js').execute('getImportSample', context))</script></actions>
     </service>
     <service verb="find" noun="Transfers" allow-remote="false">
-        <description>The import runs of every registered target the caller may view (transferList, transferCount), newest
+        <description>With direction export (impl-admin P16): the exports made here of every target the caller may read
+            (who, the target, the scope, the rows and when; the file is not kept, so there is none to open) and, for a
+            holder of ADMIN_TRANSFER_VIEW, the deliveries of scheduled business reports and business alert rules as the
+            report engine's administrative read answers them: an id, whose, the state and the counters, never a title, a
+            recipient, a value or content (kind: export, reportDelivery or alertDelivery, which narrows them). Otherwise:
+            the import runs of every registered target the caller may view (transferList, transferCount), newest
             first, a page at a time: the target and its owner, the file's label, the scope, the state, the rows applied,
             failed and skipped, who ran it, whether its detail is read here (detail) and the key and parameters of its
             owner's place. An owner's runs are what the owner's find service answers for this caller, by the owner's
@@ -322,6 +358,8 @@ along with this software (see the LICENSE.md file). If not, see
             unansweredTargetList. Narrowed by target, owner, scope, state and dates (by default the last defaultDays
             days, at most rangeDays). Needs ADMIN_TRANSFER_VIEW.</description>
         <in-parameters>
+            <parameter name="direction"><description>import (the default) or export</description></parameter>
+            <parameter name="kind"/>
             <parameter name="targetId"/>
             <parameter name="ownerApp"/>
             <parameter name="scopeKey"/>
@@ -338,12 +376,104 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="pageSize" type="Integer"/>
             <parameter name="unansweredTargetList" type="List"/>
             <parameter name="stateList" type="List"/>
+            <parameter name="kindList" type="List"/>
             <parameter name="defaultDays" type="Integer"/>
             <parameter name="rangeDays" type="Integer"/>
             <parameter name="timeZone"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferImports.js').execute('findTransfers', context))</script></actions>
     </service>
+    <!-- ========== Exports (DataTransferExports.js; impl-admin P16) ========== -->
+
+    <service verb="find" noun="ExportTargets" allow-remote="false">
+        <description>The registered export targets (targetList): each with its title, description, its owner, its mode
+            (file: its owner's own format; rows: a delimited file written here; wizard: exported in its owner's own
+            place, listed with the key of that place), and whether the caller holds the permissions its registration
+            names (exportAllowed: the owner's own checks still decide). Never a service name. Needs
+            ADMIN_TRANSFER_VIEW.</description>
+        <out-parameters>
+            <parameter name="targetList" type="List"/>
+            <parameter name="canRun" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferExports.js').execute('findExportTargets', context))</script></actions>
+    </service>
+    <service verb="get" noun="ExportFields" allow-remote="false">
+        <description>One export target as its wizard needs it (target): its words, the scopes its scope service gives this
+            caller (scopeList), its selection options (optionList), its bounds, and its registered fields (fieldList:
+            name, label, required, sensitive, allowed, selected, note): a field whose registered permission the caller
+            does not hold is not allowed and is never exported for them, whatever they ask. No permission and no service
+            is named. For any signed-in user; it answers nothing of another's.</description>
+        <in-parameters><parameter name="targetId" required="true"/></in-parameters>
+        <out-parameters><parameter name="target" type="Map"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferExports.js').execute('getExportFields', context))</script></actions>
+    </service>
+    <service verb="preview" noun="Export" allow-remote="false">
+        <description>What an export would hold, keeping and changing nothing: the fields that would be written
+            (fieldList), the chosen ones left out because the caller may not read them (omittedFieldList) and the owner's
+            count of rows (rowCount), under the caller's own authority. scopeKey must be a scope the target gives the
+            caller; selection only the registered options, within their bounds; fieldList only registered field names
+            (none: the registration's defaults). Refused with a reason: SCOPE_REQUIRED, SELECTION_INVALID, NO_FIELDS,
+            TOO_MANY_ROWS, or its owner's own. Needs the target's export permission and whatever its owner
+            checks.</description>
+        <in-parameters>
+            <parameter name="targetId" required="true"/>
+            <parameter name="scopeKey"/>
+            <parameter name="selection" type="Map"/>
+            <parameter name="fieldList" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="targetId"/>
+            <parameter name="scopeKey"/>
+            <parameter name="scopeTitle"/>
+            <parameter name="selection" type="Map"/>
+            <parameter name="fieldList" type="List"/>
+            <parameter name="omittedFieldList" type="List"/>
+            <parameter name="rowCount" type="Integer"/>
+            <parameter name="maxRows" type="Integer"/>
+            <parameter name="targetVersion"/>
+            <parameter name="refused" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferExports.js').execute('previewExport', context))</script></actions>
+    </service>
+    <service verb="run" noun="Export" allow-remote="false" transaction-timeout="600">
+        <description>Export a registered target to its caller: the file (fileText, filename, contentType) is this
+            service's answer and nothing else. It is not stored, and no parameter names an address, a path or a
+            recipient. The request is checked as preview#Export checks it, and a field the caller may not read is left
+            out and named (omittedFieldList). A file past the target's rows or bytes is refused whole (TOO_MANY_ROWS,
+            FILE_TOO_LARGE), never cut short. A record of the export is kept (transferId: who, the target, the scope,
+            the selection, the fields, the row count, the file's name and the hash of its content) with an audit log
+            row. operationKey, when given, is one export's: the same user and request under it make the file again and
+            keep no second record (repeated); anything else under it is refused (OPERATION_KEY_CONFLICT). A rows
+            target's file is delimited UTF-8 text in which a cell a spreadsheet would read as a formula is written as
+            text. Needs the target's export permission and whatever its owner checks.</description>
+        <in-parameters>
+            <parameter name="targetId" required="true"/>
+            <parameter name="scopeKey"/>
+            <parameter name="selection" type="Map"/>
+            <parameter name="fieldList" type="List"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="exported" type="Boolean"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="transferId"/>
+            <parameter name="targetId"/>
+            <parameter name="scopeKey"/>
+            <parameter name="rowCount" type="Integer"/>
+            <parameter name="fieldList" type="List"/>
+            <parameter name="omittedFieldList" type="List"/>
+            <parameter name="fileText" allow-html="any"/>
+            <parameter name="filename"/>
+            <parameter name="contentType"/>
+            <parameter name="refused" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferExports.js').execute('runExport', context))</script></actions>
+    </service>
+
     <!-- One row of a batch kept here, each in a transaction of its own under apply#Import and retry#ImportItems. No group
         is authorized to call them: they run under those services' grant. -->
     <service verb="apply" noun="TransferItem" allow-remote="false">

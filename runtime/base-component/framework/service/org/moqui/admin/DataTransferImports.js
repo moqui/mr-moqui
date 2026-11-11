@@ -14,6 +14,7 @@
 // that does not answer is named and the others are listed.
 const lib = ec.resource.script("component://framework/service/org/moqui/admin/DataTransferLib.js")
 const batches = ec.resource.script("component://framework/service/org/moqui/admin/DataTransferBatch.js")
+const exportsPart = ec.resource.script("component://framework/service/org/moqui/admin/DataTransferExports.js")
 const {text, lineText, plain, refused} = lib
 const defaultDays = 90
 const rangeDays = 366
@@ -312,8 +313,12 @@ function ownerRun(found) {
         ownerParameters: parameters
     }
 }
-// find#Transfers: the import runs of every target the caller may view, newest first, a page at a time.
+// find#Transfers: the import runs of every target the caller may view, newest first, a page at a time; with direction export,
+// the exports made and the deliveries of scheduled reports and alerts as status (DataTransferExports.js).
 function findTransfers(p) {
+    const direction = text(p.direction) || "import"
+    if (direction === "export") return exportsPart.findExportTransfers(p)
+    if (direction !== "import") throw new Error("Unknown direction " + lineText(direction, 20))
     lib.requireView()
     const {pageIndex, pageSize} = lib.pageOf(p)
     const now = lib.ms(ec.user.nowTimestamp)

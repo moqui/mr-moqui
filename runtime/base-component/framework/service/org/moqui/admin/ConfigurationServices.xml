@@ -686,4 +686,14 @@ along with this software (see the LICENSE.md file). If not, see
             store#LocalizedMessage does and with its refusals. Needs ADMIN_SETTINGS_MANAGE.</description>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('applyMessageTranslationRow', context))</script></actions>
     </service>
+
+    <!-- ========== The export of message translations (ConfigurationLocalization.js; impl-admin P16) ========== -->
+    <!-- The export service of the export target messageTranslationsExport (data/AdminConfigurationData.xml), called by
+        org.moqui.admin.DataTransferServices as the exporter. -->
+    <service verb="export" noun="MessageTranslationRows" allow-remote="false">
+        <implements service="org.moqui.admin.DataTransferServices.run#TargetExport"/>
+        <description>The message translations of one locale (selection.locale) or of every locale, as rows of the fields
+            asked for (original, locale, localized): what the import of translations reads. Needs ADMIN_SETTINGS_VIEW.</description>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationLocalization.js').execute('exportMessageTranslationRows', context))</script></actions>
+    </service>
 </services>

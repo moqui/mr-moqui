@@ -689,8 +689,18 @@ along with this software (see the LICENSE.md file). If not, see
         through org.moqui.admin.DataTransferServices, and the batch of a target that has no batch of its owner's -->
     <entity entity-name="TransferTarget" package="moqui.server" use="configuration" cache="true">
         <description>A registered target of a business data transfer (org.moqui.admin.DataTransferServices): its owner seeds
-            a row, and without one nothing is staged, applied or listed there. direction is import (export targets are
-            added with the export part). targetMode says what the owner registers. steps: the owner keeps its own batch
+            a row, and without one nothing is staged, applied, exported or listed there. direction is import or export.
+            An export target (impl-admin P16) has targetMode file (its owner's exportService, implementing
+            DataTransferServices.run#TargetExport, writes a file of its own format), rows (the exportService answers rows
+            and the file is written here, delimited text) or wizard (exported in its owner's own place: only ownerRoute
+            is registered); for file and rows columnsJson names the only fields an export may hold (name, label,
+            permission: what a caller must hold for the field to be written, comma separated; required; selected false
+            for one left out unless asked for), optionsJson the options of a selection, scopeService the scopes a caller
+            may export from, maxRows and maxBytes the bounds of one file (5000 rows and 2097152 bytes when empty, at
+            most 50000 and 16777216; a larger one is refused whole), exportPermission
+            what a caller must hold besides the owner's own checks, viewPermission who reads the records of others'
+            exports, and retentionDays how long the record of an export is kept (366 when empty). For an import target
+            targetMode says what the owner registers. steps: the owner keeps its own batch
             and names the five steps (stageService, configureService, validateService, applyService, getService, with an
             optional reportService, sampleService and kindsService), each carrying the import contract's parameters, as
             mantle.product.ProductImportServices. rows: the owner has no batch, and the framework keeps one (TransferBatch,
@@ -738,19 +748,24 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="applyRowService" type="text-medium"/>
         <field name="scopeService" type="text-medium"/>
         <field name="scopeLabel" type="text-short"/>
-        <field name="maxBytes" type="number-integer"><description>Of a file: 1048576 when empty, at most 2097152</description></field>
-        <field name="maxRows" type="number-integer"><description>Of a file: 2000 when empty, at most 5000</description></field>
+        <field name="maxBytes" type="number-integer"><description>Of an import's file: 1048576 when empty, at most 2097152</description></field>
+        <field name="maxRows" type="number-integer"><description>Of an import's file: 2000 when empty, at most 5000</description></field>
         <field name="retentionDays" type="number-integer"><description>30 when empty</description></field>
         <field name="findService" type="text-medium"/>
         <field name="viewPermission" type="text-medium"/>
         <field name="importPermission" type="text-medium"/>
+        <field name="exportService" type="text-medium"/>
+        <field name="exportPermission" type="text-medium"/>
         <field name="ownerRoute" type="text-medium"/>
         <field name="sequenceNum" type="number-integer"/>
         <field name="disabled" type="text-indicator"/>
     </entity>
     <entity entity-name="TransferBatch" package="moqui.server" cache="never">
-        <description>One import of a target that has no batch of its owner's (TransferTarget, targetMode rows), written by
-            org.moqui.admin.DataTransferServices only. transferId is the import's operation key: the one its caller gave,
+        <description>One export of an export target (state exported: who, the target, scopeKey, the selection and field
+            names in requestJson, rowCount, the file's name and the hash of its content, never the content; the record
+            of the export, removed after the target's retention), or one import of a target that has no batch of its
+            owner's (TransferTarget, targetMode rows), written by
+            org.moqui.admin.DataTransferServices only. For an import: transferId is the import's operation key: the one its caller gave,
             or one made of the user, the target, the scope and the content's hash, so the same file staged again answers
             the same batch. scopeKey is the scope the import is for (an organization), userId who staged it: the batch
             and its rows are read by that user, and by a holder of the target's view permission whom the target's scope

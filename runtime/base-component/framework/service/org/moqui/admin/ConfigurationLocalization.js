@@ -431,8 +431,32 @@ function applyMessageTranslationRow(p) {
     return {applied: true, resultRef: (locale + ": " + original).slice(0, 120), resultText: "Translation saved"}
 }
 
+// export#MessageTranslationRows: the export target messageTranslationsExport's rows (DataTransferServices.run#TargetExport):
+// the translations of one locale, or of every locale, as the import of translations reads them, in the order of the list.
+// Needs ADMIN_SETTINGS_VIEW. Only the fields asked for are answered; past maxRows it stops counting.
+function exportMessageTranslationRows(p) {
+    lib.requireView(VIEW, MANAGE)
+    const locale = text(p.selection?.locale)
+    if (locale && !/^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8}){0,2}$/.test(locale))
+        return {refused: true, reasonCode: "LOCALE_INVALID", reason: "A locale is like es or pt_BR", rowCount: 0}
+    const fields = Array.from(p.fieldList || [])
+        .map(text)
+        .filter(name => ["original", "locale", "localized"].includes(name))
+    const most = Math.max(Number(p.maxRows) || 0, 0) || 50000
+    const query = () => find(MESSAGE, locale ? {locale} : {})
+    const rowCount = Math.min(Number(query().count()), most + 1)
+    if (p.countOnly === true || rowCount > most) return {rowCount}
+    return {
+        rowCount,
+        rowList: Array.from(query().orderBy("original").orderBy("locale").limit(most).list()).map(row =>
+            Object.fromEntries(fields.map(name => [name, row[name] ?? ""]))
+        )
+    }
+}
+
 const operations = {
     findLocalizedMessages,
+    exportMessageTranslationRows,
     storeLocalizedMessage,
     findLocalizedEntityFields,
     storeLocalizedEntityField,

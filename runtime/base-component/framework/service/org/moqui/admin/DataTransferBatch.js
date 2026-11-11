@@ -881,14 +881,16 @@ function runsOf(target, filter) {
 
 // ===== retention =====
 // clean#TransferBatches: a batch never applied is removed after its target's retention; an applied one keeps its outcomes
-// and loses what was staged (the file's values and the previews). Each batch on its own.
+// and loses what was staged (the file's values and the previews). The record of an export has no rows and is removed after
+// its target's retention (366 days when it names none; the audit log keeps who exported what). Each batch on its own.
 function clean() {
     const targets = new Map(rows(lib.TARGET, {}).map(row => [row.targetId, row]))
     const now = ms(ec.user.nowTimestamp)
     let removedCount = 0
     let purgedCount = 0
     for (const row of Array.from(find(BATCH).condition("purgedDate", "equals", null).list())) {
-        const days = Math.max(Number(targets.get(row.targetId)?.retentionDays) || 30, 1)
+        // the record of an export (state exported: who, what and how many, never the file) is kept longer by default
+        const days = Math.max(Number(targets.get(row.targetId)?.retentionDays) || (row.state === "exported" ? 366 : 30), 1)
         const last = ms(row.completedDate) ?? ms(row.appliedDate) ?? ms(row.stagedDate) ?? 0
         // an apply under way is left alone; one that stopped (nothing kept of it for a day) is cleaned as any other
         if (now - last < days * 86400000 || (row.state === "applying" && now - (ms(row.lastUpdatedStamp) ?? 0) < 86400000))
@@ -916,4 +918,20 @@ function clean() {
     return {removedCount, purgedCount}
 }
 
-;({stage, configure, validate, apply, retry, get, report, sample, runsOf, scopesOf, applyItem, failItem, clean, boundsOf})
+;({
+    stage,
+    configure,
+    validate,
+    apply,
+    retry,
+    get,
+    report,
+    sample,
+    runsOf,
+    scopesOf,
+    optionsOf,
+    applyItem,
+    failItem,
+    clean,
+    boundsOf
+})
