@@ -340,4 +340,19 @@ along with this software (see the LICENSE.md file). If not, see
             description="The domain phones register to" valueTypeEnumId="IsvText"
             propertyName="sip_domain" restartRequired="Y" sequenceNum="3330"
             operatorNote="Set sip_domain in the environment or the runtime conf and restart"/>
+
+    <!-- System messages, recovery and message types (impl-admin P13), named service by service. find#Messages, get#Message
+        and preview#Recovery check ADMIN_OPERATION_VIEW, execute#Recovery ADMIN_OPERATION_MANAGE (and the owner's
+        permission a registration names); find#MessageTypes and get#MessageTypeUse ADMIN_CONNECTION_VIEW, store#MessageType
+        ADMIN_CONNECTION_MANAGE. Inheritable, so a recovery's own step (apply#MessageRecovery), the framework's send, consume,
+        reset and cancel of that one message and a registered owner's services run as it; no group is authorized to call
+        those directly here. The recovery descriptors (moqui.server.RecoveryDescriptor) and handlers
+        (moqui.server.MessageHandler) are their owners' seed rows: the framework registers none of its own. -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminOperationServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.OperationServices\.(find#Messages|get#Message|preview#Recovery|execute#Recovery)"/>
+    <moqui.security.ArtifactGroup artifactGroupId="AdminMessageTypeServices" description="Admin message type services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminMessageTypeServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ConfigurationServices\.(find#MessageTypes|get#MessageTypeUse|store#MessageType)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminMessageTypeServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminMessageTypeServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

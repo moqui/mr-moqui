@@ -15,8 +15,8 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Operational evidence and recovery for delegated administration (mr-boss plan/design-admin.md §8.1, §9, §10, §17.2;
     impl-admin P12 and later): scoped, safe projections of what the instance sent and ran, and the dispatch of an eligible
     recovery to its owner. No replacement queue, scheduler or monitor. The file grows by parts, each a section below with its
-    bodies in a module of its own beside OperationLib.js, which they share: the mail queue (OperationMail.js) here; system
-    messages and recovery, jobs and topics append theirs at the end. Each service checks its own permission with
+    bodies in a module of its own beside OperationLib.js, which they share: the mail queue (OperationMail.js), system messages
+    (OperationMessages.js) and recovery (OperationRecovery.js) here; jobs and topics append theirs at the end. Each service checks its own permission with
     ec.user.hasPermission (ADMIN_OPERATION_VIEW to read, ADMIN_OPERATION_MANAGE to act); an action names the revision it read
     and may carry an operation key, whose repeat answers the first result; a refusal a person can act on is answered (applied
     false, reasonCode, reason), never written; a missing permission or a malformed request is an error. ALL_USERS may call the
@@ -166,6 +166,196 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="emailMessageId" required="true"/>
             <parameter name="ownerRef"/>
             <parameter name="action" required="true"><description>retry, sent or notSent</description></parameter>
+            <parameter name="reason"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="ownerStateText"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== System messages (OperationMessages.js; impl-admin P13) ========== -->
+
+    <service verb="find" noun="Messages" allow-remote="false">
+        <description>The instance's system messages (moqui.service.message.SystemMessage), newest first, a page at a time
+            (messageList, messageCount). Each: its id, type, remote (and whether that remote is disabled), direction,
+            status and state (waiting; retrying: failed and tried again on its own; failed; inProgress; uncertain: a send
+            or a consume that never answered, so it may have been sent or applied; settled: an uncertain one a person
+            settled, which stays in its status and is never listed as done, with settlement (done or notDone),
+            settlementText, settledByName, settledDate and settledReason; done; staged; rejected; cancelled) with
+            its text, its times and failed attempts, the class of its last error and, unless its owner answers per
+            message and does not let this reader (a store's or an organization's scope is the owner's), its remote, its
+            correlation ids (messageId, remoteMessageId), who settled it and why, and one line of the error with what a
+            remote answered, addresses, URL paths and tokens struck out; what is registered for it (the owner, its own state there, the key of its own
+            place) and what may be done here (retryEligible, requeueEligible, reconcileEligible, cancelEligible, each only
+            with ADMIN_OPERATION_MANAGE and a registered recovery) with the next step in words, and the revision an action
+            names. Never a message's text. Narrowed by state (attention, the default: failed and uncertain; failed,
+            uncertain, settled, waiting, done, closed, all), type, remote, direction (in, out), a reference (a whole message id,
+            envelope id or remote id) and dates (by default the last defaultDays days). Needs
+            ADMIN_OPERATION_VIEW.</description>
+        <in-parameters>
+            <parameter name="state"/>
+            <parameter name="systemMessageTypeId"/>
+            <parameter name="systemMessageRemoteId"/>
+            <parameter name="direction"><description>in or out</description></parameter>
+            <parameter name="reference"/>
+            <parameter name="fromDate"/>
+            <parameter name="thruDate"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="messageList" type="List"/>
+            <parameter name="messageCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="canManage" type="Boolean"/>
+            <parameter name="stateList" type="List"/>
+            <parameter name="typeList" type="List"/>
+            <parameter name="defaultDays" type="Integer"/>
+            <parameter name="maxTargets" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMessages.js').execute('findMessages', context))</script></actions>
+    </service>
+    <service verb="get" noun="Message" allow-remote="false">
+        <description>One system message's evidence: its row as find#Messages answers it (message, with its content type,
+            the length of its text and the number of messages split from it), its failed attempts (attemptList: time, what
+            was attempted, the error's class and, where its owner lets this reader, its masked line), its status history
+            from the audit log (historyList: time, from, to and, where its owner lets this reader, who and the reason), and each recovery action with whether it
+            may be taken now, why not, and what it would do (actionList, as preview#Recovery). Its payload (payloadText,
+            cut to 20,000 characters, values of fields named like a credential struck out) is answered only when asked
+            for (includePayload) and only when the type's owner registered the permission that reads it, the reader holds
+            it and, where the owner answers per message, the owner says this reader may see it; otherwise
+            payloadHiddenReason says why not. Needs ADMIN_OPERATION_VIEW.</description>
+        <in-parameters>
+            <parameter name="systemMessageId" required="true"/>
+            <parameter name="includePayload" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="message" type="Map"/>
+            <parameter name="attemptList" type="List"/>
+            <parameter name="historyList" type="List"/>
+            <parameter name="actionList" type="List"/>
+            <parameter name="canManage" type="Boolean"/>
+            <parameter name="payloadVisible" type="Boolean"/>
+            <parameter name="payloadHiddenReason"/>
+            <parameter name="payloadText"/>
+            <parameter name="payloadTruncated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMessages.js').execute('getMessage', context))</script></actions>
+    </service>
+    <service verb="apply" noun="MessageRecovery" allow-remote="false">
+        <description>Internal to execute#Recovery (in no group's grant; it checks ADMIN_OPERATION_MANAGE itself): one step
+            on a system message in a transaction of its own, the row locked, still at the revision read and still in the
+            state the step is for. claim marks the attempt, so a second request at that revision finds the message
+            changed (one reported not done is moved to Error with its settlement cleared, for the send or consume that
+            follows); requeue (reset#SystemMessageInError) and cancel (cancel#SystemMessage) take a message in Error only;
+            done and notDone record the settlement of one whose outcome is unknown (outcomeSettlement with who, when and
+            the reason): its status is left as the transport left it, never set Sent or Consumed by a person's word.</description>
+        <in-parameters>
+            <parameter name="systemMessageId" required="true"/>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="step" required="true"><description>claim, requeue, cancel, done or notDone</description></parameter>
+            <parameter name="reason"><description>Kept with a settlement</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="taken" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationMessages.js').execute('applyMessageRecovery', context))</script></actions>
+    </service>
+
+    <!-- ========== Recovery (OperationRecovery.js; impl-admin P13) ========== -->
+
+    <service verb="preview" noun="Recovery" allow-remote="false">
+        <description>What may be done now to each of up to 25 operational records of one kind (targetKind: SystemMessage),
+            and what it would do; nothing is changed. previewList, in the order asked: targetId, found, title, state and
+            its text, the revision an action names, what is registered for it (descriptorKey, ownerApp, ownerTitle,
+            ownerRoute, ownerPermission, idempotencyNote, the owner's own reference and state) and actionList: for each
+            action of the kind (a message: retry, requeue, reconcile, cancel) its label, eligible, the reason when not
+            (reasonCode NOT_REGISTERED: no owner registered a recovery for it; NOT_OFFERED; OWNER_PERMISSION;
+            RECONCILE_REQUIRED: its outcome is unknown, so it is settled, never retried; NOT_UNCERTAIN; ALREADY_SETTLED;
+            SETTLED: reported done by the person who settled it, so never sent or consumed again; NOT_FAILED;
+            IN_PROGRESS; REMOTE_DISABLED; OWNER_UNAVAILABLE; NOT_OWNED; OWNER_REFUSES; PERMISSION), the consequence in
+            words and a reconciliation's resolutions. Needs ADMIN_OPERATION_VIEW; an action is eligible only with
+            ADMIN_OPERATION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="targetKind" required="true"/>
+            <parameter name="targetIdList" type="List"/>
+            <parameter name="targetId"><description>One id, or several comma separated, when no list is given</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="targetKind"/>
+            <parameter name="canManage" type="Boolean"/>
+            <parameter name="previewList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationRecovery.js').execute('previewRecovery', context))</script></actions>
+    </service>
+    <service verb="execute" noun="Recovery" allow-remote="false" transaction-timeout="1800">
+        <description>The registered action (retry, requeue, reconcile with a resolution done or notDone, cancel) on each of
+            up to 25 records of one kind, with the reason (required, kept in the audit log), each named with the revision
+            it was read at (targetList of targetId and expectedRevision, or one targetId and expectedRevision). Each
+            record is on its own: read again, refused when it changed (STALE_REVISION) or is not eligible now (the reasons
+            of preview#Recovery), claimed in a transaction of its own, then acted on by what its owner registered: the
+            framework's own action for that same record (a message is sent or consumed again as itself, never as a new
+            one), or the owner's own service, which checks the owner's permission and scope. A record whose outcome is
+            unknown is never retried: it is reconciled, and nothing is sent by that, nor is the record marked sent or
+            consumed: the settlement is kept beside it (reported done, or reported not done, which may then be retried).
+            One that is refused or fails
+            (RETRY_FAILED, OWNER_REFUSED, FAILED) is named in its result and the others go on: resultList has a row per
+            record (targetId, applied, reasonCode, reason, its state and revision afterwards), with appliedCount and
+            refusedCount; applied says whether any was. With an operationKey a repeat of the same batch by the same user
+            answers the first results (repeated) and does nothing again. Needs ADMIN_OPERATION_MANAGE, and the owner's
+            permission where its registration names one.</description>
+        <in-parameters>
+            <parameter name="targetKind" required="true"/>
+            <parameter name="action" required="true"/>
+            <parameter name="resolution"/>
+            <parameter name="targetList" type="List"/>
+            <parameter name="targetId"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="reason" required="true"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="targetKind"/>
+            <parameter name="action"/>
+            <parameter name="appliedCount" type="Integer"/>
+            <parameter name="refusedCount" type="Integer"/>
+            <parameter name="resultList" type="List"/>
+            <parameter name="repeated" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/OperationRecovery.js').execute('executeRecovery', context))</script></actions>
+    </service>
+
+    <service verb="find" noun="RecoveryTargets" type="interface">
+        <description>What the owner of a registered recovery answers about its records (moqui.server.RecoveryDescriptor
+            describeService): for those of the given ids that are its own (targetList: targetId, ownerRef the owner's own
+            record, ownerStateText its state there in words), what its recover service would take now for this caller
+            (retryEligible, reconcileEligible, cancelEligible, and reason when none), whether the outcome is unknown at
+            the owner (uncertain: it is then reconciled, never retried), and whether this caller may see the record's
+            diagnostics (detailVisible) and payload (payloadVisible) by the owner's own permission and scope. A record it
+            does not answer is not its own. It changes nothing and returns no payload.</description>
+        <in-parameters>
+            <parameter name="targetKind" required="true"/>
+            <parameter name="targetIdList" type="List" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="targetList" type="List"/></out-parameters>
+    </service>
+    <service verb="recover" noun="OwnedTarget" type="interface">
+        <description>A registered owner's own action on one of its records (RecoveryDescriptor recoverService): retry,
+            reconcile (resolution done or notDone) or cancel, with the reason and an operation key whose repeat the owner
+            answers with its first result. The owner checks its own permission, scope and the record's state, keeps the
+            record's identity, and answers applied, or reasonCode and reason; the registration adds no right.</description>
+        <in-parameters>
+            <parameter name="targetKind" required="true"/>
+            <parameter name="targetId" required="true"/>
+            <parameter name="ownerRef"/>
+            <parameter name="action" required="true"/>
+            <parameter name="resolution"/>
             <parameter name="reason"/>
             <parameter name="operationKey"/>
         </in-parameters>

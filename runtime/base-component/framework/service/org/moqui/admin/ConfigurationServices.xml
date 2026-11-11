@@ -15,7 +15,8 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Effective configuration and guarded configuration writes for delegated administration (mr-boss plan/design-admin.md §7,
     §17.2; impl-admin P8 and later). The file grows by parts, each a section below with its bodies in a module of its own
     beside ConfigurationLib.js, which they share: the instance settings (ConfigurationSettings.js) and the translations
-    (ConfigurationLocalization.js) here; identity providers, connections, protocols and message types append theirs at the end.
+    (ConfigurationLocalization.js) here; identity providers, connections, protocols and message types append theirs at the end
+    (message types: ConfigurationMessageTypes.js, impl-admin P13).
     Each service checks its own permission with ec.user.hasPermission (ADMIN_SETTINGS_VIEW for reads, ADMIN_SETTINGS_MANAGE for
     changes in the parts below) and names the revision it read on a change; a refusal a person can act on is answered (applied
     false, reasonCode, reason), never written; a missing permission or a malformed request is an error. A secret is never
@@ -584,5 +585,88 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="internalAddress" type="Boolean"/>
             <parameter name="millis" type="Long"/>
         </out-parameters>
+    </service>
+
+    <!-- ========== Message types (ConfigurationMessageTypes.js; impl-admin P13) ========== -->
+
+    <service verb="find" noun="MessageTypes" allow-remote="false">
+        <description>The instance's message types (moqui.service.message.SystemMessageType), by name, a page at a time
+            (typeList, typeCount): id, name, content type, direction (out, in, both or none, from what it is routed by),
+            its send, consume and receive handlers (a registered handler by its title, another by its service name), its
+            owner, what recovery is registered for its messages, its file transport options, whether it is changed here
+            (configurable: its owner registered a handler for delegated administration; canChange with
+            ADMIN_CONNECTION_MANAGE too) and its revision. Narrowed by a term (id or name) and direction. Needs
+            ADMIN_CONNECTION_VIEW.</description>
+        <in-parameters>
+            <parameter name="term"/>
+            <parameter name="direction"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="typeList" type="List"/>
+            <parameter name="typeCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationMessageTypes.js').execute('findMessageTypes', context))</script></actions>
+    </service>
+    <service verb="get" noun="MessageTypeUse" allow-remote="false">
+        <description>One message type's contract and use: its row as find#MessageTypes answers it (messageType); its
+            handlers by role (handlerList: send and consume with the current service, whether it may be chosen here and
+            the handlers its owner registered for it, each by key, title and owner; receive, never chosen here); the
+            service that documents its producer; the remotes of this type (remoteList, each with whether it is disabled);
+            what its owner registered for the recovery of its messages (recoveryList: owner, each action's mode in words,
+            the owner's permission, the permission that reads a payload, what makes a repeat safe); and its messages of
+            the last countDays days by status (countList). Needs ADMIN_CONNECTION_VIEW.</description>
+        <in-parameters><parameter name="systemMessageTypeId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="messageType" type="Map"/>
+            <parameter name="handlerList" type="List"/>
+            <parameter name="producerText"/>
+            <parameter name="remoteList" type="List"/>
+            <parameter name="recoveryList" type="List"/>
+            <parameter name="countDays" type="Integer"/>
+            <parameter name="countList" type="List"/>
+            <parameter name="receiveResponseList" type="List"/>
+            <parameter name="canManage" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationMessageTypes.js').execute('getMessageTypeUse', context))</script></actions>
+    </service>
+    <service verb="store" noun="MessageType" allow-remote="false">
+        <description>Change a message type its owner registered for delegated administration, at the revision read: its
+            name, content type and file transport options (sendPath, which may hold only the names the sender gives;
+            receivePath, receiveFilePattern, receiveMovePath and receiveResponseEnumId, which hold no ${}), and its send or
+            consume service, set only to a handler registered for this type and role (moqui.server.MessageHandler), by the
+            registration's key. A parameter not given is left as it is; an empty text clears an optional one; a handler is
+            never cleared; the service that receives the type's messages is never chosen here; no service name is taken
+            from the request. Refused, with the reason: a type with no registered handler (NOT_CONFIGURABLE), a key that
+            is not a handler of this type and role (HANDLER_NOT_REGISTERED), a stale revision (STALE_REVISION). Each
+            changed field leaves an audit row with the reason. Needs ADMIN_CONNECTION_MANAGE.</description>
+        <in-parameters>
+            <parameter name="systemMessageTypeId" required="true"/>
+            <parameter name="expectedRevision" required="true"/>
+            <parameter name="description"/>
+            <parameter name="contentType"/>
+            <parameter name="sendHandlerKey"/>
+            <parameter name="consumeHandlerKey"/>
+            <parameter name="sendPath"/>
+            <parameter name="receivePath"/>
+            <parameter name="receiveFilePattern"/>
+            <parameter name="receiveMovePath"/>
+            <parameter name="receiveResponseEnumId"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="changed" type="Boolean"/>
+            <parameter name="changedFieldList" type="List"/>
+            <parameter name="systemMessageTypeId"/>
+            <parameter name="revision"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/ConfigurationMessageTypes.js').execute('storeMessageType', context))</script></actions>
     </service>
 </services>
