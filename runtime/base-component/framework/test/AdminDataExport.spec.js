@@ -4,7 +4,7 @@
 // entity, field, filter or service of a request is read); a registered field the caller may not read is left out and named,
 // whatever is asked; the file is the service's answer to its caller, never stored or sent, bounded (a larger one refused
 // whole) and, written here, with a formula cell as text; an export keeps one record and one audit row (who, what, how many,
-// never the content), its repeat under an operation key none; the records are read by who exported and those the target's
+// never the content), its repeat under an operation key no second record and an audit row of its own; the records are read by who exported and those the target's
 // view permission admits. The target is a copy of the framework's own, message translations, with one field restricted.
 // Run: ./moq test framework --spec AdminDataExport
 const T = "org.moqui.admin.DataTransferServices."
@@ -224,7 +224,7 @@ feature("an export is dispatched only by a registration, and a field the caller 
 })
 
 feature(
-    "an export is its caller's answer and one record: who, what and how many, never the content; a repeat under its key adds none",
+    "an export is its caller's answer and one record: who, what and how many, never the content; a repeat under its key adds no record and is audited",
     {
         when() {
             const out = {}
@@ -251,14 +251,17 @@ feature(
             out.settings = as(users.settings, () => invoke(T + "find#Transfers", {direction: "export"}))
             out.records = records()
             out.auditsAdded = audits().length - before
-            out.audit = audits()
-                .find(row => row.pkPrimaryValue === "SPEC_DX_K1")
-                ?.getMap()
+            const keyed = audits()
+                .filter(row => row.pkPrimaryValue === "SPEC_DX_K1")
+                .map(row => row.getMap())
+            out.audit = keyed.find(row => !has(row.newValueText, /^repeat/))
+            out.repeatAudit = keyed.find(row => has(row.newValueText, /^repeat/))
             return out
         },
         then(out) {
             assert(out.first.exported === true && out.first.transferId === "SPEC_DX_K1" && !out.first.repeated, out.first.error)
-            // the repeat makes the file again and keeps nothing more; another request under the key is refused
+            // the repeat makes the file again and keeps no second record, but each file made is audited; another request
+            // under the key is refused and audited as nothing
             assert(out.repeat.exported === true && out.repeat.repeated === true && out.repeat.fileText === out.first.fileText)
             assert(
                 out.otherRequest.refused === true &&
@@ -267,7 +270,7 @@ feature(
             )
             assert(out.otherUser.sameKey.refused === true && out.otherUser.sameKey.reasonCode === "OPERATION_KEY_CONFLICT")
             assert(
-                out.records.length === 1 && out.auditsAdded === 1,
+                out.records.length === 1 && out.auditsAdded === 2,
                 out.records.length + " records, " + out.auditsAdded + " audit rows"
             )
             // the record: who, the target, the fields, the rows and a hash; not the content
@@ -283,6 +286,10 @@ feature(
             assert(
                 out.audit.changedByUserId === users.full &&
                     has(out.audit.newValueText, /^2 rows of Message translations; fields: original, locale, localized$/)
+            )
+            assert(
+                out.repeatAudit.changedByUserId === users.full && has(out.repeatAudit.newValueText, /^repeat: 2 rows of /),
+                JSON.stringify(out.repeatAudit)
             )
             // its exporter and a holder of the target's view permissions read the record: nothing to open; the imports' list is as it was
             const own = out.own.transferList

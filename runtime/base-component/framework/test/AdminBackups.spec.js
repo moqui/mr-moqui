@@ -45,7 +45,11 @@ function invoke(name, parameters = {}) {
 const has = (value, pattern) => pattern.test(String(value ?? ""))
 const now = () => Number(ec.user.nowTimestamp)
 const runRows = () => Array.from(find(RUN, {jobName: JOB}).list()).map(row => row.getMap())
-const clearRuns = () => find(RUN, {jobName: JOB}).deleteAll()
+const clearRuns = () => {
+    // the lock names a run: it goes first
+    find(LOCK, {jobName: JOB}).deleteAll()
+    find(RUN, {jobName: JOB}).deleteAll()
+}
 const LEDGER = "backup-requests:" + JOB
 const clearLedger = () => find("moqui.server.OperationResult", {operationKey: LEDGER}).deleteAll()
 const ledger = times =>
@@ -182,8 +186,14 @@ feature("coverage says what the runs recorded: only a run that wrote its archive
         assert(has(never.warning, /\.env file/) && has(never.warning, /field-encryption key/), never.warning)
         assert(never.notIncluded.map(item => item.key).join() === "env,encryptionKey,resourceFiles,externalStores")
         assert(has(never.verificationText, /No archive has been verified/))
-        // the five outcomes are five states, and only the first is a success
-        assert(out.success.state === "success" && out.success.lastSuccessText !== "", JSON.stringify(out.success.lastRun))
+        // the outcomes are each a state of their own, and only the first run is a success: with the job paused nothing
+        // follows it, so the instance reads as not scheduled, not as covered (the job is not resumed here: a spec does
+        // not set a backup running on a schedule)
+        assert(
+            out.success.state === "unscheduled" && has(out.success.stateText, /Succeeded.*No next backup is scheduled.*paused/),
+            out.success.stateText
+        )
+        assert(out.success.lastRun.state === "success" && out.success.lastSuccessText !== "", JSON.stringify(out.success.lastRun))
         assert(out.success.lastRun.mirrored === false && out.success.lastRun.bytesWritten === 4096)
         assert(out.skipped.state === "skipped" && has(out.skipped.stateText, /Skipped/), out.skipped.stateText)
         assert(out.failed.state === "failed" && out.partial.state === "partial" && out.notEnded.state === "notEnded")
@@ -225,6 +235,10 @@ feature("a backup asked for is one run of the job with its stored parameters: no
             out.archives = invoke(B + "find#Archives")
         })
         out.runs = runRows()
+        // the run took the job's lock, or ended and left none: never a lock naming a run that ended
+        const lock = find(LOCK, {jobName: JOB}).one()
+        const held = lock?.jobRunId ? find(RUN, {jobRunId: lock.jobRunId}).one() : null
+        out.lock = {jobRunId: lock?.jobRunId || "", ended: !!lock?.jobRunId && (!held || held.endTime != null)}
         out.audits = Array.from(
             find("moqui.entity.EntityAuditLog", {
                 changedFieldName: "backupRequest",
@@ -233,6 +247,7 @@ feature("a backup asked for is one run of the job with its stored parameters: no
             }).list()
         ).map(row => row.getMap())
         out.direct = as(users.run, () => invoke(B + "start#BackupRun"))
+        out.directHold = as(users.run, () => invoke(B + "hold#BackupLock", {jobRunId: out.first.jobRunId}))
         out.viewerArchives = as(users.view, () => invoke(B + "find#Archives"))
         out.runtime = runtime
         // three requests within a day, the last long enough ago: the day's bound
@@ -245,6 +260,18 @@ feature("a backup asked for is one run of the job with its stored parameters: no
         recordRun(10 * minute, {results: JSON.stringify(written)})
         out.soon = as(users.run, () => invoke(B + "run#Backup", {reason: "Spec: too soon"}))
         out.left = runRows().length
+        // the schedule's lock: naming a run that ended two hours ago it is nobody's; naming one that has not ended (long
+        // past the job's time, so only the lock says it runs) a request waits
+        find(LOCK, {jobName: JOB}).deleteAll()
+        clearRuns()
+        recordRun(3 * hour, {results: JSON.stringify(written)})
+        make(LOCK, {jobName: JOB, jobRunId: "SPEC_BK_R" + seq, lastRunTime: now() - 3 * hour})
+        out.staleLock = as(users.run, () => invoke(B + "get#Coverage"))
+        find(LOCK, {jobName: JOB}).deleteAll()
+        recordRun(9 * hour, {endTime: null, hasError: null})
+        make(LOCK, {jobName: JOB, jobRunId: "SPEC_BK_R" + seq, lastRunTime: now() - 9 * hour})
+        out.liveLock = as(users.run, () => invoke(B + "get#Coverage"))
+        find(LOCK, {jobName: JOB}).deleteAll()
         return out
     },
     then(out) {
@@ -270,8 +297,12 @@ feature("a backup asked for is one run of the job with its stored parameters: no
         assert(out.second.applied === false && ["IN_PROGRESS", "TOO_SOON"].includes(out.second.reasonCode), out.second.reasonCode)
         assert(out.after.canRun === false && out.after.holdReason, "a second backup was offered")
         assert(out.audits.length === 1 && out.audits[0].changeReason === "Spec: before an upgrade", JSON.stringify(out.audits))
-        // the start itself is nobody's to call
+        assert(["", out.first.jobRunId].includes(out.lock.jobRunId) && !out.lock.ended, JSON.stringify(out.lock))
+        // the start and the lock are nobody's to call
         assert(out.direct.error && !out.direct.jobRunId, "the run was started directly")
+        assert(out.directHold.error && !out.directHold.held, "the lock was taken directly")
+        // a lock left naming a run that ended is nobody's: it does not hold a request back
+        assert(out.staleLock.holdReasonCode !== "IN_PROGRESS" && out.liveLock.holdReasonCode === "IN_PROGRESS")
         // the archives as metadata: the two that are archives, newest first, never a path, no download
         for (const listed of [out.archives, out.viewerArchives]) {
             assert(listed.archiveCount === 2, listed.error || JSON.stringify(listed.archiveList))

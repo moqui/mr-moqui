@@ -437,7 +437,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferExports.js').execute('previewExport', context))</script></actions>
     </service>
-    <service verb="run" noun="Export" allow-remote="false" transaction-timeout="600">
+    <service verb="run" noun="Export" allow-remote="false" transaction="force-new" transaction-timeout="600">
         <description>Export a registered target to its caller: the file (fileText, filename, contentType) is this
             service's answer and nothing else. It is not stored, and no parameter names an address, a path or a
             recipient. The request is checked as preview#Export checks it, and a field the caller may not read is left
@@ -445,7 +445,9 @@ along with this software (see the LICENSE.md file). If not, see
             FILE_TOO_LARGE), never cut short. A record of the export is kept (transferId: who, the target, the scope,
             the selection, the fields, the row count, the file's name and the hash of its content) with an audit log
             row. operationKey, when given, is one export's: the same user and request under it make the file again and
-            keep no second record (repeated); anything else under it is refused (OPERATION_KEY_CONFLICT). A rows
+            keep no second record (repeated), with an audit log row for each file made; anything else under it is
+            refused (OPERATION_KEY_CONFLICT). The record and the audit row are written in a transaction of this
+            service's own, so they stand whatever becomes of the caller's. A rows
             target's file is delimited UTF-8 text in which a cell a spreadsheet would read as a formula is written as
             text. Needs the target's export permission and whatever its owner checks.</description>
         <in-parameters>

@@ -18,8 +18,10 @@
 // scope, the selection, the fields, the row count, the file's name and the hash of its content; never the content), with
 // an audit log row. A file is bounded by the target's rows and bytes (at most 50000 rows and 16 MiB): a larger one is
 // refused whole, never cut short. An
-// operation key is one export's: its repeat makes the file again and keeps no second record; another request under it is
-// refused. A rows target's file is written here, a cell a spreadsheet would read as a formula as text; a file target's
+// operation key is one export's: its repeat makes the file again and keeps no second record, but every file made is an
+// audit log row (the repeat reads the data as it is then, so it is a disclosure of its own); another request under it is
+// refused. The record and the audit row are written in the export's own transaction (run#Export begins one), so they stand
+// whatever becomes of the request that asked. A rows target's file is written here, a cell a spreadsheet would read as a formula as text; a file target's
 // owner writes its own format (one that writes delimited text must write such a cell as text itself).
 //
 // Status of deliveries. With ADMIN_TRANSFER_VIEW find#Transfers (direction export) also lists the occurrences of scheduled
@@ -236,6 +238,23 @@ function ask(request, countOnly) {
         }
     return {out, rowCount}
 }
+// The size of a text as the file it is sent as (UTF-8), counted only as far as it can matter: a text of so few characters
+// that it fits whatever they are is not walked, and the count stops once past most.
+function utf8Bytes(value, most) {
+    if (value.length * 3 <= most) return value.length
+    if (value.length > most) return value.length
+    let bytes = 0
+    for (let index = 0; index < value.length && bytes <= most; index++) {
+        const code = value.charCodeAt(index)
+        if (code < 0x80) bytes += 1
+        else if (code < 0x800) bytes += 2
+        else if (code >= 0xd800 && code <= 0xdbff) {
+            bytes += 4
+            index++
+        } else bytes += 3
+    }
+    return bytes
+}
 const stampText = () => ec.l10n.format(lib.ms(ec.user.nowTimestamp), "yyyyMMdd-HHmm", null, zone())
 // The file of an answer: written here for a rows target (the given fields only, by own name), the owner's for a file target.
 function fileOf(request, out, rowCount) {
@@ -273,7 +292,7 @@ function fileOf(request, out, rowCount) {
         // the name says when; its extension is its type's, whatever the owner named
         filename = base.slice(0, 60) + "-" + stampText() + "." + extension
     }
-    if (fileText.length > request.bounds.maxBytes)
+    if (utf8Bytes(fileText, request.bounds.maxBytes) > request.bounds.maxBytes)
         return {
             refusal: refusal(
                 "FILE_TOO_LARGE",
@@ -367,23 +386,25 @@ function runExport(p) {
             },
             true
         )
-        lib.auditRow(
-            BATCH,
-            "export",
-            transferId,
-            target.targetId,
-            null,
-            (
-                asked.rowCount +
-                " rows of " +
-                (lineText(target.title, 60) || target.targetId) +
-                (request.scopeKey ? " (" + request.scopeKey + ")" : "") +
-                "; fields: " +
-                request.included.map(field => field.name).join(", ")
-            ).slice(0, 255),
-            null
-        )
     }
+    // every file made is a row of the audit log: a repeat under the key keeps no second record, and reads the data again
+    lib.auditRow(
+        BATCH,
+        "export",
+        transferId,
+        target.targetId,
+        null,
+        (
+            (earlier ? "repeat: " : "") +
+            asked.rowCount +
+            " rows of " +
+            (lineText(target.title, 60) || target.targetId) +
+            (request.scopeKey ? " (" + request.scopeKey + ")" : "") +
+            "; fields: " +
+            request.included.map(field => field.name).join(", ")
+        ).slice(0, 255),
+        null
+    )
     return Object.assign(fieldAnswer(request), {
         exported: true,
         repeated: !!earlier,

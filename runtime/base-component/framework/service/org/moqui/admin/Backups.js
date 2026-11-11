@@ -23,6 +23,15 @@
 // backup-requests: when the last requests were made), locked for the request. The run is started outside the request's
 // transaction (start#BackupRun, which has none): the job runner writes the run's start and end from its own thread, and a
 // run row the request had not yet committed would lose them.
+//
+// One backup at a time, the schedule's too. Two runs of the backup beside each other are not safe: each begins by removing
+// every unfinished archive in the directory (crates/moqui-drivers/src/backup.rs sweep_partials), the other's too, and each
+// renames and removes archives by its own retention plan. The scheduler starts a job only when it takes the job's lock
+// (ServiceJobRunLock), and a run outside the schedule takes none (ec.service.job(name).run()): so a run asked for here takes
+// the lock for itself once it has its run id (hold#BackupLock), and the job runner releases it when the run ends, as it
+// does a scheduled run's (its release names the run). A scheduled run then waits for the next pass after the run ended, and
+// a request is refused while a scheduled run holds the lock. A lock naming a run that has ended, or one that is gone, is
+// nobody's: it is read as free here and taken over (the scheduler ignores it after the job's expireLockTime).
 const lib = ec.resource.script("component://framework/service/org/moqui/admin/OperationLib.js")
 const {find, one, rows, map, ms, text, refused} = lib
 const VIEW = "ADMIN_BACKUP_VIEW"
@@ -37,6 +46,7 @@ const BACKUP_SERVICE = "org.moqui.impl.ServerServices.backup#EmbeddedDatabase"
 const BACKUP_JOB = "backup_EmbeddedDatabase_daily"
 const DIR_PROPERTY = "embedded_db_backup_dir"
 const START = "org.moqui.admin.BackupServices.start#BackupRun"
+const HOLD = "org.moqui.admin.BackupServices.hold#BackupLock"
 const LEDGER = "backup-requests:" + BACKUP_JOB
 const minMinutes = 30
 const maxPerDay = 3
@@ -122,6 +132,13 @@ const jobParameters = () =>
     Object.fromEntries(rows(PARAMETER, {jobName: BACKUP_JOB}).map(row => [text(row.parameterName), text(row.parameterValue)]))
 const timeoutMs = job => Math.max(Number(job?.transactionTimeout) || 1800, 60) * 1000
 const paused = job => !(job.paused == null || job.paused === "N")
+// The run that holds the job's lock, or "": a lock is held only while the run it names has not ended.
+function lockHolder(lockRow) {
+    const jobRunId = text(lockRow?.jobRunId)
+    if (!jobRunId) return ""
+    const run = one(JOB_RUN, {jobRunId})
+    return run && run.endTime == null ? jobRunId : ""
+}
 
 // ===== runs =====
 const outcomeTexts = {
@@ -282,7 +299,7 @@ function runHold(database, job, lockRow, runs, requests, nowMs) {
             "NO_BACKUP_JOB",
             "This instance has no backup job (" + BACKUP_JOB + "): an instance administrator restores it"
         )
-    if (text(lockRow?.jobRunId) || runs.some(run => run.state === "running"))
+    if (lockHolder(lockRow) || runs.some(run => run.state === "running"))
         return hold("IN_PROGRESS", "A backup is running: a second one is not started beside it")
     const last = Math.max(runs.find(run => run.startedDate != null)?.startedDate ?? 0, requests[0] ?? 0)
     if (last && nowMs - last < minMinutes * 60000)
@@ -354,13 +371,25 @@ function getCoverage() {
         state = "none"
         stateText = "Not backed up: this instance has no backup job"
     } else if (!lastEnded) {
-        state = successesKept ? "never" : "unknown"
-        stateText = successesKept
-            ? "No backup has run yet"
-            : "Unknown: the backup job keeps only its failed runs, so a run that succeeded left no record"
+        // a first run under way is said so: nothing has been backed up yet, and "never" would not be all of it
+        state = running ? "running" : successesKept ? "never" : "unknown"
+        stateText = running
+            ? "The first backup is running: nothing has been backed up yet"
+            : successesKept
+              ? "No backup has run yet"
+              : "Unknown: the backup job keeps only its failed runs, so a run that succeeded left no record"
     } else {
         state = lastEnded.state
         stateText = "The last backup: " + lastEnded.stateText + (lastEnded.startedText ? ", " + lastEnded.startedText : "")
+    }
+    // a success is that one backup's, not the instance's: with the job paused or without a schedule no next one is made,
+    // so the instance is not read as covered by a success that nothing will follow
+    if (state === "success" && !schedule.scheduled) {
+        state = "unscheduled"
+        stateText +=
+            ". No next backup is scheduled: " +
+            (paused(job) ? "the backup job is paused" : "the backup job has no schedule") +
+            ", so the data changed since is not backed up until one is asked for"
     }
     if (database.kind === "mixed" && state === "success") {
         state = "partial"
@@ -479,13 +508,58 @@ function startBackupRun() {
     if (!backupJob()) throw new Error("This instance has no backup job")
     const wasDisabled = ec.artifactExecution.disableAuthz()
     try {
-        return {jobRunId: text(ec.service.job(BACKUP_JOB).run())}
+        const jobRunId = text(ec.service.job(BACKUP_JOB).run())
+        // the run takes the job's lock, so the schedule starts none beside it. The run is started whatever comes of this:
+        // a lock that could not be taken is logged, and the request answers its run
+        if (jobRunId)
+            try {
+                const hold = ec.service.sync().name(HOLD).parameters({jobRunId}).call() || {}
+                // a run that ended before the lock named it released nothing: what it left is cleared here
+                if (hold.held === true) ec.service.sync().name(HOLD).parameters({jobRunId, settle: true}).call()
+                else if (text(hold.heldBy))
+                    ec.logger.error(
+                        "Backup run " + jobRunId + " runs beside " + hold.heldBy + ", which took the backup job's lock first"
+                    )
+            } catch (error) {
+                ec.logger.error(
+                    "Backup run " + jobRunId + " could not take the backup job's lock: " + String(error?.message ?? error)
+                )
+            } finally {
+                ec.message.clearErrors()
+            }
+        return {jobRunId}
     } finally {
         if (!wasDisabled) ec.artifactExecution.enableAuthz()
     }
 }
+// hold#BackupLock: the backup job's lock for a run asked for here (the comment above). In a transaction of its own, the lock
+// row read for update first and the run's after it, the order the job runner ends a run in (the lock released, then the
+// run's end written). Without settle: the lock is given to the run when it is free, or names a run that ended, and the run
+// has not ended. With settle: a lock that names the run is cleared when the run has ended or is gone (it ended before the
+// lock was its own, so its release found nothing). Called only by start#BackupRun.
+function holdBackupLock(p) {
+    lib.signedIn()
+    if (!ec.user.hasPermission(RUN)) throw new Error(RUN + " is required")
+    const jobRunId = text(p.jobRunId)
+    if (!jobRunId) throw new Error("A run is required")
+    const lockRow = find(LOCK, {jobName: BACKUP_JOB}).forUpdate(true).one()
+    const run = find(JOB_RUN, {jobRunId}).forUpdate(true).one()
+    if (run && text(run.jobName) !== BACKUP_JOB) throw new Error("Not a run of the backup job")
+    const ended = !run || run.endTime != null
+    if (p.settle === true) {
+        if (ended && lockRow && text(lockRow.jobRunId) === jobRunId)
+            lib.write(LOCK, {jobName: BACKUP_JOB, jobRunId: null, instanceId: null}, false)
+        return {held: !ended && !!lockRow && text(lockRow.jobRunId) === jobRunId, heldBy: null}
+    }
+    if (ended) return {held: false, heldBy: null}
+    const holder = lockHolder(lockRow)
+    if (holder && holder !== jobRunId) return {held: false, heldBy: holder}
+    // lastRunTime as the scheduler's claim sets it: it is what lets a lock left behind expire
+    lib.write(LOCK, {jobName: BACKUP_JOB, jobRunId, lastRunTime: ec.user.nowTimestamp, instanceId: null}, !lockRow)
+    return {held: true, heldBy: null}
+}
 
-const operations = {getCoverage, findArchives, runBackup, startBackupRun}
+const operations = {getCoverage, findArchives, runBackup, startBackupRun, holdBackupLock}
 ;({
     execute: (op, parameters) => {
         if (!Object.hasOwn(operations, op)) throw new Error("Unknown backup operation " + op)

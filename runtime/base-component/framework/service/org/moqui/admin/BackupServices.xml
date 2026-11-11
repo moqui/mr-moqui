@@ -28,8 +28,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>What is backed up and how it last went (coverage): the database (embedded, external, both or
             unknown) and its provider; state and stateText, from the backup job's runs: success only for a run that
             ended without an error, was not skipped and names the archive it wrote; skipped, failed, partial (an archive
-            written with a failure after it, or an external database beside the embedded one), notEnded, never, none (no
-            backup job) and unknown each their own; an external database is external, with its state unknown here,
+            written with a failure after it, or an external database beside the embedded one), unscheduled (the last
+            run succeeded and no next one is scheduled: the job is paused or has no schedule), notEnded, running (the
+            first run is under way), never, none (no backup job) and unknown each their own; an external database is external, with its state unknown here,
             never a success. Also whether a run is under way, the job's schedule or pause, the last run and the last
             success, the archives kept (count, size of the dumps, the newest, how long they are kept), the off-site
             mirror or none, that no restore was verified, and what an archive does not hold (notIncluded and the fixed
@@ -73,7 +74,8 @@ along with this software (see the LICENSE.md file). If not, see
             directory, mode, counts and mirror; nothing of this request), recorded as a job run, whose outcome
             get#Coverage then reads. reason is kept in the audit log. Refused with a reason and nothing started
             (applied false): EXTERNAL_DATABASE or DATABASE_UNKNOWN (not a database this server backs up),
-            NO_BACKUP_JOB, IN_PROGRESS (a run is under way), TOO_SOON (within minMinutes of the last run's start or the
+            NO_BACKUP_JOB, IN_PROGRESS (a run is under way, the schedule's too: the run asked for takes the job's lock, so
+            the schedule starts none beside it), TOO_SOON (within minMinutes of the last run's start or the
             last request) and DAILY_LIMIT (maxPerDay requests in a day). operationKey, when given, answers a repeat with
             the first result. Needs ADMIN_BACKUP_RUN.</description>
         <in-parameters>
@@ -96,5 +98,19 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="start" noun="BackupRun" allow-remote="false" transaction="ignore">
         <out-parameters><parameter name="jobRunId"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Backups.js').execute('startBackupRun', context))</script></actions>
+    </service>
+    <!-- The backup job's lock for a run start#BackupRun started (Backups.js "One backup at a time"): two backups beside each
+        other are not safe, and a run outside the schedule takes no lock of its own. In a transaction of its own. No group
+        is authorized to call it. -->
+    <service verb="hold" noun="BackupLock" allow-remote="false" transaction="force-new">
+        <in-parameters>
+            <parameter name="jobRunId" required="true"/>
+            <parameter name="settle" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="held" type="Boolean"/>
+            <parameter name="heldBy"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Backups.js').execute('holdBackupLock', context))</script></actions>
     </service>
 </services>
