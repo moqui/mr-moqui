@@ -2594,15 +2594,15 @@
               ]))
             }
         } },
-        "m-assist-thread": { hash: "26a73d40", make: function (Vue) {
+        "m-assist-thread": { hash: "c354579e", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock, createElementVNode: _createElementVNode, withModifiers: _withModifiers, withKeys: _withKeys } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_btn = _resolveComponent("q-btn")
               const _component_q_chip = _resolveComponent("q-chip")
               const _component_q_icon = _resolveComponent("q-icon")
-              const _component_m_assist_markdown = _resolveComponent("m-assist-markdown")
               const _component_q_tooltip = _resolveComponent("q-tooltip")
+              const _component_m_assist_markdown = _resolveComponent("m-assist-markdown")
               const _component_q_spinner = _resolveComponent("q-spinner")
               const _component_m_assist_card = _resolveComponent("m-assist-card")
               const _component_q_input = _resolveComponent("q-input")
@@ -2749,8 +2749,19 @@
                                     round: "",
                                     size: "sm",
                                     icon: "sym_o_close",
+                                    "aria-label": _ctx.labels.discard,
                                     onClick: $event => (_ctx.drop(row))
-                                  }, null, 8, ["onClick"])
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_tooltip, null, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(_ctx.labels.discard), 1)
+                                        ]),
+                                        _: 1
+                                      })
+                                    ]),
+                                    _: 1
+                                  }, 8, ["aria-label", "onClick"])
                                 ]))
                               : _createCommentVNode("", true)
                         ], 8, ["data-assist-local"]))
@@ -5304,7 +5315,7 @@
               }, 8, ["id", "action"]))
             }
         } },
-        "m-form-go-page": { hash: "1b62080b", make: function (Vue) {
+        "m-form-go-page": { hash: "611ad806", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, withModifiers: _withModifiers, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode } = Vue
 
             return function render(_ctx, _cache) {
@@ -5339,7 +5350,8 @@
                             dense: "",
                             size: "sm",
                             type: "submit",
-                            icon: "arrow_forward"
+                            icon: "arrow_forward",
+                            "aria-label": "Go to page"
                           })
                         ]),
                         _: 1
@@ -5924,7 +5936,7 @@
               ], 2))
             }
         } },
-        "m-list-views": { hash: "e64b3065", make: function (Vue) {
+        "m-list-views": { hash: "a8cd3e71", make: function (Vue) {
             const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, createBlock: _createBlock, withDirectives: _withDirectives, createCommentVNode: _createCommentVNode, normalizeClass: _normalizeClass, renderSlot: _renderSlot, createElementVNode: _createElementVNode, normalizeProps: _normalizeProps, guardReactiveProps: _guardReactiveProps, createSlots: _createSlots, withModifiers: _withModifiers, normalizeStyle: _normalizeStyle } = Vue
 
             return function render(_ctx, _cache) {
@@ -6206,6 +6218,7 @@
                                     round: "",
                                     icon: "chevron_left",
                                     class: "m-cal-prev",
+                                    "aria-label": _ctx.labels.previous,
                                     onClick: $event => (_ctx.shift(-1))
                                   }, {
                                     default: _withCtx(() => [
@@ -6217,13 +6230,14 @@
                                       })
                                     ]),
                                     _: 1
-                                  }, 8, ["onClick"]),
+                                  }, 8, ["aria-label", "onClick"]),
                                   _createVNode(_component_q_btn, {
                                     flat: "",
                                     dense: "",
                                     round: "",
                                     icon: "chevron_right",
                                     class: "m-cal-next",
+                                    "aria-label": _ctx.labels.next,
                                     onClick: $event => (_ctx.shift(1))
                                   }, {
                                     default: _withCtx(() => [
@@ -6235,7 +6249,7 @@
                                       })
                                     ]),
                                     _: 1
-                                  }, 8, ["onClick"])
+                                  }, 8, ["aria-label", "onClick"])
                                 ], 64))
                               : _createCommentVNode("", true),
                             _createElementVNode("div", {
@@ -6689,6 +6703,7 @@
                             round: "",
                             icon: "sym_o_close",
                             class: "m-peek-close",
+                            "aria-label": _ctx.labels.close,
                             onClick: $event => (_ctx.peekSelect(''))
                           }, {
                             default: _withCtx(() => [
@@ -6700,7 +6715,7 @@
                               })
                             ]),
                             _: 1
-                          }, 8, ["onClick"])
+                          }, 8, ["aria-label", "onClick"])
                         ]),
                         (_ctx.peekSrc)
                           ? (_openBlock(), _createBlock(_component_m_dynamic_container, {
@@ -10650,7 +10665,7 @@
               ], 40, ["onFocusin"]))
             }
         } },
-        "m-text-area": { hash: "879c7991", make: function (Vue) {
+        "m-text-area": { hash: "e1e07009", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createVNode: _createVNode, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, mergeProps: _mergeProps } = Vue
 
             return function render(_ctx, _cache) {
@@ -10760,18 +10775,20 @@
                                 dense: "",
                                 size: "sm",
                                 icon: _ctx.preview ? 'edit' : 'visibility',
+                                "aria-label": _ctx.preview ? 'Edit' : 'Preview',
+                                "aria-pressed": _ctx.preview ? 'true' : 'false',
                                 onClick: _ctx.togglePreview
                               }, {
                                 default: _withCtx(() => [
                                   _createVNode(_component_q_tooltip, null, {
                                     default: _withCtx(() => [
-                                      _createTextVNode("Preview")
+                                      _createTextVNode(_toDisplayString(_ctx.preview ? 'Edit' : 'Preview'), 1)
                                     ]),
                                     _: 1
                                   })
                                 ]),
                                 _: 1
-                              }, 8, ["icon", "onClick"])
+                              }, 8, ["icon", "aria-label", "aria-pressed", "onClick"])
                             ]),
                             _: 1
                           }, 16, ["label", "model-value", "onUpdate:modelValue", "name", "for", "rows", "readonly", "disable", "form", "bg-color"]),

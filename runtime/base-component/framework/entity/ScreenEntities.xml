@@ -221,9 +221,9 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- The color schemes a user may choose for a theme (the THEME_COLOR_SCHEME preference): the standard colors for light and dark,
         sent as one style sheet by the colorSchemeCss transition of apps.xml (docs/ui/Qvt-Client.md, Appearance). The
         names are the tokens of WebrootVue.qvt.css: the brand colors primary, secondary, accent, positive, negative, info and warning
-        (Quasar's --q-*), the surfaces page-bg, panel-bg, header-bg, header-fg, drawer-bg, text, text-muted, link, negative-text,
+        (Quasar's q- custom properties), the surfaces page-bg, panel-bg, header-bg, header-fg, drawer-bg, text, text-muted, link, negative-text,
         border and divider, and the shapes header-bg-image, header-border, header-shadow, page-bg-image, btn-radius, btn-border,
-        btn-primary-bg, card-radius, card-border, card-shadow, drawer-current-bg and drawer-current-fg (--m-*); a shape value may be any CSS
+        btn-primary-bg, card-radius, card-border, card-shadow, drawer-current-bg and drawer-current-fg (m- custom properties); a shape value may be any CSS
         value without ; { } &lt; &gt; \ " ' or !, such as a gradient or a shadow. A scheme with no colors is the theme's own. -->
     <entity entity-name="ScreenColorScheme" package="moqui.screen" use="configuration" cache="true">
         <field name="colorSchemeId" type="id" is-pk="true"/>

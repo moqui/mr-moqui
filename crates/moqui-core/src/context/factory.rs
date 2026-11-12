@@ -1956,7 +1956,7 @@ fn is_secret(name: &str, flag: Option<&str>) -> bool {
     flag != "false" && (flag == "true" || name.contains("pass") || name.contains("pw") || name.contains("key"))
 }
 
-fn leave_sentinel(name: &str) -> bool {
+pub(super) fn leave_sentinel(name: &str) -> bool {
     name == "entity_ds_crypt_pass_old"
 }
 
@@ -1971,7 +1971,7 @@ fn ensure_env_readable(path: &Path) -> Result<(), Error> {
     }
 }
 
-fn generate_secret() -> Result<String, Error> {
+pub(super) fn generate_secret() -> Result<String, Error> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes)
         .map_err(|err| Error::new(format!("could not read random bytes for a secret property: {err}")))?;

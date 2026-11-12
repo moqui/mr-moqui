@@ -455,6 +455,26 @@ fn check_of_one_file_resolves_interfaces_of_other_files() {
     );
 }
 
+/// `moqui lint <file>`: a comment left open before the next one starts loads here, and is a failure, since other XML
+/// parsers refuse the file.
+#[test]
+fn check_reports_a_comment_holding_a_double_hyphen() {
+    let ctx = crate::context::ExecutionContextFactory::test_context_in(
+        "",
+        crate::service::ServicePools::idle(),
+        crate::context::framework_dir(),
+    );
+    let _entered = ctx.enter();
+    let path = write_fixture(
+        "lint-comment",
+        "<!--\nlicense\n<!-- note -->\n<services>\n<service verb=\"get\" noun=\"Thing\"/>\n</services>",
+    );
+    let failures = super::check(std::slice::from_ref(&path)).unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(failures[0].contains(":3 a comment holds `--`"), "{failures:?}");
+}
+
 fn write_fixture(name: &str, body: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("moqui-svc-{name}-{}.xml", std::process::id()));
     std::fs::write(&path, body).unwrap();

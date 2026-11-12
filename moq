@@ -1122,7 +1122,7 @@ EOF
 help_git_pull() {
     cat <<'EOF'
 Runs git pull (with any arguments given, like --rebase) in each repo, then lists the commits
-the pull brought in.
+the pull brought in. That list runs without a pager.
 EOF
 }
 
@@ -3872,7 +3872,7 @@ task_git_pull() {
         after=$(git -C "$repo" rev-parse -q HEAD 2>/dev/null)
         if [ -n "$before" ] && [ "$before" != "$after" ]; then
             info "New commits:"
-            git -C "$repo" log --no-decorate --format='  %h %<(16,trunc)%an %s' "$before..$after"
+            git --no-pager -C "$repo" log --no-decorate --format='  %h %<(16,trunc)%an %s' "$before..$after"
         fi
     done
     if [ -n "$failed" ]; then

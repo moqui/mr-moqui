@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- For moqui test runs of basic-comms only (docs/dev/JS-Test-Client.md): the server of moqui test-client basic-comms --serve
+<!-- For moqui test runs of basic-comms only (docs/dev/JS-Test-Client.md): the server moqui test-client basic-comms starts to serve the specs
     holds call media on a free loopback port, so the client specs' calls have an SFU. A binary without the rtc feature
     logs that it has none, and the specs that need it (requires: ["rtc"]) skip. -->
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">

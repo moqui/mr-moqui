@@ -65,9 +65,9 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- The style sheet of a color scheme (ScreenColorScheme, the THEME_COLOR_SCHEME preference; docs/ui/Qvt-Client.md, Appearance): its
-        colors for light and dark as the tokens of WebrootVue.qvt.css, then its extra CSS. A brand color is Quasar's --q-* and
+        colors for light and dark as the tokens of WebrootVue.qvt.css, then its extra CSS. A brand color is Quasar's q- custom property and
         !important, over the brand the Quasar config writes on the body; in dark mode the panel and page colors are also Quasar's
-        --q-dark and --q-dark-page, and the link gives way to the user's accent color. A name or value that could break out of
+        q-dark and q-dark-page properties, and the link gives way to the user's accent color. A name or value that could break out of
         its declaration is logged and left out. A scheme is not private, so this needs no login. -->
     <transition name="colorSchemeCss" read-only="true" require-session-token="false">
         <parameter name="colorSchemeId"/>

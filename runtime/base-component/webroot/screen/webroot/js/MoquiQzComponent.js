@@ -45,7 +45,7 @@
         },
         template:
             '<span>' +
-                '<q-btn dense flat icon="print" :color="readyColor" @click="show = true"><q-tooltip>Print Options</q-tooltip></q-btn>' +
+                '<q-btn dense flat icon="print" :color="readyColor" aria-label="Print options" @click="show = true"><q-tooltip>Print Options</q-tooltip></q-btn>' +
                 '<m-dialog v-model="show" title="QZ Print Options" width="720">' +
                     '<div class="row items-center">' +
                         '<div class="col"><h6 :class="connectionClass">Connection: {{connectionState}}<span v-if="qzVersion" class="text-grey"> ver {{qzVersion}}</span></h6></div>' +
@@ -58,9 +58,9 @@
                     '<p v-if="connectionState !== \'Active\'">Do not have QZ Tray installed? <a href="https://qz.io/download/" target="_blank" rel="noopener">Download from QZ.io</a></p>' +
                     '<q-card flat bordered class="q-my-sm"><q-card-actions>' +
                         '<span>Printers: Main <strong class="text-info">{{currentPrinter||"not set"}}</strong>' +
-                            '<q-btn v-if="currentPrinter" dense flat icon="close" @click="setPrinter(null)"></q-btn></span>' +
+                            '<q-btn v-if="currentPrinter" dense flat icon="close" aria-label="Clear the main printer" @click="setPrinter(null)"></q-btn></span>' +
                         '<span class="q-ml-md">Label <strong class="text-info">{{currentLabelPrinter||"not set"}}</strong>' +
-                            '<q-btn v-if="currentLabelPrinter" dense flat icon="close" @click="setLabelPrinter(null)"></q-btn></span>' +
+                            '<q-btn v-if="currentLabelPrinter" dense flat icon="close" aria-label="Clear the label printer" @click="setLabelPrinter(null)"></q-btn></span>' +
                         '<q-space></q-space><q-btn dense outline no-caps label="Find" @click="findPrinters()"></q-btn>' +
                     '</q-card-actions><q-card-section class="row">' +
                         '<div v-for="printerName in printerList" :key="printerName" class="col-xs-12 col-sm-6 q-py-xs">{{printerName}} ' +

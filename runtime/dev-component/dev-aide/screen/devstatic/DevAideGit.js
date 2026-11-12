@@ -132,7 +132,7 @@
     <div v-for="branch in local" :key="branch.name" class="m-dev-change q-py-xs" :data-branch="branch.name">
       <div class="row items-center no-wrap"><q-icon v-if="branch.current" name="sym_o_check" size="xs" class="q-mr-xs"></q-icon>
         <span class="ellipsis text-weight-medium">{{branch.name}}</span><q-space></q-space>
-        <q-btn dense flat round size="xs" icon="more_vert"><q-menu><q-list dense style="min-width: 12rem">
+        <q-btn dense flat round size="xs" icon="more_vert" :aria-label="'Actions for ' + branch.name"><q-menu><q-list dense style="min-width: 12rem">
           <q-item v-if="!branch.current" clickable v-close-popup @click="ws.switchBranch(branch.name)"><q-item-section>Switch</q-item-section></q-item>
           <q-item v-if="!branch.current" clickable v-close-popup @click="merge(branch)"><q-item-section>Merge into {{ws.status && ws.status.branch}}</q-item-section></q-item>
           <q-item v-if="!branch.current" clickable v-close-popup @click="openCompare(branch)"><q-item-section>Compare with {{ws.status && ws.status.branch}}</q-item-section></q-item>

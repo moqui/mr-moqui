@@ -11,6 +11,7 @@ warranty.
 You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
 <!-- The Artifact Browser (plans/design-dev-aide.md 7.3, D9, P9): an artifact in the center, what uses it and what it uses
     in cards beside it, each row expanding into the next column. The page is Browse.qvue, which loads the client
     (DevAide.js, DevAideBrowser.js) and reads the index through the Workspace's transitions. The same references as lists

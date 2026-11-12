@@ -658,7 +658,7 @@
     <q-btn-toggle dense no-caps flat v-model="width" :options="widths"></q-btn-toggle>
     <q-toggle dense v-model="dark" label="Dark"></q-toggle>
     <q-input dense outlined v-model="query" placeholder="Parameters: a=1&amp;b=2" class="col" @keyup.enter="render" id="DevScreenQuery"></q-input>
-    <q-btn dense flat round icon="sym_o_refresh" :loading="rendering" @click="render"><q-tooltip>Render again</q-tooltip></q-btn>
+    <q-btn dense flat round icon="sym_o_refresh" aria-label="Render again" :loading="rendering" @click="render"><q-tooltip>Render again</q-tooltip></q-btn>
   </div>
   <div class="text-caption q-px-sm" id="DevScreenTarget" v-if="view">
     <template v-if="extensionMode && edit">Extension mode: the edits go to {{view.site}}'s {{edit.path}}{{edit.missing ? ' (made on Save)' : ''}}</template>

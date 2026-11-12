@@ -115,6 +115,33 @@ These are server-side proofs, not client specs: framework specs (`./moq test fra
 
 HMAC signing in the client is `hmac.sha256Base64` and `hmac.sha256Timestamp` ([JS-Test-Client](../dev/JS-Test-Client.md)). They match `SmatHmacSha256` and `SmatHmacSha256Timestamp`.
 
+### Stored secrets
+
+Crate tests for [Threat model: stored secrets](Attack-Surface.md#threat-model-stored-secrets): `cargo test -p moqui-entity crypto`, and `cargo test -p <crate> <name>` for the others. A test whose name starts with `known_gap_` pins a weakness. When it fails, the weakness changed: update the threat model.
+
+| Claim | Test |
+| --- | --- |
+| A stored value holds no plaintext, in its text or its bytes | `a_stored_value_does_not_hold_its_plaintext` (`crates/moqui-entity/src/entity/crypto_tests.rs`) |
+| The wrong pass, salt or iteration count does not decrypt; an empty pass is refused | `only_the_same_pass_salt_and_iterations_decrypt`, `wrong_or_empty_pass_fails` (`crypto_tests.rs`) |
+| A pass that is not printable ASCII is refused | `a_pass_phrase_that_is_not_ascii_is_an_error` (`crypto_tests.rs`) |
+| `CryptConfig`'s `Debug` does not show the pass | `debug_leaves_out_the_pass` (`crypto_tests.rs`) |
+| An encrypted field reaches SQL as ciphertext and reads back as plaintext | `try_insert_seals_the_password_before_sql` (`crates/moqui-entity/src/entity/tests.rs`) |
+| Every bound value of an encrypted field in a query is encrypted | `every_bound_value_of_an_encrypted_field_is_sealed` (`crates/moqui-entity/src/entity/field_rw_tests.rs`) |
+| A generated secret is 32 random bytes, different each time; `entity_ds_crypt_pass_old` keeps its sentinel; a secret is named by its flag or by `pass`, `pw` or `key` | `generated_secrets_are_32_random_bytes_and_secret_names_are_known` (`crates/moqui-core/src/context/tests.rs`) |
+| A generated secret goes to `runtime/.env` once, mode `0600`, and stays the same at the next start | `generated_secret_is_stable_and_unwritable_env_fails` (`context/tests.rs`), `update_dotenv_file_replaces_in_place_appends_and_removes` (`crates/moqui-lib/src/env_tests.rs`) |
+| Passwords are argon2id, login keys SHA-256, and a legacy hash becomes argon2id | `hash_password_is_an_argon2id_phc_string`, `hash_login_key_stays_sha256_hex` (`crates/moqui-core/src/user/password.rs`), `a_legacy_hash_verifies_and_the_stored_value_becomes_an_argon2_string` (`user/login_tests.rs`) |
+| A session cookie with a bad MAC is no session | `a_bad_mac_is_an_unknown_session` (`crates/moqui-core/src/user/session_tests.rs`) |
+| An admin reads only whether a secret is set; its audit row has no value | `AdminConnectionServices` "an endpoint change without the secret clears it …" (framework) |
+| A client device key file is its user's alone | `a_file_key_is_the_owners_alone_and_can_be_forgotten` (`crates/moqui-client/src/keys_tests.rs`) |
+| Gap: equal plaintexts give equal ciphertext | `known_gap_equal_plaintexts_give_equal_ciphertext` (`crypto_tests.rs`) |
+| Gap: a shared 16-byte prefix gives a shared first block | `known_gap_a_shared_16_byte_prefix_gives_a_shared_first_block` (`crypto_tests.rs`) |
+| Gap: a changed ciphertext is not detected; a writer sets the first block | `known_gap_a_changed_ciphertext_is_not_detected` (`crypto_tests.rs`) |
+| Gap: AES-128 from 10 PBKDF2 iterations and a fixed salt | `known_gap_the_key_is_aes_128_from_10_pbkdf2_iterations_and_a_fixed_salt` (`crypto_tests.rs`) |
+| Gap: DES ciphertext still decrypts | `known_gap_des_ciphertext_still_decrypts_through_the_alternates` (`crypto_tests.rs`) |
+| Gap: a value sealed under the public default pass is read as valid | `known_gap_a_value_sealed_under_the_public_default_pass_is_read_as_valid` (`crypto_tests.rs`) |
+| Gap: an empty `crypt-pass` turns field encryption off | `known_gap_an_empty_crypt_pass_turns_field_encryption_off` (`crates/moqui-entity/src/entity/tests.rs`) |
+| Gap: a new `session_cookie_key` ends every session; there is no old key | `known_gap_a_new_session_cookie_key_ends_every_session_cookie` (`session_tests.rs`) |
+
 ### Not applicable
 
 These Java HTTP tests have no port. The reason is the behavior they call.
