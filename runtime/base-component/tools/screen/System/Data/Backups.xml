@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Backups (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §11 Backups, §15.3 "Backup scope"):
+<!-- Backups (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §11 Backups, §15.3 "Backup scope"):
     what of this instance's data is backed up, the archives kept, and a backup asked for now, from
     org.moqui.admin.BackupServices.
     BackupCoverage: the database and its provider, the state of the last backup as its run recorded it (a success only for

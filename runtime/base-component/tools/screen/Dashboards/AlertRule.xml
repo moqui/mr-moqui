@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- AlertRule (docs/tools/Monitoring.md, "The Dashboards app" and "Business alerts"; plans/Admin-Screens-Down.md, Track
+<!-- AlertRule (docs/tools/Monitoring.md, "The Dashboards app" and "Business alerts"; plans/archive/Admin-Screens-Down.md, Track
     I; Tools' editor merged with BOSS Insights' AlertDetail): one alert rule, for anyone who reads it (another's unshared
     rule or none is "not available"); its owner changes it. AlertBasis is the basis every rule has: its name, the
     reading (the query, the measure, the reduction), the condition and its timing. Then whom it tells, by its kind:

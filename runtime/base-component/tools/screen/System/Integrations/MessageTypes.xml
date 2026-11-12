@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- MessageTypes (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8, §14): the message contracts
+<!-- MessageTypes (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8, §14): the message contracts
     of the instance, from org.moqui.admin.ConfigurationServices.find#MessageTypes. MessageTypeFind narrows by name or id and
     direction. MessageTypeList shows each type's name, content type, direction, its send and consume handlers (a registered
     handler by its title, another by its service name), its owner, what recovery is registered for its messages and whether

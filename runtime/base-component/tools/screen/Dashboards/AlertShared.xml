@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- AlertShared (docs/tools/Monitoring.md, "The Dashboards app"; plans/Admin-Screens-Down.md, Track I): a shared contact
+<!-- AlertShared (docs/tools/Monitoring.md, "The Dashboards app"; plans/archive/Admin-Screens-Down.md, Track I): a shared contact
     point, silence or mute timing, which alert rules name by its ID: for rules that tell contact points, so Tools' own.
     Its links to the alert list and to a rule that uses it go by the mount (template/ReportMount.js: alerts, alertRule),
     and its save, copy and delete are refused under a mount whose policy does not let the viewer set an alert

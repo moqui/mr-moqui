@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- ArtifactGroupDetail (plans/Admin-Screens-Down.md): one artifact group, its members (the screens, services and entities
+<!-- ArtifactGroupDetail (plans/archive/Admin-Screens-Down.md): one artifact group, its members (the screens, services and entities
     it names, by name or pattern), the groups it authorizes and its tarpits, each changed directly. System's own, the
     instance administrator's: no app shows it under its root, and each transition that writes carries raw() as its
     condition (README, "Mounting the administration screens"). GroupDetail's forms of a group's authorizations and tarpits

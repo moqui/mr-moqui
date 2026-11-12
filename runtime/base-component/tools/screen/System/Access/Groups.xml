@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Groups (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §5 Groups): the grant bundles and
+<!-- Groups (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §5 Groups): the grant bundles and
     their use, from org.moqui.admin.AccessServices.find#Groups (ADMIN_ACCESS_VIEW). GroupFind narrows by name, app, kind
     (registered bundles, custom groups, the others) and a permission granted now; GroupList shows each group's members, app
     gates and the markers read from the effective lists: privileged (only a member changes its members) and the sealed

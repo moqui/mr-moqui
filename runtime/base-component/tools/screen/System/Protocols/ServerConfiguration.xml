@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- ServerConfiguration (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §9): the configuration
+<!-- ServerConfiguration (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §9): the configuration
     the server's protocols run with, read only, and the checks that may be run on them. EffectiveProtocolSettings is the
     registered settings of the Protocols groups from org.moqui.admin.ConfigurationServices.get#EffectiveSettings: each with its
     value, where it comes from (the deployment's configuration or the default), that a change waits for a restart and how an

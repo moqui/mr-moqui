@@ -400,7 +400,7 @@ feature("the review lists grants, app gates and members as of its date and leave
     }
 })
 
-// The matrix as the Capabilities screen shows and changes it (AccessMatrix.js; plans/Admin-Screens-Down.md A3, first IronStone
+// The matrix as the Capabilities screen shows and changes it (AccessMatrix.js; plans/archive/Admin-Screens-Down.md A3, first IronStone
 // Admin's): the proposal is the tokens the screen carries, nothing stored until it is applied
 feature(
     "the matrix context marks a proposal with its controls and effect, and applies it group by group, naming a refused group",

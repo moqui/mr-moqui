@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Home (plans/Admin-Screens-Down.md; first IronStone Admin's ProtocolsHome, mr-boss design-admin §9, §15.3 "Protocol
+<!-- Home (plans/archive/Admin-Screens-Down.md; first IronStone Admin's ProtocolsHome, mr-boss design-admin §9, §15.3 "Protocol
     readiness"): what each protocol of the server is doing, from org.moqui.admin.ConfigurationServices.get#ProtocolReadiness: a
     protocol this build leaves out, one the conf keeps off, one that did not start, one that runs without its trust and one
     that is ready read apart, each with the reason the server gives, where it listens and the link to its owner: a screen of

@@ -847,7 +847,7 @@ along with this software (see the LICENSE.md file). If not, see
             <index-field name="changedFieldName"/></index>
     </entity>
 
-    <!-- The registries of readiness, refresh and settings (plans/Admin-Screens-Down.md A6; first IronStone Admin's, mr-boss
+    <!-- The registries of readiness, refresh and settings (plans/archive/Admin-Screens-Down.md A6; first IronStone Admin's, mr-boss
         plan/design-admin.md §14): what org.moqui.admin.ReadinessServices reads. Each row is a trusted component definition
         its owner seeds in its own data, never a service name a person types. A row naming a service or a permission
         that does not exist is logged by name when read and left out, and the others still answer. The registration adds

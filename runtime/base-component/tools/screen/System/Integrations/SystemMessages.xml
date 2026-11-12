@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- SystemMessages (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8, §8.1, §15.3 "Unknown
+<!-- SystemMessages (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8, §8.1, §15.3 "Unknown
     provider outcome" and "Independent failure"): the transport outcomes of the instance's system messages, from
     org.moqui.admin.OperationServices.find#Messages, for whoever triages failed and stuck integration work. MessageFind
     narrows by state, type, direction, a whole reference (a message's own id, its envelope's or the remote's) and dates;

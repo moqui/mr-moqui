@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- DataExport (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §11 DataExport): the export of a
+<!-- DataExport (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §11 DataExport): the export of a
     registered domain format, on one page: ExportSelection (the target, then one of the scopes it gives this user and its
     registered options), ExportFields (the registered fields this user may read; one they may not read is named as left
     out and cannot be chosen), ExportReview (the target and its version, the scope, the fields and the owner's count of

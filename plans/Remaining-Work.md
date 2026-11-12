@@ -67,8 +67,9 @@ Built; plan archived as [Tools-Database](archive/Tools-Database.md); guide [Data
 
 ## System and Tools apps
 
-Built; plan archived as [Tools-Fancy](archive/Tools-Fancy.md) (the homes, Monitor in System, and the gaps filled after);
-the deliberate differences from Java are in [Parity-Diffs](Parity-Diffs.md#system-and-tools-apps-2026-11-10).
+Built; plans archived as [Tools-Fancy](archive/Tools-Fancy.md) (the homes, Monitor in System, and the gaps filled after)
+and [Admin-Screens-Down](archive/Admin-Screens-Down.md) (IronStone Admin's and Insights' generic screens in System and
+Dashboards); the deliberate differences from Java are in [Parity-Diffs](Parity-Diffs.md#system-and-tools-apps-2026-11-10).
 
 | Area | Item | Source |
 |---|---|---|
@@ -78,6 +79,9 @@ the deliberate differences from Java are in [Parity-Diffs](Parity-Diffs.md#syste
 | Elements | The Resources meters and the System home's auto refresh are `render-mode` texts and a client component (`m-page-refresh`), not XML elements; Dashboards keeps its own refresh timer. A `number-card` sparkline is not drawn in `html` | [Tools-Fancy §11](archive/Tools-Fancy.md#11-as-built) |
 | Data | A remote (`http`) data load off production; the Speed Test rows Java had for the distributed cache and a REST client call; cache entries of the framework's native caches, which report a count only | [Parity-Diffs](Parity-Diffs.md#system-and-tools-apps-2026-11-10) |
 | Data grid | A client test of the grid's filter operators and its Record link (the server's operators are tested; the `.qvue` has no page test) | `tools/screen/Tools/Data/Grid.qvue` |
+| System messages | `queueAckMessage` (System › Integrations › SystemMessageDetail) queues no acknowledgement: the framework ships no `produce#AckSystemMessage` producer a message type can name, so its test reaches the service's refusal only | [Admin-Screens-Down F139](archive/Admin-Screens-Down.md#leftovers-nov-12-2026) |
+| Tests | mr-boss `PeopleAccess` (and at times `PeoplePositions`) fail in a full run on rows other People specs leave; `PeopleFoundationWalk`'s expectations of Time and of Health predate People P10 and A6 | [Admin-Screens-Down, Finishing](archive/Admin-Screens-Down.md#finishing-nov-11-and-12-2026) |
+| Tests | The inline test module of `crates/moqui-core/src/service/jobs.rs` is over the size [Practices-Rust](../docs/dev/Practices-Rust.md) allows one: move it to `jobs_tests.rs` | [Admin-Screens-Down, Leftovers](archive/Admin-Screens-Down.md#leftovers-nov-12-2026) |
 
 ## Maps
 

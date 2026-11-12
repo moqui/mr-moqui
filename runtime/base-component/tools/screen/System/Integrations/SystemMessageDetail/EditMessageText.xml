@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- EditMessageText (plans/Admin-Screens-Down.md): a system message's text edited directly, in a dialog of
+<!-- EditMessageText (plans/archive/Admin-Screens-Down.md): a system message's text edited directly, in a dialog of
     SystemMessageDetail's part for the instance administrator (RawMessage). It is System's alone: an app that shows
     SystemMessageDetail at a location of its own has no such subscreen, the text is read only where raw is true (README,
     "Mounting the administration screens") and the transition carries raw() as its condition. -->

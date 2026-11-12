@@ -1,5 +1,5 @@
 // What the Drill screen of Dashboards shows (screen/Dashboards/Drill.xml; docs/tools/Monitoring.md, "Drill";
-// plans/Admin-Screens-Down.md, Track I): from a value of a saved panel to a breakdown and the records behind it. The
+// plans/archive/Admin-Screens-Down.md, Track I): from a value of a saved panel to a breakdown and the records behind it. The
 // request names the definition, the panel, one of its queries, the range and the buckets chosen, as the panel showed
 // them; the engine's get#Drill reads the saved panel again as the viewer and computes every predicate itself, so
 // nothing here or in the request is a query, an entity or a service. Presentation only: get#Drill and get#Definition

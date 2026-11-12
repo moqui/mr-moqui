@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- JobDetail (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §10, §14): one job, from
+<!-- JobDetail (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §10, §14): one job, from
     org.moqui.admin.OperationServices.get#Job. JobExecution: a run outside the schedule, only where the job's
     owner registered one (execute#Recovery, targetKind ServiceJob), in a dialog that says what it does, with a reason and the
     revision read: the job is marked due and the scheduler starts it at its next pass, under the job's own lock and as the

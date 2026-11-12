@@ -1,7 +1,7 @@
 // The System home's attention list (plans/archive/Tools-Fancy.md §3.4, B5): moqui.tools.SystemHomeServices.get#SystemAttention.
 // Rule tests, no screen is rendered. The first feature calls the service on the database: a failed job run is a
 // readiness check that is not ready (org.moqui.admin.ReadinessServices.get#Readiness, the one source Health reads too;
-// plans/Admin-Screens-Down.md A6), listed for an administrator with its fix place, and left out for a user who may
+// plans/archive/Admin-Screens-Down.md A6), listed for an administrator with its fix place, and left out for a user who may
 // call the service but holds no provider's permission. The second runs the service's script over readings, finds and
 // checks of its own, since a spec cannot fill a disk: a resource at warning is listed with its number, the resources
 // come first, the checks that are not ready follow by their state with a System place or none, and one item's failure

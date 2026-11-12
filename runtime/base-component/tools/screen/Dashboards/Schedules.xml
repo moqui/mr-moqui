@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- Schedules (docs/tools/Monitoring.md, "Report delivery"; plans/Admin-Screens-Down.md, Track I; first BOSS Insights'):
+<!-- Schedules (docs/tools/Monitoring.md, "Report delivery"; plans/archive/Admin-Screens-Down.md, Track I; first BOSS Insights'):
     the viewer's scheduled reports. Mine: the schedules that go to the viewer alone, with the owner-mode ones (made on
     Reports) and the screen schedules they set up for themselves (a saved list's delivery, find#ScreenSchedules); Shared
     administration: the group schedules they own, for one who may deliver to others; Received: the reports delivered to

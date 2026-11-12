@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- SystemMessageDetail (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8, §8.1, §15.3 "Unknown
+<!-- SystemMessageDetail (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8, §8.1, §15.3 "Unknown
     provider outcome"): one system message's evidence and recovery, from org.moqui.admin.OperationServices.get#Message.
     MessageEvidence: its direction, type and remote, its state in words, its times, its correlation ids, the class of its
     last error and, where its owner lets this reader, one masked line of it, its owner with the owner's own state and place

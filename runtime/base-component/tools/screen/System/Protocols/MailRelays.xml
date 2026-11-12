@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- MailRelays (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §9, §8.1): the outgoing mail
+<!-- MailRelays (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §9, §8.1): the outgoing mail
     servers of the instance, an EmailServer no mail account owns (SYSTEM and the relays registered here), listed by
     org.moqui.admin.ConfigurationServices.find#Connections for the mail kinds. The server of a personal, hosted or shared mail
     account belongs to that account, carries its password and token, and is never listed, opened, tested or changed here.

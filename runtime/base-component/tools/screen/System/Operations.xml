@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Operations (plans/Admin-Screens-Down.md): the instance's scheduled jobs and their runs, and the notification topics, over
+<!-- Operations (plans/archive/Admin-Screens-Down.md): the instance's scheduled jobs and their runs, and the notification topics, over
     org.moqui.admin.OperationServices, which check ADMIN_OPERATION_VIEW and ADMIN_OPERATION_MANAGE themselves; and Health,
     the readiness checks of every registered provider, with the support summary it links, over
     org.moqui.admin.ReadinessServices, which check each provider's permission and ADMIN_OVERVIEW_VIEW. Its screens are

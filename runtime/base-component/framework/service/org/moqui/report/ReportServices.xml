@@ -171,7 +171,7 @@
         <in-parameters><parameter name="datasetId" required="true"/><parameter name="conditions" type="List"/><parameter name="expectedVersion" type="Long"/></in-parameters>
         <out-parameters><parameter name="dataset" type="Map"/></out-parameters>
     </service>
-    <!-- What the report screens read beside the engine's own operations (ReportReads.js; plans/Admin-Screens-Down.md,
+    <!-- What the report screens read beside the engine's own operations (ReportReads.js; plans/archive/Admin-Screens-Down.md,
         Track I), so that a screen an app shows under its own root reads no entity itself. Each asks the engine as the caller
         and reads with authorization off only what that answer opens. -->
     <service verb="get" noun="BusinessDataset" allow-remote="false">
@@ -353,7 +353,7 @@
         <out-parameters><parameter name="statusId"/></out-parameters>
     </service>
     <!-- What the delivery screens read and write beside the engine's own operations (ReportReads.js, ReportWrites.js;
-        plans/Admin-Screens-Down.md, Track I), so that a screen an app shows under its own root reads and writes no entity
+        plans/archive/Admin-Screens-Down.md, Track I), so that a screen an app shows under its own root reads and writes no entity
         itself. Each checks what its caller may read or change. -->
     <service verb="find" noun="ReportRecipients" allow-remote="false">
         <description>Who may be proposed and accepted as a recipient of a report schedule or an alert rule, for a caller who

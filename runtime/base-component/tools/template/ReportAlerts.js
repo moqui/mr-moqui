@@ -1,5 +1,5 @@
 // What the alert screens of Dashboards show and ask (screen/Dashboards/Alerts.xml, AlertRule.xml and AlertShared.xml;
-// docs/tools/Monitoring.md, "The Dashboards app" and "Business alerts"; plans/Admin-Screens-Down.md, Track I): the alert
+// docs/tools/Monitoring.md, "The Dashboards app" and "Business alerts"; plans/archive/Admin-Screens-Down.md, Track I): the alert
 // rules the viewer reads, the alerts that told them and the shipped rules to copy; one rule with its reading and
 // condition, whom it tells, the state of each of its series and each recipient's last outcome; and what changes one.
 // Presentation only: every read and write is an operation of org.moqui.report.ReportServices called as the viewer, so

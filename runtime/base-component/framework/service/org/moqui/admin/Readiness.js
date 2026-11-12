@@ -1,4 +1,4 @@
-// org.moqui.admin.ReadinessServices (plans/Admin-Screens-Down.md A6; first IronStone Admin's registries, mr-boss
+// org.moqui.admin.ReadinessServices (plans/archive/Admin-Screens-Down.md A6; first IronStone Admin's registries, mr-boss
 // plan/design-admin.md §3, §7, §10, §14, §16): readiness, refresh, the settings index and the support summary, read from
 // the owners' registrations (moqui.server ReadinessProvider, RefreshOperation and SettingsEntry, each seeded by its
 // owner). Registrations are trusted component definitions: a row naming a service or a permission that does not exist is

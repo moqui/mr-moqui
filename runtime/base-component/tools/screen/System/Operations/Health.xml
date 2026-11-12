@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Health (plans/Admin-Screens-Down.md A6; first IronStone Admin's, mr-boss design-admin §10): the readiness checks the
+<!-- Health (plans/archive/Admin-Screens-Down.md A6; first IronStone Admin's, mr-boss design-admin §10): the readiness checks the
     viewer may read, from every registered provider (org.moqui.admin.ReadinessServices.get#Readiness over
     moqui.server.ReadinessProvider: the framework's own checks and each component's), narrowed by group, state and owner
     (ReadinessFind). The header shows the sign-in failures of the last day to a reader of the overview's

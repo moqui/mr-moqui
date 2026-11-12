@@ -1,5 +1,5 @@
 // What the delivery screens of Dashboards show and ask (screen/Dashboards/Schedules.xml, ScheduledReportDetail.xml and
-// ReportDelivery.xml; docs/tools/Monitoring.md, "Report delivery"; plans/Admin-Screens-Down.md, Track I): the viewer's
+// ReportDelivery.xml; docs/tools/Monitoring.md, "Report delivery"; plans/archive/Admin-Screens-Down.md, Track I): the viewer's
 // report schedules and the reports delivered to them, one schedule with its recipients, their check and its runs, and one
 // run with each recipient's outcome. Presentation only: every read and write is an operation of
 // org.moqui.report.ReportServices called as the viewer, so the engine checks the operation's grant, the schedule's owner,

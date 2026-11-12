@@ -496,7 +496,7 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
 ### Mounting the report screens
 
 An app shows the Dashboards screens under its own root (BOSS Insights does: impl-insights P2,
-[plans/Admin-Screens-Down.md](../../plans/Admin-Screens-Down.md) Track I), each in one of two ways:
+[plans/archive/Admin-Screens-Down.md](../../plans/archive/Admin-Screens-Down.md) Track I), each in one of two ways:
 
 - **By location**: a `subscreens-item` of the app names the Tools screen file. Every transition of the screen is then
   on the app's route, so this is for a screen with nothing that only an instance administrator may do, that no grant of

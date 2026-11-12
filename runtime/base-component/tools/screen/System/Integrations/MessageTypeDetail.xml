@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- MessageTypeDetail (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8, §14): one message
+<!-- MessageTypeDetail (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8, §14): one message
     type's contract and use, from org.moqui.admin.ConfigurationServices.get#MessageTypeUse. MessageContract: its name, content
     type, the handler that sends and the handler that consumes it, each chosen only among the handlers its owner registered
     for this type (never a service name typed there; the service that receives it is never chosen there), and its file

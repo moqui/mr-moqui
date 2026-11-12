@@ -1,5 +1,12 @@
 # System and Dashboards take the generic Admin and Insights screens
 
+> Archived 2026-11-12: every phase built (A0 to A6, I0 to I4), the finishing phase and the leftovers (F124 to F141)
+> done, merged to `master` of mr-moqui, mr-boss, mr-mantle and mr-marble. The guides are the tools
+> [README](../../runtime/base-component/tools/README.md#mounting-the-administration-screens) ("Mounting the
+> administration screens"), [Monitoring](../../docs/tools/Monitoring.md#mounting-the-report-screens) ("Mounting the
+> report screens") and [Practices-App-Dev](../../docs/dev/Practices-App-Dev.md#a-framework-screen-under-an-apps-root);
+> what is still open is in [Remaining-Work](../Remaining-Work.md#system-and-tools-apps).
+
 Plan and record of moving the framework-generic screens of IronStone Admin and Insights (mr-boss) into the framework's
 System and Dashboards apps (`runtime/base-component/tools`), with BOSS mounting them and adding only its business parts.
 Started Nov 11, 2026. Every phase (A0 to A6, I0 to I4) is built; the record of each phase is at the end, the
@@ -49,7 +56,7 @@ check below them: transition, entity-auto service, entity (`crates/moqui-core/sr
 
 No `ArtifactGroupMember` row is re-pointed to a tools location: no BOSS group holds a grant on a Tools screen.
 
-**Mount context** (the `reportLinks` pattern of [Monitoring](../docs/tools/Monitoring.md#mounting-the-report-screens)):
+**Mount context** (the `reportLinks` pattern of [Monitoring](../../docs/tools/Monitoring.md#mounting-the-report-screens)):
 data only, set by the mounting root's `always-actions`, nulled by the tools roots.
 
 - `adminMount` (nulled in `T/screen/System.xml`, set in `B/screen/Admin.xml`): `routes` `{key: {url, idParameter,
@@ -58,7 +65,7 @@ data only, set by the mounting root's `always-actions`, nulled by the tools root
 - `reportPolicy` (beside `reportLinks`; nulled in `T/screen/Dashboards.xml` and `T/screen/System/Monitor.xml`, set in
   `B/screen/Insights.xml`): `features {alert, share}`, `range`, `datasetIdPrefix`,
   `datasetScopeLabel`, `datasetScopeHelp` (I1), `recipientPermissionId`, `reportEmailTemplateId`, `alertAudience`, `shareGroups`, `recipientCap`, `calendar`, each
-  described in [Monitoring](../docs/tools/Monitoring.md#mounting-the-report-screens) (`datasetScopeParameter` left the
+  described in [Monitoring](../../docs/tools/Monitoring.md#mounting-the-report-screens) (`datasetScopeParameter` left the
   contract in I3: a scope policy registers its own). `reportLinks` has the keys `alerts` and `alertShared` since I0,
   read by the alert screens since I3, when `alertRule` became where a rule opens for any reader and `features.alert`
   what offers setting one; `playlists`, `wallDisplay`, `analysis` and a Tools default for `drill` came with their
@@ -1434,9 +1441,9 @@ State: every phase above is built and merged to `master` of mr-moqui, mr-boss, m
   screen's section), `plan/impl-admin.md` §9, `plan/design-insights.md` §4.2 and `plan/impl-insights.md` §9,
   `plan/design-crosscut.md` (§3.30, §4.9's Z5 and Z9 rows, §5, §7, §8), the registry statements of `impl-people`,
   `impl-sales`, `impl-marketing` and `impl-maintenance`, two rows of `ss-inventory`, and the README. Here:
-  [Practices-App-Dev](../docs/dev/Practices-App-Dev.md#a-framework-screen-under-an-apps-root) §5 (the three ways an
+  [Practices-App-Dev](../../docs/dev/Practices-App-Dev.md#a-framework-screen-under-an-apps-root) §5 (the three ways an
   app shows a framework screen, the grant and mount rules, and the engine behaviours of F16, F18, F24, F36, F101 and
-  F102), [Attack-Surface](../docs/security/Attack-Surface.md#tools-and-system) ("Screens another app shows": the mount
+  F102), [Attack-Surface](../../docs/security/Attack-Surface.md#tools-and-system) ("Screens another app shows": the mount
   rule for both tracks and the engine's rules of F54 and F94), `plans/README.md`, and this plan's own tables read
   against the Record (the A4 row, `state()`'s `hidden`, the registries among what moved down).
 - **The acceptance specs changed by path**, run one by one: mr-boss's `AdminFoundationWalk`, `AdminRegistriesWalk`,
@@ -1586,7 +1593,7 @@ Open:
 - `queueAckMessage` queues no acknowledgement until the framework ships an ack producer a message type can name (F139).
 - L10n and the UI review, in their own sweeps.
 - The inline test module of `crates/moqui-core/src/service/jobs.rs` is over the size
-  [Practices-Rust](../docs/dev/Practices-Rust.md) allows one.
+  [Practices-Rust](../../docs/dev/Practices-Rust.md) allows one.
 
 Tests:
 

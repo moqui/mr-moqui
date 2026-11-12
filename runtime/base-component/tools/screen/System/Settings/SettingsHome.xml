@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- SettingsHome (plans/Admin-Screens-Down.md A6; first IronStone Admin's, mr-boss design-admin §7, §14.2): the settings
+<!-- SettingsHome (plans/archive/Admin-Screens-Down.md A6; first IronStone Admin's, mr-boss design-admin §7, §14.2): the settings
     index, each owner's settings landing by group (org.moqui.admin.ReadinessServices.find#Settings over the owners'
     moqui.server.SettingsEntry registrations), shown only when its screen opens to the viewer's own groups and its view
     permission holds; the owners resolve scope and make every change, and an entry grants nothing. An entry is linked by

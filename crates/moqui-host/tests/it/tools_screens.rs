@@ -1031,7 +1031,7 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         "/System/Data/Backups",
         &["Not included in an archive", "Archives"],
     );
-    // The registries (plans/Admin-Screens-Down.md A6): Health lists the framework's own checks, each fix place a
+    // The registries (plans/archive/Admin-Screens-Down.md A6): Health lists the framework's own checks, each fix place a
     // System screen; the support summary and its redacted JSON; the settings index links the System screens of the
     // framework's entries; and the home's attention list is the checks that are not ready.
     // A row is "Provider: Check" where the titles differ; the header has the sign-in failures of the last day, linked

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Audit (plans/Admin-Screens-Down.md): the changes the audit log recorded (AuditChanges), over
+<!-- Audit (plans/archive/Admin-Screens-Down.md): the changes the audit log recorded (AuditChanges), over
     org.moqui.admin.AuditServices, which checks ADMIN_AUDIT_VIEW itself, answers only the registered projections and
     never a secret's value. Its screen is a file of Audit/, with the name an app that shows it under its own root uses
     (README, "Mounting the administration screens"); an app adds its own screens beside it (an access log). Nothing is

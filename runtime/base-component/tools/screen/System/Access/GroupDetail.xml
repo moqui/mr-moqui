@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- GroupDetail (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §5 GroupDetail): one group, read
+<!-- GroupDetail (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §5 GroupDetail): one group, read
     with org.moqui.admin.AccessServices.get#Group (ADMIN_ACCESS_VIEW). GroupProfile (store#Group: the description, a custom
     group's purpose, factor required and allowed IPs, at the group's revision, with a reason); GroupMembers
     (store#Membership and end#Membership: dated memberships, ended and kept; every member is named here, and a member's

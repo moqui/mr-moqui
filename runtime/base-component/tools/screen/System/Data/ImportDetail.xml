@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- ImportDetail (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §11 ImportDetail): one import
+<!-- ImportDetail (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §11 ImportDetail): one import
     of a target whose batch is read through the import contract (kept by the framework, or its owner's), from
     org.moqui.admin.DataTransferServices.get#ImportDetail. ImportSummary: the target and its version, the file and its
     content hash, what it is for, the state, the counts, who staged it and when. ImportResults: each row with its result,

@@ -449,7 +449,7 @@ along with this software (see the LICENSE.md file). If not, see
         call#TargetService, as an import's steps are). Inheritable, so the record of an export is written as them. -->
     <moqui.security.ArtifactGroupMember artifactGroupId="AdminTransferServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
             artifactName="org\.moqui\.admin\.DataTransferServices\.(find#ExportTargets|get#ExportFields|preview#Export|run#Export)"/>
-    <!-- What the Data screens of the System app, and of an app that shows them, read and post (plans/Admin-Screens-Down.md
+    <!-- What the Data screens of the System app, and of an app that shows them, read and post (plans/archive/Admin-Screens-Down.md
         A5), in the same group: find#ExportRuns, get#ExportContext, find#ImportRuns and get#ImportDetail ask
         ADMIN_TRANSFER_VIEW or ADMIN_TRANSFER_RUN and answer what the services above answer the caller; run#ExportRequest
         asks ADMIN_TRANSFER_RUN besides what run#Export asks. -->
@@ -480,7 +480,7 @@ along with this software (see the LICENSE.md file). If not, see
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
 
     <!-- Readiness, refresh, the settings index and the support summary (org.moqui.admin.ReadinessServices;
-        plans/Admin-Screens-Down.md A6), named service by service. Each checks the caller itself: get#Readiness each
+        plans/archive/Admin-Screens-Down.md A6), named service by service. Each checks the caller itself: get#Readiness each
         provider's required permission, request#Refresh the operation's, find#Settings each entry's view permission and
         whether its screen opens to the caller's own groups, get#Overview, get#HealthCards, get#SupportSummary and
         check#InstanceSetup ADMIN_OVERVIEW_VIEW (its protocols check what get#ProtocolReadiness asks). Not inheritable:
