@@ -38,6 +38,7 @@ mod agent_members;
 mod agent_remote;
 mod agent_screens;
 mod assist;
+mod authz_revocation;
 mod backup;
 mod chat_actors;
 mod cluster_notify;

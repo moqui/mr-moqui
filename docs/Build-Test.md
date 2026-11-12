@@ -564,8 +564,10 @@ Acceptance tests can be deleted freely, since nothing depends on them.
   an acceptance spec can depend on a regression fixture. A spec's name is unique across both trees of a component.
 - **Fixtures.** Acceptance fixtures live under `acceptance/`, never in `test/`. Helper libraries a spec loads by
   `component://<component>/test/...` stay in `test/`, for both suites.
-- **Rust.** Rust has no such directory: its acceptance tests are `#[ignore = "..."]` (`cargo test-slow`, and
-  moqui-core's sweep of screen generation on both script engines) or opt-in `[[test]]`s (`gate3`, `gate3_browser`, `client_browser`, `tui_screens`). `./moq accept-all` runs them, and no
+- **Rust.** Rust has no such directory: its acceptance tests are `#[ignore = "..."]` (`cargo test-slow`, which runs
+  those of the host modules its alias in `.cargo/config.toml` names: `tools_screens`, `gate2`, `tool_components`,
+  `qvt_report`, `notws`, `git_storage`, `factory_restart` and `authz_revocation`; a new module of them is added there
+  and here; and moqui-core's sweep of screen generation on both script engines) or opt-in `[[test]]`s (`gate3`, `gate3_browser`, `client_browser`, `tui_screens`). `./moq accept-all` runs them, and no
   regression command does.
 - **Who runs it.** `./moq accept-all` on a schedule (nightly, or weekly while it is long) and before a release, with
   `--junit` for a dated summary. An agent runs an acceptance test only when the user asks, or when it adds or changes
