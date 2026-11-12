@@ -102,7 +102,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <text-line size="6"/></default-field></field>
                     <field name="pushMirrorRemoteId"><default-field title="Push Mirror"
                             tooltip="A SystemMessageRemote: sendUrl is the SSH URL (git@host:owner/repo.git), with its private and public key; pushed after each change">
-                        <drop-down allow-empty="true"><entity-options key="${systemMessageRemoteId}" text="${systemMessageRemoteId}: ${description ?: sendUrl ?: ''}">
+                        <drop-down allow-empty="true"><entity-options key="${systemMessageRemoteId}" text="${systemMessageRemoteId}: ${description || sendUrl || ''}">
                             <entity-find entity-name="moqui.service.message.SystemMessageRemote"><order-by field-name="systemMessageRemoteId"/></entity-find>
                         </entity-options></drop-down></default-field></field>
                     <field name="pushMirrorRefs"><default-field title="Push Mirror Refs"

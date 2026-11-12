@@ -432,16 +432,7 @@ fn refuse_outside(facade: &EntityFacade, service: &str) -> Result<(), LibError> 
 }
 
 fn client_for(remote: &EntityValue, host: &str) -> Result<SftpClient, LibError> {
-    let mut client = SftpClient::new(host, &field(remote, "username"), None)?;
-    let private_key = field(remote, "privateKey");
-    if private_key.is_empty() {
-        client.password(&field(remote, "password"));
-    } else {
-        let public_key = field(remote, "publicKey");
-        client.public_key_pkcs8(&private_key, Some(public_key.as_str()));
-    }
-    client.host_key_fingerprint(&field(remote, "sshHostKeyFingerprint"));
-    Ok(client)
+    SftpClient::for_remote(remote, host, &field(remote, "username"))
 }
 
 /// `ec.resource.expand(type.<name>, null, names, false)`. A Groovy `?:` is refused with the field named, since the

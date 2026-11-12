@@ -257,7 +257,7 @@ fn mirror(
         )));
     }
     let send_path = send_path(facade, &remote, remote_id)?;
-    let mut client = client_for(&remote, &send_url, &private_key, &public_key)?;
+    let mut client = SftpClient::for_remote(&remote, &send_url, &field(&remote, "username"))?;
     if field(&remote, "remoteAttributes") == "N" {
         client.preserve_attributes(false);
     }
@@ -367,17 +367,6 @@ fn mirror_with(client: &mut SftpClient, send_path: &str, outcome: &backup::Backu
     } else {
         Ok("Y".to_string())
     }
-}
-
-fn client_for(remote: &EntityValue, host: &str, private_key: &str, public_key: &str) -> Result<SftpClient, LibError> {
-    let mut client = SftpClient::new(host, &field(remote, "username"), None)?;
-    if private_key.is_empty() {
-        client.password(&field(remote, "password"));
-    } else {
-        client.public_key_pkcs8(private_key, Some(public_key));
-    }
-    client.host_key_fingerprint(&field(remote, "sshHostKeyFingerprint"));
-    Ok(client)
 }
 
 fn child(dir: &str, name: &str) -> String {

@@ -46,6 +46,7 @@ fn data(user_key: &PrivateKey) -> String {
         r#"<entity-facade-xml type="seed">
     <moqui.resource.GitRepository repositoryId="hosted" repositoryKind="local" description="Hosted on disk"/>
     <moqui.resource.GitRepository repositoryId="hosted-db" repositoryKind="db" description="Hosted in the database"/>
+    <moqui.resource.GitRepository repositoryId="mirror-db" repositoryKind="db" description="A push mirror's target"/>
     <moqui.security.UserSshKey sshKeyId="JOHN_GIT_KEY" userId="EX_JOHN_DOE" publicKey="{public}"
         fingerprint="{fingerprint}" fromDate="1265184000000"/>
 </entity-facade-xml>"#
@@ -379,4 +380,134 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
         ],
     );
     assert!(!ok && out.contains("not found"), "{out}");
+
+    // a push mirror of hosted to mirror-db over this SSH server, as john.doe with his key and the host key pinned;
+    // then one to a repository that is not there, whose failure is kept on the row
+    let host_key = PrivateKey::from(Ed25519Keypair::from_seed(&HOST_SEED));
+    let factory = Arc::clone(gate.server.factory());
+    let set_mirror = |path: &str| {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let mut remote =
+            moqui_core::entity::EntityValue::make(&facade, "moqui.service.message.SystemMessageRemote").unwrap();
+        remote.set("systemMessageRemoteId", Value::string("GIT_MIRROR"));
+        remote.set(
+            "sendUrl",
+            Value::string(format!("ssh://john.doe@127.0.0.1:{ssh_port}/{path}")),
+        );
+        remote.set(
+            "privateKey",
+            Value::string(user_key.to_openssh(LineEnding::LF).unwrap().as_str()),
+        );
+        remote.set("publicKey", Value::string(user_key.public_key().to_openssh().unwrap()));
+        remote.set(
+            "sshHostKeyFingerprint",
+            Value::string(host_key.public_key().fingerprint(HashAlg::Sha256).to_string()),
+        );
+        remote.create_or_update(&facade).unwrap();
+        let mut repository = moqui_core::entity::EntityValue::make(&facade, "moqui.resource.GitRepository").unwrap();
+        repository.set("repositoryId", Value::string("hosted"));
+        repository.set("pushMirrorRemoteId", Value::string("GIT_MIRROR"));
+        repository.set("pushMirrorRefs", Value::string("main:mirror"));
+        repository.update(&facade).unwrap();
+    };
+    let push_mirror = || {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let (result, errors) = sync(
+            "org.moqui.git.GitServices.push#GitMirror",
+            &[("repositoryId", Value::string("hosted"))],
+        );
+        let row = factory
+            .entity()
+            .unwrap()
+            .find("moqui.resource.GitRepository")
+            .unwrap()
+            .eq("repositoryId", Value::string("hosted"))
+            .one()
+            .unwrap()
+            .unwrap();
+        let error = row.get("lastPushMirrorError").cloned().unwrap_or(Value::Null);
+        (result, errors, error)
+    };
+    set_mirror("mirror-db.git");
+    let (result, errors, error) = push_mirror();
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(error, Value::Null);
+    assert!(
+        result
+            .get("pushResult")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.starts_with("pushed 1 refs")),
+        "{result:?}"
+    );
+    let head = git_ok(&check, &home, None, &["rev-parse", "HEAD"]);
+    let mirror_url = format!("http://john.doe:moqui@127.0.0.1:{}/git/mirror-db.git", http.port());
+    let listed = git_ok(&work, &home, None, &["ls-remote", &mirror_url, "refs/heads/*"]);
+    assert_eq!(
+        listed.trim(),
+        format!("{}\trefs/heads/mirror", head.trim()),
+        "only the mapped name: {listed}"
+    );
+
+    set_mirror("nosuch.git");
+    let (_, errors, error) = push_mirror();
+    assert!(!errors.is_empty());
+    assert!(
+        error.as_str().is_some_and(|text| text.contains("nosuch")),
+        "the failure is kept on the row: {error:?} ({errors})"
+    );
+    set_mirror("mirror-db.git");
+    let (result, errors, error) = push_mirror();
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(error, Value::Null, "a push that works clears the error");
+    assert!(
+        result
+            .get("pushResult")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.contains("1 already current")),
+        "{result:?}"
+    );
+
+    // the framework's post-receive rule pushes the mirror after a push, async
+    commit(&check, &home, "mirrored.txt", "after the mirror\n");
+    git_ok(&check, &home, Some(&ssh), &["push", "origin", "main"]);
+    let head = git_ok(&check, &home, None, &["rev-parse", "HEAD"]);
+    let expected = format!("{}\trefs/heads/mirror", head.trim());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let listed = git_ok(&work, &home, None, &["ls-remote", &mirror_url, "refs/heads/mirror"]);
+        if listed.trim() == expected {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let context = factory.new_context();
+            let _entered = context.enter();
+            let _authz = context.disable_authz();
+            let updates = factory
+                .entity()
+                .unwrap()
+                .find("moqui.resource.GitUpdate")
+                .unwrap()
+                .eq("repositoryId", Value::string("hosted"))
+                .list()
+                .unwrap();
+            let updates: Vec<String> = updates
+                .iter()
+                .map(|row| {
+                    format!(
+                        "{:?} {:?} {:?}",
+                        row.get("source"),
+                        row.get("ecaStatus"),
+                        row.get("ecaError")
+                    )
+                })
+                .collect();
+            panic!("the rule did not push the mirror: {listed}; updates: {updates:#?}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }

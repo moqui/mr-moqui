@@ -261,8 +261,11 @@ screen). The `SystemMessageRemote` holds where and how: `sendUrl` the SSH URL (`
 `sshHostKeyFingerprint` to pin the host key, else it is trusted on first use (`runtime/conf/ssh_known_hosts`), as the
 backup's SFTP mirror does. `pushMirrorRefs` names the refs as `from:to` pairs (`master:mirror` pushes master to the
 mirror's `mirror` branch; `refs/tags/*:refs/tags/*`), every branch and tag when empty. Each is forced to the local one,
-and nothing is deleted. `lastPushMirrorDate` and `lastPushMirrorError` are on the row; a failed push fails its
-`GitUpdate`'s rules, which can be run again from the push log.
+and nothing is deleted. The rule runs the push async, outside the change's events, so a slow or unreachable mirror
+holds up no other rule; pushes of one repository take turns, and each sends the refs as they are when it runs.
+`lastPushMirrorDate` and `lastPushMirrorError` are on the row (a failure does not fail the `GitUpdate`); the next
+change, or Push Mirror Now, pushes again. A push ends as git's does: it waits for the mirror's `git-receive-pack` to
+end, so the mirror's own post-receive hooks finish.
 
 ### Merge requests
 
