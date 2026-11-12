@@ -1760,6 +1760,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Llm.xml` | Container → Dashboard | S11 | P |
 | `System/Settings/InstanceSettings.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A4; not walked here |
 | `System/Settings/Localization.xml` | XML widgets | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4), whose lists are its instance administrator's part (`rows=Y`); not walked here since |
+| `System/Settings/SettingsHome.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A6; not walked here |
 | `System/Settings.xml` | Container → InstanceSettings | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4); not walked here since |
 | `System/Print/PrintJob/PrintJobDetail.xml` | XML widgets | S05 | P |
 | `System/Print/PrintJob/PrintJobList.xml` | hidden menu | S05 | P |
@@ -1789,10 +1790,12 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Security/UserAccount/UserAccountList.xml` | hidden menu | S03 | P |
 | `System/Security/UserAccount.xml` | Container → UserAccountList | S03 | P |
 | `System/Security.xml` | Container → UserAccount | S03 | P |
+| `System/Operations/Health.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A6; not walked here |
 | `System/Operations/JobDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
 | `System/Operations/JobRunDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
 | `System/Operations/JobRuns.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
 | `System/Operations/Jobs.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/SupportSummary.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A6; not walked here |
 | `System/Operations/TopicDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
 | `System/Operations/Topics.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
 | `System/Operations.xml` | Container → Jobs | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |

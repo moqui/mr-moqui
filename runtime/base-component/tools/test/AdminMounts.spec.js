@@ -348,8 +348,9 @@ feature("every acting transition of an area's screens calls only org.moqui.admin
         problems == ""
         // the rule read something of each kind: JobDetail's saveJob and updateJob among them, GroupDetail's storeGroup and
         // updateUserGroup, Localization's storeMessage and createLocalizedMessage, and Data's four, all delegated (Backups'
-        // runBackup, DataExport's download, ImportDetail's retry and results)
-        delegated >= 38
+        // runBackup, DataExport's download, ImportDetail's retry and results); Health's requestRefresh and
+        // SupportSummary's summaryJson, delegated too (org.moqui.admin.ReadinessServices; SettingsHome has none)
+        delegated >= 40
         raw >= 56
     }
 })

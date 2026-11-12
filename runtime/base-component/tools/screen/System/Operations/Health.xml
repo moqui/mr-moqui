@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Health (plans/Admin-Screens-Down.md A6; first IronStone Admin's, mr-boss design-admin §10): the readiness checks the
+    viewer may read, from every registered provider (org.moqui.admin.ReadinessServices.get#Readiness over
+    moqui.server.ReadinessProvider: the framework's own checks and each component's), narrowed by group, state and owner
+    (ReadinessFind). Each check (Readiness) shows its state, explanation, checked time, the freshness of a data source and
+    the owner's fix place where the mount has a route for its key (template/AdminMount.js; a screen the viewer does not
+    open is a disabled link); Check again reads its provider again (nonmutating), and Request refresh runs the refresh
+    operation registered for it (request#Refresh, its own permission) with the check's own scope. A provider that could
+    not be checked is named; one the viewer may not read is left out, and nothing unavailable shows as ready. The
+    presentation is template/AdminReadiness.js. An app that adds a scope of its own (an organization) shows a screen of
+    its own around ReadinessFind, ReadinessHeader and ReadinessChecks. No part is the instance administrator's alone. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Health" default-menu-index="4" menu-image="sym_o_health_and_safety" menu-image-type="icon">
+    <parameter name="healthGroupEnumId"/>
+    <parameter name="state"/>
+    <parameter name="ownerApp"/>
+    <parameter name="providerKey"/>
+
+    <transition name="requestRefresh">
+        <actions>
+            <service-call name="org.moqui.admin.ReadinessServices.request#Refresh" out-map="refreshed"
+                    in-map="{refreshKey:refreshKey, reason:(reason || null), operationKey:(operationKey || null),
+                        scopeParameters:ec.resource.script('component://tools/template/AdminReadiness.js').scopeOf(scopeJson)}"/>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage(refreshed.message, refreshed.state === 'failed' ? 'warning' : 'success')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <set field="findValues" from="{healthGroupEnumId:healthGroupEnumId, state:state, ownerApp:ownerApp, providerKey:providerKey}"/>
+        <set field="health" from="ec.resource.script('component://tools/template/AdminReadiness.js').health(findValues, null)"/>
+        <set field="checks" from="health.checks"/>
+        <set field="failure" from="health.failure"/>
+        <set field="failedText" from="health.failedText"/>
+        <set field="checkedText" from="health.checkedText"/>
+        <set field="ownerOptions" from="health.ownerOptions"/>
+        <set field="groupOptions" from="health.groupOptions"/>
+        <set field="filtered" from="!!(healthGroupEnumId || state || ownerApp || providerKey)"/>
+    </actions>
+    <widgets>
+        <section name="ReadinessHeader">
+            <widgets>
+                <container style="row items-center q-col-gutter-sm q-mb-sm">
+                    <container style="col">
+                        <label text="Health" type="h5"/>
+                        <label text="Checked ${checkedText}" type="p" style="text-caption m-muted q-mb-none" condition="checkedText"/>
+                    </container>
+                    <container style="col-auto">
+                        <link url="../SupportSummary" text="Support summary" icon="sym_o_summarize" link-type="anchor-button"/>
+                    </container>
+                </container>
+            </widgets>
+        </section>
+        <form-single name="ReadinessFind" transition="." map="findValues">
+            <field name="providerKey"><default-field><hidden/></default-field></field>
+            <field name="healthGroupEnumId">
+                <default-field title="Area">
+                    <drop-down allow-empty="true"><list-options list="groupOptions" key="${key}" text="${text}"/></drop-down>
+                </default-field>
+            </field>
+            <field name="state">
+                <default-field title="State">
+                    <drop-down allow-empty="true">
+                        <option key="failed" text="Failed"/><option key="unavailable" text="Unavailable"/>
+                        <option key="warning" text="Warning"/><option key="ready" text="Ready"/>
+                    </drop-down>
+                </default-field>
+            </field>
+            <field name="ownerApp">
+                <default-field title="Owner">
+                    <drop-down allow-empty="true"><list-options list="ownerOptions" key="${key}" text="${text}"/></drop-down>
+                </default-field>
+            </field>
+            <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+            <field-layout>
+                <field-row-big>
+                    <field-ref name="healthGroupEnumId"/>
+                    <field-ref name="state"/>
+                    <field-ref name="ownerApp"/>
+                    <field-ref name="submitButton"/>
+                </field-row-big>
+            </field-layout>
+        </form-single>
+        <section name="ReadinessChecks">
+            <widgets>
+                <label type="p" style="text-negative" condition="failure" text="${failure}"/>
+                <label type="p" style="text-warning" condition="failedText" text="Could not be checked: ${failedText}"/>
+                <container-box>
+                    <box-body-nopad>
+                        <form-list name="Readiness" list="checks" skip-form="true" paginate="false">
+                            <field name="title"><default-field title="Check"><display text="${title}"/></default-field></field>
+                            <field name="subject"><default-field title="For"><display/></default-field></field>
+                            <field name="groupName"><default-field title="Area"><display/></default-field></field>
+                            <field name="stateName">
+                                <default-field title="Result">
+                                    <render-mode>
+                                        <text type="qvt"><![CDATA[<q-chip dense square class="q-ma-none m-tonal text-${stateColor}">${
+                                            WebUtilities.encodeHtml(stateName)}</q-chip>]]></text>
+                                        <text type="tui"><![CDATA[${JSON.stringify({t: "text", text: stateName})}]]></text>
+                                        <text type="html">${stateName}</text>
+                                    </render-mode>
+                                </default-field>
+                            </field>
+                            <field name="message"><default-field title="Explanation"><display/></default-field></field>
+                            <field name="freshnessText"><default-field title="Freshness"><display/></default-field></field>
+                            <field name="checkedText"><default-field title="Checked"><display/></default-field></field>
+                            <field name="actions">
+                                <default-field title="">
+                                    <link url="${fixHref}" url-type="plain" text="Fix" link-type="anchor-button" icon="sym_o_build" condition="fixHref"/>
+                                    <link url="${fixUrl}" text="Fix" link-type="anchor-button" icon="sym_o_build" parameter-map="fixParameters"
+                                            condition="fixUrl"/>
+                                    <link url="." text="Check again" link-type="anchor-button" icon="sym_o_refresh" parameter-map="againParameters"/>
+                                    <container-dialog id="${dialogKey}" button-text="Request refresh" icon="sym_o_sync" width="520"
+                                            title="Request ${refreshTitle}" condition="refreshKey">
+                                        <label type="p" text="Runs ${refreshTitle} for ${subject}. The check shows the new state once it is done."/>
+                                        <form-single name="RequestRefreshForm" transition="requestRefresh"
+                                                map="{refreshKey:refreshKey, scopeJson:scopeJson, operationKey:'refresh-' + ec.user.randomString(24)}">
+                                            <field name="refreshKey"><default-field><hidden/></default-field></field>
+                                            <field name="scopeJson"><default-field><hidden/></default-field></field>
+                                            <field name="operationKey"><default-field><hidden/></default-field></field>
+                                            <field name="reason"><default-field title="Reason"><text-line size="40"/></default-field></field>
+                                            <field name="submitButton"><default-field title="Request refresh"><submit/></default-field></field>
+                                        </form-single>
+                                    </container-dialog>
+                                </default-field>
+                            </field>
+                            <columns type="mobile">
+                                <column><field-ref name="title"/><field-ref name="subject"/><field-ref name="message"/></column>
+                                <column><field-ref name="stateName"/><field-ref name="actions"/></column>
+                            </columns>
+                        </form-list>
+                        <label type="p" style="q-pa-md m-muted" condition="!checks.length &amp;&amp; filtered" text="No check matches."/>
+                        <label type="p" style="q-pa-md m-muted" condition="!checks.length &amp;&amp; !filtered &amp;&amp; !failure"
+                                text="No check is open to you. Each owner's checks are shown to those who may read them."/>
+                    </box-body-nopad>
+                </container-box>
+            </widgets>
+        </section>
+    </widgets>
+</screen>

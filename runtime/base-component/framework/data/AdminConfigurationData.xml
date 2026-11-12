@@ -478,4 +478,106 @@ along with this software (see the LICENSE.md file). If not, see
             artifactName="org\.moqui\.admin\.BackupServices\.(get#Coverage|find#Archives|run#Backup)"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="AdminBackupServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminBackupServices"
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+
+    <!-- Readiness, refresh, the settings index and the support summary (org.moqui.admin.ReadinessServices;
+        plans/Admin-Screens-Down.md A6), named service by service. Each checks the caller itself: get#Readiness each
+        provider's required permission, request#Refresh the operation's, find#Settings each entry's view permission and
+        whether its screen opens to the caller's own groups, get#Overview and get#SupportSummary ADMIN_OVERVIEW_VIEW,
+        check#InstanceSetup ADMIN_OVERVIEW_VIEW (its protocols check what get#ProtocolReadiness asks). Not inheritable:
+        an owner's service a registration names is authorized for the caller as a direct call is, so the registration
+        adds no right (below an app's screen its inheritable always-allow covers it, as everything there). Their own
+        reads of the registrations and of the framework's records are made with authorization off, after the check. -->
+    <moqui.security.ArtifactGroup artifactGroupId="AdminReadinessServices" description="Admin readiness services"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminReadinessServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.ReadinessServices\.(get#Readiness|request#Refresh|get#Overview|get#SupportSummary|find#Settings|check#InstanceSetup)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AdminReadinessServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminReadinessServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- The registries' kinds. An app adds what is its own: a scope (an organization, a store), a settings group. -->
+    <moqui.basic.EnumerationType enumTypeId="AdminHealthGroup" description="Admin Health group"/>
+    <moqui.basic.Enumeration enumId="AdmHgIdentity" enumTypeId="AdminHealthGroup" description="Identity" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="AdmHgBusiness" enumTypeId="AdminHealthGroup" description="Business setup" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="AdmHgTransport" enumTypeId="AdminHealthGroup" description="Transport" sequenceNum="3"/>
+    <moqui.basic.Enumeration enumId="AdmHgStorage" enumTypeId="AdminHealthGroup" description="Storage and backup" sequenceNum="4"/>
+    <moqui.basic.Enumeration enumId="AdmHgObservability" enumTypeId="AdminHealthGroup" description="Observability" sequenceNum="5"/>
+    <moqui.basic.EnumerationType enumTypeId="AdminRegistryScope" description="Admin registration scope"/>
+    <moqui.basic.Enumeration enumId="AdmScInstance" enumTypeId="AdminRegistryScope" description="Instance" sequenceNum="1"/>
+    <moqui.basic.EnumerationType enumTypeId="AdminSettingsGroup" description="Admin settings index group"/>
+    <moqui.basic.Enumeration enumId="AdmSgApplications" enumTypeId="AdminSettingsGroup" description="Applications" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="AdmSgInstance" enumTypeId="AdminSettingsGroup" description="Instance" sequenceNum="3"/>
+    <moqui.basic.EnumerationType enumTypeId="AdminRefreshSource" description="Admin refresh source kind"/>
+    <moqui.basic.Enumeration enumId="AdmRsIndex" enumTypeId="AdminRefreshSource" description="Index" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="AdmRsFeed" enumTypeId="AdminRefreshSource" description="Feed" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="AdmRsProjection" enumTypeId="AdminRefreshSource" description="Projection" sequenceNum="3"/>
+    <!-- The framework's own readiness providers, each a function of Readiness.js behind check#InstanceSetup, for a
+        reader of the overview (the protocols for a reader of the connections); the backup check has the freshness
+        facet of its last finished run. A fix place is a key the application showing the check resolves
+        (tools template/AdminMount.js has the System screens'). -->
+    <moqui.server.ReadinessProvider providerKey="admin.mailServer" version="1" ownerApp="System" title="Outgoing mail"
+            healthGroupEnumId="AdmHgTransport" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="adminMailRelay" sequenceNum="10"/>
+    <moqui.server.ReadinessProvider providerKey="admin.backup" version="1" ownerApp="System" title="Database backup"
+            healthGroupEnumId="AdmHgStorage" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="adminJob" fixId="backup_EmbeddedDatabase_daily"
+            expectedFrequencyMinutes="1440" maxLagMinutes="2880" sequenceNum="20"/>
+    <moqui.server.ReadinessProvider providerKey="admin.reportMail" version="1" ownerApp="System" title="Report mail"
+            healthGroupEnumId="AdmHgTransport" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="emailTemplates" sequenceNum="30"/>
+    <moqui.server.ReadinessProvider providerKey="admin.protocols" version="1" ownerApp="System" title="Protocols"
+            healthGroupEnumId="AdmHgTransport" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_CONNECTION_VIEW" fixRoute="adminProtocols" sequenceNum="35"/>
+    <moqui.server.ReadinessProvider providerKey="admin.reportAlertTopic" version="1" ownerApp="System" title="Report alerts"
+            healthGroupEnumId="AdmHgObservability" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="adminTopic" fixId="ReportAlert" sequenceNum="40"/>
+    <moqui.server.ReadinessProvider providerKey="admin.adminFactors" version="1" ownerApp="System" title="Administrator factors"
+            healthGroupEnumId="AdmHgIdentity" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="adminUsers" sequenceNum="50"/>
+    <moqui.server.ReadinessProvider providerKey="admin.jobRuns" version="1" ownerApp="System" title="Job runs"
+            healthGroupEnumId="AdmHgObservability" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="adminJobRuns" sequenceNum="60"/>
+    <moqui.server.ReadinessProvider providerKey="admin.cluster" version="1" ownerApp="System" title="Cluster"
+            healthGroupEnumId="AdmHgObservability" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="monitor" sequenceNum="70"/>
+    <moqui.server.ReadinessProvider providerKey="admin.telemetry" version="1" ownerApp="System" title="Telemetry"
+            healthGroupEnumId="AdmHgObservability" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="monitorSources" sequenceNum="80"/>
+    <moqui.server.ReadinessProvider providerKey="constitution.global" version="1" ownerApp="System" title="Instance Constitution"
+            healthGroupEnumId="AdmHgBusiness" scopeEnumId="AdmScInstance" serviceName="org.moqui.admin.ReadinessServices.check#InstanceSetup"
+            requiredPermission="ADMIN_OVERVIEW_VIEW" fixRoute="constitution" sequenceNum="140"/>
+    <!-- The framework's own settings index entries, each shown to a caller its System screen opens to. An app that
+        shows one of these screens under its own root seeds the entry again with its own screenLocation. -->
+    <moqui.server.SettingsEntry settingsKey="admin.instanceSettings" version="1" ownerApp="System" title="Instance settings"
+            description="What the instance is called, its default locale and time zone, the new-device sign-in window, the group recipient ceiling, and where each deployment value comes from"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminInstanceSettings"
+            screenLocation="component://tools/screen/System/Settings/InstanceSettings.xml" viewPermission="ADMIN_SETTINGS_VIEW"
+            configuredBy="Configuration administrator" sequenceNum="101"/>
+    <moqui.server.SettingsEntry settingsKey="admin.localization" version="1" ownerApp="System" title="Localization"
+            description="Translations of messages and of the names of statuses, options, units and places"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminLocalization"
+            screenLocation="component://tools/screen/System/Settings/Localization.xml" viewPermission="ADMIN_SETTINGS_VIEW"
+            configuredBy="Configuration administrator" sequenceNum="102"/>
+    <moqui.server.SettingsEntry settingsKey="admin.connections" version="1" ownerApp="System" title="Connections"
+            description="The remote systems, mail sign-in providers, printers and gateways this instance reaches, with their addresses and credentials"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminConnection"
+            screenLocation="component://tools/screen/System/Integrations/Connections.xml" viewPermission="ADMIN_CONNECTION_VIEW"
+            configuredBy="Integration administrator" sequenceNum="111"/>
+    <moqui.server.SettingsEntry settingsKey="admin.mailRelays" version="1" ownerApp="System" title="Mail relays"
+            description="The outgoing mail servers the instance sends its own mail through"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminMailRelay"
+            screenLocation="component://tools/screen/System/Protocols/MailRelays.xml" viewPermission="ADMIN_CONNECTION_VIEW"
+            configuredBy="Integration administrator" sequenceNum="112"/>
+    <moqui.server.SettingsEntry settingsKey="admin.protocols" version="1" ownerApp="System" title="Mail and protocols"
+            description="What the server speaks besides the web (mail reception, SSH and Git, chat, calls and phones), the configuration each runs with and the checks of it"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminProtocols"
+            screenLocation="component://tools/screen/System/Protocols/Home.xml" viewPermission="ADMIN_CONNECTION_VIEW"
+            configuredBy="Whoever operates the server" sequenceNum="113"/>
+    <moqui.server.SettingsEntry settingsKey="admin.messageTypes" version="1" ownerApp="System" title="Message types"
+            description="The kinds of message exchanged with other systems: what sends and consumes each, among the handlers its owner registered, and its transport options"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminMessageTypes"
+            screenLocation="component://tools/screen/System/Integrations/MessageTypes.xml" viewPermission="ADMIN_CONNECTION_VIEW"
+            configuredBy="Integration administrator" sequenceNum="114"/>
+    <moqui.server.SettingsEntry settingsKey="admin.topics" version="1" ownerApp="System" title="Notification topics"
+            description="What people are notified about and how each topic is delivered when a person chose nothing, for the topics their owners registered"
+            settingsGroupEnumId="AdmSgInstance" scopeEnumId="AdmScInstance" destinationRoute="adminTopics"
+            screenLocation="component://tools/screen/System/Operations/Topics.xml" viewPermission="ADMIN_SETTINGS_VIEW"
+            configuredBy="Configuration administrator" sequenceNum="116"/>
 </entity-facade-xml>

@@ -259,6 +259,42 @@ to Rust:
 - Check concurrency: pass `lastUpdatedStamp` or the service's `expectedRevision` back on update so a stale write is
   refused.
 
+### Readiness, refresh and settings registrations
+
+A component shows in System › Operations › Health, the System home's attention list, the support summary and the
+settings index (and in an app that shows those screens, such as IronStone Admin) by seed rows of three framework
+entities, read by `org.moqui.admin.ReadinessServices`
+([JS-Framework-Services](JS-Framework-Services.md#administration-orgmoquiadmin); the rules a hand-made request meets
+are in [Attack-Surface](../security/Attack-Surface.md)). The fields are described in
+`runtime/base-component/framework/entity/ServerEntities.xml`; the framework's own rows are in
+`framework/data/AdminConfigurationData.xml`.
+
+- **A readiness provider** (`moqui.server.ReadinessProvider`): a key, an owner, a title, a group, the permission a
+  reader needs and a service. The service takes `providerKey` and the scope parameters the row names
+  (`scopeParameters`, such as `organizationPartyId`), changes nothing, and returns `checks`: each `{checkKey, title,
+  state (ready, warning, failed or unavailable), reasonCode, message}` and, where it applies, `subject` (whom or what
+  it is for, in words), `scope` (the scope parameters that narrow a request to it), `watermark` and `coverage` (a data
+  source's freshness, with the row's `expectedFrequencyMinutes` and `maxLagMinutes`). It checks the caller's permission
+  and scope itself and refuses with a reason code (`PERMISSION_DENIED`, `RECORD_UNAVAILABLE`), which leaves the
+  provider out for that caller; any other failure shows it as not checked. A row whose registration names a scope is
+  an organization's or a store's check: Health shows it, the System home does not.
+- **A place is a key, never a path.** A row's `fixRoute` and `fixId`, a check's own `fixRoute`, `fixId` and
+  `fixParameters`, and a settings entry's `destinationRoute` name a route the application showing them resolves
+  ([Mounting the administration screens](../../runtime/base-component/tools/README.md#mounting-the-administration-screens)):
+  the framework's keys are in `tools/template/AdminMount.js`, an app's own are in its mount (mr-boss `Admin.js`
+  `mountRoutes`). A key with no route where it is shown is no link.
+- **A refresh operation** (`moqui.server.RefreshOperation`): a key, the permission that runs it, the provider whose
+  source it refreshes and a service, called with `refreshKey`, `operationKey`, `reason` and the scope parameters the
+  row names.
+- **A settings entry** (`moqui.server.SettingsEntry`): a key, a title, a group, `destinationRoute` and
+  `screenLocation`, the screen whose authorization decides who is shown the entry (the caller's own grants, counted
+  down the component's screen directory), with an optional `viewPermission` and the `providerKey` of what it
+  configures. An app that shows a framework settings screen under its own root seeds the entry again, under the same
+  key, with its own `screenLocation`.
+- **The registration adds no right.** A registered service is called as the user, and the registry's own grant is not
+  inheritable: outside an app's screens a caller needs a grant of the service itself, which the component's setup
+  data gives to the groups that should read it.
+
 ### Values
 
 - **No hard-coded defaults** for currency (`'USD'`), units (`'OTH_ea'`), languages (`'es'`) or purposes. Take them

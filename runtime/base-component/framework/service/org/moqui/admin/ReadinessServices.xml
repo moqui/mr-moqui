@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Readiness, refresh, the settings index and the support summary for delegated administration
+    (plans/Admin-Screens-Down.md A6; first IronStone Admin's registries, mr-boss plan/design-admin.md §3, §7, §10, §14,
+    §16; Readiness.js), over the registrations their owners seed (moqui.server.ReadinessProvider, RefreshOperation and
+    SettingsEntry, entity/ServerEntities.xml). ALL_USERS may call the six (data/AdminConfigurationData.xml
+    AdminReadinessServices) and each checks the caller itself. Their ALLOW is not inheritable: a registered owner's service
+    is called only because a row names it, as the caller, never with authorization off, and is authorized for the caller
+    as a direct call is, so a registration adds no right. No parameter of any of them names a service, an entity or an
+    index. A scope (an organization, a store) is the owner's to understand and to check: it reaches an owner's service
+    only as the scope parameters its registration names. No dependency on Mantle or an app. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="Readiness" allow-remote="false">
+        <description>The readiness checks the caller may read: each registered provider whose required permission the
+            caller holds, called as the caller, its answer read as checks with a state (ready, warning, failed,
+            unavailable), a reason code, a message, whom or what it is for (subject) and the scope that narrows to it,
+            the checked time, the freshness facet of a data source (watermark, expected frequency, lag; stale past its
+            lag), for a check that is not ready the owner's fix place as a key with its record and parameters
+            (fixRoute, fixId, fixParameters: the application showing it resolves the key; never a URL), and the refresh
+            registered for the provider when the caller may run it. A provider that fails is named in failedProviders
+            and shown unavailable, without its diagnostics, while the others answer; one the caller may not read, or
+            whose service refuses the caller, is left out. Narrowed by provider, owner app, group, state and scope:
+            scopeParameters reach a provider only by the names its registration lists, and a provider that takes none
+            of those asked is left out; instanceOnly leaves out every provider whose registration names a scope
+            parameter (the checks of an organization or a store), which is what the System home's attention list
+            asks. Needs a signed-in user; exposed to the Assistant and MCP by an app that registers it.</description>
+        <in-parameters>
+            <parameter name="providerKey"/>
+            <parameter name="ownerApp"/>
+            <parameter name="healthGroupEnumId"/>
+            <parameter name="state"><description>ready, warning, failed or unavailable</description></parameter>
+            <parameter name="scopeParameters" type="Map"/>
+            <parameter name="instanceOnly" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="checks" type="List"/>
+            <parameter name="providers" type="List"/>
+            <parameter name="failedProviders" type="List"/>
+            <parameter name="checkedText"/>
+            <parameter name="ownerOptions" type="List"><description>The owner apps of the providers the caller may read</description></parameter>
+            <parameter name="groupOptions" type="List"><description>The groups, each {key, text}</description></parameter>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Readiness.js').execute('readiness', context))</script></actions>
+    </service>
+    <service verb="request" noun="Refresh" allow-remote="false">
+        <description>Run a registered refresh operation by its key: refused without the registration's own permission
+            (REFRESH_DENIED) and for a key not registered or naming a missing service (REFRESH_UNAVAILABLE). Calls the
+            owner's service as the caller with the registration's key, the operation key, the reason and only the scope
+            parameters the registration names, which the owner checks; never a service or index name from the request.
+            Answers a safe result: requested, or failed when the owner's service fails or refuses.</description>
+        <in-parameters>
+            <parameter name="refreshKey" required="true"/>
+            <parameter name="scopeParameters" type="Map"/>
+            <parameter name="reason"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="refreshKey"/>
+            <parameter name="title"/>
+            <parameter name="state"/>
+            <parameter name="message"/>
+            <parameter name="completedText"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Readiness.js').execute('requestRefresh', context))</script></actions>
+    </service>
+    <service verb="get" noun="Overview" allow-remote="false">
+        <description>What needs attention and the health cards: attention, the checks of get#Readiness that are not
+            ready, worst first, at most ten; and cards, failed job runs and sign-in failures of the last day, system
+            messages in error and backup coverage, each {key, title, value, icon, route, routeId, parameters} with the
+            key of the place that lists it, a count that cannot be read shown unavailable. Refuses a caller without
+            ADMIN_OVERVIEW_VIEW (PERMISSION_DENIED).</description>
+        <in-parameters>
+            <parameter name="scopeParameters" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="attention" type="List"/>
+            <parameter name="cards" type="List"/>
+            <parameter name="failedProviders" type="List"/>
+            <parameter name="checkedText"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Readiness.js').execute('overview', context))</script></actions>
+    </service>
+    <service verb="get" noun="SupportSummary" allow-remote="false">
+        <description>The readiness and support summary, the one projection of the support summary screen, its print and
+            its redacted JSON: the instance (display name, framework version and package, when prepared and, unless
+            redacted, by whom), the readiness checks the caller may read (get#Readiness), the protocols' states
+            (ConfigurationServices.get#ProtocolReadiness) and the effective settings (get#EffectiveSettings, a secret
+            only set or not), each section read with the caller's own permissions and marked unavailable with its
+            reason when refused. No environment, host facts, listeners, paths, users, fix places, scopes or
+            diagnostics. Redacted also leaves out who prepared it, writes an email address as [address] and says of a
+            setting that names the server's inside only whether it is set. Refuses a caller without
+            ADMIN_OVERVIEW_VIEW (PERMISSION_DENIED).</description>
+        <in-parameters>
+            <parameter name="redacted" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="summary" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Readiness.js').execute('supportSummary', context))</script></actions>
+    </service>
+    <service verb="find" noun="Settings" allow-remote="false">
+        <description>The settings index: the owners' registered settings landings the caller may open, each shown only
+            when its screen (the registration's screenLocation) opens to the caller's own groups, as the framework
+            decides a screen path, and its view permission holds; with its owner, group, scope, who configures it, the
+            key of its place (destinationRoute, which the application showing the index resolves) and the readiness
+            provider of what it configures. Searched by text (title, description, owner, who configures), by owner app
+            and by group. Needs a signed-in user: one who opens no destination is answered none.</description>
+        <in-parameters>
+            <parameter name="text"/>
+            <parameter name="ownerApp"/>
+            <parameter name="settingsGroupEnumId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="entries" type="List"/>
+            <parameter name="appOptions" type="List"/>
+            <parameter name="groupOptions" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Readiness.js').execute('settings', context))</script></actions>
+    </service>
+    <service verb="check" noun="InstanceSetup" allow-remote="false">
+        <description>One of the framework's own readiness checks, the provider its registration names (admin.mailServer,
+            admin.backup, admin.reportMail, admin.reportAlertTopic, admin.adminFactors, admin.jobRuns, admin.cluster,
+            admin.telemetry, admin.protocols, constitution.global), answering the readiness contract's checks; it reads
+            the framework's own records and names no host, address or person. On a fresh instance the backup check
+            warns that the nightly job is paused and that its mirror has no sendUrl. Refuses a caller without
+            ADMIN_OVERVIEW_VIEW (admin.protocols asks what ConfigurationServices.get#ProtocolReadiness asks instead)
+            and an unknown check.</description>
+        <in-parameters>
+            <parameter name="providerKey" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="checks" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Readiness.js').execute('instanceSetup', context))</script></actions>
+    </service>
+</services>

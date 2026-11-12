@@ -1,8 +1,11 @@
 // The System home's attention list (plans/archive/Tools-Fancy.md §3.4, B5): moqui.tools.SystemHomeServices.get#SystemAttention.
-// Rule tests, no screen is rendered. The first feature calls the service on the database: a failed job run is
-// counted for an administrator, and left out for a user who may call the service but not read job runs. The second
-// runs the service's script over readings and finds of its own, since a spec cannot fill a disk: a resource at
-// warning is listed with its number, the resources come first, and one item's failure leaves the others.
+// Rule tests, no screen is rendered. The first feature calls the service on the database: a failed job run is a
+// readiness check that is not ready (org.moqui.admin.ReadinessServices.get#Readiness, the one source Health reads too;
+// plans/Admin-Screens-Down.md A6), listed for an administrator with its fix place, and left out for a user who may
+// call the service but holds no provider's permission. The second runs the service's script over readings, finds and
+// checks of its own, since a spec cannot fill a disk: a resource at warning is listed with its number, the resources
+// come first, the checks that are not ready follow by their state with a System place or none, and one item's failure
+// leaves the others.
 // Run: ./moq test tools --spec SystemAttention
 const SERVICE = "moqui.tools.SystemHomeServices.get#SystemAttention"
 const USER = "SYSTEM_ATTENTION_SPEC"
@@ -69,31 +72,35 @@ spec({
     }
 })
 
-feature("a failed job run is counted, and left out for a user who may not read job runs", {
+feature("a failed job run is a check that is not ready, and left out for a user who may not read the checks", {
     when() {
         const before = attention("john.doe")
         sys(() => make("moqui.service.job.ServiceJobRun", {jobRunId: RUN, jobName: JOB, hasError: "Y", errors: "spec",
             startTime: new Date(Date.now() - 60000), endTime: new Date()}))
         const admin = attention("john.doe")
         const limited = attention(USERNAME)
-        const countOf = (result) => byKey(result.items, "jobRuns").reduce((sum, item) => sum + item.count, 0)
-        const item = byKey(admin.items, "jobRuns")[0] || {}
-        // what the limited user may not read: every item counted from an entity, a dataset or another service
-        const guarded = ["jobRuns", "backup", "systemMessages", "incidents", "alerts", "checks", "scrapeTargets", "errorGroups",
-            "telemetryLost", "approvals", "cluster"]
+        const countOf = (result) => byKey(result.items, "admin.jobRuns").length
+        const item = byKey(admin.items, "admin.jobRuns")[0] || {}
+        // what the limited user may not read: every item counted from an entity, a dataset or another service, and
+        // every readiness check (each of the framework's needs a permission)
+        const guarded = ["systemMessages", "incidents", "alerts", "checks", "scrapeTargets", "errorGroups", "approvals", "readiness"]
         return {before: countOf(before), after: countOf(admin), item, admin, limited,
-            textNamesRuns: /job runs? failed in 24 hours/.test(item.text || ""),
-            limitedGuarded: limited.items.filter((entry) => guarded.includes(entry.key)).map((entry) => entry.key).join(",")}
+            textNamesRuns: /job runs? failed in the last day: /.test(item.text || ""),
+            limitedGuarded: limited.items.filter((entry) => guarded.includes(entry.key) || /^(admin|constitution)\./.test(entry.key))
+                .map((entry) => entry.key).join(",")}
     },
     then({before, after, item, textNamesRuns, admin, limited, limitedGuarded}) {
         admin.errors == ""
         admin.checked
-        // a count stops at 100, so a database with that many failed runs already shows no change
-        after == Math.min(before + 1, 100)
-        item.severity == "warning"
+        // the check is one item however many runs failed (another spec's failed run may be there already)
+        before <= 1
+        after == 1
+        item.severity == "critical"
         textNamesRuns
+        // its fix place is the list of the failed runs, from the day they are counted from
         item.link == "/apps/system/Operations/JobRuns"
         item.parameters.state == "failed"
+        ;/^\d{4}-\d{2}-\d{2}$/.test(item.parameters.fromDate)
         // the same call for a user who may call the service and read nothing else: it answers, without the item
         limited.errors == ""
         limited.checked
@@ -101,7 +108,7 @@ feature("a failed job run is counted, and left out for a user who may not read j
     }
 })
 
-feature("a resource at warning is listed with its number, resources first, and one item's failure leaves the others", {
+feature("a resource at warning is listed with its number, resources first, then the checks that are not ready, and one item's failure leaves the others", {
     when() {
         const source = ec.resource.getLocationText("component://tools/service/moqui/tools/SystemHomeServices.xml")
         const script = /<actions><script><!\[CDATA\[([\s\S]*?)\]\]><\/script><\/actions>/.exec(source)[1]
@@ -124,7 +131,18 @@ feature("a resource at warning is listed with its number, resources first, and o
                     {name: "example.com", daysLeft: 200, level: "ok", notAfter: Date.now() + 200 * 86400000}]
             }
         }
-        const rows = {"moqui.service.job.ServiceJobRun": [{}, {}, {}]}
+        const rows = {}
+        // what the readiness service answers: one check of each state, two with a System place and one an app's
+        const readiness = {checks: [
+            {checkKey: "spec.ready", state: "ready", message: "Fine"},
+            {checkKey: "spec.warning", state: "warning", subject: "Instance", message: "Backups are not mirrored off the server",
+                fixRoute: "adminConnectionDetail", fixParameters: {adapterKey: "remote"}},
+            {checkKey: "spec.failed", state: "failed", message: "3 job runs failed in the last day: Spec", fixRoute: "adminJobRuns",
+                fixParameters: {state: "failed"}},
+            {checkKey: "spec.owner", state: "unavailable", subject: "Spec organization", message: "Accounting setup could not be checked",
+                fixRoute: "accountingSetup"}
+        ]}
+        const answer = (name) => name === "org.moqui.admin.ReadinessServices.get#Readiness" ? readiness : {}
         const logged = []
         const finder = (entityName) => {
             // one item's source fails
@@ -143,7 +161,8 @@ feature("a resource at warning is listed with its number, resources first, and o
                 entity: {find: finder},
                 artifactExecution: {isPermitted: () => true},
                 user: {hasPermission: () => true, nowTimestamp: new Date()},
-                service: {sync: () => ({name: () => ({parameters: () => ({call: () => ({})}), call: () => ({})})})},
+                service: {sync: () => ({name: (name) => ({parameters: () => ({call: () => answer(name)}), call: () => answer(name)})})},
+                resource: ec.resource,
                 message: {hasError: () => false},
                 logger: {error: (message) => logged.push(String(message))},
                 l10n: ec.l10n
@@ -156,7 +175,7 @@ feature("a resource at warning is listed with its number, resources first, and o
     },
     then({items, keys, logged, checkedDate}) {
         // the resources first, the critical one before the warning; then the others, the critical one first
-        keys == "disk,memory,certificates,startup,jobRuns"
+        keys == "disk,memory,certificates,startup,spec.failed,spec.owner,spec.warning"
         items[0].severity == "critical"
         items[0].text == "Disk /var is 91 % full, 4.0 GiB free (runtime, database)"
         items[0].value == 91.2
@@ -172,8 +191,18 @@ feature("a resource at warning is listed with its number, resources first, and o
         items[2].parameters.metricName == "moqui.tls.certificate.days_left"
         items[3].severity == "critical"
         items[3].text == "Listener SSH failed to start: the port is in use"
-        items[4].count == 3
-        items[4].text == "3 job runs failed in 24 hours"
+        // the checks that are not ready: the failed one critical, the others warnings, the unavailable before the
+        // warning; a fix place that is a System screen is linked, an app's own place is not
+        items[4].severity == "critical"
+        items[4].text == "3 job runs failed in the last day: Spec"
+        items[4].link == "/apps/system/Operations/JobRuns"
+        items[4].parameters.state == "failed"
+        items[5].severity == "warning"
+        items[5].text == "Accounting setup could not be checked (Spec organization)"
+        items[5].link == null
+        items[6].text == "Backups are not mirrored off the server"
+        items[6].link == "/apps/system/Integrations/ConnectionDetail"
+        items[6].parameters.adapterKey == "remote"
         // the item that failed is named in the log and the rest came back
         logged == "System attention item systemMessages failed: Error: the spec's failure"
         checkedDate != null

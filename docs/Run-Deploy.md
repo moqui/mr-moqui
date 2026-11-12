@@ -340,7 +340,8 @@ below the machine's memory, else the machine's.
 
 The levels are in the status map (`ec.factory.getStatusMap()`, its `Resources`), which the System app shows, and the
 attention list of the System home names every reading that is not `ok`
-(`moqui.tools.SystemHomeServices.get#SystemAttention`). With telemetry on, the readings are also recorded each minute
+(`moqui.tools.SystemHomeServices.get#SystemAttention`, beside the readiness checks that are not ready, which System ›
+Operations › Health lists in full). With telemetry on, the readings are also recorded each minute
 as gauges ([Monitoring](tools/Monitoring.md)), and four alert rule templates in the System folder of Dashboards ›
 Alerts (low disk space, high memory use, high CPU load, a certificate expiring) send a notification once an
 administrator saves a copy with its contact points. The certificates are those in `runtime/cert`, read again as the

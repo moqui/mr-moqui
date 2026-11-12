@@ -30,9 +30,18 @@ const systemLocation = "component://tools/screen/System.xml"
 // are what only an app has (invitations, lifecycle operations, organizations, an app's transfer targets' owners), which a
 // mount gives. The screens also ask for places that are not the framework's, linked only where a mount gives the route:
 // mailAccount (a mail account's own screens: the mail queue's owner link, the protocols' home), voice (the phone
-// system's own screens: the protocols' home), supportSummary (a readiness and support summary: the server
-// configuration) and dataImport (the import wizard an app mounts: the import targets started in it and an open import
-// continued in it, by targetId).
+// system's own screens: the protocols' home) and dataImport (the import wizard an app mounts: the import targets
+// started in it and an open import continued in it, by targetId).
+//
+// The registries' keys (plans/Admin-Screens-Down.md A6): a readiness provider's or a check's fixRoute, a settings
+// entry's destinationRoute and a health card's route (framework/data/AdminConfigurationData.xml,
+// org.moqui.admin.ReadinessServices). Those of the framework's own registrations are here: the lists a check or a card
+// opens (adminJobRuns, adminSystemMessages, adminUsers, adminTopics, adminMessageTypes, adminVisits), a connection's
+// page with its two parameters (adminConnectionDetail), the protocols' home (adminProtocols), Monitor and its sources,
+// the Constitution, the email templates in Tools' data grid, Health narrowed to a provider (adminHealth) and the
+// support summary. Monitor, the Constitution and the visits are System's own screens beside the areas; an app that
+// shows them elsewhere gives its route. An app's own registrations name keys only its mount gives, so System links
+// none of them.
 const frameworkRoutes = {
     adminUser: {url: "../../Security/UserAccount/UserAccountDetail", idParameter: "userId"},
     adminGroup: {url: "../../Access/GroupDetail", idParameter: "userGroupId"},
@@ -47,7 +56,21 @@ const frameworkRoutes = {
     adminTopic: {url: "../../Operations/TopicDetail", idParameter: "topic"},
     adminExports: {url: "../../Data/Exports"},
     adminImport: {url: "../../Data/Imports"},
-    adminBackups: {url: "../../Data/Backups"}
+    adminBackups: {url: "../../Data/Backups"},
+    adminHealth: {url: "../../Operations/Health", idParameter: "providerKey"},
+    supportSummary: {url: "../../Operations/SupportSummary"},
+    adminJobRuns: {url: "../../Operations/JobRuns"},
+    adminTopics: {url: "../../Operations/Topics"},
+    adminSystemMessages: {url: "../../Integrations/SystemMessages"},
+    adminMessageTypes: {url: "../../Integrations/MessageTypes"},
+    adminConnectionDetail: {url: "../../Integrations/ConnectionDetail"},
+    adminProtocols: {url: "../../Protocols/Home"},
+    adminUsers: {url: "../../Security/UserAccount"},
+    adminVisits: {url: "../../Visit"},
+    monitor: {url: "../../Monitor"},
+    monitorSources: {url: "../../Monitor/Sources"},
+    constitution: {url: "../../Constitution"},
+    emailTemplates: {url: "//apps/tools/Data/Grid", parameters: {entityName: "moqui.basic.email.EmailTemplate"}}
 }
 
 // The mount's map, or null. A value that is not a map (a request parameter under a root that set none) is a mount with
@@ -93,5 +116,18 @@ function link(routes, key, id, more) {
     const url = String(route.url)
     return {url, parameters, plain: route.plain === true, href: query ? url + (url.includes("?") ? "&" : "?") + query : url}
 }
+// A framework route as System's own place, for what is not a screen under a root (the System home's attention list,
+// moqui.tools.SystemHomeServices.get#SystemAttention): {link, parameters}, link a route under /apps, or null for a key
+// with no framework route (an app's own place, which its app links).
+function systemPlace(key, id, more) {
+    const found = link(frameworkRoutes, key, id, more)
+    if (!found) return null
+    const url = found.url.startsWith("../../")
+        ? "/apps/system/" + found.url.slice("../../".length)
+        : found.url.startsWith("//apps/")
+          ? found.url.slice(1)
+          : null
+    return url ? {link: url, parameters: found.parameters} : null
+}
 
-;({state, raw, link})
+;({state, raw, link, systemPlace})

@@ -68,6 +68,8 @@ data only, set by the mounting root's `always-actions`, nulled by the tools root
   cap); with no mount it is null.
 - `T/template/AdminMount.js`: `state()` gives `{mounted, raw, routes}`, `raw()` is a transition's condition. `raw` is
   true when there is no mount and the user opens System by its own grant. Every raw transition carries the condition.
+  `link(routes, key, id, more)` is one record's link, and `systemPlace(key, id, more)` a framework route as System's
+  own absolute place, for the home's attention service (A6).
 - Capabilities are `ec.user.hasPermission('ADMIN_*')` and the services' own refusals. `AdminCalls.js` (`read`,
   `reasonOf`) is the framework's (`F/service/org/moqui/admin/AdminCalls.js`). Links to System-only screens are screen
   paths (`//apps/system/...`), which the link widget disables for a user who may not follow them.
@@ -81,8 +83,8 @@ data only, set by the mounting root's `always-actions`, nulled by the tools root
 | 1, 2 | | Home, Monitor | unchanged |
 | 3 | Administration | Access | Groups, GroupDetail, Capabilities, RowRules, AccessReview, ArtifactGroups, ArtifactGroupDetail (moved, System only) |
 | 4 | Administration | Security | UserAccount/** (unchanged path, with Verify*), SignInPolicy, IdentityProviders, IdentityProviderDetail, Sessions |
-| 5 | Administration | Settings | InstanceSettings, Localization; SettingsHome in A6 |
-| 6 | Administration | Operations | Jobs, JobDetail, JobRuns, JobRunDetail, Topics, TopicDetail; Health, SupportSummary in A6 |
+| 5 | Administration | Settings | InstanceSettings, Localization, SettingsHome (A6) |
+| 6 | Administration | Operations | Jobs, JobDetail, JobRuns, JobRunDetail, Topics, TopicDetail, Health and SupportSummary (A6) |
 | 7 | Administration | Data | Backups, Exports, DataExport, Imports, ImportDetail; links to Tools › Data Export, Load, Snapshots |
 | 8 | Administration | Audit | AuditChanges |
 | 9 | Administration | Visit | unchanged path |
@@ -104,6 +106,8 @@ skills are changed; no aliases are kept.
 | | JobRuns | | D |
 | | JobRunDetail | unredacted parameters, results, errors | D |
 | | Topics, TopicDetail | | W (`BOSS_ADM_OPERATIONS_TOPICS`) |
+| | Health | | S: the organization as a filter and scope, a fix link only where it opens, its own `requestRefresh` (the record's A6) |
+| | SupportSummary | | D: no grant names it, its one transition is delegated, Admin adds nothing (the record's A6) |
 | Integrations | Connections | | S: organization filter |
 | | ConnectionDetail | any `SystemMessageRemote` field, enum maps | S: `PaymentGatewayOrganization` box |
 | | MessageTypes, MessageTypeDetail | create a type, any field | W |
@@ -119,6 +123,7 @@ skills are changed; no aliases are kept.
 | | Sessions | visits by user | S (`Users/Sessions`: Mantle identity read) |
 | Settings | InstanceSettings | | W (`BOSS_ADM_ORGANIZATIONS`; Settings has no area group) |
 | | Localization | create/update/delete any row | W |
+| | SettingsHome | | W (`BOSS_ADM_SETTINGS_INDEX`: every BOSS user's) |
 | Data | Backups | | W (`BOSS_ADM_DATA_BACKUPS`) |
 | | Exports, DataExport | | D: Admin's own part was the permission check the services make (the record's A5) |
 | | Imports | | S: organization filter |
@@ -150,7 +155,7 @@ Each phase is a mr-moqui commit, then a mr-boss commit; both repositories work a
 | A3 Access, Security | `System/Access/**`, `AccessMatrix.js`, `Security/Sessions` and the sign-in screens; delete `UserGroup/**`, `ActiveUsers` | area files; matrix services deleted | `F/test/AdminAccessCapabilities`; `AdminGroups`, `AdminSecurity`, `AdminCapabilities` |
 | A4 Settings, Audit | `System/Settings/**`, `System/Audit/**`; delete `Localization/**`, `AuditLog.xml` | wrappers | `AdminSettings`, `AdminAudit` |
 | A5 Data | `System/Data/**`; five `DataTransferServices` operations | area file, two screens by location, two S screens, Backups wrapper; `DataServices` deleted | `F/test/AdminDataExport`, `AdminDataTransfer`; `AdminExports`, `AdminImports` |
-| A6 Registry (after track I; droppable) | `moqui.server.ReadinessProvider`, `RefreshOperation`, `SettingsEntry`; `org.moqui.admin.ReadinessServices`; framework seed rows; `get#SystemAttention` becomes the not-ready checks of `get#Readiness`; `Operations/Health`, `SupportSummary`, `Settings/SettingsHome` | entities and most of `Registry.js` deleted; the Mantle adapters become contract services the rows name (as People's `people.setup` is already); rows re-seeded | a framework registry spec; `SystemAttention`, `AdminRegistries`, `PeopleAccess` |
+| A6 Registry (after track I) | `moqui.server.ReadinessProvider`, `RefreshOperation`, `SettingsEntry`; `org.moqui.admin.ReadinessServices`; the framework's own checks and settings entries as seed rows; `get#SystemAttention` lists the instance's checks of `get#Readiness` that are not ready beside its own readings; `Operations/Health`, `SupportSummary`, `Settings/SettingsHome`; `AdminReadiness.js` | entities and most of `Registry.js` deleted; the Mantle adapters are one contract service the rows name, `check#OwnerReadiness` (People's `people.setup` names Mantle's own); rows re-seeded with route keys; Health S, SupportSummary D, SettingsHome W | `F/test/AdminReadiness`; `SystemAttention`, `AdminMounts`, `AdminRegistries`, `AdminAccess`, `PeopleAccess`, `InsightsSettings` |
 
 ## Track I: Insights to Dashboards
 
@@ -1240,3 +1245,173 @@ terminal walk; 4 pass, 1 needs a server that is not there); `moqui lint --screen
 flagged site that is new (135, as before), `moqui lint` of the four changed service files. Changed and not run:
 mr-boss's acceptance `InsightsWallDisplayUsable` (the share through Dashboard's and Playlists' transitions) and
 `InsightsReviewWalk` (the wall's definitions saved with their group in place of the deleted service).
+
+### A6 Registries (Nov 11, 2026)
+
+Built: the three registries of IronStone Admin are the framework's. Entities `moqui.server.ReadinessProvider`,
+`RefreshOperation` and `SettingsEntry` (`framework/entity/ServerEntities.xml`), Admin's with their BOSS paths gone: a
+provider's `fixPath` is `fixRoute` and `fixId`, a settings entry's `screenPath` is `destinationRoute` (the key of its
+place) and `screenLocation` (the screen whose authorization decides who is shown it), and both a provider and a refresh
+name the `scopeParameters` their service takes; `scopeEnumId` stays, for display. `org.moqui.admin.ReadinessServices`
+(`Readiness.js`): `get#Readiness`, `request#Refresh`, `get#Overview`, `get#SupportSummary`, `find#Settings` and
+`check#InstanceSetup` (the table below), granted to `ALL_USERS` in `AdminReadinessServices`
+(`AdminConfigurationData.xml`) by an ALLOW that is not inheritable, and described in `docs/dev/JS-Framework-Services.md`,
+`docs/security/Attack-Surface.md` and, for a component's author, `docs/dev/Practices-App-Dev.md` ("Readiness, refresh
+and settings registrations"). No permission is added: the overview's is `ADMIN_OVERVIEW_VIEW`, as it was. The
+framework seeds the registries' kinds (`AdminHealthGroup`, `AdminRefreshSource`, the Instance scope, the Applications
+and Instance settings groups), ten providers of its own, each a function behind `check#InstanceSetup` (Admin's eight
+checks, the protocols and the instance's Constitution, whose two adapters are functions there now), and seven settings
+entries for its System screens (instance settings, localization, connections, mail relays, mail and protocols, message
+types, notification topics). Screens: `System/Operations/Health.xml` (the checks by group, state and owner; Check
+again; Request refresh with the check's own scope; a fix place linked by the mount's route), `SupportSummary.xml` (the
+summary, its print and `summaryJson`, always redacted) and `System/Settings/SettingsHome.xml` (the entries that have a
+place under the mount), with `template/AdminReadiness.js` (`health`, `settingsIndex`, `supportSummary`, `scopeOf`,
+`linkFields`); menu items Health (Operations, index 4) and Settings index (Settings, index 3), and both in the home's
+catalog. None has a part that is the instance administrator's alone: no old System screen did what they do.
+`AdminMount.js`'s framework routes gain `adminHealth`, `supportSummary`, `adminJobRuns`, `adminTopics`,
+`adminSystemMessages`, `adminMessageTypes`, `adminConnectionDetail`, `adminProtocols`, `adminUsers`, `adminVisits`,
+`monitor`, `monitorSources`, `constitution` and `emailTemplates`, and `systemPlace(key, id, more)`, a framework route as
+System's own absolute place. `get#SystemAttention` lists the instance's readiness checks that are not ready beside its
+own readings and counts (F115). In mr-boss: the three entities are gone from `AdminEntities.xml`; the 64 seed rows of
+`BossSetupData.xml` (23 providers, 8 refreshes, 33 settings entries) are 54 rows of the framework's entities (13
+providers, 8 refreshes, 33 settings entries, 7 of them the framework's own keys seeded again with Admin's screens) and
+the 10 providers the framework now seeds are removed; `Registry.js` and `RegistryServices.xml` keep
+`check#OwnerReadiness` (the readiness contract over Accounting's setup, the catalog checks, Commerce's stores and an
+organization's Constitution, for the organizations the viewer administers) and gain `get#OpenPaths` (which places open
+to the viewer); `template/AdminRegistry.js` is what Admin's own screens read of the framework's services (`readiness`,
+`overview`, `settings`, `openFixes`); `Admin.js` has `settingsRoutes` and the registries' other places in
+`mountRoutes`; Health is Admin's own screen around the System screen's sections, SupportSummary is mounted by location
+and its file deleted, SettingsHome includes the System screen at its own location; Home, Protocols › Home,
+Organizations, OrganizationDetail and ReferenceData read through `AdminRegistry.js`, and Insights' `Settings.js`,
+`Datasets.js` and DataReadiness call the framework's services. In mr-mantle: People's `get#Readiness` answers the
+framework's contract (`subject`, `scope`, `fixRoute`).
+
+| Operation | Answers or does | Checks |
+|---|---|---|
+| `get#Readiness` | the checks of the registered providers, each with its state, subject, scope, freshness, fix place as a key and the refresh offered; `failedProviders`, `ownerOptions`, `groupOptions`; narrowed by provider, owner, group, state, `scopeParameters` and `instanceOnly` | signed in; each provider's `requiredPermission`; the owner's service as the caller (a refusal leaves it out, a failure names it) |
+| `request#Refresh` | one run of a registered operation's service with the registration's key, the operation key, the reason and the scope parameters the row names; `requested` or `failed` | signed in; the row exists and names a service (`REFRESH_UNAVAILABLE`); its `requiredPermission` (`REFRESH_DENIED`); the owner checks the scope |
+| `get#Overview` | the ten worst checks that are not ready and four cards, each with the key of its place | `ADMIN_OVERVIEW_VIEW` |
+| `get#SupportSummary` | the instance, the checks, the protocols and the effective settings; redacted on request | `ADMIN_OVERVIEW_VIEW`; each section the caller's own permissions |
+| `find#Settings` | the entries the caller may open, with `destinationRoute` and `providerKey`; the apps and groups to choose from | signed in; each entry's `viewPermission` and its `screenLocation` open to the caller's own grants |
+| `check#InstanceSetup` | one of the framework's ten checks by key | `ADMIN_OVERVIEW_VIEW` (the protocols: what `get#ProtocolReadiness` asks) |
+
+| Screen | With no mount | Under Admin | Admin | What Admin keeps or adds | BOSS rows that name it | Raw part |
+|---|---|---|---|---|---|---|
+| Health | every provider the viewer reads; a fix place that is a System screen | the same with the organization filter | S | `choices`; the organization as `scopeParameters`, refused first when it is not the viewer's (`check#Record`); a fix link only where its place opens (`get#OpenPaths`); its own `requestRefresh`, which checks the organization before the framework's `request#Refresh` | none (the area's `BOSS_ADM_OPERATIONS`) | none |
+| SupportSummary | the summary, print, `summaryJson` | the same | D | nothing | none | none |
+| SettingsHome | the framework's entries, linked to System's screens | every BOSS app's entries by Admin's routes | W | nothing (it has no transition) | `BOSS_ADM_SETTINGS_INDEX`: the screen, a non-inheritable ALLOW for `BOSS_USERS` | none |
+
+Where each check `Registry.js` made is now:
+
+| Check | Now |
+|---|---|
+| a provider read only with its `requiredPermission` | `Readiness.js` `readiness`, by `ec.user.hasPermission`; Accounting's and Products' rows name none and `check#OwnerReadiness` asks it as the owners read theirs (an instance administrator holds every one, a Projects client none), F113 |
+| a provider naming a missing service or permission, or disabled, left out and logged | `Readiness.js` `registered` |
+| a provider that fails named, the others answering; one that refuses left out | `Readiness.js` `readiness` (the same refusal codes and wording, with the framework's "not authorized") |
+| an organization outside the viewer's scope refused (readiness) | `Registry.js` `organizationsOf` in `check#OwnerReadiness` (`RECORD_UNAVAILABLE`, which leaves the provider out); Mantle's `get#Readiness` (`ORGANIZATION_DENIED`); Admin's Health refuses it before any provider is asked |
+| an instance check left out when an organization is asked for | `readiness`: a provider that takes none of the scope asked for is left out |
+| a refresh's permission; an unregistered refresh | `Readiness.js` `requestRefresh` |
+| a refresh's organization within the viewer's scope | the owner's service, which is all a scope parameter reaches; Admin's Health `requestRefresh` asks `check#Record` first. No registered refresh takes an organization |
+| only the registered scope parameters passed, never the operation key, the reason or the key | `requestRefresh` |
+| a fix link only when the viewer opens it | under System the link widget disables a screen path the viewer does not open; under Admin `get#OpenPaths` (`Admin.js` `destinationOpens`, unchanged) through `AdminRegistry.js`, for Home, Health, OrganizationDetail and Protocols › Home |
+| a health card's link only when the viewer opens it | the same, in `AdminRegistry.js` `overview` |
+| the overview and the support summary for `ADMIN_OVERVIEW_VIEW` | `Readiness.js` `overview`, `supportSummary` |
+| a settings entry only where its destination opens and its view permission holds | `Readiness.js` `settings`: `screenLocation` counted down its directory by the caller's own `ArtifactAuthzCheckView` rows (`Admin.js` `pathOpens`, ported), and `viewPermission` |
+| the settings index for an Admin user or a BOSS user granted it, `ADMIN_UNAVAILABLE` otherwise | gone: any signed-in user is answered the entries their own grants open, none where they open none (F116) |
+| Health's link on a settings entry only where Health opens | the System screen asks the framework for the link's path (`sri.buildUrl(...).getDisableLink()`) |
+| the support summary's redaction | `Readiness.js` `supportSummary`, unchanged but for the JSON's `kind`, `moqui.admin.supportSummary`, and the checks' `organizationPartyId`, which is left out with their scope |
+
+Findings:
+
+- F109. The framework's six services are granted by an ALLOW that is not inheritable, as `call#TargetService` is: a
+  registered service is then authorized for the caller as a direct call is, where Admin's registry was granted
+  inheritably and carried its grant into every provider. Below Admin's screens nothing changes (the area's
+  always-allow). Outside them a caller needs the provider's own grant: Insights' users hold their app's services by
+  their root group, so `BOSS_INS_READINESS` and `BOSS_INS_READINESS_READ` (which granted Admin's registry services)
+  are deleted, and `mantle.humanres.PeopleServices.get#Readiness` is a row of the `BOSS_ADMIN` artifact group, for
+  the users who reached it through Admin's registry before. `refresh#DatasetIndex` asks its registration's permission
+  itself now, since it is called directly by its app's users. An Insights reader's refresh is refused by the
+  registration's permission (`REFRESH_DENIED`) where the registry itself was not theirs to call.
+- F110. A scope is opaque to the framework. A request carries `scopeParameters`, a provider's or a refresh's row names
+  those its service takes, and the per-organization loop is the service's: Mantle's People readiness already answered
+  every employer in its caller's scope, and Admin's adapters loop the organizations the viewer administers. A check
+  answers whom it is for (`subject`) and what narrows to it (`scope`), which Health sends back as "Check again" and as
+  a refresh's scope. People's checks are therefore those of People's own scope for the caller, not of Admin's.
+- F111. A place is a key everywhere: a provider's `fixRoute` and `fixId`, a check's own with `fixParameters`, a
+  settings entry's `destinationRoute`, a card's `route`. The mount's routes resolve them, so System links the
+  framework's screens and none of an app's, and Admin gives its apps' pages as plain routes. The fix places of the
+  instance's own checks are delegated screens now where they were Tools' data grid: the mail server's is Mail relays
+  and the report alert topic's is its TopicDetail; the report email template's is still Tools' grid
+  (`emailTemplates`), which no delegated screen edits.
+- F112. Whether a settings entry is shown is decided in the service, from the row: the mount is not in a service's
+  context (F101), and a direct call must list no more than a screen does. So an entry names `screenLocation`, and the
+  seven entries of the framework's System screens are seeded again in mr-boss under the same keys with Admin's
+  screens (and owner Admin): with BOSS installed their place is Admin's for its delegates, and System shows them to a
+  user who opens both. A location need not be a file (Admin's MailRelays is mounted by location): only its grants and
+  those of the screens above it are read.
+- F113. The framework asks a registration's permission with `ec.user.hasPermission`. BOSS's `has` gave an instance
+  administrator every permission and a Projects client none; `ADMIN` holds `INSIGHTS_VIEW`, `INSIGHTS_DATASET_EDIT`,
+  `PEOPLE_CONFIGURE`, `CONTACT_ADMIN` and `VoiceAdmin` by data, and not `ACCOUNTING_VIEW` or
+  `PRODUCT_CATALOG_VIEW`, so those two providers' rows name no permission and Admin's contract service asks it with
+  `has`. The owners of those two therefore show in Health's owner filter to a reader who gets none of their checks.
+- F114. SupportSummary is mounted by location, not wrapped as the plan had it: no grant names it, its one transition
+  calls only `get#SupportSummary`, which asks `ADMIN_OVERVIEW_VIEW`, and Admin adds nothing. `supportSummary` is a
+  framework route now and left Admin's mount.
+- F115. The System home's attention list: the framework's checks are registered as providers and no longer computed
+  twice, so four items left `get#SystemAttention`'s own code (failed job runs, the backup, a silent cluster member,
+  lost telemetry) and come from the readiness checks, with the checks it never had (the mail server, report delivery,
+  administrator factors, protocols, the Constitution). What it still computes is what is no setup check: the resource
+  readings, a failed listener, a draining instance, saturated workers or pool, and the counts of work that waits. A
+  failed check is critical, a warning or unavailable one a warning; the ten worst are listed and the rest counted
+  with a link to Health; a fix place is linked where it is a System screen. It asks `instanceOnly`: a provider whose
+  registration names a scope (an organization's setup, a store) is Health's and its app's, not the instance's home's;
+  with BOSS loaded those were 46 more rows and a quarter second of Products' catalog checks at every render of the
+  home. The job runs check answers the list of the failed runs as its fix place (F7's parameters). The cluster check
+  counts a member silent for three minutes, as the home did: its peers delete its row after ten, which Admin's ten
+  minutes never reached. On an instance with telemetry off the home now says so (the check is unavailable), and an
+  external database's instance is told its embedded backup job is paused, as Admin's Home was.
+- F116. `find#Settings` is any signed-in user's and refuses nobody: it answers the entries the caller's own grants
+  open. Admin's refused a user who was neither an Admin user nor a BOSS user granted the index (`ADMIN_UNAVAILABLE`);
+  a Projects client is now answered an empty list. `BOSS_ADM_SETTINGS_INDEX` no longer names a registry service.
+- F117. The framework's rows have owner System. Admin's Home asks the instance's own checks by that owner, and
+  Health's owner filter shows System where it showed Admin for them.
+- F118. `get#Overview` has no reader in Tools: the System home has its own counters and attention list, so the cards
+  are Admin Home's alone, each link resolved by the mount and shown where it opens.
+- F119. Health's "Check again" carried the row's own state, group and owner to the screen (F24: the target declares
+  them), so a check that changed state vanished from its own recheck; the link sends them empty. The settings
+  index's links to a screen send the index's find values empty for the same reason (Localization declares `text`).
+- F120. Admin's Home is a screen of the root, not of an area, so a relative route is not followed from it: its links
+  are the places' paths under `/qapps`, made by `AdminRegistry.js` from the mount's routes.
+- F121. The redaction does not rewrite a registration's own title or a provider's name (it never did): they are
+  their owners' seed text. A check's scope is left out of the summary with its fix place.
+- F122. No recorded agent replay names a screen, a service or a sentence of this phase (not replayed).
+- F123. For the finishing phase: mr-boss `plan/design-admin.md` §14 and §14.2 and `impl-admin.md` P2 and P19 describe
+  the registries as Admin's; `design-insights` and `impl-insights` name `ironstone.admin.RegistryServices`. The
+  acceptance `PeopleFoundationWalk` expects "People setup" on Health, which lists a check's own title (as it did). The
+  support summary's JSON has a new `kind`. mr-l10n has no string of the three screens.
+
+Tests: `./moq test tools --nobuild` (73 features; 3.4 and 3.5 s of 4 s in the last two runs, 3.5 to 4.0 in the three
+before them; 5.0 before `instanceOnly`, when the home's render and the attention spec ran Products' catalog checks; no
+render added: `SystemAttention` holds the failed job run as a check with its place and the merged order over checks of its
+own, `AdminMounts`' static rule reads the three screens, at least 40 delegated and 56 raw); `./moq test framework
+--nobuild --spec AdminReadiness --spec AdminConfiguration --spec AdminProtocols --spec AdminJobs --spec AdminRecovery
+--spec AdminDataTransfer` (21 features, 0.7 s; `AdminReadiness`' four take 0.1 s, over registrations, users and
+grants of its own: a failing provider named while the others answer, one not readable, one refusing, one naming no
+service and a disabled one left out, a scope reaching only the provider that names it, `instanceOnly`; a refresh's
+permission, a failing owner's safe result, an unregistered and a forged key; an entry by an allow of its own and
+below an inheritable allow, and not below a deny, below an allow that is not inheritable, with no grant, permission,
+place or screen; the overview's cards and the summary's redaction and refusal); `./moq test mr-boss --nobuild --spec
+AdminRegistries --spec AdminAccess --spec AdminAudit --spec AdminSettings --spec AdminJobRuns --spec PeopleAccess
+--spec InsightsHome --spec InsightsDatasets --spec InsightsSettings --spec AdminOrganizations --spec AdminRelays
+--spec InsightsCatalog --spec AdminSystemMessages --spec AdminMailQueue --spec AdminConstitution --spec AdminExports
+--spec AdminImports --spec InsightsAccess --spec AdminGroups --spec AdminUsers --spec AdminSecurity --spec
+AdminDevices --spec AdminCapabilities --spec AdminLifecycle --spec AdminInvitations` (106 features, 24.8 s;
+`AdminRegistries` keeps Admin's part: the contract service per organization, another organization refused, a place
+open or not for the reader and for ADMIN, Health's refresh through Admin's route for the operator's organization and
+refused for another, the BOSS entries of the index with the seven seeded again, and the renders of Home, Health and
+the support summary through Admin's route); `./moq test mr-mantle --nobuild --spec PeopleScope` (5 features); `cargo
+test -p moqui-host --test it tools_screens -- --ignored` (the three screens, the summary's JSON and the home's
+attention list as ADMIN; 26 s); `moqui lint --screens` with no parse failure and no flagged site that is new (135, as
+before), `moqui lint` of the six changed service files. Changed and not run: mr-boss's acceptance
+`AdminRegistriesWalk` (the mail server's fix place; the finance reader refused Admin's contract service and answered
+no Accounting check) and `AdminReviewWalk` (the two service names).

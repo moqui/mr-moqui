@@ -86,9 +86,13 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
   (`System/Security/`): Users (`UserAccount/`, System's own account administration, with the Verify screens of a user's own
   factors, which other apps mount by location), the Sign-in policy, Identity providers and a provider
   (IdentityProviderDetail) and Sessions. **Settings** (`System/Settings/`): the Instance settings (the registered
-  preferences, and where each value of the configuration comes from) and Localization (the translations of messages and
-  of registered labels). **Operations** (`System/Operations/`): Jobs, a job (JobDetail), Job runs, a run
-  (JobRunDetail), Notification topics and a topic (TopicDetail). **Data** (`System/Data/`): Imports (the runs of every
+  preferences, and where each value of the configuration comes from), Localization (the translations of messages and
+  of registered labels) and the Settings index (SettingsHome: each owner's registered settings landing the viewer may
+  open, `ReadinessServices.find#Settings`). **Operations** (`System/Operations/`): Jobs, a job (JobDetail), Job runs, a
+  run (JobRunDetail), Notification topics and a topic (TopicDetail), and Health (the readiness checks of every
+  registered provider, with Check again and a registered refresh, `ReadinessServices.get#Readiness`) with the Support
+  summary it links (SupportSummary: the checks, the protocols and the effective settings, to print or to download as
+  redacted JSON); their presentation is `template/AdminReadiness.js`. **Data** (`System/Data/`): Imports (the runs of every
   registered import target) and an import (ImportDetail: its rows, the result files, the retry of failed rows), Exports
   (the exports made, and the deliveries of scheduled reports and alerts as status), Export data (DataExport: the export
   of a registered format) and Backups, over `DataTransferServices` and `BackupServices`; the area itself links Tools'
@@ -127,7 +131,7 @@ each minute in the browser. Each block is read in its actions:
 | Identity and state | `ec.factory.getStartupReport()` (version, package, purpose, role, the time to ready) and `ec.factory.getStatusMap(true)` (host, OS, processors, start, `Ready` and `Draining`); the count of loaded components |
 | Counters | The status map's `Resources` (the 5-minute load, memory, the fullest filesystem), `ec.factory.workerPool`, the `DataSources` pool numbers, and the users with a `moqui.server.VisitUserSummary` row today. A counter at a warning or critical level takes that color and says the level in its title. With telemetry on each has a sparkline of its gauge over the period (`get#CounterSeries`) |
 | Activity | A `report-embed` of the shipped `system-home` dashboard, or of the one the `system_home_dashboard` setting names, over the `period` URL parameter (`1h`, `6h`, `24h`, `7d`), narrowed to this instance; one line in its place when telemetry is off or not in the build |
-| Needs attention | `moqui.tools.SystemHomeServices.get#SystemAttention` (below) |
+| Needs attention | `moqui.tools.SystemHomeServices.get#SystemAttention` (below): its own readings and counts, and the readiness checks that are not ready |
 | Resources | The status map's `Resources` ([resource watch](../../../docs/Run-Deploy.md#resource-watch)): each reading with its level, a meter when it is a share, and a link to its series in Monitor › Metrics; a reading the platform does not report is "—" |
 | Database | The `DataSources` by connection pool, `get#Capabilities` (kind, version, size) and the embedded database's backup job; the `moqui.server.ClusterMember` rows when there is more than one |
 | Listeners and integrations | The runtime report: each listener and integration with its state and detail (failed and skipped first) and the screen that configures it, the tool factories, what the build leaves out, and the routes in a dialog |
@@ -141,8 +145,14 @@ screen and shows nothing, and a menu item no entry names is in a last group. A c
 whether Dev AIDE is mounted (`devMounted`): then an entity's and a service's page in Tools link to it in Dev AIDE.
 
 `service/moqui/tools/SystemHomeServices.xml` has `get#SystemAttention`, the one list of what needs an administrator
-(resource readings past their `resource-watch` thresholds, failed job runs, system messages in error and the like;
-[plans/archive/Tools-Fancy.md](../../../plans/archive/Tools-Fancy.md) §3.4). `report/` holds the shipped dashboards, library panels
+([plans/archive/Tools-Fancy.md](../../../plans/archive/Tools-Fancy.md) §3.4): the resource readings past their
+`resource-watch` thresholds and the live state it reads itself (a failed listener, a draining instance, saturated
+workers or pool), the counts of work that waits (system messages in error, incidents, alerts, checks, approvals), and
+the readiness checks that are not ready, from `org.moqui.admin.ReadinessServices.get#Readiness`, the source Health
+reads too: the framework's own (mail, backup, report delivery, administrator factors, failed job runs, the cluster,
+telemetry, protocols, the Constitution) and what a component registers for the instance. A check of an organization
+or a store (a provider whose registration names a scope) is Health's and its app's, not the home's. How a component
+registers one: [Practices-App-Dev](../../../docs/dev/Practices-App-Dev.md#readiness-refresh-and-settings-registrations). `report/` holds the shipped dashboards, library panels
 and alert rule templates: the `monitor-*` dashboards of Monitor, and in the System folder `system-home`,
 `system-db-pool` and the disk, memory, CPU and certificate alert rules.
 
@@ -155,7 +165,7 @@ one. The map is data only, never authority:
 
 | Key | What it does |
 |---|---|
-| `routes` | `{key: {url, idParameter, parameters, plain}}`: where a link to a record goes under the mount. The keys are the registrations' own (a recovery descriptor's or a transfer target's `ownerRoute`, a provider's or an audit projection's `linkKey`), one key for a screen, and the screens' own for a place that is not the framework's (`mailAccount`, `voice`, `supportSummary`, `dataImport`: the import wizard, by `targetId`). The framework's records have routes by default, to the System screens beside the one shown (`frameworkRoutes` in `template/AdminMount.js`: `adminUser`, `adminGroup`, `adminIdentityProvider`, `adminInstanceSettings`, `adminLocalization`, `adminMessageType`, `adminConnection`, `adminMailRelay`, `adminSystemMessage`, `adminJob`, `adminTopic`, `adminExports`, `adminImport`, `adminBackups`); a mount adds its apps' routes and may replace a framework one (`null` removes it). A route's `url` is a screen path relative to a screen of an area (`<Root>/<Area>/<Screen>`, where every such screen is shown), so it holds under any root, and the link widget disables it for a user its screen does not open to; with `plain: true` it is a URL used as it is, for another app's page (`/qapps/<App>/...`). A key with no route is no link |
+| `routes` | `{key: {url, idParameter, parameters, plain}}`: where a link to a record goes under the mount. The keys are the registrations' own (a recovery descriptor's or a transfer target's `ownerRoute`, a provider's or an audit projection's `linkKey`), one key for a screen, a readiness provider's or check's `fixRoute`, a settings entry's `destinationRoute` and a health card's `route`, and the screens' own for a place that is not the framework's (`mailAccount`, `voice`, `dataImport`: the import wizard, by `targetId`). The framework's records have routes by default, to the System screens beside the one shown (`frameworkRoutes` in `template/AdminMount.js`: `adminUser`, `adminGroup`, `adminIdentityProvider`, `adminInstanceSettings`, `adminLocalization`, `adminMessageType`, `adminConnection`, `adminMailRelay`, `adminSystemMessage`, `adminJob`, `adminTopic`, `adminExports`, `adminImport`, `adminBackups`); a mount adds its apps' routes and may replace a framework one (`null` removes it). A route's `url` is a screen path relative to a screen of an area (`<Root>/<Area>/<Screen>`, where every such screen is shown), so it holds under any root, and the link widget disables it for a user its screen does not open to; with `plain: true` it is a URL used as it is, for another app's page (`/qapps/<App>/...`). A key with no route is no link |
 | `hide` | The part keys the mount leaves out |
 
 `template/AdminMount.js` answers where a screen stands: `state()` gives `{mounted, raw, routes, hidden}` in a screen's
@@ -181,7 +191,8 @@ So an app reuses a System screen in one of three ways:
   way for a screen with raw parts and for one a grant of the app names.
 - **A screen of the app's own**, with its own actions and transitions and the System screen's named sections by
   `section-include`, where the app adds data of its own (an organization scope). A screen made for it says in its
-  header comment which value the app sets and which sections it includes (Connections, Sessions, Imports, ImportDetail).
+  header comment which value the app sets and which sections it includes (Connections, Sessions, Imports, ImportDetail,
+  Health).
 
 Every transition of a raw part carries `AdminMount.js`'s `raw()` as its `condition`. No group of the app is granted a
 System screen's location: a grant there would open it under `/apps/system` too. The regression spec is

@@ -21,12 +21,20 @@ along with this software (see the LICENSE.md file). If not, see
             percent), link a route under /apps with its parameters. The resource readings whose level is not ok come
             first (the status map's Resources: disk space and inodes of each filesystem, memory, CPU load, open files,
             the certificates the HTTPS listener serves, swap), the most severe first; then the listeners and integrations that failed or were skipped, a draining
-            instance, saturated workers or database pool, a silent cluster member, failed job runs of the last 24
-            hours, an embedded database with no scheduled backup, system messages in error, open incidents, firing
-            alerts, failing checks and scrape targets, new error groups, lost telemetry and agent approvals waiting.
-            Each item is checked on its own: one that fails is logged as an error and left out, and the others still
-            come back. An item whose source the user may not read (the entity, the dataset, the service, or
-            MONITOR_INCIDENT for incidents) is left out; it reads nothing but counts. Refuses nothing.</description>
+            instance, saturated workers or database pool, the readiness checks that are not ready, system messages
+            in error, open incidents, firing alerts, failing checks and scrape targets, new error groups and agent
+            approvals waiting. The readiness checks are those of org.moqui.admin.ReadinessServices.get#Readiness, the
+            one source Health reads too, asked for the instance's own (a provider whose registration names a scope,
+            such as an organization, is left to Health): the framework's own (no outgoing mail server, a paused or unmirrored backup,
+            report delivery, an administrator without a second factor, failed job runs of the last day, a silent
+            cluster member, lost or unknown telemetry, a failing protocol, Constitution sources passed over) and each
+            component's registered provider, as the user may read them; a failed check is critical, a warning or
+            unavailable one a warning, its key the check's and its link its fix place where that is a System screen;
+            the ten worst are listed and the rest counted with a link to Health. Each item is checked on its own:
+            one that fails is logged as an error and left out, and the others still come back. An item whose source
+            the user may not read (the entity, the dataset, the service, a provider's permission, or
+            MONITOR_INCIDENT for incidents) is left out; it reads nothing but counts and the checks' own answers.
+            Refuses nothing.</description>
         <out-parameters>
             <parameter name="items" type="List"><description>The items, resource readings first, then the most severe first</description></parameter>
             <parameter name="checkedDate" type="Timestamp"/>
@@ -35,12 +43,9 @@ along with this software (see the LICENSE.md file). If not, see
             // A count stops here: the list says "100 or more" past it.
             const LIMIT = 100
             const DAY = 24 * 60 * 60 * 1000
-            // A cluster member is silent past three heartbeats (one a scheduler pass, a minute by default); its
-            // peers delete its row after ten.
-            const SILENT = 3 * 60 * 1000
             const OPEN_INCIDENT = ['Open', 'Mitigating', 'Monitoring', 'Reopened']
-            const BACKUP_SERVICE = 'org.moqui.impl.ServerServices.backup#EmbeddedDatabase'
-            const BACKUP_JOB = 'backup_EmbeddedDatabase_daily'
+            const READINESS = 'org.moqui.admin.ReadinessServices.get#Readiness'
+            const READINESS_SHOWN = 10
             const now = Date.now()
 
             const say = (template, values) => String(ec.l10n.localize(template)).replace(/\$\{(\w+)\}/g, (all, name) => String((values || {})[name] ?? ''))
@@ -162,35 +167,36 @@ along with this software (see the LICENSE.md file). If not, see
                             {waiting: source.waiting, group: source.group, checkedOut: source.checkedOut, max: source.max})})
                 }
             })
-            check('cluster', () => {
-                const clustered = Array.from(report.listeners || []).some((entry) => entry.name === 'Cluster' && entry.state === 'on')
-                if (!clustered || !mayView('moqui.server.ClusterMember')) return
-                const silent = count(ec.entity.find('moqui.server.ClusterMember').condition('heartbeat', '<', new Date(now - SILENT)))
-                if (silent > 0) item(others, {key: 'cluster', severity: 'warning', count: silent,
-                    text: silent === 1 ? say('1 cluster member is silent') : say('${count} cluster members are silent', {count: counted(silent)})})
+
+            // ---- what the registered readiness checks say is not ready ----
+            // One source with Health (org.moqui.admin.ReadinessServices.get#Readiness, each provider's own permission):
+            // the framework's own checks (mail, backup, report delivery, administrator factors, failed job runs, a
+            // silent cluster member, telemetry, protocols, the Constitution) and what each component registers for
+            // the instance. The checks of an organization or a store (a provider whose registration names a scope)
+            // are its app's and Health's, not the instance's home's. The worst first, at most READINESS_SHOWN, then
+            // how many more there are. A fix place is linked where it is a System screen (template/AdminMount.js); a
+            // component's own place is its app's to link.
+            check('readiness', () => {
+                if (!mayCall(READINESS, 'view')) return
+                const order = {failed: 0, unavailable: 1, warning: 2}
+                const notReady = Array.from(call(READINESS, {instanceOnly: true}).checks || []).filter((row) => row.state !== 'ready')
+                    .map((row, index) => ({row, index}))
+                    .sort((left, right) => ((order[left.row.state] ?? 1) - (order[right.row.state] ?? 1)) || (left.index - right.index)).map((entry) => entry.row)
+                if (!notReady.length) return
+                const places = ec.resource.script('component://tools/template/AdminMount.js')
+                for (const row of notReady.slice(0, READINESS_SHOWN)) {
+                    const place = row.fixRoute ? places.systemPlace(row.fixRoute, row.fixId, row.fixParameters) : null
+                    const message = String(row.message || row.title || '')
+                    item(others, {key: String(row.checkKey || row.providerKey), severity: row.state === 'failed' ? 'critical' : 'warning',
+                        link: place ? place.link : null, parameters: place ? place.parameters : {},
+                        text: row.subject && row.subject !== 'Instance' ? message + ' (' + row.subject + ')' : message})
+                }
+                const more = notReady.length - READINESS_SHOWN
+                if (more > 0) item(others, {key: 'readiness', severity: 'info', count: more, link: '/apps/system/Operations/Health',
+                    text: more === 1 ? say('1 more check is not ready') : say('${count} more checks are not ready', {count: more})})
             })
 
             // ---- work that failed or waits ----
-            check('jobRuns', () => {
-                if (!mayView('moqui.service.job.ServiceJobRun')) return
-                const since = new Date(now - DAY)
-                const failed = count(ec.entity.find('moqui.service.job.ServiceJobRun').condition('hasError', 'Y').condition('startTime', '>=', since))
-                if (failed > 0) item(others, {key: 'jobRuns', severity: 'warning', count: failed, link: '/apps/system/Operations/JobRuns',
-                    parameters: {state: 'failed', fromDate: ec.l10n.format(since, 'yyyy-MM-dd')},
-                    text: failed === 1 ? say('1 job run failed in 24 hours') : say('${count} job runs failed in 24 hours', {count: counted(failed)})})
-            })
-            check('backup', () => {
-                const embedded = Array.from(status.DataSources || []).some((source) => source.embedded === true)
-                if (!embedded || !mayView('moqui.service.job.ServiceJob')) return
-                const jobs = Array.from(ec.entity.find('moqui.service.job.ServiceJob').condition('serviceName', BACKUP_SERVICE).limit(LIMIT).disableAuthz().list())
-                if (jobs.some((job) => job.paused !== 'Y' && job.cronExpression)) return
-                const shipped = jobs.find((job) => job.jobName === BACKUP_JOB) || jobs[0]
-                item(others, shipped
-                    ? {key: 'backup', severity: 'warning', link: '/apps/system/Operations/JobDetail', parameters: {jobName: shipped.jobName},
-                        text: say('The embedded database has no running backup: the backup job is paused')}
-                    : {key: 'backup', severity: 'warning', link: '/apps/system/Operations/Jobs',
-                        text: say('The embedded database has no running backup: there is no backup job')})
-            })
             // In error only. A send or consume whose outcome a person settled (SystemMessage.outcomeSettlement) stays
             // Sending or Consuming, so it is never counted here; the failed and uncertain ones together, with what
             // may be done about each, are the Admin app's (org.moqui.admin.OperationServices.find#Messages).
@@ -240,13 +246,6 @@ along with this software (see the LICENSE.md file). If not, see
                 const fresh = Array.from(result.hits || []).filter((hit) => firstSeen((hit.body || {}).first_seen) >= now - DAY).length
                 if (fresh > 0) item(others, {key: 'errorGroups', severity: 'info', count: fresh, link: '/apps/system/Monitor/Errors', parameters: {from: 'now-24h'},
                     text: fresh === 1 ? say('1 new error group in 24 hours') : say('${count} new error groups in 24 hours', {count: counted(fresh)})})
-            })
-            check('telemetryLost', () => {
-                if (!mayCall('org.moqui.report.dataset.otel_spans', 'view') || !mayCall('org.moqui.monitor.MonitorServices.get#SourceStatus', 'view')) return
-                const counters = call('org.moqui.monitor.MonitorServices.get#SourceStatus').counters || {}
-                const lost = Number(counters.dropped || 0) + Number(counters.failed || 0)
-                if (lost > 0) item(others, {key: 'telemetryLost', severity: 'warning', count: lost, link: '/apps/system/Monitor/Sources',
-                    text: say('Telemetry lost since the start: ${dropped} dropped, ${failed} failed', {dropped: counters.dropped || 0, failed: counters.failed || 0})})
             })
             check('approvals', () => {
                 if (!mayView('moqui.agent.AgentApproval')) return

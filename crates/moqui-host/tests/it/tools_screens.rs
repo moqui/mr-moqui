@@ -985,6 +985,62 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         "/System/Data/Backups",
         &["Not included in an archive", "Archives"],
     );
+    // The registries (plans/Admin-Screens-Down.md A6): Health lists the framework's own checks, each fix place a
+    // System screen; the support summary and its redacted JSON; the settings index links the System screens of the
+    // framework's entries; and the home's attention list is the checks that are not ready.
+    assert_page(
+        address,
+        &john,
+        "/System/Operations/Health",
+        &[
+            "Support summary",
+            "Administrator factors",
+            "Off-site mirror",
+            "Backups are not mirrored off the server",
+            "/Integrations/ConnectionDetail?adapterKey=remote",
+            "Check again",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Operations/Health?providerKey=admin.jobRuns",
+        &["Job runs", "Check again"],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Operations/SupportSummary",
+        &["Effective settings", "Download JSON", "Off-site mirror", "Prepared "],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Operations/SupportSummary/summaryJson",
+        &[
+            "moqui.admin.supportSummary",
+            "\"redacted\": true",
+            "\"preparedBy\": null",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Settings/SettingsHome",
+        &[
+            "Instance settings",
+            "/Settings/InstanceSettings",
+            "Mail relays",
+            "/Protocols/MailRelays",
+            "Notification topics",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Home",
+        &["Needs attention", "Backups are not mirrored off the server"],
+    );
     assert_page(
         address,
         &john,
