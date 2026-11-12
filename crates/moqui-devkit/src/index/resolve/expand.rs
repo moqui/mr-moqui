@@ -22,7 +22,9 @@
 //!   `add_entity_fields` and `add_service_fields`: no `lastUpdatedStamp`, and a form-list leaves out the very long text
 //!   types; each with its binding into the services the form's transition calls;
 //! - a form field's binding into a transition by its path, to each service the transition reached passes the request
-//!   to, by the transition's `field-map`s.
+//!   to, by the transition's `field-map`s;
+//! - a transition's parameters from the service its own `service-call` calls: its out-parameters, and its
+//!   in-parameters when the call passes the request, the transition's own parameters winning.
 //!
 //! The rows are made from the declarations alone (each service's, form's and entity's own artifacts and the marks of
 //! their summaries, [`super::super::extract::ArtifactRow::marks`]), never from rows expanded before, so the order they are made
@@ -32,9 +34,10 @@ use std::collections::{HashMap, HashSet};
 
 use super::{entity_auto, AutoField, Method, Resolver, FIND_DEPTH};
 use crate::index::extract::{
-    extended_form, extended_location, parameter_id, parameter_name, parse_parameter_id, short_of, split_marks,
-    ArtifactRow, BindingRow, SCREEN_PATH_OWNER,
+    extended_form, extended_location, parameter_id, parse_parameter_id, short_of, split_marks, ArtifactRow, BindingRow,
+    ORIGIN_SERVICE_CALL, SCREEN_PATH_OWNER,
 };
+use crate::index::parameter::{parameter_row, ParamDirection, ParamPlace, ParamSpec};
 
 /// One definition of a service, form or transition whose marks say what it declares, and where it is.
 #[derive(Clone, Debug)]
@@ -137,6 +140,8 @@ enum Mark<'a> {
         passes: bool,
         maps: Vec<(&'a str, &'a str)>,
     },
+    /// A transition's own `service-call`, whose parameters are the transition's.
+    ServiceCall(&'a str),
     /// A form's parameters that are no field of it; a parameter's attributes it sets.
     Given(Vec<&'a str>),
     PassThrough,
@@ -190,6 +195,7 @@ fn parse_mark(text: &str) -> Option<Mark<'_>> {
             passes: *passes == "y",
             maps: list(maps).into_iter().filter_map(|map| map.split_once('=')).collect(),
         },
+        ["service-call", service] => Mark::ServiceCall(service),
         ["given", names] => Mark::Given(list(names)),
         ["pass-through"] => Mark::PassThrough,
         ["no-widget"] => Mark::NoWidget,
@@ -213,12 +219,9 @@ struct FullParam {
 }
 
 impl FullParam {
-    fn summary(&self, direction: &str) -> String {
-        let mut summary = format!("{direction} {}, required={}", self.kind, self.required);
-        if let Some(default) = &self.default {
-            summary.push_str(&format!(", default {default}"));
-        }
-        summary
+    /// It as a parameter of `direction` of an owner ([`parameter_row`]).
+    fn spec(&self, direction: ParamDirection) -> ParamSpec {
+        ParamSpec::new(direction, &self.name, &self.kind, &self.required).with_default(self.default.clone())
     }
 
     /// Merge `other` into this one: the attributes it sets (all when `given` is none).
@@ -367,7 +370,14 @@ impl Resolver {
                 let Some((owner, direction, name)) = parse_parameter_id(&artifact.id) else {
                     return;
                 };
-                if !owner.starts_with("service:") || name.contains('.') || !matches!(direction, "in" | "out") {
+                // a service's in and out parameters, which the expansions merge; a transition's own, which win over
+                // the ones its service-call gives
+                let kept = if owner.starts_with("service:") {
+                    matches!(direction, "in" | "out")
+                } else {
+                    owner.starts_with("transition:")
+                };
+                if !kept || name.contains('.') {
                     return;
                 }
                 let given = split_marks(&artifact.marks)
@@ -513,17 +523,58 @@ impl Resolver {
     /// Whether the service or form `id` declares something to expand.
     #[must_use]
     pub fn is_expandable(&self, id: &str) -> bool {
-        self.owner(id).is_some_and(|owner| owner.kind != "transition")
-            && self.marks_of(id).iter().any(|mark| {
-                matches!(
-                    mark,
-                    Mark::AutoParameters { .. }
-                        | Mark::Implements { .. }
-                        | Mark::AutoFieldsEntity { .. }
-                        | Mark::AutoFieldsService { .. }
-                        | Mark::Extends(_)
-                )
-            })
+        self.marks_of(id).iter().any(|mark| {
+            matches!(
+                mark,
+                Mark::AutoParameters { .. }
+                    | Mark::Implements { .. }
+                    | Mark::AutoFieldsEntity { .. }
+                    | Mark::AutoFieldsService { .. }
+                    | Mark::Extends(_)
+                    | Mark::ServiceCall(_)
+            )
+        })
+    }
+
+    /// The parameters the transition `transition` takes from the service its own `service-call` calls
+    /// ([`Self::full_params`]): each out-parameter, and when the call passes the request's parameters each
+    /// in-parameter the transition declares no parameter of its name for. A `required="disabled"` one is left out.
+    fn transition_params(&self, transition: &str, place: &ParamPlace<'_>) -> Vec<ArtifactRow> {
+        let marks = self.marks_of(transition);
+        let Some(service) = marks.iter().find_map(|mark| match mark {
+            Mark::ServiceCall(service) => Some(*service),
+            _ => None,
+        }) else {
+            return Vec::new();
+        };
+        let passes = marks
+            .iter()
+            .any(|mark| matches!(mark, Mark::Call { service: called, passes: true, .. } if *called == service));
+        let declared: HashSet<&str> = self
+            .params
+            .get(transition)
+            .into_iter()
+            .flatten()
+            .map(|param| param.name.as_str())
+            .collect();
+        let target = format!("service:{service}");
+        let noun = service.rsplit_once('#').map(|(_, noun)| noun);
+        let mut rows = Vec::new();
+        for direction in [ParamDirection::In, ParamDirection::Out] {
+            if direction == ParamDirection::In && !passes {
+                continue;
+            }
+            let mut visited = HashSet::from([transition.to_string(), target.clone()]);
+            for param in self.full_params(&target, direction.as_str(), &mut visited, 0, noun) {
+                if param.required == "disabled"
+                    || (direction == ParamDirection::In && declared.contains(param.name.as_str()))
+                {
+                    continue;
+                }
+                rows.push(parameter_row(transition, &param.spec(direction), place));
+            }
+        }
+        rows
     }
 
     /// The services and forms that declare something to expand, in id order.
@@ -589,30 +640,38 @@ impl Resolver {
             origin: origin.to_string(),
             marks: String::new(),
         };
+        let place = |origin| ParamPlace {
+            component: &info.component,
+            path: &info.path,
+            line: info.line,
+            column: info.column,
+            origin,
+        };
         let mut expansion = Expansion::default();
         match info.kind.as_str() {
             "service" => {
                 let noun = owner.rsplit_once('#').map(|(_, noun)| noun);
-                for direction in ["in", "out"] {
+                for direction in [ParamDirection::In, ParamDirection::Out] {
                     let mut visited = HashSet::from([owner.to_string()]);
-                    for param in self.full_params(owner, direction, &mut visited, 0, noun) {
-                        let id = parameter_id(owner, direction, &param.name);
-                        let summary = param.summary(direction);
+                    for param in self.full_params(owner, direction.as_str(), &mut visited, 0, noun) {
+                        let spec = param.spec(direction);
                         if param.origin.is_empty() {
+                            let summary = spec.summary();
                             if param.stored.as_ref().is_some_and(|stored| *stored != summary) {
-                                expansion.summaries.push((id, summary));
+                                expansion
+                                    .summaries
+                                    .push((parameter_id(owner, direction.as_str(), &param.name), summary));
                             }
                             continue;
                         }
-                        expansion.artifacts.push(row(
-                            id,
-                            "parameter",
-                            parameter_name(owner, direction, &param.name),
-                            summary,
-                            param.origin,
-                        ));
+                        expansion
+                            .artifacts
+                            .push(parameter_row(owner, &spec, &place(param.origin)));
                     }
                 }
+            }
+            "transition" => {
+                expansion.artifacts = self.transition_params(owner, &place(ORIGIN_SERVICE_CALL));
             }
             "form" => {
                 let Some(form_key) = owner.strip_prefix("form:") else {
@@ -1120,7 +1179,7 @@ impl Resolver {
     pub fn dependents(&self, changed: &HashSet<String>) -> HashSet<String> {
         let mut readers: HashMap<String, Vec<&str>> = HashMap::new();
         for id in self.owners.keys() {
-            if self.owner(id).is_none_or(|owner| owner.kind == "transition") {
+            if !self.is_expandable(id) {
                 continue;
             }
             for source in self.sources_of(id) {
@@ -1151,7 +1210,7 @@ impl Resolver {
                         sources.push(entity(name));
                     }
                 }
-                Mark::Implements { service, .. } => {
+                Mark::Implements { service, .. } | Mark::ServiceCall(service) => {
                     sources.push(format!("service:{service}"));
                     // an entity-auto name's parameters are its entity's fields
                     if let Some((_, noun)) = entity_auto(service) {

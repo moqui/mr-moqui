@@ -21,6 +21,8 @@ use std::sync::LazyLock;
 use moqui_lib::node::MNode;
 use regex::Regex;
 
+pub use super::parameter::{parameter_id, parameter_name, parse_parameter_id};
+use super::parameter::{parameter_row, ParamDirection, ParamPlace, ParamSpec};
 use crate::refs::{self, RefKind};
 use crate::ArtifactKind;
 
@@ -41,7 +43,10 @@ pub struct ArtifactRow {
     /// `parameter:<owner id>@<in|out|path>.<name>` ([`parameter_id`]): a service's in or out parameter
     /// (`parameter:service:a.B.verb#Noun@in.aId`, a nested one by its dotted path, `@in.order.items`), a screen's
     /// (`parameter:screen:component://c/screen/A.xml@in.aId`), a transition's (`parameter:transition:<screen>#save:post@in.aId`,
-    /// a `path-parameter` `@path.aId`), a REST method's route parameter (`parameter:rest:/a/{aId}:post@path.aId`).
+    /// a `path-parameter` `@path.aId`; and, origin [`ORIGIN_SERVICE_CALL`], from the service its own `service-call`
+    /// calls: `@out.<name>` for each out-parameter, `@in.<name>` for each in-parameter when the call passes the
+    /// request), a REST method's route parameter (`parameter:rest:/a/{aId}:post@path.aId`). Every owner kind makes its
+    /// parameter rows by [`super::parameter::parameter_row`].
     pub id: String,
     pub kind: String,
     pub name: String,
@@ -69,6 +74,7 @@ pub struct ArtifactRow {
     /// - `extends <location#form, or form of the same screen>`
     /// - `transition <name>` (of the same screen) or `transition-path <screen path>`
     /// - `call <service> <passes the request y|n> <field-maps from=to>`
+    /// - `service-call <service>`: a transition's own `service-call`, whose parameters are the transition's
     ///
     /// A list is comma separated, `-` when empty.
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -118,14 +124,21 @@ pub const DERIVED_PATH: &str = "derived:entity-auto";
 
 /// The origins of the artifacts and bindings the index expands from what an artifact declares
 /// ([`super::resolve::Resolver::expand`]): a service's parameters from its `auto-parameters` and `implements`, a form's
-/// fields from its `auto-fields-entity`, `auto-fields-service` and `extends`.
-pub const EXPANDED_ORIGINS: [&str; 5] = [
+/// fields from its `auto-fields-entity`, `auto-fields-service` and `extends`, a transition's parameters from its
+/// `service-call`.
+pub const EXPANDED_ORIGINS: [&str; 6] = [
     "auto-parameters",
     "implements",
     "auto-fields-entity",
     "auto-fields-service",
     "extends",
+    ORIGIN_SERVICE_CALL,
 ];
+
+/// The origin of a transition's parameter the index expands from the service its own `service-call` calls: each
+/// out-parameter of the service, and each in-parameter when the call passes the request's parameters and the
+/// transition declares no parameter of its name ([`super::resolve::Resolver::expand`]).
+pub const ORIGIN_SERVICE_CALL: &str = "service-call";
 
 /// Whether `origin` is one of [`EXPANDED_ORIGINS`].
 #[must_use]
@@ -435,6 +448,18 @@ impl Reader<'_> {
             origin: String::new(),
             marks: String::new(),
         });
+    }
+
+    /// Record the parameter `spec` of `owner`, declared by `node` ([`parameter_row`]).
+    fn parameter(&mut self, owner: &str, spec: &ParamSpec, node: &MNode) {
+        let place = ParamPlace {
+            component: self.info.component,
+            path: self.info.path,
+            line: node.line(),
+            column: node.column(),
+            origin: "",
+        };
+        self.index.artifacts.push(parameter_row(owner, spec, &place));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -882,13 +907,10 @@ impl Reader<'_> {
                     declaration = at.parent();
                 }
                 for name in names {
-                    self.artifact(
-                        parameter_id(&id, "path", &name),
-                        "parameter",
-                        &parameter_name(&id, "path", &name),
-                        Some(node),
-                        "path String, required".to_string(),
-                        Some(id.clone()),
+                    self.parameter(
+                        &id,
+                        &ParamSpec::new(ParamDirection::Path, &name, "String", "true"),
+                        node,
                     );
                 }
                 Some(id)
@@ -929,36 +951,19 @@ impl Reader<'_> {
                     up = ancestor.parent();
                 }
                 let direction = match up?.name().as_str() {
-                    "in-parameters" => "in",
-                    "out-parameters" => "out",
+                    "in-parameters" => ParamDirection::In,
+                    "out-parameters" => ParamDirection::Out,
                     _ => return None,
                 };
-                let owner = from;
                 names.reverse();
-                let name = names.join(".");
-                let parent_id = match name.rsplit_once('.') {
-                    Some((up, _)) => parameter_id(owner, direction, up),
-                    None => owner.to_string(),
-                };
-                let mut summary = vec![format!(
-                    "{direction} {}",
-                    node.attribute("type").unwrap_or_else(|| "String".to_string())
-                )];
-                summary.push(format!(
-                    "required={}",
-                    node.attribute("required").unwrap_or_else(|| "false".to_string())
-                ));
-                if let Some(default) = node.attribute("default-value").or_else(|| node.attribute("default")) {
-                    summary.push(format!("default {default}"));
-                }
-                self.artifact(
-                    parameter_id(owner, direction, &name),
-                    "parameter",
-                    &parameter_name(owner, direction, &name),
-                    Some(node),
-                    summary.join(", "),
-                    Some(parent_id),
-                );
+                let spec = ParamSpec::new(
+                    direction,
+                    &names.join("."),
+                    &node.attribute("type").unwrap_or_else(|| "String".to_string()),
+                    &node.attribute("required").unwrap_or_else(|| "false".to_string()),
+                )
+                .with_default(node.attribute("default-value").or_else(|| node.attribute("default")));
+                self.parameter(from, &spec, node);
                 // what it sets of a parameter of its name it merges into (an implemented service's, an auto one)
                 let given: Vec<String> = [
                     ("type", node.attribute("type").is_some()),
@@ -984,26 +989,20 @@ impl Reader<'_> {
                 } else {
                     from.to_string()
                 };
-                let direction = if element == "path-parameter" { "path" } else { "in" };
-                let mut summary = vec![format!(
-                    "{direction} {}",
-                    node.attribute("type").unwrap_or_else(|| "String".to_string())
-                )];
-                summary.push(format!(
-                    "required={}",
-                    element == "path-parameter" || node.attribute_is("required", "true")
-                ));
-                if let Some(default) = node.attribute("value").or_else(|| node.attribute("from")) {
-                    summary.push(format!("default {default}"));
-                }
-                self.artifact(
-                    parameter_id(&owner, direction, &name),
-                    "parameter",
-                    &parameter_name(&owner, direction, &name),
-                    Some(node),
-                    summary.join(", "),
-                    Some(owner),
-                );
+                let direction = if element == "path-parameter" {
+                    ParamDirection::Path
+                } else {
+                    ParamDirection::In
+                };
+                let required = element == "path-parameter" || node.attribute_is("required", "true");
+                let spec = ParamSpec::new(
+                    direction,
+                    &name,
+                    &node.attribute("type").unwrap_or_else(|| "String".to_string()),
+                    &required.to_string(),
+                )
+                .with_default(node.attribute("value").or_else(|| node.attribute("from")));
+                self.parameter(&owner, &spec, node);
                 None
             }
             (ArtifactKind::Screen | ArtifactKind::ScreenExtend, "transition" | "transition-include") => {
@@ -2178,8 +2177,15 @@ pub fn extended_form(extends: &str, location: &str) -> Option<(String, String)> 
 }
 
 /// The marks of the services a transition passes the request to, or maps request parameters into, each with whether
-/// it takes the request and its `field-map`s ([`request_calls`], [`MARKS_OPEN`]).
+/// it takes the request and its `field-map`s ([`request_calls`], [`MARKS_OPEN`]); and `service-call <service>` for its
+/// own `service-call`, whose parameters are the transition's ([`super::resolve::Resolver::expand`]).
 fn call_marks(transition: &MNode) -> Vec<String> {
+    let direct = transition
+        .first_named("service-call")
+        .and_then(|call| call.attribute("name"))
+        .map(|service| service.trim().to_string())
+        .filter(|service| refs::is_literal(service) && !service.is_empty() && !service.contains(' '))
+        .map(|service| format!("service-call {service}"));
     request_calls(transition)
         .into_iter()
         .map(|call| {
@@ -2191,6 +2197,7 @@ fn call_marks(transition: &MNode) -> Vec<String> {
                 mark_list(&maps)
             )
         })
+        .chain(direct)
         .collect()
 }
 
@@ -2243,31 +2250,6 @@ fn rest_path(node: &MNode) -> String {
     }
     parts.reverse();
     format!("/{}", parts.join("/"))
-}
-
-/// The id of the parameter `name` (a nested one by its dotted path) of the artifact `owner`, `direction` `in`, `out`
-/// or `path`: `parameter:<owner>@<direction>.<name>`. [`parse_parameter_id`] reads it back.
-#[must_use]
-pub fn parameter_id(owner: &str, direction: &str, name: &str) -> String {
-    format!("parameter:{owner}@{direction}.{name}")
-}
-
-/// The name of a parameter artifact: its owner's name, the direction and its own (`a.B.save#Order@in.quantity`), so a
-/// find of a bare name such as `orderId` matches it by its short name (the last part) only, after an entity's field.
-#[must_use]
-pub fn parameter_name(owner: &str, direction: &str, name: &str) -> String {
-    let owner = owner.split_once(':').map_or(owner, |(_, name)| name);
-    format!("{owner}@{direction}.{name}")
-}
-
-/// The owner id, direction and name of a [`parameter_id`]: the text after the last `@` (a parameter's name has none)
-/// is the direction, a dot, and the name. Owners may include a method suffix (`:post`, `:any`).
-#[must_use]
-pub fn parse_parameter_id(id: &str) -> Option<(&str, &str, &str)> {
-    let (owner, rest) = id.strip_prefix("parameter:")?.rsplit_once('@')?;
-    let (direction, name) = rest.split_once('.')?;
-    (matches!(direction, "in" | "out" | "path") && !owner.is_empty() && !name.is_empty())
-        .then_some((owner, direction, name))
 }
 
 /// The base screen a `screen-extend` file at `location` extends: `component://<its path under screen-extend/>`.

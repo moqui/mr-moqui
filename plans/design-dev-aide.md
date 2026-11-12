@@ -805,6 +805,17 @@ the command until then.
     its rows written again in its file when they differ (a write that fails is written again at the next update).
     Not yet: a view entity's `alias-all` aliases and an alias's key and type (its fields are its `alias` elements, none
     a key); a declared parameter written before an `auto-parameters` element of its name is merged as if after it;
+  - a transition's own `service-call` gives the transition parameters, expanded as above with origin `service-call`:
+    each out-parameter of the service (`parameter:transition:<screen>#<name>:<method>@out.<name>`), and each
+    in-parameter when the call passes the request's parameters (no `in-map` of its own) and the transition declares no
+    `parameter` or `path-parameter` of its name (`@in.<name>`). A `required="disabled"` one is left out. A transition
+    with only `actions` declares no out-parameters: what its actions put in the context is not a contract, so the
+    schema has no element for it. When the service's parameters change, the transition is expanded again;
+  - every artifact with parameters (a service, a screen, a transition, a REST method, a derived service) gives them as
+    (direction `in`, `out` or `path`, name, type, `required`, default), and one function makes their rows
+    (`crates/moqui-devkit/src/index/parameter.rs`): the id `parameter:<owner id>@<direction>.<name>`, the name
+    `<owner name>@<direction>.<name>`, the summary `<direction> <type>, required=<true|false|disabled>[, default <v>]`
+    and the parent (the owner, or the parameter a nested one is in);
   - an entity-auto name no file defines a service for is a derived service of the entity (`derived:entity-auto`) with
     the in and out parameters its runner takes;
   - `moqui check --extensions` warns of a form whose transition calls a service with a required in-parameter that has
