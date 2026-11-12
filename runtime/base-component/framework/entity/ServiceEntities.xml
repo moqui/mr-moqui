@@ -133,6 +133,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="instanceId" type="text-short"><description>The server instance (cluster member) holding the lock.
             A lock whose instance is not a live cluster member, or is this instance but not running the job here, is
             taken over before expireLockTime.</description></field>
+        <field name="leaseExpireDate" type="date-time"><description>While a run holds the lock, when its lease lapses
+            (the database's time). The instance running it renews the lease every minute, for three minutes, until the
+            run ends or goes on past its job timeout; a lock whose lease lapsed is taken over, even from a live
+            instance. Empty for a lock held with no lease (a backup run started by hand), which only a gone instance or
+            expireLockTime frees.</description></field>
         <field name="runCount" type="number-integer"><description>How many runs have been started when the job's
             errorHistoryOnly is Y, including runs whose success row was removed. repeatCount uses this instead of
             counting ServiceJobRun rows. Empty until the first such run, or until older rows are counted once.</description></field>

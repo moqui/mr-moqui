@@ -1268,3 +1268,167 @@ fn a_pass_reads_locks_in_one_query_and_a_job_not_due_costs_none_of_its_own() {
         "no liveness read"
     );
 }
+
+// ---- the job lease (HL-026) ---------------------------------------------------------------
+
+/// A timestamp `ago` milliseconds before now (after it, for a negative `ago`).
+fn stamp_ago(ago: i64) -> Value {
+    moqui_lib::object::basic_convert(&Value::I64(jiff::Timestamp::now().as_millisecond() - ago), "Timestamp").value
+}
+
+fn lease_millis_of(facade: &EntityFacade, job: &str) -> Option<i64> {
+    match lock_row_of(facade, job)?.get("leaseExpireDate") {
+        Some(Value::Timestamp(at)) => Some(at.as_millisecond()),
+        _ => None,
+    }
+}
+
+/// plans/High-Level-Review.md HL-026: a lock whose lease lapsed is taken over though its holder is a live member, and
+/// the run it named is ended as failed; a live member's lock whose lease has not lapsed is kept. The new run's claim
+/// gives it a lease, and its end clears it.
+#[test]
+fn a_lock_whose_lease_lapsed_on_a_live_member_is_taken_over() {
+    let world = jobs_world(1, 8);
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    // Ten seconds ago: far from expiring, and the every-second schedule is due again.
+    let started = stamp_ago(10_000);
+    for (job, run, lease) in [
+        ("LAPSED", "LAPSED-RUN", stamp_ago(60_000)),
+        ("LEASED", "LEASED-RUN", stamp_ago(-60_000)),
+    ] {
+        add_job(&world, job, "echo#Note", "* * * * * *", &[]);
+        create(
+            &world.facade,
+            "moqui.service.job.ServiceJobRun",
+            &[("jobRunId", run), ("jobName", job)],
+        );
+        let mut lock = world.facade.make_value("moqui.service.job.ServiceJobRunLock").unwrap();
+        lock.set("jobName", Value::string(job));
+        lock.set("jobRunId", Value::string(run));
+        lock.set("instanceId", Value::string("live-member"));
+        lock.set("lastRunTime", started.clone());
+        lock.set("leaseExpireDate", lease);
+        lock.create(&world.facade).unwrap();
+    }
+    let mut member = world.facade.make_value("moqui.server.ClusterMember").unwrap();
+    member.set("instanceId", Value::string("live-member"));
+    member.set("heartbeat", stamp_ago(0));
+    member.create(&world.facade).unwrap();
+    let report = world.ctx.factory().service_pools().tick();
+    assert_eq!(report.jobs_run, 1, "{report:?}");
+    let lapsed = lock_row_of(&world.facade, "LAPSED").unwrap();
+    assert_ne!(text(&lapsed, "jobRunId"), "LAPSED-RUN", "taken over");
+    let old = runs(&world, "LAPSED")
+        .into_iter()
+        .find(|run| text(run, "jobRunId") == "LAPSED-RUN")
+        .unwrap();
+    assert_eq!(text(&old, "hasError"), "Y");
+    assert_eq!(
+        text(&lock_row_of(&world.facade, "LEASED").unwrap(), "jobRunId"),
+        "LEASED-RUN",
+        "a lease that has not lapsed keeps its lock"
+    );
+    wait_for("the taken-over job to run and release its lock", || {
+        runs(&world, "LAPSED").iter().any(|run| text(run, "hasError") == "N")
+            && lock_row_of(&world.facade, "LAPSED").is_some_and(|lock| text(&lock, "jobRunId").is_empty())
+    });
+    assert_eq!(
+        lease_millis_of(&world.facade, "LAPSED"),
+        None,
+        "the release clears the lease"
+    );
+}
+
+/// A world with `block#Job`, a rust service that waits on `hold`, counting its starts in `started`.
+fn blocking_world(hold: &Hold, started: &Arc<std::sync::atomic::AtomicUsize>) -> Jobs {
+    let blocking = r#"<services>
+            <service verb="block" noun="Job" type="rust" location="test::blocking_job"/>
+        </services>"#;
+    let (job_hold, job_started) = (hold.clone(), Arc::clone(started));
+    jobs_world_with(1, 8, Some(blocking), move |factory| {
+        factory
+            .register_service("test::blocking_job", move |_ec, _info, _parameters| {
+                job_started.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                job_hold.wait();
+                Ok(BTreeMap::new())
+            })
+            .unwrap();
+    })
+}
+
+/// HL-026: the claim gives a running job's lock a lease, and a renewal moves it on while the job runs.
+#[test]
+fn a_running_job_renews_its_lease() {
+    let hold = Hold::new();
+    let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let world = blocking_world(&hold, &started);
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    add_job(&world, "LEASE1", "block#Job", "* * * * * *", &[]);
+    let pools = world.ctx.factory().service_pools();
+    assert_eq!(pools.tick().jobs_run, 1);
+    wait_for("the job to start", || {
+        started.load(std::sync::atomic::Ordering::SeqCst) == 1
+    });
+    let claimed = lease_millis_of(&world.facade, "LEASE1").expect("the claim's lease");
+    assert!(claimed > jiff::Timestamp::now().as_millisecond(), "a lease ahead of now");
+    std::thread::sleep(Duration::from_millis(5));
+    let renewal = super::super::job_lease::renew(world.ctx.factory()).unwrap();
+    assert_eq!(
+        (renewal.renewed, renewal.lost.len(), renewal.overdue.len()),
+        (1, 0, 0),
+        "{renewal:?}"
+    );
+    let renewed = lease_millis_of(&world.facade, "LEASE1").unwrap();
+    assert!(renewed > claimed, "{renewed} after {claimed}");
+    hold.open();
+    wait_for("the run to end", || {
+        runs(&world, "LEASE1").iter().any(|run| text(run, "hasError") == "N")
+    });
+}
+
+/// HL-026: a run whose lock another run took over has its scripts ended at the next renewal, rather than going on beside
+/// the run that holds the lock now, which keeps it.
+#[test]
+fn a_run_that_lost_its_lock_is_cut_short() {
+    let looping = r#"<services>
+            <service verb="loop" noun="Long" authenticate="false" transaction="ignore">
+                <actions><script>while (true) {}</script></actions>
+            </service>
+        </services>"#;
+    let world = jobs_world_with(1, 8, Some(looping), |_| {});
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    // A timeout far off, so only the lost lock ends it.
+    add_job(
+        &world,
+        "LOSER",
+        "loop#Long",
+        "* * * * * *",
+        &[("transactionTimeout", "600")],
+    );
+    let started = Instant::now();
+    assert_eq!(world.ctx.factory().service_pools().tick().jobs_run, 1);
+    wait_for("the run to start", || {
+        runs(&world, "LOSER").iter().any(|run| !text(run, "startTime").is_empty())
+    });
+    let run_id = text(&runs(&world, "LOSER")[0], "jobRunId");
+    let mut lock = lock_row_of(&world.facade, "LOSER").unwrap();
+    lock.set("jobRunId", Value::string("ELSEWHERE"));
+    lock.update(&world.facade).unwrap();
+    let renewal = super::super::job_lease::renew(world.ctx.factory()).unwrap();
+    assert_eq!(renewal.lost, [run_id], "{renewal:?}");
+    wait_for("the run to end", || {
+        runs(&world, "LOSER").iter().any(|run| !text(run, "endTime").is_empty())
+    });
+    let run = runs(&world, "LOSER").remove(0);
+    assert_eq!(text(&run, "hasError"), "Y");
+    assert!(text(&run, "errors").contains("interrupted"), "{}", text(&run, "errors"));
+    assert_eq!(
+        text(&lock_row_of(&world.facade, "LOSER").unwrap(), "jobRunId"),
+        "ELSEWHERE",
+        "the other run keeps the lock"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+}

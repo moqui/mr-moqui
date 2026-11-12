@@ -25,9 +25,10 @@
 //! (plans/High-Level-Review.md HL-020).
 //!
 //! A pass claims locks only for job workers that are idle, and a lock records the instance that
-//! holds it. A lock whose instance is gone (not a live cluster member, or this instance with no run
-//! of this process holding it) is taken over before `expireLockTime`, and a worker checks that its
-//! run still holds the lock before it runs the service (`plans/High-Level-Review.md` HL-026).
+//! holds it. A lock whose lease lapsed ([`super::job_lease`]: the running instance renews it apart
+//! from this thread), or whose instance is gone (not a live cluster member, or this instance with no
+//! run of this process holding it), is taken over before `expireLockTime`, and a worker checks that
+//! its run still holds the lock before it runs the service (`plans/High-Level-Review.md` HL-026).
 //!
 //! A cron expression is read in the machine's time zone ([`job_time_zone`]), the zone the operating
 //! system reports. That is not the server zone `default_time_zone` names (UTC in MoquiDefaultConf).
@@ -39,8 +40,8 @@
 //! as JSON in `queuedCall` ([`QueuedCall`]), so lists and maps keep their shape (HL-025). The pass
 //! submits it when a slot is free and deletes it when it has run.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::time::Duration;
 
 use moqui_db::sql::{insert, update, CompareOp, Condition};
@@ -48,6 +49,7 @@ use moqui_lib::object::{basic_convert, to_plain_string, Value};
 use moqui_lib::sync::lock;
 
 use super::call::CallOptions;
+use super::job_lease::{LocalClaim, LocalRuns};
 use super::pool::Shared;
 use super::util::{field_text, now_stamp, reserve};
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
@@ -153,36 +155,8 @@ pub(crate) struct JobRun {
     factory: Arc<ExecutionContextFactory>,
 }
 
-/// The job runs this process claimed and has not finished, so a lock held under this instance's id but by none of
-/// them (left by an earlier process of this instance) can be taken over.
-#[derive(Default)]
-struct LocalRuns(Mutex<HashSet<String>>);
-
-/// One claimed run in [`LocalRuns`], until it drops.
-pub(crate) struct LocalClaim {
-    runs: Arc<LocalRuns>,
-    run_id: String,
-}
-
-impl LocalClaim {
-    fn new(factory: &ExecutionContextFactory, run_id: &str) -> Self {
-        let runs = factory.extension(|_| LocalRuns::default());
-        lock(&runs.0).insert(run_id.to_string());
-        Self {
-            runs,
-            run_id: run_id.to_string(),
-        }
-    }
-}
-
-impl Drop for LocalClaim {
-    fn drop(&mut self) {
-        lock(&self.runs.0).remove(&self.run_id);
-    }
-}
-
 /// This instance's id, which a lock it claims records: the cluster member id, else the instance id telemetry names.
-fn own_instance(factory: &ExecutionContextFactory) -> String {
+pub(super) fn own_instance(factory: &ExecutionContextFactory) -> String {
     crate::cluster::instance_id(factory).unwrap_or_else(|| crate::drain::instance_id(factory))
 }
 
@@ -202,7 +176,7 @@ fn gone_owner(
     if owner == own_instance(factory) {
         let local = factory
             .extension_if_present::<LocalRuns>()
-            .is_some_and(|runs| lock(&runs.0).contains(run_id));
+            .is_some_and(|runs| runs.contains(run_id));
         return (!local).then_some(owner);
     }
     match crate::cluster::is_live_member(factory, facade, &owner) {
@@ -270,6 +244,7 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
     let now = jiff::Timestamp::now();
     let now_stamp = timestamp_value(now.as_millisecond());
     let plan = LockPlan::new(&facade)?;
+    let clock = DbClock::default();
 
     let jobs = discover(&facade, slots)?;
     // First, with no query: the jobs that can run now, each scheduled one with its cron's last occurrence. A job whose
@@ -332,7 +307,15 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
             continue;
         }
         let job_name = &candidate.job_name;
-        let ready = match readiness(factory, &facade, candidate, locks.get(job_name), now, &now_stamp) {
+        let ready = match readiness(
+            factory,
+            &facade,
+            &clock,
+            candidate,
+            locks.get(job_name),
+            now,
+            &now_stamp,
+        ) {
             Ok(Due::Ready(ready)) => ready,
             Ok(Due::Exhausted) => continue,
             Ok(Due::NotNow) => {
@@ -346,7 +329,16 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
             }
         };
         report.jobs_active += 1;
-        match dispatch(shared, factory, &facade, &plan, candidate.job, ready, &now_stamp) {
+        match dispatch(
+            shared,
+            factory,
+            &facade,
+            &plan,
+            &clock,
+            candidate.job,
+            ready,
+            &now_stamp,
+        ) {
             Ok(true) => {
                 report.jobs_run += 1;
                 slots -= 1;
@@ -359,6 +351,16 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
         }
     }
     Ok(report)
+}
+
+/// The database's time, read once a pass when a lease is checked or claimed (HL-026).
+#[derive(Default)]
+struct DbClock(std::cell::OnceCell<i64>);
+
+impl DbClock {
+    fn now(&self, facade: &EntityFacade) -> i64 {
+        *self.0.get_or_init(|| crate::cluster::db_now(facade))
+    }
 }
 
 /// A job a pass may start, found before any query: its row, name, whether it is a queued call, and for a scheduled job
@@ -475,6 +477,7 @@ enum Due {
 fn readiness(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
+    clock: &DbClock,
     candidate: &Candidate,
     lock: Option<&EntityValue>,
     now: jiff::Timestamp,
@@ -501,13 +504,18 @@ fn readiness(
             Expect::Run(run_id)
         };
         if let Expect::Run(run_id) = &expect {
-            // `expireLockTime` stays the upper bound; a lock whose instance is gone is taken over sooner (HL-026). A
-            // run id with no time has nothing to say the lock is old, so only a gone instance frees it.
+            // `expireLockTime` stays the upper bound; a lock whose lease lapsed, or whose instance is gone, is taken over
+            // sooner (HL-026). A run id with no time has nothing to say the lock is old, so only a gone instance frees
+            // it; a lock with no lease (one `hold#BackupLock` took) only a gone instance or its expiry.
             let expire = number(job, "expireLockTime").unwrap_or(DEFAULT_EXPIRE_MINUTES);
             let expired = last_run_ms
                 .is_some_and(|last| last < now.as_millisecond().saturating_sub(expire.saturating_mul(60_000)));
+            let lease = lock.get("leaseExpireDate").and_then(millis_of);
             if expired {
                 tracing::warn!(job = job_name, run = %run_id, "lock expired, ignoring it");
+            } else if lease.is_some_and(|lease| lease < clock.now(facade)) {
+                tracing::warn!(job = job_name, run = %run_id, instance = %field_text(lock, "instanceId"), "lock lease lapsed, taking the lock over");
+                reclaimed = Some(run_id.clone());
             } else if let Some(owner) = gone_owner(factory, facade, lock, run_id) {
                 tracing::warn!(job = job_name, run = %run_id, instance = %owner, "lock holder is gone, taking the lock over");
                 reclaimed = Some(run_id.clone());
@@ -551,11 +559,13 @@ fn readiness(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dispatch(
     shared: &Shared,
     factory: &Arc<ExecutionContextFactory>,
     facade: &EntityFacade,
     plan: &LockPlan,
+    clock: &DbClock,
     job: &EntityValue,
     ready: Ready,
     now_stamp: &Value,
@@ -565,11 +575,24 @@ fn dispatch(
     let run_id = create_run(facade, &job_name, None, &BTreeMap::new())?;
     // Counted as this process's before the claim, so a pass never takes it for one an earlier process left.
     let claim = LocalClaim::new(factory, &run_id);
-    if !plan.claim(&job_name, &run_id, now_stamp, &ready.expect, &own_instance(factory))? {
+    let lease = super::job_lease::stamp(
+        clock
+            .now(facade)
+            .saturating_add(super::job_lease::lease_millis(factory)),
+    );
+    if !plan.claim(
+        &job_name,
+        &run_id,
+        now_stamp,
+        &lease,
+        &ready.expect,
+        &own_instance(factory),
+    )? {
         // Another instance took it. Its run row would only confuse the history.
         delete_run(facade, &run_id);
         return Ok(false);
     }
+    super::job_lease::start_keeper(factory);
     if let Some(old) = &ready.reclaimed {
         record(
             facade,
@@ -579,7 +602,9 @@ fn dispatch(
                 ("hasError", Value::string("Y")),
                 (
                     "errors",
-                    Value::string("Its server instance stopped before it ended; the job's lock was taken over"),
+                    Value::string(
+                        "Its server instance stopped, or stopped renewing its lease, before it ended; the job's lock was taken over",
+                    ),
                 ),
             ],
         );
@@ -900,6 +925,18 @@ pub(crate) fn run_job(job: JobRun) {
         delete_run(&facade, &job.job_run_id);
         return;
     }
+    let end = RunEnd {
+        facade: &facade,
+        job: &job,
+        telemetry: &telemetry,
+        done: false,
+    };
+    // From here the keeper checks the run still holds its lock, and ends its scripts when it lost it or ran past its
+    // timeout (HL-026). After `end`, so a run that unwinds stops being started before its end is written.
+    let running = job
+        .claim
+        .as_ref()
+        .map(|claim| claim.start(&job.job_name, job.script_limit));
     // The thread's name is this port's (`moqui-job-0`, not Java's `MoquiJob-1`), an accepted difference (P7b-16).
     let thread = std::thread::current().name().unwrap_or("").to_string();
     let (host_address, host_name) = crate::context::identity::server_address();
@@ -920,12 +957,6 @@ pub(crate) fn run_job(job: JobRun) {
             ("startTime", now_stamp()),
         ],
     );
-    let end = RunEnd {
-        facade: &facade,
-        job: &job,
-        telemetry: &telemetry,
-        done: false,
-    };
     let mut parameters = job.parameters.clone();
     if !job.last_run_time.is_null() {
         parameters.insert("lastRunTime".to_string(), job.last_run_time.clone());
@@ -974,6 +1005,7 @@ pub(crate) fn run_job(job: JobRun) {
     };
     let result_values: moqui_lib::object::ValueMap = results.into_iter().collect();
     let results = serde_json::to_string(&moqui_lib::json::to_json(&Value::Map(result_values.clone()))).ok();
+    drop(running);
     end.finish(&RunOutcome {
         has_error,
         results,
@@ -1487,12 +1519,16 @@ impl LockPlan {
                 let by_job = Condition::bound("jobName", CompareOp::Equals);
                 let free = Condition::and(vec![by_job.clone(), Condition::is_null("jobRunId")]);
                 let held = Condition::and(vec![by_job.clone(), Condition::bound("jobRunId", CompareOp::Equals)]);
-                let set = ["jobRunId", "lastRunTime", "instanceId"];
+                let set = ["jobRunId", "lastRunTime", "instanceId", "leaseExpireDate"];
                 let seed = Condition::and(vec![by_job.clone(), Condition::is_null("runCount")]);
                 let step = Condition::and(vec![by_job.clone(), Condition::bound("runCount", CompareOp::Equals)]);
                 Ok(Self {
                     tx: tx.clone(),
-                    insert_sql: insert(entity, dialect, &["jobName", "jobRunId", "lastRunTime", "instanceId"])?,
+                    insert_sql: insert(
+                        entity,
+                        dialect,
+                        &["jobName", "jobRunId", "lastRunTime", "instanceId", "leaseExpireDate"],
+                    )?,
                     claim_free_sql: update(entity, dialect, &set, Some(&free))?.sql,
                     claim_run_sql: update(entity, dialect, &set, Some(&held))?.sql,
                     release_sql: update(entity, dialect, &set, Some(&held))?.sql,
@@ -1505,32 +1541,49 @@ impl LockPlan {
             .map_err(Error::from)
     }
 
-    /// True when this call took the lock for `instance`. Every path is a conditional write, so only one caller wins.
-    fn claim(&self, job: &str, run_id: &str, now: &Value, expect: &Expect, instance: &str) -> Result<bool, Error> {
+    /// True when this call took the lock for `instance`, with its lease until `lease`. Every path is a conditional
+    /// write, so only one caller wins.
+    fn claim(
+        &self,
+        job: &str,
+        run_id: &str,
+        now: &Value,
+        lease: &Value,
+        expect: &Expect,
+        instance: &str,
+    ) -> Result<bool, Error> {
         let job_value = Value::string(job);
         let owner = Value::string(instance);
         reserve(&self.tx, |conn| match expect {
             Expect::Absent => {
-                let params = [job_value, Value::string(run_id), now.clone(), owner];
+                let params = [job_value, Value::string(run_id), now.clone(), owner, lease.clone()];
                 // A lost insert race is a held lock.
                 Ok(conn.execute(&self.insert_sql, &params).is_ok())
             }
             Expect::Free => {
-                let params = [Value::string(run_id), now.clone(), owner, job_value];
+                let params = [Value::string(run_id), now.clone(), owner, lease.clone(), job_value];
                 Ok(conn.execute(&self.claim_free_sql, &params)? > 0)
             }
             Expect::Run(old) => {
-                let params = [Value::string(run_id), now.clone(), owner, job_value, Value::string(old)];
+                let params = [
+                    Value::string(run_id),
+                    now.clone(),
+                    owner,
+                    lease.clone(),
+                    job_value,
+                    Value::string(old),
+                ];
                 Ok(conn.execute(&self.claim_run_sql, &params)? > 0)
             }
         })
     }
 
-    /// Clear `run_id`'s hold and set the run time. Does nothing if another run holds the lock now.
+    /// Clear `run_id`'s hold and its lease and set the run time. Does nothing if another run holds the lock now.
     fn release(&self, job: &str, run_id: &str, last_run: &Value) -> Result<(), Error> {
         let params = [
             Value::Null,
             last_run.clone(),
+            Value::Null,
             Value::Null,
             Value::string(job),
             Value::string(run_id),

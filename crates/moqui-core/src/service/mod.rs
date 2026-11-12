@@ -50,6 +50,7 @@ pub mod http_fixtures;
 pub mod info;
 #[cfg(test)]
 mod inline_tests;
+mod job_lease;
 mod jobs;
 pub mod mail_capture;
 pub mod pool;

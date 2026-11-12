@@ -1333,7 +1333,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
 }
 
 /// The database server's time in epoch milliseconds, else this host's.
-fn db_now(facade: &EntityFacade) -> i64 {
+pub(crate) fn db_now(facade: &EntityFacade) -> i64 {
     let read = facade
         .transactions_for(MEMBER)
         .map_err(Error::from)
