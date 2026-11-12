@@ -16,7 +16,9 @@ along with this software (see the LICENSE.md file). If not, see
     §17.2; impl-admin P15 and P16): the dispatch of an import to its registered target and the runs of every target, and
     the export of a registered target to its caller. The file grows by parts, each a section below with its bodies in a
     module of its own beside DataTransferLib.js, which they share: imports (DataTransferImports.js, with
-    DataTransferBatch.js for a target that has no batch of its owner's) and exports (DataTransferExports.js). A target is a moqui.server.TransferTarget its owner seeds: a request names a target by its id and never a
+    DataTransferBatch.js for a target that has no batch of its owner's) and exports (DataTransferExports.js); the two
+    also hold what the administration screens show of them (the section before the last). A target is a
+    moqui.server.TransferTarget its owner seeds: a request names a target by its id and never a
     service, an entity or a field the registration does not name. An owner's service is called as the caller
     (call#TargetService, whose ALL_USERS ALLOW is not inheritable), so the registration adds no right. ALL_USERS may call
     the services named in data/AdminConfigurationData.xml AdminTransferServices: each checks the caller itself
@@ -474,6 +476,179 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="reason"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferExports.js').execute('runExport', context))</script></actions>
+    </service>
+
+    <!-- ========== The administration screens' projections (plans/Admin-Screens-Down.md A5) ========== -->
+    <!-- What the Data screens of the System app show and post (tools screen/System/Data: Exports, DataExport, Imports,
+        ImportDetail) and the apps that show them under their own root: the services above put together for a page, and a
+        wizard's form values turned into a request. They add no field, option or right a registration does not have; an
+        owner's place is the registration's key (ownerRoute), which the screen resolves by its mount's routes (tools
+        template/AdminMount.js). Each needs ADMIN_TRANSFER_VIEW or ADMIN_TRANSFER_RUN, and a wizard's export
+        ADMIN_TRANSFER_RUN, besides what a target and its owner ask. -->
+    <service verb="find" noun="ExportRuns" allow-remote="false">
+        <description>The Exports screen: a page of 50 of find#Transfers with direction export (the exports made that the
+            caller may read and, for a holder of ADMIN_TRANSFER_VIEW, the deliveries of scheduled reports and business
+            alerts as status: never a title, a recipient, a value or content, and nothing to open), each with its
+            counts as one text (countText), and the registered export targets (targetList, find#ExportTargets). Needs
+            ADMIN_TRANSFER_VIEW or ADMIN_TRANSFER_RUN.</description>
+        <in-parameters>
+            <parameter name="kind"/>
+            <parameter name="targetId"/>
+            <parameter name="state"/>
+            <parameter name="fromDate"/>
+            <parameter name="thruDate"/>
+            <parameter name="pageIndex" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="transferList" type="List"/>
+            <parameter name="transferCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="unansweredTargetList" type="List"/>
+            <parameter name="stateList" type="List"/>
+            <parameter name="kindList" type="List"/>
+            <parameter name="targetList" type="List"/>
+            <parameter name="canRun" type="Boolean"/>
+            <parameter name="defaultDays" type="Integer"/>
+            <parameter name="rangeDays" type="Integer"/>
+            <parameter name="timeZone"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferExports.js').execute('findExportRuns', context))</script></actions>
+    </service>
+    <service verb="define" noun="ExportRequest" type="interface">
+        <description>A request of the export wizard: the target, the scope, the values of the target's registered options
+            in their order (option1 to option3) and the names of the fields chosen (fields: a list, or names with commas).</description>
+        <in-parameters>
+            <parameter name="targetId"/>
+            <parameter name="scopeKey"/>
+            <parameter name="option1"/>
+            <parameter name="option2"/>
+            <parameter name="option3"/>
+            <parameter name="fields" type="Object"/>
+        </in-parameters>
+    </service>
+    <service verb="get" noun="ExportContext" allow-remote="false">
+        <description>The export wizard's state: the targets exported here (targetOptions) and those exported in their
+            owner's own place (elsewhereList, each with its ownerRoute); for the target named, as get#ExportFields
+            answers it for this caller, its scopes, its options with their values (slotList), the fields the caller may
+            choose (fieldOptions, selectedFields) and the names of those left out because the caller may not read them
+            (deniedFieldText); with review, preview#Export of the request (preview: the fields, the count) or why it was
+            refused (previewRefusal: a request past the bounds of one export says where larger volumes are exported),
+            and an operation key for the export of that review. An id that is no target exported here is no target.
+            Needs ADMIN_TRANSFER_VIEW or ADMIN_TRANSFER_RUN; a preview ADMIN_TRANSFER_RUN.</description>
+        <implements service="org.moqui.admin.DataTransferServices.define#ExportRequest"/>
+        <in-parameters><parameter name="review" type="Boolean"/></in-parameters>
+        <out-parameters>
+            <parameter name="canRun" type="Boolean"/>
+            <parameter name="targetOptions" type="List"/>
+            <parameter name="elsewhereList" type="List"/>
+            <parameter name="hasTarget" type="Boolean"/>
+            <parameter name="exportTarget" type="Map"/>
+            <parameter name="scopeOptions" type="List"/>
+            <parameter name="slotList" type="List"/>
+            <parameter name="fieldOptions" type="List"/>
+            <parameter name="deniedFieldText"/>
+            <parameter name="selectedFields" type="List"/>
+            <parameter name="preview" type="Map"/>
+            <parameter name="previewRefusal"/>
+            <parameter name="operationKey"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferExports.js').execute('exportContext', context))</script></actions>
+    </service>
+    <service verb="run" noun="ExportRequest" allow-remote="false" transaction-timeout="600">
+        <description>The export of a wizard's request through run#Export: the file for this caller (fileText, filename,
+            contentType) with what was left out, or the reason it was refused. A wizard's export is run with
+            ADMIN_TRANSFER_RUN, besides what the target's registration and its owner ask. The file goes to the caller's
+            response and nowhere else.</description>
+        <implements service="org.moqui.admin.DataTransferServices.define#ExportRequest"/>
+        <in-parameters><parameter name="operationKey"/></in-parameters>
+        <out-parameters>
+            <parameter name="exported" type="Boolean"/>
+            <parameter name="repeated" type="Boolean"/>
+            <parameter name="transferId"/>
+            <parameter name="rowCount" type="Integer"/>
+            <parameter name="fieldList" type="List"/>
+            <parameter name="omittedFieldList" type="List"/>
+            <parameter name="fileText" allow-html="any"/>
+            <parameter name="filename"/>
+            <parameter name="contentType"/>
+            <parameter name="refused" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferExports.js').execute('exportRequest', context))</script></actions>
+    </service>
+    <service verb="find" noun="ImportRuns" allow-remote="false">
+        <description>The Imports screen: a page of 50 of find#Transfers (the runs of every import target the caller may
+            view, narrowed by target, scope, state and dates), each with its counts as one text (countText), its owner's
+            place as the registration's key and the owner's parameters, and the registered import targets (targetList,
+            find#ImportTargets). Needs ADMIN_TRANSFER_VIEW or ADMIN_TRANSFER_RUN.</description>
+        <in-parameters>
+            <parameter name="targetId"/>
+            <parameter name="scopeKey"/>
+            <parameter name="state"/>
+            <parameter name="fromDate"/>
+            <parameter name="thruDate"/>
+            <parameter name="pageIndex" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="transferList" type="List"/>
+            <parameter name="transferCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="unansweredTargetList" type="List"/>
+            <parameter name="stateList" type="List"/>
+            <parameter name="targetList" type="List"/>
+            <parameter name="canRun" type="Boolean"/>
+            <parameter name="defaultDays" type="Integer"/>
+            <parameter name="rangeDays" type="Integer"/>
+            <parameter name="timeZone"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferImports.js').execute('findImportRuns', context))</script></actions>
+    </service>
+    <service verb="get" noun="ImportDetail" allow-remote="false">
+        <description>The ImportDetail screen: one import as get#Transfer answers it for this caller (the user who staged
+            it and those its target admits), with its target as get#ImportTarget answers it (importTarget), its scope by
+            name where the target's scope service gives the caller one (scopeKey, scopeTitle), each row's source and
+            values as text (importRows: sourceText, proposedText, warningText), the number of failed rows and whether
+            the caller may retry them here (canEdit: the import's own answer, with ADMIN_TRANSFER_RUN). Needs
+            ADMIN_TRANSFER_VIEW or ADMIN_TRANSFER_RUN.</description>
+        <in-parameters>
+            <parameter name="targetId" required="true"/>
+            <parameter name="operationKey" required="true"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="errorsOnly" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="targetId"/>
+            <parameter name="operationKey"/>
+            <parameter name="importTarget" type="Map"/>
+            <parameter name="kindDescription"/>
+            <parameter name="scopeKey"/>
+            <parameter name="scopeTitle"/>
+            <parameter name="state"/>
+            <parameter name="lastError"/>
+            <parameter name="filename"/>
+            <parameter name="fileHash"/>
+            <parameter name="importRows" type="List"/>
+            <parameter name="rowCount" type="Integer"/>
+            <parameter name="validCount" type="Integer"/>
+            <parameter name="appliedCount" type="Integer"/>
+            <parameter name="errorCount" type="Integer"/>
+            <parameter name="failedCount" type="Integer"/>
+            <parameter name="skippedCount" type="Integer"/>
+            <parameter name="shownCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="canEdit" type="Boolean"/>
+            <parameter name="purged" type="Boolean"/>
+            <parameter name="stagedDate" type="Long"/>
+            <parameter name="appliedDate" type="Long"/>
+            <parameter name="completedDate" type="Long"/>
+            <parameter name="userName"/>
+            <parameter name="timeZone"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/DataTransferImports.js').execute('getImportDetail', context))</script></actions>
     </service>
 
     <!-- One row of a batch kept here, each in a transaction of its own under apply#Import and retry#ImportItems. No group

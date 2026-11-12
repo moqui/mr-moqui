@@ -52,8 +52,8 @@ No `ArtifactGroupMember` row is re-pointed to a tools location: no BOSS group ho
 data only, set by the mounting root's `always-actions`, nulled by the tools roots.
 
 - `adminMount` (nulled in `T/screen/System.xml`, set in `B/screen/Admin.xml`): `routes` `{key: {url, idParameter,
-  parameters}}` keyed by the registrations' `ownerRoute` and `linkKey` values, framework keys defaulting to relative
-  paths; optional `hide` list.
+  parameters, plain}}` keyed by the registrations' `ownerRoute` and `linkKey` values, framework keys defaulting to
+  relative paths; optional `hide` list.
 - `reportPolicy` (beside `reportLinks`): `features {alert, share}`, `range`, `datasetIdPrefix`,
   `datasetScopeParameter`, `recipientPermissionId`, `reportEmailTemplateId`, `alertAudience`, `shareGroups`,
   `recipientCap`, `calendar`. New `reportLinks` keys `alerts`, `alertShared`, `wallDisplay`; `drill` gains a Tools
@@ -112,12 +112,15 @@ skills are changed; no aliases are kept.
 | Settings | InstanceSettings | | W (`BOSS_ADM_ORGANIZATIONS`; Settings has no area group) |
 | | Localization | create/update/delete any row | W |
 | Data | Backups | | W (`BOSS_ADM_DATA_BACKUPS`) |
-| | Exports, DataExport, Imports, ImportDetail | | S: transfer check, organization filter |
+| | Exports, DataExport | | D: Admin's own part was the permission check the services make (the record's A5) |
+| | Imports | | S: organization filter |
+| | ImportDetail | | S: the import read with the wizard's context |
 | Audit | AuditChanges | all audit rows (old AuditLog list) | D: `find#Changes` alone carries the scope (the record's A4) |
 
 Moving down: `B/template/AdminConnectionParts.xml` to `T/template/ConnectionParts.xml`; `getUserList` to
 `T/template/UserChoiceTransitions.xml`; `CapabilityServices.get#MatrixContext`/`apply#MatrixChanges` to
-`org.moqui.admin.AccessServices` (`AccessMatrix.js`); the generic parts of `Data.js` to `DataTransferExports.js`.
+`org.moqui.admin.AccessServices` (`AccessMatrix.js`); the generic parts of `Data.js` and `DataImport.js` to
+`DataTransferExports.js` and `DataTransferImports.js`.
 Deleted: `get#AppAccess`, `find#ToolLinks`, BOSS `AdminCalls.js`.
 
 Stays in BOSS: Admin Home, LogNote, Organizations, OrganizationDetail, the Users screens, ReferenceData, Devices (every
@@ -138,7 +141,7 @@ Each phase is a mr-moqui commit, then a mr-boss commit; both repositories work a
 | A2 Integrations, Mail | `System/Integrations/**`, `System/Protocols/**`, `ConnectionParts.xml`; delete `SystemMessage/**` | D/W/S per the table; mr-marble's SystemMessageDetail link | `AdminSystemMessages`, `AdminRelays`, `AdminMailQueue` |
 | A3 Access, Security | `System/Access/**`, `AccessMatrix.js`, `Security/Sessions` and the sign-in screens; delete `UserGroup/**`, `ActiveUsers` | area files; matrix services deleted | `F/test/AdminAccessCapabilities`; `AdminGroups`, `AdminSecurity`, `AdminCapabilities` |
 | A4 Settings, Audit | `System/Settings/**`, `System/Audit/**`; delete `Localization/**`, `AuditLog.xml` | wrappers | `AdminSettings`, `AdminAudit` |
-| A5 Data | `System/Data/**` | area file, S screens, Backups wrapper | `AdminExports`, `AdminImports` |
+| A5 Data | `System/Data/**`; five `DataTransferServices` operations | area file, two screens by location, two S screens, Backups wrapper; `DataServices` deleted | `F/test/AdminDataExport`, `AdminDataTransfer`; `AdminExports`, `AdminImports` |
 | A6 Registry (after track I; droppable) | `moqui.server.ReadinessProvider`, `RefreshOperation`, `SettingsEntry`; `org.moqui.admin.ReadinessServices`; framework seed rows; `get#SystemAttention` becomes the not-ready checks of `get#Readiness`; `Operations/Health`, `SupportSummary`, `Settings/SettingsHome` | entities and most of `Registry.js` deleted; the Mantle adapters become contract services the rows name (as People's `people.setup` is already); rows re-seeded | a framework registry spec; `SystemAttention`, `AdminRegistries`, `PeopleAccess` |
 
 ## Track I: Insights to Dashboards
@@ -473,3 +476,81 @@ the whole audit log and the conf link's text added; 25 s); `moqui test tools --a
 service files. Changed and not run: mr-boss's acceptance `AdminAuditUsable` (System's audit path among what stays closed
 to the audit reader; the record link present for the administrator and absent for the reader) and the sweeps' screen
 list comment in `AdminSpecLib.js` (`AdminTui`, `AdminServerStatic`).
+
+### A5 Data (Nov 11, 2026)
+
+Built: `System/Data.xml` (index 7, tabs, Imports first, Backups for a user who reads only the backups) with Admin's
+Imports, ImportDetail, Exports, DataExport and Backups, their BOSS references gone. The area itself links Tools' Data
+export, Data load and Snapshots (`//apps/tools/Data/Export`, `Load`, `Snapshots`) for a user whose own grant opens
+Tools: the links are the area file's, so an app that shows the screens under its root does not show them. No screen of
+the area has an instance administrator's part: there was no System screen over transfers or backups to fold in, and the
+entity data of the instance itself is Tools'. What Admin's `ironstone.admin.DataServices` and the list of
+`ironstone.shared.DataImportServices` did moves to the framework as five operations of
+`org.moqui.admin.DataTransferServices`, in the modules of the parts they read (`DataTransferExports.js`,
+`DataTransferImports.js`), granted in the `AdminTransferServices` group (`AdminConfigurationData.xml`) as the others
+are and described in `docs/dev/JS-Framework-Services.md` and `docs/security/Attack-Surface.md`: `find#ExportRuns` (a
+page of the export runs with their counts as text, and the targets), `get#ExportContext` (the export wizard's state),
+`run#ExportRequest` (a wizard's form values as `run#Export`'s request; `ADMIN_TRANSFER_RUN`), `find#ImportRuns` (a page
+of the import runs with their counts as text, and the targets) and `get#ImportDetail` (one import with its target's
+words, its scope by name and its rows as text). They answer an owner's place as the registration's key, never a URL.
+The screens link it by the mount's routes: a target's or a run's `ownerRoute`, with the run's own parameters, and a new
+key of the screens' own, `dataImport`, for the import wizard an app mounts (the targets started in it from Imports, an
+open import continued from ImportDetail); with no mount a target started in a wizard is only named. ImportDetail has
+its own `results` transition (`get#ImportReport`) in place of the wizard's. `AdminMount.js`'s framework routes gain
+`adminExports`, `adminImport` and `adminBackups`. The home's catalog has Imports, Exports and Backups in the
+Administration group. In mr-boss: Exports and DataExport are mounted by location and their files deleted; Backups
+includes the System screen at its own location (`BOSS_ADM_DATA_BACKUPS` names it) and takes in `runBackup`; Imports
+(the organization as a filter, `get#Choices`, and as the scope of `find#ImportRuns`; the column's name) and
+ImportDetail (the import read by `get#ImportContext`, the wizard's own read under Admin's mount, with the organization
+by its name where the target's owner names its organizations itself) are Admin's own screens around the System screens'
+named sections, ImportDetail taking in `retry` and `results`; `DataServices.xml` and `Data.js` are deleted, and
+`find#ImportRuns` is gone from `DataImportServices`; the two tables of owners' places (`Data.js`, `DataImport.js`) are
+`mountRoutes` entries, as plain routes, with `dataImport`, and `adminExports`, `adminImport` and `adminBackups` are
+dropped there (the framework's are the same relative paths). The shared wizard reads its "imported in its owner's own
+wizard" link from the mount's routes too (`get#ImportMount` answers them under Admin), so no second table is left.
+
+Findings:
+
+- F31. There is no check of a transfer as an Admin record. What `Data.js` and `DataImport.js` asked under Admin was
+  `get#SharedContext`'s `transferView` and `transferRun`, which are `ADMIN_TRANSFER_VIEW` and `ADMIN_TRANSFER_RUN` for a
+  user of Admin: the area's grant decides who opens the route and the framework's operations ask the two permissions
+  themselves, so Admin adds nothing to Exports and DataExport. No grant names them and they have no raw transition, so
+  they are mounted by location, not kept as screens of Admin's own as the plan's table had it (corrected). For the same
+  reason ImportDetail takes in the System screen's `retry` rather than keeping one that asks `get#ImportMount` first.
+- F32. `DataTransferExports.js` was already the framework's export module, so the wizard's and the list's projections
+  are added to it and to `DataTransferImports.js` rather than being a new module; they call the module's own functions,
+  and `run#ExportRequest` calls `run#Export` as a service, for the transaction of its own that the record and the audit
+  row of an export are written in.
+- F33. The sentence at the bound of one export named BOSS ("Larger volumes are not a BOSS export"); the framework's
+  says "Larger volumes are not exported here", with the rest as it was (ask a system administrator, who has tools for
+  volume), on DataExport and in a refusal's reason. Exports' two sentences that named Insights say whose a report is
+  and that a target exported in its owner's place is opened there; the owner's app is in the targets list.
+- F34. The static rule reads a transition's `service-call` elements, so ImportDetail's `results` calls
+  `get#ImportReport` by a `service-call` and sends the file in a script after it (the wizard's own calls it from a
+  script, which the rule would name as acting past the delegated services).
+- F35. A link to ImportDetail carried the Imports list's page (both declare `pageIndex`), and the link back carried the
+  import's target as the list's filter; each sends the other screen's value empty (F24). The Imports parts send the
+  find values of the screen showing them empty with an owner's link, an app's own among them (the organization).
+- F36. A field of an extended form-list is replaced whole by a field of the same name: Admin's Imports names the scope
+  column Organization so. ImportDetail's label for the scope is the target's registered `scopeLabel`, or what the
+  screen showing it sets.
+- F37. The reads of Backups, Exports, DataExport and Imports go through `AdminCalls.read`, so a refusal is shown as
+  its reason after the sentence that it is not available ("Backups are not available to you: ADMIN_BACKUP_VIEW is
+  required."); ImportDetail keeps the one sentence, since an import that is not the user's and one that is not there
+  are not told apart.
+- F38. No recorded agent replay names a screen or a service of this phase (not replayed).
+
+Tests: `./moq test tools --nobuild` (71 features, 3.3 s of 4 s; `AdminMounts` reads Data in its static rule: four
+transitions, all delegated, so at least 38 delegated and 56 raw; no post added); `./moq test framework --nobuild --spec
+AdminDataExport --spec AdminDataTransfer` (6 features, 0.3 s; the wizard's and the lists' rules moved here from
+mr-boss: one new feature of AdminDataExport over the spec's own target, and the import list and detail in
+AdminDataTransfer's last feature; `AdminBackups`, which this phase does not change, was run beside them five times and
+failed once, at its lock check, and passed the other four); `./moq test mr-boss --nobuild --spec AdminExports --spec AdminImports --spec
+ProductsImport --spec AdminAccess --spec AdminRegistries --spec AdminAudit` (AdminExports keeps the contact book's
+export through Admin's route, the status list and the three renders, and holds an owner's place as its key in the
+answer and as its URL in the page; AdminImports the same for an owner's run, a wizard target and the shared wizard's
+link); `cargo test -p moqui-host --test it tools_screens -- --ignored` (the area's Tools links, a seeded import's
+detail with its retry, the export wizard's review of the framework's own target, Exports and Backups; 26 s);
+`moqui lint --screens` with no parse failure and no flagged site in the changed screens, `moqui lint` of the two
+changed service files. Changed and not run: mr-boss's acceptance `AdminReviewWalk` (the export service's name) and the
+sweeps' screen list comment in `AdminSpecLib.js` (`AdminTui`, `AdminServerStatic`).

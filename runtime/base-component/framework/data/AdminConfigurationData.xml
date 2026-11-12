@@ -449,6 +449,12 @@ along with this software (see the LICENSE.md file). If not, see
         call#TargetService, as an import's steps are). Inheritable, so the record of an export is written as them. -->
     <moqui.security.ArtifactGroupMember artifactGroupId="AdminTransferServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
             artifactName="org\.moqui\.admin\.DataTransferServices\.(find#ExportTargets|get#ExportFields|preview#Export|run#Export)"/>
+    <!-- What the Data screens of the System app, and of an app that shows them, read and post (plans/Admin-Screens-Down.md
+        A5), in the same group: find#ExportRuns, get#ExportContext, find#ImportRuns and get#ImportDetail ask
+        ADMIN_TRANSFER_VIEW or ADMIN_TRANSFER_RUN and answer what the services above answer the caller; run#ExportRequest
+        asks ADMIN_TRANSFER_RUN besides what run#Export asks. -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="AdminTransferServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.admin\.DataTransferServices\.(find#ExportRuns|get#ExportContext|run#ExportRequest|find#ImportRuns|get#ImportDetail)"/>
     <!-- The framework's own export target (an app's are its own seed rows): message translations as the import of
         translations reads them, written here as delimited text. Its service checks ADMIN_SETTINGS_VIEW itself; the
         registration asks for the transfer permission besides. No field is restricted: a translation is what people see. -->

@@ -5,7 +5,9 @@
 // whatever is asked; the file is the service's answer to its caller, never stored or sent, bounded (a larger one refused
 // whole) and, written here, with a formula cell as text; an export keeps one record and one audit row (who, what, how many,
 // never the content), its repeat under an operation key no second record and an audit row of its own; the records are read by who exported and those the target's
-// view permission admits. The target is a copy of the framework's own, message translations, with one field restricted.
+// view permission admits; and what the administration screens read and post of them (find#ExportRuns, get#ExportContext,
+// run#ExportRequest; plans/Admin-Screens-Down.md A5) adds nothing: a wizard's form values are a request of the registration,
+// run with ADMIN_TRANSFER_RUN. The target is a copy of the framework's own, message translations, with one field restricted.
 // Run: ./moq test framework --spec AdminDataExport
 const T = "org.moqui.admin.DataTransferServices."
 const TARGET = "specDxTranslations"
@@ -314,6 +316,105 @@ feature(
             )
             assert(out.otherUser.deliveries.kindList.length === 3)
             assert(has(out.settings.error, /ADMIN_TRANSFER_VIEW is required/), out.settings.error)
+        }
+    }
+)
+
+feature(
+    "the export screens' reads add nothing: a wizard's form values are a request of the registration, run with ADMIN_TRANSFER_RUN",
+    {
+        when() {
+            const out = {}
+            // the target's one registered option, the locale, is the form's first slot
+            const request = {targetId: TARGET, option1: "zz_SP"}
+            out.runner = as(users.run, () => {
+                const found = {
+                    choose: invoke(T + "get#ExportContext"),
+                    importTarget: invoke(T + "get#ExportContext", {targetId: "messageTranslations"}),
+                    context: invoke(
+                        T + "get#ExportContext",
+                        Object.assign({review: true, fields: "original,localized"}, request)
+                    ),
+                    tooMany: invoke(T + "get#ExportContext", {targetId: TARGET, option1: "zz_SQ", review: true}),
+                    file: invoke(T + "run#ExportRequest", Object.assign({fields: "original,locale,localized"}, request)),
+                    tooManyFile: invoke(T + "run#ExportRequest", {targetId: TARGET, option1: "zz_SQ"}),
+                    unregistered: invoke(T + "run#ExportRequest", Object.assign({fields: "original,userId"}, request))
+                }
+                found.list = invoke(T + "find#ExportRuns", {targetId: TARGET})
+                return found
+            })
+            out.full = as(users.full, () => invoke(T + "get#ExportContext", request))
+            // the transfer view without the run permission, and the owner's permission without either
+            out.view = as(users.view, () => ({
+                context: invoke(T + "get#ExportContext", Object.assign({review: true}, request)),
+                run: invoke(T + "run#ExportRequest", request),
+                list: invoke(T + "find#ExportRuns")
+            }))
+            out.settings = as(users.settings, () => ({
+                context: invoke(T + "get#ExportContext", request),
+                run: invoke(T + "run#ExportRequest", request),
+                list: invoke(T + "find#ExportRuns")
+            }))
+            return out
+        },
+        then(out) {
+            const runner = out.runner
+            // the catalog: the targets exported here to choose from, and an id that is no export target is no target
+            assert(runner.choose.hasTarget === false && runner.choose.canRun === true, runner.choose.error)
+            assert(runner.choose.targetOptions.some(option => option.value === TARGET && option.label === "Message translations"))
+            assert(runner.importTarget.hasTarget === false && runner.importTarget.exportTarget == null, runner.importTarget.error)
+            // the form: the registered option as a slot with the value given, the fields the caller may read to choose from,
+            // the one they may not read named and never selected, whatever was asked
+            const context = runner.context
+            assert(context.hasTarget === true && context.slotList.length === 1, context.error)
+            assert(
+                context.slotList[0].value === "zz_SP" && context.slotList[0].isChoice === false && context.slotList[0].slot === 1
+            )
+            assert(
+                context.fieldOptions.map(option => option.value).join() === "original,locale" &&
+                    context.fieldOptions[0].label === "Original (always)",
+                JSON.stringify(context.fieldOptions)
+            )
+            assert(context.deniedFieldText === "Translation" && context.selectedFields.join() === "original,locale")
+            assert(!JSON.stringify(context).includes(SECRET) && !JSON.stringify(context).includes("Services"))
+            // the review is preview#Export of that request, with a key for its export; past the bounds it says where volume goes
+            assert(context.preview.rowCount === 2 && has(context.operationKey, /^x-/) && !context.previewRefusal)
+            assert(
+                runner.tooMany.preview == null &&
+                    runner.tooMany.operationKey == null &&
+                    has(runner.tooMany.previewRefusal, /Larger volumes are not exported here/),
+                runner.tooMany.previewRefusal
+            )
+            assert(out.full.fieldOptions.map(option => option.value).join() === "original,locale,localized", out.full.error)
+            assert(out.full.deniedFieldText === "")
+            // the export is run#Export of the request: the field the caller may not read left out, a refusal with its reason
+            assert(runner.file.exported === true && runner.file.rowCount === 2, runner.file.error || runner.file.reason)
+            assert(runner.file.omittedFieldList.map(field => field.name).join() === "localized")
+            assert(
+                !runner.file.fileText.includes("Spec export secret words") && runner.file.fileText.includes('"Original","Locale"')
+            )
+            assert(
+                runner.tooManyFile.refused === true &&
+                    runner.tooManyFile.reasonCode === "TOO_MANY_ROWS" &&
+                    has(runner.tooManyFile.reason, /Larger volumes are not exported here/) &&
+                    !runner.tooManyFile.fileText
+            )
+            assert(has(runner.unregistered.error, /has no field/) && !runner.unregistered.fileText, runner.unregistered.error)
+            // the list: the export made, with its counts as text, and the targets with their owner's key, never a URL
+            const listed = runner.list.transferList.find(row => row.runId === runner.file.transferId)
+            assert(listed && listed.countText === "2 rows · 2 fields", listed?.countText || runner.list.error)
+            assert(runner.list.canRun === true && runner.list.pageSize === 50)
+            const target = runner.list.targetList.find(found => found.targetId === TARGET)
+            assert(target.ownerRoute === "adminLocalization" && !JSON.stringify(runner.list.targetList).includes("/"))
+            // without the run permission the form is read and nothing is previewed or exported; without the transfer
+            // permissions nothing is read
+            assert(out.view.context.hasTarget === true && out.view.context.canRun === false, out.view.context.error)
+            assert(out.view.context.preview == null && out.view.context.fieldOptions.length === 0)
+            assert(has(out.view.run.error, /ADMIN_TRANSFER_RUN is required/), out.view.run.error)
+            assert(out.view.list.error === "" && out.view.list.canRun === false, out.view.list.error)
+            assert(has(out.settings.context.error, /ADMIN_TRANSFER_VIEW is required/), out.settings.context.error)
+            assert(has(out.settings.list.error, /ADMIN_TRANSFER_VIEW is required/), out.settings.list.error)
+            assert(has(out.settings.run.error, /ADMIN_TRANSFER_RUN is required/), out.settings.run.error)
         }
     }
 )

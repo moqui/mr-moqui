@@ -25,13 +25,14 @@ const systemLocation = "component://tools/screen/System.xml"
 // <Root>/<Area>/<Screen> alike); each phase of the move adds the keys its screens link. The keys are the linkKey values of
 // the framework's audit projections (framework/data/AdminAuditData.xml), which the changes list links by and the other
 // screens use for the same places: a member's or a session's user (adminUser, System's own account page), a run's item
-// that is a system message (adminSystemMessage). A key with no id parameter opens a list or a screen of one record. The
-// registered keys with no route here have no System screen: the exports, imports and backups (adminExports,
-// adminImport, adminBackups) and what only an app has (invitations, lifecycle operations, organizations), which a mount
-// gives. The screens also ask for places that are not the framework's, linked only where a mount gives the route:
+// that is a system message (adminSystemMessage), the framework's own transfer targets' owner (adminLocalization, their
+// ownerRoute). A key with no id parameter opens a list or a screen of one record. The registered keys with no route here
+// are what only an app has (invitations, lifecycle operations, organizations, an app's transfer targets' owners), which a
+// mount gives. The screens also ask for places that are not the framework's, linked only where a mount gives the route:
 // mailAccount (a mail account's own screens: the mail queue's owner link, the protocols' home), voice (the phone
-// system's own screens: the protocols' home) and supportSummary (a readiness and support summary: the server
-// configuration).
+// system's own screens: the protocols' home), supportSummary (a readiness and support summary: the server
+// configuration) and dataImport (the import wizard an app mounts: the import targets started in it and an open import
+// continued in it, by targetId).
 const frameworkRoutes = {
     adminUser: {url: "../../Security/UserAccount/UserAccountDetail", idParameter: "userId"},
     adminGroup: {url: "../../Access/GroupDetail", idParameter: "userGroupId"},
@@ -43,7 +44,10 @@ const frameworkRoutes = {
     adminMailRelay: {url: "../../Protocols/MailRelays"},
     adminSystemMessage: {url: "../../Integrations/SystemMessageDetail", idParameter: "systemMessageId"},
     adminJob: {url: "../../Operations/JobDetail", idParameter: "jobName"},
-    adminTopic: {url: "../../Operations/TopicDetail", idParameter: "topic"}
+    adminTopic: {url: "../../Operations/TopicDetail", idParameter: "topic"},
+    adminExports: {url: "../../Data/Exports"},
+    adminImport: {url: "../../Data/Imports"},
+    adminBackups: {url: "../../Data/Backups"}
 }
 
 // The mount's map, or null. A value that is not a map (a request parameter under a root that set none) is a mount with

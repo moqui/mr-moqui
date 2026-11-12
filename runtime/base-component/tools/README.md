@@ -67,7 +67,12 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
   (IdentityProviderDetail) and Sessions. **Settings** (`System/Settings/`): the Instance settings (the registered
   preferences, and where each value of the configuration comes from) and Localization (the translations of messages and
   of registered labels). **Operations** (`System/Operations/`): Jobs, a job (JobDetail), Job runs, a run
-  (JobRunDetail), Notification topics and a topic (TopicDetail). **Audit** (`System/Audit/`): Changes (AuditChanges: the
+  (JobRunDetail), Notification topics and a topic (TopicDetail). **Data** (`System/Data/`): Imports (the runs of every
+  registered import target) and an import (ImportDetail: its rows, the result files, the retry of failed rows), Exports
+  (the exports made, and the deliveries of scheduled reports and alerts as status), Export data (DataExport: the export
+  of a registered format) and Backups, over `DataTransferServices` and `BackupServices`; the area itself links Tools'
+  Data export, Data load and Snapshots for a user who opens Tools, and an import is staged and applied in a wizard an
+  app mounts (the `dataImport` route), not here. **Audit** (`System/Audit/`): Changes (AuditChanges: the
   audit log's registered projections, `AuditServices.find#Changes`, each record linked to its place by the mount's
   routes). **Integrations** (`System/Integrations/`): Connections and a connection (ConnectionDetail: a
   gateway, a remote system, a mail sign-in provider, a printer), Message types and a type (MessageTypeDetail), System
@@ -129,7 +134,7 @@ one. The map is data only, never authority:
 
 | Key | What it does |
 |---|---|
-| `routes` | `{key: {url, idParameter, parameters, plain}}`: where a link to a record goes under the mount. The keys are the registrations' own (a recovery descriptor's or a transfer target's `ownerRoute`, a provider's or an audit projection's `linkKey`), one key for a screen, and the screens' own for a place that is not the framework's (`mailAccount`, `voice`, `supportSummary`). The framework's records have routes by default, to the System screens beside the one shown (`frameworkRoutes` in `template/AdminMount.js`: `adminUser`, `adminGroup`, `adminIdentityProvider`, `adminInstanceSettings`, `adminLocalization`, `adminMessageType`, `adminConnection`, `adminMailRelay`, `adminSystemMessage`, `adminJob`, `adminTopic`); a mount adds its apps' routes and may replace a framework one (`null` removes it). A route's `url` is a screen path relative to a screen of an area (`<Root>/<Area>/<Screen>`, where every such screen is shown), so it holds under any root, and the link widget disables it for a user its screen does not open to; with `plain: true` it is a URL used as it is, for another app's page (`/qapps/<App>/...`). A key with no route is no link |
+| `routes` | `{key: {url, idParameter, parameters, plain}}`: where a link to a record goes under the mount. The keys are the registrations' own (a recovery descriptor's or a transfer target's `ownerRoute`, a provider's or an audit projection's `linkKey`), one key for a screen, and the screens' own for a place that is not the framework's (`mailAccount`, `voice`, `supportSummary`, `dataImport`: the import wizard, by `targetId`). The framework's records have routes by default, to the System screens beside the one shown (`frameworkRoutes` in `template/AdminMount.js`: `adminUser`, `adminGroup`, `adminIdentityProvider`, `adminInstanceSettings`, `adminLocalization`, `adminMessageType`, `adminConnection`, `adminMailRelay`, `adminSystemMessage`, `adminJob`, `adminTopic`, `adminExports`, `adminImport`, `adminBackups`); a mount adds its apps' routes and may replace a framework one (`null` removes it). A route's `url` is a screen path relative to a screen of an area (`<Root>/<Area>/<Screen>`, where every such screen is shown), so it holds under any root, and the link widget disables it for a user its screen does not open to; with `plain: true` it is a URL used as it is, for another app's page (`/qapps/<App>/...`). A key with no route is no link |
 | `hide` | The part keys the mount leaves out |
 
 `template/AdminMount.js` answers where a screen stands: `state()` gives `{mounted, raw, routes, hidden}` in a screen's
@@ -154,7 +159,8 @@ So an app reuses a System screen in one of three ways:
   transition the app takes in. A raw transition that is not taken in does not exist on the app's route. This is the
   way for a screen with raw parts and for one a grant of the app names.
 - **A screen of the app's own**, with its own actions and transitions and the System screen's named sections by
-  `section-include`, where the app adds data of its own (an organization scope).
+  `section-include`, where the app adds data of its own (an organization scope). A screen made for it says in its
+  header comment which value the app sets and which sections it includes (Connections, Sessions, Imports, ImportDetail).
 
 Every transition of a raw part carries `AdminMount.js`'s `raw()` as its `condition`. No group of the app is granted a
 System screen's location: a grant there would open it under `/apps/system` too. The regression spec is

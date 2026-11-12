@@ -9,7 +9,8 @@
 // that mounts the screen by location, and runs under System, as other areas' do (GroupDetail's updateUserGroup,
 // Localization's createLocalizedMessage). And the rule that keeps it so, read from the screens' sources at no render's
 // cost: every transition of an area's screens that acts either calls only org.moqui.admin services, which check the
-// delegated permissions themselves, or carries raw() as its condition.
+// delegated permissions themselves, or carries raw() as its condition (the Data area has no raw part: its four
+// transitions are all of the first kind).
 // Run: ./moq test tools --spec AdminMounts
 const mount = "component://tools/test/screen/AdminMount.xml"
 const probe = "component://tools/test/screen/AdminMount/Probe.xml"
@@ -25,7 +26,7 @@ const MESSAGE = "moqui.basic.LocalizedMessage"
 const original = "AdminMountsSpec message"
 // The areas of System that another app may show under its root (screen/System/<Area>/): each phase of
 // plans/Admin-Screens-Down.md adds its own.
-const AREAS = ["Operations", "Integrations", "Protocols", "Access", "Security", "Settings", "Audit"]
+const AREAS = ["Operations", "Integrations", "Protocols", "Access", "Security", "Settings", "Data", "Audit"]
 // What an area's directory holds that the rule does not read, as a path under screen/System (a screen and the screens below
 // it), with why.
 const NOT_AREA_SCREENS = {
@@ -346,8 +347,9 @@ feature("every acting transition of an area's screens calls only org.moqui.admin
         // always-allow it would run for everyone the app lets into the area
         problems == ""
         // the rule read something of each kind: JobDetail's saveJob and updateJob among them, GroupDetail's storeGroup and
-        // updateUserGroup, and Localization's storeMessage and createLocalizedMessage
-        delegated >= 34
+        // updateUserGroup, Localization's storeMessage and createLocalizedMessage, and Data's four, all delegated (Backups'
+        // runBackup, DataExport's download, ImportDetail's retry and results)
+        delegated >= 38
         raw >= 56
     }
 })

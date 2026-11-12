@@ -4,8 +4,11 @@
 // registration without its contract is left out; an owner's service runs as the caller); a file that is not text, or has a
 // column named like a secret, is refused whole; a batch is read by who staged it and those its target admits; a stale
 // preview is refused; an identical retry answers the first result and changed content under its key is refused; each row is
-// on its own, and only failed rows are retried: an applied row is never applied again. The target is the framework's own,
-// message translations, whose rows are saved by store#LocalizedMessage's rules.
+// on its own, and only failed rows are retried: an applied row is never applied again; and what the administration screens
+// read of an import (find#ImportRuns, get#ImportDetail; plans/Admin-Screens-Down.md A5) is the same answers put together:
+// the run with its counts as text and its owner's key, the import's rows as text, a retry there only with
+// ADMIN_TRANSFER_RUN. The target is the framework's own, message translations, whose rows are saved by
+// store#LocalizedMessage's rules.
 // Run: ./moq test framework --spec AdminDataTransfer
 const T = "org.moqui.admin.DataTransferServices."
 const TARGET = "messageTranslations"
@@ -394,7 +397,15 @@ feature("each row is on its own and only failed rows are retried: an applied row
             })
             out.none = step("retry#ImportItems", {operationKey: out.staged.operationKey})
             out.after = step("get#Transfer", {operationKey: out.staged.operationKey})
+            // what the administration screens read: the run in the list, the import with its rows that need attention
+            out.listed = invoke(T + "find#ImportRuns", {targetId: TARGET})
+            out.detail = step("get#ImportDetail", {operationKey: out.staged.operationKey, errorsOnly: true})
         })
+        out.viewDetail = as(users.view, () => step("get#ImportDetail", {operationKey: out.staged.operationKey}))
+        out.settingsRead = as(users.settings, () => ({
+            list: invoke(T + "find#ImportRuns"),
+            detail: step("get#ImportDetail", {operationKey: out.staged.operationKey})
+        }))
         out.clean = invoke(T + "clean#TransferBatches")
         out.view = as(users.view, () => step("retry#ImportItems", {operationKey: out.staged.operationKey, itemSeqIdList: [1]}))
         // who staged it reads it only while they hold the target's permissions
@@ -455,5 +466,25 @@ feature("each row is on its own and only failed rows are retried: an applied row
         // retention leaves a batch within its days as it is
         r.clean.removedCount == 0
         r.clean.purgedCount == 0
+        // the screens' reads: the run with its counts as one text and its owner's key, never a URL; the import with its
+        // target's words and its rows as text; a retry there only with the run permission, and nothing without the view
+        const listed = Array.from(r.listed.transferList).find(run => run.runId === r.staged.operationKey)
+        listed.countText == "6 rows · 2 applied · 4 need attention"
+        listed.ownerRoute == "adminLocalization"
+        listed.detail == true
+        r.listed.canRun == true
+        Array.from(r.listed.targetList).some(target => target.targetId === TARGET && target.wizardHere === true)
+        !JSON.stringify(r.listed).includes("Services.")
+        r.detail.importTarget.title == "Message translations"
+        r.detail.state == "partial"
+        r.detail.canEdit == true
+        r.detail.shownCount == 4
+        has(rowOf(r.detail, 3).sourceText, /original: Spec transfer bye; locale: es; localized: Adios otra vez/)
+        r.detail.scopeTitle == null
+        !!r.detail.timeZone
+        r.viewDetail.state == "partial"
+        r.viewDetail.canEdit == false
+        has(r.settingsRead.list.error, /ADMIN_TRANSFER_VIEW is required/)
+        has(r.settingsRead.detail.error, /ADMIN_TRANSFER_VIEW is required/)
     }
 })

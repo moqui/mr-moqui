@@ -43,6 +43,11 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.security.sso.AuthFlow authFlowId="GATE_FLOW" authFlowTypeEnumId="AftOauth" description="Gate sign-in" disabled="Y"/>
     <moqui.basic.email.EmailServer emailServerId="GATE_RELAY" smtpHost="smtp.gate.example.test" smtpPort="465" smtpSsl="Y"/>
     <moqui.entity.sync.EntitySync entitySyncId="GATE_SYNC" description="Gate sync" statusId="EsNotStarted" forPull="N"/>
+    <moqui.server.TransferBatch transferId="GATE_IMPORT" targetId="messageTranslations" userId="EX_JOHN_DOE" state="partial"
+        filename="gate-translations.csv" fileHash="0000" rowCount="1" stagedDate="2026-01-02 03:04:05"
+        requestJson="{&quot;headers&quot;:[&quot;original&quot;,&quot;locale&quot;,&quot;localized&quot;]}"/>
+    <moqui.server.TransferItem transferId="GATE_IMPORT" itemSeqId="1" rowNumber="2" result="failed" errorMessage="Gate row reason"
+        sourceJson="{&quot;sourceValues&quot;:{&quot;original&quot;:&quot;Gate original&quot;}}"/>
     <moqui.resource.GitRepository repositoryId="GATE_GIT" description="Gate git" repositoryKind="db"/>
     <moqui.server.Visit visitId="GATE_VISIT" userId="EX_JOHN_DOE" clientIpAddress="127.0.0.1" fromDate="2026-01-02 03:04:05"/>
     <moqui.server.instance.AppInstance appInstanceId="GATE_AI" instanceName="gate" hostName="gate.example"/>
@@ -88,6 +93,9 @@ const DETAILS: &[&str] = &[
     "/System/Security/Sessions?visits=Y",
     // and of the changes: the whole audit log, here an account's rows
     "/System/Audit/AuditChanges?log=Y&changedEntityName=moqui.security.UserAccount",
+    // the Data area: an import kept by the framework, and the export wizard at its review
+    "/System/Data/ImportDetail?targetId=messageTranslations&operationKey=GATE_IMPORT",
+    "/System/Data/DataExport?targetId=messageTranslationsExport&option1=es&review=true",
     "/System/Integrations/MessageTypeDetail?systemMessageTypeId=GateSmsg",
     "/System/Integrations/ConnectionDetail?adapterKey=remote&connectionKey=GateRemote",
     "/System/Integrations/SystemMessageDetail?systemMessageId=GATE_MSG",
@@ -422,6 +430,56 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         &john,
         "/System/Settings/InstanceSettings",
         &["Instance preferences", "Open the conf"],
+    );
+    // The Data area: Tools' own data screens are linked for a user who opens Tools by their own grant; an import
+    // target started in a wizard is only named where no mount gives the wizard; a seeded import shows its rows with
+    // the retry and no wizard link; the export wizard reviews the framework's own target.
+    assert_page(
+        address,
+        &john,
+        "/System/Data/Imports?fromDate=2026-01-01&thruDate=2026-02-01",
+        &[
+            "Entity data of the instance itself, in Tools",
+            "/apps/tools/Data/Load",
+            "/apps/tools/Data/Snapshots",
+            "Message translations",
+            "The import wizard, in an app that has it",
+            "gate-translations.csv",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Data/ImportDetail?targetId=messageTranslations&operationKey=GATE_IMPORT",
+        &[
+            "gate-translations.csv",
+            "Partly applied",
+            "original: Gate original",
+            "Gate row reason",
+            "Retry failed rows",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Data/DataExport?targetId=messageTranslationsExport&option1=es&review=true",
+        &[
+            "3. Review and export",
+            "Locale (empty for every locale): es",
+            "in one export)",
+        ],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Data/Exports",
+        &["Export targets", "Message translations", "/apps/tools/Data/Export"],
+    );
+    assert_page(
+        address,
+        &john,
+        "/System/Data/Backups",
+        &["Not included in an archive", "Archives"],
     );
     assert_page(
         address,

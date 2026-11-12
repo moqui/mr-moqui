@@ -395,6 +395,76 @@ function findTransfers(p) {
     }
 }
 
+// ===== the administration screens' projections =====
+// What the Imports and ImportDetail screens show (tools screen/System/Data, and the apps that show them under their own
+// root): the reads above put together for a page. They add nothing a registration does not have; an owner's place is the
+// registration's key (ownerRoute) with the owner's parameters, which the screen showing it resolves (tools
+// template/AdminMount.js). Both need ADMIN_TRANSFER_VIEW or ADMIN_TRANSFER_RUN, besides what an import asks of its reader.
+const joined = parts => parts.filter(Boolean).join(" · ")
+// find#ImportRuns: the Imports screen: the runs of every target the caller may view (a page of find#Transfers, each with its
+// counts as text) and the registered import targets.
+function findImportRuns(p) {
+    const targets = findImportTargets()
+    const found = findTransfers({
+        targetId: text(p.targetId) || null,
+        scopeKey: text(p.scopeKey) || null,
+        state: text(p.state) || null,
+        fromDate: p.fromDate || null,
+        thruDate: p.thruDate || null,
+        pageIndex: p.pageIndex || 0,
+        pageSize: 50
+    })
+    return Object.assign({}, found, {
+        canRun: targets.canRun,
+        targetList: targets.targetList,
+        transferList: found.transferList.map(run =>
+            Object.assign({}, run, {
+                countText: joined([
+                    run.rowCount != null ? run.rowCount + " rows" : null,
+                    run.appliedCount != null ? run.appliedCount + " applied" : null,
+                    run.errorCount ? run.errorCount + " need attention" : null,
+                    run.skippedCount ? run.skippedCount + " skipped" : null
+                ])
+            })
+        )
+    })
+}
+// get#ImportDetail: the ImportDetail screen: one import as get#Transfer answers it for this caller, with its target's words,
+// its scope by name where the target's scope service gives the caller one, each row's source and values as text, the number
+// of failed rows and whether the caller may retry them here (canEdit: the import's own answer, with ADMIN_TRANSFER_RUN).
+function getImportDetail(p) {
+    lib.requireView()
+    const targetId = text(p.targetId)
+    const target = getImportTarget({targetId}).target
+    const found = getTransfer({targetId, operationKey: p.operationKey, pageIndex: p.pageIndex, errorsOnly: p.errorsOnly === true})
+    if (ec.message.hasError() || !found.state) return {}
+    const columns = lib.list(found.columns)
+    const importRows = lib.list(found.importRows).map(row =>
+        Object.assign({}, row, {
+            sourceText: Object.entries(plain(row.sourceValues))
+                .map(([name, value]) => name + ": " + value)
+                .join("; "),
+            proposedText: columns
+                .filter(column => row.values && Object.hasOwn(row.values, column.name))
+                .map(column => column.label + ": " + (row.values[column.name] ?? "(clear)"))
+                .join("; "),
+            warningText: lib.list(row.warnings).join("; ")
+        })
+    )
+    const scopeKey = text(found.organizationPartyId)
+    return Object.assign({}, found, {
+        targetId,
+        importTarget: target,
+        scopeKey: scopeKey || null,
+        scopeTitle: lib.list(target.scopeList).find(scope => scope.scopeKey === scopeKey)?.title || scopeKey || null,
+        importRows,
+        failedCount: found.failedCount ?? importRows.filter(row => ["failed", "stale"].includes(row.result)).length,
+        canEdit: found.canEdit === true && ec.user.hasPermission(lib.RUN),
+        // the server's time zone, in which the Imports list shows an import's times
+        timeZone: zone()
+    })
+}
+
 const operations = {
     findImportTargets,
     getImportTarget,
@@ -407,6 +477,8 @@ const operations = {
     getImportSample,
     retryImportItems,
     findTransfers,
+    findImportRuns,
+    getImportDetail,
     callTargetService: lib.callTargetService,
     applyTransferItem: batches.applyItem,
     failTransferItem: batches.failItem,

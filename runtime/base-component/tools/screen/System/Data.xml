@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Data (plans/Admin-Screens-Down.md): business data in and out of the instance by registered targets, and its backups.
+    Imports (the runs of every registered import target) and ImportDetail (one import's summary and results, with the
+    retry of failed rows), Exports (the exports made and the deliveries of scheduled reports and alerts as status) and
+    DataExport (the export of a registered format), over org.moqui.admin.DataTransferServices, which check
+    ADMIN_TRANSFER_VIEW, ADMIN_TRANSFER_RUN, each target's own permissions and scope, and call a target's owner as the
+    user; and Backups (what is backed up, the archives kept, a backup asked for now) over
+    org.moqui.admin.BackupServices, which check ADMIN_BACKUP_VIEW and ADMIN_BACKUP_RUN. Its screens are the files of
+    Data/, with the sibling names an app that shows them under its own root uses (README, "Mounting the administration
+    screens"), so their links to each other are relative. An import is staged, mapped and applied in a wizard an app
+    mounts (the mount's dataImport route); there is none here.
+    The entity data of the instance itself (any entity, data documents, whole snapshots) is not a registered target's:
+    it is Tools' Data export, Data load and Snapshots, linked here for a user who opens Tools by their own grant. The
+    links are this area's own, so an app that shows the screens under its root does not show them. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Data" default-menu-index="7" default-menu-group="Administration" menu-image="sym_o_swap_vert" menu-image-type="icon">
+    <subscreens default-item="Imports">
+        <!-- a user who reads only the backups starts at them -->
+        <conditional-default condition="ec.user.userId &amp;&amp; !ec.user.hasPermission('ADMIN_TRANSFER_VIEW') &amp;&amp; !ec.user.hasPermission('ADMIN_TRANSFER_RUN') &amp;&amp; ec.user.hasPermission('ADMIN_BACKUP_VIEW')"
+                item="Backups"/>
+    </subscreens>
+    <widgets>
+        <!-- asked of the user's own authorization records, as the other links to a screen only System or Tools has are
+            (template/AdminMount.js): in the section's condition, since a tab rendered on its own does not run this
+            screen's actions -->
+        <section name="ToolsDataLinks" condition="ec.artifactExecution.isPermittedOwn('component://tools/screen/Tools.xml')">
+            <widgets>
+                <container style="row items-center q-gutter-sm q-mb-sm">
+                    <label text="Entity data of the instance itself, in Tools:" type="span" style="text-caption m-muted"/>
+                    <link url="//apps/tools/Data/Export" text="Data export" link-type="anchor" icon="sym_o_file_download"/>
+                    <link url="//apps/tools/Data/Load" text="Data load" link-type="anchor" icon="sym_o_upload_file"/>
+                    <link url="//apps/tools/Data/Snapshots" text="Snapshots" link-type="anchor" icon="sym_o_photo_camera"/>
+                </container>
+            </widgets>
+        </section>
+        <subscreens-panel id="SystemDataPanel" type="tab"/>
+    </widgets>
+</screen>

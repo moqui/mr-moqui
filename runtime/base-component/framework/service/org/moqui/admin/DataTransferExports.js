@@ -680,7 +680,158 @@ function findExportTransfers(p) {
     }
 }
 
-const operations = {findExportTargets, getExportFields, previewExport, runExport}
+// ===== the administration screens' projections =====
+// What the Exports and DataExport screens show and post (tools screen/System/Data, and the apps that show them under their
+// own root): the reads above put together for a page and a wizard's form values turned into a request. They add no field,
+// option or right a registration does not have; an owner's place is the registration's key (ownerRoute), which the screen
+// showing it resolves (tools template/AdminMount.js). A wizard's export needs ADMIN_TRANSFER_RUN besides what the target
+// and its owner ask.
+// An export here is bounded (the rows and bytes of one file): what is said where a user meets the bound.
+const volumeNote =
+    "Larger volumes are not exported here: ask a system administrator, who has tools for volume (Tools' ETL, snapshots and data export)."
+const bounded = out => ["TOO_MANY_ROWS", "FILE_TOO_LARGE"].includes(text(out?.reasonCode))
+const refusalText = out => text(out?.reason) + (bounded(out) ? " " + volumeNote : "")
+// The option slots a wizard form shows (three: no registered target has more; a further option keeps its default).
+const optionSlots = 3
+// The selection a request carries, by the target's registered options: option1 to option3 are their values in order.
+function selectionOf(target, p) {
+    const selection = {}
+    lib.list(target.optionList)
+        .slice(0, optionSlots)
+        .forEach((option, index) => {
+            const value = p["option" + (index + 1)]
+            if (value != null && value !== "") selection[option.name] = String(value)
+        })
+    return selection
+}
+const joined = parts => parts.filter(Boolean).join(" · ")
+// What a run counted, as one text: an export's rows and fields, a delivery's recipients and outcomes.
+const countText = run =>
+    run.kind === "export"
+        ? joined([run.rowCount != null ? run.rowCount + " rows" : null, run.fieldCount ? run.fieldCount + " fields" : null])
+        : joined([
+              run.recipientCount != null ? run.recipientCount + " recipients" : null,
+              run.sentCount + " sent",
+              run.failedCount ? run.failedCount + " failed" : null,
+              run.uncertainCount ? run.uncertainCount + " unknown" : null,
+              run.skippedCount ? run.skippedCount + " skipped" : null
+          ])
+
+// find#ExportRuns: the Exports screen: the exports made and the deliveries of scheduled reports and alerts as status (a
+// page of find#Transfers with direction export, each with its counts as text), and the registered export targets.
+function findExportRuns(p) {
+    const targets = findExportTargets()
+    const found = findExportTransfers({
+        kind: text(p.kind) || null,
+        targetId: text(p.targetId) || null,
+        state: text(p.state) || null,
+        fromDate: p.fromDate || null,
+        thruDate: p.thruDate || null,
+        pageIndex: p.pageIndex || 0,
+        pageSize: 50
+    })
+    return Object.assign({}, found, {
+        canRun: targets.canRun,
+        targetList: targets.targetList,
+        transferList: found.transferList.map(run => Object.assign({}, run, {countText: countText(run)}))
+    })
+}
+
+// get#ExportContext: the export wizard's state for a request: the targets exported here, the chosen target's scopes,
+// options and fields as get#ExportFields answers them for this user, and, when asked, the preview.
+function exportContext(p) {
+    const targets = findExportTargets()
+    const out = {
+        canRun: targets.canRun,
+        targetOptions: targets.targetList
+            .filter(target => target.exportHere)
+            .map(target => ({value: target.targetId, label: target.title})),
+        elsewhereList: targets.targetList.filter(target => !target.exportHere),
+        hasTarget: false,
+        exportTarget: null,
+        scopeOptions: [],
+        slotList: [],
+        fieldOptions: [],
+        deniedFieldText: "",
+        selectedFields: [],
+        preview: null,
+        previewRefusal: null,
+        operationKey: null
+    }
+    const targetId = text(p.targetId)
+    // an id that is no export target exported here is no target: the list is the catalog
+    if (!targetId || !out.targetOptions.some(option => option.value === targetId)) return out
+    const target = getExportFields({targetId}).target || {}
+    const selection = selectionOf(target, p)
+    const fields = lib.list(target.fieldList)
+    const asked = nameList(p.fields)
+    Object.assign(out, {
+        hasTarget: true,
+        exportTarget: target,
+        scopeOptions: lib.list(target.scopeList).map(scope => ({value: scope.scopeKey, label: scope.title})),
+        slotList: lib
+            .list(target.optionList)
+            .slice(0, optionSlots)
+            .map((option, index) => ({
+                slot: index + 1,
+                label: option.label,
+                isChoice: option.type === "option",
+                choices: lib.list(option.options).map(choice => ({value: choice.value, label: choice.label || choice.value})),
+                value: selection[option.name] ?? option.defaultValue ?? ""
+            })),
+        fieldOptions: fields
+            .filter(field => field.allowed)
+            .map(field => ({value: field.name, label: field.label + (field.required ? " (always)" : "")})),
+        deniedFieldText: fields
+            .filter(field => !field.allowed)
+            .map(field => field.label)
+            .join(", "),
+        selectedFields: asked.length
+            ? fields.filter(field => field.allowed && (field.required || asked.includes(field.name))).map(field => field.name)
+            : fields.filter(field => field.selected).map(field => field.name)
+    })
+    if (!(p.review === true || p.review === "true") || !target.exportAllowed || !out.canRun) return out
+    const preview = previewExport({
+        targetId,
+        scopeKey: text(p.scopeKey) || null,
+        selection,
+        // only names the form offered: a field this user may not read is not asked for
+        fieldList: out.selectedFields
+    })
+    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+    if (preview.refused) out.previewRefusal = refusalText(preview)
+    else {
+        out.preview = preview
+        // one key for this review: a second press of Export makes the file again and keeps no second record
+        out.operationKey = "x-" + ec.user.randomString(24)
+    }
+    return out
+}
+
+// run#ExportRequest: the export of a wizard's request: the registered target's file for this user, or the reason it was
+// refused. The export is run#Export's, called as a service for its own transaction.
+function exportRequest(p) {
+    lib.signedIn()
+    if (!ec.user.hasPermission(lib.RUN)) throw new Error(lib.RUN + " is required")
+    const targetId = text(p.targetId)
+    const target = getExportFields({targetId}).target || {}
+    const out =
+        ec.service
+            .sync()
+            .name("org.moqui.admin.DataTransferServices.run#Export")
+            .parameters({
+                targetId,
+                scopeKey: text(p.scopeKey) || null,
+                selection: selectionOf(target, p),
+                fieldList: nameList(p.fields),
+                operationKey: text(p.operationKey) || null
+            })
+            .call() || {}
+    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+    return out.refused ? Object.assign({}, out, {reason: refusalText(out)}) : out
+}
+
+const operations = {findExportTargets, getExportFields, previewExport, runExport, findExportRuns, exportContext, exportRequest}
 ;({
     findExportTransfers,
     execute: (op, parameters) => {

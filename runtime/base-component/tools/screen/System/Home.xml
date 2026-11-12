@@ -330,6 +330,8 @@ along with this software (see the LICENSE.md file). If not, see
                 entry(administration, 'Operations/Topics', '', 'sym_o_notifications'),
                 entry(administration, 'Settings/InstanceSettings', L('Instance settings'), 'sym_o_tune'),
                 entry(administration, 'Settings/Localization', '', 'sym_o_translate'),
+                entry(administration, 'Data/Imports', '', 'sym_o_upload_file'), entry(administration, 'Data/Exports', '', 'sym_o_file_download'),
+                entry(administration, 'Data/Backups', '', 'sym_o_backup'),
                 entry(administration, 'Audit/AuditChanges', L('Audit changes'), 'sym_o_history_edu'), entry(administration, 'Visit'),
 
                 entry(monitor, 'Monitor/Services'), entry(monitor, 'Monitor/Traces'), entry(monitor, 'Monitor/Logs'), entry(monitor, 'Monitor/Errors'),
