@@ -58,8 +58,14 @@ agentSpec({
                 ;[1, 2, 3, 20, 40].forEach((days, index) => make("moqui.server.Visit", {
                     visitId: `AGENT_EVAL_V${index + 1}`, fromDate: daysAgo(days), initialRequest: `${visitPrefix}page${index + 1}`,
                     clientIpAddress: "10.0.0.7" }))
+                // recent visits of other pages, more than a page of the list: the count needs the filters, not a read of all
+                for (let n = 1; n <= 30; n++) make("moqui.server.Visit", { visitId: `AGENT_EVAL_VN${n}`, fromDate: daysAgo(n % 6 + 1),
+                    initialRequest: `/agent-eval-noise/page${n}`, clientIpAddress: "10.0.0.7" })
             },
-            cleanup() { for (let n = 1; n <= 5; n++) remove("moqui.server.Visit", "visitId", `AGENT_EVAL_V${n}`) },
+            cleanup() {
+                for (let n = 1; n <= 5; n++) remove("moqui.server.Visit", "visitId", `AGENT_EVAL_V${n}`)
+                for (let n = 1; n <= 30; n++) remove("moqui.server.Visit", "visitId", `AGENT_EVAL_VN${n}`)
+            },
             expect: {
                 called: [{ tool: "data", args: { path: /VisitList/ } }],
                 results: [{ tool: "data", result: /showing 3 of 3/ }, { tool: "data", result: /resolved:/ }],
@@ -291,7 +297,8 @@ agentSpec({
             expect: {
                 called: [{ tool: "ask", args: { options: [/sales/, /support/] } }],
                 questions: 1,
-                path: "/apps/system/Security/UserGroup/UserGroupDetail",
+                // the group's page in System or in BOSS Admin: either opens the one the user picked
+                path: /^\/apps\/(system\/Security\/UserGroup\/UserGroupDetail|Admin\/Access\/GroupDetail)$/,
                 parameters: { userGroupId: "AGENT_EVAL_ASK_B" },
                 noWrite: true,
             },

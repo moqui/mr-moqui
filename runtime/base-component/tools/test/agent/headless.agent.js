@@ -37,10 +37,10 @@ agentSpec({
                     fromDate: daysAgo(days), initialRequest: `/agent-eval-hl/page${index + 1}`, clientIpAddress: "10.0.0.11" }))
             },
             cleanup() { for (let n = 1; n <= 3; n++) remove("moqui.server.Visit", "visitId", `AGENT_EVAL_H${n}`) },
+            // the visit list read filtered, through data or the screen's own find
             expect: {
-                called: [{ tool: "data", args: { path: /VisitList/ } }],
                 notCalled: ["write_ui"],
-                results: [{ tool: "data", result: /showing 2 of 2/ }],
+                results: [/showing 2 of 2|Rows 1–2 of 2/],
                 answer: /\b(2|two)\b/i,
                 noInvented: true,
                 noWrite: true,

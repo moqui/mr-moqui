@@ -85,6 +85,26 @@ fn a_download_is_handed_to_the_callers_policy_once_and_reports_success_or_failur
         .contains("Could not save the file: test destination is read only"));
 }
 
+/// A name that a closed dialog's field and a list's find field share is not guessed: the find is not opened, and the
+/// answer says the dialog is to be opened first. A button named with the `…` it is drawn with opens its dialog.
+#[test]
+fn a_name_a_dialog_field_shares_with_a_find_field_opens_neither() {
+    let shared = DIALOG_FIND_JSON.replace(r#""title": "Description""#, r#""title": "Owner""#);
+    let mut agent = Agent::open(FakeLink::from_json(&[shared.as_str()]).unwrap(), "/groups", 100, 30);
+    let set = agent.set_field("Owner", "ann");
+    assert!(!set.ok, "{}", set.text);
+    assert!(set.text.contains("overlay none"), "the find stays closed: {}", set.text);
+    assert!(set.text.contains("open it first with do \"New Group\""), "{}", set.text);
+    // a find's pattern is a find's: it opens the find, whatever a dialog shares the name
+    let mut finding = Agent::open(FakeLink::from_json(&[shared.as_str()]).unwrap(), "/groups", 100, 30);
+    let pattern = finding.set_field("Owner", "ann%");
+    assert!(pattern.ok && pattern.text.contains("overlay find"), "{}", pattern.text);
+    let opened = agent.run("do New Group…");
+    assert!(opened.ok, "{}", opened.text);
+    assert!(agent.set_field("Owner", "ann").ok);
+    assert_eq!(agent.session().buffer("NewGroup.description"), "ann");
+}
+
 /// The text of a list row (its id) names the row: `do` moves to it and opens it, as `find` and Enter do.
 #[test]
 fn a_rows_text_opens_the_row() {

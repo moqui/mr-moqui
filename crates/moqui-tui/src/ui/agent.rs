@@ -402,7 +402,7 @@ impl<L: ScreenLink> Agent<L> {
             self.set_login(&format!("{element} {value}"))
         } else {
             // a find field of a list whose find is closed: open it first, as a person does before typing in it
-            if let Some(list) = self.closed_find_of(element.trim()) {
+            if let Some(list) = self.closed_find_of(element.trim(), value) {
                 let _ = self.open_find(&list);
             }
             self.resolve_one(element.trim())
@@ -412,8 +412,9 @@ impl<L: ScreenLink> Agent<L> {
         self.answer(result, self.json)
     }
 
-    /// The list whose find holds the field `name` names (its label or id), when that find is closed.
-    fn closed_find_of(&self, name: &str) -> Option<String> {
+    /// The list whose find holds the field `name` names (its label or id), when that find is closed. A closed dialog's
+    /// field of the same name is as likely meant, unless `value` is a find's pattern (`john%`, `%acme%`).
+    fn closed_find_of(&self, name: &str, value: &str) -> Option<String> {
         let wanted = name.trim().to_lowercase();
         if wanted.is_empty() || !matches!(self.named(name), Named::None) {
             return None;
@@ -423,13 +424,25 @@ impl<L: ScreenLink> Agent<L> {
             _ => None,
         };
         let index = self.session().index();
-        index.order.iter().find_map(|item| {
-            let named = self.label(item).trim_end_matches('…').trim().to_lowercase() == wanted
-                || item.key.to_lowercase() == wanted;
-            match &item.scope {
-                Scope::Find(list) if named && open.as_deref() != Some(list.as_str()) => Some(list.clone()),
-                _ => None,
-            }
+        let named = |item: &&FocusItem| {
+            self.label(item).trim_end_matches('…').trim().to_lowercase() == wanted || item.key.to_lowercase() == wanted
+        };
+        // a closed dialog's field of the same name is as likely meant (its form is what "fill in" opens): no guess, but
+        // for a value only a find takes
+        let dialogs = self.session().dialogs_open();
+        let pattern = value.trim().ends_with('%');
+        if !pattern
+            && index
+            .order
+            .iter()
+            .filter(named)
+            .any(|item| matches!(&item.scope, Scope::Dialog(id) if !dialogs.contains(&id.as_str())))
+        {
+            return None;
+        }
+        index.order.iter().filter(named).find_map(|item| match &item.scope {
+            Scope::Find(list) if open.as_deref() != Some(list.as_str()) => Some(list.clone()),
+            _ => None,
         })
     }
 
@@ -1587,9 +1600,10 @@ fn holds_words(label: &str, words: &str) -> bool {
     })
 }
 
-/// `text` without the brackets the screen draws around a button (`< Find >`, `[Find]`), trimmed.
+/// `text` without the brackets the screen draws around a button (`< Find >`, `[Find]`) or a trailing `…` (a button
+/// that opens a dialog), trimmed.
 fn undecorated(text: &str) -> &str {
-    let text = text.trim();
+    let text = text.trim().trim_end_matches('…').trim_end();
     for (open, close) in [('<', '>'), ('[', ']')] {
         if let Some(inner) = text.strip_prefix(open).and_then(|rest| rest.strip_suffix(close)) {
             if !inner.trim().is_empty() {
