@@ -434,6 +434,25 @@ fn locale_defaults_to_en_and_crypt_stays_unset() {
     assert!(alts.is_empty());
 }
 
+/// An empty `crypt-pass` leaves field encryption off with no error, so `encrypt="true"` fields are then written as
+/// plaintext. Startup fills `entity_ds_crypt_pass` when it is the `CHANGEME` default, not when it is set empty.
+///
+/// When this is fixed, this test fails: update the threat model in Attack-Surface.md.
+#[test]
+fn known_gap_an_empty_crypt_pass_turns_field_encryption_off() {
+    let facade = open_fake();
+    let empty = MNode::parse_text("conf", r#"<entity-facade crypt-pass=""/>"#).unwrap();
+    facade.crypt_from_conf(&empty).unwrap();
+    assert!(facade.crypt().is_none());
+    let set = MNode::parse_text(
+        "conf",
+        r#"<entity-facade crypt-pass="SomePass" crypt-salt="20201202" crypt-iter="10"/>"#,
+    )
+    .unwrap();
+    facade.crypt_from_conf(&set).unwrap();
+    assert!(facade.crypt().is_some());
+}
+
 #[test]
 fn try_insert_seals_the_password_before_sql() {
     let tape = Arc::new(Mutex::new(Tape {

@@ -38,6 +38,9 @@ Design, status and review documents for MR Moqui. User guides for built features
   focused effort (Remaining-Work).
 
 
+**Security**
+- [Sealed-Secrets.md](Sealed-Secrets.md): keys kept as Vault keeps them. A server starts sealed and unseals with a TPM, a passphrase, Shamir shares or a KMS, so no usable key is on disk. A versioned keyring and an AEAD field format with associated data and a blind index. Separate keyrings for BOSS (inner) and PASS or the edge node (outer). One sign-in core with canonical identity and a shared lockout. Code and data apart under systemd. Unsafe production starts refused. Phases S0 to S11; the threat model is in [Attack-Surface](../docs/security/Attack-Surface.md). Plan; nothing built.
+
 **Project infrastructure**
 - [Dogfood.md](Dogfood.md): the Moqui project's own infrastructure on mr-moqui at moqui.org, in place of GitHub (repositories, issues, pull requests), Discourse, Google Groups and the `moqui-site` web site: Smithy, a git hosting app in mr-pass with groups, public and private repositories, forks, issues as Mantle work items and merge requests, over the framework's git hosting; the forum inside it and the mailing lists as categories; CI with pipelines in the repository and runners started through a container API; the GitHub push mirror and importer; the contributor agreement as a check; and the phases to cutover. General, so a dev shop runs the same as its group server. Research and plan; nothing built.
 

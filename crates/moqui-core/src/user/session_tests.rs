@@ -235,6 +235,28 @@ fn a_bad_mac_is_an_unknown_session() {
     assert_ne!(guard.session_id(), id);
 }
 
+/// `session_cookie_key` has no old key to fall back on: a new key ends every session cookie and every value signed
+/// with a key derived from it (`derived_cookie_key`). A derived key differs by label and is never the session MAC.
+///
+/// When this is fixed, this test fails: update the threat model in Attack-Surface.md.
+#[test]
+fn known_gap_a_new_session_cookie_key_ends_every_session_cookie() {
+    let _lock = cookie_tests_lock();
+    let _key = KeyGuard::install();
+    let id = "cd".repeat(SESSION_ID_BYTES);
+    let header = format_session_cookie(&id, false).unwrap();
+    let value = cookie_value(&header).to_string();
+    assert_eq!(verify_session_cookie(&value).unwrap().as_deref(), Some(id.as_str()));
+    let handle = derived_cookie_key("handle").unwrap();
+    assert_ne!(handle, derived_cookie_key("mcp").unwrap());
+    let (_, tag) = value.split_once('.').unwrap();
+    assert_ne!(URL_SAFE_NO_PAD.decode(tag).unwrap(), handle);
+
+    moqui_lib::env::set_property("session_cookie_key", STANDARD.encode([7_u8; 32]));
+    assert!(verify_session_cookie(&value).unwrap().is_none());
+    assert_ne!(derived_cookie_key("handle").unwrap(), handle);
+}
+
 /// A visit records the request that starts it, as Java's; a user ends another session of theirs by its visit (its
 /// row goes, its live copy is retired, so its cookie starts over signed out, and the Visit gets its thruDate), but
 /// not the current one and not another user's.
