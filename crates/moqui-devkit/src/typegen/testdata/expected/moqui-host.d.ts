@@ -1454,7 +1454,11 @@ interface MoquiServerEc {
     readonly llm: MoquiLlmFacade;
 }
 
-/** `ec.llm`: one completion from a configured model (`model`, else the binding of `feature`, else a model of `tier`). */
+/**
+ * `ec.llm`: one completion from a configured model (`model`, else the binding of `feature`, else a model of `tier`).
+ * A model call is refused while a transaction is open unless its options give `allowInTransaction` (true or `"Y"`),
+ * which suspends the transaction for the call and cuts the call to the time it has left.
+ */
 interface MoquiLlmFacade {
     /** With `schema` (a JSON schema) the reply is parsed and checked into `json`; a call that ends without an answer throws. */
     complete(options: {
@@ -1462,11 +1466,22 @@ interface MoquiLlmFacade {
         model?: string; feature?: string; tier?: "fast" | "balanced" | "thorough";
         schema?: MoquiMap | string; schemaName?: string;
         reasoning?: "none" | "low" | "medium" | "high" | "max"; maxOutput?: number; timeoutSeconds?: number;
+        allowInTransaction?: boolean | "Y";
     }): {
         text: string; json: unknown; modelId: string; finish: string; inputTokens: number;
         cachedInputTokens: number; outputTokens: number; cost: number | null; callIds: string[];
     };
     isEnabled(): boolean;
+    /** The summary of `text` (the `summarize` AI task). */
+    summarize(text: string, options?: { maxWords?: number; allowInTransaction?: boolean | "Y" }): string;
+    /** The label of `text` among `labels` (the `classify` AI task). */
+    classify(text: string, labels: string[], options?: { allowInTransaction?: boolean | "Y" }): string;
+    /** The values of `fields` (name to description) found in `text` (the `extract` AI task). */
+    extract(
+        text: string, fields: { [name: string]: string }, options?: { allowInTransaction?: boolean | "Y" },
+    ): MoquiMap;
+    /** Starts a background agent run of `agentId` with `text` as the current user (needs AgentUse and AgentAdmin); its run id. */
+    startRun(agentId: string, text: string): string;
 }
 
 // ---- server ec and sri during a screen render ----

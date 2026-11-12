@@ -389,7 +389,8 @@ pub fn run_task(
     })
 }
 
-/// `ec.llm.summarize`: the summary of `text`.
+/// `ec.llm.summarize`: the summary of `text`; with a transaction open, refused unless `allow_in_transaction` (as
+/// [`run_task`]).
 ///
 /// # Errors
 ///
@@ -399,12 +400,13 @@ pub fn summarize(
     facade: &EntityFacade,
     text: &str,
     max_words: Option<u64>,
+    allow_in_transaction: bool,
 ) -> Result<String, Error> {
     let mut input = json!({"text": text});
     if let Some(words) = max_words {
         input["maxWords"] = json!(words);
     }
-    let done = run_task(factory, facade, "summarize", &input, None, false)?;
+    let done = run_task(factory, facade, "summarize", &input, None, allow_in_transaction)?;
     Ok(done
         .output
         .get("summary")
@@ -413,7 +415,7 @@ pub fn summarize(
         .to_string())
 }
 
-/// `ec.llm.classify`: the label of `text` among `labels`.
+/// `ec.llm.classify`: the label of `text` among `labels`; `allow_in_transaction` as [`summarize`].
 ///
 /// # Errors
 ///
@@ -423,6 +425,7 @@ pub fn classify(
     facade: &EntityFacade,
     text: &str,
     labels: &[String],
+    allow_in_transaction: bool,
 ) -> Result<String, Error> {
     let done = run_task(
         factory,
@@ -430,7 +433,7 @@ pub fn classify(
         "classify",
         &json!({"text": text, "labels": labels}),
         None,
-        false,
+        allow_in_transaction,
     )?;
     Ok(done
         .output
@@ -440,7 +443,8 @@ pub fn classify(
         .to_string())
 }
 
-/// `ec.llm.extract`: the values of `fields` (name to description) in `text`.
+/// `ec.llm.extract`: the values of `fields` (name to description) in `text`; `allow_in_transaction` as
+/// [`summarize`].
 ///
 /// # Errors
 ///
@@ -450,6 +454,7 @@ pub fn extract(
     facade: &EntityFacade,
     text: &str,
     fields: &Json,
+    allow_in_transaction: bool,
 ) -> Result<Json, Error> {
     let done = run_task(
         factory,
@@ -457,7 +462,7 @@ pub fn extract(
         "extract",
         &json!({"text": text, "fields": fields}),
         None,
-        false,
+        allow_in_transaction,
     )?;
     Ok(done.output.get("values").cloned().unwrap_or(Json::Null))
 }
