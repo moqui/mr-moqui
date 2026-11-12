@@ -362,6 +362,10 @@ huskarl = "0.11"
 # as it links a second p256 (0.13), aes-gcm 0.10 and jwt-simple.
 hkdf = "0.13"
 aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+# The age format (age-encryption.org/v1) of encrypted backups in moqui-lib's age feature: X25519 and ChaCha20-Poly1305,
+# the versions russh already links, with the hkdf and hmac above.
+curve25519-dalek = { version = "5.0", default-features = false, features = ["alloc", "zeroize"] }
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"] }
 # IPP message encoding for network printing (the moqui-cups port). The clients stay off, so the request goes through
 # the async reqwest above on the edge runtime; no second HTTP stack.
 ipp = { version = "8", default-features = false }

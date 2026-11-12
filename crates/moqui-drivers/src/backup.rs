@@ -151,7 +151,7 @@ fn backup_one(
         dump_one(dir, target, &name, request.timeout)?;
         "dump".to_string()
     } else {
-        let from = next_incremental(dir, target, request.full_every)?;
+        let from = next_incremental(dir, target, request.full_every, request.chain_incrementals)?;
         take_physical(dir, target, &name, from, request.fast_checkpoint, request.timeout)?
     };
     let archives = archives_for_retain(dir, &target.prefix);
@@ -262,7 +262,12 @@ fn take_physical(
     Ok(kind.to_string())
 }
 
-fn next_incremental(dir: &Path, target: &ToolTarget, full_every: u32) -> Result<Option<IncrementalFrom>, Error> {
+fn next_incremental(
+    dir: &Path,
+    target: &ToolTarget,
+    full_every: u32,
+    chain: bool,
+) -> Result<Option<IncrementalFrom>, Error> {
     let shown = show_summarize_wal(target)?;
     if !shown.eq_ignore_ascii_case("on") {
         tracing::info!(
@@ -275,21 +280,41 @@ fn next_incremental(dir: &Path, target: &ToolTarget, full_every: u32) -> Result<
     let Some(full) = newest_full(&archives) else {
         return Ok(None);
     };
-    if generation_len(&archives, &full.name) >= full_every {
+    let generation = generation(&archives, &full.name);
+    if u32::try_from(generation.len()).unwrap_or(u32::MAX) >= full_every {
         tracing::info!(
             "the backup generation for {} holds {full_every} archives, so this one is a full",
             target.prefix
         );
         return Ok(None);
     }
-    let manifest = dir.join(&full.name).join("backup_manifest");
+    let parent = incremental_parent(&archives, full, &generation, chain);
+    let manifest = dir.join(&parent.name).join("backup_manifest");
     if !manifest.is_file() {
         return Ok(None);
     }
     Ok(Some(IncrementalFrom {
         manifest,
-        parent: full.name.clone(),
+        parent: parent.name.clone(),
     }))
+}
+
+/// What the next incremental is taken from: the generation's full, or with `chain` its newest archive, so each
+/// incremental holds only the blocks changed since the one before it.
+fn incremental_parent<'a>(
+    archives: &'a [Physical],
+    full: &'a Physical,
+    generation: &HashSet<String>,
+    chain: bool,
+) -> &'a Physical {
+    if !chain {
+        return full;
+    }
+    archives
+        .iter()
+        .filter(|item| generation.contains(&item.name))
+        .max_by_key(|item| item.stamp)
+        .unwrap_or(full)
 }
 
 fn show_summarize_wal(target: &ToolTarget) -> Result<String, Error> {
@@ -348,7 +373,8 @@ fn newest_full(archives: &[Physical]) -> Option<&Physical> {
     archives.iter().filter(|item| item.full).max_by_key(|item| item.stamp)
 }
 
-fn generation_len(archives: &[Physical], full_name: &str) -> u32 {
+/// The names of the full `full_name` and of every archive taken from it, directly or through another.
+fn generation(archives: &[Physical], full_name: &str) -> HashSet<String> {
     let mut reached = HashSet::new();
     reached.insert(full_name.to_string());
     loop {
@@ -364,7 +390,7 @@ fn generation_len(archives: &[Physical], full_name: &str) -> u32 {
             break;
         }
     }
-    u32::try_from(reached.len()).unwrap_or(u32::MAX)
+    reached
 }
 
 /// A stamp no archive of `prefixes` has yet: one for every target of a run, so the archives of one cluster's databases
