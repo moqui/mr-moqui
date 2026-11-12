@@ -69,7 +69,7 @@ along with this software (see the LICENSE.md file). If not, see
             facts = recordFound ? [
                 {label: 'Owner', value: record.ownerText},
                 {label: 'Purpose', value: record.purpose},
-                {label: 'Kind', value: [record.isPrivate ? 'Private: only those a notification is sent to receive it' : 'Open', record.inboxText,
+                {label: 'Kind', value: [record.isPrivate ? 'Private: for those a notification is sent to, and a user set to receive every message of the topic unless it is sent direct-only' : 'Open', record.inboxText,
                     record.actionable ? 'asks its recipients for a decision' : ''].filter(Boolean).join(' · ')},
                 {label: 'Audience', value: record.audiencePermission ? 'Accounts that hold ' + record.audiencePermission : ''},
                 {label: 'Users with a setting', value: String(record.subscriptionCount)},
