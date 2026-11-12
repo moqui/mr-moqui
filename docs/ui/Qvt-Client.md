@@ -255,6 +255,11 @@ once per page load:
   0), absent text as null. A quick-create kind with no `screen` opens the theme's `STRT_QUICK_CREATE` screen with `kind` added to its query;
   with neither it is left out. `parameter` children are added to a link's query. A provider whose screen the user may not view is left out,
   and one whose screen does not exist is logged and left out. `requiresRecord` kinds are offered only while `screenContext.record` is set.
+  A quick-create kind with a `condition-service` is offered only when that service, called as the app root that declares the kind (its
+  authorization and entity filters, a transaction of its own) with `kind`, answers `offer` true for the session's user
+  (`org.moqui.ui.ShellServices.offer#QuickCreate`); false, no answer, or a service that fails or is missing leaves out that kind alone,
+  and a failure is logged with the app, kind and service. It runs on each `getShellData`, and `getShellProviders` keeps its answer as
+  it keeps the rest (below).
   `action` of a key is a client action of the shell (`palette`, `quickCreate`) for a key with no `url`.
 - Another component adds to an app root's providers with a `screen-extend` of it: each child merges by its element and key (a
   quick-create by `kind`, a palette source by `group`, a key of a keymap by `keys`, a provider hook by `name`; the XSD's

@@ -89,6 +89,9 @@ pub struct ShellLink {
     pub sequence: Option<i64>,
     /// `requires-record` of a quick-create kind: offered only while a record is in the screen context.
     pub requires_record: bool,
+    /// `condition-service` of a quick-create kind: a service asked, as the app root that declares the kind, whether to
+    /// offer it to the current user (its `offer` out-parameter); empty for a kind offered by its screen's grant alone.
+    pub condition_service: String,
 }
 
 /// A `today-source`: a service the Today panel calls.
@@ -243,6 +246,7 @@ impl ShellLink {
                 .collect(),
             sequence: sequence_of(node),
             requires_record: attr(node, "requires-record") == "true",
+            condition_service: attr(node, "condition-service"),
         }
     }
 }
@@ -888,6 +892,9 @@ impl<'a> Shell<'a> {
         let Some(url) = url else {
             return Ok(None);
         };
+        if what == "quick-create" && !link.condition_service.is_empty() && !Self::offered(app, link) {
+            return Ok(None);
+        }
         let mut out = Item::default();
         if what == "quick-create" {
             out.insert("kind".to_string(), text_or_null(&link.kind));
@@ -900,6 +907,36 @@ impl<'a> Shell<'a> {
         }
         out.insert("sequence".to_string(), number_or_null(link.sequence));
         Ok(Some(out))
+    }
+
+    /// Whether a quick-create kind with a `condition-service` is offered to the current user: the service, called in a
+    /// transaction of its own as the app root that declares the kind (its authorization and entity filters) with `kind`,
+    /// answers `offer` true. False, no answer, or a service that fails or is missing leaves out this kind alone; a failure
+    /// is logged with the app, the kind and the service (AGENTS.md failure tolerance).
+    fn offered(app: &App, link: &ShellLink) -> bool {
+        let parameters = BTreeMap::from([("kind".to_string(), Value::string(&link.kind))]);
+        let options = crate::service::call::CallOptions {
+            require_new_transaction: Some(true),
+            ..Default::default()
+        };
+        let required = app.def.authentication == crate::screen::definition::Authentication::Required;
+        let answer = run_in_app(&app.def.location, required, || {
+            crate::service::shell::call_tolerant_with(&link.condition_service, &parameters, &options)
+        });
+        match answer {
+            Ok(out) => out
+                .get("offer")
+                .is_some_and(|offer| matches!(offer, Value::Bool(true)) || to_plain_string(offer) == "true"),
+            Err(err) => {
+                tracing::error!(
+                    "App {}: the condition service {} of quick-create {} failed; the kind is left out: {err}",
+                    app.item.name,
+                    link.condition_service,
+                    link.kind
+                );
+                false
+            }
+        }
     }
 
     fn link_list(
