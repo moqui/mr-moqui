@@ -472,7 +472,8 @@ Dashboards (menu index 96, `DASHBOARDS_APP`) holds the general tool.
   own report rendered again), and makes a schedule: a dashboard or report the viewer reads, a timing and a format, for
   themselves or for people and groups, each checked by the engine. ScheduledReportDetail is one schedule for its owner:
   its timing and output, its recipients beside each one's result of the engine's check, the viewer's own preview, its
-  runs, and Resume, Send now and Pause (an owner-mode schedule is paused, resumed and sent there, not changed).
+  runs, and Resume, Send now and Pause (an owner-mode schedule is paused, resumed and sent there, and its timing and
+  output changed, its recipients, template and location kept as they were made).
   ReportDelivery is one run: what ran and each recipient's outcome for its owner (who retries the failed and
   reconciles the uncertain) and for the administrator (with its owner by name), a recipient's own delivery alone, and
   the same statuses as CSV. What a viewer is offered follows their own grant of each operation, so nothing is asked that
@@ -841,7 +842,9 @@ seconds. Three screens (`tools/template/ReportPlaylists.js`):
 
 - **Playlists** (in the menu) lists the playlists the viewer reads, each with its dashboards, its seconds and the group
   it is shared with; makes one (`createPlaylist`: dashboards the viewer reads, saved as their own; it is ordered in the
-  definition editor), for a viewer whose own grant opens the save where there is an editor; and shares one
+  definition editor), for a viewer whose own grant opens the save where there is an editor (the transition refuses
+  where the mount gives none, `reportLinks.definition` null: the engine's save alone would not hold it, since an app
+  may grant the save to users who author nothing); and shares one
   ([Sharing](#sharing)). A playlist opens in Playlist or, by Play full screen, on WallDisplay in a window of its own.
 - **Playlist** plays one in the app, for whoever sits at it: the dashboards in turn in kiosk mode over the request's
   range (the mount's when it names none), each also opened on its own. Its `data` transition answers the dashboard at
@@ -898,7 +901,10 @@ owner mode, to one address line.
   refusal, they are skipped at each run) and the audience is within the cap (`RECIPIENT_CAP`). The cap is `recipientCap`, 50
   without one, held under the instance preference `report.groupRecipientCeiling` (Admin's, 200 by default). A change needs
   the revision read (`expectedRevision`, `STALE_REVISION`). `pause#Schedule` resumes a group schedule only when its recipients
-  pass again.
+  pass again. An owner-mode schedule (made by `create#Schedule`, with no `deliveryMode`) changed with no recipient list is
+  changed in its timing and output alone (cron, render mode, skipping when empty, subject and dates, at the revision read):
+  its definition, recipients, template and location are kept and it stays in owner mode. Sent recipient lists make it a
+  business schedule.
 - **A run** opens a `moqui.report.ReportOccurrence` (a cron occurrence keyed by the schedule and the cron instant, or a Send
   now), pins the owner, the schedule's revision and the definition's version, and for each recipient, just before their
   message: checks the lease, the owner and the schedule again, computes the recipient's fingerprint again, and sends one
@@ -971,12 +977,20 @@ evaluated and delivered to its contact points as before.
 - **The audience in place of contact points.** A business rule is saved through `save#Definition` with
   `audience`: `recipientUserIds`, `recipientGroupIds`, `channels` (`notification`, the default, a private in-app
   notification on `topic`, `ReportAlert` without one; and `email`, the recipient's own account address through
-  `emailTemplateId`), `recipientCap`, and the grouping and timing a contact point has (`groupBy`, `groupWaitSeconds`,
-  `repeatSeconds`). Nobody named is the owner alone; the owner is told only when named or alone. A contact point, a shared
+  `emailTemplateId`, else the framework's `REPORT_ALERT`, written into the audience at save), `recipientCap`, and the
+  grouping and timing a contact point has (`groupBy`, `groupWaitSeconds`, `repeatSeconds`). Nobody named is the owner
+  alone; the owner is told only when named or alone. A contact point, a shared
   contact reference, a webhook or any other audience field (an address, a URL) refuses the save
   (`BUSINESS_CONTACT_REFUSED`, `BUSINESS_AUDIENCE_REFUSED`). The server sets `audience.deliveryMode`: `personal` when the
   owner is the only recipient, `group` otherwise. A rule may also name `detailLink`, a plain path on this server its
-  notifications link to with `?definitionId=` (an app's own rule screen), in place of Tools' Alerts.
+  notifications link to with `?definitionId=` (an app's own rule screen), in place of Tools' AlertRule
+  (`/apps/dashboards/AlertRule?definitionId=`), where the notifications of a rule that names none open.
+- **The default alert email.** `REPORT_ALERT` (`framework/data/ReportEmailData.xml`,
+  `framework/screen/ReportAlertEmail.xml`) is the rule's title, the state of each series told with the recipient's own
+  value, and a link to the rule. Like `DASHBOARD_REPORT` it ships with no from address, and the `SYSTEM` mail server it
+  names has no SMTP host on a fresh instance: an administrator sets both before any is sent (Health's report mail check
+  warns of the server, which both templates name). With no mount the alert screens offer email for any audience; under a
+  mount that names `alertAudience`, only where it names its template.
 - **At save.** An active business rule is saved only when every recipient passes the check as it stands for the rule
   (`RECIPIENT_REFUSED`, naming each with its reason code; a missing address refuses only where `email` is a channel) and
   the audience is within the cap (`RECIPIENT_CAP`, the cap and ceiling of report delivery); recipients other than the owner

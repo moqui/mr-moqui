@@ -394,7 +394,9 @@ with the findings behind these rules, is [plans/Admin-Screens-Down.md](../../pla
   - A link carries every parameter its target declares that is in the linking screen's context (a page index, a range
     of dates, a find value), and a screen mounted by location declares all of its parameters on the app's route. An
     empty value in the link's own parameters leaves one out: a list that links another screen's record sends its own
-    find values empty, as a link that leaves a mode does.
+    find values empty, as a link that leaves a mode does. A menu entry or tab carries them too, but one for a screen
+    other than the one shown leaves out the list's page, page size and sort (`pageIndex`, `pageSize`, `pageNoLimit`,
+    `orderByField`).
   - A screen path that names the app's root (`//Admin/...`) does not resolve where a spec renders with the app's root
     file as the root. A mount's routes are relative to a screen of an area, which holds under any root.
 

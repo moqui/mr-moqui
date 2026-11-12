@@ -3,7 +3,7 @@
 Plan and record of moving the framework-generic screens of IronStone Admin and Insights (mr-boss) into the framework's
 System and Dashboards apps (`runtime/base-component/tools`), with BOSS mounting them and adding only its business parts.
 Started Nov 11, 2026. Every phase (A0 to A6, I0 to I4) is built; the record of each phase is at the end, the
-finishing phase last.
+finishing phase and the leftovers last.
 
 Paths: `T` = `runtime/base-component/tools`, `F` = `runtime/base-component/framework`,
 `B` = `runtime/component/mr-boss` (its own repository).
@@ -657,7 +657,7 @@ Findings:
   to Explore from DatasetView carried the dataset and now carries that screen's range, query and `pageIndex` too
   (seen in the menu's data), so Explore opens on the same page number of its own list. Tools' own menu does this
   between Dashboards screens. Not changed here: the choice is this or a wrapper kept only to declare less; I1 should
-  settle it when DatasetView is rewritten.
+  settle it when DatasetView is rewritten (the menu's part is fixed in the Leftovers entry, F124).
 - F46. A `subscreens-item` has no menu image, so an item mounted by location shows the screen's own. Tools' Panels has
   Insights' image now, and is the only item of the Dashboards menu with one.
 - F47. The Insights sweeps list its screens from its own files, as Admin's did (F14): `InsightsSpecLib.mountedScreens`
@@ -768,7 +768,7 @@ Findings:
   builder's tab to Explore still carries the page: the subscreens menu builds each item's URL from what the item
   declares of the current request (from DatasetView with `pageIndex=2` the menu's data has Explore with `datasetId`,
   `from` and `pageIndex=2`, and Analysis with `datasetId` and `from`), in Tools' own menu too. Left as it is: the change
-  would be the menu's, for every app.
+  would be the menu's, for every app (made there in the Leftovers entry, F124).
 - F56. Datasets' parameter for the other dataset whose fields are shown is `otherDatasetId`, not `datasetId`: the
   screens beside it carry `datasetId`, and a link or tab back to the list would have opened the other datasets' field
   list on a business dataset (F24).
@@ -902,7 +902,7 @@ Findings:
 - F68. An owner-mode schedule (made on Reports, or by `create#Schedule`) is listed under Mine as "Owner mode" and is
   paused, resumed and sent on the new screens, not changed: `store#Schedule` on it would make it a business schedule
   and drop its location and its group, which Insights' detail did when its form was saved. A change of one is still
-  made nowhere, as before.
+  made nowhere, as before (its timing and output are changed since the Leftovers entry, F132).
 - F69. ReportDelivery shows the whole run to a holder of `ADMIN_TRANSFER_VIEW` who is not its owner, as
   `get#ReportOccurrence` answers it (the counters, each recipient's outcome, no title, the owner by name), read only.
   Insights' screen showed such a viewer the heading alone, though its service answered the same rows. Under Insights
@@ -1051,8 +1051,8 @@ Findings:
   them), and the series' states are a box under the list from the same `get#AlertState` answers, one call a rule
   listed. Templates' Copy is the engine's `copy#Definition` there; under a mount of audiences it is a read and a
   save, since the copy takes the mount's fixed parts and Insights' distributor holds the save, not the copy.
-- F84. With no mount an audience's email channel is offered only when the rule already names a template: the engine
-  has no default alert template, and the audience form takes no template id.
+- F84. With no mount an audience's email channel is offered only when the rule already names a template: the engine has
+  no default alert template, and the audience form takes no template id (it has one since the Leftovers entry, F133).
 - F85. The recipient cap is the policy's at every save. `Alerts.js` kept the lower of the stored and the current cap
   on a save that did not change the audience; the two are equal whenever the area supplies the cap.
 - F86. A single rule's refused pause or activation is the transition's error (F67); of several, each refusal is a
@@ -1061,7 +1061,8 @@ Findings:
   with them; nothing compared one but the specs. A member of Insights' root group alone is told "No alert has told
   you anything yet." where the list said alerts are shown to Insights readers.
 - F88. The screen lint reads a name that ends in Set as a collection (F26's rule for Rows): the list's flag is
-  `settable`. A link whose `url` is an expression takes its id from that text, so these links have ids of their own.
+  `settable`. A link whose `url` is an expression takes its id from that text, so these links have ids of their own (of
+  its unexpanded text until the Leftovers entry, F125).
 - F89. Under a spec's Insights root a transition's answer by the mount's links (`//Insights/...`) does not resolve
   (F4), so `InsightsAlerts` posts under the server's root, where a copy opens AlertDetail and a delete the list. What
   the screens show a user is checked with no render: the module called with the links and policy Insights' context
@@ -1074,9 +1075,10 @@ Findings:
 - F92. No recorded agent replay names a screen, a transition or a service of this phase (not replayed).
 - F93. For I4: `features.share` and `shareGroups` are still read by no screen; Dashboard's sharing should hold the
   feature in its transition as `requireSet` does, since Insights' author check is `share#Dashboard`'s today. The
-  engine's notification of a rule with no `detailLink` opens the list with `definitionId`, which the list does not
-  read (it never did): a link to AlertRule would open the rule. `ReportDelivery.js` and `ReportAlerts.js` each have their own
-  words for a recipient who is not accepted; `ReportDatasets.js` still has its own engine call.
+  engine's notification of a rule with no `detailLink` opens the list with `definitionId`, which the list does not read
+  (it never did): a link to AlertRule would open the rule (it does since the Leftovers entry, F126). `ReportDelivery.js`
+  and `ReportAlerts.js` each have their own words for a recipient who is not accepted; `ReportDatasets.js` still has its
+  own engine call (not since the Leftovers entry, F134).
 
 Tests: `cargo lint`, `./moq build`, then `./moq test tools --nobuild` (72 features, 3.4 s of 4 s in each of three
 runs; the one Alerts render, `AdminOverview`'s, takes 0.05 s with the kinds and states read through the engine, and
@@ -1158,7 +1160,7 @@ Where what Insights' services did is now:
 | `DashboardServices.get#ShareGroups` | `find#ShareGroups` for the two share dialogs; `ContextServices.get#ShareGroups` (the same function of `Insights.js`, now without the wall displays) for SavedReports and Analysis, with FlowMaps' and the digest's use of it |
 | `Insights.js` `shareDashboard` | deleted; `shareGroups` and `shareGroupIds` stay for Insights' own forms |
 | `Drill.js` | keeps the reader check, the scope, the default range, the cost filter, the meaning and the record screens; the engine call, the buckets, the breakdown, the rows and the links' parameters are `ReportDrill.js` `view` |
-| `Analysis.js` | keeps the author check, the admitted datasets, the organization's calendar, the narrowing for Assist, its reason codes and `store`; the choices' lists, the fields, the query and the result's rows are `ReportAnalysis.js` |
+| `Analysis.js` | keeps the author check, the admitted datasets, the organization's calendar (the policy's since the Leftovers entry, F131), the narrowing for Assist, its reason codes and `store`; the choices' lists, the fields, the query and the result's rows are `ReportAnalysis.js` |
 | Playlists' list, devices and display share | the list is `ReportPlaylists.list`; the direct read of `UserGroup` is gone (a group's name is `find#ShareGroups`'); the devices stay |
 | WallDisplay's page and `data` | `WallDisplay.xml` of Dashboards and `ReportPlaylists.wall`, `wallData` |
 
@@ -1169,7 +1171,7 @@ The policy values, and why a hand-made request does not get past them:
 | `features.share` | `ReportShare.requireShare`, first in `share` and `sharePlaylist`; a group named in Tools' `saveAnalysis` | the transitions read the policy the root set in `always-actions`, never a parameter. The engine alone would not hold it: Insights' steward and distributor hold `save#Definition` and are no authors. Under Insights these transitions are the only way to change a dashboard's or a playlist's group: the editors keep the group as stored (the `share` link), Insights' own saves name only the caller's own groups, no REST resource or agent tool names the operation, and its users open no Tools route (held in `InsightsDashboards`: the distributor's share of their own dashboard refused and the author's same request taken; seen to fail with the feature not asked) |
 | `shareGroups` | the transition takes only a group it offers (the viewer's own, and the policy's that `find#ShareGroups` answers them); `save#Definition` then asks the group's membership or share artifact itself | the list is what is offered and gives no right. A group in the policy is taken only from one whose own grant holds its artifact (Insights: the author, `BOSS_INS_SHARE_DISPLAY`), by a direct call too; a group outside both is refused by the transition and by the engine (held in `InsightsWallDisplay`: the author's share with the wall displays taken, a distributor's save with that group refused by the engine; in `InsightsDashboards`: another group refused by the transition and by the engine's save; in `ReportMounts`: the mount's group not taken from a viewer without its artifact) |
 | `range` | Playlist and Drill open on it when the request names none; WallDisplay's page and `data` use it always | `wallData` reads no `from` or `thru`; the device's request gets the range from the root (held in `InsightsWallDisplay`: thirty years asked, thirty days answered; in the cargo test for Tools) |
-| `calendar` | Tools' Analysis writes it into a time grain's bucket in its actions and in `saveAnalysis` | no parameter names a zone or an offset. Insights' Analysis is its own screen and service and writes the calendar of its own organization choice (`calendarParameters`), as before, so nothing on Insights' route reads the root's field today |
+| `calendar` | Tools' Analysis writes it into a time grain's bucket in its actions and in `saveAnalysis` | no parameter names a zone or an offset. Insights' Analysis is its own screen and service and writes the calendar of its own organization choice (`calendarParameters`), as before, so nothing on Insights' route reads the root's field today (Insights' Analysis reads it since the Leftovers entry, F131) |
 
 What keeps the wall display hardened: the route group and the display account's grant still name
 `mr-boss/screen/Insights/WallDisplay.xml` and its `data` alone, and the wrapper takes in nothing else (the Tools screen
@@ -1203,9 +1205,9 @@ Findings:
   where someone sits (the request's range, links out), WallDisplay one played where nobody does. The two `data`
   transitions share `dashboardAt` and differ in what they take and show. Playlist's three `now-7d` defaults are the
   policy's range. `createPlaylist` refuses a dashboard of a hidden component, as `createSchedule` does (F70).
-- F100. New playlist is offered by the viewer's own grant of the save where the mount has an editor, as Insights
-  offered it; the transition itself is held by the engine's save alone, as before, so Insights' distributor could
-  post one by hand. There is no feature for authoring in the policy; not added here.
+- F100. New playlist is offered by the viewer's own grant of the save where the mount has an editor, as Insights offered
+  it; the transition itself is held by the engine's save alone, as before, so Insights' distributor could post one by
+  hand (refused since the Leftovers entry, F130). There is no feature for authoring in the policy; not added here.
 - F101. A service's context is its own: `ReportMount.js` called from Insights' drill service sees no mount and would
   answer Tools' range, so `view` takes the range and the fixed variables as options, and an app's service passes them.
   The same holds for any module function an app calls from a service.
@@ -1223,10 +1225,10 @@ Findings:
 - F106. `rustfmt` on the two host test files reformatted lines that are not this phase's; they are left as they
   were. `InsightsRecords` and `InsightsWallDisplay` were not prettier-clean before this phase and are not reformatted.
 - F107. No recorded agent replay names a screen, a transition or a service of this phase (not replayed).
-- F108. Left for the finishing phase: `B/plan` (design-insights §4 ShareDashboard and Playlists, impl-insights' P2,
-  P6 and P11 entries name `DashboardServices`); the root's `calendar` field has no reader on Insights' route (the
-  table above); `InsightsSpecLib.mountedScreens` lists only screens mounted by location, which this phase did not add
-  to.
+- F108. Left for the finishing phase: `B/plan` (design-insights §4 ShareDashboard and Playlists, impl-insights' P2, P6
+  and P11 entries name `DashboardServices`); the root's `calendar` field has no reader on Insights' route (the table
+  above; read since the Leftovers entry, F131); `InsightsSpecLib.mountedScreens` lists only screens mounted by location,
+  which this phase did not add to.
 
 Tests: `cargo lint`, `./moq build`, then `./moq test tools --nobuild` (73 features; 3.4 to 3.5 s of 4 s in
 four of five runs after the last build and 3.8 in one, the spread in the one DataViews feature, 1.4 to 1.7 s, as in
@@ -1340,12 +1342,12 @@ Findings:
   every employer in its caller's scope, and Admin's adapters loop the organizations the viewer administers. A check
   answers whom it is for (`subject`) and what narrows to it (`scope`), which Health sends back as "Check again" and as
   a refresh's scope. People's checks are therefore those of People's own scope for the caller, not of Admin's.
-- F111. A place is a key everywhere: a provider's `fixRoute` and `fixId`, a check's own with `fixParameters`, a
-  settings entry's `destinationRoute`, a card's `route`. The mount's routes resolve them, so System links the
-  framework's screens and none of an app's, and Admin gives its apps' pages as plain routes. The fix places of the
-  instance's own checks are delegated screens now where they were Tools' data grid: the mail server's is Mail relays
-  and the report alert topic's is its TopicDetail; the report email template's is still Tools' grid
-  (`emailTemplates`), which no delegated screen edits.
+- F111. A place is a key everywhere: a provider's `fixRoute` and `fixId`, a check's own with `fixParameters`, a settings
+  entry's `destinationRoute`, a card's `route`. The mount's routes resolve them, so System links the framework's screens
+  and none of an app's, and Admin gives its apps' pages as plain routes. The fix places of the instance's own checks are
+  delegated screens now where they were Tools' data grid: the mail server's is Mail relays and the report alert topic's
+  is its TopicDetail; the report email template's is still Tools' grid (`emailTemplates`), which no delegated screen
+  edits. Report mail with no mail server linked the templates too, until the Leftovers entry (F137).
 - F112. Whether a settings entry is shown is decided in the service, from the row: the mount is not in a service's
   context (F101), and a direct call must list no more than a screen does. So an entry names `screenLocation`, and the
   seven entries of the framework's System screens are seeded again in mr-boss under the same keys with Admin's
@@ -1354,9 +1356,10 @@ Findings:
   those of the screens above it are read.
 - F113. The framework asks a registration's permission with `ec.user.hasPermission`. BOSS's `has` gave an instance
   administrator every permission and a Projects client none; `ADMIN` holds `INSIGHTS_VIEW`, `INSIGHTS_DATASET_EDIT`,
-  `PEOPLE_CONFIGURE`, `CONTACT_ADMIN` and `VoiceAdmin` by data, and not `ACCOUNTING_VIEW` or
-  `PRODUCT_CATALOG_VIEW`, so those two providers' rows name no permission and Admin's contract service asks it with
-  `has`. The owners of those two therefore show in Health's owner filter to a reader who gets none of their checks.
+  `PEOPLE_CONFIGURE`, `CONTACT_ADMIN` and `VoiceAdmin` by data, and not `ACCOUNTING_VIEW` or `PRODUCT_CATALOG_VIEW`, so
+  those two providers' rows name no permission and Admin's contract service asks it with `has`. The owners of those two
+  therefore show in Health's owner filter to a reader who gets none of their checks (not since the Leftovers entry,
+  F136).
 - F114. SupportSummary is mounted by location, not wrapped as the plan had it: no grant names it, its one transition
   calls only `get#SupportSummary`, which asks `ADMIN_OVERVIEW_VIEW`, and Admin adds nothing. `supportSummary` is a
   framework route now and left Admin's mount.
@@ -1378,8 +1381,9 @@ Findings:
   a Projects client is now answered an empty list. `BOSS_ADM_SETTINGS_INDEX` no longer names a registry service.
 - F117. The framework's rows have owner System. Admin's Home asks the instance's own checks by that owner, and
   Health's owner filter shows System where it showed Admin for them.
-- F118. `get#Overview` has no reader in Tools: the System home has its own counters and attention list, so the cards
-  are Admin Home's alone, each link resolved by the mount and shown where it opens.
+- F118. `get#Overview` has no reader in Tools: the System home has its own counters and attention list, so the cards are
+  Admin Home's alone, each link resolved by the mount and shown where it opens (Health's header shows one since the
+  Leftovers entry, F138).
 - F119. Health's "Check again" carried the row's own state, group and owner to the screen (F24: the target declares
   them), so a check that changed state vanished from its own recheck; the link sends them empty. The settings
   index's links to a screen send the index's find values empty for the same reason (Localization declares `text`).
@@ -1390,8 +1394,9 @@ Findings:
 - F122. No recorded agent replay names a screen, a service or a sentence of this phase (not replayed).
 - F123. For the finishing phase: mr-boss `plan/design-admin.md` §14 and §14.2 and `impl-admin.md` P2 and P19 describe
   the registries as Admin's; `design-insights` and `impl-insights` name `ironstone.admin.RegistryServices`. The
-  acceptance `PeopleFoundationWalk` expects "People setup" on Health, which lists a check's own title (as it did). The
-  support summary's JSON has a new `kind`. mr-l10n has no string of the three screens.
+  acceptance `PeopleFoundationWalk` expects "People setup" on Health, which lists a check's own title (as it did;
+  "Provider: Check" since the Leftovers entry, F135). The support summary's JSON has a new `kind`. mr-l10n has no string
+  of the three screens.
 
 Tests: `./moq test tools --nobuild` (73 features; 3.4 and 3.5 s of 4 s in the last two runs, 3.5 to 4.0 in the three
 before them; 5.0 before `instanceOnly`, when the home's render and the attention spec ran Products' catalog checks; no
@@ -1419,10 +1424,10 @@ before), `moqui lint` of the six changed service files. Changed and not run: mr-
 `AdminRegistriesWalk` (the mail server's fix place; the finance reader refused Admin's contract service and answered
 no Accounting check) and `AdminReviewWalk` (the two service names).
 
-### Finishing (Nov 11, 2026)
+### Finishing (Nov 11 and 12, 2026)
 
-State: every phase above is built and committed on branch `admin-screens-down` of mr-moqui, mr-boss, mr-mantle and
-mr-marble. The finishing phase is three things:
+State: every phase above is built and merged to `master` of mr-moqui, mr-boss, mr-mantle and mr-marble, and the branch
+`admin-screens-down` is deleted. The finishing phase is three things:
 
 - **The documents.** In mr-boss: `plan/design-admin.md` (§1.4 on which screens are the framework's and what Admin
   keeps, §13 without the Developer tools area, §14 with the registries as the framework's, and a line in each moved
@@ -1456,16 +1461,17 @@ Results:
   for the People work: an employee opens Time (People's later phases opened it), and it looks for the words "People
   setup" on Admin's Health, which lists People's checks under their own titles (Departments, Managers, for each
   employer, owner People, with the fix link to People's Settings) and names a provider only when it could not be
-  checked, as the screen did before A6.
+  checked, as the screen did before A6 ("People setup: Departments" since the Leftovers entry, F135).
 - **`./moq test-framework`:** every suite passes but `cargo test --workspace`, by one test of `moqui-git`
   (`the_tree_refs_compare_and_merge_methods_through_services`: a git update's ECA finds no report service in that
-  crate's runtime), which passes alone and failed in one of two more runs of the crate; nothing here touches
-  `moqui-git` or `Git.gitecas.xml`. The specs: framework 532 features, 16.1 s of 17 s; tools 3.8 s of 4 s (3.3 to 3.6 s
-  alone and warm, 4.8 and 5.4 s in the first two runs after a build).
+  crate's runtime), which passes alone and failed in one of two more runs of the crate; nothing here touches `moqui-git`
+  or `Git.gitecas.xml` (fixed in the Leftovers entry, F129). The specs: framework 532 features, 16.1 s of 17 s; tools
+  3.8 s of 4 s (3.3 to 3.6 s alone and warm, 4.8 and 5.4 s in the first two runs after a build).
 - **`./moq test-apps`**, three runs: 3,626 features, 3,618 then 3,622 then 3,624 passing; the client suite passes each
   time. What failed, none of it this work's:
-  - mr-mantle's `AccountingRecurringAging` and `SupportCases` fail while the UTC date is ahead of the local one (the
-    evening: failed at 23:59:57, passed at 00:00:07).
+  - mr-mantle's `AccountingRecurringAging` and `SupportCases` fail in the last local hour of the day (the evening:
+    failed at 23:59:57, passed at 00:00:07), not while the UTC date is ahead, as first read (F141 of the Leftovers
+    entry).
   - `AdminDevices` found the device Mantle's `SharedDevices` spec leaves under the same name when a run puts both on
     one worker's database; its setup now removes its own names first, and it passes in the full run.
   - `PeopleAccess` ("No department is set up") and `PeoplePositions` (a pay grade "Pos spec shared grade") read rows
@@ -1479,5 +1485,125 @@ Results:
   the group) and "System › Access › Groups". After them: tools 73 features, 3.4 s of 4 s; both replay sets pass
   against their baselines; the access specs of the framework and mr-boss pass.
 - Known and not this work's, seen in the phases: `AdminAccessServices` "a membership change is seen at once by the
-  session it changes" and `AdminBackups`' lock check each fail about one run in six; three `gate3` and four
-  `gate3_browser` tests fail before and after (F22).
+  session it changes" and `AdminBackups`' lock check each fail about one run in six (both fixed in the Leftovers entry,
+  F127 and F128); three `gate3` and four `gate3_browser` tests fail before and after (F22).
+
+### Leftovers (Nov 12, 2026)
+
+What the Record left (small behaviours, flaky tests and stale documents), cleared on branch `screens-down-leftovers` of
+mr-moqui, mr-boss and mr-mantle in five groups: L1 the engine, L2 the report screens, L3 System and Admin, L4 two
+mr-mantle specs, L5 the documents.
+
+L1, the engine:
+
+- F124. A menu entry for a screen other than the one shown leaves out the page, page size and sort of the list being
+  shown (`pageIndex`, `pageSize`, `pageNoLimit`, `orderByField`: `LIST_STATE_PARAMETERS` and
+  `UrlInstance::drop_list_state` in `crates/moqui-core/src/screen/urls.rs`, in the menu's data, the tabs, the shell and
+  `sri.getMenuItems`), where each entry's URL took every parameter its screen declares from the request: the Report
+  builder's tab to Explore opened on the page of the dataset list (F45, F55). The current screen's entry, links and the
+  current URL keep them.
+- F125. A field link whose `url` is an expression has an id of the expression's names (`_recordUrl`), not its unexpanded
+  text (`AuditList_recordText_0_${recordUrl}`), in html and qvt (`ScreenHtml.js`, `ScreenQvt.js`); a plain url's id is
+  as before, so no existing id changed (F88).
+- F126. An alert's notification with no `detailLink` opens the rule (Dashboards' `AlertRule` with its `definitionId`),
+  not the list, which did not read that id (`crates/moqui-report/src/alert.rs`; F93).
+- F127. A membership ended with no date is stored as ended a millisecond before now (`Access.js` `endMembership`): the
+  session's group check takes a thru date as still open (inclusive, as Java's `filterByDate`), so one stored as now was
+  seen for the rest of that millisecond, `AdminAccessServices`' failure of one run in six. Ended with no date, a
+  membership that has not started never takes effect.
+- F128. The job runner releases a run's lock again after its end is written when the lock still names the run
+  (`crates/moqui-core/src/service/jobs.rs` `finish_run`): a backup's hold (`hold#BackupLock`, for a run started by hand)
+  taken between the release and the end was left naming an ended run until it expired, `AdminBackups`' lock check
+  failure.
+- F129. moqui-git: a claimed git update that fails after its claim is marked failed (`events.rs`), where it stayed
+  `running` until the 30-minute stale reset; the hosting tests leave out the report definitions' pull rule, whose
+  service a test factory never registers, so a push no longer records a failed ECA; `settled()` names each busy update
+  and its status. The crate passed 10 of 10 runs after (the Finishing results' one failure).
+
+L2, the report screens:
+
+- F130. `createPlaylist` refuses where the mount gives no editor (`links.definition`, the condition the list already
+  offered New playlist by), and `edit` answers its own page there (`ReportPlaylists.js`, `Dashboards/Playlists.xml`):
+  Insights' distributor, who holds the engine's `save#Definition` for alert rules, could make a playlist by a hand-made
+  post, as F100 said (confirmed). Tools has its editor, so it is unchanged.
+- F131. Insights' Analysis takes its calendar from `reportPolicy.calendar` of Insights' context for the organization in
+  scope, through the framework's `calendarParameters` (`ReportAnalysis.js`), as Tools' Analysis reads a mount's;
+  `Insights.calendarParameters` and its second read of the settings are gone (F108's "no reader").
+- F132. `store#Schedule` of an owner-mode schedule sent no recipient list changes its timing and output alone (cron,
+  render mode, skipping when empty, subject and dates) at the revision read, keeping its definition, recipients,
+  template and location (`delivery.rs`), and ScheduledReportDetail offers its timing form (F68). A request that sends
+  recipient lists still makes it a business schedule, as before; no screen offers a recipient form for one.
+- F133. A business alert's audience told by email that names no template is sent the framework's new `REPORT_ALERT`
+  (`framework/data/ReportEmailData.xml`, `framework/screen/ReportAlertEmail.xml`: the rule's title, each series' state
+  and a link to the rule), written into the audience at save as a schedule's `DASHBOARD_REPORT` is, so Dashboards offers
+  email with no mount (F84). Like `DASHBOARD_REPORT` it ships with no from address, and the `SYSTEM` mail server has no
+  SMTP host on a fresh instance: an administrator sets both.
+- F134. The report screens have one engine call, `ReportDelivery.js` `ask`, which `ReportDatasets.js` now imports (F93);
+  a dataset screen's refusal drops a leading reason code (`CODE:`) and starts with a capital, as the others' do.
+
+L3, System and Admin:
+
+- F135. A Health and support-summary row is named "Provider: Check" where the provider's title and the check's differ
+  (People setup: Departments), else by the one title (`AdminReadiness.js` `checkText`); Admin Home keeps its Source
+  column. These are the words `PeopleFoundationWalk` looked for (F123, the Finishing results); the walk is not run here.
+- F136. Health's owner and area filters offer only the owners and groups of providers the reader may read whose service
+  did not refuse them (`Readiness.js` `readiness`: `ownerOptions`, `groupOptions`), so Accounting and Products are no
+  longer offered to a reader their contract service refuses (F113). A provider the find left out is not asked, so it
+  stays offered.
+- F137. Report mail with no mail server links the mail relays (`fixRoute` `adminMailRelay`), where it linked the email
+  templates its provider names; a missing report template still links the templates (F111).
+- F138. System's and Admin's Health headers show the last day's sign-in failures to a reader of the overview, linked by
+  the `adminVisits` route, from the new `org.moqui.admin.ReadinessServices.get#HealthCards`: the overview's four cards
+  with no provider run (`ADMIN_OVERVIEW_VIEW`; granted with the other readiness services in `AdminReadinessServices`).
+  `get#Overview` answers as before (F118).
+- F139. `crates/moqui-host/tests/it/system_sync.rs` posts the instance administrator's message transitions with their
+  effects: one produced message sent and every one, one received message consumed and every one, a message typed in
+  received and consumed. `queueAckMessage` is refused and queues nothing: the framework ships no
+  `produce#AckSystemMessage` implementation for a type to name.
+- F140. `tools_screens` holds that the Data area's Tools links are absent for a user without Tools, and `AdminMounts`
+  that no other component's app root or area takes in a System area's own file (`System/<Area>.xml`, what only System
+  shows of the area).
+
+L4, mr-mantle:
+
+- F141. `AccountingRecurringAging` and `SupportCases` failed only in the last local hour of the day, not while the UTC
+  date was ahead (the Finishing results): the aging spec subtracted 24-hour days, so a date 131 days back crossed the
+  Nov 1 daylight-saving change onto the next day after 23:00, and the cases' Today feature gave a due date of now plus
+  an hour, which is tomorrow after 23:00. The days are calendar days in the user's zone now, and the due date is now;
+  the services were right.
+
+L5, the documents: in mr-boss `plan/research-admin.md` and `research-commerce.md` (a dated note on the `System/` paths
+they cite), `impl-people.md` (`fixRoute` and the framework's registry, six lines), `design-admin.md` (Health, People's
+provider, printers, §13's title) and `design-insights.md` (§4, §5, §7 and §8: what the grants decide, what the two maps
+pass, and F130 to F133); here `docs/tools/Monitoring.md`, `docs/dev/JS-Framework-Services.md`,
+`docs/dev/Practices-App-Dev.md` (a menu entry and the list's state), `docs/security/Attack-Surface.md`, the tools README
+and this Record's pointers.
+
+Open:
+
+- `PeopleAccess`, `PeoplePositions` and `PeopleFoundationWalk` (the Finishing results), left to the People work.
+- mr-boss's client suite over its budget, handled elsewhere.
+- `queueAckMessage` queues no acknowledgement until the framework ships an ack producer a message type can name (F139).
+- L10n and the UI review, in their own sweeps.
+- The inline test module of `crates/moqui-core/src/service/jobs.rs` is over the size
+  [Practices-Rust](../docs/dev/Practices-Rust.md) allows one.
+
+Tests:
+
+- L1: `cargo test -p moqui-core screen::` (460 passed); `service::jobs` (5); `cargo test -p moqui-report alert` (14);
+  `report_alerts` (3); `moqui-git` 10 of 10 runs, 106 tests each; `AdminAccessServices` 10 of 10 runs; `AdminBackups` 10
+  of 10; `./moq test tools` (73 features, 3.4 s of 4 s); `tools_screens` passes; both replay sets pass every task (their
+  drift is from the screens move, none from L1).
+- L2: `cargo test -p moqui-report` delivery (8), schedule (8), alert_delivery (3), alert (14); framework
+  `ReportAudience`, `BusinessAlerts`, `BusinessDatasets` (26 features); mr-boss's eight Insights specs (37 features);
+  tools (73 features, 3.4 s); `tools_screens` passes.
+- L3 and L4: framework `AdminReadiness`, `AdminConfiguration` (8 features); tools (74 features, 3.5 s of 4 s); mr-boss
+  `AdminRegistries`, `AdminAccess`, `AdminSystemMessages` (17 features), and `AdminExports`, `AdminImports`; mr-mantle
+  `AccountingRecurringAging`, `SupportCases` (18 features; the fix proved at 23:30 local by the arithmetic);
+  `tools_screens` and `system_sync` pass.
+
+Results: `./moq test-framework` passes every suite, `cargo test --workspace` among them (the `moqui-git` test of the
+Finishing results passed); its specs: framework 534 features, 15.7 s of 17 s; tools 3.7 s of 4 s. `./moq test-apps`:
+3,642 features, 3,641 passing, the client suite passing; the one failure is `PeopleAccess` ("No department is set up",
+rows other People specs leave on the same database), left to the People work. `PeoplePositions` and the two Mantle
+date specs passed. mr-boss's client suite read 62.3 s of its 57 s budget (handled elsewhere).

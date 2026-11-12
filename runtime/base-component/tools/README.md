@@ -90,7 +90,8 @@ preference `database.selected`; `template/DatabaseParts.xml` has the picker.
   of registered labels) and the Settings index (SettingsHome: each owner's registered settings landing the viewer may
   open, `ReadinessServices.find#Settings`). **Operations** (`System/Operations/`): Jobs, a job (JobDetail), Job runs, a
   run (JobRunDetail), Notification topics and a topic (TopicDetail), and Health (the readiness checks of every
-  registered provider, with Check again and a registered refresh, `ReadinessServices.get#Readiness`) with the Support
+  registered provider, with Check again and a registered refresh, `ReadinessServices.get#Readiness`, and the last day's
+  sign-in failures for a reader of the overview, `get#HealthCards`) with the Support
   summary it links (SupportSummary: the checks, the protocols and the effective settings, to print or to download as
   redacted JSON); their presentation is `template/AdminReadiness.js`. **Data** (`System/Data/`): Imports (the runs of every
   registered import target) and an import (ImportDetail: its rows, the result files, the retry of failed rows), Exports
