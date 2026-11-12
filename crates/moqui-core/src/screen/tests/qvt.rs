@@ -447,6 +447,19 @@ fn an_alias_transition_link_points_at_the_screen() {
     );
     assert!(out.contains("href=\"/List/detail?id=I1\""), "{out}");
     assert!(out.contains("href=\"/List/acted?id=I1\""), "{out}");
+    // an expression url gives its id the expression's names, not its unexpanded text
+    assert!(out.contains("id=\"Rows_fix_0_fixUrl\""), "{out}");
+    assert!(!out.contains("${fixUrl}"), "{out}");
+    // and in html, whose renderer has the same rule
+    let context = ExecutionContextFactory::test_context();
+    let html = make_render(context.factory())
+        .root_screen(render_dir().join("Alias.xml").to_string_lossy().into_owned())
+        .screen_path("/List")
+        .render_mode("html")
+        .render()
+        .unwrap()
+        .body_text();
+    assert!(html.contains("id=\"Rows_fix_0_fixUrl\""), "{html}");
     // expand defaults to true, so this submit goes to the screen. false keeps the post on the transition.
     assert!(out.contains("action=\"/Detail\""), "{out}");
     assert!(out.contains("action=\"/List/detail\""), "{out}");

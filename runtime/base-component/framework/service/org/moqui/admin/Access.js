@@ -588,11 +588,16 @@ function endMembership(p) {
     if (!p.expectedRevision || p.expectedRevision !== stamp(existing))
         return refused("REVISION_CHANGED", "The membership changed since you read it; reload it", {revision: stamp(existing)})
     const now = nowMs()
-    const thruDate = p.thruDate != null && p.thruDate !== "" ? ms(p.thruDate) : now
+    const given = p.thruDate != null && p.thruDate !== ""
+    // Ended now, it ends a millisecond before now: the session's group check takes a thru date as still open (inclusive, as
+    // Java's filterByDate), so one stored as now would be seen for the rest of this millisecond.
+    const thruDate = given ? ms(p.thruDate) : now - 1
     if (!Number.isFinite(thruDate) || thruDate < now - 60000) throw new Error("A membership ends now or later")
     if (existing.thruDate && ms(existing.thruDate) <= now) return refused("MEMBERSHIP_ENDED", "The membership has already ended")
     const fromDate = ms(existing.fromDate)
-    const end = Math.max(thruDate, fromDate ?? thruDate)
+    // A date given is not before the start; ended now, a membership that started this millisecond ends before it and is not
+    // seen at all.
+    const end = given ? Math.max(thruDate, fromDate ?? thruDate) : thruDate
     const row = {userGroupId: group.userGroupId, userId: existing.userId, fromDate, thruDate: end}
     const path = identity.administrationPath({memberships: [row]})
     if (!path.allowed) return refused(path.reasonCode, path.reason)

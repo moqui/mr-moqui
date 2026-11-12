@@ -1020,7 +1020,9 @@
             if (l.fieldName === undefined) {
                 l.fieldName = fname(n);
                 l.formName = formName(n);
-                l.urlId = "_" + l.url.replace(/\./g, "_");
+                // an expression url has no fixed text, so its id is the expression's names (`${fixUrl}` is `_fixUrl`)
+                l.urlId = l.url.indexOf("${") >= 0 ? "_" + l.url.replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "")
+                    : "_" + l.url.replace(/\./g, "_");
             }
             return (st.fieldForm || xn(l.formName)) + "_" + l.fieldName + entry() + sec() + l.urlId;
         };

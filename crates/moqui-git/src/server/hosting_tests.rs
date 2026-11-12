@@ -69,9 +69,19 @@ fn grant_entities(fixture: &Fixture) {
 }
 
 /// The framework's own gitECA rules (`service/Git.gitecas.xml`), which a test factory without components does not
-/// load: merge requests follow their branches, webhooks follow pushes.
+/// load: merge requests follow their branches, webhooks follow pushes. Not the report definitions' pull: a test factory
+/// registers no report services, so it would fail on every push.
 fn framework_rules(fixture: &Fixture) {
-    let xml = std::fs::read_to_string(moqui_core::context::framework_dir().join("service/Git.gitecas.xml")).unwrap();
+    let mut xml =
+        std::fs::read_to_string(moqui_core::context::framework_dir().join("service/Git.gitecas.xml")).unwrap();
+    let id = xml
+        .find(r#"id="FrameworkPullDefinitionGitSyncs""#)
+        .expect("Git.gitecas.xml has the report pull rule");
+    let start = xml[..id]
+        .rfind("<giteca ")
+        .expect("the rule's element starts before its id");
+    let end = id + xml[id..].find("</giteca>").expect("the rule's element ends") + "</giteca>".len();
+    xml.replace_range(start..end, "");
     moqui_core::service::git_eca::install(fixture.context.factory(), &xml);
 }
 

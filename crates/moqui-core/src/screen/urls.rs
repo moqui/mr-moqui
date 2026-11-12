@@ -41,6 +41,11 @@ pub struct LinkPermitted {
     permitted: bool,
 }
 
+/// The parameters that say where a list is: its page, its page size and its sort. A menu entry for a screen other than the one shown
+/// leaves them out ([`UrlInstance::drop_list_state`]), so a sibling that declares `pageIndex` does not open on the
+/// page of the list being shown.
+pub const LIST_STATE_PARAMETERS: [&str; 4] = ["pageIndex", "pageSize", "pageNoLimit", "orderByField"];
+
 /// A URL for a link, with the parameters added to it.
 #[derive(Clone, Debug, Default)]
 pub struct UrlInstance {
@@ -289,6 +294,13 @@ impl UrlInstance {
 
     pub fn remove_parameter(&mut self, name: &str) {
         self.parameters.shift_remove(name);
+    }
+
+    /// Leave out the page, page size and sort of a list ([`LIST_STATE_PARAMETERS`]), which belong to the screen being shown.
+    pub fn drop_list_state(&mut self) {
+        for name in LIST_STATE_PARAMETERS {
+            self.parameters.shift_remove(name);
+        }
     }
 
     /// The parameters without the ones that belong to one request.

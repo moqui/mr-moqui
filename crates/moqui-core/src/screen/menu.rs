@@ -112,7 +112,11 @@ pub(super) fn subscreen_entry(
     let screen_path = format!("{parent_path}/{}", moqui_lib::string::url_encode_if_needed(&item.name));
     let mut names = parent_names.to_vec();
     names.push(item.name.clone());
-    let url = urls::resolve_names_at(state, names, 0, true)?;
+    let mut url = urls::resolve_names_at(state, names, 0, true)?;
+    // The page and sort of the list being shown are not a sibling's (a link or the current URL keeps them).
+    if item.name != next_item {
+        url.drop_list_state();
+    }
     let Some(sui) = url.info.as_ref() else {
         return Ok(None);
     };

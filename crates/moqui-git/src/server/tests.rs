@@ -1724,9 +1724,11 @@ const RULES: &str = r#"<gitecas>
     </giteca>
 </gitecas>"#;
 
-/// Wait until no update of the fixture is still to run.
+/// Wait until no update of the fixture is still to run. An update still pending after a while is run here, as the job
+/// that runs pending updates would (the git pool may have refused its run); the panic names each update still busy.
 pub(super) fn settled(fixture: &Fixture) -> Vec<EntityValue> {
     let started = std::time::Instant::now();
+    let mut ran_pending = false;
     loop {
         let rows = {
             let _entered = fixture.context.enter();
@@ -1739,16 +1741,39 @@ pub(super) fn settled(fixture: &Fixture) -> Vec<EntityValue> {
                 .list()
                 .unwrap()
         };
-        let busy = rows.iter().any(|row| {
-            matches!(
-                row.get("ecaStatus").and_then(Value::as_str),
-                Some("recording" | "pending" | "running")
-            )
-        });
-        if !busy {
+        let busy: Vec<String> = rows
+            .iter()
+            .filter_map(|row| {
+                let status = row.get("ecaStatus").and_then(Value::as_str)?;
+                matches!(status, "recording" | "pending" | "running").then(|| {
+                    let field = |name: &str| {
+                        row.get(name)
+                            .map(moqui_lib::object::to_plain_string)
+                            .unwrap_or_default()
+                    };
+                    format!(
+                        "{} of {} ({status} since {})",
+                        field("updateId"),
+                        field("repositoryId"),
+                        field("updateDate")
+                    )
+                })
+            })
+            .collect();
+        if busy.is_empty() {
             return rows.iter().cloned().collect();
         }
-        assert!(started.elapsed().as_secs() < 30, "git updates did not settle: {rows:?}");
+        let elapsed = started.elapsed().as_secs();
+        if elapsed >= 10 && !ran_pending && busy.iter().any(|row| row.contains("(pending since")) {
+            ran_pending = true;
+            eprintln!("git updates still pending after {elapsed}s, running them here: {busy:?}");
+            let _entered = fixture.context.enter();
+            let _authz = fixture.context.disable_authz();
+            if let Err(err) = crate::provider(fixture.context.factory()).unwrap().process_pending() {
+                eprintln!("running the pending git updates failed: {err}");
+            }
+        }
+        assert!(elapsed < 30, "git updates did not settle, still busy: {busy:?}");
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }

@@ -558,6 +558,9 @@ fn notification_presentation(payload: &Json) -> (String, &'static str) {
     (format!("{} — {title}", labels.join(", ")), tone)
 }
 
+/// Tools' screen of one alert rule, which reads the rule's `definitionId` (the alert list does not).
+const ALERT_RULE_PATH: &str = "/apps/dashboards/AlertRule";
+
 pub(crate) fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
     match text(contact, "type", "notification") {
         "notification" => {
@@ -570,10 +573,16 @@ pub(crate) fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> 
                 Some(states) if name.contains('$') => format!("{states}${{title}}"),
                 _ => title,
             };
+            // the payload's own link, else the rule it names (the screen that reads `definitionId`), else the list
+            let link = match (payload["link"].as_str(), payload["ruleId"].as_str()) {
+                (Some(link), _) => link.to_string(),
+                (None, Some(rule)) => format!("{ALERT_RULE_PATH}?definitionId={rule}"),
+                (None, None) => "/apps/dashboards/Alerts".to_string(),
+            };
             let mut note = moqui_core::notify::NotificationMessage::new();
             note.topic(text(contact, "topic", "ReportAlert"))
                 .title(title)
-                .link(text(payload, "link", "/apps/dashboards/Alerts"))
+                .link(link)
                 .notification_type(tone)
                 .message_json(payload.to_string())
                 .persist(true);
@@ -732,14 +741,14 @@ fn notify(
                 .collect();
             let hash = moqui_lib::json::canonical_sha256(&json!(state_key));
             let resolved = events.iter().all(|event| event["state"] == "Normal");
-            // the mounting app's rule screen where the rule names one (detailLink), Tools' list otherwise
+            // the mounting app's rule screen where the rule names one (detailLink), Tools' rule screen otherwise
             // (checked again here: the link is expanded as a template, and a row may be written past the save)
             let link = format!(
                 "{}?definitionId={id}",
                 body["detailLink"]
                     .as_str()
                     .filter(|link| super::alert_delivery::server_path(link))
-                    .unwrap_or("/apps/dashboards/Alerts")
+                    .unwrap_or(ALERT_RULE_PATH)
             );
             let payload = json!({"ruleId":id,"title":definition["title"],"labels":labels,"events":events,"link":link});
             let result = (|| -> Result<moqui_core::entity::EntityValue, Error> {

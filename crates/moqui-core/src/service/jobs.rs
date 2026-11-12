@@ -965,12 +965,12 @@ fn finish_run(facade: &EntityFacade, job: &JobRun, outcome: &RunOutcome) {
     // Frames the service left open are rolled back first, so the records below do not join them.
     super::pool::rollback_frames(facade);
     // The lock goes first: a failure restores the previous run time so the job is due again.
+    let restored = if outcome.has_error {
+        job.last_run_time.clone()
+    } else {
+        now_stamp()
+    };
     if !job.delete_when_done {
-        let restored = if outcome.has_error {
-            job.last_run_time.clone()
-        } else {
-            now_stamp()
-        };
         release_lock(facade, job, &restored);
     }
     // `errorHistoryOnly`: a success is not history. The row existed so the lock could point at it and Job Detail
@@ -1003,6 +1003,11 @@ fn finish_run(facade: &EntityFacade, job: &JobRun, outcome: &RunOutcome) {
         if job.delete_when_done {
             delete_queued(facade, &job.job_name);
         }
+    }
+    // A lock given to this run between the release and the end above (`hold#BackupLock` for a run started by hand, which
+    // takes the lock while the run has no end) would name an ended run until it expires: it is released again.
+    if !job.delete_when_done && holds_lock(facade, job) {
+        release_lock(facade, job, &restored);
     }
     if outcome.has_error {
         tracing::warn!(job = %job.job_name, run = %job.job_run_id, errors = %outcome.errors, "service job ended with errors");
@@ -1754,6 +1759,53 @@ mod tests {
         assert!(super::within_dates(&job, PREVIOUS + 1_000));
         assert!(!super::within_dates(&job, PREVIOUS - 1));
         assert!(!super::within_dates(&job, PREVIOUS + 1_001));
+    }
+
+    /// A run started by hand holds no lock until `hold#BackupLock` gives it one, which can land between the runner's
+    /// release and its write of the run's end (a rule on that write stands in for it here): the lock is released again
+    /// once the end is written, so it does not name an ended run.
+    #[test]
+    fn a_lock_taken_while_a_run_ends_is_released_after_its_end() {
+        let facade = crate::testing::open_with(
+            &crate::testing::framework_dir(),
+            crate::testing::Options {
+                entity_eca: true,
+                data_feed: false,
+                tape: None,
+            },
+        );
+        crate::entity::load_feed::add_eca_rules(
+            &facade,
+            r#"<eecas>
+                    <eeca id="TestHoldWhileEnding" entity="moqui.service.job.ServiceJobRun" on-update="true" run-before="true">
+                        <actions>
+                            <entity-make-value entity-name="moqui.service.job.ServiceJobRunLock" value-field="held"/>
+                            <script>held.set("jobName", "HeldJob"); held.set("jobRunId", "R-HELD")</script>
+                            <entity-update value-field="held"/>
+                        </actions>
+                    </eeca>
+                </eecas>"#,
+        )
+        .unwrap();
+        let ctx = ExecutionContextFactory::test_context();
+        ctx.factory().set_entity(facade.clone());
+        let _entered = ctx.enter();
+        let _authz = ctx.disable_authz();
+        let run = claimed(&ctx, &facade, "HeldJob", "R-HELD");
+        // the lock is free when the run ends, as for a run the request has not yet given it
+        let mut lock = one(&facade, JOB_LOCK, "jobName", "HeldJob");
+        lock.set("jobRunId", Value::Null);
+        lock.update(&facade).unwrap();
+        let outcome = super::RunOutcome {
+            has_error: false,
+            results: None,
+            result_values: Default::default(),
+            messages: String::new(),
+            errors: String::new(),
+        };
+        super::finish_run(&facade, &run, &outcome);
+        assert!(!text(&one(&facade, JOB_RUN, "jobRunId", "R-HELD"), "endTime").is_empty());
+        assert_eq!(text(&one(&facade, JOB_LOCK, "jobName", "HeldJob"), "jobRunId"), "");
     }
 
     #[test]
