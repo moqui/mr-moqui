@@ -14,7 +14,8 @@
 
 //! Bulk writes of a find: `update_all`, `delete_all` and `purge`. They page through the rows by primary key in bounded
 //! chunks, reading only the key (and the fields an update sets) unless an ECA rule, the data feed, a transaction cache
-//! or a sim needs whole rows (plans/High-Level-Review.md HL-033).
+//! or a sim needs whole rows (plans/archive/High-Level-Review.md HL-033). A chunk of a delete read by key goes in one statement
+//! ([`delete_chunk`]).
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -26,6 +27,7 @@ use moqui_lib::object::Value;
 use super::EntityFind;
 use crate::entity::load_feed;
 use crate::entity::value::{EntityList, EntityValue};
+use crate::entity::EntityFacade;
 use crate::transaction::TransactionAttribute;
 
 /// Rows a bulk write reads in one query, unless [`EntityFind::bulk_chunk`] sets another.
@@ -171,6 +173,26 @@ fn children_first(rows: Vec<EntityValue>, pk: &[String], self_refs: &[Vec<(Strin
     order.into_iter().filter_map(|index| slots[index].take()).collect()
 }
 
+/// Delete a chunk the pager read. Rows read by their key alone (no ECA rule runs and the data feed keeps no values) of
+/// an entity that does not refer to itself go in one statement, or a few under the bind limits
+/// ([`crate::entity::EntityFacade::delete_keys`], plans/archive/High-Level-Review.md HL-033); other rows, or where a sim or a
+/// transaction cache holds the deletes, one at a time through the value path, in the pager's order. As a row's delete,
+/// a row another transaction deleted first is not an error, and each row read counts as deleted, as Java's
+/// `deleteAll` counts them.
+fn delete_chunk(facade: &EntityFacade, pager: &KeyPager, by_key: bool, list: &EntityList) -> Result<(), Error> {
+    if by_key
+        && pager.self_refs.is_empty()
+        && !pager.pk.is_empty()
+        && facade.delete_keys(&pager.base.entity_name, list.values())?.is_some()
+    {
+        return Ok(());
+    }
+    for value in list.values() {
+        value.delete(facade)?;
+    }
+    Ok(())
+}
+
 /// Rows after `last` in primary-key order: `k1 > v1 OR (k1 = v1 AND k2 > v2) OR ...`.
 fn after_key(pk: &[String], last: &[Value]) -> Condition {
     let mut any = Vec::with_capacity(pk.len());
@@ -307,12 +329,11 @@ impl EntityFind {
         let facade = self.facade.clone();
         self.refuse_create_only("deleted")?;
         let select = (!self.bulk_reads_whole_rows("delete", true)?).then(Vec::new);
+        let by_key = select.is_some();
         let mut pager = self.key_pager(select, true)?;
         let mut deleted = 0_i64;
         while let Some(list) = pager.next()? {
-            for value in list.values() {
-                value.delete(&facade)?;
-            }
+            delete_chunk(&facade, &pager, by_key, &list)?;
             deleted = deleted.saturating_add(i64::try_from(list.len()).unwrap_or(i64::MAX));
         }
         Ok(deleted)
@@ -335,6 +356,7 @@ impl EntityFind {
         let tx = facade.transactions_for(&entity_name)?;
         // Each chunk begins a transaction of its own, which holds nothing in a transaction cache.
         let select = (!self.bulk_reads_whole_rows("delete", false)?).then(Vec::new);
+        let by_key = select.is_some();
         let mut pager = self.key_pager(select, true)?;
         let mut purged = Purged::default();
         while !pager.done {
@@ -353,9 +375,7 @@ impl EntityFind {
                 let Some(list) = pager.next()? else {
                     return Ok(None);
                 };
-                for value in list.values() {
-                    value.delete(&facade)?;
-                }
+                delete_chunk(&facade, &pager, by_key, &list)?;
                 Ok(Some(i64::try_from(list.len()).unwrap_or(i64::MAX)))
             });
             match chunk {

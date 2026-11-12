@@ -82,7 +82,7 @@ struct Driver<'a> {
 }
 
 /// The SFU's work counters ([`moqui_rtc::SfuStats`]) as the driver last copied them, for the telemetry gauges
-/// `moqui.rtc.sfu.*` (plans/High-Level-Review.md HL-008): datagrams received and accepted, accept checks, drives, drive
+/// `moqui.rtc.sfu.*` (plans/archive/High-Level-Review.md HL-008): datagrams received and accepted, accept checks, drives, drive
 /// passes and peer polls, each a running total. The driver owns the SFU, so it copies them at most once a second.
 #[derive(Default)]
 struct SfuGauges([std::sync::atomic::AtomicU64; 6]);

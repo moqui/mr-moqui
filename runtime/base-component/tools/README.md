@@ -210,5 +210,6 @@ area's screen (Security's `UserAccount/`), and `UNGUARDED` a transition that act
 ```
 
 `test/load/` holds the shipped load scripts (`ServiceCall.load.js`: one service called again and again in this
-server, so only Tools › Load runs it, not `./moq test-load`); `moqui test` does not read them. Writing and running
+server, so only Tools › Load runs it, not `./moq test-load`; `AgentApps.load.js`: the apps over SSH as an agent drives
+them, from Tools or `./moq test-load tools --script AgentApps --ssh 2222`); `moqui test` does not read them. Writing and running
 one: [docs/tools/Load-Runner.md](../../../docs/tools/Load-Runner.md).

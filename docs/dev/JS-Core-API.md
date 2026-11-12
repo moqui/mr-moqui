@@ -545,7 +545,7 @@ the find as it was, so it can run again.
 | `iterator()` | The rows through a database cursor ([EntityListIterator](#entitylistiterator)) |
 | `count()` | How many rows match |
 | `updateAll(fieldsToSet)` | Sets the fields on each row found and updates the ones that change; how many were updated. Each row's ECA rules run |
-| `deleteAll()` | Deletes the rows; how many |
+| `deleteAll()` | Deletes the rows; how many. Each row's ECA rules run: with none (and no data feed keeping values), the rows are read a chunk at a time by primary key and each chunk deleted in one statement |
 | `purge(maxSeconds, chunkSize)` | Deletes the rows a chunk at a time by primary key, each chunk committed on its own; a failed chunk is logged and passed over, and no chunk begins after `maxSeconds`. How many rows the committed chunks deleted |
 | `getEntityName()` | The entity of the find |
 | `getSelectFields()` | The fields selected, empty for all |
@@ -1241,16 +1241,17 @@ ec.makeNotificationMessage().topic("OrderApproved").userIds([salesRepUserId])
 ## `ec.llm`
 
 Model calls of app code. `ec.llm` is there only in a build with the `llm` feature (`ec.factory.hasFeature("llm")`).
-A model call is refused while a transaction is open, unless `complete` is given `allowInTransaction: true`, which
-suspends the transaction for the call.
+A model call is refused while a transaction is open, unless its options give `allowInTransaction: true` (`complete`,
+`summarize`, `classify` and `extract` take it), which suspends the transaction for the call and cuts the call to the
+time the transaction has left.
 
 | Member | |
 |---|---|
 | `isEnabled()` | Whether model calls are enabled |
 | `complete(options)` | One completion: `{prompt, system, messages, model, feature, tier, schema, schemaName, reasoning, maxOutput, timeoutSeconds, allowInTransaction}` gives `{text, json, modelId, finish, inputTokens, cachedInputTokens, outputTokens, cost, callIds}`. The model is `model`, else the binding of `feature`, else a model of `tier`. With `schema` (a JSON schema) the reply is parsed and checked into `json`. A call that ends without an answer throws |
-| `summarize(text, options)` | A summary; `options.maxWords` |
-| `classify(text, labels)` | One of the labels |
-| `extract(text, fields)` | A value for each field of `{name: description}` |
+| `summarize(text, options)` | A summary; `options` `{maxWords, allowInTransaction}` |
+| `classify(text, labels, options)` | One of the labels; `options` `{allowInTransaction}` |
+| `extract(text, fields, options)` | A value for each field of `{name: description}`; `options` `{allowInTransaction}` |
 | `startRun(agentId, text)` | Starts a background agent run as the current user; its run id |
 
 ## Differences from Moqui Java

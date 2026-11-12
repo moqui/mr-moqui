@@ -203,7 +203,10 @@ pub fn eligibility_of(
     if !marked && !force {
         reasons.push("server-static does not name qvt".to_string());
     }
-    reasons.extend(structure_reasons(facade, factory, def, macro_location));
+    reasons.extend(
+        def.generated
+            .recorded(|| structure_reasons(facade, factory, def, macro_location)),
+    );
     let result = Arc::new(Eligibility {
         marked,
         eligible: (marked || force) && reasons.is_empty(),
@@ -296,7 +299,7 @@ fn template_for(state: &RenderState, runner: &dyn Runner, key: &str) -> Result<A
         return Ok(found);
     }
     // a template is shared by every render of the screen: none of a stamped render's stamps go into it (F10)
-    match super::stamp::paused(|| build_template(state, runner, &def, key)) {
+    match super::stamp::paused(|| def.generated.recorded(|| build_template(state, runner, &def, key))) {
         Ok(made) => {
             def.generated.put_static_template(key.to_string(), Arc::clone(&made));
             Ok(made)

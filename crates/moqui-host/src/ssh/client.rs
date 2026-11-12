@@ -18,6 +18,9 @@
 //! Host keys: a pinned `SHA256:` fingerprint must match. Without one the key is checked against
 //! `runtime/conf/ssh_known_hosts` (OpenSSH format, never `~/.ssh`); a host seen for the first time is recorded, and a
 //! host whose key changed is refused with both fingerprints in the error.
+//!
+//! [`login`], the connection and login without the `sftp` subsystem, is also the SSH client of client specs and load
+//! scripts (`test_client/ssh.rs`), which check a key against a [`Trust`] of their own.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -57,17 +60,27 @@ impl SftpConnector for RusshConnector {
     fn connect(&self, config: &SftpConfig) -> Result<Box<dyn SftpSession>, Error> {
         let config = config.clone();
         let known_hosts = self.known_hosts.clone();
-        let session = crate::edge::block_on(async move { open(config, known_hosts).await })??;
+        let session = crate::edge::block_on(async move { open(config, Trust::KnownHosts(known_hosts)).await })??;
         Ok(Box::new(session))
     }
 }
 
+/// What a host key with no pinned fingerprint is checked against.
+pub(crate) enum Trust {
+    /// An OpenSSH known-hosts file, where a host seen for the first time is recorded.
+    KnownHosts(PathBuf),
+    /// Any key: a client spec's server on this machine, or `--insecure`.
+    Any,
+    /// No key: the refusal names the server's fingerprint, to pin.
+    Nothing,
+}
+
 /// Checks the server key, and keeps why it refused one for the error.
-struct KeyCheck {
+pub(crate) struct KeyCheck {
     host: String,
     port: u16,
     pinned: Option<String>,
-    known_hosts: PathBuf,
+    trust: Trust,
     refused: Arc<Mutex<Option<String>>>,
 }
 
@@ -84,22 +97,33 @@ impl KeyCheck {
                 ))
             };
         }
+        let known_hosts = match &self.trust {
+            Trust::KnownHosts(path) => path,
+            Trust::Any => return Ok(()),
+            Trust::Nothing => {
+                return Err(format!(
+                    "SSH host key of {}:{} is {fingerprint}, which nothing pins: pass it as the fingerprint, or run \
+                     with --insecure",
+                    self.host, self.port
+                ))
+            }
+        };
         let _lock = lock(&KNOWN_HOSTS_LOCK);
-        match russh::keys::check_known_hosts_path(&self.host, self.port, key, &self.known_hosts) {
+        match russh::keys::check_known_hosts_path(&self.host, self.port, key, known_hosts) {
             Ok(true) => Ok(()),
             Ok(false) => {
-                russh::keys::known_hosts::learn_known_hosts_path(&self.host, self.port, key, &self.known_hosts)
-                    .map_err(|err| format!("could not record the host key in {}: {err}", self.known_hosts.display()))?;
+                russh::keys::known_hosts::learn_known_hosts_path(&self.host, self.port, key, known_hosts)
+                    .map_err(|err| format!("could not record the host key in {}: {err}", known_hosts.display()))?;
                 tracing::info!(
                     "SSH host {}:{} seen for the first time; recorded key {fingerprint} in {}",
                     self.host,
                     self.port,
-                    self.known_hosts.display()
+                    known_hosts.display()
                 );
                 Ok(())
             }
             Err(russh::keys::Error::KeyChanged { line }) => {
-                let recorded = russh::keys::known_hosts::known_host_keys_path(&self.host, self.port, &self.known_hosts)
+                let recorded = russh::keys::known_hosts::known_host_keys_path(&self.host, self.port, known_hosts)
                     .ok()
                     .and_then(|keys| keys.into_iter().find(|(at, _)| *at == line))
                     .map_or_else(
@@ -110,12 +134,12 @@ impl KeyCheck {
                     "SSH host key of {}:{} changed: it is {fingerprint}, and {} line {line} has {recorded}; refusing to connect",
                     self.host,
                     self.port,
-                    self.known_hosts.display()
+                    known_hosts.display()
                 ))
             }
             Err(err) => Err(format!(
                 "could not check the host key in {}: {err}",
-                self.known_hosts.display()
+                known_hosts.display()
             )),
         }
     }
@@ -146,18 +170,22 @@ pub(crate) fn same_fingerprint(pinned: &str, actual: &str) -> bool {
     clean(pinned) == clean(actual)
 }
 
-async fn open(config: SftpConfig, known_hosts: PathBuf) -> Result<RusshSession, Error> {
+/// Connect to `config`'s server, check its key against the pinned fingerprint or `trust`, and log in.
+pub(crate) async fn login(config: &SftpConfig, trust: Trust) -> Result<client::Handle<KeyCheck>, Error> {
     let target = config.target();
     let refused = Arc::new(Mutex::new(None));
     let check = KeyCheck {
         host: config.host.clone(),
         port: config.port,
         pinned: config.host_key_fingerprint.clone(),
-        known_hosts,
+        trust,
         refused: Arc::clone(&refused),
     };
     let ssh_config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(600)),
+        // each exchange is a request and its answer (an SFTP call, an exec): Nagle held each small write about 40 ms
+        // for the server's delayed acknowledgement (plans/archive/LoadRunner.md L7)
+        nodelay: true,
         ..client::Config::default()
     });
     let connecting = client::connect(ssh_config, (config.host.as_str(), config.port), check);
@@ -171,12 +199,18 @@ async fn open(config: SftpConfig, known_hosts: PathBuf) -> Result<RusshSession, 
         }
         Err(_) => return Err(Error::new(format!("timed out connecting to {target}"))),
     };
-    let authenticated = authenticate(&mut handle, &config).await;
+    let authenticated = authenticate(&mut handle, config).await;
     if let Err(err) = authenticated {
         tracing::error!("Authentication failed for {target}: {err}");
         let _ = handle.disconnect(russh::Disconnect::ByApplication, "", "").await;
         return Err(err);
     }
+    Ok(handle)
+}
+
+async fn open(config: SftpConfig, trust: Trust) -> Result<RusshSession, Error> {
+    let target = config.target();
+    let handle = login(&config, trust).await?;
     let channel = handle
         .channel_open_session()
         .await

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Load results side by side (plans/LoadRunner.md §7 `compare#LoadRuns`, L5), for the service and for
+//! Load results side by side (plans/archive/LoadRunner.md §7 `compare#LoadRuns`, L5), for the service and for
 //! `moqui test-load --compare`: the summary's rows, then each request name's, every value after the first with its
 //! change from the first in percent.
 

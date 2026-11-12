@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `service.call(name, parameters, { name, expect })` of a load run in a server (plans/LoadRunner.md §6, D10): on the
+//! `service.call(name, parameters, { name, expect })` of a load run in a server (plans/archive/LoadRunner.md §6, D10): on the
 //! user's thread, in the ExecutionContext the run made for it ([`super::run::in_user_context`]), logged in as the user
 //! who started the run, through the service facade with authorization required and the transaction its definition
 //! gives. Timed from the call to its return; the context's error messages are the sample's error, and every message

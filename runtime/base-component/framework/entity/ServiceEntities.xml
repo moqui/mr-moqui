@@ -133,11 +133,37 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="instanceId" type="text-short"><description>The server instance (cluster member) holding the lock.
             A lock whose instance is not a live cluster member, or is this instance but not running the job here, is
             taken over before expireLockTime.</description></field>
+        <field name="leaseExpireDate" type="date-time"><description>While a run holds the lock, when its lease lapses
+            (the database's time). The instance running it renews the lease every minute, for three minutes, until the
+            run ends or goes on past its job timeout; a lock whose lease lapsed is taken over, even from a live
+            instance. Empty for a lock held with no lease (a backup run started by hand), which only a gone instance or
+            expireLockTime frees.</description></field>
         <field name="runCount" type="number-integer"><description>How many runs have been started when the job's
             errorHistoryOnly is Y, including runs whose success row was removed. repeatCount uses this instead of
             counting ServiceJobRun rows. Empty until the first such run, or until older rows are counted once.</description></field>
         <relationship type="one" related="moqui.service.job.ServiceJob"/>
         <relationship type="one" related="moqui.service.job.ServiceJobRun"/>
+    </entity>
+    <entity entity-name="ServiceOutbox" package="moqui.service.job" use="transactional" cache="never">
+        <description>The tx-commit service ECA rules of a call, written in the transaction that commits, so they run
+            after it even when the process stops first (plans/archive/High-Level-Review.md HL-025). The run after the commit
+            deletes the row in its own transaction, so its effects and the delete commit together; a row still here
+            after availableDate (its run was lost to a crash, a stop or a full service queue, or failed) is run by the
+            scheduler on a job worker, claimed with a conditional update of attemptCount, up to five attempts, later
+            ones waiting longer. Delivery is at least once: a rule with an effect outside the database (an email)
+            de-duplicates. Only for a call in the default entity group's transaction; a sim session writes none.</description>
+        <field name="outboxId" type="id" is-pk="true"/>
+        <field name="serviceName" type="text-medium"><description>The service whose rules these are.</description></field>
+        <field name="phase" type="text-short"><description>The rules' when: tx-commit.</description></field>
+        <field name="queuedCall" type="text-very-long"><description>The call as JSON, as ServiceJob.queuedCall: the
+            parameters and results keeping their lists and maps, the user and agent run that made it, and the
+            authorization the rules run under.</description></field>
+        <field name="availableDate" type="date-time"><description>When the scheduler may run it: a minute after the
+            commit, then later after each attempt.</description></field>
+        <field name="attemptCount" type="number-integer"><description>Runs tried that did not commit.</description></field>
+        <field name="lastAttemptDate" type="date-time"/>
+        <field name="lastError" type="text-very-long"><description>The error of the last attempt that failed.</description></field>
+        <index name="SVC_OUTBOX_AVAIL" unique="false"><index-field name="availableDate"/></index>
     </entity>
 
     <!-- ========================================================= -->

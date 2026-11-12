@@ -921,13 +921,37 @@ fn merge_sequence_rows(after: &[Row], mut current: Vec<Row>) -> Vec<Row> {
     current
 }
 
-/// The columns of a condition that is only `column = ?` joined by AND. Anything else has no key.
+/// The columns of a condition that is only `column = ?` joined by AND, or a statement of several rows by their keys
+/// (a bulk delete's chunk, plans/archive/High-Level-Review.md HL-033): `column IN (?, ...)`, or an OR of such ANDs on the same
+/// columns. Anything else has no key.
 fn equality_key(pred: &Option<Pred>) -> Option<Vec<String>> {
+    let pred = pred.as_ref()?;
     let mut fields = Vec::new();
-    if !equality_fields(pred.as_ref()?, &mut fields) || fields.is_empty() {
-        return None;
-    }
-    Some(fields)
+    let keyed = match pred {
+        Pred::In {
+            field,
+            negated: false,
+            ..
+        } => {
+            fields.push(field.clone());
+            true
+        }
+        Pred::Or(parts) => {
+            let mut each = parts.iter().map(|part| {
+                let mut part_fields = Vec::new();
+                equality_fields(part, &mut part_fields).then_some(part_fields)
+            });
+            match each.next().flatten() {
+                Some(first) => {
+                    fields = first;
+                    each.all(|part| part.as_ref() == Some(&fields))
+                }
+                None => false,
+            }
+        }
+        _ => equality_fields(pred, &mut fields),
+    };
+    (keyed && !fields.is_empty()).then_some(fields)
 }
 
 fn equality_fields(pred: &Pred, fields: &mut Vec<String>) -> bool {

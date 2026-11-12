@@ -24,7 +24,7 @@
 //! (replacing its copy there; [`apply_draft`]). A message whose UID is not known (a move
 //! without UIDPLUS) is found by Message-ID. A change that cannot be made yet waits; one that fails
 //! [`MAX_ATTEMPTS`] times is dropped and logged. An attempt is counted, in a transaction of its own, before its command
-//! goes, so one that loses the connection or stops the session counts too (plans/High-Level-Review.md HL-029).
+//! goes, so one that loses the connection or stops the session counts too (plans/archive/High-Level-Review.md HL-029).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock, Weak};

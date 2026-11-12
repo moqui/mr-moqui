@@ -134,7 +134,14 @@ fn serve_starts_the_declared_server_runs_the_specs_and_stops_it() {
     );
     assert!(out.contains("Http > an anonymous GET /Login is HTML"), "{out}");
     // Skipped's fixture-user feature, and Load's rate feature, which needs a slow server this run has none of
-    assert!(out.contains(" 0 failed, 0 ignored, 2 skipped; 6 specs in "), "{out}");
+    assert!(out.contains(" 0 failed, 0 ignored, 2 skipped; 7 specs in "), "{out}");
+    // the ready file's ssh line: the served server's SSH listener, on a port of its own, is the specs' server.ssh
+    assert!(
+        out.contains(
+            "Ssh > in a load, a connect, an exec, an agent-apps session and a shell are timed by name  PASSED"
+        ),
+        "{out}"
+    );
     assert!(junit.join("TEST-moqui-test-fixture.client.Served.xml").is_file());
     // the child ran Basics (and only it) before it served, and stopped when the client was done
     assert!(
@@ -288,7 +295,10 @@ fn a_server_that_does_not_start_fails_its_suite_only() {
         "{out}"
     );
     // the child's error, from the end of its log, in the failure report
-    assert!(out.contains("none of the components named (moqui-test-fixture) has a spec NoSuchSpec"), "{out}");
+    assert!(
+        out.contains("none of the components named (moqui-test-fixture) has a spec NoSuchSpec"),
+        "{out}"
+    );
     assert!(out.contains("Probe > the server answers  PASSED"), "{out}");
     assert!(
         out.contains("Probe setup FAILED: moqui-test-undeclared declares no server for --serve"),

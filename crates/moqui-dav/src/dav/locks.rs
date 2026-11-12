@@ -17,7 +17,7 @@
 //! client holds another user's client (whose href names the drive's folder in their own home) and every other writer
 //! of the drive (the Files screens, SFTP, the drive services) as well. The answers here are the WebDAV ones: 423, the
 //! `lockdiscovery` property, LOCK, refresh and UNLOCK by token. The locks are rows of the database, so a lock taken
-//! through one member of a cluster holds the writers on every member (plans/High-Level-Review.md HL-036).
+//! through one member of a cluster holds the writers on every member (plans/archive/High-Level-Review.md HL-036).
 
 use moqui_core::entity::EntityFacade;
 use moqui_core::resource::locks::{self as table, Lock};

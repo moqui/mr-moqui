@@ -1398,7 +1398,7 @@ pub(crate) fn of_call(facade: &EntityFacade, run_id: &str, tool_call_id: &str) -
         .map(ApprovalView::of))
 }
 
-/// A tool call the run goes on without (its step stopped while it ran, plans/High-Level-Review.md HL-040): its
+/// A tool call the run goes on without (its step stopped while it ran, plans/archive/High-Level-Review.md HL-040): its
 /// approval that began is UnknownOutcome, and one that never began (Pending, Approved) expires, each with its event.
 /// In the transaction in place.
 ///

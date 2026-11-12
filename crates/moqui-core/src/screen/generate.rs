@@ -136,6 +136,9 @@ pub struct Generated {
     static_failures: Mutex<HashMap<String, String>>,
     /// Held while a server-static template is made, so concurrent first requests make it once.
     static_build: Mutex<()>,
+    /// The service names looked up while what is kept here was made, found or not ([`Self::recorded`]): a service reload
+    /// that changes one of them drops the definition (plans/archive/High-Level-Review.md HL-015).
+    services: Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl Default for Generated {
@@ -149,6 +152,7 @@ impl Default for Generated {
             dependencies: Mutex::default(),
             static_failures: Mutex::default(),
             static_build: Mutex::default(),
+            services: Mutex::default(),
         }
     }
 }
@@ -172,6 +176,23 @@ impl Generated {
                 dependencies.push(source.clone());
             }
         }
+    }
+
+    /// Run `work`, which makes something kept here, and keep the service names it looked up.
+    pub(super) fn recorded<R>(&self, work: impl FnOnce() -> R) -> R {
+        let (result, names) = crate::service::define::recording_lookups(work);
+        if !names.is_empty() {
+            lock(&self.services).extend(names);
+        }
+        result
+    }
+
+    /// Whether what is kept here was made with one of `names`, or with a service name that was an expression (`${}`),
+    /// which any reload may change.
+    pub(super) fn looked_up_any(&self, names: &std::collections::BTreeSet<&str>) -> bool {
+        lock(&self.services)
+            .iter()
+            .any(|name| name.contains("${") || names.contains(name.as_str()))
     }
 
     pub(super) fn form(&self, name: &str) -> Option<Arc<FormInstance>> {
@@ -298,7 +319,14 @@ pub fn unit_for(request: &UnitRequest<'_>) -> Result<Option<Arc<Unit>>, Error> {
         request.section,
         if request.fail { "fail" } else { "widgets" }
     );
-    let made = match unit_root(request.def, request.section, request.fail)? {
+    let made = request.def.generated.recorded(|| make_unit_for(request, &key))?;
+    request.def.generated.put_unit(&unit_key, made.clone());
+    Ok(made)
+}
+
+/// The unit [`unit_for`] makes, none when the section has nothing to render.
+fn make_unit_for(request: &UnitRequest<'_>, key: &str) -> Result<Option<Arc<Unit>>, Error> {
+    Ok(match unit_root(request.def, request.section, request.fail)? {
         Some(root) => match mode_source(request.factory, request.macro_location) {
             Ok(source) => {
                 let loaded = load_module(&source, request.mode, std::env::var_os(DEBUG_ENV).is_some())?;
@@ -350,7 +378,7 @@ pub fn unit_for(request: &UnitRequest<'_>) -> Result<Option<Arc<Unit>>, Error> {
                     ))
                 })?;
                 let unit = make_unit(&loaded, body)?;
-                dump_unit(&key, &request.def.location, &unit);
+                dump_unit(key, &request.def.location, &unit);
                 Some(Arc::new(unit))
             }
             // A mode with no module yet renders nothing for widgets with nothing in them.
@@ -365,9 +393,7 @@ pub fn unit_for(request: &UnitRequest<'_>) -> Result<Option<Arc<Unit>>, Error> {
             }
         },
         None => None,
-    };
-    request.def.generated.put_unit(&unit_key, made.clone());
-    Ok(made)
+    })
 }
 
 /// Write `unit`'s source and its mode runtime to the `MOQUI_UNIT_DUMP` directory, when one is set, named for the screen and
@@ -410,19 +436,21 @@ pub fn unit_for_dynamic_form(
     if let Some(found) = request.def.generated.dynamic_unit(&key) {
         return Ok(found);
     }
-    let source = mode_source(request.factory, request.macro_location)?;
-    let loaded = load_module(&source, request.mode, std::env::var_os(DEBUG_ENV).is_some())?;
-    let root = MNode::new("dynamic-form");
-    root.append_node(form.node()?);
-    let body = generate_unit_body(&loaded, &root, None, request.mode).map_err(|err| {
-        Error::new(format!(
-            "{} dynamic form {}: {}",
-            request.def.location,
-            form.name,
-            err.message()
-        ))
+    let unit = request.def.generated.recorded(|| -> Result<Arc<Unit>, Error> {
+        let source = mode_source(request.factory, request.macro_location)?;
+        let loaded = load_module(&source, request.mode, std::env::var_os(DEBUG_ENV).is_some())?;
+        let root = MNode::new("dynamic-form");
+        root.append_node(form.node()?);
+        let body = generate_unit_body(&loaded, &root, None, request.mode).map_err(|err| {
+            Error::new(format!(
+                "{} dynamic form {}: {}",
+                request.def.location,
+                form.name,
+                err.message()
+            ))
+        })?;
+        Ok(Arc::new(make_unit(&loaded, body)?))
     })?;
-    let unit = Arc::new(make_unit(&loaded, body)?);
     request.def.generated.put_dynamic_unit(key, Arc::clone(&unit));
     Ok(unit)
 }

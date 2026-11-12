@@ -20,23 +20,31 @@
 //! to the service pool. It never runs the service body. A worker does, and records the outcome.
 //! A job with `errorHistoryOnly` Y removes that row when the run succeeds. Java keeps every run.
 //!
+//! A pass finds which jobs may start before any query (dates, paused, a free slot, the cron's last occurrence), then
+//! reads the lock rows of all of them in one query; only a due job has its repeat count and run history read
+//! (plans/archive/High-Level-Review.md HL-020).
+//!
 //! A pass claims locks only for job workers that are idle, and a lock records the instance that
-//! holds it. A lock whose instance is gone (not a live cluster member, or this instance with no run
-//! of this process holding it) is taken over before `expireLockTime`, and a worker checks that its
-//! run still holds the lock before it runs the service (`plans/High-Level-Review.md` HL-026).
+//! holds it. A lock whose lease lapsed ([`super::job_lease`]: the running instance renews it apart
+//! from this thread), or whose instance is gone (not a live cluster member, or this instance with no
+//! run of this process holding it), is taken over before `expireLockTime`, and a worker checks that
+//! its run still holds the lock before it runs the service (`plans/archive/High-Level-Review.md` HL-026).
 //!
 //! A cron expression is read in the machine's time zone ([`job_time_zone`]), the zone the operating
 //! system reports. That is not the server zone `default_time_zone` names (UTC in MoquiDefaultConf).
 //! The pass still skips a job only when the previous occurrence is strictly before the last run, so
 //! a last run at that occurrence still runs, as Java's `!lastSchedule.isBefore(lastRunDt)`.
 //!
-//! A fire-and-forget call, or the tx rules of a committed call, that finds the pool queue full or
-//! stopping is stored as a `ServiceJob` named with [`QUEUE_PREFIX`] and no cron expression, the call
-//! as JSON in `queuedCall` ([`QueuedCall`]), so lists and maps keep their shape (HL-025). The pass
-//! submits it when a slot is free and deletes it when it has run.
+//! A fire-and-forget call, or the tx rules of a committed call that has no outbox row (tx-rollback
+//! rules, a call outside the default group's transaction), that finds the pool queue full or stopping
+//! is stored as a `ServiceJob` named with [`QUEUE_PREFIX`] and no cron expression, the call as JSON in
+//! `queuedCall` ([`QueuedCall`]), so lists and maps keep their shape (HL-025). The pass submits it
+//! when a slot is free and deletes it when it has run. Tx-commit rules are kept in the outbox, written
+//! in the committing transaction ([`super::outbox`]); the pass runs a row still there after its
+//! `availableDate` with the slots the jobs left.
 
-use std::collections::{BTreeMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::time::Duration;
 
 use moqui_db::sql::{insert, update, CompareOp, Condition};
@@ -44,6 +52,7 @@ use moqui_lib::object::{basic_convert, to_plain_string, Value};
 use moqui_lib::sync::lock;
 
 use super::call::CallOptions;
+use super::job_lease::{LocalClaim, LocalRuns};
 use super::pool::Shared;
 use super::util::{field_text, now_stamp, reserve};
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
@@ -126,7 +135,7 @@ pub(crate) struct JobRun {
     parameters: BTreeMap<String, Value>,
     timeout: Duration,
     /// The run's scripts end when it is out ([`crate::script::DeadlineGuard`]), whatever the service's transaction
-    /// attribute; `None` when the job says `noTimeLimit` (plans/High-Level-Review.md HL-035).
+    /// attribute; `None` when the job says `noTimeLimit` (plans/archive/High-Level-Review.md HL-035).
     script_limit: Option<Duration>,
     job_run_id: String,
     /// The lock's `lastRunTime` before this run, restored when the run fails.
@@ -149,36 +158,8 @@ pub(crate) struct JobRun {
     factory: Arc<ExecutionContextFactory>,
 }
 
-/// The job runs this process claimed and has not finished, so a lock held under this instance's id but by none of
-/// them (left by an earlier process of this instance) can be taken over.
-#[derive(Default)]
-struct LocalRuns(Mutex<HashSet<String>>);
-
-/// One claimed run in [`LocalRuns`], until it drops.
-pub(crate) struct LocalClaim {
-    runs: Arc<LocalRuns>,
-    run_id: String,
-}
-
-impl LocalClaim {
-    fn new(factory: &ExecutionContextFactory, run_id: &str) -> Self {
-        let runs = factory.extension(|_| LocalRuns::default());
-        lock(&runs.0).insert(run_id.to_string());
-        Self {
-            runs,
-            run_id: run_id.to_string(),
-        }
-    }
-}
-
-impl Drop for LocalClaim {
-    fn drop(&mut self) {
-        lock(&self.runs.0).remove(&self.run_id);
-    }
-}
-
 /// This instance's id, which a lock it claims records: the cluster member id, else the instance id telemetry names.
-fn own_instance(factory: &ExecutionContextFactory) -> String {
+pub(super) fn own_instance(factory: &ExecutionContextFactory) -> String {
     crate::cluster::instance_id(factory).unwrap_or_else(|| crate::drain::instance_id(factory))
 }
 
@@ -198,7 +179,7 @@ fn gone_owner(
     if owner == own_instance(factory) {
         let local = factory
             .extension_if_present::<LocalRuns>()
-            .is_some_and(|runs| lock(&runs.0).contains(run_id));
+            .is_some_and(|runs| runs.contains(run_id));
         return (!local).then_some(owner);
     }
     match crate::cluster::is_live_member(factory, facade, &owner) {
@@ -228,6 +209,8 @@ pub struct PassReport {
     pub jobs_not_checked: usize,
     /// Jobs that could not be checked or started; each is logged and the pass goes on.
     pub jobs_failed: usize,
+    /// Runs of tx-commit rules from the outbox handed to a job worker (HL-025).
+    pub outbox_runs: usize,
 }
 
 /// One scheduler pass for the pool's factory. Errors are logged, so a bad pass never ends the thread.
@@ -266,8 +249,13 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
     let now = jiff::Timestamp::now();
     let now_stamp = timestamp_value(now.as_millisecond());
     let plan = LockPlan::new(&facade)?;
+    let clock = DbClock::default();
 
     let jobs = discover(&facade, slots)?;
+    // First, with no query: the jobs that can run now, each scheduled one with its cron's last occurrence. A job whose
+    // schedule names nothing before now, or whose pattern does not parse, costs no query (plans/archive/High-Level-Review.md
+    // HL-020).
+    let mut candidates = Vec::new();
     for job in &jobs {
         let job_name = field_text(job, "jobName");
         let queued = job_name.starts_with(QUEUE_PREFIX);
@@ -283,39 +271,79 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
             continue;
         }
         // With no slot left nothing more can start, so the lock and history queries are not made: under a saturated
-        // queue they would cost a query per queued call on every pass (`plans/High-Level-Review.md` HL-020). Jobs come
-        // in priority order, so those left are the lower ones, checked on a later pass.
+        // queue they would cost a query per queued call on every pass (HL-020). Jobs come in priority order, so those
+        // left are the lower ones, checked on a later pass.
         if slots <= 0 {
             report.jobs_not_checked += 1;
             continue;
         }
         // As in Java's `ScheduledJobRunner`, a job that cannot be checked or started is logged and the pass goes on
         // with the next job.
-        let exhausted = if queued {
-            Ok(false)
+        let occurrence = if queued {
+            None
         } else {
-            repeat_exhausted(&facade, job, &job_name, &now_stamp)
+            match last_occurrence(&cron_text, now) {
+                Ok(Some(at)) => Some(at),
+                // A schedule with nothing before now has not come due yet.
+                Ok(None) => {
+                    report.jobs_active += 1;
+                    continue;
+                }
+                Err(err) => {
+                    tracing::error!(job = %job_name, cron = %cron_text, error = %err, "Error checking scheduled job, skipping it");
+                    report.jobs_failed += 1;
+                    continue;
+                }
+            }
         };
-        match exhausted {
-            Ok(true) => continue,
-            Ok(false) => {}
+        candidates.push(Candidate {
+            job,
+            job_name,
+            queued,
+            occurrence,
+        });
+    }
+    // Then the lock rows of all of them in one read, so a job that is not due, or whose lock is held, costs no query of
+    // its own; the run history and the repeat count are read only for a job that is due.
+    let locks = read_locks(&facade, candidates.iter().map(|candidate| candidate.job_name.as_str()))?;
+    for candidate in &candidates {
+        if slots <= 0 {
+            report.jobs_not_checked += 1;
+            continue;
+        }
+        let job_name = &candidate.job_name;
+        let ready = match readiness(
+            factory,
+            &facade,
+            &clock,
+            candidate,
+            locks.get(job_name),
+            now,
+            &now_stamp,
+        ) {
+            Ok(Due::Ready(ready)) => ready,
+            Ok(Due::Exhausted) => continue,
+            Ok(Due::NotNow) => {
+                report.jobs_active += 1;
+                continue;
+            }
             Err(err) => {
                 tracing::error!(job = %job_name, error = %err, "Error checking scheduled job, skipping it");
                 report.jobs_failed += 1;
                 continue;
             }
-        }
-        report.jobs_active += 1;
-        let ready = match readiness(factory, &facade, job, &job_name, &cron_text, now) {
-            Ok(Some(ready)) => ready,
-            Ok(None) => continue,
-            Err(err) => {
-                tracing::error!(job = %job_name, cron = %cron_text, error = %err, "Error checking scheduled job, skipping it");
-                report.jobs_failed += 1;
-                continue;
-            }
         };
-        match dispatch(shared, factory, &facade, &plan, job, ready, &now_stamp) {
+        report.jobs_active += 1;
+        match dispatch(
+            shared,
+            factory,
+            &facade,
+            &plan,
+            &clock,
+            candidate.job,
+            ready,
+            &now_stamp,
+        ) {
             Ok(true) => {
                 report.jobs_run += 1;
                 slots -= 1;
@@ -327,11 +355,65 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
             }
         }
     }
+    // Then the tx-commit rules left in the outbox, with the slots the jobs left (HL-025).
+    match super::outbox::replay(shared, factory, &facade, slots) {
+        Ok(queued) => report.outbox_runs = queued,
+        Err(err) => tracing::error!(error = %err, "could not read the tx rules waiting in the outbox"),
+    }
     Ok(report)
 }
 
+/// The database's time, read once a pass when a lease is checked or claimed (HL-026).
+#[derive(Default)]
+struct DbClock(std::cell::OnceCell<i64>);
+
+impl DbClock {
+    fn now(&self, facade: &EntityFacade) -> i64 {
+        *self.0.get_or_init(|| crate::cluster::db_now(facade))
+    }
+}
+
+/// A job a pass may start, found before any query: its row, name, whether it is a queued call, and for a scheduled job
+/// the last time at or before now that its cron names, in epoch milliseconds.
+struct Candidate<'a> {
+    job: &'a EntityValue,
+    job_name: String,
+    queued: bool,
+    occurrence: Option<i64>,
+}
+
+/// The last time at or before `now` that `cron_text` names, in epoch milliseconds: None when it names none yet.
+fn last_occurrence(cron_text: &str, now: jiff::Timestamp) -> Result<Option<i64>, Error> {
+    let cron = super::schedule::cached_cron(cron_text)?;
+    Ok(cron
+        .last_at_or_before(&now.to_zoned(job_time_zone()))
+        .map(|at| at.timestamp().as_millisecond()))
+}
+
+/// The most job names one lock read names, so its `IN` list stays well under every database's bind limit.
+const LOCK_READ_CHUNK: usize = 500;
+
+/// The lock rows of the jobs `names`, by job name: one query for each [`LOCK_READ_CHUNK`] names, none for no name.
+fn read_locks<'a>(
+    facade: &EntityFacade,
+    names: impl Iterator<Item = &'a str>,
+) -> Result<HashMap<String, EntityValue>, Error> {
+    let names: Vec<Value> = names.map(Value::string).collect();
+    let mut locks = HashMap::new();
+    for chunk in names.chunks(LOCK_READ_CHUNK) {
+        let rows = facade
+            .find(JOB_LOCK)?
+            .condition(Condition::is_in("jobName", chunk.to_vec()))
+            .list()?;
+        for row in rows.into_values() {
+            locks.insert(field_text(&row, "jobName"), row);
+        }
+    }
+    Ok(locks)
+}
+
 /// The jobs a pass looks at, in priority order: every scheduled job (one with a cron expression), and the queued calls
-/// the free slots can take, read a bounded number at a time (plans/High-Level-Review.md HL-026): a full queue can leave
+/// the free slots can take, read a bounded number at a time (plans/archive/High-Level-Review.md HL-026): a full queue can leave
 /// many `ASYNC_QUEUE_` rows, which a later pass reads when slots are free. Priority is lower first, a job with none after
 /// every job with one, then by name: the same on every database (an `ORDER BY` puts nulls first on some and last on
 /// others).
@@ -390,56 +472,73 @@ struct Ready {
     reclaimed: Option<String>,
 }
 
-/// `None` when the job is not due, is running, or failed too recently.
+/// What [`readiness`] found for a job.
+enum Due {
+    /// Start it, as the lock row allows.
+    Ready(Ready),
+    /// Not due, running, or failed too recently.
+    NotNow,
+    /// It has run its `repeatCount` and is paused now.
+    Exhausted,
+}
+
+/// Whether `candidate` starts now, from its lock row (`lock`, read by the pass). A scheduled job whose last occurrence
+/// is before its last run is not due, which needs no query; only a due job has its repeat count and run history read.
 fn readiness(
     factory: &ExecutionContextFactory,
     facade: &EntityFacade,
-    job: &EntityValue,
-    job_name: &str,
-    cron_text: &str,
+    clock: &DbClock,
+    candidate: &Candidate,
+    lock: Option<&EntityValue>,
     now: jiff::Timestamp,
-) -> Result<Option<Ready>, Error> {
-    let lock = facade.find(JOB_LOCK)?.eq("jobName", Value::string(job_name)).one()?;
+    now_stamp: &Value,
+) -> Result<Due, Error> {
+    let (job, job_name) = (candidate.job, candidate.job_name.as_str());
+    let last_run_time = lock
+        .and_then(|lock| lock.get("lastRunTime").cloned())
+        .unwrap_or(Value::Null);
+    let last_run_ms = millis_of(&last_run_time);
+    // A held lock's lastRunTime is when its run was claimed, so a running job is not due either.
+    if let Some(occurrence) = candidate.occurrence {
+        if last_run_ms.is_some_and(|last_run| occurrence < last_run) {
+            return Ok(Due::NotNow);
+        }
+    }
     let mut expect = Expect::Absent;
-    let mut last_run_time = Value::Null;
-    let mut last_run_ms = None;
     let mut reclaimed = None;
-    if let Some(lock) = &lock {
+    if let Some(lock) = lock {
         let run_id = field_text(lock, "jobRunId");
-        last_run_time = lock.get("lastRunTime").cloned().unwrap_or(Value::Null);
-        last_run_ms = millis_of(&last_run_time);
         expect = if run_id.is_empty() {
             Expect::Free
         } else {
             Expect::Run(run_id)
         };
         if let Expect::Run(run_id) = &expect {
-            // `expireLockTime` stays the upper bound; a lock whose instance is gone is taken over sooner (HL-026). A
-            // run id with no time has nothing to say the lock is old, so only a gone instance frees it.
+            // `expireLockTime` stays the upper bound; a lock whose lease lapsed, or whose instance is gone, is taken over
+            // sooner (HL-026). A run id with no time has nothing to say the lock is old, so only a gone instance frees
+            // it; a lock with no lease (one `hold#BackupLock` took) only a gone instance or its expiry.
             let expire = number(job, "expireLockTime").unwrap_or(DEFAULT_EXPIRE_MINUTES);
             let expired = last_run_ms
                 .is_some_and(|last| last < now.as_millisecond().saturating_sub(expire.saturating_mul(60_000)));
+            let lease = lock.get("leaseExpireDate").and_then(millis_of);
             if expired {
                 tracing::warn!(job = job_name, run = %run_id, "lock expired, ignoring it");
+            } else if lease.is_some_and(|lease| lease < clock.now(facade)) {
+                tracing::warn!(job = job_name, run = %run_id, instance = %field_text(lock, "instanceId"), "lock lease lapsed, taking the lock over");
+                reclaimed = Some(run_id.clone());
             } else if let Some(owner) = gone_owner(factory, facade, lock, run_id) {
                 tracing::warn!(job = job_name, run = %run_id, instance = %owner, "lock holder is gone, taking the lock over");
                 reclaimed = Some(run_id.clone());
             } else {
                 tracing::info!(job = job_name, run = %run_id, "lock held, not running");
-                return Ok(None);
+                return Ok(Due::NotNow);
             }
         }
     }
-    if !cron_text.is_empty() {
-        let cron = super::schedule::cached_cron(cron_text)?;
-        let zoned = now.to_zoned(job_time_zone());
-        // A schedule with nothing before now has not come due yet.
-        let Some(last_schedule) = cron.last_at_or_before(&zoned) else {
-            return Ok(None);
-        };
-        if last_run_ms.is_some_and(|last_run| last_schedule.timestamp().as_millisecond() < last_run) {
-            return Ok(None);
-        }
+    if !candidate.queued && repeat_exhausted(facade, job, job_name, lock, now_stamp)? {
+        return Ok(Due::Exhausted);
+    }
+    if candidate.occurrence.is_some() {
         // After an error, wait the minimum retry time.
         let runs = facade
             .find(JOB_RUN)?
@@ -458,23 +557,25 @@ fn readiness(
                 let ran_since = last_run_ms.is_some_and(|last_run| last_run >= stamp);
                 if !ran_since && stamp > now.as_millisecond().saturating_sub(retry.saturating_mul(60_000)) {
                     tracing::info!(job = job_name, "not retrying after an error yet");
-                    return Ok(None);
+                    return Ok(Due::NotNow);
                 }
             }
         }
     }
-    Ok(Some(Ready {
+    Ok(Due::Ready(Ready {
         expect,
         last_run_time,
         reclaimed,
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dispatch(
     shared: &Shared,
     factory: &Arc<ExecutionContextFactory>,
     facade: &EntityFacade,
     plan: &LockPlan,
+    clock: &DbClock,
     job: &EntityValue,
     ready: Ready,
     now_stamp: &Value,
@@ -484,11 +585,24 @@ fn dispatch(
     let run_id = create_run(facade, &job_name, None, &BTreeMap::new())?;
     // Counted as this process's before the claim, so a pass never takes it for one an earlier process left.
     let claim = LocalClaim::new(factory, &run_id);
-    if !plan.claim(&job_name, &run_id, now_stamp, &ready.expect, &own_instance(factory))? {
+    let lease = super::job_lease::stamp(
+        clock
+            .now(facade)
+            .saturating_add(super::job_lease::lease_millis(factory)),
+    );
+    if !plan.claim(
+        &job_name,
+        &run_id,
+        now_stamp,
+        &lease,
+        &ready.expect,
+        &own_instance(factory),
+    )? {
         // Another instance took it. Its run row would only confuse the history.
         delete_run(facade, &run_id);
         return Ok(false);
     }
+    super::job_lease::start_keeper(factory);
     if let Some(old) = &ready.reclaimed {
         record(
             facade,
@@ -498,7 +612,9 @@ fn dispatch(
                 ("hasError", Value::string("Y")),
                 (
                     "errors",
-                    Value::string("Its server instance stopped before it ended; the job's lock was taken over"),
+                    Value::string(
+                        "Its server instance stopped, or stopped renewing its lease, before it ended; the job's lock was taken over",
+                    ),
                 ),
             ],
         );
@@ -609,31 +725,68 @@ fn map_json(json: Option<&serde_json::Value>) -> Option<BTreeMap<String, Value>>
     }
 }
 
+/// The phase, results and authorization of tx rules, as [`call_json`] writes them.
+struct RulesPart<'a> {
+    when: &'a str,
+    results: Option<&'a BTreeMap<String, Value>>,
+    authz: &'a crate::user::RegisteredAuthz,
+}
+
+/// A queued call as the JSON `queuedCall` holds: [`QueuedCall::to_json`], and the outbox's rows ([`rules_json`]).
+fn call_json(
+    parameters: &BTreeMap<String, Value>,
+    user_name: Option<&str>,
+    origin: Option<&crate::context::AgentOrigin>,
+    rules: Option<RulesPart<'_>>,
+) -> String {
+    let mut root = serde_json::Map::new();
+    root.insert("parameters".into(), json_map(parameters));
+    if let Some(user_name) = user_name.filter(|name| !name.is_empty()) {
+        root.insert("userName".into(), user_name.into());
+    }
+    if let Some(origin) = origin {
+        root.insert("agentId".into(), origin.agent_id.clone().into());
+        if let Some(run_id) = &origin.run_id {
+            root.insert("agentRunId".into(), run_id.clone().into());
+        }
+    }
+    if let Some(rules) = rules {
+        root.insert("when".into(), rules.when.into());
+        if let Some(results) = rules.results {
+            root.insert("results".into(), json_map(results));
+        }
+        root.insert("authz".into(), rules.authz.to_json());
+    }
+    serde_json::Value::Object(root).to_string()
+}
+
+/// The tx rules `rules` of a call by `user_name` in the agent run `origin`, as a queued call's JSON, which
+/// [`QueuedCall::parse`] reads back (the outbox's `queuedCall`, HL-025).
+pub(crate) fn rules_json(
+    rules: &super::pool::TxRules,
+    user_name: Option<&str>,
+    origin: Option<&crate::context::AgentOrigin>,
+) -> String {
+    let part = RulesPart {
+        when: &rules.when,
+        results: rules.results.as_ref(),
+        authz: &rules.authz,
+    };
+    call_json(&rules.parameters, user_name, origin, Some(part))
+}
+
 impl QueuedCall {
     fn to_json(&self) -> String {
-        let mut root = serde_json::Map::new();
-        root.insert("parameters".into(), json_map(&self.parameters));
-        if let Some(user_name) = self.user_name.as_deref().filter(|name| !name.is_empty()) {
-            root.insert("userName".into(), user_name.into());
-        }
-        if let Some(origin) = &self.origin {
-            root.insert("agentId".into(), origin.agent_id.clone().into());
-            if let Some(run_id) = &origin.run_id {
-                root.insert("agentRunId".into(), run_id.clone().into());
-            }
-        }
-        if let Some(rules) = &self.rules {
-            root.insert("when".into(), rules.when.clone().into());
-            if let Some(results) = &rules.results {
-                root.insert("results".into(), json_map(results));
-            }
-            root.insert("authz".into(), rules.authz.to_json());
-        }
-        serde_json::Value::Object(root).to_string()
+        let rules = self.rules.as_ref().map(|rules| RulesPart {
+            when: &rules.when,
+            results: rules.results.as_ref(),
+            authz: &rules.authz,
+        });
+        call_json(&self.parameters, self.user_name.as_deref(), self.origin.as_ref(), rules)
     }
 
     /// The call stored in `text`. The service is the job's `serviceName`, so it is left empty here.
-    fn parse(text: &str) -> Result<Self, Error> {
+    pub(crate) fn parse(text: &str) -> Result<Self, Error> {
         let json: serde_json::Value =
             serde_json::from_str(text).map_err(|err| Error::new(format!("queued call is not JSON: {err}")))?;
         let field = |name: &str| json.get(name).and_then(serde_json::Value::as_str).map(str::to_string);
@@ -819,6 +972,18 @@ pub(crate) fn run_job(job: JobRun) {
         delete_run(&facade, &job.job_run_id);
         return;
     }
+    let end = RunEnd {
+        facade: &facade,
+        job: &job,
+        telemetry: &telemetry,
+        done: false,
+    };
+    // From here the keeper checks the run still holds its lock, and ends its scripts when it lost it or ran past its
+    // timeout (HL-026). After `end`, so a run that unwinds stops being started before its end is written.
+    let running = job
+        .claim
+        .as_ref()
+        .map(|claim| claim.start(&job.job_name, job.script_limit));
     // The thread's name is this port's (`moqui-job-0`, not Java's `MoquiJob-1`), an accepted difference (P7b-16).
     let thread = std::thread::current().name().unwrap_or("").to_string();
     let (host_address, host_name) = crate::context::identity::server_address();
@@ -839,12 +1004,6 @@ pub(crate) fn run_job(job: JobRun) {
             ("startTime", now_stamp()),
         ],
     );
-    let end = RunEnd {
-        facade: &facade,
-        job: &job,
-        telemetry: &telemetry,
-        done: false,
-    };
     let mut parameters = job.parameters.clone();
     if !job.last_run_time.is_null() {
         parameters.insert("lastRunTime".to_string(), job.last_run_time.clone());
@@ -870,7 +1029,7 @@ pub(crate) fn run_job(job: JobRun) {
                 // Under the authorization of the call that registered them, not the job's disabled authorization.
                 authz: rules.authz.clone(),
             };
-            super::call::run_tx_rules(&factory, &mut rules).map(|()| BTreeMap::new())
+            super::call::run_tx_rules(&factory, &mut rules, None).map(|()| BTreeMap::new())
         }
         None => super::call::sync_with(&job.service_name, &parameters, &options),
     };
@@ -893,6 +1052,7 @@ pub(crate) fn run_job(job: JobRun) {
     };
     let result_values: moqui_lib::object::ValueMap = results.into_iter().collect();
     let results = serde_json::to_string(&moqui_lib::json::to_json(&Value::Map(result_values.clone()))).ok();
+    drop(running);
     end.finish(&RunOutcome {
         has_error,
         results,
@@ -1291,12 +1451,6 @@ fn error_history_only(job: &EntityValue) -> bool {
     field_text(job, "errorHistoryOnly") == "Y"
 }
 
-/// The lock's `runCount`, when the row and the count are there.
-fn stored_run_count(facade: &EntityFacade, job_name: &str) -> Result<Option<i64>, Error> {
-    let lock = facade.find(JOB_LOCK)?.eq("jobName", Value::string(job_name)).one()?;
-    Ok(lock.as_ref().and_then(|row| number(row, "runCount")))
-}
-
 /// Count a run whose success row will not stay. Called after the run row exists and, for a scheduled run, after the
 /// lock is held.
 ///
@@ -1328,8 +1482,15 @@ fn note_started(facade: &EntityFacade, job_name: &str) -> Result<(), Error> {
     Err(Error::new(format!("could not count a run of {job_name}")))
 }
 
-/// Stop a repeating job that has run `repeatCount` times. True when it was stopped.
-fn repeat_exhausted(facade: &EntityFacade, job: &EntityValue, job_name: &str, now: &Value) -> Result<bool, Error> {
+/// Stop a repeating job that has run `repeatCount` times. True when it was stopped. `lock` is the job's lock row, as the
+/// pass read it.
+fn repeat_exhausted(
+    facade: &EntityFacade,
+    job: &EntityValue,
+    job_name: &str,
+    lock: Option<&EntityValue>,
+    now: &Value,
+) -> Result<bool, Error> {
     let Some(limit) = number(job, "repeatCount") else {
         return Ok(false);
     };
@@ -1337,7 +1498,7 @@ fn repeat_exhausted(facade: &EntityFacade, job: &EntityValue, job_name: &str, no
     // is new and the rows still there are the history, so they decide. This does not insert a lock: the run that is
     // accepted writes the count, after its row exists.
     let runs = if error_history_only(job) {
-        match stored_run_count(facade, job_name)? {
+        match lock.and_then(|row| number(row, "runCount")) {
             Some(count) => count,
             None => facade.find(JOB_RUN)?.eq("jobName", Value::string(job_name)).count()?,
         }
@@ -1405,12 +1566,16 @@ impl LockPlan {
                 let by_job = Condition::bound("jobName", CompareOp::Equals);
                 let free = Condition::and(vec![by_job.clone(), Condition::is_null("jobRunId")]);
                 let held = Condition::and(vec![by_job.clone(), Condition::bound("jobRunId", CompareOp::Equals)]);
-                let set = ["jobRunId", "lastRunTime", "instanceId"];
+                let set = ["jobRunId", "lastRunTime", "instanceId", "leaseExpireDate"];
                 let seed = Condition::and(vec![by_job.clone(), Condition::is_null("runCount")]);
                 let step = Condition::and(vec![by_job.clone(), Condition::bound("runCount", CompareOp::Equals)]);
                 Ok(Self {
                     tx: tx.clone(),
-                    insert_sql: insert(entity, dialect, &["jobName", "jobRunId", "lastRunTime", "instanceId"])?,
+                    insert_sql: insert(
+                        entity,
+                        dialect,
+                        &["jobName", "jobRunId", "lastRunTime", "instanceId", "leaseExpireDate"],
+                    )?,
                     claim_free_sql: update(entity, dialect, &set, Some(&free))?.sql,
                     claim_run_sql: update(entity, dialect, &set, Some(&held))?.sql,
                     release_sql: update(entity, dialect, &set, Some(&held))?.sql,
@@ -1423,32 +1588,49 @@ impl LockPlan {
             .map_err(Error::from)
     }
 
-    /// True when this call took the lock for `instance`. Every path is a conditional write, so only one caller wins.
-    fn claim(&self, job: &str, run_id: &str, now: &Value, expect: &Expect, instance: &str) -> Result<bool, Error> {
+    /// True when this call took the lock for `instance`, with its lease until `lease`. Every path is a conditional
+    /// write, so only one caller wins.
+    fn claim(
+        &self,
+        job: &str,
+        run_id: &str,
+        now: &Value,
+        lease: &Value,
+        expect: &Expect,
+        instance: &str,
+    ) -> Result<bool, Error> {
         let job_value = Value::string(job);
         let owner = Value::string(instance);
         reserve(&self.tx, |conn| match expect {
             Expect::Absent => {
-                let params = [job_value, Value::string(run_id), now.clone(), owner];
+                let params = [job_value, Value::string(run_id), now.clone(), owner, lease.clone()];
                 // A lost insert race is a held lock.
                 Ok(conn.execute(&self.insert_sql, &params).is_ok())
             }
             Expect::Free => {
-                let params = [Value::string(run_id), now.clone(), owner, job_value];
+                let params = [Value::string(run_id), now.clone(), owner, lease.clone(), job_value];
                 Ok(conn.execute(&self.claim_free_sql, &params)? > 0)
             }
             Expect::Run(old) => {
-                let params = [Value::string(run_id), now.clone(), owner, job_value, Value::string(old)];
+                let params = [
+                    Value::string(run_id),
+                    now.clone(),
+                    owner,
+                    lease.clone(),
+                    job_value,
+                    Value::string(old),
+                ];
                 Ok(conn.execute(&self.claim_run_sql, &params)? > 0)
             }
         })
     }
 
-    /// Clear `run_id`'s hold and set the run time. Does nothing if another run holds the lock now.
+    /// Clear `run_id`'s hold and its lease and set the run time. Does nothing if another run holds the lock now.
     fn release(&self, job: &str, run_id: &str, last_run: &Value) -> Result<(), Error> {
         let params = [
             Value::Null,
             last_run.clone(),
+            Value::Null,
             Value::Null,
             Value::string(job),
             Value::string(run_id),
@@ -1559,7 +1741,7 @@ impl Shared {
             if state.stop || state.jobs.len() >= self.job_queue_max.max(self.job_pool_max) {
                 return false;
             }
-            state.jobs.push_back(Box::new(run));
+            state.jobs.push_back(super::pool::JobWork::Run(Box::new(run)));
         }
         self.job_wake.notify_all();
         true
@@ -1567,260 +1749,5 @@ impl Shared {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-    use std::panic::{catch_unwind, AssertUnwindSafe};
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    use moqui_lib::object::{to_plain_string, Value};
-
-    use super::{abandon, timestamp_value, JobRun, RunEnd, JOB_LOCK, JOB_RUN};
-    use crate::context::{ExecutionContext, ExecutionContextFactory};
-    use crate::entity::{EntityFacade, EntityValue};
-
-    const PREVIOUS: i64 = 1_700_000_000_000;
-
-    /// A run whose lock row is claimed, as the pass leaves it before a worker takes the run.
-    fn claimed(ctx: &ExecutionContext, facade: &EntityFacade, job: &str, run_id: &str) -> JobRun {
-        let mut run = facade.make_value(JOB_RUN).unwrap();
-        run.set("jobRunId", Value::string(run_id));
-        run.set("jobName", Value::string(job));
-        run.create(facade).unwrap();
-        let mut lock = facade.make_value(JOB_LOCK).unwrap();
-        lock.set("jobName", Value::string(job));
-        lock.set("jobRunId", Value::string(run_id));
-        lock.set("lastRunTime", super::now_stamp());
-        lock.create(facade).unwrap();
-        JobRun {
-            job_name: job.to_string(),
-            service_name: "never#Called".to_string(),
-            parameters: BTreeMap::new(),
-            timeout: Duration::from_secs(60),
-            script_limit: None,
-            job_run_id: run_id.to_string(),
-            last_run_time: timestamp_value(PREVIOUS),
-            delete_when_done: false,
-            user_name: None,
-            origin: None,
-            topic: None,
-            description: None,
-            error_history_only: false,
-            retries: false,
-            rules: None,
-            claim: None,
-            factory: Arc::clone(ctx.factory()),
-        }
-    }
-
-    /// A run that waited for a worker while another instance took its lock over does not call its service (an unknown
-    /// one here, whose call would end the run row with an error): its row goes and the other run keeps the lock.
-    #[test]
-    fn a_parked_run_whose_lock_was_taken_over_does_not_call_its_service() {
-        let ctx = ExecutionContextFactory::test_context();
-        let facade = crate::testing::open();
-        ctx.factory().set_entity(facade.clone());
-        let _entered = ctx.enter();
-        let _authz = ctx.disable_authz();
-        let mut run = claimed(&ctx, &facade, "ParkedJob", "R-PARKED");
-        run.claim = Some(super::LocalClaim::new(ctx.factory(), "R-PARKED"));
-        let mut lock = one(&facade, JOB_LOCK, "jobName", "ParkedJob");
-        lock.set("jobRunId", Value::string("ELSEWHERE"));
-        lock.update(&facade).unwrap();
-        super::run_job(run);
-        assert_eq!(
-            text(&one(&facade, JOB_LOCK, "jobName", "ParkedJob"), "jobRunId"),
-            "ELSEWHERE"
-        );
-        let left = facade
-            .find(JOB_RUN)
-            .unwrap()
-            .eq("jobRunId", Value::string("R-PARKED"))
-            .one()
-            .unwrap();
-        assert!(left.is_none(), "the run did not start");
-    }
-
-    fn one(facade: &EntityFacade, entity: &str, field: &str, id: &str) -> EntityValue {
-        facade
-            .find(entity)
-            .unwrap()
-            .eq(field, Value::string(id))
-            .one()
-            .unwrap()
-            .unwrap_or_else(|| panic!("no {entity} {id}"))
-    }
-
-    fn text(row: &EntityValue, field: &str) -> String {
-        row.get(field).map(to_plain_string).unwrap_or_default()
-    }
-
-    /// The lock is free with the run time from before, and the run ended with an error.
-    fn assert_released_and_failed(facade: &EntityFacade, job: &str, run_id: &str) {
-        let lock = one(facade, JOB_LOCK, "jobName", job);
-        assert_eq!(text(&lock, "jobRunId"), "");
-        assert_eq!(
-            super::millis_of(lock.get("lastRunTime").unwrap_or(&Value::Null)),
-            Some(PREVIOUS)
-        );
-        let run = one(facade, JOB_RUN, "jobRunId", run_id);
-        assert_eq!(text(&run, "hasError"), "Y");
-        assert!(!text(&run, "endTime").is_empty());
-    }
-
-    #[test]
-    fn a_run_that_unwinds_releases_its_lock_and_records_an_error() {
-        let ctx = ExecutionContextFactory::test_context();
-        let facade = crate::testing::open();
-        ctx.factory().set_entity(facade.clone());
-        let _entered = ctx.enter();
-        let _authz = ctx.disable_authz();
-        let run = claimed(&ctx, &facade, "PanicJob", "R1");
-        let telemetry = crate::telemetry::for_factory(ctx.factory());
-        #[cfg(feature = "telemetry")]
-        let runs = {
-            #[derive(Default)]
-            struct Runs(std::sync::Mutex<Vec<String>>);
-            impl crate::telemetry::Exporter for Runs {
-                fn export(
-                    &self,
-                    index: &str,
-                    documents: Vec<crate::entity::document::Document>,
-                ) -> Result<usize, moqui_lib::error::Error> {
-                    let count = documents.len();
-                    for document in documents.iter().filter(|_| index == "otel_metrics") {
-                        if document.get("name").and_then(Value::as_str) == Some("moqui.job.runs") {
-                            self.0.lock().unwrap().push(text_of(document.get("outcome")));
-                        }
-                    }
-                    Ok(count)
-                }
-            }
-            fn text_of(value: Option<&Value>) -> String {
-                value.map(to_plain_string).unwrap_or_default()
-            }
-            let runs = std::sync::Arc::new(Runs::default());
-            telemetry.set_exporter(runs.clone());
-            runs
-        };
-        let unwound = catch_unwind(AssertUnwindSafe(|| {
-            let _end = RunEnd {
-                facade: &facade,
-                job: &run,
-                telemetry: &telemetry,
-                done: false,
-            };
-            // A frame the service began and never ended: the records must not join it.
-            assert!(facade.begin("moqui.test.TestEntity", None).unwrap());
-            let mut row = facade.make_value("moqui.test.TestEntity").unwrap();
-            row.set("testId", Value::string("from-panicked-job"));
-            row.create(&facade).unwrap();
-            panic!("stand-in service panic");
-        }));
-        assert!(unwound.is_err());
-        assert!(!crate::transaction::thread_in_transaction());
-        assert_released_and_failed(&facade, "PanicJob", "R1");
-        assert!(text(&one(&facade, JOB_RUN, "jobRunId", "R1"), "errors").contains("panicked"));
-        let kept = facade
-            .find("moqui.test.TestEntity")
-            .unwrap()
-            .eq("testId", Value::string("from-panicked-job"))
-            .one()
-            .unwrap();
-        assert!(kept.is_none(), "the panicked job's frame was committed");
-        #[cfg(feature = "telemetry")]
-        {
-            telemetry.flush();
-            assert_eq!(
-                *runs.0.lock().unwrap(),
-                ["panic"],
-                "a panicked run counts in moqui.job.runs"
-            );
-            telemetry.shutdown();
-        }
-    }
-
-    /// As Java's `filterByDate` and its paused check: both date ends are inclusive, and a `paused` that is not null or
-    /// `N`, an empty one too, pauses the job.
-    #[test]
-    fn job_dates_are_inclusive_and_an_empty_paused_pauses() {
-        let facade = crate::testing::open();
-        let mut job = facade.make_value(super::SERVICE_JOB).unwrap();
-        assert!(super::paused_ok(&job));
-        job.set("paused", Value::string("N"));
-        assert!(super::paused_ok(&job));
-        for paused in ["", "Y", "T"] {
-            job.set("paused", Value::string(paused));
-            assert!(!super::paused_ok(&job), "paused {paused:?}");
-        }
-        job.set("fromDate", timestamp_value(PREVIOUS));
-        job.set("thruDate", timestamp_value(PREVIOUS + 1_000));
-        assert!(super::within_dates(&job, PREVIOUS));
-        assert!(super::within_dates(&job, PREVIOUS + 1_000));
-        assert!(!super::within_dates(&job, PREVIOUS - 1));
-        assert!(!super::within_dates(&job, PREVIOUS + 1_001));
-    }
-
-    /// A run started by hand holds no lock until `hold#BackupLock` gives it one, which can land between the runner's
-    /// release and its write of the run's end (a rule on that write stands in for it here): the lock is released again
-    /// once the end is written, so it does not name an ended run.
-    #[test]
-    fn a_lock_taken_while_a_run_ends_is_released_after_its_end() {
-        let facade = crate::testing::open_with(
-            &crate::testing::framework_dir(),
-            crate::testing::Options {
-                entity_eca: true,
-                data_feed: false,
-                tape: None,
-            },
-        );
-        crate::entity::load_feed::add_eca_rules(
-            &facade,
-            r#"<eecas>
-                    <eeca id="TestHoldWhileEnding" entity="moqui.service.job.ServiceJobRun" on-update="true" run-before="true">
-                        <actions>
-                            <entity-make-value entity-name="moqui.service.job.ServiceJobRunLock" value-field="held"/>
-                            <script>held.set("jobName", "HeldJob"); held.set("jobRunId", "R-HELD")</script>
-                            <entity-update value-field="held"/>
-                        </actions>
-                    </eeca>
-                </eecas>"#,
-        )
-        .unwrap();
-        let ctx = ExecutionContextFactory::test_context();
-        ctx.factory().set_entity(facade.clone());
-        let _entered = ctx.enter();
-        let _authz = ctx.disable_authz();
-        let run = claimed(&ctx, &facade, "HeldJob", "R-HELD");
-        // the lock is free when the run ends, as for a run the request has not yet given it
-        let mut lock = one(&facade, JOB_LOCK, "jobName", "HeldJob");
-        lock.set("jobRunId", Value::Null);
-        lock.update(&facade).unwrap();
-        let outcome = super::RunOutcome {
-            has_error: false,
-            results: None,
-            result_values: Default::default(),
-            messages: String::new(),
-            errors: String::new(),
-        };
-        super::finish_run(&facade, &run, &outcome);
-        assert!(!text(&one(&facade, JOB_RUN, "jobRunId", "R-HELD"), "endTime").is_empty());
-        assert_eq!(text(&one(&facade, JOB_LOCK, "jobName", "HeldJob"), "jobRunId"), "");
-    }
-
-    #[test]
-    fn a_run_dropped_at_shutdown_releases_its_lock() {
-        let ctx = ExecutionContextFactory::test_context();
-        let facade = crate::testing::open();
-        ctx.factory().set_entity(facade.clone());
-        let run = {
-            let _entered = ctx.enter();
-            let _authz = ctx.disable_authz();
-            claimed(&ctx, &facade, "DroppedJob", "R2")
-        };
-        abandon(run);
-        let _entered = ctx.enter();
-        let _authz = ctx.disable_authz();
-        assert_released_and_failed(&facade, "DroppedJob", "R2");
-    }
-}
+#[path = "jobs_tests.rs"]
+mod tests;

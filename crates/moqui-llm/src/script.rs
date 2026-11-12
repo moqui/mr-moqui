@@ -19,18 +19,18 @@
 //!         timeoutSeconds, allowInTransaction})
 //!     -> {text, json, modelId, finish, inputTokens, cachedInputTokens, outputTokens, cost, callIds}
 //! ec.llm.isEnabled() -> boolean
-//! ec.llm.summarize(text, {maxWords}) -> string
-//! ec.llm.classify(text, labels) -> label
-//! ec.llm.extract(text, fields) -> {name: value}          fields: {name: description}
+//! ec.llm.summarize(text, {maxWords, allowInTransaction}) -> string
+//! ec.llm.classify(text, labels, {allowInTransaction}) -> label
+//! ec.llm.extract(text, fields, {allowInTransaction}) -> {name: value}    fields: {name: description}
 //! ec.llm.startRun(agentId, text) -> runId                  a background run as the current user (job surface; AgentAdmin)
 //! ```
 //!
 //! `summarize`, `classify` and `extract` are the typed AI tasks of `org.moqui.agent.AiTaskServices`
 //! ([`crate::ai_task`]), on their features' models.
 //!
-//! A model call is refused while a transaction is open (plans/High-Level-Review.md HL-041, [`crate::provider::call`]):
-//! call these from code with none open, or pass `allowInTransaction: true` to `complete`, which suspends the
-//! transaction for the call and cuts the call to the time it has left.
+//! A model call is refused while a transaction is open (plans/archive/High-Level-Review.md HL-041, [`crate::provider::call`]):
+//! call these from code with none open, or pass `allowInTransaction: true` in the options of `complete`, `summarize`,
+//! `classify` or `extract`, which suspends the transaction for the call and cuts the call to the time it has left.
 //!
 //! `messages` are earlier turns, each `{role: "user" | "assistant", text}`; `schema` is a JSON schema (a map or its
 //! text), and with it `json` is the reply parsed and checked. The model is `model`, else the binding of `feature`, else
@@ -53,8 +53,8 @@ static LLM: HostClass = HostClass {
         host_method!("ec.llm", "complete", [Value], None, complete),
         host_method!("ec.llm", "isEnabled", [], is_enabled),
         host_method!("ec.llm", "summarize", [Text, OptValue], None, summarize),
-        host_method!("ec.llm", "classify", [Text, Value], None, classify),
-        host_method!("ec.llm", "extract", [Text, Value], None, extract),
+        host_method!("ec.llm", "classify", [Text, Value, OptValue], None, classify),
+        host_method!("ec.llm", "extract", [Text, Value, OptValue], None, extract),
         host_method!("ec.llm", "startRun", [Text, Text], None, start_run),
     ],
     getters: &[],
@@ -83,8 +83,9 @@ fn summarize(call: &mut Call<'_>) -> Result<Ret, HostError> {
         Some(Value::Map(map)) => text_option(map, "maxWords").and_then(|text| text.parse().ok()),
         _ => None,
     };
+    let allow = allows_transaction(call.value(1));
     let (factory, facade) = (factory()?, entity()?);
-    let summary = crate::ai_task::summarize(&factory, &facade, &text, max_words).map_err(HostError::Lib)?;
+    let summary = crate::ai_task::summarize(&factory, &facade, &text, max_words, allow).map_err(HostError::Lib)?;
     Ok(summary.into())
 }
 
@@ -94,16 +95,18 @@ fn classify(call: &mut Call<'_>) -> Result<Ret, HostError> {
         Value::List(items) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
         _ => return Err(HostError::message("ec.llm.classify takes a list of labels")),
     };
+    let allow = allows_transaction(call.value(2));
     let (factory, facade) = (factory()?, entity()?);
-    let label = crate::ai_task::classify(&factory, &facade, &text, &labels).map_err(HostError::Lib)?;
+    let label = crate::ai_task::classify(&factory, &facade, &text, &labels, allow).map_err(HostError::Lib)?;
     Ok(label.into())
 }
 
 fn extract(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let text = call.text(0).unwrap_or_default().to_string();
     let fields = moqui_lib::json::to_json(&call.value_or_null(1));
+    let allow = allows_transaction(call.value(2));
     let (factory, facade) = (factory()?, entity()?);
-    let values = crate::ai_task::extract(&factory, &facade, &text, &fields).map_err(HostError::Lib)?;
+    let values = crate::ai_task::extract(&factory, &facade, &text, &fields, allow).map_err(HostError::Lib)?;
     Ok(Ret::Value(moqui_lib::json::from_json(&values)))
 }
 
@@ -111,6 +114,14 @@ fn start_run(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let (agent_id, text) = (call.text(0).unwrap_or_default(), call.text(1).unwrap_or_default());
     let run_id = crate::ai_task::start_run(&factory()?, agent_id, text).map_err(HostError::Lib)?;
     Ok(run_id.into())
+}
+
+/// `allowInTransaction` of an options map: true or `Y` lets the model call be made with a transaction open (HL-041).
+fn allows_transaction(options: Option<&Value>) -> bool {
+    match options {
+        Some(Value::Map(map)) => matches!(text_option(map, "allowInTransaction").as_deref(), Some("true" | "Y")),
+        _ => false,
+    }
 }
 
 fn text_option(map: &moqui_lib::object::ValueMap, key: &str) -> Option<String> {
@@ -268,5 +279,43 @@ mod tests {
             let error = run_script(script).unwrap_err().to_string();
             assert!(error.contains(expected), "{script}: {error}");
         }
+    }
+
+    /// A typed AI task inside a transaction is refused as `complete` is, and its options' `allowInTransaction` lets it
+    /// run (plans/archive/High-Level-Review.md HL-041).
+    #[test]
+    fn ec_llm_tasks_in_a_transaction_are_refused_unless_they_opt_in() {
+        clear_context_stack();
+        let context = ExecutionContextFactory::test_context_with_conf(&CONF.replace("script-fake", "task-tx-fake"));
+        let facade = moqui_core::testing::open();
+        context.factory().set_entity(facade.clone());
+        let _entered = context.enter();
+        crate::provider::fake::clear("task-tx-fake");
+        let transactions = facade.transactions_for("moqui.basic.Enumeration").unwrap();
+        let in_transaction = |expression: &str| {
+            transactions.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
+                Ok(eval_condition(expression)?)
+            })
+        };
+        for script in [
+            r#"ec.llm.classify("Invoice #12", ["invoice", "other"]) !== null"#,
+            r#"ec.llm.summarize("A long text.", {maxWords: 20}) !== null"#,
+            r#"ec.llm.extract("Ship to Acme", {customer: "The customer"}) !== null"#,
+        ] {
+            let error = in_transaction(script).unwrap_err().to_string();
+            assert!(error.contains(crate::provider::IN_TRANSACTION), "{script}: {error}");
+        }
+        assert!(
+            crate::provider::fake::requests("task-tx-fake").is_empty(),
+            "nothing was sent"
+        );
+        for expression in [
+            r#"ec.llm.classify("Invoice #12", ["invoice", "other"], {allowInTransaction: true}) === "invoice""#,
+            r#"typeof ec.llm.summarize("A long text.", {allowInTransaction: true}) === "string""#,
+            r#""customer" in ec.llm.extract("Ship to Acme", {customer: "The customer"}, {allowInTransaction: "Y"})"#,
+        ] {
+            assert!(in_transaction(expression).unwrap(), "{expression}");
+        }
+        assert_eq!(crate::provider::fake::requests("task-tx-fake").len(), 3);
     }
 }

@@ -79,7 +79,7 @@ pub struct DavResponse {
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
     /// A file's content to send in place of `body`, read a window at a time as the client takes it, so a download is
-    /// never held whole (plans/High-Level-Review.md HL-010).
+    /// never held whole (plans/archive/High-Level-Review.md HL-010).
     pub stream: Option<moqui_core::web::ResponseStream>,
 }
 

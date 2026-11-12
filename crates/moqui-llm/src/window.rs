@@ -873,7 +873,7 @@ fn json_map(text: Option<String>) -> Map<String, Json> {
     }
 }
 
-/// The condition of a conversation's active messages, the ones still sent (plans/High-Level-Review.md HL-013): after
+/// The condition of a conversation's active messages, the ones still sent (plans/archive/High-Level-Review.md HL-013): after
 /// `compactedThroughSeq` (`through`), so the conversation's message index (`AGENT_MSG_SEQ`) serves the read and its
 /// rows do not grow with the conversation's lifetime, and not flagged `compacted`, the exact negation of
 /// [`super::flag_of`]'s true.

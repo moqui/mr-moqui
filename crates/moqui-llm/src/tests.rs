@@ -1213,7 +1213,7 @@ fn bare_call(facade: &EntityFacade, id: &str, user: &str, source: &str, start: i
 
 /// One check reads each scope's calls once with only their totals' fields: the totals are those of the whole rows, at
 /// the day's boundary in the server's time zone, with nulls as nothing, by source, and with the month's earlier days
-/// from `LlmUsageDaily` (plans/High-Level-Review.md HL-012).
+/// from `LlmUsageDaily` (plans/archive/High-Level-Review.md HL-012).
 #[test]
 fn quota_totals_keep_the_day_boundary_nulls_sources_and_month() {
     let facade = facade();
@@ -1290,7 +1290,7 @@ fn quota_totals_keep_the_day_boundary_nulls_sources_and_month() {
 }
 
 /// Concurrent admissions of one user whose quota has room for one call's reserve: one is admitted, and its
-/// reservation counts until it is dropped (plans/High-Level-Review.md HL-030).
+/// reservation counts until it is dropped (plans/archive/High-Level-Review.md HL-030).
 #[test]
 fn one_of_concurrent_admissions_takes_the_room_left() {
     let facade = facade();
@@ -1376,4 +1376,96 @@ fn an_expired_reservation_stops_counting() {
         .one()
         .unwrap();
     assert!(gone.is_none());
+}
+
+/// A quota check has the database sum each scope's calls and reservations: one row of totals a scope, and no call
+/// row is read (plans/archive/High-Level-Review.md HL-012). So does an API client's daily limit at admission.
+#[test]
+fn a_quota_check_reads_one_summed_row_per_scope_and_no_call_rows() {
+    let tape = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(std::sync::Arc::clone(&tape));
+    let conf = LlmConf::from_conf_text(CONF).unwrap();
+    let now = jiff::Timestamp::now().as_millisecond();
+    for n in 0..6 {
+        let mut fields = vec![
+            ("inputTokens", Value::I64(10)),
+            ("outputTokens", Value::I64(5)),
+            ("clientId", Value::string("CS")),
+            ("requestJson", Value::string("a body a total does not read")),
+        ];
+        if n == 0 {
+            fields.push(("errorClass", Value::string("server")));
+        }
+        let source = if n % 2 == 0 { "agent" } else { "gateway" };
+        bare_call(&facade, &format!("S{n}"), "US", source, now - 10, &fields);
+    }
+    row(
+        &facade,
+        "moqui.llm.LlmQuota",
+        &[("quotaId", "QSD"), ("userId", "US"), ("maxTokens", "100000")],
+    );
+    row(
+        &facade,
+        "moqui.llm.LlmQuota",
+        &[
+            ("quotaId", "QSM"),
+            ("userId", "US"),
+            ("period", "month"),
+            ("scope", "agent"),
+            ("maxTokens", "100000"),
+        ],
+    );
+    let reads = |from: usize, table: &str| -> Vec<String> {
+        let quoted = format!("\"{table}\"");
+        tape.lock().unwrap()[from..]
+            .iter()
+            .filter(|sql| sql.starts_with("SELECT") && sql.contains(&quoted))
+            .cloned()
+            .collect()
+    };
+    let from = tape.lock().unwrap().len();
+    let status = usage::check_quota(&facade, &conf.limits, "US", "agent", now).unwrap();
+    assert!(status.is_within(), "{status:?}");
+    // the day limit counts every source, and the month limit the agent's
+    assert_eq!(
+        (status.used.calls, status.used.errors, status.used.usage.total()),
+        (6, 1, 90)
+    );
+    let calls = reads(from, "llm_call");
+    assert_eq!(
+        calls.len(),
+        2,
+        "today's calls of all sources and of the agent: {calls:?}"
+    );
+    for sql in &calls {
+        assert!(sql.contains("SUM(") && !sql.contains("request_json"), "{sql}");
+    }
+    let reserved = reads(from, "llm_quota_reservation");
+    assert_eq!(reserved.len(), 2, "{reserved:?}");
+    assert!(reserved.iter().all(|sql| sql.contains("SUM(")), "{reserved:?}");
+    assert!(reads(from, "llm_usage_daily").iter().all(|sql| sql.contains("SUM(")));
+
+    let client = usage::ClientLimit {
+        client_id: "CS".to_string(),
+        daily_tokens: Some(1000),
+        daily_cost: None,
+    };
+    let admission = usage::Admission {
+        user_id: None,
+        scope: "gateway",
+        client: Some(&client),
+        reserve: usage::Reserve {
+            tokens: 10,
+            cost: Decimal::ZERO,
+        },
+        ttl: std::time::Duration::from_secs(60),
+    };
+    let from = tape.lock().unwrap().len();
+    let reservation = usage::admit(&facade, &conf.limits, &admission, now).unwrap().unwrap();
+    assert!(reservation.id().is_some());
+    let calls = reads(from, "llm_call");
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(calls[0].contains("SUM("), "{}", calls[0]);
+    let client_used = usage::client_calls_since(&facade, "CS", now - 60_000).unwrap();
+    assert_eq!(client_used.usage.total(), 90);
 }

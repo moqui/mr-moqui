@@ -12,8 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui test-load` as a process (plans/LoadRunner.md §9, L2): option errors, its help, the script list of a
-//! component, the refusal of a script that uses `service`, a run's result where Tools › Load finds it, and `--compare`.
+//! `moqui test-load` as a process (plans/archive/LoadRunner.md §9, L2): option errors, its help, the script list of a
+//! component, the refusal of a script that uses `service` (or a kind it does not know) and the run of one that uses
+//! `ssh`, a run's result where Tools › Load finds it, and `--compare`.
 //! The server is a stub that answers every request with 200; no test here runs the order to cash walk.
 
 use std::io::{Read, Write};
@@ -144,6 +145,17 @@ scenario("pings", { users: 2, iterations: 2, run() { http.get(params.path, { nam
         "plan({ title: \"In process\", uses: [\"service\"] })\nscenario(\"calls\", { iterations: 1, run() {} })\n",
     )
     .unwrap();
+    std::fs::write(
+        component.join("test/load/Telnet.load.js"),
+        "plan({ title: \"Telnet\", uses: [\"telnet\"] })\nscenario(\"one\", { iterations: 1, run() {} })\n",
+    )
+    .unwrap();
+    // nothing listens on the port --ssh names: the connect is the run's one sample, an error
+    std::fs::write(
+        component.join("test/load/Shell.load.js"),
+        "plan({ title: \"Shell\", uses: [\"ssh\"] })\nscenario(\"one\", { iterations: 1, run() { ssh.connect({ user: \"x\", password: \"y\", timeout: 5 }) } })\n",
+    )
+    .unwrap();
     runtime
 }
 
@@ -221,8 +233,33 @@ fn a_component_lists_its_scripts_and_a_service_script_is_refused() {
         "{err}"
     );
     assert!(err.contains("Tools › Load"), "{err}");
+    let (_, err, ok) = test_load(&runtime, &["load-stub", "--script", "Telnet"]);
+    assert!(!ok);
+    assert!(
+        err.contains("Telnet.load.js uses telnet, which moqui test-load cannot make (it makes http and ssh)"),
+        "{err}"
+    );
     // a refused run leaves no run directory
     assert!(!runtime.join("tmp/test-load").exists());
+    // a script that uses ssh runs, its connect going where --ssh says
+    let server = stub();
+    let url = format!("http://127.0.0.1:{}", server.port);
+    let (out, err, ok) = test_load(
+        &runtime,
+        &[
+            "load-stub",
+            "--script",
+            "Shell",
+            "--server",
+            &url,
+            "--ssh",
+            "127.0.0.1:1",
+        ],
+    );
+    assert!(!ok, "no request succeeded: {out}{err}");
+    assert!(!err.contains("cannot make"), "{err}");
+    assert!(out.contains("ssh connect"), "{out}{err}");
+    assert!(format!("{out}{err}").contains("x@127.0.0.1:1"), "{out}{err}");
 }
 
 #[test]
@@ -367,4 +404,91 @@ fn a_run_writes_its_result_where_tools_finds_it_and_compare_reads_two() {
         &["--compare", file.to_str().unwrap(), not_a_result.to_str().unwrap()],
     );
     assert!(!ok && err.contains("is not a load result"), "{err}");
+}
+
+/// A server that answers every request with 200 at once on keep-alive connections, a thread for each, until the
+/// process ends: as little server as there can be, so a run's rate is the generator's.
+fn fast_stub() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            std::thread::spawn(move || {
+                let mut stream = stream;
+                let mut buf = Vec::new();
+                let mut chunk = [0_u8; 8192];
+                loop {
+                    // each request head is answered; a GET has no body
+                    while let Some(end) = buf.windows(4).position(|window| window == b"\r\n\r\n") {
+                        buf.drain(..end + 4);
+                        if stream
+                            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nok")
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => return,
+                        Ok(count) => buf.extend_from_slice(&chunk[..count]),
+                    }
+                }
+            });
+        }
+    });
+    port
+}
+
+/// The generator's ceiling (plans/archive/LoadRunner.md §16.1): requests a second of `moqui test-load` for a script of
+/// one GET against [`fast_stub`], at 1 to 256 users for 10 seconds each, with the generator's CPU share and the share
+/// of the users' time in script. A measurement, not a check: it prints a table, and asserts only that each run made
+/// requests with no errors. Build the release binary first for numbers worth keeping (`cargo test --release`).
+#[test]
+#[ignore = "a measurement of about a minute: cargo test --release -p moqui --test cli -- --ignored load_ceiling --nocapture"]
+fn load_ceiling() {
+    let dir = temp("ceiling");
+    let runtime = runtime(&dir.0);
+    std::fs::write(
+        runtime.join("component/load-stub/test/load/Ceiling.load.js"),
+        "plan({ title: \"Ceiling\" })\nscenario(\"get\", { users: 1, duration: 10, run() { http.get(\"/x\", { name: \"get\" }) } })\n",
+    )
+    .unwrap();
+    let url = format!("http://127.0.0.1:{}", fast_stub());
+    println!("users  requests/s  per core  p50 ms  p99 ms  generator cpu  script share");
+    for users in ["1", "4", "16", "64", "256"] {
+        let out = dir.0.join(format!("out-{users}"));
+        let (stdout, stderr, ok) = test_load(
+            &runtime,
+            &[
+                "load-stub",
+                "--script",
+                "Ceiling",
+                "--server",
+                &url,
+                "--users",
+                users,
+                "--ramp-up",
+                "1",
+                "--duration",
+                "10",
+                "--out",
+                out.to_str().unwrap(),
+            ],
+        );
+        assert!(ok, "{stdout}{stderr}");
+        let result: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(out.join("result.json")).unwrap()).unwrap();
+        assert_eq!(result["errors"], 0, "{stdout}");
+        let rps = result["rps"].as_f64().unwrap();
+        let cores = result["generator"]["cores"].as_f64().unwrap_or(1.0);
+        let cpu = result["generator"]["cpu"].as_f64().unwrap_or(f64::NAN);
+        println!(
+            "{users:>5}  {rps:>10.0}  {:>8.0}  {:>6.2}  {:>6.2}  {:>13.3}  {:>12}",
+            rps / cores,
+            result["latency"]["p50"].as_f64().unwrap_or(f64::NAN),
+            result["latency"]["p99"].as_f64().unwrap_or(f64::NAN),
+            cpu,
+            result["generator"]["scriptShare"]
+        );
+    }
 }

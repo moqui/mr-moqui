@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The finished runs (plans/LoadRunner.md §7, D5): each is `runtime/tmp/test-load/<runId>/result.json`, the result of
+//! The finished runs (plans/archive/LoadRunner.md §7, D5): each is `runtime/tmp/test-load/<runId>/result.json`, the result of
 //! §5 with its `run` block (script, label, user, status, target, start, end). No entity and no database rows. The
 //! list of runs is those files, read for their `run` block and summary and cached by the file's time. A run is read,
 //! written and deleted only by a [`valid_run_id`], a directory name with no path in it (§10 Result files).

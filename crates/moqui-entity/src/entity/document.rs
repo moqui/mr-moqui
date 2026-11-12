@@ -1027,7 +1027,7 @@ impl<'a> DocMerger<'a> {
 }
 
 /// The type-many children of one map, by the document alias of each list on it, so a row finds the child it joins
-/// without comparing it with every child before it (plans/High-Level-Review.md HL-001). Kept for one assembly only.
+/// without comparing it with every child before it (plans/archive/High-Level-Review.md HL-001). Kept for one assembly only.
 #[derive(Default)]
 struct ChildIndex {
     lists: HashMap<String, ListIndex>,

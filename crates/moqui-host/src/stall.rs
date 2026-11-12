@@ -13,7 +13,7 @@
  */
 
 //! A bounded wait for a client that stops reading, for a blocking thread that feeds an async response (a git job's
-//! output, an Assist event stream): `plans/High-Level-Review.md` HL-027.
+//! output, an Assist event stream): `plans/archive/High-Level-Review.md` HL-027.
 
 use std::io;
 use std::time::{Duration, Instant};

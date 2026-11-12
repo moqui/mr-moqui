@@ -68,7 +68,7 @@ pub struct Entry {
 pub type Handover = oneshot::Sender<oneshot::Sender<Box<crate::session::Session>>>;
 
 /// The attached sessions: by id, and the ids of each user's, so a stanza or a push to a user looks at that user's
-/// sessions only, not every session of the node (plans/High-Level-Review.md HL-009). Both change together under the
+/// sessions only, not every session of the node (plans/archive/High-Level-Review.md HL-009). Both change together under the
 /// one lock.
 #[derive(Default)]
 struct Sessions {

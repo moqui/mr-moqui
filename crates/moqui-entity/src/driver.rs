@@ -158,7 +158,7 @@ pub trait DbConnection: Send {
     /// How much a stream holds in memory is the driver's: Postgres fetches through a cursor a batch at a time
     /// and MySQL reads an active result, so memory stays bounded; the browser's SQLite reads the whole result
     /// here, before the first row, so a stream there costs as much memory as a list and an early stop still
-    /// pays for every row (plans/High-Level-Review.md HL-003).
+    /// pays for every row (plans/archive/High-Level-Review.md HL-003).
     fn open_stream(&mut self, sql: &str, params: &[Value]) -> Result<(), Error>;
 
     /// The next row of the open stream; `None` at its end, or with no stream open.

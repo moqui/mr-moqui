@@ -14,8 +14,8 @@
 
 //! `moqui test-client` against the seeded server: the fixture component's client specs
 //! (`tests/fixtures/test-component/test/client`) over HTTP, logins, the session token with and without, redirects off,
-//! raw requests and WebSocket, with a skipped spec and JUnit; then a spec that fails on purpose, which fails the run
-//! with its line. The runner runs in this process, as `moqui test-client` runs it; the binary's own run, with the
+//! raw requests, WebSocket and SSH (the server's listener on a free port, passed as `--ssh`), with a skipped spec and
+//! JUnit; then a spec that fails on purpose, which fails the run with its line. The runner runs in this process, as `moqui test-client` runs it; the binary's own run, with the
 //! runtime files it must leave alone, is `crates/moqui/tests/cli/test_client.rs`.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum", feature = "test-client"))]
@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use moqui_host::test_client::{parse_client_args, run};
 
-use crate::common::{start, temp_dir, DirGuard};
+use crate::common::{temp_dir, DirGuard};
 
 fn fixture_component() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test-component")
@@ -68,18 +68,28 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
     if !crate::common::own_process() {
         return;
     }
-    let gate = start("test-client");
+    // with ssh and tui the server listens for SSH too (Ssh.spec.js); without, that spec skips
+    #[cfg(all(feature = "ssh", feature = "tui"))]
+    let gate = {
+        use base64::Engine as _;
+        let seed = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
+        crate::common::start_with_properties("test-client", None, &[("ssh_port", "0"), ("ssh_host_key", &seed)])
+    };
+    #[cfg(not(all(feature = "ssh", feature = "tui")))]
+    let gate = crate::common::start("test-client");
     let server = format!("http://{}", gate.server.address());
+    let ssh = gate.server.ssh_address().map(|address| address.to_string());
     let out = temp_dir("moqui-test-client-out");
     let _out = DirGuard(out.clone());
     let junit = out.join("junit");
     let files = out.join("files");
     let specs = fixture_component().join("test/client");
     let slow = format!("slowServer={}", slow_server());
-    let (text, result) = run_client(&[
-        specs.to_str().unwrap(),
-        "--server",
-        &server,
+    let mut args = vec![specs.to_str().unwrap(), "--server", &server];
+    if let Some(ssh) = &ssh {
+        args.extend(["--ssh", ssh.as_str()]);
+    }
+    args.extend([
         "--param",
         "greeting=hello",
         "--param",
@@ -89,6 +99,7 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
         "--out",
         files.to_str().unwrap(),
     ]);
+    let (text, result) = run_client(&args);
     assert!(result.is_ok(), "{result:?}\n{text}");
     let lines: Vec<&str> = text.lines().filter(|line| line.contains(" > ")).collect();
     // suite.js order
@@ -170,7 +181,19 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
     assert_eq!(stats["run"]["spec"], "Load", "{json}");
     let xml = std::fs::read_to_string(junit.join("TEST-moqui-test-fixture.client.Load.xml")).unwrap();
     assert!(xml.contains("<system-out>2 users, "), "{xml}");
-    assert!(text.contains(" failed, 0 ignored, 3 skipped; 6 specs in "), "{text}");
+    let skipped = if ssh.is_some() { 3 } else { 5 };
+    assert!(
+        text.contains(&format!(" failed, 0 ignored, {skipped} skipped; 7 specs in ")),
+        "{text}"
+    );
+    if ssh.is_some() {
+        assert!(
+            lines.iter().any(|line| line.starts_with(
+                "Ssh > in a load, a connect, an exec, an agent-apps session and a shell are timed by name  PASSED"
+            )),
+            "{text}"
+        );
+    }
     assert!(text.contains(" 0 failed, "), "{text}");
     assert!(text.contains(&format!("Output: {}", files.display())), "{text}");
     assert!(files.join("login.html").is_file());

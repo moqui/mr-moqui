@@ -566,7 +566,7 @@ where
 pub(crate) type ConnectionHold = Box<dyn Send + Sync>;
 
 /// A stream whose write fails once it has made no progress for `limit`, so a client that stops reading cannot keep its
-/// connection, or a push loop's write, past it (`plans/High-Level-Review.md` HL-027). A write that moves any bytes starts
+/// connection, or a push loop's write, past it (`plans/archive/High-Level-Review.md` HL-027). A write that moves any bytes starts
 /// the time again: a slow download that is still progressing goes on, and so does backpressure. The stream carries the
 /// connection's [`ConnectionHold`], so an upgraded socket (a WebSocket hyper handed off) keeps its connection slots
 /// until it closes.

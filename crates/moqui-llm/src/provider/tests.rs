@@ -1196,7 +1196,7 @@ const QUOTA_CONF: &str = r#"<llm-facade>
 
 /// Agent calls of one user at once, whose quota fits one attempt's prompt and output limit: the first admitted holds
 /// its reservation while the fake holds its reply at a gate, and the others end with the quota's refusal, which the
-/// run stops on (plans/High-Level-Review.md HL-030).
+/// run stops on (plans/archive/High-Level-Review.md HL-030).
 #[test]
 fn one_of_concurrent_agent_calls_takes_the_room_left() {
     let facade = moqui_core::testing::open();

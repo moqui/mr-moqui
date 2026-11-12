@@ -1606,7 +1606,12 @@ fn install_session_flush(factory: &Arc<ExecutionContextFactory>) {
         let Some(factory) = weak.upgrade() else {
             return;
         };
-        if let Err(err) = crate::user::session::flush_dirty(&factory) {
+        // Bounded, resuming where the last pass stopped, so many dirty sessions do not hold the scheduler (HL-020).
+        let bound = crate::user::session::FlushBound {
+            sessions: crate::user::session::FLUSH_PASS_SESSIONS,
+            time: crate::user::session::FLUSH_PASS_TIME,
+        };
+        if let Err(err) = crate::user::session::flush_dirty_bounded(&factory, bound) {
             tracing::warn!("session flush failed: {err}");
         }
         let expired = crate::user::session::take_expired(&factory);

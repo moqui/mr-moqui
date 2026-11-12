@@ -908,7 +908,7 @@ pub const EMPTY_NUDGE: &str = "Your last reply was empty. Answer the request, or
 /// options allow. The reply's finish says how it ended; an error is never returned.
 ///
 /// A call is refused (a `bad-request` error, nothing sent) while a transaction is open on this thread, active or
-/// suspended (plans/High-Level-Review.md HL-041): suspending one does not free it, since its connection stays out of
+/// suspended (plans/archive/High-Level-Review.md HL-041): suspending one does not free it, since its connection stays out of
 /// the pool (parked, counted against the pool's maximum) and its locks stay held, and its deadline keeps running, so a
 /// call that outlasts it is paid for and then rolled back with the caller's work. Make the call outside the
 /// transaction (a service with `transaction="ignore"` called with none open, a screen transition with

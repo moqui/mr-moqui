@@ -305,7 +305,12 @@ is its first child element only.
 - A rule is skipped while `ec.message` has an error unless it has `run-on-error="true"`.
 - A failure is reported as "service ECA `<id>` on `<when>` of `<service>`: ...".
 - `tx-commit` and `tx-rollback` rules run on a service worker when the transaction ends, in a context and
-  transaction of their own.
+  transaction of their own, as the user and with the authorization the call had. A call's `tx-commit` rules are also
+  written to the outbox (`moqui.service.job.ServiceOutbox`) in the transaction that commits, and their run deletes
+  that row in its own transaction: when the process stops before they run, the service queue is full, or their run
+  fails, the scheduler runs them from the row a minute or more later (up to five attempts). So a `tx-commit` rule runs
+  at least once, and a rule with an effect outside the database, such as sending an email, checks that it has not
+  already had it (plans/archive/High-Level-Review.md HL-025).
 - **A refusal needs `force-new`.** A `pre-service` rule that calls a service which adds an error stops the guarded
   service. The refusing service joins the guarded service's transaction and marks it rollback-only, so the user sees
   a second error, "Transaction marked for rollback ...", beside the refusal. Give the refusing service

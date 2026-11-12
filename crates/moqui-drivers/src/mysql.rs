@@ -14,7 +14,7 @@
 
 //! Sync MySQL client behind [`moqui_core::driver::DbDriver`].
 //!
-//! Network waits are bounded (plans/High-Level-Review.md HL-019): a connection connects within `CONNECT_TIMEOUT`, each
+//! Network waits are bounded (plans/archive/High-Level-Review.md HL-019): a connection connects within `CONNECT_TIMEOUT`, each
 //! read waits at most `READ_TIMEOUT` (or the datasource's `read-timeout`) and each write `WRITE_TIMEOUT`, and TCP
 //! keepalive is on. The `mysql` crate sets a read timeout only when it connects, so it is one fixed bound, the
 //! handshake's among them, rather than the transaction's remaining time as for Postgres; the transaction deadline

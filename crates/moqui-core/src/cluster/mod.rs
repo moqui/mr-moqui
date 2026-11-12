@@ -18,11 +18,22 @@
 //! Fan-out is not done on the thread that published: the message goes on a queue, and one sender thread posts it to
 //! the live peers, as `plans/archive/Cluster.md` says. An invalidation joins the one already waiting for its entity, which
 //! then carries every key written, up to [`KEYS_PER_ENTITY`], and the whole entity past it ([`Queue::push`],
-//! plans/High-Level-Review.md HL-017). A peer that may have missed an invalidation (a failed post, a skip while it was
+//! plans/archive/High-Level-Review.md HL-017). A peer that may have missed an invalidation (a failed post, a skip while it was
 //! down, a return to the live set) gets a clear of every entity cache before anything else ([`PeerCache::dirty`],
 //! HL-018). Each peer gets what was waiting as one batch, in order
 //! ([`Sender::post_batch`]: one gRPC call, or one POST after another), and several peers are posted to at once. The
 //! peer list is kept and read again on each heartbeat.
+//!
+//! The clear of every entity cache is the recovery of a gap in any topic, so a peer is marked for it whatever it missed:
+//! a failed or skipped batch of any topic, and every peer when a message of another topic is dropped from a full queue.
+//! A member that receives it ([`recover_missed`]) clears its entity caches and retires the live sessions whose rows are
+//! gone, which covers a lost `session-end`. The other topics need no more: a co-edited document's open rooms read the
+//! state other servers stored at their next tick (moqui-collab `tick`), so a lost `collab-update` is merged and sent to
+//! the room's clients within seconds; a notification whose topic persists it is stored before it is pushed, and a client
+//! reads its list on load, while one not persisted is a live hint that a closed socket misses on one server too; an RTC
+//! signal goes to one member ([`send_to`]) and a call that misses one is set up again by its client; a live setting is in
+//! memory only and expires within 24 hours, and an instance that missed one keeps its on-disk value; a component
+//! deploy's files are written from the shared repository at the next start of a member that missed it.
 //!
 //! Each factory keeps its own state (sender, member id, queue, peers): a write or notification fans out only to the
 //! peers of the factory whose entity facade made it, so two factories in one process do not post for each other.
@@ -158,7 +169,7 @@ enum Queued {
 }
 
 impl Queue {
-    /// Queue `message` (plans/High-Level-Review.md HL-017). An entity cache invalidation joins the one waiting for its
+    /// Queue `message` (plans/archive/High-Level-Review.md HL-017). An entity cache invalidation joins the one waiting for its
     /// entity: that one then carries every key, in `primaryKeys`, up to `limits.keys`, and no key (the whole entity) past
     /// it or when a write had no usable key. A clear of every entity cache waiting covers it. With `limits.entities`
     /// entities waiting, the invalidations become one clear of every entity cache. Other topics are kept in order, up to
@@ -242,8 +253,9 @@ fn whole_without_key(body: &mut serde_json::Value) {
     }
 }
 
-/// Add the key of `added` to the waiting invalidation `waiting`: it then lists its keys in `primaryKeys`. With no
-/// usable key, or past `cap` keys, it carries none and invalidates the whole entity; a whole one stays whole.
+/// Add the keys of `added` (its `primaryKey`, or each of its `primaryKeys`) to the waiting invalidation `waiting`: it
+/// then lists its keys in `primaryKeys`. With no usable key, or past `cap` keys, it carries none and invalidates the
+/// whole entity; a whole one stays whole.
 fn join_keys(waiting: &mut serde_json::Value, added: &serde_json::Value, cap: usize) {
     let Some(map) = waiting.as_object_mut() else {
         return;
@@ -255,14 +267,21 @@ fn join_keys(waiting: &mut serde_json::Value, added: &serde_json::Value, cap: us
     }) else {
         return;
     };
-    let Some(key) = added
-        .get("primaryKey")
-        .filter(|key| key.as_object().is_some_and(|key| !key.is_empty()))
-    else {
-        return;
+    let added_keys: Vec<&serde_json::Value> = match added.get("primaryKeys").and_then(serde_json::Value::as_array) {
+        Some(list) => list.iter().collect(),
+        None => added.get("primaryKey").into_iter().collect(),
     };
-    if !keys.contains(key) {
-        keys.push(key.clone());
+    let usable = |key: &&serde_json::Value| key.as_object().is_some_and(|key| !key.is_empty());
+    if added_keys.is_empty() || !added_keys.iter().all(usable) {
+        return;
+    }
+    for key in added_keys {
+        if keys.len() > cap {
+            break;
+        }
+        if !keys.contains(key) {
+            keys.push(key.clone());
+        }
     }
     if keys.len() <= cap {
         map.insert("primaryKeys".to_string(), serde_json::Value::Array(keys));
@@ -276,8 +295,9 @@ struct PeerCache {
     read_at: i64,
     /// Peers to skip until the time given, after every try of a post failed.
     down_until: HashMap<String, Instant>,
-    /// Peers that may have missed an entity cache invalidation (plans/High-Level-Review.md HL-018): a post that failed
-    /// every try, a batch skipped while the peer was down, or a return to the live set. Each gets a clear of every entity
+    /// Peers that may have missed a message (plans/archive/High-Level-Review.md HL-018): a post that failed every try, a batch
+    /// skipped while the peer was down, a message dropped from a full queue, or a return to the live set. Each gets a
+    /// clear of every entity
     /// cache ahead of its next batch, and stays here until one is delivered; the heartbeat asks for that pass, so no
     /// write is needed. The value is the gap's number, so a gap found while a clear was on its way is not forgotten.
     dirty: HashMap<String, u64>,
@@ -473,11 +493,14 @@ pub fn apply_remote(facade: &EntityFacade, topic: &str, message: &TopicMessage) 
 }
 
 /// An `entity-cache-invalidate` body: `clearAll` clears every entity cache (a sender that may have lost invalidations,
-/// plans/High-Level-Review.md HL-018); `primaryKeys` evicts by each key (several writes joined, HL-017), `primaryKey` by
+/// plans/archive/High-Level-Review.md HL-018); `primaryKeys` evicts by each key (several writes joined, HL-017), `primaryKey` by
 /// one; with no usable key the entity's caches go whole. A key that does not apply is logged and the others still are.
 fn apply_invalidation(facade: &EntityFacade, body: &serde_json::Value) -> Result<(), Error> {
     if is_clear_all(body) {
-        return crate::entity::cache::clear_all_list_caches(facade).map_err(Error::from);
+        let factory = linked_state(facade)
+            .and_then(|state| lock(&state.factory).upgrade())
+            .or_else(|| ExecutionContext::with_current(|ec| Arc::clone(ec.factory())));
+        return recover_missed(factory.as_deref(), facade);
     }
     let name = Some(entity_of(body))
         .filter(|name| !name.is_empty())
@@ -495,14 +518,38 @@ fn apply_invalidation(facade: &EntityFacade, body: &serde_json::Value) -> Result
         // With the written row's key, only the cached finds it may have changed go.
         _ => vec![body.get("primaryKey").and_then(key_of)],
     };
-    let mut first_error = None;
-    for key in &keys {
-        if let Err(err) = crate::entity::cache::clear_one_cache(facade, name, key.as_ref()) {
-            tracing::warn!("cluster invalidation of {name} failed for one key: {err}");
-            first_error.get_or_insert(Error::from(err));
+    // Several keys go in one sweep of the entity's caches (plans/archive/High-Level-Review.md HL-002); a key that is not
+    // usable clears the entity whole, which covers the others.
+    let cleared = match keys.into_iter().collect::<Option<Vec<_>>>() {
+        Some(keys) if keys.len() > 1 => crate::entity::cache::clear_keys_cache(facade, name, &keys),
+        Some(keys) => crate::entity::cache::clear_one_cache(facade, name, keys.first()),
+        None => crate::entity::cache::clear_one_cache(facade, name, None),
+    };
+    cleared.map_err(|err| {
+        tracing::warn!("cluster invalidation of {name} failed: {err}");
+        Error::from(err)
+    })
+}
+
+/// What a member does when it may have missed cluster messages: a peer's clear of every entity cache (a gap in its
+/// sends) or a transport that lost its connection. Every entity list cache is cleared, and the live sessions whose rows
+/// are gone are retired, so a `session-end` lost in the gap does not leave an ended session served here
+/// (plans/archive/High-Level-Review.md HL-018). The other topics need nothing: see the module documentation. The session step
+/// runs only with `factory`, and its failure is logged.
+///
+/// # Errors
+///
+/// When the entity caches cannot be cleared.
+pub fn recover_missed(factory: Option<&ExecutionContextFactory>, facade: &EntityFacade) -> Result<(), Error> {
+    let cleared = crate::entity::cache::clear_all_list_caches(facade).map_err(Error::from);
+    if let Some(factory) = factory {
+        match crate::user::session::retire_gone(factory) {
+            Ok(0) => {}
+            Ok(retired) => tracing::info!("cluster recovery: {retired} sessions ended on another server were retired"),
+            Err(err) => tracing::error!("cluster recovery: the live sessions could not be checked: {err}"),
         }
     }
-    first_error.map_or(Ok(()), Err)
+    cleared
 }
 
 /// Publish `message` on this process's bus, then queue it for the peers of the factory that started `facade`. A
@@ -577,8 +624,65 @@ pub(crate) fn note_write(
     pk_fields: &[String],
     values: &crate::entity::FieldMap,
 ) -> Result<(), Error> {
+    note_invalidation(facade, entity_name, || {
+        invalidation_body(entity_name, pk_fields, values)
+    })
+}
+
+/// [`note_write`] for the rows one statement wrote, by their keys (a bulk delete's chunk, plans/archive/High-Level-Review.md
+/// HL-033): one invalidation that lists every key in `primaryKeys`, or past [`KEYS_PER_ENTITY`] keys none, which
+/// invalidates the whole entity, as a waiting invalidation joined past that many does.
+pub(crate) fn note_writes(
+    facade: &EntityFacade,
+    entity_name: &str,
+    pk_fields: &[String],
+    keys: &[Arc<crate::entity::FieldMap>],
+) -> Result<(), Error> {
+    if keys.is_empty() {
+        return Ok(());
+    }
+    note_invalidation(facade, entity_name, || {
+        keys_body(entity_name, pk_fields, keys, LIMITS.keys)
+    })
+}
+
+/// The invalidation body of the rows `keys`: each key in `primaryKeys`, or none (the whole entity) past `cap` keys or
+/// for a key with no usable field.
+fn keys_body(
+    entity_name: &str,
+    pk_fields: &[String],
+    keys: &[Arc<crate::entity::FieldMap>],
+    cap: usize,
+) -> serde_json::Value {
+    let whole = || serde_json::json!({ "entityName": entity_name });
+    let mut listed = Vec::with_capacity(keys.len().min(cap));
+    for key in keys {
+        let mut body = invalidation_body(entity_name, pk_fields, key);
+        let Some(key) = body
+            .get_mut("primaryKey")
+            .map(serde_json::Value::take)
+            .filter(|key| key.as_object().is_some_and(|key| !key.is_empty()))
+        else {
+            return whole();
+        };
+        if !listed.contains(&key) {
+            if listed.len() >= cap {
+                return whole();
+            }
+            listed.push(key);
+        }
+    }
+    serde_json::json!({ "entityName": entity_name, "primaryKeys": listed })
+}
+
+/// Publish the invalidation `body` gives, after commit when a transaction is open.
+fn note_invalidation(
+    facade: &EntityFacade,
+    entity_name: &str,
+    body: impl FnOnce() -> serde_json::Value,
+) -> Result<(), Error> {
     // No member caches what this entity's writes change (`cache="never"` and in no cacheable view): the peers are not
-    // told (plans/High-Level-Review.md HL-017), though a local listener still is.
+    // told (plans/archive/High-Level-Review.md HL-017), though a local listener still is.
     let to_peers = is_linked(facade)
         && (crate::user::is_authz_entity(entity_name) || crate::entity::cache::peers_may_cache(facade, entity_name));
     // No peer and no local listener: there is no one to tell, so the message (a UUID and a JSON body) is not built.
@@ -588,7 +692,7 @@ pub(crate) fn note_write(
     let message = TopicMessage {
         origin_id: notify::origin_id().to_string(),
         message_id: crate::entity::uuid_v4().map_err(Error::from)?,
-        body: invalidation_body(entity_name, pk_fields, values),
+        body: body(),
     };
     let tx = facade.transactions_for(entity_name).map_err(Error::from)?;
     if tx.in_transaction() {
@@ -796,7 +900,7 @@ fn reject_peer_mismatch(
 
 /// Start the heartbeat thread: [`heartbeat`] every scheduler interval. It runs on a thread of its own, not as a
 /// scheduler hook, so a long job pass or maintenance hook does not hold it past the liveness window and drop this member
-/// out of its peers' fan-out (`plans/High-Level-Review.md` HL-020). Pools with no threads (inline, idle) run no
+/// out of its peers' fan-out (`plans/archive/High-Level-Review.md` HL-020). Pools with no threads (inline, idle) run no
 /// scheduler, so they get no heartbeat, as before.
 fn install_heartbeat(factory: &Arc<ExecutionContextFactory>) {
     if !factory.service_pools().is_threaded() || factory.cluster_heartbeat.swap(true, Ordering::AcqRel) {
@@ -858,7 +962,7 @@ pub fn heartbeat(factory: &ExecutionContextFactory) {
 }
 
 /// Start a send pass for the peers that may have missed an invalidation, with nothing else queued, so they get their
-/// clear without waiting for another write (plans/High-Level-Review.md HL-018).
+/// clear without waiting for another write (plans/archive/High-Level-Review.md HL-018).
 fn request_resync(state: &Arc<ClusterState>) {
     if lock(&state.peers).dirty.is_empty() {
         return;
@@ -904,9 +1008,15 @@ fn fan_out(state: &Arc<ClusterState>, topic: &'static str, message: &TopicMessag
     }
     let mut queue = lock(&state.queue);
     if queue.push(topic, message.clone(), LIMITS) == Queued::Dropped {
+        drop(queue);
         let dropped = state.dropped.fetch_add(1, Ordering::Relaxed) + 1;
         if dropped.is_power_of_two() {
             tracing::warn!("cluster fan-out queue is full; {dropped} messages dropped");
+        }
+        // Every peer misses it: each gets the recovery of a gap ahead of its next batch (HL-018).
+        let mut peers = lock(&state.peers);
+        for base_url in peers.urls.clone() {
+            peers.mark_dirty(&base_url);
         }
         return;
     }
@@ -980,13 +1090,12 @@ fn send_batch(state: &ClusterState, batch: &[(&'static str, TopicMessage)]) {
             }
         })
         .collect();
-    let invalidates = batch.iter().any(|(topic, _)| *topic == ENTITY_CACHE_INVALIDATE);
     let mut live: Vec<&str> = Vec::new();
     for base_url in &peers {
         if !peer_down(state, base_url) {
             live.push(base_url);
-        } else if invalidates {
-            // Skipped while down: it misses these invalidations.
+        } else if !payloads.is_empty() {
+            // Skipped while down: it misses these messages.
             lock(&state.peers).mark_dirty(base_url);
         }
     }
@@ -1020,10 +1129,9 @@ fn send_batch(state: &ClusterState, batch: &[(&'static str, TopicMessage)]) {
                 peers.dirty.remove(base_url);
             }
         } else {
+            // Whatever the batch held, the peer may have missed some of it.
             mark_peer_down(state, base_url);
-            if invalidates || gap.is_some() {
-                lock(&state.peers).mark_dirty(base_url);
-            }
+            lock(&state.peers).mark_dirty(base_url);
         }
     };
     // Each peer gets the whole batch in order; with more than one they are posted to at once, so a slow or unreachable
@@ -1333,7 +1441,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
 }
 
 /// The database server's time in epoch milliseconds, else this host's.
-fn db_now(facade: &EntityFacade) -> i64 {
+pub(crate) fn db_now(facade: &EntityFacade) -> i64 {
     let read = facade
         .transactions_for(MEMBER)
         .map_err(Error::from)

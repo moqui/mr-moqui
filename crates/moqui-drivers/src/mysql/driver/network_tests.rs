@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The network bounds of a session (plans/High-Level-Review.md HL-019) against a real MySQL or MariaDB server, behind a
+//! The network bounds of a session (plans/archive/High-Level-Review.md HL-019) against a real MySQL or MariaDB server, behind a
 //! relay that stops forwarding part way through a statement, as a host that stops answering without a reset does.
 //! Acceptance tests: they need `MOQUI_TEST_MYSQL=user:pass@host:port/database` and take about 15 seconds.
 //!

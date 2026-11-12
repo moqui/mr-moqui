@@ -17,7 +17,7 @@
 //! RFC 4571 says (a two-byte length before each). A thread per connection reads and hands each datagram to the driver;
 //! the driver writes back through the connection's stream. At most [`MAX_CONNECTIONS`] connections, [`PER_SOURCE`] of
 //! them from one source (an IPv6 /64 is one), and one that sends nothing for [`IDLE`] is closed (a browser's ICE
-//! consent checks come every few seconds) (plans/High-Level-Review.md HL-032).
+//! consent checks come every few seconds) (plans/archive/High-Level-Review.md HL-032).
 
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};

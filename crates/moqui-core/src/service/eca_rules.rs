@@ -23,7 +23,7 @@ use moqui_lib::sync::{read, write};
 
 use super::email_eca::{email_rule_from, EmailRule};
 use super::git_eca::{git_rule_from, GitRule};
-use super::seca::{seca_rule_from, SecaIndex, SecaRule};
+use super::seca::{seca_rule_from, KnownServices, SecaIndex, SecaRule};
 use crate::context::{ExecutionContext, ExecutionContextFactory};
 
 #[derive(Default)]
@@ -36,6 +36,18 @@ pub(super) struct EcaRules {
     /// gitECA rules in priority order, a later rule with the same id having replaced an earlier one. Read only by the
     /// git events (moqui-git).
     pub(super) git: Vec<Arc<GitRule>>,
+    /// Every SECA rule the files hold, in load order, with whether its service is defined: `seca` is made of those
+    /// that are. When services come or go, [`recheck`] checks these again instead of reading the files
+    /// (plans/archive/High-Level-Review.md HL-015).
+    candidates: Vec<Candidate>,
+}
+
+/// A SECA rule as loaded: its id, and whether the service it names is defined, as Java's load checks it.
+#[derive(Clone)]
+struct Candidate {
+    id: Option<String>,
+    rule: Arc<SecaRule>,
+    defined: bool,
 }
 
 impl EcaRules {
@@ -45,6 +57,22 @@ impl EcaRules {
             seca,
             email,
             git,
+            candidates: Vec::new(),
+        }
+    }
+
+    /// The rules of `candidates` whose service is defined, with `email` and `git`.
+    fn of_candidates(candidates: Vec<Candidate>, email: Vec<Arc<EmailRule>>, git: Vec<Arc<GitRule>>) -> Self {
+        let seca = seca_in_load_order(
+            candidates
+                .iter()
+                .filter(|candidate| candidate.defined)
+                .map(|candidate| (candidate.id.clone(), Arc::clone(&candidate.rule)))
+                .collect(),
+        );
+        Self {
+            candidates,
+            ..Self::new(seca, email, git)
         }
     }
 
@@ -111,6 +139,44 @@ pub fn reload(factory: &ExecutionContextFactory) -> EcaRuleCounts {
     counts
 }
 
+/// Check again whether the service of each SECA rule the files hold is defined, after services came or went (a service
+/// file or an entity reloaded), and swap in the rules whose service is: a rule left out for a service not defined yet
+/// runs once the service is, and one whose service went is left out, as a load does, without reading the rule files
+/// again (plans/archive/High-Level-Review.md HL-015). A call in flight keeps the rules it has. Answers how many rules of each
+/// kind there are now.
+pub fn recheck(factory: &ExecutionContextFactory) -> EcaRuleCounts {
+    let current = rules_of(factory);
+    let facade = factory.entity();
+    let mut known = KnownServices::default();
+    let mut changed = false;
+    let candidates: Vec<Candidate> = current
+        .candidates
+        .iter()
+        .map(|candidate| {
+            let defined = candidate.rule.service_defined(facade.as_ref(), &mut known);
+            changed |= defined != candidate.defined;
+            Candidate {
+                defined,
+                ..candidate.clone()
+            }
+        })
+        .collect();
+    if changed {
+        let rules = EcaRules::of_candidates(candidates, current.email.clone(), current.git.clone());
+        tracing::info!(
+            "Service ECA rules checked again for the services defined: {} active",
+            rules.seca.len()
+        );
+        install(factory, rules);
+    }
+    let now = rules_of(factory);
+    EcaRuleCounts {
+        seca: now.seca.len(),
+        email: now.email.len(),
+        git: now.git.len(),
+    }
+}
+
 /// How many SECA, EmECA and gitECA rules a factory has: [`reload`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EcaRuleCounts {
@@ -126,14 +192,14 @@ pub(super) fn install(factory: &ExecutionContextFactory, rules: EcaRules) {
 }
 
 fn load(factory: &ExecutionContextFactory) -> EcaRules {
-    // each rule as loaded, with its id when it has one
-    let mut loaded: Vec<(Option<String>, Arc<SecaRule>)> = Vec::new();
+    // each rule as loaded, with its id when it has one, and whether its service is defined
+    let mut loaded: Vec<Candidate> = Vec::new();
     let mut email = Vec::new();
     let mut git_nodes: Vec<MNode> = Vec::new();
     let (mut seca_files, mut email_files, mut git_files, mut no_id, mut skipped) =
         (0_usize, 0_usize, 0_usize, 0_usize, 0_usize);
     let facade = factory.entity();
-    let mut known_services = None;
+    let mut known_services = KnownServices::default();
     let started = std::time::Instant::now();
     for component in factory.components().iter() {
         let dir = component.location.join("service");
@@ -170,20 +236,24 @@ fn load(factory: &ExecutionContextFactory) -> EcaRules {
                             continue;
                         }
                     };
-                    if !rule.service_defined(facade.as_ref(), &mut known_services) {
+                    let defined = rule.service_defined(facade.as_ref(), &mut known_services);
+                    if !defined {
                         tracing::warn!(
                             "Invalid service name {} found in SECA file {}, skipping",
                             node.attribute("service").unwrap_or_default(),
                             path.display()
                         );
                         skipped += 1;
-                        continue;
                     }
                     let id = node.attribute("id").filter(|id| !id.is_empty());
-                    if id.is_none() {
+                    if id.is_none() && defined {
                         no_id += 1;
                     }
-                    loaded.push((id, Arc::new(rule)));
+                    loaded.push(Candidate {
+                        id,
+                        rule: Arc::new(rule),
+                        defined,
+                    });
                 }
             } else {
                 email_files += 1;
@@ -193,7 +263,8 @@ fn load(factory: &ExecutionContextFactory) -> EcaRules {
             }
         }
     }
-    let seca = seca_in_load_order(loaded);
+    let rules = EcaRules::of_candidates(loaded, Vec::new(), Vec::new());
+    let seca = &rules.seca;
     tracing::info!(
         "Loaded {} Service ECA rules from {seca_files} .secas.xml files, {no_id} rules have no id, {} SECA rules active, {skipped} skipped for an undefined service, in {}ms",
         seca.len(),
@@ -210,7 +281,7 @@ fn load(factory: &ExecutionContextFactory) -> EcaRules {
         "Loaded [{}] git ECA rules from {git_files} .gitecas.xml files, {git_skipped} skipped",
         git.len()
     );
-    EcaRules::new(seca, email, git)
+    EcaRules { email, git, ..rules }
 }
 
 /// The SECA rules to run, by priority and, within a priority, in the order they were loaded (components in order,

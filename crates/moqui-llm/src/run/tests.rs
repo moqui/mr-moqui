@@ -217,7 +217,11 @@ fn a_run_streams_its_answer_as_numbered_events_and_completes() {
     // the live deltas went to the hub with their offsets, the stored events after them
     let hub = engine(&bed.factory).hub();
     let live = hub.wait(&started.run_id, None, Duration::ZERO);
-    let deltas: Vec<&hub::HubEvent> = live.iter().filter(|event| event.event_type == "text.delta").collect();
+    let deltas: Vec<&hub::HubEvent> = live
+        .iter()
+        .map(|event| &**event)
+        .filter(|event| event.event_type == "text.delta")
+        .collect();
     assert!(!deltas.is_empty());
     assert!(deltas
         .iter()
@@ -1471,6 +1475,87 @@ fn an_event_wakes_only_its_own_runs_followers_and_they_read_only_what_is_new() {
         (1..=100).contains(&woken),
         "only the busy run's follower wakes: {woken}"
     );
+}
+
+/// HL-021 measurement, opt-in: one active run among quiet watchers, each quiet one following a run of its own with a
+/// filled ring and waking at the stream's keep-alive poll. The active run gets a text delta every millisecond, read by
+/// one follower; per event it prints the waiters woken, the ring events looked at, the hub lock's takings and hold
+/// time, the share of the wall time the lock was held, and the delivery latency from push to the follower's read.
+/// Run it with `cargo test -p moqui-llm --lib hub_work_per_event_by_watchers -- --ignored --nocapture`.
+#[test]
+#[ignore = "measurement: prints run hub work per event as quiet watchers grow"]
+fn hub_work_per_event_by_watchers() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    const EVENTS: usize = 2000;
+    for watchers in [0usize, 64, 256, 512] {
+        let hub = Arc::new(RunHub::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let quiet: Vec<_> = (0..watchers)
+            .map(|n| {
+                let run_id = format!("run-quiet-{n}");
+                for i in 0..64 {
+                    hub.push_live(&run_id, "status", json!({"n": i}));
+                }
+                let (hub, stop) = (Arc::clone(&hub), Arc::clone(&stop));
+                std::thread::spawn(move || {
+                    let mut cursor = hub.wait(&run_id, None, Duration::ZERO).last().map(|event| event.index);
+                    while !stop.load(Ordering::Relaxed) {
+                        let events = hub.wait(&run_id, cursor, stream::POLL);
+                        cursor = events.last().map(|event| event.index).or(cursor);
+                    }
+                })
+            })
+            .collect();
+        let start = Instant::now();
+        let follower = {
+            let hub = Arc::clone(&hub);
+            std::thread::spawn(move || {
+                let mut cursor = None;
+                let mut latencies = Vec::with_capacity(EVENTS);
+                while latencies.len() < EVENTS {
+                    for event in hub.wait("run-busy", cursor, stream::POLL) {
+                        cursor = Some(event.index);
+                        let at = event.payload["at"].as_u64().unwrap();
+                        let now = u64::try_from(start.elapsed().as_nanos()).unwrap();
+                        latencies.push(now.saturating_sub(at));
+                    }
+                }
+                latencies
+            })
+        };
+        std::thread::sleep(Duration::from_millis(100));
+        let before = hub.stats();
+        let began = Instant::now();
+        for n in 0..EVENTS {
+            let at = u64::try_from(start.elapsed().as_nanos()).unwrap();
+            hub.push_live("run-busy", "text.delta", json!({"n": n, "at": at, "text": "a token "}));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let mut latencies = follower.join().unwrap();
+        let wall = began.elapsed();
+        let after = hub.stats();
+        stop.store(true, Ordering::Relaxed);
+        for watcher in quiet {
+            watcher.join().unwrap();
+        }
+        latencies.sort_unstable();
+        let micros = |q: f64| latencies[((latencies.len() - 1) as f64 * q) as usize] as f64 / 1e3;
+        let per = |count: u64| count as f64 / EVENTS as f64;
+        let held = after.lock_held - before.lock_held;
+        println!(
+            "{watchers:>4} quiet watchers: per event {:.2} wakeups, {:.2} events inspected, {:.2} lock takings, \
+             {:.2} us lock held; lock held {:.3}% of {:.2} s; delivery p50 {:.0} us, p99 {:.0} us, max {:.0} us",
+            per(after.wakeups - before.wakeups),
+            per(after.inspected - before.inspected),
+            per(after.locks - before.locks),
+            held.as_secs_f64() * 1e6 / EVENTS as f64,
+            held.as_secs_f64() * 100.0 / wall.as_secs_f64(),
+            wall.as_secs_f64(),
+            micros(0.5),
+            micros(0.99),
+            micros(1.0),
+        );
+    }
 }
 
 /// HL-021: a follower behind a ring that wrapped gets the stored events the ring dropped from the database, then the

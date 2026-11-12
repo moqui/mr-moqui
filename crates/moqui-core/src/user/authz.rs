@@ -856,7 +856,7 @@ fn cached<T: Clone>(
 /// # Errors
 ///
 /// Returns an error when the memberships cannot be read.
-pub(crate) fn current_user_groups() -> Result<Arc<HashSet<String>>, Error> {
+pub fn current_user_groups() -> Result<Arc<HashSet<String>>, Error> {
     let Some(facade) = ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() else {
         return Ok(Arc::new(HashSet::from(["ALL_USERS".to_string()])));
     };

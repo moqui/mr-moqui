@@ -121,7 +121,7 @@ impl RequestPool {
 
     /// Queue `job` and hand its result to `done`, which runs on the worker once the job's context and cleanup have
     /// ended: the completion hook an async caller finishes its own future from, so no thread waits on the reply
-    /// (`plans/High-Level-Review.md` HL-006). A full or stopped pool returns an error and calls neither; a job still
+    /// (`plans/archive/High-Level-Review.md` HL-006). A full or stopped pool returns an error and calls neither; a job still
     /// queued when the pool stops gets `done` with an error.
     pub fn try_submit_then<T>(
         &self,
@@ -230,7 +230,7 @@ pub fn caps(conf_text: &str) -> (u32, u32) {
 ///
 /// The pool the `content` group reads from also holds a connection for each streamed database download reading a
 /// window ([`transfer_readers`]). When the webapp's `transfer-workers` do not fit beside the workers and the agent
-/// worker, this warns and the downloads read fewer at once, at least one (`plans/High-Level-Review.md` HL-022).
+/// worker, this warns and the downloads read fewer at once, at least one (`plans/archive/High-Level-Review.md` HL-022).
 pub fn check_serve_caps(factory: &ExecutionContextFactory) -> Result<(), Error> {
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
     let (request_cap, service_cap) = caps(&factory.conf_text());

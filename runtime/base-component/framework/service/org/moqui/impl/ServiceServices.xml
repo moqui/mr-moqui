@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>
             Delete job runs older than daysToKeep, a chunk of rows at a time, each chunk committed on its own, so a large
             backlog is worked down over runs instead of rolling back whole. No chunk begins after maxSeconds
-            (plans/High-Level-Review.md HL-033).
+            (plans/archive/High-Level-Review.md HL-033).
         </description>
         <in-parameters>
             <parameter name="daysToKeep" type="Integer" default="90"/>

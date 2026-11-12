@@ -137,3 +137,43 @@ fn tcp_connections_are_capped_per_source_and_closed_by_their_deadlines() {
     );
     drop(node);
 }
+
+/// An Allocate request over TCP is answered on its connection (its 401, with no credential), and stopping the TURN
+/// node closes its open connections, one that spoke and one that did not, long before their deadlines, and its
+/// listener with them (HL-031).
+#[test]
+fn a_stop_closes_open_connections() {
+    let mut s = of(&[
+        ("turn_port", "0"),
+        ("turn_host", "127.0.0.1"),
+        ("turn_auth_secret", "s3cret"),
+    ])
+    .unwrap()
+    .unwrap();
+    s.limits.handshake = Duration::from_secs(30);
+    let runtime = std::env::temp_dir();
+    let node = start(&runtime, &s).unwrap();
+    let address = node.bound.tcp.unwrap();
+    let mut spoke = TcpStream::connect(address).unwrap();
+    // an Allocate request with REQUESTED-TRANSPORT UDP and no credential
+    let mut allocate = vec![0x00, 0x03, 0x00, 0x08, 0x21, 0x12, 0xa4, 0x42];
+    allocate.extend_from_slice(&[9; 12]);
+    allocate.extend_from_slice(&[0x00, 0x19, 0x00, 0x04, 17, 0, 0, 0]);
+    spoke.write_all(&allocate).unwrap();
+    // the server's answer comes back on the connection: an Allocate error response
+    spoke.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let mut answer = [0_u8; 20];
+    spoke.read_exact(&mut answer).unwrap();
+    assert_eq!(answer[..2], [0x01, 0x13], "{answer:?}");
+    let mut silent = TcpStream::connect(address).unwrap();
+    assert!(
+        !closed_within(&mut spoke, Duration::from_millis(200)),
+        "open while the node runs"
+    );
+    let started = Instant::now();
+    drop(node);
+    assert!(closed_within(&mut spoke, Duration::from_secs(2)), "the one that spoke");
+    assert!(closed_within(&mut silent, Duration::from_secs(2)), "the silent one");
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    assert!(TcpStream::connect(address).is_err(), "the listener closed");
+}

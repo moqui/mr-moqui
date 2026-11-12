@@ -28,7 +28,7 @@ use moqui_lib::sync::lock;
 use super::fake_servers::{FakeImap, FakeSmtp};
 use super::sync_tests::{
     alice, by_message_id, call, errors, field, folder_id, imap_account, login, mail, now, ok, one, out_number,
-    out_text, row, rows, setup, setup_with, stamp, sync, text, update, user,
+    out_text, row, rows, setup, setup_inline, setup_with, stamp, sync, text, update, user,
 };
 use moqui_core::context::ExecutionContext;
 use moqui_core::entity::EntityFacade;
@@ -624,7 +624,7 @@ fn a_folder_kind_a_user_chose_holds_and_an_unsubscribed_folder_is_not_synced() {
 #[test]
 fn the_automatic_reply_goes_to_its_audience() {
     let _lock = moqui_core::user::session::cookie_property_lock();
-    let (ctx, facade) = setup();
+    let (ctx, facade) = setup_inline();
     let _entered = ctx.enter();
     let dir = stub_dir("audience");
     install_with(Some(&dir));
@@ -696,6 +696,8 @@ fn the_automatic_reply_goes_to_its_audience() {
                 ],
             );
         }
+        // the replies go once their transactions commit
+        ctx.factory().run_pending();
         sink.sent()[before..].iter().map(|mail| mail.to.join(",")).collect()
     };
     let everyone = [

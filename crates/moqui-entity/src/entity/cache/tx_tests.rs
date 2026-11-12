@@ -205,7 +205,7 @@ fn flush_and_disable_writes_the_held_rows_once_and_stops_holding() {
     assert!(found(&facade, TEST, "testId", "After"));
 }
 
-/// plans/High-Level-Review.md HL-034: a find in a transaction-cache frame reads its list once, and the stored rows
+/// plans/archive/High-Level-Review.md HL-034: a find in a transaction-cache frame reads its list once, and the stored rows
 /// under the frame's held updates once per frame, in one query, however many rows are held or loaded.
 #[test]
 fn held_updates_read_their_stored_rows_once_per_frame() {

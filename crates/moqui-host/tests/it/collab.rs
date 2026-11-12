@@ -293,6 +293,65 @@ fn dav_routes_and_coediting_over_the_socket() {
     assert!(saved["versionName"].is_string(), "{saved}");
     assert!(frame(&mut alice, "saved", Duration::from_secs(5)).is_some());
 
+    // HL-018: another server that has the page open stores an edit whose relay here was lost; the next tick merges it
+    // and sends it to the editors here, and a version saved here has it
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let mut row = facade
+            .find("moqui.resource.CollabDocument")
+            .unwrap()
+            .eq("documentKey", Value::string(&doc))
+            .one()
+            .unwrap()
+            .unwrap();
+        let theirs = Doc::new();
+        let Some(Value::Bytes(state)) = row.get("stateData").cloned() else {
+            panic!("no stored state")
+        };
+        theirs
+            .transact_mut()
+            .apply_update(Update::decode_v1(&state).unwrap())
+            .unwrap();
+        {
+            let fragment = theirs.get_or_insert_xml_fragment("default");
+            let mut txn = theirs.transact_mut();
+            let paragraph = fragment.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+            paragraph.push_back(&mut txn, XmlTextPrelim::new("From the other server."));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+        let state = theirs
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+        row.set("stateData", Value::Bytes(state));
+        row.update(&facade).unwrap();
+    }
+    let recovered = frame(&mut bob, "update", Duration::from_secs(5)).expect("bob gets the lost edit");
+    assert_eq!(recovered["client"], json!("server"));
+    bob_doc
+        .transact_mut()
+        .apply_update(Update::decode_v1(&b64().decode(recovered["update"].as_str().unwrap()).unwrap()).unwrap())
+        .unwrap();
+    assert!(moqui_collab::markdown::render(&bob_doc).contains("From the other server."));
+    assert!(frame(&mut alice, "update", Duration::from_secs(5)).is_some());
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        moqui_core::user::internal_login_user("john.doe").unwrap();
+        assert!(moqui_collab::save(&doc, Some("With the other server's line"))
+            .unwrap()
+            .is_some());
+        let text = moqui_collab::snapshot(&doc).unwrap();
+        assert!(
+            text.contains("From the other server.") && text.contains("Typed together."),
+            "{text}"
+        );
+    }
+    assert!(frame(&mut bob, "saved", Duration::from_secs(5)).is_some());
+    assert!(frame(&mut alice, "saved", Duration::from_secs(5)).is_some());
+
     // an update before a join is refused; a leave tells the other
     send(
         &mut bob,

@@ -397,6 +397,10 @@ last saved as, and the users whose changes are in no version yet.
   (`org.moqui.resource.CollabServices.save#CollabDocument`), after two minutes without an edit on database files, and when the
   last editor leaves (a note names the editors). The state is written a second and a half after an edit, merged with what
   another server wrote. A save tells the editors (`saved`).
+- **Lost updates.** An update relayed to another server once can be lost on the way. Every second each server reads the
+  stamps of its open documents' rows in one query, merges the state another server stored since it last read or wrote
+  it, and sends its editors what their room lacked (an `update` from `server`); a version is saved with the stored state
+  merged first, so it has every edit that reached any server's row.
 - **Outside changes.** A page saved with the markdown text area, restored or moved while no co-edited changes are open is
   read again at the next join; with changes open, the co-edited text is kept (logged) and the next save writes over the
   change, which stays in the page's history.

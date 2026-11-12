@@ -330,17 +330,40 @@ struct Registry {
 #[derive(Clone, Default)]
 struct Loaded {
     defined: BTreeMap<String, Arc<ServiceDef>>,
-    /// The failures found reading the files.
-    failures: Vec<String>,
-    /// Each `service-include` by its local name, with the service it names or why it names none.
-    includes: Vec<(String, Result<String, String>)>,
+    /// The failures found reading the files, with the file of each.
+    failures: Vec<(PathBuf, String)>,
+    /// Each `service-include`: its local name, the service it names or why it names none.
+    includes: Vec<Included>,
     /// The files read, normalized.
     files: BTreeSet<PathBuf>,
     /// For a service defined in a file under a `service` directory of [`service_roots`], the position of that
     /// directory: a later component's definition overrides an earlier one, as Java's lookup does.
     ranks: BTreeMap<String, usize>,
+    /// The files read by the prefix they give their services ([`service_prefix`]), with the names they define: the
+    /// files of one path in every `service` directory are one group, which a reload reads again when one of them changed
+    /// (plans/archive/High-Level-Review.md HL-015).
+    groups: BTreeMap<String, Group>,
 }
 
+/// The files of one service prefix and the names they define, their `service-include` local names among them.
+#[derive(Clone, Default)]
+struct Group {
+    files: BTreeSet<PathBuf>,
+    names: BTreeSet<String>,
+}
+
+/// A `service-include` as read: the local name, the service it names or why it names none, the group of the file that
+/// has it, and the files it was followed through, so a change to one of them follows it again.
+#[derive(Clone)]
+struct Included {
+    local: String,
+    target: Result<String, String>,
+    group: String,
+    include: ServiceInclude,
+    through: Vec<PathBuf>,
+}
+
+#[derive(Clone)]
 struct ServiceInclude {
     prefix: String,
     verb: String,
@@ -595,8 +618,51 @@ pub fn input_hints(service: &str, parameter: &str) -> Option<ParamHints> {
     Some(ParamHints { classes, regexp })
 }
 
+thread_local! {
+    /// The service names looked up on this thread while something records them, innermost last
+    /// ([`recording_lookups`]).
+    static LOOKUPS: std::cell::RefCell<Vec<BTreeSet<String>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Run `work`, answering with it every service name [`find`] was asked for on this thread meanwhile, found or not (a
+/// name not defined yet decides a form too, as an implicit entity-auto one). A screen keeps them with what it generated,
+/// so a service reload makes again only the screens that looked up a service it changed (plans/archive/High-Level-Review.md
+/// HL-015). A recording inside another adds its names to the outer one too.
+pub(crate) fn recording_lookups<R>(work: impl FnOnce() -> R) -> (R, BTreeSet<String>) {
+    struct Recording;
+    impl Drop for Recording {
+        fn drop(&mut self) {
+            LOOKUPS.with(|lookups| {
+                let mut lookups = lookups.borrow_mut();
+                if let Some(names) = lookups.pop() {
+                    if let Some(outer) = lookups.last_mut() {
+                        outer.extend(names);
+                    }
+                }
+            });
+        }
+    }
+    LOOKUPS.with(|lookups| lookups.borrow_mut().push(BTreeSet::new()));
+    let recording = Recording;
+    let result = work();
+    let names = LOOKUPS.with(|lookups| lookups.borrow().last().cloned().unwrap_or_default());
+    drop(recording);
+    (result, names)
+}
+
+fn note_lookup(name: &str) {
+    LOOKUPS.with(|lookups| {
+        if let Some(names) = lookups.borrow_mut().last_mut() {
+            if !names.contains(name) {
+                names.insert(name.to_string());
+            }
+        }
+    });
+}
+
 /// A service of the entered context's factory. `None` when it is not defined or no context is entered.
 pub fn find(name: &str) -> Option<Arc<ServiceDef>> {
+    note_lookup(name);
     let shared = entered().ok()?;
     if let Some(def) = snapshot(&shared).services.get(name) {
         return Some(Arc::clone(def));
@@ -804,6 +870,21 @@ fn read_names_in_file(path: &Path, relative: &Path) -> Vec<String> {
     names
 }
 
+/// The names of the services registered with the entered context's factory, without `#`, as a SECA rule's service name
+/// is matched (`seca`): read once for every rule a load checks, not a copy of each definition. Empty with no context.
+pub(crate) fn registered_plain_names() -> HashSet<String> {
+    entered().map_or_else(
+        |_| HashSet::new(),
+        |shared| {
+            snapshot(&shared)
+                .services
+                .keys()
+                .map(|name| name.replace('#', ""))
+                .collect()
+        },
+    )
+}
+
 /// Every service registered with the entered context's factory, by name. Type generation reads these.
 ///
 /// # Errors
@@ -878,7 +959,7 @@ pub fn check(paths: &[PathBuf]) -> Result<Vec<String>, Error> {
         .defined
         .keys()
         .cloned()
-        .chain(registry.loaded.includes.iter().map(|(local, _)| local.clone()))
+        .chain(registry.loaded.includes.iter().map(|included| included.local.clone()))
         .collect();
     registry.merge_implemented();
     Ok(registry
@@ -901,7 +982,10 @@ pub struct ServiceReload {
     pub defined: usize,
     /// The registration failures of the changed files and their services.
     pub failures: Vec<String>,
-    /// How long each part of the reload took (plans/High-Level-Review.md HL-015).
+    /// The services resolved again, which may have changed: those the changed files define or defined, and every
+    /// service that implements or includes one of them, transitively. A screen that looked one up is made again.
+    pub resolved: Vec<String>,
+    /// How long each part of the reload took (plans/archive/High-Level-Review.md HL-015).
     pub phases: ReloadPhases,
 }
 
@@ -916,23 +1000,30 @@ pub struct ReloadPhases {
     pub resolve: Duration,
     /// Files read.
     pub files: usize,
+    /// Services resolved again.
+    pub resolved: usize,
 }
 
-/// The time a [`Registry::merge`] took to read its files and to resolve.
-#[derive(Clone, Copy, Debug, Default)]
+/// What a [`Registry::merge`] did: the time it took to read its files and to resolve, the files it read and the
+/// services it resolved again.
+#[derive(Clone, Debug, Default)]
 struct MergeTimes {
     load: Duration,
     resolve: Duration,
+    files: usize,
+    resolved: BTreeSet<String>,
 }
 
-/// Rebuild the entered context's service registry from the configured service files and every file read so far (those
-/// found by service name too), reading each again with the changed text, and swap it in. Replaced and removed
-/// services, `implements` and `service-include` are resolved by the same code as a boot; inline actions compile anew
-/// from their new text. Calls in flight keep the definitions they have. Answers what changed for `changed`.
+/// Read the changed service files again and swap the registry they change in (plans/archive/High-Level-Review.md HL-015). Each
+/// changed file's group is read again, the files of its path in every `service` directory (as a boot reads them, so a
+/// later component still overrides), and only the services those files define or defined are resolved again, with
+/// every service that implements or includes one of them, transitively; the others keep their resolved definitions.
+/// Inline actions compile anew from their new text. Calls in flight keep the definitions they have. Answers what
+/// changed for `changed`.
 ///
 /// # Errors
 ///
-/// Returns an error when no context is entered or the conf cannot be read.
+/// Returns an error when no context is entered.
 pub fn reload(changed: &[PathBuf]) -> Result<ServiceReload, Error> {
     reload_parsed(changed, Vec::new())
 }
@@ -947,23 +1038,34 @@ pub fn reload_parsed(changed: &[PathBuf], parsed: Vec<(PathBuf, MNode)>) -> Resu
     let shared = entered()?;
     let _loading = lock(&shared.load);
     let before = snapshot(&shared);
-    // The configured files may not be readable (a conf with no service-facade); the files read so far still reload.
-    let mut paths = configured_paths().unwrap_or_else(|err| {
-        tracing::error!(error = %err, "Could not read the configured service files; reloading the files read so far");
-        Vec::new()
-    });
-    // One canonical form of each path, made once (plans/High-Level-Review.md HL-015): the files loaded before are
-    // canonical already, as `load_file` keeps them.
-    let mut seen: HashSet<PathBuf> = paths.iter().map(|path| normalize(path)).collect();
-    for file in &before.loaded.files {
+    let changed: Vec<PathBuf> = changed.iter().map(|path| normalize(path)).collect();
+    let prefixes: BTreeSet<String> = changed.iter().map(|path| service_prefix(path)).collect();
+    // The registry as it was, less what the changed groups read: their files, failures, services and includes.
+    let mut registry = Registry::clone(&before);
+    let mut seeds = BTreeSet::new();
+    let mut paths = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    for prefix in &prefixes {
+        let Some(group) = registry.loaded.groups.remove(prefix) else {
+            continue;
+        };
+        for file in &group.files {
+            registry.loaded.files.remove(file);
+            if seen.insert(file.clone()) && file.is_file() {
+                paths.push(file.clone());
+            }
+        }
+        registry.loaded.failures.retain(|(file, _)| !group.files.contains(file));
+        for name in &group.names {
+            registry.loaded.defined.remove(name);
+            registry.loaded.ranks.remove(name);
+        }
+        registry.loaded.includes.retain(|include| &include.group != prefix);
+        seeds.extend(group.names);
+    }
+    for file in &changed {
         if seen.insert(file.clone()) && file.is_file() {
             paths.push(file.clone());
-        }
-    }
-    for file in changed {
-        let file = normalize(file);
-        if seen.insert(file.clone()) && file.is_file() {
-            paths.push(file);
         }
     }
     let collected = started.elapsed();
@@ -971,52 +1073,46 @@ pub fn reload_parsed(changed: &[PathBuf], parsed: Vec<(PathBuf, MNode)>) -> Resu
         .into_iter()
         .map(|(path, root)| (normalize(&path), root))
         .collect();
-    let mut registry = Registry::default();
-    let times = registry.merge_parsed(&paths, &mut parsed)?;
-    let prefixes: Vec<String> = changed
-        .iter()
-        .map(|path| service_prefix(&normalize(path)))
-        .filter(|prefix| !prefix.is_empty())
-        .collect();
-    let of_changed = |name: &str| {
-        name.rsplit_once('.')
-            .is_some_and(|(prefix, _)| prefixes.iter().any(|changed| changed == prefix))
+    let times = registry.merge_parsed(&paths, &mut parsed, seeds)?;
+    let names_of = |registry: &Registry| -> BTreeSet<String> {
+        prefixes
+            .iter()
+            .filter_map(|prefix| registry.loaded.groups.get(prefix))
+            .flat_map(|group| group.names.iter())
+            .filter(|name| registry.loaded.defined.contains_key(*name))
+            .cloned()
+            .collect()
     };
-    // A file not read before (its services are found by name on first use) adds nothing new: its services are only
-    // read now.
-    let read_before: Vec<String> = changed
-        .iter()
-        .filter(|path| before.loaded.files.contains(&normalize(path)))
-        .map(|path| service_prefix(&normalize(path)))
-        .collect();
-    let mut report = ServiceReload::default();
-    for name in registry.loaded.defined.keys().filter(|name| of_changed(name)) {
-        report.defined += 1;
-        let was_read = name
-            .rsplit_once('.')
-            .is_some_and(|(prefix, _)| read_before.iter().any(|read| read == prefix));
-        if was_read && !before.loaded.defined.contains_key(name) {
-            report.added.push(name.clone());
-        }
-    }
-    report.removed = before
-        .loaded
-        .defined
-        .keys()
-        .filter(|name| of_changed(name) && !registry.loaded.defined.contains_key(*name))
-        .cloned()
-        .collect();
-    let displays: Vec<String> = changed
-        .iter()
-        .map(|path| normalize(path).display().to_string())
-        .collect();
-    let names: Vec<&String> = registry.loaded.defined.keys().filter(|name| of_changed(name)).collect();
+    let now = names_of(&registry);
+    let was = names_of(&before);
+    let mut report = ServiceReload {
+        defined: now.len(),
+        // A group not read before (its services are found by name on first use) adds nothing new: its services are
+        // only read now.
+        added: now
+            .iter()
+            .filter(|name| {
+                !before.loaded.defined.contains_key(*name)
+                    && prefixes
+                        .iter()
+                        .any(|prefix| before.loaded.groups.contains_key(prefix) && name_prefix(name) == prefix)
+            })
+            .cloned()
+            .collect(),
+        removed: was
+            .iter()
+            .filter(|name| !registry.loaded.defined.contains_key(*name))
+            .cloned()
+            .collect(),
+        ..ServiceReload::default()
+    };
+    let displays: Vec<String> = changed.iter().map(|path| path.display().to_string()).collect();
     report.failures = registry
         .failures
         .iter()
         .filter(|failure| {
             displays.iter().any(|display| failure.contains(display.as_str()))
-                || names.iter().any(|name| failure.contains(&format!("service {name} ")))
+                || now.iter().any(|name| failure.contains(&format!("service {name} ")))
         })
         .cloned()
         .collect();
@@ -1024,10 +1120,19 @@ pub fn reload_parsed(changed: &[PathBuf], parsed: Vec<(PathBuf, MNode)>) -> Resu
         collect: collected,
         load: times.load,
         resolve: times.resolve,
-        files: registry.loaded.files.len(),
+        files: times.files,
+        resolved: times.resolved.len(),
     };
+    report.resolved = times.resolved.into_iter().collect();
     replace(&shared, registry);
     Ok(report)
+}
+
+/// The prefix of a service name: before its last `.` ahead of the `#` (`a.b.C` of `a.b.C.verb#d.Noun`), empty for
+/// none.
+fn name_prefix(name: &str) -> &str {
+    let head = name.split('#').next().unwrap_or(name);
+    head.rsplit_once('.').map_or("", |(prefix, _)| prefix)
 }
 
 fn install(paths: &[PathBuf]) -> Result<(), Error> {
@@ -1047,16 +1152,25 @@ impl Registry {
     /// Read `paths` and the files they include, those not read already, and resolve the services again. A service
     /// resolved before keeps its definition, unless a new file defines a service of the same name: then all resolve again.
     fn merge(&mut self, paths: &[PathBuf]) -> Result<MergeTimes, Error> {
-        self.merge_parsed(paths, &mut HashMap::new())
+        self.merge_parsed(paths, &mut HashMap::new(), BTreeSet::new())
     }
 
-    /// [`Self::merge`], taking a file's root from `parsed` instead of reading it when it is there.
-    fn merge_parsed(&mut self, paths: &[PathBuf], parsed: &mut HashMap<PathBuf, MNode>) -> Result<MergeTimes, Error> {
+    /// [`Self::merge`], taking a file's root from `parsed` instead of reading it when it is there. `seeds` are names
+    /// whose definitions changed or went (a reload's), resolved again with those the files define now and everything
+    /// that implements or includes one of them, transitively (plans/archive/High-Level-Review.md HL-015); every other service
+    /// resolved before keeps its definition.
+    fn merge_parsed(
+        &mut self,
+        paths: &[PathBuf],
+        parsed: &mut HashMap<PathBuf, MNode>,
+        mut seeds: BTreeSet<String>,
+    ) -> Result<MergeTimes, Error> {
         let started = std::time::Instant::now();
         let mut includes = Vec::new();
         let mut added = Vec::new();
         let mut pending: Vec<PathBuf> = paths.to_vec();
         let roots = service_roots();
+        let files_before = self.loaded.files.clone();
         while let Some(path) = pending.pop() {
             load_file(
                 &path,
@@ -1068,23 +1182,42 @@ impl Registry {
                 parsed,
             )?;
         }
+        let read: BTreeSet<PathBuf> = self.loaded.files.difference(&files_before).cloned().collect();
+        // an include read before that was followed through a file read now may name another service
+        for included in &mut self.loaded.includes {
+            if included.through.iter().any(|file| read.contains(file)) {
+                let mut through = Vec::new();
+                included.target = follow_include(&included.include, &[], 0, &mut through);
+                included.through = through;
+                seeds.insert(included.local.clone());
+            }
+        }
         for include in includes {
             let local = service_name(&include.prefix, &include.verb, &include.noun);
-            let target = follow_include(&include, &[], 0);
-            self.loaded.includes.push((local, target));
+            let mut through = Vec::new();
+            let target = follow_include(&include, &[], 0, &mut through);
+            seeds.insert(local.clone());
+            self.loaded.includes.push(Included {
+                local,
+                target,
+                group: include.prefix.clone(),
+                include,
+                through,
+            });
         }
         let loaded = started.elapsed();
-        let previous = if added.iter().any(|name| self.services.contains_key(name)) {
-            BTreeMap::new()
-        } else {
-            std::mem::take(&mut self.services)
-        };
+        seeds.extend(added);
+        let dirty = dependents(&self.loaded, seeds);
+        let mut previous = std::mem::take(&mut self.services);
+        previous.retain(|name, _| !dirty.contains(name));
         let (services, failures) = resolve(&self.loaded, previous);
         self.services = services;
         self.failures = failures;
         Ok(MergeTimes {
             load: loaded,
             resolve: started.elapsed().saturating_sub(loaded),
+            files: read.len(),
+            resolved: dirty,
         })
     }
 
@@ -1112,13 +1245,39 @@ impl Registry {
     }
 }
 
+/// `seeds` and every name that implements or includes one of them, transitively: what resolves again when they change.
+/// The reverse edges are made from the definitions in one pass, with no file read.
+fn dependents(loaded: &Loaded, seeds: BTreeSet<String>) -> BTreeSet<String> {
+    let mut edges: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (name, def) in &loaded.defined {
+        for implement in &def.implements {
+            edges.entry(implement.service.as_str()).or_default().push(name.as_str());
+        }
+    }
+    for included in &loaded.includes {
+        if let Ok(target) = &included.target {
+            edges.entry(target.as_str()).or_default().push(included.local.as_str());
+        }
+    }
+    let mut pending: Vec<String> = seeds.iter().cloned().collect();
+    let mut dirty = seeds;
+    while let Some(name) = pending.pop() {
+        for dependent in edges.get(name.as_str()).into_iter().flatten() {
+            if dirty.insert((*dependent).to_string()) {
+                pending.push((*dependent).to_string());
+            }
+        }
+    }
+    dirty
+}
+
 /// The services of `loaded` with includes and implements resolved, and the failures. The services in `previous` are
 /// resolved already and stay as they are.
 fn resolve(
     loaded: &Loaded,
     previous: BTreeMap<String, Arc<ServiceDef>>,
 ) -> (BTreeMap<String, Arc<ServiceDef>>, Vec<String>) {
-    let mut failures = loaded.failures.clone();
+    let mut failures: Vec<String> = loaded.failures.iter().map(|(_, failure)| failure.clone()).collect();
     let done: BTreeSet<String> = previous.keys().cloned().collect();
     let mut services = previous;
     for (name, def) in &loaded.defined {
@@ -1154,6 +1313,9 @@ fn load_file(
     if !loaded.files.insert(path.clone()) {
         return Ok(());
     }
+    let prefix = service_prefix(&path);
+    let group = loaded.groups.entry(prefix.clone()).or_default();
+    group.files.insert(path.clone());
     // A file that does not parse loses only its own services, as in Java, where a file is read when one of its
     // services is first looked up. A file the caller parsed already is not read again.
     let read = parsed.remove(&path).map_or_else(
@@ -1170,13 +1332,16 @@ fn load_file(
             tracing::error!(error = %err, "Could not read service file {}, its services are not registered", path.display());
             loaded
                 .failures
-                .push(format!("{} could not be read: {err}", path.display()));
+                .push((path.clone(), format!("{} could not be read: {err}", path.display())));
             return Ok(());
         }
     };
-    let failures = &mut loaded.failures;
+    let mut failures = Vec::new();
     if !root.has_name("services") {
         failures.push(format!("{} root is {} and not services", path.display(), root.name()));
+        loaded
+            .failures
+            .extend(failures.into_iter().map(|failure| (path.clone(), failure)));
         return Ok(());
     }
     let place = roots.iter().enumerate().find_map(|(rank, root)| {
@@ -1193,11 +1358,12 @@ fn load_file(
         }
     }
     let rank = place.map(|(rank, _)| rank);
-    let prefix = service_prefix(&path);
+    let mut names = Vec::new();
     for child in root.child_iter() {
         match &*child.name_rc() {
             "service" => {
-                if let Some(def) = load_service(&prefix, &child, failures) {
+                if let Some(def) = load_service(&prefix, &child, &mut failures) {
+                    names.push(def.name.clone());
                     if let (Some(rank), Some(&have)) = (rank, loaded.ranks.get(&def.name)) {
                         if have > rank {
                             continue;
@@ -1219,6 +1385,7 @@ fn load_file(
                 let verb = child.attribute("verb").unwrap_or_default();
                 let noun = child.attribute("noun").unwrap_or_default();
                 let location = child.attribute("location").unwrap_or_default();
+                names.push(service_name(&prefix, &verb, &noun));
                 if location.is_empty() {
                     failures.push(format!(
                         "service-include {}.{} is missing a location",
@@ -1248,6 +1415,12 @@ fn load_file(
             }
             _ => {}
         }
+    }
+    loaded
+        .failures
+        .extend(failures.into_iter().map(|failure| (path.clone(), failure)));
+    if let Some(group) = loaded.groups.get_mut(&prefix) {
+        group.names.extend(names);
     }
     Ok(())
 }
@@ -1778,7 +1951,7 @@ fn implemented(dest: &mut Vec<ParamDef>, extra: &[ParamDef], required: Option<bo
 /// Add a service under each include's local name, a copy of the service it names as that file defines it.
 fn resolve_includes(loaded: &Loaded, services: &mut BTreeMap<String, Arc<ServiceDef>>, failures: &mut Vec<String>) {
     let mut aliases = Vec::new();
-    for (local, target) in &loaded.includes {
+    for Included { local, target, .. } in &loaded.includes {
         match target {
             Ok(target) if loaded.defined.contains_key(target) => aliases.push((local, target)),
             Ok(target) => failures.push(format!("service {local} include did not resolve to {target}")),
@@ -1798,7 +1971,13 @@ fn resolve_includes(loaded: &Loaded, services: &mut BTreeMap<String, Arc<Service
     }
 }
 
-fn follow_include(include: &ServiceInclude, stack: &[PathBuf], depth: usize) -> Result<String, String> {
+/// The service `include` names, following an include of an include; `through` gets each file it reads.
+fn follow_include(
+    include: &ServiceInclude,
+    stack: &[PathBuf],
+    depth: usize,
+    through: &mut Vec<PathBuf>,
+) -> Result<String, String> {
     if depth > 32 {
         return Err(format!(
             "service-include {} is too deep",
@@ -1807,6 +1986,7 @@ fn follow_include(include: &ServiceInclude, stack: &[PathBuf], depth: usize) -> 
     }
     let path = resolve_location(&include.location).map_err(|err| err.to_string())?;
     let path = normalize(&path);
+    through.push(path.clone());
     if stack.iter().any(|seen| seen == &path) {
         return Err(format!(
             "service-include {} is circular",
@@ -1831,7 +2011,7 @@ fn follow_include(include: &ServiceInclude, stack: &[PathBuf], depth: usize) -> 
         };
         let mut stack = stack.to_vec();
         stack.push(path);
-        return follow_include(&next, &stack, depth + 1);
+        return follow_include(&next, &stack, depth + 1, through);
     }
     let verb = node.attribute("verb").unwrap_or_else(|| include.verb.clone());
     let noun = node.attribute("noun").unwrap_or_default();

@@ -707,6 +707,31 @@ impl ScreenFacade {
         dropped
     }
 
+    /// Drop at once every cached definition whose generated code or forms looked up one of the services `names`
+    /// (found or not, so a service defined since is seen), or a service whose name was an expression, with the
+    /// resolved paths and `//` searches that hold them: what a service reload changed (plans/archive/High-Level-Review.md
+    /// HL-015), where [`Self::clear`] dropped every screen. Answers the screen locations dropped.
+    pub fn forget_services(&self, names: &[String]) -> Vec<String> {
+        if names.is_empty() {
+            return Vec::new();
+        }
+        let names: std::collections::BTreeSet<&str> = names.iter().map(String::as_str).collect();
+        let mut dropped = Vec::new();
+        let _ = self.definitions.remove_where(|location, def| {
+            let stale = def.generated.looked_up_any(&names);
+            if stale {
+                dropped.push(location.clone());
+            }
+            stale
+        });
+        if !dropped.is_empty() {
+            let _ = self.urls.clear();
+            self.clear_sparse();
+            lock(&self.shell_providers).clear();
+        }
+        dropped
+    }
+
     /// Cache hit and miss counts, for tests and the status page.
     pub fn cache_stats(&self) -> moqui_lib::cache::CacheStats {
         self.definitions.stats()

@@ -81,7 +81,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="clean" noun="PrintJobData" authenticate="false" transaction="ignore">
         <description>
             Delete print jobs older than daysToKeep, a chunk of rows at a time, each chunk committed on its own; no chunk
-            begins after maxSeconds (plans/High-Level-Review.md HL-033).
+            begins after maxSeconds (plans/archive/High-Level-Review.md HL-033).
         </description>
         <in-parameters>
             <parameter name="daysToKeep" type="Integer" default="7"/>

@@ -770,13 +770,19 @@ fn deliver_one(
     };
     // Inbox mail with no email ECA rule to run first: the message and what the account's rules do to it in one
     // transaction-cache frame. When that fails, the message is stored alone and the rules run after it, as apart, so a
-    // rule that fails never loses the message.
+    // rule that fails never loses the message. A rule's forward is sent only once the frame commits
+    // (deliver#DraftMessage in a transaction), so a frame that fails and rules run again send it once
+    // (plans/archive/High-Level-Review.md HL-028).
     let together = junk.is_none() && moqui_core::service::email_rule_count() == 0;
     let mut rules_ran = false;
     let id = if together {
         let stored = force_cache(facade, || {
             let id = store::store_message(facade, &parsed, &place)?;
             run_rules_in_frame(account_id, std::slice::from_ref(&id))?;
+            #[cfg(test)]
+            if FAIL_AFTER_RULES.with(std::cell::Cell::take) {
+                return Err(LibError::new("the frame failed after the rules for the test"));
+            }
             Ok(id)
         });
         match stored {
@@ -823,6 +829,12 @@ fn deliver_one(
         email_message_id: id,
         junk: junk.is_some(),
     })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test's failure of the next store-and-rules frame on this thread, after the rules ran in it.
+    pub(super) static FAIL_AFTER_RULES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// A step after the store, which logs its own failures; a panic is logged here and the delivery goes on.

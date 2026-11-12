@@ -20,7 +20,7 @@
 //! Each call runs on a request worker: on the root with authorization off, on the drives logged in as the user.
 //!
 //! A file opened for reading is opened as a windowed source (`ResourceFacade::open`, through the drive adapter for the
-//! drives) and read a window at a time as the client asks (plans/High-Level-Review.md HL-010); one opened for writing
+//! drives) and read a window at a time as the client asks (plans/archive/High-Level-Review.md HL-010); one opened for writing
 //! is kept in memory and written on close, because a `dbresource` file is a row. `ssh-server` `sftp-max-file` bytes
 //! (default 256 MiB) bound either file, and the bytes all the open files of one channel hold together (a reader holds
 //! its window). A channel has at most [`MAX_HANDLES`] handles open.
