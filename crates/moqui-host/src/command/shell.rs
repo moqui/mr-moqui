@@ -46,6 +46,10 @@ const HELP: &str = "Commands:
   cache clear [name]            clear one cache, or all of them
   js <code>                     run JavaScript with ec; 'js' alone reads lines until a line with '.'
   apps                          the applications in the terminal; quit them to come back here
+  sh [profile]                  a program on the server's operating system (dev instances, TERMINAL_HOST)
+  profiles                      the programs sh runs
+  sessions                      your kept terminal sessions, from the browser and here
+  attach <id>                   (SSH) be the window of one of your sessions; Ctrl+\\ detaches, and it goes on
   (exec) agent-apps ...         the applications for a program, a command at a time: agent-apps help
   exit                          end the session";
 

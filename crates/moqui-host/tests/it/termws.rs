@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{connect, ClientRequestBuilder, Message, WebSocket};
 
-type Ws = WebSocket<MaybeTlsStream<TcpStream>>;
+pub(crate) type Ws = WebSocket<MaybeTlsStream<TcpStream>>;
 
 fn request(address: SocketAddr, cookie: Option<&str>) -> ClientRequestBuilder {
     let uri: tungstenite::http::Uri = format!("ws://{address}/termws").parse().unwrap();
@@ -242,14 +242,14 @@ fn a_stop_closes_terminal_and_xmpp_websockets_at_once() {
 }
 
 /// The page's session token and a JSON call of the Terminal screen's transitions, as the store makes them.
-struct Page {
+pub(crate) struct Page {
     address: SocketAddr,
     cookie: String,
     token: String,
 }
 
 impl Page {
-    fn signed_in(address: SocketAddr, username: &str) -> Self {
+    pub(crate) fn signed_in(address: SocketAddr, username: &str) -> Self {
         let cookie = crate::common::sign_in(address, username, "moqui");
         let (status, _, html) = crate::common::exchange(
             address,
@@ -260,7 +260,7 @@ impl Page {
         Self { address, cookie, token }
     }
 
-    fn call(&self, name: &str, body: Option<serde_json::Value>) -> serde_json::Value {
+    pub(crate) fn call(&self, name: &str, body: Option<serde_json::Value>) -> serde_json::Value {
         self.call_with(name, body, &[])
     }
 
@@ -305,7 +305,7 @@ impl Page {
     }
 
     /// Attach a socket to the kept session `id`, as a page that drew `have` of its bytes.
-    fn attach(&self, id: &str, have: Option<u64>) -> Ws {
+    pub(crate) fn attach(&self, id: &str, have: Option<u64>) -> Ws {
         let uri: tungstenite::http::Uri = format!("ws://{}/termws?session={id}", self.address).parse().unwrap();
         let request = ClientRequestBuilder::new(uri)
             .with_header("Cookie", &self.cookie)
@@ -322,7 +322,7 @@ impl Page {
 }
 
 /// The text messages and bytes a socket gives until `want` is in its bytes, or its close reason.
-fn read_messages_until(socket: &mut Ws, want: &str) -> Result<(Vec<String>, Vec<u8>), String> {
+pub(crate) fn read_messages_until(socket: &mut Ws, want: &str) -> Result<(Vec<String>, Vec<u8>), String> {
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut texts = Vec::new();
     let mut seen = Vec::new();

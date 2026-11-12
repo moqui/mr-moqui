@@ -16,7 +16,7 @@ Contents: [kinds](#kinds-of-session) · [the screen](#the-terminal-screen) · [k
 | Kind | What | Who |
 | --- | --- | --- |
 | Apps | The terminal client of the apps (`moqui tui`'s), as the signed-in user | Every user, every purpose |
-| Command line | The `moqui>` prompt of SSH's admin shell: `service`, `entity`, `js`, `cache clear`, `status`, `apps`, `sh`, `profiles`, `sessions` | `SSH_SHELL`, on a dev instance |
+| Command line | The `moqui>` prompt of SSH's admin shell: `service`, `entity`, `js`, `cache clear`, `status`, `apps`, `sh`, `profiles`, `sessions`, and over SSH `attach` | `SSH_SHELL`, on a dev instance |
 | Host | A program on the server's operating system on a pseudo-terminal: the server user's shell, bash, zsh, an agent, a log | `TERMINAL_HOST`, on a dev instance |
 
 With nothing open, the Terminal opens the command line for a user who has it, else the apps (Settings › Opens first
@@ -105,7 +105,11 @@ account, so `TERMINAL_HOST` goes only to people trusted with it.
   a UTF-8 locale, `TERM_PROGRAM=mr-moqui`, `MOQUI_TERMINAL_SESSION`, `MOQUI_RUNTIME` and `MOQUI_USER` set. No credential
   of the Moqui user is in it.
 - **At the prompt.** `sh [profile]` runs a host program on the command line's own stream and the prompt comes back
-  when it ends, in the browser and over SSH; `profiles` lists them and `sessions` your sessions.
+  when it ends, in the browser and over SSH; `profiles` lists them and `sessions` your sessions. Over SSH, `attach
+  <id>` (the id or its start; Tab completes it) makes the SSH window the session's, as a page's would be: the session's
+  output is replayed, the window it was shown in is told "opened elsewhere", and Ctrl+\ detaches with the session
+  still running. A command line or a host session asks what an attach from the browser asks, by the SSH peer's
+  address; another user's id is no such session.
 - **The pty.** `moqui term-exec` (a hidden mode of every server binary, the Desktop app's too) makes itself the session
   leader with the pty as its terminal and then becomes the program. Windows servers have no host sessions yet.
 
