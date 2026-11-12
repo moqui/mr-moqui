@@ -35,10 +35,13 @@
 //! The pass still skips a job only when the previous occurrence is strictly before the last run, so
 //! a last run at that occurrence still runs, as Java's `!lastSchedule.isBefore(lastRunDt)`.
 //!
-//! A fire-and-forget call, or the tx rules of a committed call, that finds the pool queue full or
-//! stopping is stored as a `ServiceJob` named with [`QUEUE_PREFIX`] and no cron expression, the call
-//! as JSON in `queuedCall` ([`QueuedCall`]), so lists and maps keep their shape (HL-025). The pass
-//! submits it when a slot is free and deletes it when it has run.
+//! A fire-and-forget call, or the tx rules of a committed call that has no outbox row (tx-rollback
+//! rules, a call outside the default group's transaction), that finds the pool queue full or stopping
+//! is stored as a `ServiceJob` named with [`QUEUE_PREFIX`] and no cron expression, the call as JSON in
+//! `queuedCall` ([`QueuedCall`]), so lists and maps keep their shape (HL-025). The pass submits it
+//! when a slot is free and deletes it when it has run. Tx-commit rules are kept in the outbox, written
+//! in the committing transaction ([`super::outbox`]); the pass runs a row still there after its
+//! `availableDate` with the slots the jobs left.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -206,6 +209,8 @@ pub struct PassReport {
     pub jobs_not_checked: usize,
     /// Jobs that could not be checked or started; each is logged and the pass goes on.
     pub jobs_failed: usize,
+    /// Runs of tx-commit rules from the outbox handed to a job worker (HL-025).
+    pub outbox_runs: usize,
 }
 
 /// One scheduler pass for the pool's factory. Errors are logged, so a bad pass never ends the thread.
@@ -349,6 +354,11 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
                 report.jobs_failed += 1;
             }
         }
+    }
+    // Then the tx-commit rules left in the outbox, with the slots the jobs left (HL-025).
+    match super::outbox::replay(shared, factory, &facade, slots) {
+        Ok(queued) => report.outbox_runs = queued,
+        Err(err) => tracing::error!(error = %err, "could not read the tx rules waiting in the outbox"),
     }
     Ok(report)
 }
@@ -715,31 +725,68 @@ fn map_json(json: Option<&serde_json::Value>) -> Option<BTreeMap<String, Value>>
     }
 }
 
+/// The phase, results and authorization of tx rules, as [`call_json`] writes them.
+struct RulesPart<'a> {
+    when: &'a str,
+    results: Option<&'a BTreeMap<String, Value>>,
+    authz: &'a crate::user::RegisteredAuthz,
+}
+
+/// A queued call as the JSON `queuedCall` holds: [`QueuedCall::to_json`], and the outbox's rows ([`rules_json`]).
+fn call_json(
+    parameters: &BTreeMap<String, Value>,
+    user_name: Option<&str>,
+    origin: Option<&crate::context::AgentOrigin>,
+    rules: Option<RulesPart<'_>>,
+) -> String {
+    let mut root = serde_json::Map::new();
+    root.insert("parameters".into(), json_map(parameters));
+    if let Some(user_name) = user_name.filter(|name| !name.is_empty()) {
+        root.insert("userName".into(), user_name.into());
+    }
+    if let Some(origin) = origin {
+        root.insert("agentId".into(), origin.agent_id.clone().into());
+        if let Some(run_id) = &origin.run_id {
+            root.insert("agentRunId".into(), run_id.clone().into());
+        }
+    }
+    if let Some(rules) = rules {
+        root.insert("when".into(), rules.when.into());
+        if let Some(results) = rules.results {
+            root.insert("results".into(), json_map(results));
+        }
+        root.insert("authz".into(), rules.authz.to_json());
+    }
+    serde_json::Value::Object(root).to_string()
+}
+
+/// The tx rules `rules` of a call by `user_name` in the agent run `origin`, as a queued call's JSON, which
+/// [`QueuedCall::parse`] reads back (the outbox's `queuedCall`, HL-025).
+pub(crate) fn rules_json(
+    rules: &super::pool::TxRules,
+    user_name: Option<&str>,
+    origin: Option<&crate::context::AgentOrigin>,
+) -> String {
+    let part = RulesPart {
+        when: &rules.when,
+        results: rules.results.as_ref(),
+        authz: &rules.authz,
+    };
+    call_json(&rules.parameters, user_name, origin, Some(part))
+}
+
 impl QueuedCall {
     fn to_json(&self) -> String {
-        let mut root = serde_json::Map::new();
-        root.insert("parameters".into(), json_map(&self.parameters));
-        if let Some(user_name) = self.user_name.as_deref().filter(|name| !name.is_empty()) {
-            root.insert("userName".into(), user_name.into());
-        }
-        if let Some(origin) = &self.origin {
-            root.insert("agentId".into(), origin.agent_id.clone().into());
-            if let Some(run_id) = &origin.run_id {
-                root.insert("agentRunId".into(), run_id.clone().into());
-            }
-        }
-        if let Some(rules) = &self.rules {
-            root.insert("when".into(), rules.when.clone().into());
-            if let Some(results) = &rules.results {
-                root.insert("results".into(), json_map(results));
-            }
-            root.insert("authz".into(), rules.authz.to_json());
-        }
-        serde_json::Value::Object(root).to_string()
+        let rules = self.rules.as_ref().map(|rules| RulesPart {
+            when: &rules.when,
+            results: rules.results.as_ref(),
+            authz: &rules.authz,
+        });
+        call_json(&self.parameters, self.user_name.as_deref(), self.origin.as_ref(), rules)
     }
 
     /// The call stored in `text`. The service is the job's `serviceName`, so it is left empty here.
-    fn parse(text: &str) -> Result<Self, Error> {
+    pub(crate) fn parse(text: &str) -> Result<Self, Error> {
         let json: serde_json::Value =
             serde_json::from_str(text).map_err(|err| Error::new(format!("queued call is not JSON: {err}")))?;
         let field = |name: &str| json.get(name).and_then(serde_json::Value::as_str).map(str::to_string);
@@ -982,7 +1029,7 @@ pub(crate) fn run_job(job: JobRun) {
                 // Under the authorization of the call that registered them, not the job's disabled authorization.
                 authz: rules.authz.clone(),
             };
-            super::call::run_tx_rules(&factory, &mut rules).map(|()| BTreeMap::new())
+            super::call::run_tx_rules(&factory, &mut rules, None).map(|()| BTreeMap::new())
         }
         None => super::call::sync_with(&job.service_name, &parameters, &options),
     };
@@ -1694,7 +1741,7 @@ impl Shared {
             if state.stop || state.jobs.len() >= self.job_queue_max.max(self.job_pool_max) {
                 return false;
             }
-            state.jobs.push_back(Box::new(run));
+            state.jobs.push_back(super::pool::JobWork::Run(Box::new(run)));
         }
         self.job_wake.notify_all();
         true

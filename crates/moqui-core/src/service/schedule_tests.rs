@@ -860,7 +860,7 @@ const MAP_RULE: &str = r#"<secas>
         <seca service="commit#Map" when="tx-commit">
             <actions>
                 <entity-make-value entity-name="moqui.test.TestEntity" value-field="made"/>
-                <script>made.set("testId", "MAP_RULE"); made.set("testMedium", parameters.items.color + "-" + parameters.tags[1] + "-" + results.note)</script>
+                <script>if (ec.entity.find("moqui.test.TestEntity").condition("testId", "BLOCK_RULE").one() != null) throw new Error("the rule is blocked"); made.set("testId", "MAP_RULE"); made.set("testMedium", parameters.items.color + "-" + parameters.tags[1] + "-" + results.note)</script>
                 <entity-create value-field="made"/>
             </actions>
         </seca>
@@ -907,10 +907,105 @@ fn rule_row(facade: &EntityFacade) -> Option<String> {
         .map(|row| text(&row, "testMedium"))
 }
 
-/// The rule's run is stored as a job when the queue is full, with the phase, the results and the map and list
-/// parameters as they were, and a job worker runs it while the queue is still full.
+fn outbox_rows(facade: &EntityFacade) -> Vec<crate::entity::EntityValue> {
+    super::super::outbox::rows(facade)
+}
+
+/// What a minute after the commit looks like to the scheduler: every outbox row is available.
+fn make_outbox_available(facade: &EntityFacade) {
+    facade
+        .find(super::super::outbox::OUTBOX)
+        .unwrap()
+        .disable_authz()
+        .update_all([("availableDate".to_string(), stamp_ago(1_000))])
+        .unwrap();
+}
+
+/// plans/High-Level-Review.md HL-025: tx-commit rules that ran after their commit leave no outbox row: the row was
+/// written in the committing transaction and the run deleted it in its own.
 #[test]
-fn tx_commit_rules_that_find_the_queue_full_run_later_as_a_job_with_their_maps() {
+fn tx_commit_rules_that_ran_leave_no_outbox_row() {
+    let world = map_rule_world(2, 8);
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    commit_map();
+    wait_for("the rules to run", || rule_row(&world.facade).is_some());
+    assert_eq!(rule_row(&world.facade).as_deref(), Some("blue-b-done"));
+    wait_for("the outbox row to be deleted", || outbox_rows(&world.facade).is_empty());
+    assert!(queued_jobs(&world.facade).is_empty(), "nothing stored as a job");
+}
+
+/// HL-025: a call whose transaction rolls back leaves no outbox row, and its tx-commit rules do not run.
+#[test]
+fn a_rolled_back_call_leaves_no_outbox_row() {
+    let world = map_rule_world(2, 8);
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    let tx = world.facade.default_transactions().unwrap();
+    let outcome: Result<(), _> = tx.run(crate::transaction::TransactionAttribute::UseOrBegin, None, || {
+        commit_map();
+        assert_eq!(outbox_rows(&world.facade).len(), 1, "written in the transaction");
+        Err(moqui_lib::error::Error::new("stand-in failure after the call"))
+    });
+    assert!(outcome.is_err());
+    assert!(outbox_rows(&world.facade).is_empty(), "rolled back with the call");
+    world.ctx.factory().service_pools().tick();
+    assert!(rule_row(&world.facade).is_none());
+}
+
+/// HL-025: the rules of a call that committed are run from the outbox row when their commit hook never ran (the process
+/// stopped first), by the scheduler once the row is available, on a job worker, with the phase, the results and the
+/// map and list parameters as they were.
+#[test]
+fn tx_commit_rules_whose_hook_never_ran_run_from_the_outbox_with_their_maps() {
+    let world = map_rule_world(2, 8);
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    // What register_tx_rules writes, committed, with no hook to run it: as after a crash.
+    let mut items = indexmap::IndexMap::default();
+    items.insert("color".to_string(), Value::string("blue"));
+    let mut results = BTreeMap::new();
+    results.insert("note".to_string(), Value::string("done"));
+    let rules = super::super::pool::TxRules {
+        service: "commit#Map".to_string(),
+        when: "tx-commit".to_string(),
+        parameters: BTreeMap::from([
+            ("items".to_string(), Value::Map(items)),
+            (
+                "tags".to_string(),
+                Value::List(vec![Value::string("a"), Value::string("b")]),
+            ),
+        ]),
+        results: Some(results),
+        authz: world.ctx.registered_authz(),
+    };
+    let tx = world.facade.default_transactions().unwrap();
+    tx.run(crate::transaction::TransactionAttribute::UseOrBegin, None, || {
+        super::super::outbox::write(&world.facade, &tx, &rules, Some("john.doe"), None).map_err(Into::into)
+    })
+    .unwrap()
+    .expect("the default group's transaction keeps an outbox row");
+    let stored = outbox_rows(&world.facade);
+    assert_eq!(stored.len(), 1);
+    let call: serde_json::Value = serde_json::from_str(&text(&stored[0], "queuedCall")).unwrap();
+    assert_eq!(call["when"], "tx-commit");
+    assert_eq!(call["parameters"]["items"]["color"], "blue");
+    assert_eq!(call["results"]["note"], "done");
+    assert_eq!(call["userName"], "john.doe");
+    assert_eq!(text(&stored[0], "phase"), "tx-commit");
+    let pools = world.ctx.factory().service_pools();
+    assert_eq!(pools.tick().outbox_runs, 0, "not before its grace");
+    make_outbox_available(&world.facade);
+    assert_eq!(pools.tick().outbox_runs, 1);
+    wait_for("the rules to run from the outbox", || rule_row(&world.facade).is_some());
+    assert_eq!(rule_row(&world.facade).as_deref(), Some("blue-b-done"));
+    wait_for("the outbox row to be deleted", || outbox_rows(&world.facade).is_empty());
+}
+
+/// HL-025: tx-commit rules that find the service queue full stay in their outbox row (no job is stored), and the
+/// scheduler runs them on a job worker while the service queue is still full.
+#[test]
+fn tx_commit_rules_that_find_the_queue_full_stay_in_the_outbox_and_run_later() {
     let world = map_rule_world(1, 1);
     let _entered = world.ctx.enter();
     let _authz = world.ctx.disable_authz();
@@ -918,34 +1013,35 @@ fn tx_commit_rules_that_find_the_queue_full_run_later_as_a_job_with_their_maps()
     let hold = Hold::new();
     fill_queue(pools, &hold);
     commit_map();
-    let stored = queued_jobs(&world.facade);
+    assert!(queued_jobs(&world.facade).is_empty(), "no job is stored");
+    let stored = outbox_rows(&world.facade);
     assert_eq!(stored.len(), 1);
+    assert_eq!(text(&stored[0], "serviceName"), "commit#Map");
     let call: serde_json::Value = serde_json::from_str(&text(&stored[0], "queuedCall")).unwrap();
-    assert_eq!(call["when"], "tx-commit");
-    assert_eq!(call["parameters"]["items"]["color"], "blue");
     assert_eq!(call["parameters"]["tags"][1], "b");
-    assert_eq!(call["results"]["note"], "done");
     // Registered with authorization disabled, the rules run so.
     assert_eq!(call["authz"]["disabled"], true);
-    assert_eq!(text(&stored[0], "serviceName"), "commit#Map");
     assert!(rule_row(&world.facade).is_none());
-    wait_for("the queued rules to run", || {
+    make_outbox_available(&world.facade);
+    wait_for("the rules to run from the outbox", || {
         pools.tick();
         rule_row(&world.facade).is_some()
     });
     assert_eq!(rule_row(&world.facade).as_deref(), Some("blue-b-done"));
-    wait_for("the queued job to be removed", || queued_jobs(&world.facade).is_empty());
+    wait_for("the outbox row to be deleted", || outbox_rows(&world.facade).is_empty());
     hold.open();
 }
 
-/// Rules still in the queue when the pool stops with no wait are stored as a job, which a later pool runs.
+/// HL-025: rules still in the service queue when the pool stops with no wait stay in the outbox, which a later pool's
+/// scheduler runs.
 #[test]
-fn tx_commit_rules_queued_at_a_zero_wait_stop_are_kept_as_a_job() {
+fn tx_commit_rules_queued_at_a_zero_wait_stop_stay_in_the_outbox() {
     let world = map_rule_world(1, 4);
     {
         let _entered = world.ctx.enter();
         let _authz = world.ctx.disable_authz();
         let pools = world.ctx.factory().service_pools();
+        let shared = pools.shared_handle();
         let hold = Hold::new();
         let task_hold = hold.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
@@ -957,26 +1053,62 @@ fn tx_commit_rules_queued_at_a_zero_wait_stop_are_kept_as_a_job() {
             .unwrap();
         started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         commit_map();
-        assert!(queued_jobs(&world.facade).is_empty(), "the queue had room");
+        assert_eq!(
+            moqui_lib::sync::lock(&shared.state).queue.len(),
+            1,
+            "the queue had room"
+        );
         let stopping = {
             let factory = Arc::clone(world.ctx.factory());
             std::thread::spawn(move || factory.service_pools().shutdown_now())
         };
-        wait_for("the rules to be stored at the stop", || {
-            queued_jobs(&world.facade).len() == 1
+        wait_for("the stop to take the queue", || {
+            moqui_lib::sync::lock(&shared.state).queue.is_empty()
         });
         hold.open();
         stopping.join().unwrap();
     }
     assert!(rule_row(&world.facade).is_none());
+    assert_eq!(outbox_rows(&world.facade).len(), 1, "kept in the outbox");
+    assert!(queued_jobs(&world.facade).is_empty(), "no job is stored");
     let later = map_rule_world(1, 4);
     later.ctx.factory().set_entity(world.facade.clone());
     let _entered = later.ctx.enter();
+    make_outbox_available(&world.facade);
     let pools = later.ctx.factory().service_pools();
-    wait_for("the stored rules to run", || {
+    wait_for("the kept rules to run", || {
         pools.tick();
         rule_row(&world.facade).is_some()
     });
+    assert_eq!(rule_row(&world.facade).as_deref(), Some("blue-b-done"));
+}
+
+/// HL-025: a run of the rules that fails rolls back with its outbox row's delete; the row counts the attempt, keeps the
+/// error and waits, and a later run from the outbox that succeeds removes it.
+#[test]
+fn a_failed_tx_rules_run_is_counted_in_the_outbox_and_tried_again() {
+    let world = map_rule_world(2, 8);
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    // A BLOCK_RULE row makes the rule fail.
+    create(&world.facade, "moqui.test.TestEntity", &[("testId", "BLOCK_RULE")]);
+    commit_map();
+    wait_for("the failure to be recorded", || {
+        outbox_rows(&world.facade)
+            .first()
+            .is_some_and(|row| text(row, "attemptCount") == "1")
+    });
+    let row = outbox_rows(&world.facade).remove(0);
+    assert!(!text(&row, "lastError").is_empty());
+    assert!(!text(&row, "lastAttemptDate").is_empty());
+    let pools = world.ctx.factory().service_pools();
+    assert_eq!(pools.tick().outbox_runs, 0, "it waits after the failure");
+    let mut blocking = world.facade.make_value("moqui.test.TestEntity").unwrap();
+    blocking.set("testId", Value::string("BLOCK_RULE"));
+    blocking.delete(&world.facade).unwrap();
+    make_outbox_available(&world.facade);
+    assert_eq!(pools.tick().outbox_runs, 1);
+    wait_for("the second run to commit", || outbox_rows(&world.facade).is_empty());
     assert_eq!(rule_row(&world.facade).as_deref(), Some("blue-b-done"));
 }
 
@@ -1372,7 +1504,10 @@ fn a_running_job_renews_its_lease() {
         started.load(std::sync::atomic::Ordering::SeqCst) == 1
     });
     let claimed = lease_millis_of(&world.facade, "LEASE1").expect("the claim's lease");
-    assert!(claimed > jiff::Timestamp::now().as_millisecond(), "a lease ahead of now");
+    assert!(
+        claimed > jiff::Timestamp::now().as_millisecond(),
+        "a lease ahead of now"
+    );
     std::thread::sleep(Duration::from_millis(5));
     let renewal = super::super::job_lease::renew(world.ctx.factory()).unwrap();
     assert_eq!(
@@ -1411,7 +1546,9 @@ fn a_run_that_lost_its_lock_is_cut_short() {
     let started = Instant::now();
     assert_eq!(world.ctx.factory().service_pools().tick().jobs_run, 1);
     wait_for("the run to start", || {
-        runs(&world, "LOSER").iter().any(|run| !text(run, "startTime").is_empty())
+        runs(&world, "LOSER")
+            .iter()
+            .any(|run| !text(run, "startTime").is_empty())
     });
     let run_id = text(&runs(&world, "LOSER")[0], "jobRunId");
     let mut lock = lock_row_of(&world.facade, "LOSER").unwrap();
