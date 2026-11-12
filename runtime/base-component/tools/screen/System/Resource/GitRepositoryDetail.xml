@@ -33,6 +33,8 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="fetchGitRepository"><service-call name="org.moqui.git.GitServices.fetch#GitRepository"/>
         <default-response url="."/></transition>
+    <transition name="pushGitMirror"><service-call name="org.moqui.git.GitServices.push#GitMirror"/>
+        <default-response url="."/></transition>
     <transition name="initGitRepository"><service-call name="org.moqui.git.GitServices.init#GitRepository"/>
         <default-response url="."/></transition>
     <transition name="exportGitRepository"><service-call name="org.moqui.git.GitServices.export#GitRepository"/>
@@ -98,6 +100,16 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="fetchIntervalMinutes"><default-field title="Fetch Every (minutes)"
                             tooltip="For a remote repository: fetch#AllGitRepositories fetches it when this long has passed; never when empty">
                         <text-line size="6"/></default-field></field>
+                    <field name="pushMirrorRemoteId"><default-field title="Push Mirror"
+                            tooltip="A SystemMessageRemote: sendUrl is the SSH URL (git@host:owner/repo.git), with its private and public key; pushed after each change">
+                        <drop-down allow-empty="true"><entity-options key="${systemMessageRemoteId}" text="${systemMessageRemoteId}: ${description || sendUrl || ''}">
+                            <entity-find entity-name="moqui.service.message.SystemMessageRemote"><order-by field-name="systemMessageRemoteId"/></entity-find>
+                        </entity-options></drop-down></default-field></field>
+                    <field name="pushMirrorRefs"><default-field title="Push Mirror Refs"
+                            tooltip="from:to pairs separated by spaces, such as master:mirror; every branch and tag when empty">
+                        <text-line size="40"/></default-field></field>
+                    <field name="lastPushMirrorDate"><default-field title="Last Push Mirror"><display/></default-field></field>
+                    <field name="lastPushMirrorError"><default-field title="Push Mirror Error"><display/></default-field></field>
                     <field name="headCommitId"><default-field title="Head"><display/></default-field></field>
                     <field name="lastFetchDate"><default-field title="Last Fetch"><display/></default-field></field>
                     <field name="lastFetchError"><default-field title="Fetch Error"><display/></default-field></field>
@@ -109,6 +121,10 @@ along with this software (see the LICENSE.md file). If not, see
                     <section name="RemoteActions" condition="isRemote"><widgets>
                         <link url="fetchGitRepository" text="Fetch Now" parameter-map="{repositoryId:repositoryId}"/>
                         <label text="Replaces the mirror's branch with the remote one." type="p"/>
+                    </widgets></section>
+                    <section name="PushMirrorActions" condition="gitRepository?.pushMirrorRemoteId"><widgets>
+                        <link url="pushGitMirror" text="Push Mirror Now" parameter-map="{repositoryId:repositoryId}"/>
+                        <label text="Forces each mapped ref on the mirror to the local one; deletes nothing." type="p"/>
                     </widgets></section>
                     <section name="LocalActions" condition="gitRepository?.repositoryKind == 'local'"><widgets>
                         <link url="initGitRepository" text="Create Bare Repository" parameter-map="{repositoryId:repositoryId}"/>

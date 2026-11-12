@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The framework's own gitECA rules (docs/interfaces/Git-Hosting.md): webhooks and merge requests follow every change of a
+<!-- The framework's own gitECA rules (docs/interfaces/Git-Hosting.md): webhooks, merge requests and push mirrors follow every change of a
     repository's refs, from a push, a mirror fetch, an import or a write through Moqui (create#GitRef, merge#GitRefs,
     a wiki save). Each runs even after another rule of the change failed. Branch rules are not rules here: the git
     server enforces them, so no component can remove them. -->
@@ -29,5 +29,12 @@ along with this software (see the LICENSE.md file). If not, see
     <giteca rule-name="Webhooks of pushes and tags" id="FrameworkWebhookPush" event="post-receive"
             source="push,fetch,import,write" priority="8" run-on-error="true">
         <actions><service-call name="org.moqui.git.GitServices.queue#GitWebhookPush" in-map="context"/></actions>
+    </giteca>
+    <!-- A no-op for a repository with no pushMirrorRemoteId. Async: the push runs outside this change's events, so a
+        slow or unreachable mirror holds up no later change's rules; its outcome is on the repository's row. -->
+    <giteca rule-name="Push mirrors follow their repositories" id="FrameworkPushMirror" event="post-receive"
+            source="push,fetch,import,write" priority="9" run-on-error="true">
+        <actions><service-call name="org.moqui.git.GitServices.push#GitMirror" in-map="{repositoryId:repositoryId}"
+                async="true"/></actions>
     </giteca>
 </gitecas>

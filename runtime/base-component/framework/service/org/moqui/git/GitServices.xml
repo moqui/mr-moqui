@@ -32,6 +32,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="failedIds" type="List"/>
         </out-parameters>
     </service>
+    <service verb="push" noun="GitMirror" type="rust" location="moqui_git::service::push_mirror" transaction="ignore">
+        <description>Push a repository's refs to its push mirror over SSH (pushMirrorRemoteId, pushMirrorRefs), each
+            forced to the local one as it is when the push runs; nothing is deleted. Nothing for a repository with no
+            push mirror. The framework's post-receive gitECA rule runs it async after each change; pushes of one
+            repository take turns. Records lastPushMirrorDate and lastPushMirrorError in a transaction of their own,
+            so a failure is kept. Refused in sim mode.</description>
+        <in-parameters><parameter name="repositoryId" required="true"/></in-parameters>
+        <out-parameters><parameter name="pushResult"/></out-parameters>
+    </service>
     <service verb="init" noun="GitRepository" type="rust" location="moqui_git::service::init_repository">
         <description>Make a repository ready: create the bare repository of a local kind (a local repository is also
             created on its first use), fetch a remote kind for the first time. A db kind needs nothing.</description>

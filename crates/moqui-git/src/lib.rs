@@ -212,6 +212,9 @@ struct Inner {
     locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// The runs of each repository's gitECA post events take turns, so they run one change at a time, in order.
     event_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// The pushes of each repository to its push mirror take turns: a push that read older refs and connected after a
+    /// newer one would force the mirror's refs back.
+    push_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// When each repository's refs last changed (milliseconds): a push of commits dated in the past still changes the
     /// last-modified time of its files, which caches over `git://` locations go by.
     updated: Mutex<HashMap<String, i64>>,
@@ -290,6 +293,7 @@ impl GitProvider {
                 changing: Mutex::new(Changing::default()),
                 locks: Mutex::new(HashMap::new()),
                 event_locks: Mutex::new(HashMap::new()),
+                push_locks: Mutex::new(HashMap::new()),
                 updated: Mutex::new(HashMap::new()),
                 objects: std::sync::OnceLock::new(),
                 attributes: attributes::rules_cache(),
@@ -602,6 +606,34 @@ impl GitProvider {
         self.refresh(repository_id);
     }
 
+    /// Run `body`, which records the outcome of a fetch or push on a repository's row, in a transaction of its own: the
+    /// service that ran it adds the error, and its own transaction is rolled back. A failure is logged.
+    fn kept(&self, repository_id: &str, body: impl FnOnce()) {
+        let transactions = match self
+            .entity()
+            .and_then(|entity| Ok(entity.transactions_for(GIT_REPOSITORY)?))
+        {
+            Ok(transactions) => transactions,
+            Err(err) => {
+                tracing::error!(
+                    repository = repository_id,
+                    "cannot record the git repository outcome: {err}"
+                );
+                return;
+            }
+        };
+        let ran = transactions.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
+            body();
+            Ok(())
+        });
+        if let Err(err) = ran {
+            tracing::error!(
+                repository = repository_id,
+                "cannot record the git repository outcome: {err}"
+            );
+        }
+    }
+
     fn write_row(&self, repository_id: &str, fields: impl FnOnce(&mut EntityValue)) {
         let now = jiff::Timestamp::now().as_millisecond();
         self.note_update(repository_id, now);
@@ -896,7 +928,9 @@ impl GitProvider {
                 let current = fs::FsStore::open(&definition.path)
                     .ok()
                     .and_then(|store| store.read_ref(&ops::branch_ref(&definition.branch)).ok().flatten());
-                self.remember_head(repository_id, current, Some(Some(err.message())));
+                self.kept(repository_id, || {
+                    self.remember_head(repository_id, current, Some(Some(err.message())));
+                });
                 Err(err)
             }
         }
@@ -933,6 +967,138 @@ impl GitProvider {
             }
         }
         Ok((fetched, failed))
+    }
+
+    /// Push a repository's refs to its push mirror over SSH: the `SystemMessageRemote` its `pushMirrorRemoteId` names
+    /// (`sendUrl` the SSH URL, `username` when the URL has none, `privateKey` and `publicKey` or `password`,
+    /// `sshHostKeyFingerprint` to pin the host key), the refs its `pushMirrorRefs` maps (every branch and tag when
+    /// empty), each forced to the local one; nothing is deleted. Records `lastPushMirrorDate` and
+    /// `lastPushMirrorError` on its row, in a transaction of its own. Pushes of one repository take turns, each with the
+    /// refs as they are when its turn comes. What was done, or `None` when the repository has no push mirror.
+    pub fn push_mirror(&self, repository_id: &str) -> Result<Option<String>, Error> {
+        let lock = Arc::clone(
+            moqui_lib::sync::lock(&self.inner.push_locks)
+                .entry(repository_id.to_string())
+                .or_default(),
+        );
+        let _turn = moqui_lib::sync::lock(&lock);
+        let row = {
+            let _rows = rows_guard();
+            self.entity()?
+                .find(GIT_REPOSITORY)?
+                .eq("repositoryId", Value::string(repository_id))
+                .one()?
+                .ok_or_else(|| Error::new(format!("git repository {repository_id} is not defined")))?
+        };
+        let Some(remote_id) = text(row.get("pushMirrorRemoteId")) else {
+            return Ok(None);
+        };
+        let outcome = self.push_mirror_to(
+            repository_id,
+            &remote_id,
+            &text(row.get("pushMirrorRefs")).unwrap_or_default(),
+        );
+        let error = outcome.as_ref().err().map(Error::message);
+        self.kept(repository_id, || {
+            let _rows = rows_guard();
+            let recorded = self.entity().and_then(|entity| {
+                entity
+                    .find(GIT_REPOSITORY)?
+                    .eq("repositoryId", Value::string(repository_id))
+                    .update_all([
+                        (
+                            "lastPushMirrorDate".to_string(),
+                            moqui_core::user::now_effective_value(),
+                        ),
+                        (
+                            "lastPushMirrorError".to_string(),
+                            error.map_or(Value::Null, Value::string),
+                        ),
+                    ])
+                    .map_err(Error::from)
+            });
+            if let Err(err) = recorded {
+                tracing::error!(
+                    repository = repository_id,
+                    "cannot record the push mirror outcome: {err}"
+                );
+            }
+        });
+        outcome.map(Some)
+    }
+
+    fn push_mirror_to(&self, repository_id: &str, remote_id: &str, ref_maps: &str) -> Result<String, Error> {
+        let maps = server::push::parse_ref_maps(ref_maps)?;
+        let remote = {
+            let _rows = rows_guard();
+            self.entity()?
+                .find("moqui.service.message.SystemMessageRemote")?
+                .eq("systemMessageRemoteId", Value::string(remote_id))
+                .one()?
+                .ok_or_else(|| Error::new(format!("no SystemMessageRemote with id {remote_id}")))?
+        };
+        let field = |name: &str| text(remote.get(name)).unwrap_or_default();
+        let url = server::push::parse_ssh_url(&field("sendUrl"))?;
+        let username = url
+            .user
+            .clone()
+            .or_else(|| text(remote.get("username")))
+            .unwrap_or_else(|| "git".into());
+        let mut client = moqui_core::sftp::SftpClient::for_remote(&remote, &url.host, &username)?;
+        let repo = self.repo(repository_id)?;
+        let local = repo.store.list_refs("refs/")?;
+        let refs = server::push::mapped(&maps, &local);
+        if refs.is_empty() {
+            return Err(Error::new(format!(
+                "git repository {repository_id} has no refs that pushMirrorRefs ({ref_maps}) maps"
+            )));
+        }
+        let shown = format!("{}:{}", url.host, url.path);
+        let mut exec = client.exec(&server::push::receive_pack_command(&url.path))?;
+        let pushed = {
+            let io = server::push::ExecIo(std::cell::RefCell::new(exec.as_mut()));
+            let mut output = std::io::BufWriter::with_capacity(64 * 1024, &io);
+            let pushed = server::push::push(repo.store.as_ref(), &refs, &mut &io, &mut output);
+            drop(output);
+            pushed
+        };
+        let pushed = pushed.map_err(|err| {
+            let stderr = exec.stderr();
+            let stderr = stderr.trim();
+            if stderr.is_empty() {
+                Error::new(format!("push to {shown}: {}", err.message()))
+            } else {
+                Error::new(format!("push to {shown}: {} ({stderr})", err.message()))
+            }
+        })?;
+        match server::push::finish(exec.as_mut()) {
+            Ok(Some(status)) if status != 0 => tracing::warn!(
+                repository = repository_id,
+                "git-receive-pack on {shown} exited with {status}: {}",
+                exec.stderr().trim()
+            ),
+            Ok(_) => {}
+            Err(err) => tracing::warn!(repository = repository_id, "ending the push to {shown}: {err}"),
+        }
+        if !pushed.refused.is_empty() {
+            return Err(Error::new(format!(
+                "push to {shown} refused {}",
+                pushed
+                    .refused
+                    .iter()
+                    .map(|(name, reason)| format!("{name} ({reason})"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        let done = format!(
+            "pushed {} refs ({} objects) to {shown}; {} already current",
+            pushed.pushed.len(),
+            pushed.objects,
+            pushed.current
+        );
+        tracing::info!(repository = repository_id, "{done}");
+        Ok(done)
     }
 
     /// Make a repository ready: create the bare repository of a `local` kind, fetch a `remote` one. A `db` repository

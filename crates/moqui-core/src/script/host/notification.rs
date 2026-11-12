@@ -15,7 +15,7 @@
 //! `ec.makeNotificationMessage()`: Java's `NotificationMessage` builder, backed by [`crate::notify::NotificationMessage`].
 //! Each setter changes the builder and returns it. `reason`, `record`, `actorUserId` and `appName` are not in Java: the
 //! IronStone notification fields (`NotificationMessage.reasonEnumId`, `recordEntityName`, `recordId`, `actorUserId`,
-//! `appName`).
+//! `appName`). Nor is `directOnly` (`NotificationMessage::direct_only`): the named users and group alone.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -34,6 +34,7 @@ pub(super) static NOTIFICATION: HostClass = HostClass {
         method!("ec.makeNotificationMessage()", "userId", [Value], user_id),
         method!("ec.makeNotificationMessage()", "userIds", [Value], user_ids),
         method!("ec.makeNotificationMessage()", "userGroupId", [Value], user_group_id),
+        method!("ec.makeNotificationMessage()", "directOnly", [OptValue], direct_only),
         method!("ec.makeNotificationMessage()", "message", [Value], message),
         method!("ec.makeNotificationMessage()", "title", [Value], title),
         method!("ec.makeNotificationMessage()", "link", [Value], link),
@@ -177,6 +178,15 @@ fn user_group_id(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let group_id = text_of(call, 0);
     changed(call, |message| {
         message.user_group_id(group_id);
+    })
+}
+
+/// `directOnly()` or `directOnly(flag)`: the named users and group alone receive it; a user subscribed to every
+/// message of the topic (`NotificationTopicUser.allNotifications`) does not.
+fn direct_only(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let on = flag(call, 0);
+    changed(call, |message| {
+        message.direct_only(on);
     })
 }
 
