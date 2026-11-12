@@ -1450,9 +1450,13 @@ Results:
   the web root as a browser asks for the page; under Admin as a spec's root it does not resolve) and
   `AdminRegistriesWalk` (an anchor's ampersand is escaped in html). The framework's `LoadBasic` passes. The opt-in
   `tui_screens` passes after two gallery snapshots took the registries' four enumeration types of A6 (a count, the
-  first rows of a list). The acceptance specs over changed screens that the phases did not change were not run
-  (`InsightsDrillUsable`, `AdminDevicesUsable`, `AdminExportsUsable`, `AdminImportsUsable`, `PeopleFoundationWalk`, the
-  client `InsightsDashboardsUsable`).
+  first rows of a list). The acceptance specs over changed screens that the phases did not change were run at the user's word on Nov 12,
+  after the upstream merges of that day: `InsightsDrillUsable`, `AdminDevicesUsable`, `AdminExportsUsable`,
+  `AdminImportsUsable` and the client `InsightsDashboardsUsable` pass. `PeopleFoundationWalk` fails two features, left
+  for the People work: an employee opens Time (People's later phases opened it), and it looks for the words "People
+  setup" on Admin's Health, which lists People's checks under their own titles (Departments, Managers, for each
+  employer, owner People, with the fix link to People's Settings) and names a provider only when it could not be
+  checked, as the screen did before A6.
 - **`./moq test-framework`:** every suite passes but `cargo test --workspace`, by one test of `moqui-git`
   (`the_tree_refs_compare_and_merge_methods_through_services`: a git update's ECA finds no report service in that
   crate's runtime), which passes alone and failed in one of two more runs of the crate; nothing here touches
@@ -1468,6 +1472,12 @@ Results:
     other People specs leave on the same database; both pass alone. Left for the People work.
   - mr-boss's client suite reads 62 s of its 57 s budget; this work changed no client spec, and the People hire walk
     (6.6 s) is new since the budget was set.
+- **The merges of Nov 12** (mr-moqui's assist evaluation, People P10 and P11 in mr-boss and mr-mantle): the agent task
+  files keep master's looser checks with the group page's path under Access; master's "Open in System" link of Admin's
+  group page and the reason beside it, which named the removed User Groups screen, are the shared GroupDetail's
+  (shown under a mount for a group that is neither a registered bundle nor a custom group, to System's own page of
+  the group) and "System › Access › Groups". After them: tools 73 features, 3.4 s of 4 s; both replay sets pass
+  against their baselines; the access specs of the framework and mr-boss pass.
 - Known and not this work's, seen in the phases: `AdminAccessServices` "a membership change is seen at once by the
   session it changes" and `AdminBackups`' lock check each fail about one run in six; three `gate3` and four
   `gate3_browser` tests fail before and after (F22).
