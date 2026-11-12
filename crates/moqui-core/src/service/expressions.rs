@@ -16,7 +16,7 @@
 //! evaluator of payroll formulas (IronStone People design PE-09; docs/dev/JS-Framework-Services.md "Expressions") over
 //! [`moqui_lib::decimal_expr`]. Neither reads anything but its parameters. A refused expression is answered in the
 //! out-parameters (`valid` false, `errorCode`, `errorMessage`, `errorPosition`) and is not a service error, so a caller
-//! checking a formula keeps its transaction; only a parameter of the wrong type is an error.
+//! checking a formula keeps its transaction; a parameter of the wrong shape is refused the same way (`INPUT_INVALID`).
 
 use std::collections::BTreeMap;
 
@@ -40,16 +40,16 @@ fn text_list(values: &[String]) -> Value {
 }
 
 /// `inputNames`, when given: a list of names (or a comma-separated text).
-fn input_names(parameters: &BTreeMap<String, Value>) -> Result<Option<Vec<String>>, LibError> {
+fn input_names(parameters: &BTreeMap<String, Value>) -> Result<Option<Vec<String>>, ExprError> {
     match parameters.get("inputNames") {
         None | Some(Value::Null) => Ok(None),
         Some(Value::List(items)) => items
             .iter()
             .map(|item| match item {
                 Value::String(name) => Ok(name.trim().to_string()),
-                _ => Err(LibError::new("inputNames is a list of names")),
+                _ => Err(invalid("inputNames is a list of names")),
             })
-            .collect::<Result<Vec<String>, LibError>>()
+            .collect::<Result<Vec<String>, ExprError>>()
             .map(Some),
         Some(Value::String(names)) => Ok(Some(
             names
@@ -59,15 +59,24 @@ fn input_names(parameters: &BTreeMap<String, Value>) -> Result<Option<Vec<String
                 .map(str::to_string)
                 .collect(),
         )),
-        Some(_) => Err(LibError::new("inputNames is a list of names")),
+        Some(_) => Err(invalid("inputNames is a list of names")),
     }
 }
 
-fn expression_text(parameters: &BTreeMap<String, Value>) -> Result<String, LibError> {
+/// A parameter of the wrong shape, refused as a formula is.
+fn invalid(message: impl Into<String>) -> ExprError {
+    ExprError {
+        code: "INPUT_INVALID",
+        message: message.into(),
+        position: None,
+    }
+}
+
+fn expression_text(parameters: &BTreeMap<String, Value>) -> Result<String, ExprError> {
     match parameters.get("expression") {
         None | Some(Value::Null) => Ok(String::new()),
         Some(Value::String(text)) => Ok(text.clone()),
-        Some(_) => Err(LibError::new("expression is a text")),
+        Some(_) => Err(invalid("expression is a text")),
     }
 }
 
@@ -85,10 +94,10 @@ fn refused(out: &mut BTreeMap<String, Value>, error: &ExprError) {
     );
 }
 
-fn parsed(parameters: &BTreeMap<String, Value>) -> Result<Result<Expression, ExprError>, LibError> {
+fn parsed(parameters: &BTreeMap<String, Value>) -> Result<Expression, ExprError> {
     let text = expression_text(parameters)?;
     let names = input_names(parameters)?;
-    Ok(decimal_expr::parse(&text, names.as_deref()))
+    decimal_expr::parse(&text, names.as_deref())
 }
 
 /// `validate#DecimalExpression`: `valid`, the `names` the expression reads and the `functions` it calls, or the
@@ -98,7 +107,7 @@ fn validate_decimal_expression(
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let mut out = BTreeMap::new();
-    match parsed(parameters)? {
+    match parsed(parameters) {
         Ok(expression) => {
             out.insert("valid".into(), Value::Bool(true));
             out.insert("names".into(), text_list(expression.names()));
@@ -132,7 +141,7 @@ fn evaluate_decimal_expression(
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let mut out = BTreeMap::new();
     out.insert("result".into(), Value::Null);
-    let expression = match parsed(parameters)? {
+    let expression = match parsed(parameters) {
         Ok(expression) => expression,
         Err(error) => {
             refused(&mut out, &error);
@@ -143,7 +152,10 @@ fn evaluate_decimal_expression(
     let given = match parameters.get("inputs") {
         None | Some(Value::Null) => None,
         Some(Value::Map(map)) => Some(map),
-        Some(_) => return Err(LibError::new("inputs is a map of names to decimals")),
+        Some(_) => {
+            refused(&mut out, &invalid("inputs is a map of names to decimals"));
+            return Ok(out);
+        }
     };
     // only the inputs the expression reads are converted; an unread one is not looked at
     let mut inputs = BTreeMap::new();
@@ -157,12 +169,7 @@ fn evaluate_decimal_expression(
             }
             Ok(None) => {}
             Err(()) => {
-                let error = ExprError {
-                    code: "INPUT_INVALID",
-                    message: format!("The input {name} is not a decimal"),
-                    position: None,
-                };
-                refused(&mut out, &error);
+                refused(&mut out, &invalid(format!("The input {name} is not a decimal")));
                 return Ok(out);
             }
         }

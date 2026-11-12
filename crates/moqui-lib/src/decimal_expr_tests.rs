@@ -186,3 +186,50 @@ fn inputs_as_text() {
     assert_eq!(decimal_input("abc"), None);
     assert_eq!(decimal_input(""), None);
 }
+
+#[test]
+fn nesting_of_every_kind_is_bounded() {
+    let nested_if = |levels: usize| format!("{}1{}", "if(1 > 0, ".repeat(levels), ", 0)".repeat(levels));
+    assert_eq!(eval(&nested_if(31), &[]), d("1"));
+    assert_eq!(code(&nested_if(33), &[]), "EXPRESSION_TOO_DEEP");
+    assert_eq!(
+        code(&format!("if({}1 > 0, 1, 0)", "not ".repeat(40)), &[]),
+        "EXPRESSION_TOO_DEEP"
+    );
+    assert_eq!(
+        code(&format!("{}1{}", "abs(".repeat(40), ")".repeat(40)), &[]),
+        "EXPRESSION_TOO_DEEP"
+    );
+    // a long run of one operator is a flat chain, not a deep one, and stops at the type's range
+    let product = vec!["a"; 600].join("*");
+    assert_eq!(code(&product, &[("a", "1.5")]), "OVERFLOW");
+}
+
+#[test]
+fn numbers_stay_in_the_decimal_type() {
+    // leading zeros are not significant digits; a trailing zero is
+    assert_eq!(eval(&format!("{}1", "0".repeat(1990)), &[]), d("1"));
+    assert_eq!(code("1.0000000000000000000000000000", &[]), "NUMBER_INVALID");
+    assert_eq!(code(&format!("0.{}1", "0".repeat(40)), &[]), "NUMBER_INVALID");
+    assert_eq!(code("round(1, 99999999999999999999)", &[]), "ROUNDING_PLACES_INVALID");
+    assert_eq!(eval("round(1.234, 2.0)", &[]).to_string(), "1.23");
+    assert_eq!(
+        code("79228162514264337593543950 / 0.0000000000000000000000000001", &[]),
+        "OVERFLOW"
+    );
+    // a product past 28 places rounds to the type, as division does
+    assert_eq!(
+        eval("0.00000000000001 * 0.00000000000001 * 0.00000000000001", &[]),
+        d("0")
+    );
+    assert_eq!(decimal_input(&"9".repeat(40)), None);
+    assert_eq!(decimal_input("+-1"), None);
+}
+
+#[test]
+fn zero_has_no_sign() {
+    assert_eq!(eval("-0", &[]).to_string(), "0");
+    assert_eq!(eval("-a", &[("a", "0.00")]).to_string(), "0.00");
+    assert_eq!(eval("a * -1", &[("a", "0.00")]).to_string(), "0.00");
+    assert_eq!(eval("round(-0.001, 2)", &[]).to_string(), "0.00");
+}

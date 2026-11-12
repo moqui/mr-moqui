@@ -34,8 +34,10 @@
 //! ```
 //!
 //! Two types: an amount (a decimal) and a condition. Arithmetic and comparisons take amounts; `and`, `or`, `not` and
-//! the first argument of `if` take conditions; the whole expression is an amount. `+`, `-` and `*` are exact, `/` keeps
-//! the full precision of the decimal type, and nothing is rounded but by `round`, `floor` and `ceil`.
+//! the first argument of `if` take conditions; the whole expression is an amount. `+`, `-` and `*` are exact while the
+//! result fits the decimal type (28 significant digits, at most 28 places; past that a product rounds to it, as `/`
+//! does), `/` keeps the full precision of the type, and nothing else is rounded but by `round`, `floor` and `ceil`. Zero
+//! has no sign: `-0` and `-1 * 0` are `0`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -760,13 +762,21 @@ impl Expression {
                 format!("The formula needs {}", missing.join(", ")),
             ));
         }
-        Evaluator { inputs }.amount(&self.root)
+        Evaluator { inputs }.amount(&self.root).map(unsigned_zero)
     }
 }
 
 /// Parse and evaluate in one step.
 pub fn evaluate(text: &str, inputs: &BTreeMap<String, Decimal>) -> Result<Decimal, ExprError> {
     parse(text, None)?.evaluate(inputs)
+}
+
+/// Zero without its sign, so a negated or multiplied zero never shows as `-0` or `-0.00`.
+fn unsigned_zero(mut value: Decimal) -> Decimal {
+    if value.is_zero() {
+        value.set_sign_positive(true);
+    }
+    value
 }
 
 struct Evaluator<'a> {

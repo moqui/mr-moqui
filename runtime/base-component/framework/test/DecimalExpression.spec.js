@@ -6,7 +6,12 @@ const SERVICES = "org.moqui.impl.ExpressionServices"
 
 // the service's answer and the error messages it left (none for a refused expression)
 function invoke(verb, parameters) {
-    const result = ec.service.sync().name(SERVICES + "." + verb + "#DecimalExpression").parameters(parameters).call() || {}
+    const result =
+        ec.service
+            .sync()
+            .name(SERVICES + "." + verb + "#DecimalExpression")
+            .parameters(parameters)
+            .call() || {}
     const error = ec.message.hasError() ? ec.message.getErrorsString() : ""
     ec.message.clearErrors()
     return Object.assign({}, result, {error})
@@ -45,8 +50,10 @@ feature("a formula computes in exact decimals over its named inputs", {
 
 feature("validate lists what a formula reads and refuses a name outside its declared inputs", {
     when() {
-        return {ok: validate("max(base, floor) * factor", ["base", "floor", "factor"]),
-            unknown: validate("base * bonus", ["base"])}
+        return {
+            ok: validate("max(base, floor) * factor", ["base", "floor", "factor"]),
+            unknown: validate("base * bonus", ["base"])
+        }
     },
     then({ok, unknown}) {
         ok.valid && ok.error == ""
@@ -62,7 +69,12 @@ feature("anything outside the grammar is refused with its code and leaves no err
         const codes = {}
         for (const expression of ["ec(1)", "eval(1)", "ec.user", "'text'", "a = 1", "a; b", "1 >", "1 > 0"])
             codes[expression] = validate(expression)
-        return {codes, errors: Object.values(codes).map((answer) => answer.error).join("")}
+        return {
+            codes,
+            errors: Object.values(codes)
+                .map(answer => answer.error)
+                .join("")
+        }
     },
     then({codes, errors}) {
         codes["ec(1)"].errorCode == "UNKNOWN_FUNCTION" && codes["eval(1)"].errorCode == "UNKNOWN_FUNCTION"
@@ -71,7 +83,7 @@ feature("anything outside the grammar is refused with its code and leaves no err
         codes["a = 1"].errorCode == "SYNTAX_ERROR" && codes["a; b"].errorCode == "SYNTAX_ERROR"
         codes["1 >"].errorCode == "SYNTAX_ERROR"
         codes["1 > 0"].errorCode == "TYPE_MISMATCH"
-        Object.values(codes).every((answer) => answer.valid === false && answer.errorMessage)
+        Object.values(codes).every(answer => answer.valid === false && answer.errorMessage)
         errors == ""
         !ec.message.hasError()
     }
@@ -79,8 +91,12 @@ feature("anything outside the grammar is refused with its code and leaves no err
 
 feature("a missing input, a bad input and a division by zero are refused in the answer", {
     when() {
-        return {missing: evaluate("a * b + c", {a: 1, c: null}), bad: evaluate("a + 1", {a: "ten"}),
-            zero: evaluate("a / b", {a: 1, b: 0}), empty: evaluate("", {})}
+        return {
+            missing: evaluate("a * b + c", {a: 1, c: null}),
+            bad: evaluate("a + 1", {a: "ten"}),
+            zero: evaluate("a / b", {a: 1, b: 0}),
+            empty: evaluate("", {})
+        }
     },
     then({missing, bad, zero, empty}) {
         !missing.valid && missing.errorCode == "MISSING_INPUT" && missing.result == null
@@ -89,5 +105,20 @@ feature("a missing input, a bad input and a division by zero are refused in the 
         zero.errorCode == "DIVIDE_BY_ZERO"
         empty.errorCode == "EXPRESSION_REQUIRED"
         missing.error == "" && bad.error == "" && zero.error == "" && empty.error == ""
+    }
+})
+
+feature("a parameter of the wrong shape is refused in the answer, not as an error", {
+    when() {
+        return {
+            names: evaluate("a + 1", {a: 1}, ["a", 2]),
+            text: invoke("validate", {expression: {a: 1}}),
+            negative: evaluate("-a", {a: toDecimal("0.00")})
+        }
+    },
+    then({names, text, negative}) {
+        !names.valid && names.errorCode == "INPUT_INVALID" && names.error == ""
+        !text.valid && text.errorCode == "INPUT_INVALID" && text.error == ""
+        String(negative.result) == "0.00"
     }
 })
