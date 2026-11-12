@@ -1,5 +1,5 @@
 // The writes of org.moqui.report.ReportServices that the report screens need beside the engine's own (docs/tools/Monitoring.md,
-// "Report delivery"; plans/Admin-Screens-Down.md, Track I), so that a mountable report screen writes no entity itself. Each
+// "Report delivery"; plans/archive/Admin-Screens-Down.md, Track I), so that a mountable report screen writes no entity itself. Each
 // operation checks what its caller may change and writes with authorization off only that. No dependency on Mantle or an app.
 //
 //     store#ScreenSchedule  the timing, format, active interval, subject and pause of a screen schedule the caller set up

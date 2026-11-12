@@ -1678,19 +1678,19 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 
 | XML file / logical route | Presentation and companions | Activity | Review status |
 |---|---|---|---|
-| `System/Audit/AuditChanges.xml` | XML widgets | S06 | Replaces the Audit Log screen S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4), whose list is its instance administrator's part (`log=Y`); not walked here since |
-| `System/Audit.xml` | Container → AuditChanges | S06 | Replaces the Audit Log screen S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4); not walked here since |
+| `System/Audit/AuditChanges.xml` | XML widgets | S06 | Replaces the Audit Log screen S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A4), whose list is its instance administrator's part (`log=Y`); not walked here since |
+| `System/Audit.xml` | Container → AuditChanges | S06 | Replaces the Audit Log screen S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A4); not walked here since |
 | `System/Cache/CacheElements.xml` | XML widgets | S01 | V/P: native count-only and reported-empty states explained; generic populated entries/clear pending |
 | `System/Cache/CacheList.xml` | XML widgets | S01 | V/P: valid/literal-fallback filter and recovery, summary→detail/back; cache clearing pending |
 | `System/Cache.xml` | Container → CacheList | S01 | V/P: normal parent navigation |
 | `System/Components.xml` | XML widgets | S02 | V/P; parent observation |
 | `System/Conf.xml` | XML widgets | S02 | P |
-| `System/Data/Backups.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A5; not walked here |
-| `System/Data/DataExport.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A5; not walked here |
-| `System/Data/Exports.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A5; not walked here |
-| `System/Data/ImportDetail.xml` | XML widgets; hidden menu | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A5; not walked here |
-| `System/Data/Imports.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A5; not walked here |
-| `System/Data.xml` | Container → Imports | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A5 (the links to Tools' Data export, Data load and Snapshots); not walked here |
+| `System/Data/Backups.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A5; not walked here |
+| `System/Data/DataExport.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A5; not walked here |
+| `System/Data/Exports.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A5; not walked here |
+| `System/Data/ImportDetail.xml` | XML widgets; hidden menu | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A5; not walked here |
+| `System/Data/Imports.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A5; not walked here |
+| `System/Data.xml` | Container → Imports | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A5 (the links to Tools' Data export, Data load and Snapshots); not walked here |
 | `System/DataDocument/Edit/DataDocFields/FieldList.xml` | hidden menu | S08 | P |
 | `System/DataDocument/Edit/DataDocFields.xml` | XML widgets | S08 | P |
 | `System/DataDocument/Edit/EditDataDocument.xml` | XML widgets | S08 | P |
@@ -1758,10 +1758,10 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Llm/Triggers.xml` | Container → TriggerList | S14 | P |
 | `System/Llm/Usage.xml` | XML widgets | S11 | V/P: empty/valid quota check and no-use state; UI-033 |
 | `System/Llm.xml` | Container → Dashboard | S11 | P |
-| `System/Settings/InstanceSettings.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A4; not walked here |
-| `System/Settings/Localization.xml` | XML widgets | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4), whose lists are its instance administrator's part (`rows=Y`); not walked here since |
-| `System/Settings/SettingsHome.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A6; not walked here |
-| `System/Settings.xml` | Container → InstanceSettings | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A4); not walked here since |
+| `System/Settings/InstanceSettings.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A4; not walked here |
+| `System/Settings/Localization.xml` | XML widgets | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A4), whose lists are its instance administrator's part (`rows=Y`); not walked here since |
+| `System/Settings/SettingsHome.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A6; not walked here |
+| `System/Settings.xml` | Container → InstanceSettings | S09 | Replaces the Localization screens S09 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A4); not walked here since |
 | `System/Print/PrintJob/PrintJobDetail.xml` | XML widgets | S05 | P |
 | `System/Print/PrintJob/PrintJobList.xml` | hidden menu | S05 | P |
 | `System/Print/PrintJob.xml` | Container → PrintJobList | S05 | P |
@@ -1771,18 +1771,18 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Resource/GitRepositoryDetail.xml` | hidden menu | S10 | P |
 | `System/Resource/GitRepositoryList.xml` | XML widgets | S10 | P |
 | `System/Resource.xml` | Container → GitRepositoryList | S10 | P |
-| `System/Access/AccessReview.xml` | hidden menu | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
-| `System/Access/ArtifactGroupDetail.xml` | hidden menu | S03 | S/P; moved from `System/Security/ArtifactGroup/` ([Admin-Screens-Down](Admin-Screens-Down.md) A3) |
-| `System/Access/ArtifactGroups.xml` | XML widgets | S03 | P; was `System/Security/ArtifactGroup/ArtifactGroupList.xml` ([Admin-Screens-Down](Admin-Screens-Down.md) A3) |
-| `System/Access/Capabilities.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
-| `System/Access/GroupDetail.xml` | hidden menu | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A3); not walked here since |
-| `System/Access/Groups.xml` | XML widgets | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A3); not walked here since |
-| `System/Access/RowRules.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
-| `System/Access.xml` | Container → Groups | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A3); not walked here since |
-| `System/Security/IdentityProviderDetail.xml` | hidden menu | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
-| `System/Security/IdentityProviders.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
-| `System/Security/Sessions.xml` | XML widgets | S03 | Replaces the Active Users screen S03 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A3); not walked here since |
-| `System/Security/SignInPolicy.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A3; not walked here |
+| `System/Access/AccessReview.xml` | hidden menu | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A3; not walked here |
+| `System/Access/ArtifactGroupDetail.xml` | hidden menu | S03 | S/P; moved from `System/Security/ArtifactGroup/` ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A3) |
+| `System/Access/ArtifactGroups.xml` | XML widgets | S03 | P; was `System/Security/ArtifactGroup/ArtifactGroupList.xml` ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A3) |
+| `System/Access/Capabilities.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A3; not walked here |
+| `System/Access/GroupDetail.xml` | hidden menu | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A3); not walked here since |
+| `System/Access/Groups.xml` | XML widgets | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A3); not walked here since |
+| `System/Access/RowRules.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A3; not walked here |
+| `System/Access.xml` | Container → Groups | S03 | Replaces the User Groups screens S03 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A3); not walked here since |
+| `System/Security/IdentityProviderDetail.xml` | hidden menu | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A3; not walked here |
+| `System/Security/IdentityProviders.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A3; not walked here |
+| `System/Security/Sessions.xml` | XML widgets | S03 | Replaces the Active Users screen S03 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A3); not walked here since |
+| `System/Security/SignInPolicy.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A3; not walked here |
 | `System/Security/UserAccount/UserAccountDetail/VerifyEmail.xml` | hidden menu | S04 | P |
 | `System/Security/UserAccount/UserAccountDetail/VerifySms.xml` | hidden menu | S04 | P |
 | `System/Security/UserAccount/UserAccountDetail/VerifyTotp.xml` | hidden menu | S04 | P |
@@ -1790,29 +1790,29 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Security/UserAccount/UserAccountList.xml` | hidden menu | S03 | P |
 | `System/Security/UserAccount.xml` | Container → UserAccountList | S03 | P |
 | `System/Security.xml` | Container → UserAccount | S03 | P |
-| `System/Operations/Health.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A6; not walked here |
-| `System/Operations/JobDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
-| `System/Operations/JobRunDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
-| `System/Operations/JobRuns.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
-| `System/Operations/Jobs.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
-| `System/Operations/SupportSummary.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A6; not walked here |
-| `System/Operations/TopicDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
-| `System/Operations/Topics.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
-| `System/Operations.xml` | Container → Jobs | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A1); not walked here since |
-| `System/Integrations/ConnectionDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations/Connections.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations/MessageTypeDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations/MessageTypes.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations/SystemMessageDetail/EditMessageText.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations/SystemMessageDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations/SystemMessages.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
-| `System/Integrations.xml` | Container → Connections | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](Admin-Screens-Down.md) A2); not walked here since |
-| `System/Protocols/Home.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
-| `System/Protocols/MailQueue.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
-| `System/Protocols/MailRelayDetail.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
-| `System/Protocols/MailRelays.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
-| `System/Protocols/ServerConfiguration.xml` | XML widgets | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
-| `System/Protocols.xml` | Container → Home | — | New with [Admin-Screens-Down](Admin-Screens-Down.md) A2; not walked here |
+| `System/Operations/Health.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A6; not walked here |
+| `System/Operations/JobDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/JobRunDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/JobRuns.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/Jobs.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/SupportSummary.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A6; not walked here |
+| `System/Operations/TopicDetail.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations/Topics.xml` | XML widgets | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
+| `System/Operations.xml` | Container → Jobs | S05 | Replaces the Service Jobs screens S05 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A1); not walked here since |
+| `System/Integrations/ConnectionDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/Connections.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/MessageTypeDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/MessageTypes.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/SystemMessageDetail/EditMessageText.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/SystemMessageDetail.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations/SystemMessages.xml` | XML widgets | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
+| `System/Integrations.xml` | Container → Connections | S06 | Replaces the System Messages screens S06 covered ([Admin-Screens-Down](archive/Admin-Screens-Down.md) A2); not walked here since |
+| `System/Protocols/Home.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols/MailQueue.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols/MailRelayDetail.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols/MailRelays.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols/ServerConfiguration.xml` | XML widgets | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A2; not walked here |
+| `System/Protocols.xml` | Container → Home | — | New with [Admin-Screens-Down](archive/Admin-Screens-Down.md) A2; not walked here |
 | `System/ThreadList.xml` | XML widgets | S01 | V/P: unavailable state/localized scheduler verified at 1920 light/dark and 390; Linux details pending |
 | `System/Visit/VisitDetail.xml` | hidden menu | S06 | P |
 | `System/Visit/VisitList.xml` | XML widgets | S06 | P |

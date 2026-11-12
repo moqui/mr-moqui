@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- SupportSummary (plans/Admin-Screens-Down.md A6; first IronStone Admin's, mr-boss design-admin §16): what to give
+<!-- SupportSummary (plans/archive/Admin-Screens-Down.md A6; first IronStone Admin's, mr-boss design-admin §16): what to give
     whoever supports the instance, from Health and the server configuration. One projection
     (org.moqui.admin.ReadinessServices.get#SupportSummary, ADMIN_OVERVIEW_VIEW) for the screen, its print (this screen in
     html-print) and its JSON (summaryJson, always redacted: no one who prepared it, an email address as [address], a

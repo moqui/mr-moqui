@@ -1,5 +1,5 @@
 // A read an administration screen makes through a service that checks its own permission and scope, with the refusal
-// kept as its reason (the System screens of tools and the apps that mount them, plans/Admin-Screens-Down.md; first
+// kept as its reason (the System screens of tools and the apps that mount them, plans/archive/Admin-Screens-Down.md; first
 // IronStone Admin's, mr-boss impl-admin F129, P19). A service-call with ignore-error="true" clears the error message, so
 // a screen could not tell a refusal from an empty list or a missing record: read() calls the service in a transaction and
 // an error frame of its own and answers {out, failure}. failure is the refusal's own words when the service refused with a

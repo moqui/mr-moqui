@@ -890,7 +890,7 @@ fn get_alert_state(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
     };
     // whose rule it is, by name, for anyone who reads the rule (its definition already answers them the owner's id):
     // the owner's account is the engine's to read, so a screen that shows a rule reads no account itself
-    // (plans/Admin-Screens-Down.md, Track I). A shipped rule has no owner.
+    // (plans/archive/Admin-Screens-Down.md, Track I). A shipped rule has no owner.
     let owner_name = if definition["readOnly"] == true {
         Json::Null
     } else {

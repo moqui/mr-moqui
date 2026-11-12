@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Connections (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8.1, §8): the infrastructure
+<!-- Connections (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8.1, §8): the infrastructure
     connections of the registered kinds (gateways, remote systems, mail sign-in providers, network printers), the native
     records their owners read, listed by org.moqui.admin.ConfigurationServices.find#Connections. ConnectionList shows each
     with its kind, provider, address (a host, never a path or a credential), its last test and its state; NewConnection starts

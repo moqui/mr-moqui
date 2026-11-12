@@ -1,5 +1,5 @@
 // The mount of the administration screens (the tools README, "Mounting the administration screens";
-// plans/Admin-Screens-Down.md). The System screens of the areas Access, Security, Settings, Operations, Data, Audit,
+// plans/archive/Admin-Screens-Down.md). The System screens of the areas Access, Security, Settings, Operations, Data, Audit,
 // Integrations and Mail and protocols are also shown by another app under its own root (IronStone Admin): mounted by
 // location, or included in a screen of the app's own with the transitions it takes in. Such a root sets `adminMount` in
 // its always-actions, so that its transitions read it too; System's root sets it to null, so a request parameter never
@@ -33,7 +33,7 @@ const systemLocation = "component://tools/screen/System.xml"
 // system's own screens: the protocols' home) and dataImport (the import wizard an app mounts: the import targets
 // started in it and an open import continued in it, by targetId).
 //
-// The registries' keys (plans/Admin-Screens-Down.md A6): a readiness provider's or a check's fixRoute, a settings
+// The registries' keys (plans/archive/Admin-Screens-Down.md A6): a readiness provider's or a check's fixRoute, a settings
 // entry's destinationRoute and a health card's route (framework/data/AdminConfigurationData.xml,
 // org.moqui.admin.ReadinessServices). Those of the framework's own registrations are here: the lists a check or a card
 // opens (adminJobRuns, adminSystemMessages, adminUsers, adminTopics, adminMessageTypes, adminVisits), a connection's

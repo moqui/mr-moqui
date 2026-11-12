@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- Datasets (docs/tools/Monitoring.md, "Business datasets"; plans/Admin-Screens-Down.md, Track I; first BOSS Insights'):
+<!-- Datasets (docs/tools/Monitoring.md, "Business datasets"; plans/archive/Admin-Screens-Down.md, Track I; first BOSS Insights'):
     the business datasets the viewer reads, and a steward's waiting for review, each with its state (admitted, needs review,
     unavailable, retired), source, scope, index and feed and last build, from the engine's find#BusinessDatasets. A dataset
     reaches readers only once admitted: its document in a registered feed, its index built and a registered row filter

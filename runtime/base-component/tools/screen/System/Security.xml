@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Security (plans/Admin-Screens-Down.md): the user accounts (UserAccount/: System's own account administration, with the
+<!-- Security (plans/archive/Admin-Screens-Down.md): the user accounts (UserAccount/: System's own account administration, with the
     Verify screens of a user's own factors, which other apps mount by location) and, over org.moqui.admin
     ConfigurationServices, AccessServices and IdentityServices, which check their permissions themselves, the sign-in
     policy with the groups' sign-in rules (SignInPolicy), the sign-in providers (IdentityProviders, a provider:

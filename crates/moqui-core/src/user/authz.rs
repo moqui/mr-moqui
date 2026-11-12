@@ -377,7 +377,7 @@ pub fn authorize_own(artifact_type: &str, name: &str, action: &str) -> Result<()
 /// from the stack (no inheritable authorization of a frame below, no deny of one), no hit is counted and no failure
 /// recorded. For a screen that shows or refuses a part by whether the user holds another artifact's grant themselves,
 /// whatever mount they came through: the System screens' instance administrator sections under another app's root,
-/// whose inheritable always-allow would answer [`authorize`] for everyone (plans/Admin-Screens-Down.md).
+/// whose inheritable always-allow would answer [`authorize`] for everyone (plans/archive/Admin-Screens-Down.md).
 ///
 /// # Errors
 ///

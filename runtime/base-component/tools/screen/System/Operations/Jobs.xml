@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Jobs (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §10): the instance's scheduled jobs, from
+<!-- Jobs (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §10): the instance's scheduled jobs, from
     org.moqui.admin.OperationServices.find#Jobs. JobFind: state (all,
     failing or late, failing, late, paused, running), owner and a term. JobList: each job with its owner (or "Not
     registered": its owner's deployment, read only here), its schedule in words, its state, its next run in the machine's time

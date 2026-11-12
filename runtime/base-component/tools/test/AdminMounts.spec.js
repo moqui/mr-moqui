@@ -1,5 +1,5 @@
 // System's administration screens shown under another app's root (README, "Mounting the administration screens";
-// plans/Admin-Screens-Down.md): the mount's root sets adminMount and template/AdminMount.js answers where a screen stands.
+// plans/archive/Admin-Screens-Down.md): the mount's root sets adminMount and template/AdminMount.js answers where a screen stands.
 // The instance administrator's parts (raw) are never shown under a mount and their transitions are refused there, for a
 // delegate whose group holds an inheritable always-allow on the mount, as an app's area grant is, and for the instance
 // administrator too; with no mount they are shown to a user who opens System by their own grant, and not to one whom only
@@ -26,7 +26,7 @@ const jobName = "AdminMountsSpec_job"
 const MESSAGE = "moqui.basic.LocalizedMessage"
 const original = "AdminMountsSpec message"
 // The areas of System that another app may show under its root (screen/System/<Area>/): each phase of
-// plans/Admin-Screens-Down.md adds its own.
+// plans/archive/Admin-Screens-Down.md adds its own.
 const AREAS = ["Operations", "Integrations", "Protocols", "Access", "Security", "Settings", "Data", "Audit"]
 // What an area's directory holds that the rule does not read, as a path under screen/System (a screen and the screens below
 // it), with why.

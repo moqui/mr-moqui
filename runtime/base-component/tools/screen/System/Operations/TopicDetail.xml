@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- TopicDetail (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §10): one notification topic, from
+<!-- TopicDetail (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §10): one notification topic, from
     org.moqui.admin.OperationServices.get#Topic. TopicDefaults: its delivery settings, of which only those its owner
     registered are changed, by the configuration administrator (store#TopicDefaults, ADMIN_SETTINGS_MANAGE); whether it is
     private, its templates, its approval services and its inbox are never changed here. TopicSubscriptions: the settings of the

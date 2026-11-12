@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Imports (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §11 Imports): the import runs of
+<!-- Imports (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §11 Imports): the import runs of
     every registered target, newest first, from org.moqui.admin.DataTransferServices.find#ImportRuns. ImportFind: target,
     state and a bounded range of dates. ImportList: each run with its target and owner, the file's label, what it was
     for, the state and the rows applied, in need of attention and skipped. A run whose batch is read through the import

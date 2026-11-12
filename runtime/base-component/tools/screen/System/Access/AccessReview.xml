@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- AccessReview (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §16 "Access/grant review"):
+<!-- AccessReview (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §16 "Access/grant review"):
     the access and grant review of the groups chosen in Capabilities or of one group from GroupDetail, as of a date and
     time: each group's permission grants, app gates with their row rules, and members, every one named. One projection
     (org.moqui.admin.AccessServices.get#GrantReview, ADMIN_ACCESS_VIEW, made into rows by template/AccessReview.js) for the

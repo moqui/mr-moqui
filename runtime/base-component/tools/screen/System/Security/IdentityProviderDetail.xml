@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- IdentityProviderDetail (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §6
+<!-- IdentityProviderDetail (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §6
     IdentityProviderDetail, §8.1): one sign-in provider, read from org.moqui.admin.ConfigurationServices
     find#IdentityProviders and changed through store#IdentityProvider at the revision read. ProviderConfiguration is the
     type's own form (OpenID Connect, OAuth or SAML): a secret is entered, never shown (only whether one is set); a change

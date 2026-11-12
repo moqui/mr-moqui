@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- ConnectionDetail (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8.1, §8): one connection of
+<!-- ConnectionDetail (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §8.1, §8): one connection of
     a registered kind (a gateway, a remote system, a mail sign-in provider, a network printer), read from
     org.moqui.admin.ConfigurationServices.get#Connection and changed through store#Connection at the revision read.
     NativeConnection is the kind's own form: its settings and its secrets, a secret entered and never shown; a change of an

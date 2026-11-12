@@ -160,7 +160,7 @@ and alert rule templates: the `monitor-*` dashboards of Monitor, and in the Syst
 ### Mounting the administration screens
 
 Another app shows System's administration screens under its own root, as IronStone Admin does
-([plans/Admin-Screens-Down.md](../../../plans/Admin-Screens-Down.md)). Its root sets `adminMount` in its
+([plans/archive/Admin-Screens-Down.md](../../../plans/archive/Admin-Screens-Down.md)). Its root sets `adminMount` in its
 `always-actions`, so that the transitions read it too; `System.xml` sets it to null, so a request parameter never supplies
 one. The map is data only, never authority:
 

@@ -5,7 +5,7 @@
 // column named like a secret, is refused whole; a batch is read by who staged it and those its target admits; a stale
 // preview is refused; an identical retry answers the first result and changed content under its key is refused; each row is
 // on its own, and only failed rows are retried: an applied row is never applied again; and what the administration screens
-// read of an import (find#ImportRuns, get#ImportDetail; plans/Admin-Screens-Down.md A5) is the same answers put together:
+// read of an import (find#ImportRuns, get#ImportDetail; plans/archive/Admin-Screens-Down.md A5) is the same answers put together:
 // the run with its counts as text and its owner's key, the import's rows as text, a retry there only with
 // ADMIN_TRANSFER_RUN. The target is the framework's own, message translations, whose rows are saved by
 // store#LocalizedMessage's rules.

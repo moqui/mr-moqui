@@ -361,7 +361,7 @@ An app shows a framework screen (System's administration screens, the Dashboards
 of copying it, as IronStone Admin and Insights do. The two contracts are
 [Mounting the administration screens](../../runtime/base-component/tools/README.md#mounting-the-administration-screens)
 and [Mounting the report screens](../tools/Monitoring.md#mounting-the-report-screens); the record of the two moves,
-with the findings behind these rules, is [plans/Admin-Screens-Down.md](../../plans/Admin-Screens-Down.md).
+with the findings behind these rules, is [plans/archive/Admin-Screens-Down.md](../../plans/archive/Admin-Screens-Down.md).
 
 - **Three ways**, chosen by what the app's authorization rows name, what the framework screen has and what the app
   adds:

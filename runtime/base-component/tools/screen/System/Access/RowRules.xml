@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- RowRules (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §5 RowRules): the row rules in
+<!-- RowRules (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §5 RowRules): the row rules in
     effect, read from org.moqui.admin.AccessServices.get#ScopeRules (ADMIN_ACCESS_VIEW). ScopeRules lists each filter set
     bound to a group's app gate (an EntityFilterSet on an ArtifactAuthz) with the records it narrows and where it comes
     from: a registered bundle, or deployed configuration. A registered app gate that lacks a row rule its bundle registers

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- Alerts (docs/tools/Monitoring.md, "The Dashboards app" and "Business alerts"; plans/Admin-Screens-Down.md, Track I;
+<!-- Alerts (docs/tools/Monitoring.md, "The Dashboards app" and "Business alerts"; plans/archive/Admin-Screens-Down.md, Track I;
     Tools' list merged with BOSS Insights'): the alert rules the viewer reads. AlertFind chooses the view and the state.
     All: every rule they read, each with its kind (an operational rule tells contact points, a business rule an audience
     of people who read what its owner reads), its owner, its condition, whom it tells and the most severe state of its

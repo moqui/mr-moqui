@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Readiness, refresh, the settings index and the support summary for delegated administration
-    (plans/Admin-Screens-Down.md A6; first IronStone Admin's registries, mr-boss plan/design-admin.md §3, §7, §10, §14,
+    (plans/archive/Admin-Screens-Down.md A6; first IronStone Admin's registries, mr-boss plan/design-admin.md §3, §7, §10, §14,
     §16; Readiness.js), over the registrations their owners seed (moqui.server.ReadinessProvider, RefreshOperation and
     SettingsEntry, entity/ServerEntities.xml). ALL_USERS may call the seven (data/AdminConfigurationData.xml
     AdminReadinessServices) and each checks the caller itself. Their ALLOW is not inheritable: a registered owner's service

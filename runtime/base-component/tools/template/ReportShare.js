@@ -1,5 +1,5 @@
 // Sharing a dashboard or a playlist with a group (screen/Dashboards/Dashboard.xml's share and Playlists.xml's
-// sharePlaylist; docs/tools/Monitoring.md, "Sharing"; plans/Admin-Screens-Down.md, Track I). A definition has one group:
+// sharePlaylist; docs/tools/Monitoring.md, "Sharing"; plans/archive/Admin-Screens-Down.md, Track I). A definition has one group:
 // its owner shares it with a group, moves it to another or makes it private again, and the group reads the definition
 // only: each of its viewers still reads a dataset by their own grant. Presentation only: the groups are
 // find#ShareGroups' and the save is the engine's save#Definition, each called as the viewer, so the engine checks the

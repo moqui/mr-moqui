@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Sessions (plans/Admin-Screens-Down.md; its list first IronStone Admin's, mr-boss design-admin §4 Sessions): the sessions
+<!-- Sessions (plans/archive/Admin-Screens-Down.md; its list first IronStone Admin's, mr-boss design-admin §4 Sessions): the sessions
     of every account, from org.moqui.admin.IdentityServices.find#Sessions (ADMIN_IDENTITY_VIEW), live ones or the last
     days', narrowed by a user's name, each named by its visit and a client summary, never a cookie, token or user agent.
     SessionList's bulk action ends the chosen sessions on every server (revoke#Sessions, ADMIN_IDENTITY_MANAGE): one the

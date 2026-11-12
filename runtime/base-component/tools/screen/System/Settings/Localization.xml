@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Localization (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §7 Localization): the
+<!-- Localization (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §7 Localization): the
     translations, for a holder of ADMIN_SETTINGS_VIEW (reads) and ADMIN_SETTINGS_MANAGE (changes), which
     org.moqui.admin.ConfigurationServices check themselves. LocalizationFind chooses messages or labels, a locale, text
     and whether to list what is missing in the locale. MessageTranslations are the message translations

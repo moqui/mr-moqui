@@ -1,5 +1,5 @@
 // Readiness, refresh, the settings index and the support summary, org.moqui.admin.ReadinessServices
-// (plans/Admin-Screens-Down.md A6; first IronStone Admin's registries, mr-boss plan/design-admin.md §3, §7, §10, §14, §16):
+// (plans/archive/Admin-Screens-Down.md A6; first IronStone Admin's registries, mr-boss plan/design-admin.md §3, §7, §10, §14, §16):
 // each is read from the owners' registrations (moqui.server ReadinessProvider, RefreshOperation, SettingsEntry), and a
 // registered service is called only because a row names it, as the caller. A provider that fails is named while the
 // others answer; one the caller may not read, one whose service refuses the caller and one naming no service are left

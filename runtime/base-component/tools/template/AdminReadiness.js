@@ -1,5 +1,5 @@
 // What the Health, settings index and support summary screens show (System › Operations › Health and SupportSummary,
-// System › Settings › SettingsHome; plans/Admin-Screens-Down.md A6), over org.moqui.admin.ReadinessServices, which
+// System › Settings › SettingsHome; plans/archive/Admin-Screens-Down.md A6), over org.moqui.admin.ReadinessServices, which
 // check the caller themselves. A refusal is shown as its reason (AdminCalls.read). A place a registration names is a
 // key: it is linked by the mount's routes (AdminMount.js), a screen path by url and parameters, which the link widget
 // disables for a viewer the screen does not open to, another app's page by href; a key with no route here is no link.

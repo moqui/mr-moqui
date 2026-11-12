@@ -1,5 +1,5 @@
 // What the Analysis screen of Dashboards shows and asks (screen/Dashboards/Analysis.xml; docs/tools/Monitoring.md,
-// "Analysis"; plans/Admin-Screens-Down.md, Track I): an aggregate over a dataset the viewer reads, built from typed
+// "Analysis"; plans/archive/Admin-Screens-Down.md, Track I): an aggregate over a dataset the viewer reads, built from typed
 // choices (the dataset, a measure and how it is aggregated, up to two groups, a time grain, one filter), run through the
 // report engine as the viewer and saved as an ordinary library panel, which the definition editor then refines. No query
 // language is added: the choices become the engine's own query, each field checked against the dataset's fields, and

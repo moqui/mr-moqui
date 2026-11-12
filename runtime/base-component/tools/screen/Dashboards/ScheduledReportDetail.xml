@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- ScheduledReportDetail (docs/tools/Monitoring.md, "Report delivery"; plans/Admin-Screens-Down.md, Track I; first BOSS
+<!-- ScheduledReportDetail (docs/tools/Monitoring.md, "Report delivery"; plans/archive/Admin-Screens-Down.md, Track I; first BOSS
     Insights'): one schedule, for its owner (another's or none is "not available"). EditScreenScheduled: the timing,
     format, active interval, subject and skipping an empty report. ReportAudience: the people and groups it goes to
     beside each recipient's result from the engine's check (may receive it, or the reason in words; never the other

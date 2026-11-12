@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Capabilities (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §5 Capabilities): what the
+<!-- Capabilities (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §5 Capabilities): what the
     registered bundles and custom groups hold, over the capability registry (org.moqui.admin.AccessServices
     get#MatrixContext). CapabilitySelection chooses an app, up to eight groups and a kind; CapabilityMatrix shows the app's
     capabilities as rows (a launcher, and each permission by its kind: view, change, export, sensitive values, each a row

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- ReportDelivery (docs/tools/Monitoring.md, "Report delivery"; plans/Admin-Screens-Down.md, Track I; first BOSS
+<!-- ReportDelivery (docs/tools/Monitoring.md, "Report delivery"; plans/archive/Admin-Screens-Down.md, Track I; first BOSS
     Insights'): one run of a schedule, as get#ReportOccurrence answers the viewer (missing and someone else's read alike
     as "not available"). Occurrence: what ran, for its schedule's owner (the schedule's revision, the report's version,
     the safe counters), and for a holder of the administrative read the same with its owner by name. RecipientOutcomes:

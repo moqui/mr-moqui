@@ -1,5 +1,5 @@
 // The capability matrix as a screen shows and changes it, org.moqui.admin.AccessServices get#MatrixContext and
-// apply#MatrixChanges (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §5 Capabilities). Access.js
+// apply#MatrixChanges (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §5 Capabilities). Access.js
 // and AccessCapabilities.js hold the registry, the projections and every rule (get#Capabilities, preview#Grants,
 // apply#Grants: ADMIN_ACCESS_VIEW and ADMIN_ACCESS_MANAGE, registered bundles only, sealed permissions and privileged groups,
 // revisions, the administration path). This module is the Capabilities screen's context over them:

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- InstanceSettings (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §7 InstanceSettings): the
+<!-- InstanceSettings (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §7 InstanceSettings): the
     instance's registered settings, from org.moqui.admin.ConfigurationServices.get#EffectiveSettings
     (ADMIN_SETTINGS_VIEW). InstancePresentation lists the instance preferences (what the instance is called, the default
     locale and time zone, the new-device sign-in window, the group recipient ceiling of scheduled reports), each changed

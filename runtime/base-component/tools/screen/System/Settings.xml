@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Settings (plans/Admin-Screens-Down.md): the instance's registered settings with where each value comes from
+<!-- Settings (plans/archive/Admin-Screens-Down.md): the instance's registered settings with where each value comes from
     (InstanceSettings) and the translations of messages and of registered labels (Localization), over
     org.moqui.admin.ConfigurationServices, which check ADMIN_SETTINGS_VIEW and ADMIN_SETTINGS_MANAGE themselves; and the
     settings index (SettingsHome), each owner's registered settings landing the viewer may open, over

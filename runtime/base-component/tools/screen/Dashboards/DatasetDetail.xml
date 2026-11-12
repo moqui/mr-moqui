@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
-<!-- DatasetDetail (docs/tools/Monitoring.md, "Business datasets"; plans/Admin-Screens-Down.md, Track I; first BOSS
+<!-- DatasetDetail (docs/tools/Monitoring.md, "Business datasets"; plans/archive/Admin-Screens-Down.md, Track I; first BOSS
     Insights'): one business dataset for its steward, from get#BusinessDataset: its identity and scope (EditDataDocument:
     name, time field, a registered scope policy and the field that carries a row's scope; a shipped dataset's are its
     component's), its index (feed, index, last build and lag, Rebuild index through index#BusinessDataset), its admission

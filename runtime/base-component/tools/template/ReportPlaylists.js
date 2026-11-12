@@ -1,5 +1,5 @@
 // What the playlist screens of Dashboards show and ask (screen/Dashboards/Playlists.xml, Playlist.xml and
-// WallDisplay.xml; docs/tools/Monitoring.md, "Playlists and the wall display"; plans/Admin-Screens-Down.md, Track I). A
+// WallDisplay.xml; docs/tools/Monitoring.md, "Playlists and the wall display"; plans/archive/Admin-Screens-Down.md, Track I). A
 // playlist is a report definition of kind playlist: dashboards in an order, each shown for a number of seconds.
 //
 //     Playlists    the playlists the viewer reads, a new one, and its owner's sharing (ReportShare.js)

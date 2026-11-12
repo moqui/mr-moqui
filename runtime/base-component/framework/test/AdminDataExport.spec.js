@@ -6,7 +6,7 @@
 // whole) and, written here, with a formula cell as text; an export keeps one record and one audit row (who, what, how many,
 // never the content), its repeat under an operation key no second record and an audit row of its own; the records are read by who exported and those the target's
 // view permission admits; and what the administration screens read and post of them (find#ExportRuns, get#ExportContext,
-// run#ExportRequest; plans/Admin-Screens-Down.md A5) adds nothing: a wizard's form values are a request of the registration,
+// run#ExportRequest; plans/archive/Admin-Screens-Down.md A5) adds nothing: a wizard's form values are a request of the registration,
 // run with ADMIN_TRANSFER_RUN. The target is a copy of the framework's own, message translations, with one field restricted.
 // Run: ./moq test framework --spec AdminDataExport
 const T = "org.moqui.admin.DataTransferServices."

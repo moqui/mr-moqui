@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Topics (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §10): the notification topics, from
+<!-- Topics (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §10): the notification topics, from
     org.moqui.admin.OperationServices.find#Topics. TopicList: each topic with its description, its owner (or "Not registered":
     read only here), whether it is private, its inbox, whether it asks for a decision, its delivery defaults (in app, email,
     push, digest) and how many users have a setting for it and receive every message of it; a topic opens TopicDetail. No title

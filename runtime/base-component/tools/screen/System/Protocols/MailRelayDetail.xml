@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- MailRelayDetail (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §9, §8.1): one outgoing mail
+<!-- MailRelayDetail (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §9, §8.1): one outgoing mail
     relay, an EmailServer no mail account owns. RelayConfiguration is its SMTP host, port, TLS and sign-in, the password
     entered and never shown; a change of the host, the port, TLS or the user needs the password entered again, else the stored
     one is cleared, and either way the relay sends nothing until RelayTest passes against the new host, which enables it.

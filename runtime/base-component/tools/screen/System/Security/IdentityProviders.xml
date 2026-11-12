@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- IdentityProviders (plans/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §6 IdentityProviders):
+<!-- IdentityProviders (plans/archive/Admin-Screens-Down.md; first IronStone Admin's, mr-boss design-admin §6 IdentityProviders):
     the sign-in providers people may sign in through (moqui.security.sso.AuthFlow), read from
     org.moqui.admin.ConfigurationServices.find#IdentityProviders. ProviderList shows each with its type, whether it is
     enabled, its readiness and the callback URL to register at the provider; NewProvider starts an OpenID Connect or OAuth

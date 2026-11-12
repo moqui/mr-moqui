@@ -366,7 +366,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/AccessCapabilities.js').execute('getGrantReview', context))</script></actions>
     </service>
 
-    <!-- The capability matrix as a screen shows and changes it (AccessMatrix.js; plans/Admin-Screens-Down.md A3: first IronStone
+    <!-- The capability matrix as a screen shows and changes it (AccessMatrix.js; plans/archive/Admin-Screens-Down.md A3: first IronStone
         Admin's): the Capabilities screen's context over get#Capabilities and preview#Grants, and its proposal applied through
         apply#Grants -->
     <service verb="get" noun="MatrixContext" allow-remote="false">
