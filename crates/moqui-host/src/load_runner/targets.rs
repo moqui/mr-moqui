@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What a load run from Tools may reach and how big it may be (plans/LoadRunner.md §10 Targets and Limits, D6). A
+//! What a load run from Tools may reach and how big it may be (plans/archive/LoadRunner.md §10 Targets and Limits, D6). A
 //! run reaches this server, loopback and the URL prefixes of `load_runner_targets`; a dev instance any URL. Without
 //! the rule a holder could aim the server at another site, a request forgery and a denial of service tool. Plain
 //! http to another machine is refused unless the list names it, since a login crosses in the clear: a prefix carries
@@ -20,6 +20,9 @@
 //! (behind a load balancer its public name is another machine's). URLs are parsed as reqwest parses them (WHATWG, the
 //! `url` crate), so a prefix is matched on the path a request is really sent to, after `..`, `%2e%2e` and `.`
 //! segments are resolved.
+//!
+//! SSH (plans/archive/LoadRunner.md L7): a run's `ssh.connect` reaches this server's own SSH listener, loopback, and the
+//! `ssh://host:port` entries of `load_runner_targets`; a dev instance any host.
 
 use std::collections::BTreeMap;
 use std::net::IpAddr;
@@ -41,6 +44,10 @@ pub(crate) struct TargetPolicy {
     pub(crate) own: Vec<SiteOrigin>,
     /// The `load_runner_targets` prefixes.
     pub(crate) prefixes: Vec<Prefix>,
+    /// The `ssh://host:port` entries of `load_runner_targets`, the host in lower case.
+    pub(crate) ssh: Vec<(String, u16)>,
+    /// This server's SSH listener, when it has one.
+    pub(crate) own_ssh: Option<std::net::SocketAddr>,
     /// A dev instance reaches any URL.
     pub(crate) any: bool,
 }
@@ -55,11 +62,39 @@ pub(crate) struct Prefix {
 impl TargetPolicy {
     /// The policy of this instance: its own origins, `load_runner_targets`, and whether it is a dev instance.
     pub(crate) fn of_factory(factory: &ExecutionContextFactory) -> Self {
+        let targets = moqui_lib::env::get_prop_or_env("load_runner_targets");
         Self {
             own: configured_origins(factory),
-            prefixes: parse_prefixes(&moqui_lib::env::get_prop_or_env("load_runner_targets")),
+            prefixes: parse_prefixes(&targets),
+            ssh: parse_ssh_targets(&targets),
+            own_ssh: own_ssh(factory),
             any: moqui_core::devtools::is_dev_instance(),
         }
+    }
+
+    /// Whether a run may connect over SSH to `host:port`; the error says why not.
+    pub(crate) fn allow_ssh(&self, host: &str, port: u16) -> Result<(), String> {
+        let host = host.trim().to_ascii_lowercase();
+        if self.any || is_loopback(&host) {
+            return Ok(());
+        }
+        // this server's listener by one of its own names, or by the address it binds
+        let own = self.own_ssh.is_some_and(|address| {
+            address.port() == port
+                && (address.ip().to_string() == host.trim_start_matches('[').trim_end_matches(']')
+                    || self.own.iter().any(|origin| origin.host == host))
+        });
+        if own
+            || self
+                .ssh
+                .iter()
+                .any(|(allowed, allowed_port)| *allowed == host && *allowed_port == port)
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "ssh to {host}:{port} is not this server's SSH, loopback, or an ssh://host:port entry in load_runner_targets"
+        ))
     }
 
     /// Whether a run may reach `url`; the error says why not.
@@ -112,12 +147,50 @@ pub(crate) fn parse_prefixes(text: &str) -> Vec<Prefix> {
         .map(str::trim)
         .filter(|entry| !entry.is_empty());
     for entry in entries {
+        if entry.starts_with("ssh://") {
+            continue;
+        }
         match parse_url(entry) {
             Some((origin, path)) => prefixes.push(Prefix { origin, path }),
-            None => tracing::error!(entry, "load_runner_targets: not an http or https URL; left out"),
+            None => tracing::error!(entry, "load_runner_targets: not an http, https or ssh URL; left out"),
         }
     }
     prefixes
+}
+
+/// The `ssh://host:port` entries of `load_runner_targets` (port 22 when it names none); one that does not read is
+/// logged and left out.
+pub(crate) fn parse_ssh_targets(text: &str) -> Vec<(String, u16)> {
+    let mut targets = Vec::new();
+    let entries = text
+        .split([',', ' ', '\n', '\t'])
+        .map(str::trim)
+        .filter(|entry| entry.starts_with("ssh://"));
+    for entry in entries {
+        let parsed = url::Url::parse(entry).ok().and_then(|url| {
+            let host = url.host_str().filter(|host| !host.is_empty())?.to_ascii_lowercase();
+            let plain = url.username().is_empty() && url.password().is_none() && matches!(url.path(), "" | "/");
+            plain.then(|| (host, url.port().unwrap_or(moqui_core::sftp::SSH_PORT)))
+        });
+        match parsed {
+            Some(target) => targets.push(target),
+            None => tracing::error!(entry, "load_runner_targets: not an ssh://host:port entry; left out"),
+        }
+    }
+    targets
+}
+
+/// This server's SSH listener: where a run against this server connects by default.
+pub(crate) fn own_ssh(factory: &ExecutionContextFactory) -> Option<std::net::SocketAddr> {
+    #[cfg(feature = "ssh")]
+    {
+        *moqui_lib::sync::lock(&factory.extension(|_| crate::ssh::server::SshAddress::default()).0)
+    }
+    #[cfg(not(feature = "ssh"))]
+    {
+        let _ = factory;
+        None
+    }
 }
 
 /// The origin and the normalized path of an http or https URL, as reqwest sends it: dot segments (`..`, `%2e%2e`,

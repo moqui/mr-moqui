@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The loads running in this process (plans/LoadRunner.md §7, D5, D6): the registry by runId, a run's thread, its
+//! The loads running in this process (plans/archive/LoadRunner.md §7, D5, D6): the registry by runId, a run's thread, its
 //! stop, its watch on the starting user, and the stop of every run at shutdown. A running load is only here, in
 //! memory; once every one of its users' threads has exited its thread writes `result.json` ([`super::results`]) and
 //! takes it out of the registry. Nothing is written to the database.
@@ -198,7 +198,7 @@ const BEGUN_ONLY: [&str; 7] = [
     "sleep",
 ];
 
-/// What a run binds its threads to, in Rust and not through the script's own calls (plans/LoadRunner.md §10): its
+/// What a run binds its threads to, in Rust and not through the script's own calls (plans/archive/LoadRunner.md §10): its
 /// load, set once its users have started, and the flag that interrupts their scripts on a stop now.
 pub(crate) struct Bound {
     load: OnceLock<Arc<Load>>,
@@ -252,6 +252,16 @@ impl InServer for RunInServer {
         }
         may_act()?;
         self.policy.allow(url)
+    }
+
+    fn allow_ssh(&self, host: &str, port: u16) -> Result<(), String> {
+        if !self.uses("ssh") {
+            return Err(
+                "the load script makes no SSH connection: its plan does not declare uses: [\"ssh\"]".to_string(),
+            );
+        }
+        may_act()?;
+        self.policy.allow_ssh(host, port)
     }
 
     fn service_call(&self, args: &Value) -> Result<Value, String> {
@@ -316,10 +326,12 @@ fn own_url(factory: &ExecutionContextFactory) -> String {
     }
 }
 
-/// The client host for a run of a script of `component_dir` against `server`.
+/// The client host for a run of a script of `component_dir` against `server`, whose `ssh.connect` goes to `ssh`
+/// when it names no host.
 fn host_for(
     factory: &ExecutionContextFactory,
     server: &str,
+    ssh: Option<(String, u16)>,
     component_dir: &Path,
     insecure: bool,
     bound: Arc<Bound>,
@@ -332,6 +344,7 @@ fn host_for(
     let dyn_in_server: Arc<dyn InServer> = Arc::clone(&in_server) as Arc<dyn InServer>;
     let host = ClientHost::for_server_run(
         server,
+        ssh,
         BTreeMap::new(),
         insecure,
         component_dir.to_path_buf(),
@@ -361,7 +374,7 @@ pub(crate) fn read_plan_for_list(
         }
     }
     let read = (|| {
-        let (host, _) = host_for(factory, &own_url(factory), component_dir, false, Bound::new())?;
+        let (host, _) = host_for(factory, &own_url(factory), None, component_dir, false, Bound::new())?;
         let file = load::LoadScript::from_file(&script.path, &script.location)?;
         load::script::read_plan_listed(&host, &file, &json!({}))
     })();
@@ -630,8 +643,28 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>, ask: Ask) -> Result<
         TargetKind::This | TargetKind::Service => own_url(factory),
     };
     policy.allow(&target)?;
+    // a run against this server connects to its own SSH listener; one against another names its host and port
+    let ssh = match ask.target_kind {
+        TargetKind::Url => None,
+        TargetKind::This | TargetKind::Service => policy.own_ssh.map(|address| {
+            let ip = address.ip();
+            let host = match ip {
+                std::net::IpAddr::V4(ip) if ip.is_unspecified() => "127.0.0.1".to_string(),
+                std::net::IpAddr::V6(ip) if ip.is_unspecified() => "::1".to_string(),
+                ip => ip.to_string(),
+            };
+            (host, address.port())
+        }),
+    };
     let bound = Bound::new();
-    let (host, in_server) = host_for(factory, &target, &ask.component_dir, ask.insecure, Arc::clone(&bound))?;
+    let (host, in_server) = host_for(
+        factory,
+        &target,
+        ssh,
+        &ask.component_dir,
+        ask.insecure,
+        Arc::clone(&bound),
+    )?;
     let file = load::LoadScript::from_file(&ask.script.path, &ask.script.location)?;
     let plan = load::script::read_plan(&host, &file, &Value::Object(ask.params.clone()), &json!({}))?;
     let uses = plan.uses();
@@ -884,11 +917,11 @@ fn kind_name(kind: TargetKind) -> &'static str {
 }
 
 /// A plan's `uses` against the run's target: `service` needs the `service` target (this server's process), `http`
-/// needs `this` or `url`.
+/// needs `this` or `url`; `ssh` goes with any, its host checked on each connect ([`TargetPolicy::allow_ssh`]).
 pub(crate) fn check_uses(uses: &[String], kind: TargetKind) -> Result<(), String> {
     for kind_used in uses {
         match (kind_used.as_str(), kind) {
-            ("service", TargetKind::Service) | ("http", TargetKind::This | TargetKind::Url) => {}
+            ("service", TargetKind::Service) | ("http", TargetKind::This | TargetKind::Url) | ("ssh", _) => {}
             ("service", _) => {
                 return Err(
                     "the script calls services in process (uses service): run it with the service target".into(),

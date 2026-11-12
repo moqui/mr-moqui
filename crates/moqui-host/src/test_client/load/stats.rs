@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A load's result (plans/LoadRunner.md section 5): the totals and the table by name from the histograms, the bins,
+//! A load's result (plans/archive/LoadRunner.md section 5): the totals and the table by name from the histograms, the bins,
 //! the thresholds and their verdict, the generator's share of the machine, and the console table.
 
 use std::fmt::Write as _;

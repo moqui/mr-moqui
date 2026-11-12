@@ -12,6 +12,6 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Load runs in a server when this build has no `test-client` feature (plans/LoadRunner.md §7): nothing is registered,
+//! Load runs in a server when this build has no `test-client` feature (plans/archive/LoadRunner.md §7): nothing is registered,
 //! and a call of an `org.moqui.dev.LoadServices` service reports that test-client is not built into this host
 //! (`moqui_core::extension` maps `moqui_host::load_runner::` to the feature).

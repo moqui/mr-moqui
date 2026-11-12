@@ -208,7 +208,7 @@ Each of these is small, and each decides an item of §6. M1 and M2 come first: t
     holds, a service call inside a loop.
 - **M4. Thread rows.** `speed::Rows::run_threads` (R7) on 1, 2, 4, 8 and 16 threads for noop#Inline, a cached find
   from actions, a find in the database from a script, and List html. Then `perf c2c` on what stops scaling.
-  [LoadRunner](LoadRunner.md) does the same for whole flows over HTTP once built.
+  [LoadRunner](archive/LoadRunner.md) does the same for whole flows over HTTP once built.
 - **M5. A clean render profile.** `perf` of the current build for Entities and Cache Elements in html and qvt, the
   render profile off, split by layer with R33's `layers.py`. The output now streams (0a1f1a41), so this is also the
   new base.
@@ -465,7 +465,7 @@ locally on its rows and tests, then committed; the Sweep, the Mantle runs and th
 - **D3, result (Round 60):** on by default for XML-actions and script services; Rust, native and entity-auto services
   and force-new calls keep their definition's attribute.
 - **D6. The pool sizes are not fixed (§3, S6).** Round 60: 16 request and 22 service workers, pools of 90. The defaults (eight request workers, 25 service workers) get tuned
-  when load testing with real-ish loads begins ([LoadRunner](LoadRunner.md)). If a test before that shows a default
+  when load testing with real-ish loads begins ([LoadRunner](archive/LoadRunner.md)). If a test before that shows a default
   should change, M4's thread rows for one, change it then and keep tuning.
 
 Nothing is open as of 2026-11-10. A question that comes up in the work goes here.
@@ -492,4 +492,4 @@ Nothing is open as of 2026-11-10. A question that comes up in the work goes here
 - **[MantleUSL-Performance-Audit](MantleUSL-Performance-Audit.md)** and
   **[MantleUSL-Execution-Benchmark-Plan](MantleUSL-Execution-Benchmark-Plan.md):** the loop counts, the execution
   methods compared (S3c is its method I with a choice per body), Stage B.
-- **[LoadRunner](LoadRunner.md):** the order to cash flow for M4 and M8.
+- **[LoadRunner](archive/LoadRunner.md):** the order to cash flow for M4 and M8.

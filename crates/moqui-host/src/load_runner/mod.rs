@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Load runs in a server (plans/LoadRunner.md §6, §7, §10), the server side of the Tools load runner under the
+//! Load runs in a server (plans/archive/LoadRunner.md §6, §7, §10), the server side of the Tools load runner under the
 //! `test-client` feature: `org.moqui.dev.LoadServices`, Rust services registered through this module's extension
 //! entry. The load scripts of the loaded components ([`scripts`]), the running loads and their threads ([`run`]),
 //! `service.call` in process ([`service_call`]), the result files of finished runs ([`results`]) and what a run may
@@ -266,7 +266,7 @@ fn stop_load_run(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -
     none()
 }
 
-/// `update#LoadRunUsers` (plans/LoadRunner.md L6): a running scenario's users or rate from now on, within
+/// `update#LoadRunUsers` (plans/archive/LoadRunner.md L6): a running scenario's users or rate from now on, within
 /// `load_runner_max_users` for the run in all.
 fn update_load_run_users(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
     if !may_run_loads() {

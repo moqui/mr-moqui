@@ -1,7 +1,8 @@
 # Load scripts: the `.load.js` API
 
 A load script is a JavaScript file, `<component>/test/load/<Name>.load.js`, that declares groups of virtual users
-and what each user does: HTTP requests to a server, or calls of a server's services in its own process. Three things
+and what each user does: HTTP requests and WebSocket messages to a server, commands and terminal sessions over SSH,
+or calls of a server's services in its own process. Three things
 run it, on one engine: the `moqui test-load` command (`./moq test-load`), Tools › Load in a running server, and a
 client spec's `load({ script })`. This page is the API a script is written with. Running a script, reading its
 result and the security rules of a run in a server are in [Load-Runner](../tools/Load-Runner.md).
@@ -11,8 +12,9 @@ The other JavaScript test APIs are [JS-Testkit](JS-Testkit.md), the server specs
 Building, the two suites and the commands are in [Build-Test](../Build-Test.md).
 
 The code is `crates/moqui-host/src/test_client/prelude.js` (`plan`, `scenario`, `step`, `pause`, `fail`, `service`,
-`load`), `crates/moqui-host/src/test_client/load/` (the engine: `script.rs` reads a plan and a scenario's settings,
-`schedule.rs` the stages and rates, `pace.rs` the think and pause times) and
+`ssh`, `load`), `crates/moqui-host/src/test_client/load/` (the engine: `script.rs` reads a plan and a scenario's
+settings, `schedule.rs` the stages and rates, `pace.rs` the think and pause times), `test_client/ws.rs` and
+`test_client/ssh.rs` (the WebSocket and SSH samples) and
 `crates/moqui-host/src/load_runner/` (a run in a server, `service_call.rs` for `service.call`).
 
 ## A script
@@ -58,13 +60,15 @@ The rules of the top level:
   (`plan() is called at the top level of a load script`). A second `plan()` throws, and so does a second scenario
   of the same name.
 - The top level makes no request. `http.request` (and so `get`, `post`, `login` and the rest), `http.raw`,
-  `ws.connect`, `browser.newPage` and `service.call` there throw "a load script makes no request at its top level".
+  `ws.connect`, `ssh.connect`, `browser.newPage` and `service.call` there throw "a load script makes no request at
+  its top level".
 - Reading the plan may take 30 seconds at most, since the top level only declares.
 - A script with no `scenario()` cannot run.
 - `moqui test` and `moqui test-client` run only `*.spec.js` files, so neither runs a `.load.js`.
 
 The scripts in the repository: `runtime/base-component/tools/test/load/ServiceCall.load.js` (one service called
-again and again in the server), `runtime/component/mr-marble/test/load/OrderToCash.load.js` (a sales order through
+again and again in the server), `runtime/base-component/tools/test/load/AgentApps.load.js` (the apps over SSH as an
+agent drives them, [SSH](#ssh)), `runtime/component/mr-marble/test/load/OrderToCash.load.js` (a sales order through
 the Marble ERP screens), and `runtime/dev-component/example/test/load/ScriptReach.load.js` (a fixture that proves
 what a user's engine reaches in a server run).
 
@@ -73,7 +77,7 @@ what a user's engine reaches in a server run).
 | Option | |
 | --- | --- |
 | `title`, `description` | Shown in the script list and on a run |
-| `uses` | The kinds of load the script makes: `"http"` (the default, when `uses` is left out) and `"service"`. A run that cannot make one is refused: `service` needs a run in a server with the service target, and `moqui test-load` refuses a script that uses it; `http` needs a target URL. In a server run a request of a kind the plan does not declare throws (`the load script makes no HTTP request: its plan does not declare uses: ["http"]`) |
+| `uses` | The kinds of load the script makes: `"http"` (the default, when `uses` is left out; WebSocket is under it), `"ssh"` and `"service"`. A run that cannot make one is refused: `service` needs a run in a server with the service target, and `moqui test-load` refuses a script that uses it; `http` needs a target URL; `ssh` goes with any target, its host checked on each connect. A kind the runner does not know is refused. In a server run a request of a kind the plan does not declare throws (`the load script makes no HTTP request: its plan does not declare uses: ["http"]`) |
 | `params` | The script's parameters ([`params`](#params)) |
 | `thresholds` | Limits the run is checked against at its end: `errorRate`, and in milliseconds `min`, `mean`, `p50`, `p90`, `p95`, `p99`, `max`, over every request, or under `names: { "<name>": {...} }` for one name. An unknown metric, or a limit that is not a number, is refused before the users start. A name with no samples breaks its limits |
 
@@ -188,10 +192,11 @@ What a script has from the client harness:
 | --- | --- |
 | `http` | The user's own default session: cookies and the session token of one user. `get`, `post`, `put`, `patch`, `delete`, `options`, `head`, `request`, `raw`, `login`, `logout`, `formLogin`, `cookies`, `clearCookies` and `token` ([HTTP](JS-Test-Client.md#http)). With `newSession` it is a fresh one each iteration |
 | `session(opts)`, `login(user, password)`, `logout()` | Another session of the user's, and the REST login and logout on `http` |
-| `ws` | WebSocket ([WebSocket](JS-Test-Client.md#websocket)) |
+| `ws` | WebSocket ([WebSocket](JS-Test-Client.md#websocket)); in a load its handshakes, named sends and receives are samples ([WebSocket and SSH](#websocket-and-ssh)) |
+| `ssh` | SSH: `exec`, `agentApps` and a pty `shell` ([SSH](JS-Test-Client.md#ssh)), each a sample in a load ([WebSocket and SSH](#websocket-and-ssh)) |
 | `hmac` | The System Message HMAC signers |
 | `files.list(dir, regex)`, `files.read(path)` | The script's own component, read-only |
-| `server` | `{ url, host, port, secure }` of the target |
+| `server` | `{ url, host, port, secure, ssh }` of the target; `ssh` is `{ host, port }` of its SSH listener, or null ([SSH](JS-Test-Client.md#ssh)) |
 | `sleep(ms)`, `waitUntil(fn, opts)` | A plain wait, and a poll until a function's value is true |
 | `assert` and its methods, `dec`, `sum` | As in a spec ([JS-Testkit](JS-Testkit.md#assert)). A failed `assert` ends the iteration as an error |
 | `log.trace`, `debug`, `info`, `warn`, `error` | To the console or the server's log at that level |
@@ -224,6 +229,53 @@ the timed part, in `setup` and `teardown`, nothing is recorded, and an error sti
 
 A load user's requests carry `User-Agent: moqui-load/<version>`, unless the request or its session names another.
 
+## WebSocket and SSH
+
+A WebSocket or SSH call of `run` is a sample as a request is, of kind `ws` or `ssh`, named by its `name` option or by
+default as below, with an outcome label in the name's `outcomes` (no `statuses`). It waits the scenario's `pause`
+first when it is something the user does (a connect, a send, an exec), not when it waits for the server (a receive,
+an expect). A stop now ends any of its waits. `expect: [labels]` lists the outcomes that are not errors.
+
+| Call | Default name | Outcomes, the errors in bold |
+| --- | --- | --- |
+| `ws.connect(path, { name, expect })` | `ws <path>` | The handshake's status: 101, **any other** |
+| `socket.send(text, { name })` | none: a send is a sample only when named | `ok`, **`error`** |
+| `socket.receive({ timeout, name, expect })` | `ws receive` | `ok` (a frame), **`timeout`**, **`closed`**, **`error`**. A receive that waits for nothing on purpose says `expect: ["timeout"]` |
+| `ssh.connect({ ..., name })` | `ssh connect` | `ok`, **`timeout`**, **`error`** (a refused key or login, nothing listening) |
+| `connection.exec(command, { name, expect, input, timeout })` | `ssh <first word>` | `exit 0`, **`exit <n>`**, **`refused`** (a command the account may not run; never expected), **`timeout`**. `expect: [1]` is `exit 1` |
+| `apps.command(line, { name, expect })` | `agent-apps <first word>` | As `exec`: `exit 0`, **`exit 1`** (an answer of `--- error`; `expect: ["error"]` allows it), **`exit 2`** (no such session, which throws whatever `expect` says) |
+| `shell.expect(pattern, { name, timeout, expect })` | `ssh expect` | `ok`, **`timeout`**, **`closed`**. Its time is from the shell's last `send` or match |
+
+## SSH
+
+`uses: ["ssh"]` lets a script open SSH connections, by default to the target's SSH listener
+([JS-Test-Client, SSH](JS-Test-Client.md#ssh) has the calls). The shipped `AgentApps.load.js` is the model: each
+user connects once in `setup` and keeps the connection in `this`, and each iteration opens an `agent-apps` session,
+runs its commands and closes it.
+
+```js
+scenario("agents", {
+    users: 4, rampUp: 2, iterations: 5, think: [500, 1500],
+    setup(user) { this.conn = ssh.connect({ user: params.user, password: params.password }) },
+    run(user, iteration) {
+        step("find a user account", () => {
+            const apps = this.conn.agentApps("/apps/system/Security/UserAccount/UserAccountList")
+            apps.command("key f", { name: "open find" })
+            apps.command(`set Username ${params.username}`, { name: "set username" })
+            const found = apps.command("key Enter", { name: "find" })
+            if (!found.ok) fail(`the find answered ${found.reason}`)
+            apps.close()
+        })
+    },
+    teardown(user) { this.conn.close() },
+})
+```
+
+A user's connections and shells close when the user ends. The server limits SSH connections (`ssh-server`
+`max-sessions`, 8) and terminal sessions (`terminal` `max-sessions` 16 and `max-sessions-per-user` 4, an `agent-apps`
+session and a pty's apps alike), so users sharing one account stop at 4 sessions. `conf/MoquiLoadTestConf.xml` raises
+them and turns SSH on at port 2222.
+
 ## From a client spec
 
 `load({ script: "test/load/Name.load.js", params, scenarios: { name: { users, iterations, ... } } })` runs a script
@@ -240,6 +292,9 @@ of the spec's component and returns the result, so an acceptance spec checks tha
 - `think`, `pause` and `sleep` are in milliseconds; `duration`, `rampUp` and a stage's `duration` are in seconds.
 - `expect: [...]` replaces the 400-and-up rule for that request: list every status that is not an error.
 - A `step` is not a request: the totals and `rps` count the requests inside it.
+- A WebSocket receive that is meant to time out says `expect: ["timeout"]`; otherwise, in a load, the timeout is an
+  error.
+- SSH users of one account meet the server's terminal limits before its CPU does ([SSH](#ssh)).
 - A load against a server with the demo data is answered 429 by its tarpits; run the server on
   `conf/MoquiLoadTestConf.xml` ([Load-Runner, Notes on measuring](../tools/Load-Runner.md#notes-on-measuring)).
 - A REST logout ends every session of that user, and an account locks on its fourth failed login

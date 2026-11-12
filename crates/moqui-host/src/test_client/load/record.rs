@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Recording a load's samples (plans/LoadRunner.md section 5): a user's thread keeps its samples in its own
+//! Recording a load's samples (plans/archive/LoadRunner.md section 5): a user's thread keeps its samples in its own
 //! [`Recorder`], with no lock, and merges them into the load's [`Shared`] state at most once a second and when it ends.
 //! The shared state has, per name, a histogram, counts by outcome and an error count, and the run's bins.
 

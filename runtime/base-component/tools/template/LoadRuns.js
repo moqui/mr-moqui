@@ -1,6 +1,6 @@
 // This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
 //
-// The reads Tools › Load's screens share (plans/LoadRunner.md §8), over org.moqui.dev.LoadServices, which check
+// The reads Tools › Load's screens share (plans/archive/LoadRunner.md §8), over org.moqui.dev.LoadServices, which check
 // LOAD_RUNNER and the Tools authorization themselves:
 //
 // - runView(runId): one run as its page shows it: a running load's snapshot or a finished run's result, made into the

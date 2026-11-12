@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui test-load [component | test/load dir | file.load.js] [--script Name]` (plans/LoadRunner.md §9): a load
+//! `moqui test-load [component | test/load dir | file.load.js] [--script Name]` (plans/archive/LoadRunner.md §9): a load
 //! script of a component against a server that is already running, from this process, as `moqui test-client` runs a
 //! component's client specs. With no script named it lists the component's scripts and their params. While a load
 //! runs it prints a line every 5 seconds; Ctrl-C stops the users and still writes the result, by default to
@@ -35,7 +35,7 @@ use serde_json::{json, Map, Value};
 
 use super::http::Server;
 use super::load;
-use super::{camel_case, check_server, http_client, new_host, ClientArgs, DEFAULT_SERVER};
+use super::{camel_case, check_server, http_client, new_host, ssh_target, ClientArgs, DEFAULT_SERVER, NOT_PARAMS};
 use crate::load_runner::scripts::scripts_in;
 use crate::load_runner::{compare, results};
 use crate::test_cmd::{component_dir_named, component_name};
@@ -57,6 +57,8 @@ pub struct LoadArgs {
     /// `--script Name`: `test/load/Name.load.js` of the component.
     pub script: Option<String>,
     pub server: Option<String>,
+    /// `--ssh host:port`: where a script's `ssh.connect` goes by default (plans/archive/LoadRunner.md L7).
+    pub ssh: Option<String>,
     /// `--param name=value`, in order; a later one wins.
     pub params: Vec<(String, String)>,
     pub insecure: bool,
@@ -70,7 +72,7 @@ pub struct LoadArgs {
     pub ramp_up: Option<f64>,
     pub duration: Option<f64>,
     pub iterations: Option<u64>,
-    /// `--rate N`: iterations started per second, with `users` the most at once (plans/LoadRunner.md L6).
+    /// `--rate N`: iterations started per second, with `users` the most at once (plans/archive/LoadRunner.md L6).
     pub rate: Option<f64>,
     /// `--scenario name`: run only this scenario, and the settings above are its.
     pub scenario: Option<String>,
@@ -110,6 +112,7 @@ pub fn parse_load_args(args: &[String]) -> Result<LoadArgs, Error> {
         match arg.as_str() {
             "--script" => parsed.script = Some(value("--script")?),
             "--server" => parsed.server = Some(value("--server")?),
+            "--ssh" => parsed.ssh = Some(value("--ssh")?),
             "--param" => {
                 let pair = value("--param")?;
                 let (name, text) = pair
@@ -340,7 +343,7 @@ fn env_params() -> Value {
     let found: Map<String, Value> = std::env::vars()
         .filter_map(|(name, value)| {
             let rest = name.strip_prefix("MOQUI_TEST_")?;
-            (!rest.is_empty() && rest != "SERVER").then(|| (camel_case(rest), Value::String(value)))
+            (!rest.is_empty() && !NOT_PARAMS.contains(&rest)).then(|| (camel_case(rest), Value::String(value)))
         })
         .collect();
     Value::Object(found)
@@ -367,6 +370,8 @@ pub fn run(args: &LoadArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> {
         })
         .unwrap_or_else(|| DEFAULT_SERVER.to_string());
     let server = Server::parse(&server_text, args.allow_http)?;
+    let ssh = ssh_target(args.ssh.as_deref(), &server)?;
+    let server = server.with_ssh(ssh);
     let client_args = ClientArgs {
         insecure: args.insecure,
         allow_http: args.allow_http,
@@ -397,11 +402,10 @@ pub fn run(args: &LoadArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> {
             chosen.location
         )));
     }
-    if !uses.iter().any(|kind| kind == "http") {
+    if let Some(other) = uses.iter().find(|kind| !matches!(kind.as_str(), "http" | "ssh")) {
         return Err(Error::new(format!(
-            "{} uses {}, which moqui test-load cannot make (it makes http)",
-            chosen.location,
-            uses.join(", ")
+            "{} uses {other}, which moqui test-load cannot make (it makes http and ssh)",
+            chosen.location
         )));
     }
     let scenarios = load::script::settings(&plan, &overrides(args)).map_err(Error::new)?;
