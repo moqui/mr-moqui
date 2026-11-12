@@ -38,14 +38,20 @@ $closeChildren();
 $openChildren({t:"dialog",id:$uid("D1"),title:ec.resource.expand("Open ${name}"),button:ec.resource.expand("Open ${name}")});
 $emit({t:"text",id:$uid("widgets/D1/label"),text:ec.resource.expand("in dialog")});
 $closeChildren();
+if ($isAgent()) $emit({t:"section",id:$uid("First"),name:"First",c:[{t:"text",id:$uid("First.aiOff"),text:$aiOffText()}]});
+else {
 if ($sink) $emit({t:"section",id:$uid("First"),name:"First",c:JSON.parse(sri.renderSectionValue("First"))});
 else { $openRender({t:"section",id:$uid("First"),name:"First"});
 sri.renderSection("First");
 $closeRender(); }
+}
+if ($isAgent()) $emit({t:"section",id:$uid("Each"),name:"Each",iterate:true,c:[{t:"text",id:$uid("Each.aiOff"),text:$aiOffText()}]});
+else {
 if ($sink) $emit({t:"section",id:$uid("Each"),name:"Each",iterate:true,c:JSON.parse(sri.renderSectionValue("Each"))});
 else { $openRender({t:"section",id:$uid("Each"),name:"Each",iterate:true});
 sri.renderSection("Each");
 $closeRender(); }
+}
 $openRender({t:"section",id:$uid("First"),name:"First"});
 sri.renderSectionInclude({"name":"section-include","attrs":{"name":"First"}});
 $closeRender();

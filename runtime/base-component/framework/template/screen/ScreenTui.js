@@ -212,6 +212,11 @@ const $screenUrlWith = ($pairs, $remove) => {
     for (const $pair of $pairs) $url.addParameter($pair[0], $pair[1]);
     return $url.getUrlWithParams();
 };
+// An agent's render (an Assist screen session, the data tool, agent-apps: sri.isAgentRender()) writes this in place of the
+// text of an ai-opt-out field, section or screen, so that text reaches no model (design-people PE-21, docs/ai/Assist.md).
+let $agentRender = null;
+const $isAgent = () => ($agentRender === null ? ($agentRender = !!sri.isAgentRender()) : $agentRender);
+const $aiOffText = () => String(ec.l10n.localize("Not shared with AI"));
 $w("[");
 `;
     const epilogue = `
@@ -219,6 +224,10 @@ $w("]");
 `;
 
     const typeNames = (type) => (type || "").split(",").map((name) => name.trim()).filter((name) => name);
+    // ai-opt-out on a field, section or screen: in an agent's render its text is $aiOffText() (design-people PE-21)
+    const aiOff = (node) => !!node && attr(node, "ai-opt-out") === "true";
+    const aiOffNames = (fields) => fields.filter(aiOff).map((field) => attr(field, "name")).filter((name) => name);
+    const aiOffBranch = (node, placeholder, code) => (aiOff(node) && code ? `if ($isAgent()) ${placeholder}\nelse {\n${code}}\n` : code);
     const exprOf = (text) => (text && String(text).includes("${") ? S.expandExpr(text) : jsString(text || ""));
     const exprNoL10n = (text) => (text && String(text).includes("${") ? S.expandNoL10nExpr(text) : jsString(text || ""));
     // A title as the other modes show it: expanded and localized.
@@ -627,7 +636,11 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
     const fieldHasSet = (field) => childrenNamed(field, "default-field").concat(childrenNamed(field, "conditional-field")).some((sub) => child(sub, "set"));
     const emitField = (field) => {
         if (!field || attr(field, "hide") === "true") return "";
-        return ownContext(fieldHasSet(field), S.fieldChain(field, (sub) => emitSub(field, sub)));
+        const code = ownContext(fieldHasSet(field), S.fieldChain(field, (sub) => emitSub(field, sub)));
+        // an agent's render: the field's title with the placeholder as a display, never its value
+        const sub = child(field, "default-field") || child(field, "conditional-field");
+        const placeholder = `$emit({t:"field",id:$uid(${jsString(fieldIdOf(field))}),name:${jsString(attr(field, "name") || "field")},title:String(${sub ? S.localizedTitle(sub) : '""'} || ""),w:{kind:"display",text:$aiOffText()}});`;
+        return aiOffBranch(field, placeholder, code);
     };
     const layoutCode = (form) => {
         const fields = childrenNamed(form, "field");
@@ -748,12 +761,15 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
     const sectionCode = (node, extra) => {
         const fields = `t:"section",id:$uid(${jsString(idOf(node))}),name:${jsString(attr(node, "name") || "")}${extra}`;
         const name = jsString(attr(node, "name") || "");
-        return `if ($sink) $emit({${fields},c:JSON.parse(sri.renderSectionValue(${name}))});\nelse { $openRender({${fields}});\nsri.renderSection(${name});\n$closeRender(); }\n`;
+        const code = `if ($sink) $emit({${fields},c:JSON.parse(sri.renderSectionValue(${name}))});\nelse { $openRender({${fields}});\nsri.renderSection(${name});\n$closeRender(); }\n`;
+        // an agent's render runs nothing of an ai-opt-out section: its placeholder in place of it
+        return aiOffBranch(node, `$emit({${fields},c:[{t:"text",id:$uid(${jsString(idOf(node) + ".aiOff")}),text:$aiOffText()}]});`, code);
     };
     // One widget of a list cell: a text, a link, or a field node (an editable; an input or a button of a row form).
     const cellPiece = (field, sub, widget, list) => {
         if (widget.name === "section") {
-            return `JSON.parse(sri.renderSectionValue(${jsString(attr(widget, "name") || "")}))`;
+            const value = `JSON.parse(sri.renderSectionValue(${jsString(attr(widget, "name") || "")}))`;
+            return aiOff(widget) ? `($isAgent() ? $aiOffText() : ${value})` : value;
         }
         if (["container", "container-row", "row-col"].includes(widget.name)) {
             const pieces = widget.children.filter((kid) => !notWidget(kid)).map((kid) => cellPiece(field, sub, kid, list));
@@ -829,7 +845,7 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
                     });
                     return inner;
                 });
-                if (body) code += S.hideGuard(field, `$start = $parts.length;\n${ownContext(fieldHasSet(field), body)}`);
+                if (body) code += S.hideGuard(field, `$start = $parts.length;\n${aiOffBranch(field, "$addPart($parts, $start, $aiOffText());", ownContext(fieldHasSet(field), body))}`);
             });
             code += `$cells.push($cellOf($parts));\n`;
             if (hidden) code += `}\n`;
@@ -846,12 +862,13 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
         if (!name || SECRET.has(name.toLowerCase())) return "";
         if (!rowSubs(field).some((sub) => sub.children.some(postsHidden))) return "";
         const nameExpr = multi ? `${jsString(name + "_")} + $index` : jsString(name);
-        return S.fieldChain(field, (sub) => {
+        const code = S.fieldChain(field, (sub) => {
             const kept = sub.children.filter(postsHidden);
             if (!kept.length) return "";
             return S.setCode(sub) + kept.map((widget) =>
                 `$rowHidden.push({name:${nameExpr},value:String(sri.getFieldValuePlainString(${S.fieldLit(widget)}, ${jsString(widget.name === "hidden" ? attr(widget, "default-value") : "")}) || "")});\n`).join("");
         });
+        return aiOff(field) && code ? `if (!$isAgent()) {\n${code}}\n` : code;
     }).join("");
     // The submit and reset buttons of a multi form, once for the list.
     const listButtonsCode = (fields) => fields.map((field) => {
@@ -886,7 +903,8 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
                     ? `$headerFields.push(${expr});\n`
                     : `$headerFields.push({t:"placeholder",id:$uid(${jsString(fieldIdOf(field) + "." + widget.name)}),text:${jsString(widget.name)}});\n`;
             });
-            code += ownContext(hasSet, own);
+            // an agent finds by no ai-opt-out field: its find field is left out of an agent's render
+            code += aiOff(field) && own ? `if (!$isAgent()) {\n${ownContext(hasSet, own)}}\n` : ownContext(hasSet, own);
         });
         return code;
     };
@@ -919,15 +937,18 @@ $emit({t:"field",id:$uid(${jsString(fieldIdOf(field) + "." + scanIdField)}),name
     }
     `
             : "";
+        // the hidden values of ai-opt-out fields are not in an agent's render
+        const offNames = aiOffNames(childrenNamed(node, "field"));
+        const offCode = offNames.length ? `const $aiOffNames = $isAgent() ? ${JSON.stringify(offNames)} : [];\n    ` : "";
         return `sri.pushSingleFormMapContext(${map});
 try {
     const $hidden = [];
-    ${passCode}const $hiddenMap = sri.getFormHiddenParameters(${S.nodeLit(node, true)}) || {};
+    ${offCode}${passCode}const $hiddenMap = sri.getFormHiddenParameters(${S.nodeLit(node, true)}) || {};
     const $hiddenKeys = Object.keys($hiddenMap);
     for (let $hi = 0; $hi < $hiddenKeys.length; $hi++) {
         const $key = $hiddenKeys[$hi];
         const $value = $hiddenMap[$key];
-        if ($value == null || $value === "") continue;
+        if ($value == null || $value === ""${offNames.length ? " || $aiOffNames.includes($key)" : ""}) continue;
         if ($secret.has(String($key).toLowerCase()) || $hidden.some(($h) => $h.name === $key)) continue;
         $hidden.push({name:String($key),value:String($value)});
     }
@@ -1194,9 +1215,9 @@ try {
             const field = fieldByName[name];
             const dflt = field ? child(field, "default-field") : null;
             const widget = dflt ? dflt.children.find((kid) => kid.name && kid.name !== "hidden" && kid.name !== "ignored") : null;
-            if (!widget) return `String(ec.context.get(${jsString(name)}) ?? "")`;
-            if (widget.name === "link") return `String(${S.linkTextExpr(widget)} ?? "")`;
-            return `String(${cellText(widget)} ?? "")`;
+            const text = !widget ? `String(ec.context.get(${jsString(name)}) ?? "")`
+                : widget.name === "link" ? `String(${S.linkTextExpr(widget)} ?? "")` : `String(${cellText(widget)} ?? "")`;
+            return aiOff(field) ? `($isAgent() ? $aiOffText() : ${text})` : text;
         };
         const boardFields = namesOf(vb("card-fields"));
         const calendarFields = namesOf(vc("card-fields"));
@@ -1319,7 +1340,8 @@ try {
             if ($value != null && $value !== "") $paging[$key] = $whole($value);
         }
         const $list = {t:"formList",id:$uid(${jsString(id)}),name:${jsString(name)},domId:${domIdExpr(node)},columns:$columns,rows:$rows,paging:$paging,headerFields:$headerFields};
-        ${selection ? `${selectCondition ? "if ($selOn) " : ""}$list.rowSelection = {idField:${jsString(selectIdField)},parameter:${jsString(attr(selection, "parameter") || selectIdField)}${attr(selection, "list-mode") ? `,listMode:${jsString(attr(selection, "list-mode"))}` : ""}};
+        ${aiOffNames(fields).length ? `if ($isAgent()) $list.aiOff = ${JSON.stringify(aiOffNames(fields))};
+        ` : ""}${selection ? `${selectCondition ? "if ($selOn) " : ""}$list.rowSelection = {idField:${jsString(selectIdField)},parameter:${jsString(attr(selection, "parameter") || selectIdField)}${attr(selection, "list-mode") ? `,listMode:${jsString(attr(selection, "list-mode"))}` : ""}};
         ` : ""}${listFormBlock}${savedFindsBlock}${selectColumnsBlock}${exportsBlock}${viewsBlock}$emit($list);
 ${actionDialogs ? "        " + ifSelOn(actionDialogs) : ""}    } finally {
         sri.safeCloseList($info);
@@ -1487,7 +1509,8 @@ ${actionDialogs ? "        " + ifSelOn(actionDialogs) : ""}    } finally {
         `$openChildren({t:${jsString(type)},id:$uid(${jsString(idOf(node))})${extra ? extra(node) : ""}});\n${children}$closeChildren();\n`);
 
     const overrides = {
-        "screen": pass,
+        // an ai-opt-out screen: in an agent's render its placeholder in place of its widgets and the subscreens in them
+        "screen": stmt((node, children) => aiOffBranch(node, `$emit({t:"text",id:$uid("aiOff"),text:$aiOffText()});`, children)),
         "widgets": pass,
         "fail-widgets": pass,
         "dynamic-form": pass,

@@ -93,6 +93,36 @@ password widgets.
 - `editor` is a dev-aide page's file (plans/design-dev-aide.md 13.4): its root and path, language and view, whether it
   has unsaved edits, the element at the cursor and its line, the selection (at most 2,000 characters), its problem count
   and artifact. The Workspace sets `moqui.assist.editorState` while it is the page; the tail gives it one line.
+- `forms` holds no value of an `ai-opt-out` field, and no form in an `ai-opt-out` section or screen ("AI opt-out" below).
+
+## AI opt-out
+
+`ai-opt-out="true"` keeps a field's text away from every model tool (design-people PE-21): confidential notes, case
+statements, review text. It goes on a form field (`form-single` and `form-list`), a `section` or `section-iterate`, a
+`screen`, and an entity field; mark the entity field and each screen field that shows it.
+
+- **An agent's render** (`RenderOrigin::Agent`: an Assist screen session, `data`'s screen lists, the canvas read proxy;
+  and `agent-apps` over SSH; `sri.isAgentRender()`, also inside a render one of these started) writes "Not shared with
+  AI" in place of an opted-out field's value (a form field as a display, a list cell, a board or calendar card's field),
+  posts no hidden value of it, has no find field for it, and runs nothing of an opted-out section or screen (its
+  widgets and the subscreens in them). The `tui` macros do this (`ScreenTui.js`); the person's own terminal and browser
+  show everything as always.
+- **`data`** names a list's opted-out fields from the render (`aiOff`) and answers `ai_opt_out` for a `where` or
+  `order` on one, so a filter cannot tell the text by the rows it keeps. Its entity reads never read, find or sort by an
+  opted-out entity field, as for an encrypted one.
+- **Update with AI** (`propose#AiFieldValue`) refuses an opted-out entity field before any model call, and leaves the
+  record's opted-out fields out of the text it sends for another field; an approval's record snapshot leaves them out.
+- **The browser**: the qvt macros mark an opted-out field's box or list cell `data-ai-opt-out="field"
+  data-ai-field="<name>"` and wrap a section or screen in `<div class="m-ai-opt-out" data-ai-opt-out="section|screen">`
+  (`display: contents`). `m-rich-text` offers no text actions inside one (or with its `ai-opt-out` prop, for a `.qvue`
+  screen), the drawer leaves those fields out of `forms` and never fills them (`follow.locate` answers `aiOff`), and
+  it does not dictate while a screen opted out is on the page.
+
+Not covered: text a screen shows other than through its fields and sections (a label outside an opted-out section, a
+menu or title), a service tool's result (`AgentToolExposure`; expose no service whose result holds such text), the
+search index (a DataDocument that indexes the text is found by `search`), a `section-include` of an opted-out section
+(mark the include's section in the including screen), and a find parameter of an opted-out field given in a `screen`
+`go` path's query. Routing to a local model in place of none is not built.
 
 ## The calls
 
@@ -803,7 +833,7 @@ follows there. They are acceptance tests of the framework, run by `./moq accept-
   same dialog. It reads `GET /assist/constitution` and `GET /assist/constitutionReference`, which need a signed-in user,
   not `AgentUse` ([Constitution](Constitution.md)).
 - **Inline text actions**: `m-rich-text` offers Rewrite, Shorten, Translate and Fix grammar in its toolbar when
-  `moqui.assist.textActionsOn()` (not on a shared, co-edited document); the selection's text, or the field's as plain
+  `moqui.assist.textActionsOn()` (not on a shared, co-edited document, nor on a field opted out of AI, "AI opt-out"); the selection's text, or the field's as plain
   text, goes to `POST textAction`, and the proposal shows under the toolbar with Replace, Insert below and Discard. Only
   a click applies it, and a selection that changed meanwhile is never overwritten.
 - **Degrading**: a 501 or 404 from prompts, attachments, transcribe, textAction, memories, skills or a skill draft turns

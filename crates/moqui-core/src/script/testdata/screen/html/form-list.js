@@ -14,7 +14,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
             "find": () => {
         sri.pushContext();
         try {
-            $h.textFind({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
+            $h.textFind({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id","ai-opt-out":"true"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
         } finally {
             sri.popContext();
         }
@@ -25,18 +25,18 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
             const $open = $h.fieldOpen("id", $title, false, "", false);
             sri.pushContext();
             try {
-                $h.textFind({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
+                $h.textFind({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id","ai-opt-out":"true"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
             } finally {
                 sri.popContext();
             }
             $h.fieldClose($open, false);
         }
         },
-            "summary": () => { let $v = ""; sri.pushContext(); try {  $v += $h.valueText({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}}); } finally { sri.popContext(); } return $v.trim(); },
+            "summary": () => { let $v = ""; sri.pushContext(); try {  $v += $h.valueText({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id","ai-opt-out":"true"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}}); } finally { sri.popContext(); } return $v.trim(); },
             "cell": ($m) => {
                 if ($m !== 2) {
                     $h.rowCellOpen("", "", $m === 2);
-                    $h.display({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
+                    $h.display({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"id","ai-opt-out":"true"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
                     $h.rowCellClose($m === 2);
                 }
             }
@@ -57,7 +57,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
                     $h.rowCellOpen("", "", $m === 2);
                     sri.pushContext();
                     try {
-                        $h.textLine({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{"title":"The Title"},"parent":{"name":"field","attrs":{"name":"title","print-width":"30","print-width-type":"characters"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
+                        $h.textLine({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{"title":"The Title"},"parent":{"name":"field","attrs":{"name":"title","ai-opt-out":"true","print-width":"30","print-width-type":"characters"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
                     } finally {
                         sri.popContext();
                     }
@@ -232,7 +232,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
             "find": () => {
         sri.pushContext();
         try {
-            $h.textFind({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
+            $h.textFind({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id","ai-opt-out":"true"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
         } finally {
             sri.popContext();
         }
@@ -243,18 +243,18 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
             const $open = $h.fieldOpen("id", $title, false, "", false);
             sri.pushContext();
             try {
-                $h.textFind({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
+                $h.textFind({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id","ai-opt-out":"true"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
             } finally {
                 sri.popContext();
             }
             $h.fieldClose($open, false);
         }
         },
-            "summary": () => { let $v = ""; sri.pushContext(); try {  $v += $h.valueText({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}}); } finally { sri.popContext(); } return $v.trim(); },
+            "summary": () => { let $v = ""; sri.pushContext(); try {  $v += $h.valueText({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id","ai-opt-out":"true"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}}); } finally { sri.popContext(); } return $v.trim(); },
             "cell": ($m) => {
                 if ($m !== 2) {
                     $h.rowCellOpen("", "", $m === 2);
-                    $h.display({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
+                    $h.display({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"id","ai-opt-out":"true"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
                     $h.rowCellClose($m === 2);
                 }
             }
@@ -275,7 +275,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
                     $h.rowCellOpen("", "", $m === 2);
                     sri.pushContext();
                     try {
-                        $h.textLine({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{"title":"The Title"},"parent":{"name":"field","attrs":{"name":"title","print-width":"30","print-width-type":"characters"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
+                        $h.textLine({"name":"text-line","attrs":{},"parent":{"name":"default-field","attrs":{"title":"The Title"},"parent":{"name":"field","attrs":{"name":"title","ai-opt-out":"true","print-width":"30","print-width-type":"characters"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}});
                     } finally {
                         sri.popContext();
                     }

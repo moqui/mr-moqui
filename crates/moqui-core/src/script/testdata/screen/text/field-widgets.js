@@ -9,7 +9,7 @@ try {
     sri.write("\n");
     $cellWidth = $lineChars * 0.8;
     sri.write($pad(ec.l10n.localize("About"), $lineChars * 0.2, true) + ": ");
-    sri.write($pad(sri.getFieldValueString({"name":"text-area","attrs":{"rows":"3"},"parent":{"name":"default-field","attrs":{"title":"About"},"parent":{"name":"field","attrs":{"name":"bio"},"parent":{"name":"form-single","attrs":{"name":"AllFields","map":"fv"},"parent":{"name":"widgets","attrs":{}}}}}})));
+    sri.write($pad(sri.getFieldValueString({"name":"text-area","attrs":{"rows":"3"},"parent":{"name":"default-field","attrs":{"title":"About"},"parent":{"name":"field","attrs":{"name":"bio","ai-opt-out":"true"},"parent":{"name":"form-single","attrs":{"name":"AllFields","map":"fv"},"parent":{"name":"widgets","attrs":{}}}}}})));
     sri.write("\n");
     $cellWidth = $lineChars * 0.8;
     sri.write($pad(ec.l10n.localize("User Group ID"), $lineChars * 0.2, true) + ": ");

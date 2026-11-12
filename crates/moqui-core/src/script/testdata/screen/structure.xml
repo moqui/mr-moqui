@@ -21,8 +21,8 @@
         <panel-footer><label text="pf"/></panel-footer>
     </container-panel>
     <container-dialog id="D1" button-text="Open ${name}"><label text="in dialog"/></container-dialog>
-    <section name="First"><widgets><label text="first"/></widgets></section>
-    <section-iterate name="Each" list="rows" entry="row"><widgets><label text="${row}"/></widgets></section-iterate>
+    <section name="First" ai-opt-out="true"><widgets><label text="first"/></widgets></section>
+    <section-iterate name="Each" list="rows" entry="row" ai-opt-out="true"><widgets><label text="${row}"/></widgets></section-iterate>
     <section-include name="First"/>
     <subscreens-menu/>
     <subscreens-active/>

@@ -23,7 +23,7 @@ try {
         const $open = $h.fieldOpen("bio", $title, false, "", false);
         sri.pushContext();
         try {
-            $h.textArea({"name":"text-area","attrs":{"rows":"3"},"parent":{"name":"default-field","attrs":{"title":"About"},"parent":{"name":"field","attrs":{"name":"bio"},"parent":{"name":"form-single","attrs":{"name":"AllFields","map":"fv"}}}}});
+            $h.textArea({"name":"text-area","attrs":{"rows":"3"},"parent":{"name":"default-field","attrs":{"title":"About"},"parent":{"name":"field","attrs":{"name":"bio","ai-opt-out":"true"},"parent":{"name":"form-single","attrs":{"name":"AllFields","map":"fv"}}}}});
         } finally {
             sri.popContext();
         }

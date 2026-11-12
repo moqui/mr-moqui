@@ -50,8 +50,13 @@ if ($v.containerDialog({"name":"container-dialog","attrs":{"id":"D1","button-tex
     $v.label({"name":"label","attrs":{"text":"in dialog"}});
     sri.write("</m-container-dialog>\n");
 }
+sri.write('<div class="m-ai-opt-out" data-ai-opt-out="section">');
 sri.renderSection("First");
+sri.write("</div>");
+sri.write('<div class="m-ai-opt-out" data-ai-opt-out="section">');
 sri.renderSection("Each");
+
+sri.write("</div>");
 {
     const $included = sri.getSectionIncludedNode({"name":"section-include","attrs":{"name":"First"}});
     if ($included.attrs.paginate === "true") $v.sectionPaginate($included.attrs.list);

@@ -1,8 +1,8 @@
 <widgets>
     <form-list name="Rows" list="rowList">
         <row-actions><set field="extra" value="x"/></row-actions>
-        <field name="id"><header-field show-order-by="true"><text-find/></header-field><default-field><display/></default-field></field>
-        <field name="title" print-width="30" print-width-type="characters"><default-field title="The Title"><text-line/></default-field></field>
+        <field name="id" ai-opt-out="true"><header-field show-order-by="true"><text-find/></header-field><default-field><display/></default-field></field>
+        <field name="title" ai-opt-out="true" print-width="30" print-width-type="characters"><default-field title="The Title"><text-line/></default-field></field>
         <field name="qty" align="right" print-width="20"><default-field><display format="0.0"/></default-field></field>
         <field name="amt" hide="hideAmt"><default-field><display currency-unit-field="'USD'"/></default-field></field>
         <field name="status">

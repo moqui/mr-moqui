@@ -34,6 +34,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ================ Screen - root elements ================ -->
     <xs:complexType name="screen-base">
+        <xs:attribute name="ai-opt-out" type="boolean" default="false">
+            <xs:annotation><xs:documentation>True for a screen whose content no AI model may read: an agent's render
+                shows "Not shared with AI" in place of its widgets and the subscreens rendered in them, and in the
+                browser its rich-text fields offer no text actions, Assist leaves its forms out of the page state,
+                and the Assist drawer does not dictate while it is shown. As the field attribute of the same name
+                (xml-form-3.xsd), for the whole screen.</xs:documentation></xs:annotation>
+        </xs:attribute>
         <xs:attribute name="standalone" type="boolean" default="false">
             <xs:annotation><xs:documentation>
                 If set to true this screen will be rendered without rendering any parent screens. It can still be
@@ -972,6 +979,13 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:annotation><xs:documentation>A name for the section, used for reference within the screen.
                 Must be specified and must be unique within the screen.</xs:documentation></xs:annotation>
         </xs:attribute>
+        <xs:attribute name="ai-opt-out" type="boolean" default="false">
+            <xs:annotation><xs:documentation>True for a section whose content no AI model may read: an agent's
+                render runs nothing of it and shows "Not shared with AI" in its place, and in the browser its
+                rich-text fields offer no text actions and Assist leaves its forms out of the page state. As
+                the field attribute of the same name (xml-form-3.xsd), for every field and text in the
+                section.</xs:documentation></xs:annotation>
+        </xs:attribute>
         <xs:attribute name="condition" type="xs:string">
             <xs:annotation><xs:documentation>A condition expression, just like the section.condition.expression
                 element but more concise.</xs:documentation></xs:annotation>
@@ -988,6 +1002,10 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:annotation><xs:documentation>
                 The name of the field that contains the list to iterate over.
             </xs:documentation></xs:annotation>
+        </xs:attribute>
+        <xs:attribute name="ai-opt-out" type="boolean" default="false">
+            <xs:annotation><xs:documentation>As the section attribute: no AI model reads what the section shows for
+                any entry.</xs:documentation></xs:annotation>
         </xs:attribute>
         <xs:attribute name="entry" type="xs:string" use="required">
             <xs:annotation><xs:documentation>

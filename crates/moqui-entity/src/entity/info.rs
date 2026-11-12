@@ -400,6 +400,7 @@ pub fn definition_info(facade: &EntityFacade, name: &str) -> Option<moqui_lib::o
                     text(field.enable_audit_log.as_deref().unwrap_or("false")),
                 );
                 row.insert("encrypt".to_string(), Value::Bool(field.encrypt));
+                row.insert("aiOptOut".to_string(), Value::Bool(field.ai_opt_out));
                 row.insert("enableLocalization".to_string(), Value::Bool(field.enable_localization));
                 row.insert(
                     "defaultStr".to_string(),

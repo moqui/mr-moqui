@@ -127,6 +127,8 @@ pub struct FieldAlias {
     pub expr: AliasExpr,
     pub is_pk: bool,
     pub encrypt: bool,
+    /// The member field's `ai-opt-out`, once the view is completed.
+    pub ai_opt_out: bool,
     pub enable_localization: bool,
     pub from_alias_all: bool,
     /// Full name of the member entity a column alias reads. Set when the view is completed.
@@ -545,6 +547,7 @@ impl EntityModel {
                 }
                 alias.is_pk = source.is_pk;
                 alias.encrypt = source.encrypt;
+                alias.ai_opt_out = source.ai_opt_out;
                 alias.enable_localization = source.enable_localization;
                 alias.member_entity = Some(member.full_name.clone());
             }
@@ -564,5 +567,6 @@ pub(super) struct SourceField {
     pub field_type: Option<String>,
     pub is_pk: bool,
     pub encrypt: bool,
+    pub ai_opt_out: bool,
     pub enable_localization: bool,
 }

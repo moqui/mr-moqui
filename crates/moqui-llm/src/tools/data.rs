@@ -20,7 +20,8 @@
 //!   `field_not`), `order` its `orderByField`, `limit` and `offset` its `pageSize` and `pageIndex` (a list that does
 //!   not page is cut here).
 //! - An entity of the conf's `data-entity` patterns (`entity`; by default the `moqui.basic` package: enumerations,
-//!   status items, units, geos), read directly with authorization off as Java's `find_basic`, encrypted fields never.
+//!   status items, units, geos), read directly with authorization off as Java's `find_basic`, encrypted and
+//!   `ai-opt-out` fields never.
 //! - A spilled result of the conversation (`artifact`): its lines from `offset`, or the lines that hold `grep`; a text
 //!   file the user attached to the conversation (`F12`) the same way.
 //!
@@ -521,7 +522,9 @@ fn read_entity(ctx: &TurnContext<'_>, entity: &str, read: &Read<'_>) -> Result<S
         for field in fields {
             if let Value::Map(field) = field {
                 let name = field.get("name").map(to_plain_string).unwrap_or_default();
-                let encrypted = matches!(field.get("encrypt"), Some(Value::Bool(true)));
+                // an encrypted field, and one whose text reaches no model (ai-opt-out, design-people PE-21), is never read
+                let encrypted = matches!(field.get("encrypt"), Some(Value::Bool(true)))
+                    || matches!(field.get("aiOptOut"), Some(Value::Bool(true)));
                 let kind = field.get("type").map(to_plain_string).unwrap_or_default();
                 all_fields.push((name, encrypted, kind));
             }
@@ -736,6 +739,26 @@ fn read_list(ctx: &TurnContext<'_>, path: &str, list: Option<&str>, read: &Read<
             }
         }
     };
+    // a find or sort by an ai-opt-out field would tell its text by the rows it keeps: none is answered (design-people PE-21)
+    let ordered = read.order.iter().flat_map(|order| order.split(',')).filter_map(|part| {
+        part.trim()
+            .trim_start_matches(['-', '+', '^'])
+            .split_whitespace()
+            .next()
+    });
+    let named: Vec<&str> = tests.iter().map(|(field, _)| field.as_str()).chain(ordered).collect();
+    if let Some(off) = named
+        .iter()
+        .find(|field| chosen.ai_off.iter().any(|name| name == *field))
+    {
+        return Err(ToolError::new(
+            "ai_opt_out",
+            format!(
+                "{off} of {} is not shared with AI, so data neither finds nor sorts by it. Use another field.",
+                chosen.name
+            ),
+        ));
+    }
     let mut after: Vec<String> = Vec::new();
     if list.is_none() && lists.len() > 1 {
         after.push(format!("other lists: {} (data list=name)", names[1..].join(", ")));
@@ -829,6 +852,8 @@ struct ListData {
     count: usize,
     /// The field names its columns show, in order: the keys of a canvas read's rows.
     keys: Vec<String>,
+    /// Its `ai-opt-out` fields (the agent's render shows a placeholder for them): no `where` or `order` names one.
+    ai_off: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -921,6 +946,13 @@ fn list_of(node: &Json) -> ListData {
             .and_then(Json::as_u64)
             .and_then(|count| usize::try_from(count).ok())
             .unwrap_or(rows.len()),
+        ai_off: node
+            .get("aiOff")
+            .and_then(Json::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|field| field.as_str().map(str::to_string))
+            .collect(),
         rows,
     }
 }

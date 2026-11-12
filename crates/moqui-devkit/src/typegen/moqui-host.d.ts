@@ -1086,6 +1086,8 @@ interface MoquiScreenTest {
     baseScreenPath(path: string): MoquiScreenTest;
     renderMode(mode: string): MoquiScreenTest;
     baseLinkUrl(url: string): MoquiScreenTest;
+    /** Every render as an agent's screen session renders it (an agent's origin, fenced, writes held): what reaches a model. */
+    agent(): MoquiScreenTest;
     /** Render as the current user; `requestMethod` is GET when not given. */
     render(screenPath: string, parameters?: MoquiMap | null, requestMethod?: string | null): MoquiScreenTestRender;
     renderAll(screenPaths: string[], parameters?: MoquiMap | null, requestMethod?: string | null): void;
@@ -1538,6 +1540,8 @@ interface MoquiScreenRenderer {
     readonly activeInCurrentMenu: boolean;
     write(text: string): void;
     getRenderMode(): string;
+    /** The render is an agent's (an Assist screen session, the data tool, agent-apps) or runs inside one: an `ai-opt-out` field, section or screen writes its placeholder. */
+    isAgentRender(): boolean;
     doBoundaryComments(): boolean;
     encodeHtml(text: unknown): string;
     getActiveScreenDef(): MoquiScreenDefInfo;

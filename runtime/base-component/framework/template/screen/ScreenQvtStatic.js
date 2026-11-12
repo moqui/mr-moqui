@@ -1234,11 +1234,11 @@
             const shown = first(n.parent, "visible-when");
             return { ":required": "$mq.holds(" + whenArgs(requireWhen) + ")" + (shown ? "&&$mq.holds(" + whenArgs(shown) + ")" : "") };
         };
-        const fieldBox = (when, containerStyle, big) => {
+        const fieldBox = (when, containerStyle, big, aiOff) => {
             let style = null;
             if (when) style = "$mq.shown(" + whenArgs(when) + ")";
             const box = big ? "big-row-item" : cls("q-ma-sm", containerStyle || null);
-            const attrs = { class: box, ":style": style };
+            const attrs = Object.assign({ class: box, ":style": style }, aiOff ? { "data-ai-opt-out": "field", "data-ai-field": String(aiOff) } : {});
             if (containerStyle && isDynamic(containerStyle)) { delete attrs.class; attrs[":class"] = "'q-ma-sm '+" + exp(containerStyle, null, "container-style", false); }
             w("<div" + A(attrs) + ">");
         };
@@ -1383,6 +1383,9 @@
         };
 
         const cellStyle = (style, align) => cls("form-group", style || null, align === "right" ? "text-right" : align === "center" ? "text-center" : null);
+        // a list cell's attributes: its classes, and data-ai-opt-out="field" for an ai-opt-out field (ScreenQvt.js rowCellOpen)
+        const cellAttrs = (sub, field) => Object.assign({ class: cellStyle(at(sub, "container-style"), at(field, "align")) },
+            at(field, "ai-opt-out") === "true" ? { "data-ai-opt-out": "field", "data-ai-field": at(field, "name") || "field" } : {});
 
         // The widgets of the field in a cell: the branch that holds, as a chain of v-if templates.
         const cellBody = (field, emitSub) => {
@@ -1492,6 +1495,9 @@
                 n.children.forEach(renderNode);
                 w("</" + (at(n, "type") || "div") + ">\n");
             } else if (name === "section") {
+                // an ai-opt-out section: in its display:contents div (aiOffWrap below)
+                const off = at(n, "ai-opt-out") === "true";
+                if (off) w('<div class="m-ai-opt-out" data-ai-opt-out="section">');
                 const condition = sectionCondition(n);
                 if (condition === null) note("condition", n, "section " + at(n, "name") + " has an XML condition that cannot be a v-if");
                 if (condition) w(vIf(n, condition));
@@ -1500,7 +1506,10 @@
                     w("</template>");
                     if (first(n, "fail-widgets")) { w("<template v-else>"); nodesOf(n, "fail-widgets").forEach(renderNode); w("</template>"); }
                 }
+                if (off) w("</div>");
             } else if (name === "section-iterate") {
+                const off = at(n, "ai-opt-out") === "true";
+                if (off) w('<div class="m-ai-opt-out" data-ai-opt-out="section">');
                 const condition = sectionCondition(n);
                 if (at(n, "paginate") === "true") w(sectionPaginate(n));
                 w(sectionIterateOpen(n));
@@ -1511,6 +1520,7 @@
                     w("</template>");
                 }
                 w("</m-scope></template>");
+                if (off) w("</div>");
             } else if (name === "container-dialog") {
                 const wrapped = containerDialog(n);
                 n.children.forEach(renderNode);
@@ -1544,7 +1554,7 @@
             const box = (sub) => {
                 if (kids(sub, "ignored").length) return;
                 if (kids(sub, "hidden").length) { subWidgets(sub); return; }
-                fieldBox(first(sub, "visible-when"), at(sub, "container-style"), big);
+                fieldBox(first(sub, "visible-when"), at(sub, "container-style"), big, at(field, "ai-opt-out") === "true" ? at(field, "name") || "field" : "");
                 subWidgets(sub);
                 w("</div>");
             };
@@ -1788,7 +1798,7 @@
                 cellBody(field, (sub) => {
                     if (kids(sub, "ignored").length) return;
                     if (kids(sub, "hidden").length) { subWidgets(sub); return; }
-                    w("<div" + A({ class: cellStyle(at(sub, "container-style"), at(field, "align")) }) + ">");
+                    w("<div" + A(cellAttrs(sub, field)) + ">");
                     subWidgets(sub);
                     w("</div>");
                 });
@@ -1833,7 +1843,7 @@
         const specialCell = (field, tag) => {
             const sub = first(field, tag);
             if (!sub || !sub.children.length || kids(sub, "hidden").length) return;
-            w("<div" + A({ class: cellStyle(at(sub, "container-style"), at(field, "align")) }) + ">");
+            w("<div" + A(cellAttrs(sub, field)) + ">");
             subWidgets(sub);
             w("</div>");
         };
@@ -1850,7 +1860,7 @@
                 w('<div class="col">');
                 fields.forEach((field) => cellBody(field, (sub) => {
                     if (kids(sub, "ignored").length || kids(sub, "hidden").length) return;
-                    w("<div" + A({ class: cellStyle(at(sub, "container-style"), at(field, "align")) }) + ">");
+                    w("<div" + A(cellAttrs(sub, field)) + ">");
                     subWidgets(sub);
                     w("</div>");
                 }));
@@ -1990,7 +2000,7 @@
                 fields.forEach((field) => cellBody(field, (sub) => {
                     if (kids(sub, "ignored").length) return;
                     if (kids(sub, "hidden").length) { subWidgets(sub); return; }
-                    w("<div" + A({ class: cellStyle(at(sub, "container-style"), at(field, "align")) }) + ">");
+                    w("<div" + A(cellAttrs(sub, field)) + ">");
                     subWidgets(sub);
                     w("</div>");
                 }));
@@ -2011,7 +2021,7 @@
                 if (!field) { if (name) w('<span v-text="' + e("$mq.str(" + scopeRef(name + "_display") + " || " + scopeRef(name) + ")") + '"></span>'); return; }
                 cellBody(field, (sub) => {
                     if (kids(sub, "ignored").length || kids(sub, "hidden").length) return;
-                    w("<div" + A({ class: cellStyle(at(sub, "container-style"), at(field, "align")) }) + ">");
+                    w("<div" + A(cellAttrs(sub, field)) + ">");
                     subWidgets(sub);
                     w("</div>");
                 });
@@ -2103,7 +2113,7 @@
                     cellBody(field, (sub) => {
                         if (kids(sub, "ignored").length) return;
                         if (kids(sub, "hidden").length) { subWidgets(sub); return; }
-                        w("<div" + A({ class: cellStyle(at(sub, "container-style"), at(field, "align")) }) + ">");
+                        w("<div" + A(cellAttrs(sub, field)) + ">");
                         subWidgets(sub);
                         w("</div>");
                     });
@@ -2382,10 +2392,14 @@
         const fail = child(node, "fail-widgets");
         const condition = conditionCode(node);
         const body = widgets ? widgets.source || "" : "";
-        if (!condition) return body;
-        return `{\nconst $cond = ${condition};\nif ($cond) sri.write($s.vIf(${wlit(node, false)}, $cond));\n${body}if ($cond) {\nsri.write("</template>");\n` +
-            (fail ? `sri.write("<template v-else>");\n${fail.source || ""}sri.write("</template>");\n` : "") + "}\n}\n";
+        if (!condition) return aiOffWrap(node, "section", body);
+        return aiOffWrap(node, "section", `{\nconst $cond = ${condition};\nif ($cond) sri.write($s.vIf(${wlit(node, false)}, $cond));\n${body}if ($cond) {\nsri.write("</template>");\n` +
+            (fail ? `sri.write("<template v-else>");\n${fail.source || ""}sri.write("</template>");\n` : "") + "}\n}\n");
     });
+
+    // ai-opt-out on a section or screen: its template in a display:contents div with data-ai-opt-out (ScreenQvt.js aiOffWrap)
+    const aiOffWrap = (node, kind, code) => (attr(node, "ai-opt-out") === "true" && code
+        ? `sri.write('<div class="m-ai-opt-out" data-ai-opt-out="${kind}">');\n${code}\nsri.write("</div>");\n` : code);
 
     const sectionIterateMacro = stmt((node) => {
         const widgets = child(node, "widgets");
@@ -2401,7 +2415,7 @@
             if (fail) code += `sri.write("</template><template v-else>");\n${fail.source || ""}`;
             code += `sri.write("</template>");\n}\n`;
         }
-        return "{\n" + code + `sri.write("</m-scope></template>");\n}\n`;
+        return aiOffWrap(node, "section", "{\n" + code + `sri.write("</m-scope></template>");\n}\n`);
     });
 
     const containerMacro = stmt((node, children) => `$s.containerOpen(${wlit(node, false)});\n${children}sri.write(${lit(`</${attr(node, "type") || "div"}>\n`)});\n`);
@@ -2510,7 +2524,7 @@
     const macros = Object.assign({}, noops(S.allElements), noops(["condition", "actions"]), {
         // an element no macro names: the walker logs it and writes Java's placeholder, as the merged qvt does
         "@element": stmt((node) => S.unknownElementCode(MODE, node.name)),
-        "screen": stmt((node, children) => children),
+        "screen": stmt((node, children) => aiOffWrap(node, "screen", children)),
         "widgets": widgetsMacro,
         "fail-widgets": widgetsMacro,
         "dynamic-form": widgetsMacro,

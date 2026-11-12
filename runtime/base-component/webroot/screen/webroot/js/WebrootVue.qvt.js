@@ -4100,11 +4100,11 @@
         props: { modelValue: String, name: String, id: String, label: String, form: String, disable: Boolean, readonly: Boolean, tooltip: String,
             light: Boolean, placeholder: String, rows: [String, Number], enter: { type: String, default: "newline" }, mentionUrl: String,
             mentionParameters: Object, recordUrl: String, recordParameters: Object, plain: Boolean, plainToggle: { type: Boolean, default: true }, autofocus: Boolean,
-            collab: Object },
+            collab: Object, aiOptOut: Boolean },
         emits: ["update:modelValue", "update:plain", "submit", "mention", "failed"],
         data() {
             richTextCount += 1;
-            return { state: "loading", isPlain: this.plain, focused: false, plainFocused: false, htmlBeforePlain: "", plainText: "",
+            return { state: "loading", isPlain: this.plain, focused: false, plainFocused: false, htmlBeforePlain: "", plainText: "", aiOffInside: false,
                 active: {}, blockLabel: "Paragraph", asking: null, askValue: "", proposal: null,
                 mention: { open: false, items: [], index: 0, loading: false }, uid: "m-rich-text-" + richTextCount };
         },
@@ -4196,8 +4196,10 @@
                 { key: "deleteRow", label: "Delete row" }, { key: "deleteColumn", label: "Delete column" }, { key: "deleteTable", label: "Delete table" }]; },
             canEdit() { return !this.disable && !this.readonly; },
             editable() { return this.state === "ready" && this.canEdit; },
-            // Assist's text actions when the server offers them (bootstrap.features.textActions), never on a shared document
-            textActions() { const assist = moqui.assist; return assist && assist.textActionsOn && !this.collab && assist.textActionsOn() ? assist.textActionList() : []; },
+            // Assist's text actions when the server offers them (bootstrap.features.textActions), never on a shared document, nor on
+            // a field opted out of AI: the ai-opt-out prop, or inside a [data-ai-opt-out] field, section or screen (design-people PE-21)
+            aiOff() { return this.aiOptOut || this.aiOffInside; },
+            textActions() { const assist = moqui.assist; return assist && assist.textActionsOn && !this.collab && !this.aiOff && assist.textActionsOn() ? assist.textActionList() : []; },
             assistLabel() { return moqui.assist ? moqui.assist.labels.textActions : "Assist"; },
             minHeight() {
                 const rows = parseInt(this.rows, 10) || (this.light ? 2 : 6);
@@ -4306,6 +4308,7 @@
             textAction(item) {
                 const assist = moqui.assist;
                 const editor = this.editor;
+                if (!assist || this.aiOff) return;
                 let source;
                 if (this.isPlain) {
                     const area = this.$refs.plainArea;
@@ -4566,6 +4569,7 @@
             }
         },
         mounted() {
+            this.aiOffInside = !!(this.$el && this.$el.closest && this.$el.closest("[data-ai-opt-out]"));
             loadTiptap().then(() => {
                 if (this.unmountedNow) return;
                 try {
