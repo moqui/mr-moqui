@@ -875,12 +875,14 @@ fn a_new_llm_or_agent_entity_is_in_the_sim_list_or_named_absent() {
         "moqui.agent.AgentTrigger",
         "moqui.agent.AgentTriggerEvent",
         "moqui.llm.LlmApiClient",
+        "moqui.llm.LlmCallSummary",
         "moqui.llm.LlmEndpoint",
         "moqui.llm.LlmFeatureBinding",
         "moqui.llm.LlmModel",
         "moqui.llm.LlmModelAlias",
         "moqui.llm.LlmModelCapability",
         "moqui.llm.LlmQuota",
+        "moqui.llm.LlmQuotaReservationSummary",
         "moqui.llm.LlmUsageSummary",
     ];
     let facade = testing::open();
