@@ -48,6 +48,14 @@ along with this software (see the LICENSE.md file). If not, see
                 text</description></parameter>
         </in-parameters>
     </service>
+    <service verb="offer" noun="QuickCreate" type="interface">
+        <description>The contract of a quick-create kind's condition-service (xml-screen-3.xsd quick-create): whether to offer the
+            kind to the session's user. The shell calls it as the app root that declares the kind, in a transaction of its own,
+            each time it makes the shell data; offer true offers it, false or no answer leaves it out, and one that fails is
+            logged and leaves out that kind alone. It answers about the session's user only.</description>
+        <in-parameters><parameter name="kind"><description>The quick-create kind asked about</description></parameter></in-parameters>
+        <out-parameters><parameter name="offer" type="Boolean"/></out-parameters>
+    </service>
     <service verb="get" noun="Providers" type="rust" location="moqui_core::service::shell::get_providers" transaction="ignore">
         <description>The providers of hook declared in the shell-providers of the app roots the current user may open, in
             sequence order: sourceId (the provider's name), app and service. A screen offers a feature that needs a provider

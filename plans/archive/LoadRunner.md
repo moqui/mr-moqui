@@ -1,8 +1,18 @@
 # LoadRunner
 
-Status 2026-11-10: L1 to L6 are built (2026-11-10); L7, other kinds of load, is deferred. The
-guide is [docs/tools/Load-Runner.md](../docs/tools/Load-Runner.md), which says what was built where this plan
-differs. Corrections the build made are marked "Built:" below. The plan turns the Tools app's Service Load Runner screen into
+> Archived 2026-11-12: L1 to L7 built (L1 to L6 on 2026-11-10, L7's WebSocket and SSH loads on 2026-11-12), the
+> generator's ceiling measured (§16) and the third run's slowdown of §11 found (the embedded database's 16MB of
+> shared buffers; the code's default is now 128MB, and the load test conf gives it 256MB). The guides are
+> [Load-Runner](../../docs/tools/Load-Runner.md) and [JS-Test-Load](../../docs/dev/JS-Test-Load.md); what is still
+> open (browser users, a distributed runner, the target's own numbers, data feeders, CSS selectors, saved profiles,
+> a purge, an authorization override for in-process calls, the no-pdf stall of §11) is in
+> [Remaining-Work](../Remaining-Work.md#tests).
+
+Status 2026-11-12: L1 to L6 are built (2026-11-10), and L7, WebSocket and SSH loads, on 2026-11-12
+([What L7 built](#what-l7-built)), with the generator's ceiling measured (§16) and the third run's slowdown of §11
+found. The guides are [docs/tools/Load-Runner.md](../../docs/tools/Load-Runner.md) and
+[docs/dev/JS-Test-Load.md](../../docs/dev/JS-Test-Load.md), which say what was built where this plan differs.
+Corrections the build made are marked "Built:" below. The plan turns the Tools app's Service Load Runner screen into
 a general load runner: load scripts in JavaScript on the `moqui test-client` harness, run from Tools › Load, from a
 command, or from a client spec, against this server's services in process or any server over HTTP, with room for SSH
 and other loads later. The first script is an order to cash walk that runs against Moqui Java (MarbleERP) and MR Moqui
@@ -21,7 +31,7 @@ Contents: [1 what there is](#1-what-there-is-now) · [2 what to build](#2-what-t
 
 **The Service Load Runner screen** (`runtime/base-component/tools/screen/Tools/Service/ServiceLoadRunner.xml`) is the
 Java screen with a `tui` twin. It calls `ec.service.getLoadRunner()`, which MR Moqui does not have
-([Screen-TUI-Impl](archive/Screen-TUI-Impl.md): "the port does not have"), so the screen shows a form and no run. In
+([Screen-TUI-Impl](Screen-TUI-Impl.md): "the port does not have"), so the screen shows a form and no run. In
 Java (`ServiceFacadeImpl.LoadRunner`, `framework/src/main/groovy/org/moqui/impl/service/ServiceFacadeImpl.groovy:613`)
 it is one in-memory runner per server:
 
@@ -34,7 +44,7 @@ it is one in-memory runner per server:
 It can only call services in the same server, has no scenario of several steps, keeps no history, and needs the
 `SERVICE_LOAD_RUNNER` permission (sealed, on `ADMIN_ADV`).
 
-**`load(opts)` in `moqui test-client`** ([JS-Test-Client, Load and parallel](../docs/dev/JS-Test-Client.md#load-and-parallel);
+**`load(opts)` in `moqui test-client`** ([JS-Test-Client, Load and parallel](../../docs/dev/JS-Test-Client.md#load-and-parallel);
 `crates/moqui-host/src/test_client/load.rs`, `prelude.js`, `mod.rs` `run_load`) already runs virtual users from
 outside a server. Each user is a thread with its own script engine and HTTP session (cookie jar and session token).
 It has `users`, `duration`, `iterations`, `rampUp`, `think`, and `setup`, `scenario` and `teardown` functions. Each
@@ -79,7 +89,7 @@ one is missing. It was last changed in 2017 and no longer runs as written: the l
    to be the same on both (§11), so its parameters are the target and a few options, not a server flavor.
 
 Not in scope: reading or writing JMeter's `.jmx`; a recorder or a visual script builder; a distributed runner that
-spreads the generator across machines or a cluster's nodes (§17); replacing the opt-in speed tests ([Profiling2](Profiling2.md)), which measure single
+spreads the generator across machines or a cluster's nodes (§17); replacing the opt-in speed tests ([Profiling2](../Profiling2.md)), which measure single
 paths without a client.
 
 ## 3. Decisions
@@ -97,7 +107,7 @@ D2, D5, D8, D9 and D10 are the user's decisions of 2026-11-10; the others are th
 | D7 | Where it is in Tools | `Tools/Load.xml` and `Tools/Load/`, a "Load testing" box on the dashboard. `Tools/Service/ServiceLoadRunner.xml` is deleted (one route per screen); what it did is the shipped script `ServiceCall.load.js` |
 | D8 | The command's name | `moqui test-load` (`./moq test-load`), after `moqui test-client`: a component's `test/load/` scripts as `test-client` runs its `test/client/` specs |
 | D9 | The permission | Rename `SERVICE_LOAD_RUNNER` to `LOAD_RUNNER` (still sealed, on `ADMIN_ADV`), since it is no longer about services. Pre-release, so no migration |
-| D10 | In-process service calls | Run as the user who started the run, with authorization required and the tarpit off for the run's contexts. Java ran them as anonymous with authorization off. An override may prove needed (a service worth loading that the user is not granted); it is added when a real case shows it, not before (§16). Recorded in [Parity-Diffs](Parity-Diffs.md) when built |
+| D10 | In-process service calls | Run as the user who started the run, with authorization required and the tarpit off for the run's contexts. Java ran them as anonymous with authorization off. An override may prove needed (a service worth loading that the user is not granted); it is added when a real case shows it, not before (§16). Recorded in [Parity-Diffs](../Parity-Diffs.md) when built |
 | D11 | Reading HTML | No CSS selectors in L1. The first script needs none: an id comes from the redirect's URL (`response.urlParam`) or from a link's `href` by a regular expression (§11). If scripts come to need them, a small matcher in `moqui-lib` over html5ever, which is already linked, and no new crate (§17) |
 | D12 | Scripts come from files | The run form names a script in a component; no script text is typed into the screen. A typed script would be code execution in the server, which is `GROOVY_SHELL_WEB`'s class of tool |
 
@@ -221,7 +231,7 @@ omission). Iterations that could not start for lack of a free user are counted a
 no user has taken it by the time of the start after it (one interval late, and at least 25 ms), or when the scenario
 ends with it due. Each iteration of a rate scenario is also a `<scenario> iteration` step sample from its scheduled
 start. The semantics of stages and of a live change (`Load::set_target`, `update#LoadRunUsers`) are in
-`test_client/load/schedule.rs` and [JS-Test-Load](../docs/dev/JS-Test-Load.md#rates-and-stages).
+`test_client/load/schedule.rs` and [JS-Test-Load](../../docs/dev/JS-Test-Load.md#rates-and-stages).
 
 ## 6. Kinds of load
 
@@ -245,7 +255,7 @@ type statistics; §16 has the options.
 
 **Later kinds** (§17) fit the sample model without changing it: `ws` sends and receives as named samples; `ssh.exec`
 (a command, such as an `agent-apps` step, with its exit status as the outcome); an interactive shell with `send` and
-`expect`; a browser page per user.
+`expect`; a browser page per user. Built in L7, all but the browser page ([What L7 built](#what-l7-built)).
 
 ## 7. Runs in a server
 
@@ -285,7 +295,7 @@ its end the run's thread writes the result file and takes the load out of the re
 (`before_shutdown`) running loads are stopped and their results written as `stopped`. A load cut off by the process
 dying leaves no result. When the target is this server, the run writes a Monitor annotation at its start and end, so
 dashboards show the load window
-([Monitoring, Deploy markers and annotations](../docs/tools/Monitoring.md#deploy-markers-and-annotations)).
+([Monitoring, Deploy markers and annotations](../../docs/tools/Monitoring.md#deploy-markers-and-annotations)).
 
 ## 8. Tools › Load
 
@@ -302,7 +312,7 @@ box (Load scripts, Runs), shown with the permission, and loses the "Service load
 
 The form of New run is built from the plan and the run's page draws live charts, which the XML widgets do not
 express, so those two have a `.qvue` with a `tui` twin; the lists and Compare are plain XML screens. The run's page
-polls `Load/runStatus` every 2 seconds while the run is running (the pattern [Monitoring](Monitoring.md) names for
+polls `Load/runStatus` every 2 seconds while the run is running (the pattern [Monitoring](../Monitoring.md) names for
 live data) and stops polling when it ends. In `tui` the page shows the numbers as they are when it renders, with
 Refresh, and the charts as the `chart` component the old twin used.
 
@@ -352,7 +362,7 @@ its flow. `load({ scenario() {...} })` with functions stays as it is.
 - **Limits.** One run an instance and 1,000 users a run by default (D6). The run's contexts skip the tarpit; the
   target's own tarpits still apply to HTTP.
 - **Demo.** Replaced by the Disabled screen (§8).
-- [Attack-Surface](../docs/security/Attack-Surface.md) gets the screen's row, the target rule and the sealed
+- [Attack-Surface](../../docs/security/Attack-Surface.md) gets the screen's row, the target rule and the sealed
   permission's new name.
 
 ## 11. The first script: order to cash
@@ -471,7 +481,21 @@ and a new session each iteration. The generator's CPU share was 0.2%.
     conversion and merge services, which change Party key columns. The four runs after the fix had no errors and no
     deadlock in the server log, and Java and MR now both run the walk clean.
   - The third pdf run after the fix slowed through the run (its order-to-cash mean went from 0.9 s in the first 10 s
-    to 3.2 s at the end) with no error or lock wait logged; not looked into yet.
+    to 3.2 s at the end) with no error or lock wait logged. Found (2026-11-12): the embedded Postgres's 16MB of
+    shared buffers, the code's default for a quiet instance.
+    - On a database loaded fresh, four pdf runs back to back went from an order-to-cash p50 of 750 ms to 1,221 ms.
+      Each step's p50 held; what grew was stalls of up to a second every 7 seconds or so, in which every statement
+      waited, a primary key lookup of `screen_path_alias` included.
+    - The backends wrote 200 to 565 MB each in one run, evicting dirty pages all the time, and the machine's
+      writeback came in bursts of up to 295 MB a second with processes blocked on I/O.
+    - With `shared-buffers="256MB"` on the transactional datasource, the second to fourth pdf runs held at a p50 of
+      684 to 700 ms and a p95 of 709 to 741 ms on a database six runs larger, and writes peaked at 18 MB a second.
+      `conf/MoquiLoadTestConf.xml` now sets it, and the guide says why; the code's default went from 16MB to 128MB,
+      Postgres's own. All the MR runs in the table above were on 16MB, so their tails are higher than the
+      framework's.
+    - Without pdf the walk still has a tail on 256MB: ten users reserve the one product's asset rows (`asset ... FOR
+      UPDATE`), so place order's p50 is 153 ms against 60 ms with the PDF steps spacing the users, and one stall of
+      about a second a run, several requests at once, which the server log does not explain. Not looked into.
 - **The cold Java run** spent its first 15 seconds compiling. Its one error is FOP failing to transform the first
   OrderDetail PDF.
 - **What differed in the setup:**
@@ -479,7 +503,7 @@ and a new session each iteration. The generator's CPU share was 0.2%.
   - the PDF renderer (FOP against Chromium);
   - the pages themselves (§16.7).
 - **A fair comparison of the two frameworks** needs both servers on Postgres; the MR deadlock is fixed.
-- **The result files** are under `runtime/tmp/test-load/` of this checkout:
+- **The result files** were under `runtime/tmp/test-load/` of this checkout, which a clean of `tmp` has since removed:
   - Java: `20261110-154200-2060829` (cold), `-154243-2061599`, `-154308-2062112`;
   - MR: `20261110-153128-2034648`, `-153237-2037672`, `-153304-2040024`;
   - MR after FOR NO KEY UPDATE: `20261110-185343-489917` (no pdf), `-185414-491481`, `-185441-495824`,
@@ -515,10 +539,43 @@ running them is not part of Done.
 | **L4 Tools › Load** | The screens of §8, the dashboard box, the old screen and its link removed, the demo lock-down, Attack-Surface | In `LoadRunner.spec.js`: `Run` rendered once in `qvt` and once in `tui` for a finished run (it has its own templates in both), each with all of its checks (the header, a name's row, no `Error rendering`); `NewRun` the same for `ServiceCall`. The demo spec's path |
 | **L5 Compare and import** | `compare#LoadRuns`, `Compare.xml`, `import#LoadRunResult`, Run again, the Monitor annotation, the generator panel's CPU share | `compare#LoadRuns` on two made-up results gives the percent changes; an import of a result file makes a completed run and refuses a file that is not a result |
 | **L6 Rates and stages** | The arrival rate with scheduled starts and `dropped`; `stages` (users over time); changing a scenario's users while it runs, from the run's page | Rust unit tests of the schedule with a fake clock; a fixture spec where a slow fixture endpoint shows the wait in the step time |
-| **L7 Other kinds** | `ws` samples; `ssh.exec` and an `agent-apps` session; an interactive shell with `send` and `expect` (§17 has the sketch). Its own short plan first | Decided there |
+| **L7 Other kinds** | `ws` samples; `ssh.exec` and an `agent-apps` session; an interactive shell with `send` and `expect` (§17 has the sketch). Built: no plan of its own, [What L7 built](#what-l7-built) | Rust unit tests of the shell's text and the SSH target rule; the fixture's `WebSocket.spec.js` and `Ssh.spec.js` against a server with an SSH listener; the `test-load` CLI test; a case of `tools/test/LoadRunner.spec.js` |
 
 L1 and L2 give the comparison of Java and MR from the command. L3 and L4 give the Tools app its runner back. L5 on
 can wait for use to show what matters.
+
+### What L7 built
+
+Built 2026-11-12, with no plan of its own: the sample model of L1 held, so L7 added two kinds and their calls.
+
+- **Kinds.** `Kind::Ws` and `Kind::Ssh` (`test_client/load/mod.rs`), with `load::observe_outcome` for a sample
+  whose outcome is a label: `timeout`, `closed`, `refused`, an exit status as `exit 1`. `expect` on a call lists the
+  labels that are not errors. A call that is something the user does (a connect, a send, an exec) waits the
+  scenario's `pause` first; one that waits for the server (a receive, an expect) does not. A stop now ends any wait.
+- **WebSocket** (`test_client/ws.rs`). In a load the handshake (`ws <path>`, its status the outcome, an error but 101), a
+  send given a name, and each receive (`ws receive`: `ok`, `timeout`, `closed`) are samples; a receive waits in
+  250 ms slices. Outside a load nothing changed, so the security proofs' refused handshakes still answer.
+- **SSH** (`test_client/ssh.rs`, `ssh_off.rs` without the `ssh` feature):
+  - `ssh.connect` logs in by password or key through `crate::ssh::client::login`, the SFTP client's connect and
+    login split out of its `open`. The host key is a pinned fingerprint, else anything on loopback or with
+    `--insecure`, else refused naming the key (`Trust` in `ssh/client.rs`).
+  - `exec` runs one command. `shell` asks for a pty, with `send` and `expect`, the output read through `Screen`,
+    which takes out escape sequences across reads. `agentApps` is the prelude's, on `exec`, with JSON answers.
+  - The calls run on the edge runtime, and the user's thread waits in 100 ms slices.
+  - The client sets `nodelay`. Without it each exec took a floor of about 41 ms (Nagle's algorithm against the
+    server's delayed acknowledgement), so an `agent-apps` command took 41 ms and now takes 0.2 to 6 ms. The SFTP
+    client, which shares the login, gains the same.
+- **Where SSH goes.** `server.ssh` is `--ssh host:port` or `MOQUI_TEST_SSH` for `test-client` and `test-load`, the
+  second line of the ready file of `moqui test --serve` (`ssh <address>`), or in a run from Tools this server's own
+  listener. In a server run `ssh` goes with any target kind (`check_uses`), and each connect is checked by
+  `TargetPolicy::allow_ssh`: this server's listener, loopback, `ssh://host:port` entries of `load_runner_targets`,
+  or any host on a dev instance. `moqui test-load` refuses only `service` and kinds it does not know.
+- **Limits.** `conf/MoquiLoadTestConf.xml` turns SSH on at 2222 and raises `ssh-server max-sessions` and the
+  `terminal` limits to 1,000, since users of one account otherwise stop at 4 sessions.
+- **The script.** `tools/test/load/AgentApps.load.js`: each user connects in `setup` and each iteration opens an
+  `agent-apps` session on the user account list, finds an account and closes it. 50 users of one account ran it
+  from the command with no error, and 3 from Tools against the server's own listener.
+- **Not built:** a browser page per user (§17).
 
 ## 14. Acceptance tests to write
 
@@ -535,20 +592,20 @@ either suite, since no suite starts a Java server.
 
 - `docs/tools/Load-Runner.md`, new: writing a script, the API added, running from Tools and from the command, reading
   a result, comparing, the tarpit and generator notes, what is approximate.
-- [JS-Test-Client](../docs/dev/JS-Test-Client.md): the Load section points to it, and gains `load({ script })`,
+- [JS-Test-Client](../../docs/dev/JS-Test-Client.md): the Load section points to it, and gains `load({ script })`,
   `step`, `pause`, `urlParam`, the bins and the approximate percentiles.
-- [Build-Test](../docs/Build-Test.md) and the `moq` help: `test-load`.
+- [Build-Test](../../docs/Build-Test.md) and the `moq` help: `test-load`.
 - `runtime/base-component/tools/README.md`: the `Load/` row, `test/load/`; mr-marble's README: its script.
-- [Attack-Surface](../docs/security/Attack-Surface.md), [Parity-Diffs](Parity-Diffs.md) (D10, the removed screen),
-  [Parity-Mapping](Parity-Mapping.md) (`ServiceFacadeImpl.LoadRunner` to `load_runner`).
-- [Remaining-Work](Remaining-Work.md): a load runner row with what is left (§17, L7), pointing here; the arrival-rate
+- [Attack-Surface](../../docs/security/Attack-Surface.md), [Parity-Diffs](../Parity-Diffs.md) (D10, the removed screen),
+  [Parity-Mapping](../Parity-Mapping.md) (`ServiceFacadeImpl.LoadRunner` to `load_runner`).
+- [Remaining-Work](../Remaining-Work.md): a load runner row with what is left (§17, L7), pointing here; the arrival-rate
   model, server samples and compare are built.
 
 ## 16. Risks and open questions
 
 1. **The generator's own ceiling.** A user is a thread with an interpreted script engine (about 1 MB and 7 ms to
-   start, [JS-Test-Client](../docs/dev/JS-Test-Client.md#load-and-parallel)). A few hundred users a process is the
-   scale. [Performance](Performance.md)'s target of 100,000 a second is far past what scripted users generate from
+   start, [JS-Test-Client](../../docs/dev/JS-Test-Client.md#load-and-parallel)). A few hundred users a process is the
+   scale. [Performance](../Performance.md)'s target of 100,000 a second is far past what scripted users generate from
    one process; that target stays with the speed tests and a native driver. L1 measures the ceiling (requests a
    second per core for a script of one request against a fixture that answers at once) and the guide states it; the
    `generator` block makes a run at the ceiling visible.
@@ -579,8 +636,12 @@ either suite, since no suite starts a Java server.
 
 **What the build settled** (L1 to L6):
 
-- 1: the ceiling was not measured; JS-Test-Client gives the scale (a few hundred users a process) and the `generator`
-  block's `cpu` and `scriptShare` show a run at it. Still to measure.
+- 1: measured 2026-11-12 (`load_ceiling`, an ignored test in `crates/moqui/tests/cli/test_load.rs`), on the
+  machine of §11 with a stub that answers at once on the same machine. One process made 30,000 requests a second of a
+  one-request script from 1 user, about 77,000 from 4 to 16 users, and 64,500 from 256. A request costs the
+  generator 33 to 45 µs of CPU, so a core makes 22,000 to 30,000 a second. At the plateau the generator used 3.5 of
+  24 CPUs, so its CPU was not the limit there. The guide states it, and the `generator` block's `cpu` and
+  `scriptShare` show a run near it.
 - 2: a run from Tools against this server is `in-target`, with a `generator.note` and the server samples; one
   against another server is `in-server`, since the generator is this server's process and not the target's.
 - 3: no per-context counters were added; the server panel has the machine's load, the process's CPU share, memory
@@ -593,7 +654,9 @@ either suite, since no suite starts a Java server.
 
 ## 17. Later
 
-- **SSH and interactive loads** (L7), sketched so that L1's sample model holds them:
+- **SSH and interactive loads** (L7), sketched so that L1's sample model holds them. Built
+  ([What L7 built](#what-l7-built)): the connection is `ssh.connect`, a session `conn.agentApps(path)` with
+  `command(line)`, and the shell `conn.shell()`:
 
   ```js
   plan({ title: "Terminal walk", uses: ["ssh"] })
@@ -610,8 +673,8 @@ either suite, since no suite starts a Java server.
 
   and for a shell, `const sh = conn.shell(); sh.send("status\r"); sh.expect(/uptime/, { name: "status", timeout: 5 })`.
   The host has an SSH client (`crates/moqui-host/src/ssh/client.rs`, russh).
-- **WebSocket samples** (`/notws` subscribers held open while HTTP users write), and **browser users** (a Chromium
-  page per user, a handful at most).
+- **WebSocket samples** (`/notws` subscribers held open while HTTP users write; built in L7), and **browser users** (a
+  Chromium page per user, a handful at most).
 - **A distributed runner**: the generator spread across a cluster's nodes from Tools, or the command on several
   machines, with one merged result. It needs what D5 leaves out: run records every node sees, a stop that reaches
   every node, and histograms merged across them (they merge by adding, which L1's histogram allows).

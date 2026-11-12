@@ -23,6 +23,15 @@
         </actions>
     </service>
 
+    <!-- The condition of the gallery's quick-create kind galleryTask (screen/Gallery.xml; xml-screen-3.xsd quick-create
+        condition-service): the shell offers the kind only when this answers offer true for the session's user. Here it is
+        offered unless the user turned it off (their preference GALLERY_QUICK_TASK set to N), as an app offers Clock in only to
+        someone who clocks. -->
+    <service verb="offer" noun="GalleryQuickCreate">
+        <implements service="org.moqui.ui.ShellServices.offer#QuickCreate"/>
+        <actions><set field="offer" from="ec.user.getPreference('GALLERY_QUICK_TASK') != 'N'"/></actions>
+    </service>
+
     <!-- Two call-context providers of the suite shell (the shell-providers of screen/Gallery.xml; plans/Comms-Framework.md §3.3,
         V5): who a phone caller is, for the ring bar and the call's screen pop (CallServices get#CallContext, as the user rung).
         The first knows the gallery's example numbers (+1 555 0100 xxxx); the second shows a provider that fails being left out

@@ -2287,7 +2287,7 @@ task_test_load() {
                 comparing=''
                 ;;
             --compare) args+=("$arg"); comparing=1 ;;
-            --script | --server | --param | --users | --ramp-up | --duration | --iterations | --rate | --scenario | \
+            --script | --server | --ssh | --param | --users | --ramp-up | --duration | --iterations | --rate | --scenario | \
                 --label | --log-level | --timeout)
                 args+=("$arg")
                 if [ ${#OPT_REST[@]} -gt 0 ]; then
@@ -4985,7 +4985,7 @@ complete_task() {
             ;;
         test-client)
             case $prev in
-                --server | --spec | --feature | --param | --wait | --timeout | --log-level) return ;;
+                --server | --ssh | --spec | --feature | --param | --wait | --timeout | --log-level) return ;;
                 --junit | --out | --chromium) echo @files; return ;;
             esac
             local out
@@ -4996,14 +4996,14 @@ complete_task() {
             esac
             case $cur in
                 -*)
-                    filter_prefix "$cur" --server --serve --spec --feature --acceptance --param --junit --out --wait \
+                    filter_prefix "$cur" --server --ssh --serve --spec --feature --acceptance --param --junit --out --wait \
                         --timeout --chromium --headed --video --offline --insecure --allow-http --fail-on-skip --log-level
                     ;;
             esac
             ;;
         test-load)
             case $prev in
-                --server | --script | --param | --users | --ramp-up | --duration | --iterations | --scenario | --label | \
+                --server | --ssh | --script | --param | --users | --ramp-up | --duration | --iterations | --scenario | --label | \
                     --log-level) return ;;
                 --out | --compare) echo @files; return ;;
             esac
@@ -5015,7 +5015,7 @@ complete_task() {
             esac
             case $cur in
                 -*)
-                    filter_prefix "$cur" --script --server --param --users --ramp-up --duration --iterations --scenario \
+                    filter_prefix "$cur" --script --server --ssh --param --users --ramp-up --duration --iterations --scenario \
                         --label --out --compare --insecure --allow-http --log-level
                     ;;
             esac

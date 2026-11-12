@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What the run page's server panel shows for a run on this server (plans/LoadRunner.md §8, L5): the machine's load,
+//! What the run page's server panel shows for a run on this server (plans/archive/LoadRunner.md §8, L5): the machine's load,
 //! the process's CPU share and memory, sampled every few seconds over the run from the status map
 //! (`moqui_core::context::status::status_map`, what the old Service Load Runner screen polled), and the Monitor
 //! annotations at the run's start and end.

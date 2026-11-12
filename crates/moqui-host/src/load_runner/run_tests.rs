@@ -29,7 +29,11 @@ fn a_plan_uses_what_its_target_supplies() {
     let err = check_uses(&uses(&["http"]), TargetKind::Service).unwrap_err();
     assert!(err.contains("HTTP"), "{err}");
     assert!(check_uses(&uses(&["service", "http"]), TargetKind::Service).is_err());
-    assert!(check_uses(&uses(&["ssh"]), TargetKind::This).is_err());
+    // ssh goes with any target: each connect is checked against the target rule
+    assert_eq!(check_uses(&uses(&["ssh"]), TargetKind::This), Ok(()));
+    assert_eq!(check_uses(&uses(&["http", "ssh"]), TargetKind::Url), Ok(()));
+    let err = check_uses(&uses(&["telnet"]), TargetKind::This).unwrap_err();
+    assert!(err.contains("uses telnet"), "{err}");
 }
 
 #[test]
@@ -56,6 +60,9 @@ fn a_thread_is_bound_to_its_own_run_only() {
     // and such a thread neither sends nor calls
     let err = in_server.allow("http://localhost/").unwrap_err();
     assert!(err.contains("top level"), "{err}");
+    // a plan that does not declare ssh connects nowhere, loopback included
+    let err = in_server.allow_ssh("127.0.0.1", 2222).unwrap_err();
+    assert!(err.contains("uses: [\"ssh\"]"), "{err}");
     assert!(in_server.check_call("session.new", &json!({})).is_ok());
     // the waits and the recorder's calls only in a user's scenario: no wait with no recorder to see a stop
     for name in [

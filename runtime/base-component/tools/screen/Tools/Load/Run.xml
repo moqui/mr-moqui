@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- One load run (plans/LoadRunner.md §8, Detail): its header, Stop and Stop now while it runs, Run again, Download
+<!-- One load run (plans/archive/LoadRunner.md §8, Detail): its header, Stop and Stop now while it runs, Run again, Download
     result and Delete after; the number cards; the charts of requests and errors per second, of p50, p95 and p99, and of
     active users; the table by name; the first errors; the generator and, for a load running on this server, the
     server's CPU load and memory. A run that is not here (no such run, or a load running on another server) is "Not

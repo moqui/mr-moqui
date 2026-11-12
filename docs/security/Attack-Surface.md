@@ -404,7 +404,7 @@ The Tools database sections ([Database](../tools/Database.md), `crates/moqui-too
 
 ### Load runs
 
-Tools › Load runs a load script on threads of the server (`crates/moqui-host/src/load_runner`, plans/LoadRunner.md
+Tools › Load runs a load script on threads of the server (`crates/moqui-host/src/load_runner`, plans/archive/LoadRunner.md
 §10; the guide is [Load-Runner](../tools/Load-Runner.md)):
 
 - **Targets.** A run reaches this server (its own https URL, and its http URL only on a loopback host), loopback, and
@@ -412,6 +412,10 @@ Tools › Load runs a load script on threads of the server (`crates/moqui-host/s
   machine is refused unless `load_runner_targets` names it, since a login crosses in the clear; a prefix carries its
   scheme, and is matched on the path a request is sent to after `..` and `.` segments are resolved (`targets.rs`).
   `insecure` (an invalid certificate accepted) is a run setting shown on the run.
+- **SSH.** A script whose plan uses `ssh` connects (`ssh.connect`, `test_client/ssh.rs`) only to this server's own SSH
+  listener, loopback, and the `ssh://host:port` entries of `load_runner_targets`; a dev instance to any host. A host
+  key not pinned by the script is taken only from loopback, or from any host when the run is `insecure`. It logs in
+  with the account and password or key the script gives, so it can do over SSH only what that account may.
 - **In-process service calls.** A script whose plan uses `service` calls this server's services through
   `service.call` as the user who started the run, with authorization required and the tarpit off for the run's
   contexts; a service that user is not authorized for is counted as an error and not run (D10; Java ran them as

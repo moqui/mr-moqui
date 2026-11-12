@@ -88,7 +88,7 @@ fn a_cluster_started_with_work_mem_runs_with_it() {
     assert_eq!(rows[0].get("setting"), Some(&Value::string("7168")), "{rows:?}");
     assert_eq!(rows[0].get("unit"), Some(&Value::string("kB")));
     let buffers = show(&mut conn, "shared_buffers");
-    assert!(buffers == "16MB" || buffers == "16384kB", "shared_buffers={buffers}");
+    assert!(buffers == "128MB" || buffers == "131072kB", "shared_buffers={buffers}");
     drop(conn);
     drop(cluster);
 }
@@ -154,7 +154,7 @@ fn embedded_cluster_queries_stream_cache_and_drops() {
     assert_eq!(show(&mut conn, "max_connections"), "20");
     assert_eq!(show(&mut conn, "listen_addresses"), "");
     let buffers = show(&mut conn, "shared_buffers");
-    assert!(buffers == "16MB" || buffers == "16384kB", "shared_buffers={buffers}");
+    assert!(buffers == "128MB" || buffers == "131072kB", "shared_buffers={buffers}");
 
     let selected = conn.query_once("SELECT 1", &[]).unwrap();
     assert_eq!(selected.len(), 1);

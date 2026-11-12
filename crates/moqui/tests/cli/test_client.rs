@@ -141,7 +141,7 @@ fn option_errors_name_the_option() {
         ),
         (
             &["--serve", "--server", "http://localhost:8080"][..],
-            "--serve starts the servers the suites declare: leave out --server and --wait",
+            "--serve starts the servers the suites declare: leave out --server, --ssh and --wait",
         ),
         (
             &["no-such-component"][..],

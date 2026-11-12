@@ -64,8 +64,10 @@ along with this software (see the LICENSE.md file). If not, see
         a palette action, a palette group over enumerations and a key. Screen paths are under the apps root. -->
     <shell-providers>
         <quick-create kind="galleryNote" label="Gallery note" icon="sym_o_note_add" screen="gallery/QuickNote" sequence="90"/>
-        <!-- a .qvue screen: named without .qvue, loaded in its render mode -->
-        <quick-create kind="galleryTask" label="Gallery task" icon="sym_o_add_task" screen="gallery/QuickTask" sequence="91"/>
+        <!-- a .qvue screen: named without .qvue, loaded in its render mode; with a condition-service, offered only where that
+            service says so for the user (example.ExampleServices.offer#GalleryQuickCreate: unless they turned it off) -->
+        <quick-create kind="galleryTask" label="Gallery task" icon="sym_o_add_task" screen="gallery/QuickTask" sequence="91"
+                condition-service="example.ExampleServices.offer#GalleryQuickCreate"/>
         <palette-action label="Open the widget gallery" icon="sym_o_widgets" screen="gallery/Widgets" sequence="90"/>
         <palette-source group="GalleryEnumerations" label="Enumerations" icon="sym_o_label" prefix="~" sequence="90"
                 service="example.ExampleServices.search#GalleryEnumerations"/>

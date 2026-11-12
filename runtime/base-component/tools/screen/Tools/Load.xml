@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Load testing (plans/LoadRunner.md §8): the load scripts of the loaded components (Scripts), a run's form (NewRun),
+<!-- Load testing (plans/archive/LoadRunner.md §8): the load scripts of the loaded components (Scripts), a run's form (NewRun),
     the runs (Runs), one run (Run) and runs side by side (Compare), over org.moqui.dev.LoadServices, which check the
     sealed LOAD_RUNNER permission and all actions on the Tools app whatever calls them. The JSON transitions here serve
     NewRun.qvue and Run.qvue; each answers {..., errors} and every change is a POST. A run's script and target are

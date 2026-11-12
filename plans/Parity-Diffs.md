@@ -419,7 +419,7 @@ A screen's response sent as it renders, and list rows read from a cursor as they
 
 ## Load runs in a server (2026-11-10)
 
-The Tools load runner's runs in the server's own process ([LoadRunner](LoadRunner.md) §6, §7, D10), which replace the
+The Tools load runner's runs in the server's own process ([LoadRunner](archive/LoadRunner.md) §6, §7, D10), which replace the
 Service Load Runner screen.
 
 | Area | Difference | Rationale / where documented |
@@ -429,7 +429,7 @@ Service Load Runner screen.
 
 ## FOR NO KEY UPDATE (2026-11-10)
 
-An addition with no Java counterpart, from the OrderToCash load run's deadlocks ([LoadRunner](LoadRunner.md) §11).
+An addition with no Java counterpart, from the OrderToCash load run's deadlocks ([LoadRunner](archive/LoadRunner.md) §11).
 
 | Area | Difference | Rationale / where documented |
 |---|---|---|

@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 use moqui_devkit::testkit::{spec_offline, suite_server, Failure, SpecResult, SuiteServer};
 use moqui_lib::error::Error;
 
-use super::{run_against, ClientArgs, Server};
+use super::{run_against, ClientArgs, Server, SshTarget};
 use crate::test_cmd::{report, suite_tree, TestComponent};
 
 /// How long a child has to load or restore its database and start listening. A first load of Mantle's data is minutes.
@@ -97,13 +97,19 @@ pub(super) fn run_served(
             }
         };
         match child.ready() {
-            Ok(url) => {
+            Ok((url, ssh)) => {
                 print(&format!(
                     "Server for {names}: {url} (pid {}, log {})",
                     child.process.id(),
                     log.display()
                 ));
                 let ran = Server::parse(&url, true)
+                    .and_then(|server| {
+                        let ssh = ssh
+                            .map(|ssh| SshTarget::parse(&ssh, &server.host).map_err(Error::new))
+                            .transpose()?;
+                        Ok(server.with_ssh(ssh))
+                    })
                     .and_then(|server| run_against(args, server, Some(30.0), &group.components, out_dir, print));
                 match ran {
                     Ok(ran) => results.extend(ran),
@@ -249,15 +255,16 @@ fn start(server: &SuiteServer, log: &Path, index: usize, args: &ClientArgs) -> R
 }
 
 impl ServeChild {
-    /// The URL from the ready file, once the child writes it. An error with the end of its output when it exits first
-    /// or does not start in time.
-    fn ready(&mut self) -> Result<String, Error> {
+    /// The URL from the ready file, once the child writes it, and its SSH listener when it has one (a line `ssh
+    /// <address>`). An error with the end of its output when it exits first or does not start in time.
+    fn ready(&mut self) -> Result<(String, Option<String>), Error> {
         let deadline = Instant::now() + START_TIMEOUT;
         loop {
             if let Ok(text) = std::fs::read_to_string(&self.ready_file) {
-                let url = text.trim();
-                if !url.is_empty() {
-                    return Ok(url.to_string());
+                let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+                if let Some(url) = lines.next() {
+                    let ssh = lines.find_map(|line| line.strip_prefix("ssh ")).map(str::to_string);
+                    return Ok((url.to_string(), ssh));
                 }
             }
             match self.process.try_wait() {

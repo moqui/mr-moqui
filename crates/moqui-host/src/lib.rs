@@ -65,7 +65,7 @@ mod grpc_client;
 mod grpc_listen;
 #[cfg(feature = "print")]
 pub mod ipp;
-// Load runs from Tools (plans/LoadRunner.md §7): org.moqui.dev.LoadServices.
+// Load runs from Tools (plans/archive/LoadRunner.md §7): org.moqui.dev.LoadServices.
 #[cfg(feature = "test-client")]
 mod load_runner;
 #[cfg(not(feature = "test-client"))]

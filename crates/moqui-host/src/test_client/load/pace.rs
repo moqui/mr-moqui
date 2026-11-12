@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The pace of a load's users (plans/LoadRunner.md section 5): the think time between iterations and the pause before
+//! The pace of a load's users (plans/archive/LoadRunner.md section 5): the think time between iterations and the pause before
 //! each request, untimed, drawn from a generator of the user's own thread. A Gaussian pause (JMeter's Gaussian Random
 //! Timer) is clamped at zero.
 

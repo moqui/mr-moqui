@@ -637,7 +637,7 @@ fn a_held_update_commits_in_one_round_trip_and_fails_for_a_row_gone_on_postgres(
 /// A parent row held `FOR NO KEY UPDATE` does not block another transaction's insert of a child row, whose foreign key
 /// check takes `FOR KEY SHARE` on the parent; held `FOR UPDATE` it does, until the inserting transaction's statement
 /// timeout. This is the lock an organization's `Party` row takes to serialize postings, which a deadlock with an
-/// `Invoice` insert showed (plans/LoadRunner.md section 11).
+/// `Invoice` insert showed (plans/archive/LoadRunner.md section 11).
 #[test]
 fn a_no_key_lock_does_not_block_a_child_insert_and_a_for_update_lock_does_on_postgres() {
     use moqui_core::transaction::TransactionAttribute;

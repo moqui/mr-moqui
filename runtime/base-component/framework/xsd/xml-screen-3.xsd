@@ -697,6 +697,16 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="screen" type="xs:string"/>
         <xs:attribute name="requires-record" type="boolean" default="false"><xs:annotation><xs:documentation>Offered only
             while a record is in the screen context (an activity on the record).</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="condition-service" type="xs:string"><xs:annotation><xs:documentation>
+            A service that says whether to offer this kind to the current user, beyond the grant of its screen (Clock in
+            only to someone who clocks). The shell calls it each time it makes the shell data (and the providers the tray
+            reads, which it keeps up to ten minutes), in a transaction of its own and as the app root that declares the
+            kind, with that app's authorization and entity filters; it gets kind and nothing else, answers for the session's
+            user (a user named as data grants nothing) and implements org.moqui.ui.ShellServices.offer#QuickCreate: its
+            out-parameter offer true offers the kind. False, no answer, or a service that fails or is missing leaves out
+            this kind alone, and a failure is logged with the app, kind and service. Keep it cheap: it runs on every page
+            load of the shell.
+        </xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
     <xs:element name="today-source"><xs:annotation><xs:documentation>
         A service the Today panel calls for the items this app adds to it (open RFQs for Sales, late shipments for

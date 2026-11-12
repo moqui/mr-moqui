@@ -1,4 +1,4 @@
-// A load script for the harness's own client spec (test/client/Load.spec.js, plans/LoadRunner.md section 4): a plan
+// A load script for the harness's own client spec (test/client/Load.spec.js, plans/archive/LoadRunner.md section 4): a plan
 // with params and a threshold, a constant and a helper at the top level that both scenarios use, and two scenarios
 // that start together.
 plan({

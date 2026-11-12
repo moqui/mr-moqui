@@ -487,7 +487,7 @@ thread_local! {
 
 /// From now on this thread's scripts may call only the host functions whose path (`System.getProperty`,
 /// `ec.service.sync`, `__moquiTestHost.call`) `allow` passes; any other throws. For a thread that runs code the host
-/// does not trust with the server's own functions: a load script's users in a server run (plans/LoadRunner.md §10),
+/// does not trust with the server's own functions: a load script's users in a server run (plans/archive/LoadRunner.md §10),
 /// which get only the client harness's globals. A [`HostCallsLifted`] lets a host call that runs the server's own code
 /// (a service) call them again while it runs.
 pub fn restrict_host_calls(allow: fn(&str) -> bool) {

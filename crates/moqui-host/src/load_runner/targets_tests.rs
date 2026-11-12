@@ -18,8 +18,39 @@ fn policy(own: &[&str], targets: &str) -> TargetPolicy {
     TargetPolicy {
         own: own.iter().filter_map(|url| SiteOrigin::parse(url)).collect(),
         prefixes: parse_prefixes(targets),
+        ssh: parse_ssh_targets(targets),
+        own_ssh: None,
         any: false,
     }
+}
+
+#[test]
+fn ssh_reaches_loopback_this_servers_listener_and_the_listed_hosts() {
+    let mut policy = policy(
+        &["https://erp.example.com"],
+        "https://api.example.com/rest, ssh://Shell.Example.com:2222 ssh://bastion.example.com",
+    );
+    assert_eq!(policy.allow_ssh("127.0.0.1", 2222), Ok(()));
+    assert_eq!(policy.allow_ssh("localhost", 22), Ok(()));
+    assert_eq!(policy.allow_ssh("shell.example.com", 2222), Ok(()));
+    assert_eq!(policy.allow_ssh("bastion.example.com", 22), Ok(()));
+    // another port, another host, and an https prefix's host are not allowed
+    assert!(policy.allow_ssh("shell.example.com", 22).is_err());
+    let err = policy.allow_ssh("api.example.com", 22).unwrap_err();
+    assert!(err.contains("load_runner_targets"), "{err}");
+    // the ssh entries are not http prefixes
+    assert!(policy.allow("https://shell.example.com:2222/").is_err());
+    // this server's own listener, by its name or the address it binds
+    assert!(policy.allow_ssh("erp.example.com", 2222).is_err());
+    policy.own_ssh = Some("10.0.0.5:2222".parse().unwrap());
+    assert_eq!(policy.allow_ssh("erp.example.com", 2222), Ok(()));
+    assert_eq!(policy.allow_ssh("10.0.0.5", 2222), Ok(()));
+    assert!(policy.allow_ssh("erp.example.com", 2223).is_err());
+    // an entry that does not read is left out, the others kept
+    assert_eq!(
+        parse_ssh_targets("ssh://user@h.example.com:22 ssh://h2.example.com:2200/path ssh://ok.example.com:2201"),
+        vec![("ok.example.com".to_string(), 2201)]
+    );
 }
 
 #[test]

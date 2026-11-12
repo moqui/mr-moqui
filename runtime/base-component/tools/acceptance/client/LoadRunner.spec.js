@@ -1,5 +1,5 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// The Tools › Load walk of plans/LoadRunner.md §14 in the browser on the qvt shell (./moq accept tools --spec
+// The Tools › Load walk of plans/archive/LoadRunner.md §14 in the browser on the qvt shell (./moq accept tools --spec
 // LoadRunner): a LOAD_RUNNER holder (john.doe, in ADMIN_ADV) opens Load scripts, starts ServiceCall from New run, sees
 // the request count grow on the run's page, stops it, finds it in Runs as Stopped, makes a second run and compares the
 // two from Runs' row selection; then deletes both from their pages. Each run's label is unique to this walk, and what

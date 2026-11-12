@@ -977,7 +977,7 @@ pub fn run_on_thread(
 pub type ThreadBody<'a> = Box<dyn FnOnce() -> Result<String, String> + 'a>;
 
 /// Runs a thread's body inside what the caller sets up on the thread, such as an entered ExecutionContext with a
-/// user logged in (a load run in a server, plans/LoadRunner.md section 6), and answers the body's answer.
+/// user logged in (a load run in a server, plans/archive/LoadRunner.md section 6), and answers the body's answer.
 pub type AroundThread = Box<dyn for<'a> FnOnce(ThreadBody<'a>) -> Result<String, String> + Send>;
 
 /// A script file for [`run_script_on_thread`]: its text, and the name an error gives for it.
@@ -1007,7 +1007,7 @@ pub struct ScriptThread {
     pub around: Option<AroundThread>,
 }
 
-/// Run a script on a thread of its own (plans/LoadRunner.md section 5, a load script's users): an engine with the
+/// Run a script on a thread of its own (plans/archive/LoadRunner.md section 5, a load script's users): an engine with the
 /// core prelude and `host`'s, then [`ScriptThread::before`], the file, and the call. The thread answers the call's
 /// value as JSON, or the error, which names the file and line for an error in the file.
 ///

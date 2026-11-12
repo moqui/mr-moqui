@@ -753,8 +753,10 @@ mod cluster {
         settings.temporary = false;
         settings.timeout = None;
         // fsync=on overrides pg_ctl's `-F`. Sim keeps it on too; synchronous_commit is its only relaxation.
+        // the entity cluster's is Postgres's own default: on 16MB a load's growing data kept the backends evicting
+        // dirty pages, and their writeback stalled every query (plans/archive/LoadRunner.md section 11)
         let buffers = match role {
-            ClusterRole::Entity => "16MB",
+            ClusterRole::Entity => "128MB",
             ClusterRole::Sim => "8MB",
         };
         settings.configuration.insert(

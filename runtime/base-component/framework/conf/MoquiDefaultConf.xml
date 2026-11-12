@@ -111,7 +111,7 @@
     <default-property name="moqui_chromium_path" value=""/>
 
     <!--
-        Load runs from Tools (org.moqui.dev.LoadServices, plans/LoadRunner.md §10). A run may reach this server (its https
+        Load runs from Tools (org.moqui.dev.LoadServices, plans/archive/LoadRunner.md §10). A run may reach this server (its https
         URL; its http one only on a loopback host), loopback (localhost and the loopback addresses),
         and the URL prefixes in load_runner_targets (comma-separated, each with its scheme: https://staging.example.com
         allows that origin, https://example.com/app/ only under that path); a dev instance may reach any URL. Plain
@@ -1412,7 +1412,7 @@
             development in runtime/conf/MoquiDevConf.xml.
             The embedded cluster's shared-buffers, work-mem, maintenance-work-mem and effective-cache-size (sizes such as
             64MB) may be set on the transactional datasource; when not set the defaults from code apply (shared_buffers
-            16MB), and a change applies when the server starts the cluster. -->
+            128MB, Postgres's own default), and a change applies when the server starts the cluster. -->
         <datasource group-name="transactional" database-conf-name="${entity_ds_db_conf}" schema-name="${entity_ds_schema}"
                 runtime-add-missing="${entity_add_missing_runtime}" startup-add-missing="${entity_add_missing_startup}"
                 pg-stat-statements="false">

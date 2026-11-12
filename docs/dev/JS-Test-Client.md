@@ -53,6 +53,7 @@ polls until it answers, for CI that starts the server in the background. Any fai
 | Option | |
 |---|---|
 | `--server URL` | `http://localhost:8080` by default, or `MOQUI_TEST_SERVER`. Plain `http` goes only to this machine (`localhost`, `127.0.0.0/8`, `::1`) unless `--allow-http`, since a login over it crosses the network in the clear. `./moq test-client -p N` gives `http://localhost:N` |
+| `--ssh host:port` | Where `ssh.connect` goes when a spec names no host and port (`server.ssh`); a port alone is on the server's host. Or `MOQUI_TEST_SSH`. Not with `--serve`, which takes the started server's ([SSH](#ssh)) |
 | `--serve` | Start each suite's declared server as a child process and run against it (below). Not with `--server`, `--wait` or `--offline` |
 | `--offline` | Run only specs with `server: false`. Pages open at `https://moqui.test`. Nothing listens. Not with `--serve` |
 | `--spec Name[,Name]` | The specs to run, by file name without `.spec.js`, exactly (no patterns), with the specs their `dependsOn` names |
@@ -66,7 +67,7 @@ polls until it answers, for CI that starts the server in the background. Any fai
 | `--chromium path` | The browser, else `moqui_chromium_path`, else `runtime/chromium` (`./moq chromium-download`), else an installed Chromium, then Google Chrome or Microsoft Edge (on the PATH or where the OS installs them) |
 | `--headed` | A visible browser, for debugging |
 | `--video` | Record each spec's pages into `<out>/video/<Spec>.webm`, with `<Spec>.timeline.json` ([Video](#video)). Needs `ffmpeg` |
-| `--insecure` | Accept an invalid server certificate (a WARN says so); Chromium gets `--ignore-certificate-errors` too |
+| `--insecure` | Accept an invalid server certificate (a WARN says so); Chromium gets `--ignore-certificate-errors` too, and `ssh` takes any host key |
 | `--allow-http` | Allow plain `http` to another machine |
 | `--fail-on-skip` | A skipped spec or feature fails the run, so that a missing Chromium or fixture does not pass as green in CI |
 | `--log-level level` | Console only: `trace`, `debug`, `info`, `warn` (the default) or `error`. `log.info` in a spec shows at `info` |
@@ -140,7 +141,9 @@ later ones take seconds.
 `moqui test --serve [address]` is the server side, also for use by hand. When its specs pass it shuts the test factory
 down and serves the same scratch database on the address (`127.0.0.1:0`, a free port, by default; or a port alone, on
 loopback), printing `Serving <url> (Ctrl-C to stop)`, until Ctrl-C, SIGTERM, or the end of standard input when it is a
-pipe. The SSH, HTTPS and cluster ports move to free ones unless set, so it starts beside a running server. With
+pipe. The SSH, HTTPS and cluster ports move to free ones unless set, so it starts beside a running server; the ready
+file names the moved SSH listener on a second line (`ssh 127.0.0.1:<port>`), which `--serve` gives the specs as
+`server.ssh`. With
 `--db existing` it serves the runtime's own database instead of a scratch one; when there are no specs to run (each
 component named has none) no test factory boots first, and the server starts at once. Not with `--db none`, `--agents`
 or `--skills`.
@@ -243,13 +246,14 @@ Every call blocks until it is done; there is no `await`. Conditions are plain va
 
 | Global | |
 |---|---|
-| `server` | `{ url, host, port, secure }` of the server under test |
+| `server` | `{ url, host, port, secure, ssh }` of the server under test; `ssh` is `{ host, port }` of its SSH listener (`--ssh`, or the server `--serve` started), else null |
 | `params` | The `--param` values and `MOQUI_TEST_*` variables, as text |
 | `http` | The current session: the spec's default, or in `load` and `parallel` the thread's own |
 | `session(opts)` | A new session with its own cookie jar and token. `opts.headers` go on each of its requests; `opts.user` (and `opts.password`, `moqui` by default) logs it in |
 | `login(user, password = "moqui")`, `logout()` | `http.login` and `http.logout` |
 | `hmac` | `sha256Base64` and `sha256Timestamp`, the System Message signers ([HTTP](#http)) |
 | `ws` | WebSocket |
+| `ssh` | SSH: `connect` to a server, then `exec`, `agentApps` and `shell` ([SSH](#ssh)) |
 | `browser` | Headless Chromium: `newPage(opts)`, and `runInPage(opts)` at the top of an offline spec |
 | `load(opts)`, `parallel(n, fn, args, opts)` | Virtual users, and threads |
 | `step(name, fn)`, `pause(spec)`, `fail(message)`, `service.call(...)` | The load globals ([Load and parallel](#load-and-parallel)) |
@@ -366,6 +370,41 @@ const evil = ws.connect("/notws", { session: s, origin: "https://evil.example" }
 !evil.open
 evil.status == 403
 ```
+
+In a load the handshake, a send given a `name` (`send(text, { name })`) and each receive are samples of kind `ws`,
+and a refused handshake, a receive that times out and one whose socket closes are errors unless the call's `expect`
+lists the status or `timeout` or `closed` ([JS-Test-Load, WebSocket and SSH](JS-Test-Load.md#websocket-and-ssh)).
+Outside a load they behave as above.
+
+### SSH
+
+`ssh.connect({ user, password, key, host, port, fingerprint, timeout })` logs in to an SSH server and returns a
+connection; `user` and a `password` or a private `key` (PEM text) are needed. With no `host` and `port` it goes to
+`server.ssh`: `--ssh host:port` (a port alone is on the server's host), `MOQUI_TEST_SSH`, the listener of a server
+`--serve` started, or in a load run from Tools the server's own; a `port` with no listener named is on 22. The host
+key: a pinned `fingerprint` (`SHA256:...`) must match; a server on this machine is taken, and so is any with
+`--insecure`; any other is refused, naming its fingerprint to pin. The calls on the connection:
+
+| Call | |
+| --- | --- |
+| `exec(command, { input, timeout, name, expect })` | Runs one command and returns `{ status, stdout, stderr }`; `input` is its standard input. It does not throw for an exit status, only for a channel the server refused (a command the account may not run) or a timeout |
+| `agentApps(path = "/apps", { size, timeout, name })` | A session of the server's `agent-apps` ([TUI, For agents](../ui/TUI.md#for-agents)) on `path`, as JSON; it throws when the session does not open. Its `command(line, { name, expect })` runs one command and returns the answer (`{ ok, reason, path, title, screen, elements, ... }`), `close()` ends it, and `answer` is the last one |
+| `shell({ cols, rows, term })` | A pty (120x40, `xterm-256color` by default) and the shell the account gets: the `moqui>` prompt with `SSH_SHELL`, else the apps. `send(text)` writes to it (`"\r"` is Enter); `expect(pattern, { timeout, expect })` waits until the output, escape sequences taken out and a cursor move read as a line break, matches a RegExp or a string, and returns `{ match, groups, before }`, the output up to the match then read. A timeout throws, with the end of the output, unless `expect` lists `timeout` (then null). The pattern is the regex crate's, so a lookahead or a back reference is refused |
+| `close()` | Logs out; the spec's connections and shells close after the spec in any case |
+
+```js
+const conn = ssh.connect({ user: "john.doe", password: "moqui" })
+const apps = conn.agentApps("/apps/system")
+apps.command("go /apps/system/Security/UserAccount/UserAccountList").ok
+conn.exec("agent-apps nosuch look").status == 2
+const shell = conn.shell()
+shell.expect(/moqui> |System/, { timeout: 20 })
+```
+
+In a load each connect, exec, agent-apps command and expect is a sample of kind `ssh`
+([JS-Test-Load, WebSocket and SSH](JS-Test-Load.md#websocket-and-ssh)). The code is `test_client/ssh.rs`, with the
+login of the host's SFTP client (`crates/moqui-host/src/ssh/client.rs`); a build without the `ssh` feature (`lite`)
+throws on each call.
 
 ### Browser
 
@@ -632,7 +671,9 @@ in `results` and `"thread <i>: <message>"` in `errors`. `timeout` is 120 s by de
 simultaneous logins.
 
 A user's thread and engine start in about 7 ms and take about 1 MB, so a few hundred users per process is the scale;
-beyond that, run several client processes. Without `rate` it is a closed model: each user waits for its answer before
+beyond that, run several client processes. A request costs the generator 33 to 45 µs of CPU, about 25,000 a second
+from a core, and one process made 77,000 a second of a one-request script on a 24-thread machine
+([Load-Runner, Notes on measuring](../tools/Load-Runner.md#notes-on-measuring)). Without `rate` it is a closed model: each user waits for its answer before
 the next request.
 
 `stages` and `rate` ([JS-Test-Load, Rates and stages](JS-Test-Load.md#rates-and-stages)) give users over
