@@ -1164,7 +1164,7 @@ fn a_trigger_batches_its_events_and_keeps_its_run_limits() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// plans/High-Level-Review.md HL-020: a sweep fires at most its cap of triggers whose window has closed, the one
+/// plans/archive/High-Level-Review.md HL-020: a sweep fires at most its cap of triggers whose window has closed, the one
 /// waiting longest first; the rest fire on the next pass.
 #[test]
 fn a_capped_trigger_sweep_fires_the_rest_next_pass() {

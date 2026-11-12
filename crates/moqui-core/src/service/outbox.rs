@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The outbox of tx-commit rules (plans/High-Level-Review.md HL-025): a `ServiceOutbox` row written in the
+//! The outbox of tx-commit rules (plans/archive/High-Level-Review.md HL-025): a `ServiceOutbox` row written in the
 //! transaction that commits, so the rules of a committed call run though the process stops before they do.
 //!
 //! The commit hook runs the rules from memory as before, on a service worker, and that run deletes the row first in its

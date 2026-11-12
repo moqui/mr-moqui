@@ -28,7 +28,7 @@
 //! the next save writes over it, the other change staying in the page's history.
 //!
 //! In a cluster an update is relayed once to the other servers that have the document open (`collab-update`). One that
-//! is lost there is recovered from the row (plans/High-Level-Review.md HL-018): each [`tick`] reads the stamps of the
+//! is lost there is recovered from the row (plans/archive/High-Level-Review.md HL-018): each [`tick`] reads the stamps of the
 //! open documents' rows in one query, merges the state of each row another server wrote since this one last read or
 //! wrote it, and gives the part its room lacked to the room's clients ([`Event::Update`]); a version is saved from the
 //! document with the stored state merged first. Yjs updates are idempotent, so merging what a room already has changes

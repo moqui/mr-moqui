@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Group revocation under load (plans/High-Level-Review.md HL-023), an acceptance test on embedded Postgres. Writer
+//! Group revocation under load (plans/archive/High-Level-Review.md HL-023), an acceptance test on embedded Postgres. Writer
 //! threads end users' `UserGroupMember` rows, each in a transaction of its own, half by setting `thruDate` and half by
 //! deleting the row, while reader threads, each a user's session, reload that user's groups over and over. A user's
 //! groups are read through the entity's list cache (`cache="true"`) and kept by the session until the authorization
@@ -57,7 +57,7 @@ struct Revocations {
 }
 
 #[test]
-#[ignore = "acceptance: group revocation under load on embedded Postgres (plans/High-Level-Review.md HL-023)"]
+#[ignore = "acceptance: group revocation under load on embedded Postgres (plans/archive/High-Level-Review.md HL-023)"]
 fn revoked_memberships_are_gone_from_every_read_after_the_commit() {
     use moqui_core::driver::DbDriver;
     use moqui_host::db::embedded::EmbeddedCluster;

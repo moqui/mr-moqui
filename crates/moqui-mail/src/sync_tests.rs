@@ -1117,7 +1117,7 @@ impl Drop for FailStore {
 
 /// A message whose store keeps failing is read again from its UID, counted on the folder row so a restart goes on
 /// counting, and in the fifth session skipped and reported in the account's lastSyncError; the folder moves past it
-/// (plans/High-Level-Review.md HL-038).
+/// (plans/archive/High-Level-Review.md HL-038).
 #[test]
 fn a_store_failing_in_five_sessions_is_skipped_and_reported() {
     let _lock = moqui_core::user::session::cookie_property_lock();
@@ -1419,7 +1419,7 @@ fn sent_mail_is_appended_to_sent_unless_the_server_kept_a_copy() {
 }
 
 /// A queued change that loses the connection (the server drops it on APPEND) is counted before its command goes, and
-/// the sync goes on with a new connection (plans/High-Level-Review.md HL-029): the new Inbox mail comes in that
+/// the sync goes on with a new connection (plans/archive/High-Level-Review.md HL-029): the new Inbox mail comes in that
 /// session, a later change of another message still goes, and the change is dropped once it has had its tries.
 #[test]
 fn a_change_that_loses_the_connection_counts_and_the_sync_goes_on() {
@@ -1857,7 +1857,7 @@ fn rules_conditions_actions_block_and_spam() {
     assert_eq!(label_names(&facade, &id(7)), vec!["AnyHit".to_string()]);
     // their server side went at the end of the session
     assert_eq!(changes(&facade, &account), 0);
-    // the forward is claimed in the rules' transaction and goes once it commits (plans/High-Level-Review.md HL-028),
+    // the forward is claimed in the rules' transaction and goes once it commits (plans/archive/High-Level-Review.md HL-028),
     // its copy to Sent at the next sync
     assert!(sink.sent().is_empty(), "not sent in the rules' transaction");
     ctx.factory().run_pending();

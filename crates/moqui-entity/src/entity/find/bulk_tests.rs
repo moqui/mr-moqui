@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! plans/High-Level-Review.md HL-033: bulk writes page by primary key in bounded chunks, and a purge commits each one.
+//! plans/archive/High-Level-Review.md HL-033: bulk writes page by primary key in bounded chunks, and a purge commits each one.
 
 use std::sync::{Arc, Mutex};
 

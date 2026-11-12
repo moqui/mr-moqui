@@ -971,7 +971,7 @@ pub(super) fn enum_ids(rows: &crate::entity::EntityList) -> Vec<String> {
         .collect()
 }
 
-/// plans/High-Level-Review.md HL-002: a key of one type compares as a value, and only text against another type
+/// plans/archive/High-Level-Review.md HL-002: a key of one type compares as a value, and only text against another type
 /// compares as text.
 #[test]
 fn a_cached_rows_key_matches_the_written_one_across_types_only_as_text() {
@@ -982,7 +982,7 @@ fn a_cached_rows_key_matches_the_written_one_across_types_only_as_text() {
     assert!(!super::same_key(&Value::I64(7), &Value::I64(8)));
 }
 
-/// plans/High-Level-Review.md HL-002, opt-in: the cost of a single write's eviction (one sweep of every cached list per
+/// plans/archive/High-Level-Review.md HL-002, opt-in: the cost of a single write's eviction (one sweep of every cached list per
 /// write) beside the one sweep per entity that a frame end and a bulk delete's chunk run ([`super::sweep`]), which
 /// checks each cached row against a set of the changed keys. The writes match no cached list, the case where selective
 /// eviction scans everything and removes nothing. Run:
@@ -1089,7 +1089,7 @@ fn eviction_sweep_cost_per_write_and_per_entity() {
     }
 }
 
-/// plans/High-Level-Review.md HL-002: a frame's writes of one entity are evicted again at its end in one sweep, and the
+/// plans/archive/High-Level-Review.md HL-002: a frame's writes of one entity are evicted again at its end in one sweep, and the
 /// lists another thread cached while the frame was open are fresh after it: one held an updated row, one matches a
 /// created row, one holds a deleted row. A list none of the writes touches stays.
 #[test]
@@ -1146,7 +1146,7 @@ fn a_frames_writes_of_one_entity_make_one_frame_end_sweep() {
     assert_eq!(cached(&facade, "K"), ["K1:stored"]);
 }
 
-/// plans/High-Level-Review.md HL-002, the cost rule of a sweep: within its work bound a bulk delete's sweep keeps a
+/// plans/archive/High-Level-Review.md HL-002, the cost rule of a sweep: within its work bound a bulk delete's sweep keeps a
 /// cached list that holds none of the deleted rows; where matching would spend more than the bound, the entity's lists
 /// go unjudged, that one too, for a bulk delete's chunk and for a frame's end. (`LocalizedMessage` does not refer to
 /// itself, so its bulk delete goes a chunk at a time; `Enumeration` does.)

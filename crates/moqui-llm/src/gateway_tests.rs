@@ -260,7 +260,7 @@ fn admit_race(
 }
 
 /// Concurrent gateway calls of one user, and of one API client, whose remaining quota fits one call's reserve: one is
-/// admitted and holds its reservation while its call runs, the others get 429 (plans/High-Level-Review.md HL-030).
+/// admitted and holds its reservation while its call runs, the others get 429 (plans/archive/High-Level-Review.md HL-030).
 #[test]
 fn one_of_concurrent_gateway_calls_takes_the_room_left() {
     let facade = moqui_core::testing::open();

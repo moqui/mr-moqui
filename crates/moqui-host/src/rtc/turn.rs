@@ -20,7 +20,7 @@
 //! ([`crate::edge::handle`]), which read a stream a message at a time for the server and write back what it sends. TLS
 //! uses the host's certificates (`runtime/cert`).
 //!
-//! The TCP and TLS connections are bounded ([`StreamLimits`], plans/High-Level-Review.md HL-031): at most
+//! The TCP and TLS connections are bounded ([`StreamLimits`], plans/archive/High-Level-Review.md HL-031): at most
 //! `max_connections` at once and `per_source` from one source (an IPv6 /64 is one); one must send a whole message
 //! (after its TLS handshake) within `handshake`, and one with nothing read or written for `idle` is closed; and what
 //! waits to be written to a client is at most `max_queued` messages, past which the client is not reading and its

@@ -18,7 +18,7 @@
 //! Fan-out is not done on the thread that published: the message goes on a queue, and one sender thread posts it to
 //! the live peers, as `plans/archive/Cluster.md` says. An invalidation joins the one already waiting for its entity, which
 //! then carries every key written, up to [`KEYS_PER_ENTITY`], and the whole entity past it ([`Queue::push`],
-//! plans/High-Level-Review.md HL-017). A peer that may have missed an invalidation (a failed post, a skip while it was
+//! plans/archive/High-Level-Review.md HL-017). A peer that may have missed an invalidation (a failed post, a skip while it was
 //! down, a return to the live set) gets a clear of every entity cache before anything else ([`PeerCache::dirty`],
 //! HL-018). Each peer gets what was waiting as one batch, in order
 //! ([`Sender::post_batch`]: one gRPC call, or one POST after another), and several peers are posted to at once. The
@@ -169,7 +169,7 @@ enum Queued {
 }
 
 impl Queue {
-    /// Queue `message` (plans/High-Level-Review.md HL-017). An entity cache invalidation joins the one waiting for its
+    /// Queue `message` (plans/archive/High-Level-Review.md HL-017). An entity cache invalidation joins the one waiting for its
     /// entity: that one then carries every key, in `primaryKeys`, up to `limits.keys`, and no key (the whole entity) past
     /// it or when a write had no usable key. A clear of every entity cache waiting covers it. With `limits.entities`
     /// entities waiting, the invalidations become one clear of every entity cache. Other topics are kept in order, up to
@@ -295,7 +295,7 @@ struct PeerCache {
     read_at: i64,
     /// Peers to skip until the time given, after every try of a post failed.
     down_until: HashMap<String, Instant>,
-    /// Peers that may have missed a message (plans/High-Level-Review.md HL-018): a post that failed every try, a batch
+    /// Peers that may have missed a message (plans/archive/High-Level-Review.md HL-018): a post that failed every try, a batch
     /// skipped while the peer was down, a message dropped from a full queue, or a return to the live set. Each gets a
     /// clear of every entity
     /// cache ahead of its next batch, and stays here until one is delivered; the heartbeat asks for that pass, so no
@@ -493,7 +493,7 @@ pub fn apply_remote(facade: &EntityFacade, topic: &str, message: &TopicMessage) 
 }
 
 /// An `entity-cache-invalidate` body: `clearAll` clears every entity cache (a sender that may have lost invalidations,
-/// plans/High-Level-Review.md HL-018); `primaryKeys` evicts by each key (several writes joined, HL-017), `primaryKey` by
+/// plans/archive/High-Level-Review.md HL-018); `primaryKeys` evicts by each key (several writes joined, HL-017), `primaryKey` by
 /// one; with no usable key the entity's caches go whole. A key that does not apply is logged and the others still are.
 fn apply_invalidation(facade: &EntityFacade, body: &serde_json::Value) -> Result<(), Error> {
     if is_clear_all(body) {
@@ -518,7 +518,7 @@ fn apply_invalidation(facade: &EntityFacade, body: &serde_json::Value) -> Result
         // With the written row's key, only the cached finds it may have changed go.
         _ => vec![body.get("primaryKey").and_then(key_of)],
     };
-    // Several keys go in one sweep of the entity's caches (plans/High-Level-Review.md HL-002); a key that is not
+    // Several keys go in one sweep of the entity's caches (plans/archive/High-Level-Review.md HL-002); a key that is not
     // usable clears the entity whole, which covers the others.
     let cleared = match keys.into_iter().collect::<Option<Vec<_>>>() {
         Some(keys) if keys.len() > 1 => crate::entity::cache::clear_keys_cache(facade, name, &keys),
@@ -534,7 +534,7 @@ fn apply_invalidation(facade: &EntityFacade, body: &serde_json::Value) -> Result
 /// What a member does when it may have missed cluster messages: a peer's clear of every entity cache (a gap in its
 /// sends) or a transport that lost its connection. Every entity list cache is cleared, and the live sessions whose rows
 /// are gone are retired, so a `session-end` lost in the gap does not leave an ended session served here
-/// (plans/High-Level-Review.md HL-018). The other topics need nothing: see the module documentation. The session step
+/// (plans/archive/High-Level-Review.md HL-018). The other topics need nothing: see the module documentation. The session step
 /// runs only with `factory`, and its failure is logged.
 ///
 /// # Errors
@@ -629,7 +629,7 @@ pub(crate) fn note_write(
     })
 }
 
-/// [`note_write`] for the rows one statement wrote, by their keys (a bulk delete's chunk, plans/High-Level-Review.md
+/// [`note_write`] for the rows one statement wrote, by their keys (a bulk delete's chunk, plans/archive/High-Level-Review.md
 /// HL-033): one invalidation that lists every key in `primaryKeys`, or past [`KEYS_PER_ENTITY`] keys none, which
 /// invalidates the whole entity, as a waiting invalidation joined past that many does.
 pub(crate) fn note_writes(
@@ -682,7 +682,7 @@ fn note_invalidation(
     body: impl FnOnce() -> serde_json::Value,
 ) -> Result<(), Error> {
     // No member caches what this entity's writes change (`cache="never"` and in no cacheable view): the peers are not
-    // told (plans/High-Level-Review.md HL-017), though a local listener still is.
+    // told (plans/archive/High-Level-Review.md HL-017), though a local listener still is.
     let to_peers = is_linked(facade)
         && (crate::user::is_authz_entity(entity_name) || crate::entity::cache::peers_may_cache(facade, entity_name));
     // No peer and no local listener: there is no one to tell, so the message (a UUID and a JSON body) is not built.
@@ -900,7 +900,7 @@ fn reject_peer_mismatch(
 
 /// Start the heartbeat thread: [`heartbeat`] every scheduler interval. It runs on a thread of its own, not as a
 /// scheduler hook, so a long job pass or maintenance hook does not hold it past the liveness window and drop this member
-/// out of its peers' fan-out (`plans/High-Level-Review.md` HL-020). Pools with no threads (inline, idle) run no
+/// out of its peers' fan-out (`plans/archive/High-Level-Review.md` HL-020). Pools with no threads (inline, idle) run no
 /// scheduler, so they get no heartbeat, as before.
 fn install_heartbeat(factory: &Arc<ExecutionContextFactory>) {
     if !factory.service_pools().is_threaded() || factory.cluster_heartbeat.swap(true, Ordering::AcqRel) {
@@ -962,7 +962,7 @@ pub fn heartbeat(factory: &ExecutionContextFactory) {
 }
 
 /// Start a send pass for the peers that may have missed an invalidation, with nothing else queued, so they get their
-/// clear without waiting for another write (plans/High-Level-Review.md HL-018).
+/// clear without waiting for another write (plans/archive/High-Level-Review.md HL-018).
 fn request_resync(state: &Arc<ClusterState>) {
     if lock(&state.peers).dirty.is_empty() {
         return;

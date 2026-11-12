@@ -1170,7 +1170,7 @@ impl EntityFacade {
     }
 
     /// Delete the rows a bulk delete read by key in as few statements as the bind limits allow
-    /// (plans/High-Level-Review.md HL-033): `DELETE ... WHERE pk IN (...)`, or for a composite key an OR of each row's
+    /// (plans/archive/High-Level-Review.md HL-033): `DELETE ... WHERE pk IN (...)`, or for a composite key an OR of each row's
     /// key, at most [`DELETE_IN_ITEMS`] rows and [`DELETE_BINDS`] values to a statement. What [`Self::finish_write`] does
     /// for each row is done once for the chunk where it is the same for every row: the authorization check and the
     /// artifact hit, the entity-changed notice, the table check, and one sweep of the caches and one cluster

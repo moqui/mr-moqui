@@ -424,7 +424,7 @@ struct OneCaches {
     epoch: Arc<AtomicU64>,
 }
 
-/// What a find took of its entity's store fence before its query (plans/High-Level-Review.md HL-023). Its result is
+/// What a find took of its entity's store fence before its query (plans/archive/High-Level-Review.md HL-023). Its result is
 /// stored only when no eviction or clear of the entity's caches began since: under the cache's write lock, which the
 /// eviction takes after moving the fence, so rows read before a commit are either refused or evicted after their
 /// store. As [`super::derived`] does for the definitions it builds.
@@ -1014,7 +1014,7 @@ fn frame_sweeps() -> usize {
     FRAME_SWEEPS.with(std::cell::Cell::get)
 }
 
-/// [`evict`] for every write a frame kept of one entity, in one sweep of each cache (plans/High-Level-Review.md
+/// [`evict`] for every write a frame kept of one entity, in one sweep of each cache (plans/archive/High-Level-Review.md
 /// HL-002), through [`sweep`].
 fn evict_frame(facade: &EntityFacade, meta: &ReadMeta, writes: &[FrameWrite]) -> Result<(), Error> {
     #[cfg(test)]
@@ -1023,7 +1023,7 @@ fn evict_frame(facade: &EntityFacade, meta: &ReadMeta, writes: &[FrameWrite]) ->
     sweep(facade, meta, &writes).map(|_| ())
 }
 
-/// The immediate eviction of several writes of one entity at once, a bulk delete's chunk (plans/High-Level-Review.md
+/// The immediate eviction of several writes of one entity at once, a bulk delete's chunk (plans/archive/High-Level-Review.md
 /// HL-002, HL-033): one [`sweep`] of each cache instead of one per row. True when the entity has a cache of finds or
 /// of counts, as [`evict`].
 fn evict_keys(facade: &EntityFacade, meta: &ReadMeta, operation: &str, keys: &[Arc<FieldMap>]) -> Result<bool, Error> {
@@ -1034,7 +1034,7 @@ fn evict_keys(facade: &EntityFacade, meta: &ReadMeta, operation: &str, keys: &[A
 /// Work one [`sweep`] of a list cache may spend matching: a cached row tested against the set of written keys, or a
 /// list's condition judged against one written value, is a unit. Past it the lists not yet judged are removed
 /// unjudged, which is always safe, and read again at their next find: matching more would hold the cache's write lock,
-/// which cached reads of the entity wait on, longer than warming those lists again costs (plans/High-Level-Review.md
+/// which cached reads of the entity wait on, longer than warming those lists again costs (plans/archive/High-Level-Review.md
 /// HL-002). At 200 lists of 50 rows and 200 updates in a frame one sweep spends 50 000.
 const SWEEP_WORK_MAX: usize = 100_000;
 
@@ -1060,7 +1060,7 @@ fn set_sweep_work_max(work: usize) -> usize {
     SWEEP_WORK.with(|bound| bound.replace(work))
 }
 
-/// [`evict`] for a set of writes of one entity in one sweep of each cache (plans/High-Level-Review.md HL-002): a cached
+/// [`evict`] for a set of writes of one entity in one sweep of each cache (plans/archive/High-Level-Review.md HL-002): a cached
 /// list goes when one of its rows has the key of a delete, update or upsert (each row's key text looked up in a set of
 /// the written keys, through one buffer), or when its condition may match the values of a create, update or upsert. A
 /// write with no whole primary key may change any list, so the lists are cleared, and so they are when matching would
@@ -1160,7 +1160,7 @@ fn list_affected(cached: &CachedList, operation: &str, values: &FieldMap, pk: Op
 
 /// Whether a cached row's key field holds the written value: equal values, or the same text when the types differ (a
 /// key written as text and read as a number). Two values of one type compare as values, with no strings made: the
-/// eviction sweep runs this for every cached row that is not the written one (plans/High-Level-Review.md HL-002).
+/// eviction sweep runs this for every cached row that is not the written one (plans/archive/High-Level-Review.md HL-002).
 fn same_key(stored: &Value, value: &Value) -> bool {
     if stored == value {
         return true;
@@ -1342,7 +1342,7 @@ fn forget_read_through(facade: &EntityFacade, entity_name: &str, tx: &Transactio
     Ok(())
 }
 
-/// [`gate_write`] for a bulk write of many rows in one statement (plans/High-Level-Review.md HL-033): true when the
+/// [`gate_write`] for a bulk write of many rows in one statement (plans/archive/High-Level-Review.md HL-033): true when the
 /// database takes it directly, as `gate_write` gives [`WriteGate::Proceed`]; false, with nothing done, when a sim or a
 /// transaction cache would hold each row, so the caller writes row by row. The write fence is checked either way.
 pub(crate) fn writes_direct(facade: &EntityFacade, entity_name: &str, operation: &str) -> Result<bool, Error> {
@@ -1505,7 +1505,7 @@ pub(crate) fn on_write_shared(
 }
 
 /// [`on_write_shared`] for the rows one statement of a bulk delete removed, by their primary keys
-/// (plans/High-Level-Review.md HL-002, HL-033): one sweep of the entity's caches for them all ([`evict_keys`]), each
+/// (plans/archive/High-Level-Review.md HL-002, HL-033): one sweep of the entity's caches for them all ([`evict_keys`]), each
 /// kept for the frame's end, and one cluster invalidation that carries every key.
 pub(crate) fn on_delete_keys(facade: &EntityFacade, entity_name: &str, keys: &[Arc<FieldMap>]) -> Result<(), Error> {
     if keys.is_empty() {
@@ -1545,7 +1545,7 @@ fn write_hooks(
     (crate::hooks::get().cluster_note_write)(facade, entity_name, &meta.pk_fields, values).map_err(Error::from)
 }
 
-/// The entity-changed notice (plans/High-Level-Review.md HL-024): moves every cache kept from entity rows outside the
+/// The entity-changed notice (plans/archive/High-Level-Review.md HL-024): moves every cache kept from entity rows outside the
 /// list and count caches, from this one place, for a write here (when it is over), a cluster peer's invalidation
 /// ([`clear_one_cache`]) and a whole-cache clear (`None`, every entity: [`clear_all_list_caches`]). The screen
 /// configuration, feed definition and localized generations, the definitions built at runtime, and through the
@@ -1574,7 +1574,7 @@ pub(crate) fn note_changed(facade: &EntityFacade, entity_name: Option<&str>) {
 }
 
 /// Whether a cluster peer may hold something a write of `entity_name` changes, so the write is worth an invalidation
-/// (plans/High-Level-Review.md HL-017): a cached find of it (any entity not marked `cache="never"`, since a find may ask
+/// (plans/archive/High-Level-Review.md HL-017): a cached find of it (any entity not marked `cache="never"`, since a find may ask
 /// for the cache), a cached find of a view it is a member of, or a cache the entity-changed notice ([`note_changed`])
 /// moves for it. True for a name the model does not know.
 pub fn peers_may_cache(facade: &EntityFacade, entity_name: &str) -> bool {
@@ -1614,7 +1614,7 @@ pub fn clear_one_cache(facade: &EntityFacade, entity_name: &str, primary_key: Op
 }
 
 /// [`clear_one_cache`] for several keys of one entity, as a cluster peer's invalidation joins them: one sweep of the
-/// entity's caches for them all (plans/High-Level-Review.md HL-002). A key short of a primary key field, or no key,
+/// entity's caches for them all (plans/archive/High-Level-Review.md HL-002). A key short of a primary key field, or no key,
 /// clears the entity's caches whole.
 pub fn clear_keys_cache(facade: &EntityFacade, entity_name: &str, keys: &[FieldMap]) -> Result<(), Error> {
     let meta = read_meta(facade, entity_name)?;

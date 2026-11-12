@@ -684,7 +684,7 @@ pub(crate) const SWEEP_FIRES: usize = 50;
 
 /// The scheduler's tick: fire each document trigger whose batch window has closed (from its oldest waiting event), at
 /// most [`SWEEP_FIRES`] of them, those waiting longest first, so a backlog does not hold the scheduler thread; the rest
-/// fire on the next pass (plans/High-Level-Review.md HL-020). Failure tolerant: a trigger that fails to fire is logged
+/// fire on the next pass (plans/archive/High-Level-Review.md HL-020). Failure tolerant: a trigger that fails to fire is logged
 /// and the others go on.
 pub fn sweep(factory: &Arc<ExecutionContextFactory>) {
     sweep_at_most(factory, SWEEP_FIRES);

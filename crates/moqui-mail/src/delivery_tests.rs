@@ -509,7 +509,7 @@ fn a_rule_that_fails_with_the_store_leaves_the_message_stored() {
 
 /// A rule's forward is claimed in the frame that stores the message and runs its rules, and sent once that commits:
 /// when the frame fails after the rules ran, the message is stored alone and the rules run again, and the forward goes
-/// once (plans/High-Level-Review.md HL-028). The send registered for the commit runs with no user, as the listener's
+/// once (plans/archive/High-Level-Review.md HL-028). The send registered for the commit runs with no user, as the listener's
 /// delivery has none.
 #[test]
 fn a_forward_whose_storing_frame_fails_after_the_rules_is_sent_once() {

@@ -652,7 +652,7 @@ impl EntityFacade {
 
     /// Whether the database of `entity_name` runs other statements on a connection while a cursor is open on it, so an
     /// iterator can stream while each row looks up more: every database but MySQL (and MariaDB), whose open result
-    /// takes no other query (plans/High-Level-Review.md HL-003). A caller that queries for each row reads a list there.
+    /// takes no other query (plans/archive/High-Level-Review.md HL-003). A caller that queries for each row reads a list there.
     pub fn streams_beside_queries(&self, entity_name: &str) -> bool {
         self.with_entity(entity_name, |_, dialect, _| {
             let name = dialect.name.to_ascii_lowercase();
@@ -730,7 +730,7 @@ impl EntityFacade {
     }
 
     /// True when a `use_clone` find of `name` reads a replica, whose rows may be behind the primary's: such a find is
-    /// not stored in the shared entity cache (plans/High-Level-Review.md HL-023).
+    /// not stored in the shared entity cache (plans/archive/High-Level-Review.md HL-023).
     pub(crate) fn reads_clone(&self, name: &str) -> bool {
         let model = self.inner.model.model();
         self.definition(&model, name)

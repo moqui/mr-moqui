@@ -28,7 +28,7 @@
 //! `summarize`, `classify` and `extract` are the typed AI tasks of `org.moqui.agent.AiTaskServices`
 //! ([`crate::ai_task`]), on their features' models.
 //!
-//! A model call is refused while a transaction is open (plans/High-Level-Review.md HL-041, [`crate::provider::call`]):
+//! A model call is refused while a transaction is open (plans/archive/High-Level-Review.md HL-041, [`crate::provider::call`]):
 //! call these from code with none open, or pass `allowInTransaction: true` in the options of `complete`, `summarize`,
 //! `classify` or `extract`, which suspends the transaction for the call and cuts the call to the time it has left.
 //!
@@ -282,7 +282,7 @@ mod tests {
     }
 
     /// A typed AI task inside a transaction is refused as `complete` is, and its options' `allowInTransaction` lets it
-    /// run (plans/High-Level-Review.md HL-041).
+    /// run (plans/archive/High-Level-Review.md HL-041).
     #[test]
     fn ec_llm_tasks_in_a_transaction_are_refused_unless_they_opt_in() {
         clear_context_stack();

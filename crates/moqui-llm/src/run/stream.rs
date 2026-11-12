@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The replay-then-follow of a run's events that every reader of them shares (plans/High-Level-Review.md HL-014):
+//! The replay-then-follow of a run's events that every reader of them shares (plans/archive/High-Level-Review.md HL-014):
 //! the Assist stream (`moqui-host` `llm/sse.rs`), A2A streams and resubscribes, the blocking `message:send` wait and
 //! push ([`crate::a2a::ops::follow`]).
 //!

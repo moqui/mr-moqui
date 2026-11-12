@@ -146,7 +146,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <entity entity-name="ServiceOutbox" package="moqui.service.job" use="transactional" cache="never">
         <description>The tx-commit service ECA rules of a call, written in the transaction that commits, so they run
-            after it even when the process stops first (plans/High-Level-Review.md HL-025). The run after the commit
+            after it even when the process stops first (plans/archive/High-Level-Review.md HL-025). The run after the commit
             deletes the row in its own transaction, so its effects and the delete commit together; a row still here
             after availableDate (its run was lost to a crash, a stop or a full service queue, or failed) is run by the
             scheduler on a job worker, claimed with a conditional update of attemptCount, up to five attempts, later

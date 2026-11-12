@@ -66,7 +66,7 @@ pub(super) const IDLE: Duration = Duration::from_secs(600);
 const PREAUTH_TIMEOUT: Duration = Duration::from_secs(30);
 /// Connections that have not logged in yet, at once; one more is closed. They do not count toward `ssh-server` `max-sessions`.
 const MAX_PREAUTH: usize = 16;
-/// Of [`MAX_PREAUTH`], those one source may hold (plans/High-Level-Review.md HL-032).
+/// Of [`MAX_PREAUTH`], those one source may hold (plans/archive/High-Level-Review.md HL-032).
 const PREAUTH_PER_SOURCE: usize = 4;
 
 /// The address the server listens on, kept on the factory for `Server::ssh_address`.

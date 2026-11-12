@@ -922,7 +922,7 @@ fn merge_sequence_rows(after: &[Row], mut current: Vec<Row>) -> Vec<Row> {
 }
 
 /// The columns of a condition that is only `column = ?` joined by AND, or a statement of several rows by their keys
-/// (a bulk delete's chunk, plans/High-Level-Review.md HL-033): `column IN (?, ...)`, or an OR of such ANDs on the same
+/// (a bulk delete's chunk, plans/archive/High-Level-Review.md HL-033): `column IN (?, ...)`, or an OR of such ANDs on the same
 /// columns. Anything else has no key.
 fn equality_key(pred: &Option<Pred>) -> Option<Vec<String>> {
     let pred = pred.as_ref()?;

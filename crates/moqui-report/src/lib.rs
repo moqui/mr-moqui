@@ -746,7 +746,7 @@ pub fn execute_query(ec: &ExecutionContext, options: &Json) -> Result<Json, Erro
 }
 
 /// The typed frames of a child query's result, taken out of it rather than copied
-/// (plans/High-Level-Review.md HL-016): the composing parent reads only the result's notices, inspection and
+/// (plans/archive/High-Level-Review.md HL-016): the composing parent reads only the result's notices, inspection and
 /// requests after.
 fn take_frames(result: &mut Json) -> Result<Vec<frame::Frame>, Error> {
     match result.get_mut("frames").map(Json::take) {

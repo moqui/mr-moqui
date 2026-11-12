@@ -198,7 +198,7 @@ fn serve_caps_reject_a_small_pool_and_accept_16_and_22() {
 
 /// Streamed database downloads hold a connection of the content group's pool for each window they read: the startup
 /// check counts them there, and a pool that cannot hold them beside the workers warns and admits fewer, never a reserve
-/// connection (plans/High-Level-Review.md HL-022).
+/// connection (plans/archive/High-Level-Review.md HL-022).
 #[test]
 fn transfer_reads_count_in_the_content_pool() {
     let ctx = ExecutionContextFactory::test_context();

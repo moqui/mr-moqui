@@ -835,7 +835,7 @@ fn poll_deadline_marks_rollback_only_and_cancels() {
 }
 
 /// A deadline cancel that stalls (its host does not answer) holds neither the other cancels already due nor the
-/// timer's later passes (plans/High-Level-Review.md HL-019).
+/// timer's later passes (plans/archive/High-Level-Review.md HL-019).
 #[test]
 fn a_stalled_cancel_holds_neither_other_cancels_nor_later_passes() {
     let (first, first_driver) = harness(small());
@@ -862,7 +862,7 @@ fn a_stalled_cancel_holds_neither_other_cancels_nor_later_passes() {
 }
 
 /// A connection whose canceller the timer took is closed when its transaction ends, not handed to the next borrower,
-/// whose statement the late cancel would otherwise stop (plans/High-Level-Review.md HL-019).
+/// whose statement the late cancel would otherwise stop (plans/archive/High-Level-Review.md HL-019).
 #[test]
 fn a_late_cancel_never_reaches_the_next_borrowers_statement() {
     let (mgr, driver) = harness(PoolConfig {
@@ -1576,7 +1576,7 @@ fn finish_deferred_waits_on_each_linked_connection() {
     default.commit().expect("commit");
 }
 
-/// plans/High-Level-Review.md HL-003: a connection that comes back with a stream open is not handed to the next
+/// plans/archive/High-Level-Review.md HL-003: a connection that comes back with a stream open is not handed to the next
 /// borrower, who would read the old cursor's rows.
 #[test]
 fn a_connection_returned_with_an_open_stream_is_discarded() {

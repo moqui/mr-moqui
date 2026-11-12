@@ -13,7 +13,7 @@
  */
 
 //! The anonymous side of an artifact frame (`anonymous-all`, `anonymous-view`), shared by the screen, REST path,
-//! service and empty-database load frames (plans/High-Level-Review.md HL-004): the inheritable grant on the top frame
+//! service and empty-database load frames (plans/archive/High-Level-Review.md HL-004): the inheritable grant on the top frame
 //! ([`super::ExecutionContext::grant_anonymous`]) and the anonymous login the frame starts when nobody is logged in
 //! ([`AnonymousLogin`]), ended with the frame.
 //!

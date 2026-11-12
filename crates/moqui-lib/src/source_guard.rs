@@ -319,7 +319,7 @@ impl RequestGate {
     }
 }
 
-/// A listener's connection slots with a share per source (plans/High-Level-Review.md HL-032): at most `total` held at
+/// A listener's connection slots with a share per source (plans/archive/High-Level-Review.md HL-032): at most `total` held at
 /// once, and at most `per_source` by one source ([`source_key`]), so one host cannot hold every slot of a pool that
 /// connections wait in before they authenticate. Only sources holding a slot are in the table, so it is bounded by
 /// `total` and nothing is scanned per call. Cheap to clone; the clones share the slots.

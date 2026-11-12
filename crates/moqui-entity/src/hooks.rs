@@ -153,7 +153,7 @@ pub struct EntityHooks {
     /// Publish a write to the cluster's caches.
     pub cluster_note_write: fn(&EntityFacade, &str, &[String], &FieldMap) -> Result<(), Error>,
     /// Publish the rows one statement wrote, by their primary keys, as one invalidation (a bulk delete's chunk,
-    /// plans/High-Level-Review.md HL-033).
+    /// plans/archive/High-Level-Review.md HL-033).
     pub cluster_note_writes: fn(&EntityFacade, &str, &[String], &[std::sync::Arc<FieldMap>]) -> Result<(), Error>,
     pub trace_statement: fn(&str) -> Option<Box<dyn StatementTrace>>,
     pub trace_transaction: fn() -> Option<Box<dyn TransactionTrace>>,

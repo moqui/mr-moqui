@@ -588,7 +588,7 @@ async fn serve(
         let _ = stream.set_nodelay(true);
         tune_socket(&stream, limits.write);
         // the hold keeps a watch on `closing` too, so an upgraded socket (which outlives its connection's task) is one
-        // the stop's drain waits for, as it waits for a connection (plans/High-Level-Review.md HL-027)
+        // the stop's drain waits for, as it waits for a connection (plans/archive/High-Level-Review.md HL-027)
         let hold: serve::ConnectionHold = Box::new((slot, permit, closing_rx.clone()));
         let builder = builder.clone();
         let closing = closing_rx.clone();

@@ -38,7 +38,7 @@ pub(super) struct EcaRules {
     pub(super) git: Vec<Arc<GitRule>>,
     /// Every SECA rule the files hold, in load order, with whether its service is defined: `seca` is made of those
     /// that are. When services come or go, [`recheck`] checks these again instead of reading the files
-    /// (plans/High-Level-Review.md HL-015).
+    /// (plans/archive/High-Level-Review.md HL-015).
     candidates: Vec<Candidate>,
 }
 
@@ -142,7 +142,7 @@ pub fn reload(factory: &ExecutionContextFactory) -> EcaRuleCounts {
 /// Check again whether the service of each SECA rule the files hold is defined, after services came or went (a service
 /// file or an entity reloaded), and swap in the rules whose service is: a rule left out for a service not defined yet
 /// runs once the service is, and one whose service went is left out, as a load does, without reading the rule files
-/// again (plans/High-Level-Review.md HL-015). A call in flight keeps the rules it has. Answers how many rules of each
+/// again (plans/archive/High-Level-Review.md HL-015). A call in flight keeps the rules it has. Answers how many rules of each
 /// kind there are now.
 pub fn recheck(factory: &ExecutionContextFactory) -> EcaRuleCounts {
     let current = rules_of(factory);

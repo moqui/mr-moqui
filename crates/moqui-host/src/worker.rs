@@ -15,7 +15,7 @@
 //! Run a blocking framework job on a request worker from async code (the SSH server, the SMTP listener, the XMPP
 //! server, the edge link and the notification socket), without blocking the async runtime. The pool's completion hook
 //! ([`RequestPool::try_submit_then`](moqui_core::service::RequestPool::try_submit_then)) finishes a oneshot the task
-//! awaits, so no thread waits on the reply (`plans/High-Level-Review.md` HL-006); the job's context and cleanup stay on
+//! awaits, so no thread waits on the reply (`plans/archive/High-Level-Review.md` HL-006); the job's context and cleanup stay on
 //! the worker. The tasks hold the factory weakly, so a server that stopped is not kept alive by them, and its database
 //! clients are never dropped on a runtime thread ([`release`]).
 

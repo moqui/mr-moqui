@@ -54,7 +54,7 @@ static PUSH: OnceLock<moqui_core::notify::Subscription> = OnceLock::new();
 static NEXT_SOCKET: AtomicU64 = AtomicU64::new(1);
 
 /// The open sockets of this node: by id, for direct call signaling ([`push_to_socket`]), and by user, so a notification
-/// for a few users visits only their sockets, not every socket of the node (plans/High-Level-Review.md HL-009). Both
+/// for a few users visits only their sockets, not every socket of the node (plans/archive/High-Level-Review.md HL-009). Both
 /// change together under the one lock.
 #[derive(Default)]
 struct Registry {
@@ -107,7 +107,7 @@ const SOCKET_QUEUE: usize = 256;
 const PING_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 const SESSION_CHECK: std::time::Duration = std::time::Duration::from_secs(60);
 /// A send to a socket whose client takes nothing for this long fails, and the socket closes, so a blocked write does
-/// not hold up the loop's own timeouts (`plans/High-Level-Review.md` HL-027). The connection's write timeout does the
+/// not hold up the loop's own timeouts (`plans/archive/High-Level-Review.md` HL-027). The connection's write timeout does the
 /// same under HTTP/1.1; this covers a socket over HTTP/2, where one stream's window does not block the connection.
 pub(crate) const SEND_STALL: std::time::Duration = std::time::Duration::from_secs(60);
 /// Topics one socket may follow; a subscribe past it is ignored, so one socket cannot grow its set without end.

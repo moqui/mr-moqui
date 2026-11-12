@@ -344,7 +344,7 @@ fn the_services_register_at_the_locations_the_service_file_names() {
     assert_eq!(registered, named);
 }
 
-/// plans/High-Level-Review.md HL-015, opt-in: the phases of a service reload of one changed file as the loaded files
+/// plans/archive/High-Level-Review.md HL-015, opt-in: the phases of a service reload of one changed file as the loaded files
 /// grow: the reload's own parse check, path collection, reading and parsing, resolution, the screens dropped for the
 /// services resolved again and the artifact index update, with the files read and services resolved. Run:
 /// `cargo test -p moqui-devkit --lib service_reload_phases -- --ignored --nocapture`.

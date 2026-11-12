@@ -296,7 +296,7 @@ fn deliver_remote(message: &TopicMessage) {
 }
 
 /// What a tick of the rooms did, to their editors: a save to those on every server; the changes another server stored
-/// that a room here lacked (an update relayed to this server and lost, plans/High-Level-Review.md HL-018) to this
+/// that a room here lacked (an update relayed to this server and lost, plans/archive/High-Level-Review.md HL-018) to this
 /// server's editors only, as every server reads the rows itself.
 pub(crate) fn deliver_events(factory: &ExecutionContextFactory, events: Vec<moqui_collab::Event>) {
     for event in events {

@@ -14,7 +14,7 @@
 
 //! Bulk writes of a find: `update_all`, `delete_all` and `purge`. They page through the rows by primary key in bounded
 //! chunks, reading only the key (and the fields an update sets) unless an ECA rule, the data feed, a transaction cache
-//! or a sim needs whole rows (plans/High-Level-Review.md HL-033). A chunk of a delete read by key goes in one statement
+//! or a sim needs whole rows (plans/archive/High-Level-Review.md HL-033). A chunk of a delete read by key goes in one statement
 //! ([`delete_chunk`]).
 
 use std::collections::HashMap;
@@ -175,7 +175,7 @@ fn children_first(rows: Vec<EntityValue>, pk: &[String], self_refs: &[Vec<(Strin
 
 /// Delete a chunk the pager read. Rows read by their key alone (no ECA rule runs and the data feed keeps no values) of
 /// an entity that does not refer to itself go in one statement, or a few under the bind limits
-/// ([`crate::entity::EntityFacade::delete_keys`], plans/High-Level-Review.md HL-033); other rows, or where a sim or a
+/// ([`crate::entity::EntityFacade::delete_keys`], plans/archive/High-Level-Review.md HL-033); other rows, or where a sim or a
 /// transaction cache holds the deletes, one at a time through the value path, in the pager's order. As a row's delete,
 /// a row another transaction deleted first is not an error, and each row read counts as deleted, as Java's
 /// `deleteAll` counts them.

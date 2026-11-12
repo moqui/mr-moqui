@@ -126,7 +126,7 @@ pub(crate) fn stop_all(factory: &ExecutionContextFactory) {
 
 /// The accounts IDLE should watch: active, with an IMAP server, the first `email-client` `idle-max` by id. The
 /// accounts are read `idle-max` at a time, by id, until that many are found, so a pass over many accounts reads only
-/// those it needs (plans/High-Level-Review.md HL-020).
+/// those it needs (plans/archive/High-Level-Review.md HL-020).
 fn wanted_accounts(facade: &EntityFacade) -> Result<Vec<(String, String)>, moqui_lib::error::Error> {
     let max = max_workers();
     let mut out = Vec::new();

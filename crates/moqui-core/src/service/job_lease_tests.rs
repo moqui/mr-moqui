@@ -22,7 +22,7 @@ use moqui_lib::object::{to_plain_string, Value};
 use super::{renew, stamp, LeaseTiming, LocalRuns};
 use crate::context::ExecutionContextFactory;
 
-/// plans/High-Level-Review.md HL-026: one renewal extends the leases of this process's runs, a parked one too, but not
+/// plans/archive/High-Level-Review.md HL-026: one renewal extends the leases of this process's runs, a parked one too, but not
 /// that of a run past its job timeout and the grace, whose scripts end; a started run whose lock another run holds now
 /// is lost, and its scripts end too.
 #[test]

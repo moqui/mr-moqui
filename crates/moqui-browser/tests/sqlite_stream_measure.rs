@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Opt-in measurement of the browser SQLite stream (plans/High-Level-Review.md HL-003): peak heap and time to the first
+//! Opt-in measurement of the browser SQLite stream (plans/archive/High-Level-Review.md HL-003): peak heap and time to the first
 //! row of an `open_stream` over growing tables, beside a `LIMIT 1` query for the cost of one row. It runs natively, on
 //! the same driver code the wasm build links; the browser's own worker memory adds the emscripten heap around it.
 //! Its own test binary, so the counting allocator sees only this. Run:

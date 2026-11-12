@@ -503,7 +503,7 @@ fn reload_services(factory: &ExecutionContextFactory, files: &mut [FileReload]) 
         Ok(reload) => {
             // the screens whose forms or code looked up a service resolved again (auto-fields-service, validation
             // hints, an implicit entity-auto name) are made again on next use; the others stay
-            // (plans/High-Level-Review.md HL-015)
+            // (plans/archive/High-Level-Review.md HL-015)
             let forgot = std::time::Instant::now();
             let screens = moqui_core::screen::ScreenFacade::of(factory).forget_services(&reload.resolved);
             let phases = &reload.phases;

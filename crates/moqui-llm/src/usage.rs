@@ -18,13 +18,13 @@
 //!
 //! Days are in the server's time zone. A quota counts today's calls from `LlmCall` itself, so it does not wait for the
 //! rollup; a monthly quota adds the earlier days of the month from `LlmUsageDaily`. One check reads each distinct
-//! scope's calls once, as one row of totals the database sums (the `LlmCallSummary` view; plans/High-Level-Review.md
+//! scope's calls once, as one row of totals the database sums (the `LlmCallSummary` view; plans/archive/High-Level-Review.md
 //! HL-012), and so the reservations and the month's earlier days.
 //!
 //! A call is admitted ([`admit`]) under a lock row per user and per API client (`LlmQuotaLock`), which checks the
 //! quotas with what the call may use at most and writes that as an `LlmQuotaReservation` in the same short
 //! transaction: a total is the finished calls plus the open reservations, so concurrent calls of one user, on any
-//! node, cannot all pass against the same total (plans/High-Level-Review.md HL-012, HL-030). The reservation goes when
+//! node, cannot all pass against the same total (plans/archive/High-Level-Review.md HL-012, HL-030). The reservation goes when
 //! the call's row is written ([`Reservation`] dropped), or stops counting at its `expiresDate` when a node stopped
 //! mid-call. No transaction is open across the call itself.
 //!
@@ -53,7 +53,7 @@ const LLM_USAGE_DAILY: &str = "moqui.llm.LlmUsageDaily";
 const LLM_QUOTA: &str = "moqui.llm.LlmQuota";
 pub(crate) const LLM_QUOTA_RESERVATION: &str = "moqui.llm.LlmQuotaReservation";
 const LLM_QUOTA_LOCK: &str = "moqui.llm.LlmQuotaLock";
-/// `LlmCall` summed: a find of only its totals reads one row (plans/High-Level-Review.md HL-012).
+/// `LlmCall` summed: a find of only its totals reads one row (plans/archive/High-Level-Review.md HL-012).
 const LLM_CALL_SUMMARY: &str = "moqui.llm.LlmCallSummary";
 /// `LlmUsageDaily` summed.
 const LLM_USAGE_SUMMARY: &str = "moqui.llm.LlmUsageSummary";
@@ -611,7 +611,7 @@ fn calls_between(facade: &EntityFacade, start: i64, end: i64) -> Result<moqui_co
 }
 
 /// The totals of the rows `find` (of `LlmCallSummary` or `LlmUsageSummary`, with its conditions) reads when it selects
-/// only [`SUMMARY_FIELDS`]: one row of totals, which the database sums (plans/High-Level-Review.md HL-012), or for
+/// only [`SUMMARY_FIELDS`]: one row of totals, which the database sums (plans/archive/High-Level-Review.md HL-012), or for
 /// `LlmUsageSummary` one a currency.
 fn summed(mut find: moqui_core::entity::EntityFind) -> Result<Totals, Error> {
     for field in SUMMARY_FIELDS {

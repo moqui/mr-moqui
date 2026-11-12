@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The job lease (plans/High-Level-Review.md HL-026): the job runs this process claimed ([`LocalRuns`]), and a keeper
+//! The job lease (plans/archive/High-Level-Review.md HL-026): the job runs this process claimed ([`LocalRuns`]), and a keeper
 //! thread of their own, apart from the scheduler and the cluster heartbeat, that renews the `leaseExpireDate` of their
 //! `ServiceJobRunLock` rows in one update. A lock whose lease lapsed is taken over by the next pass on any member,
 //! before the holder is gone and before `expireLockTime`, which stays the upper bound.

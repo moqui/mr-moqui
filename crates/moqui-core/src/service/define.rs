@@ -341,7 +341,7 @@ struct Loaded {
     ranks: BTreeMap<String, usize>,
     /// The files read by the prefix they give their services ([`service_prefix`]), with the names they define: the
     /// files of one path in every `service` directory are one group, which a reload reads again when one of them changed
-    /// (plans/High-Level-Review.md HL-015).
+    /// (plans/archive/High-Level-Review.md HL-015).
     groups: BTreeMap<String, Group>,
 }
 
@@ -626,7 +626,7 @@ thread_local! {
 
 /// Run `work`, answering with it every service name [`find`] was asked for on this thread meanwhile, found or not (a
 /// name not defined yet decides a form too, as an implicit entity-auto one). A screen keeps them with what it generated,
-/// so a service reload makes again only the screens that looked up a service it changed (plans/High-Level-Review.md
+/// so a service reload makes again only the screens that looked up a service it changed (plans/archive/High-Level-Review.md
 /// HL-015). A recording inside another adds its names to the outer one too.
 pub(crate) fn recording_lookups<R>(work: impl FnOnce() -> R) -> (R, BTreeSet<String>) {
     struct Recording;
@@ -985,7 +985,7 @@ pub struct ServiceReload {
     /// The services resolved again, which may have changed: those the changed files define or defined, and every
     /// service that implements or includes one of them, transitively. A screen that looked one up is made again.
     pub resolved: Vec<String>,
-    /// How long each part of the reload took (plans/High-Level-Review.md HL-015).
+    /// How long each part of the reload took (plans/archive/High-Level-Review.md HL-015).
     pub phases: ReloadPhases,
 }
 
@@ -1014,7 +1014,7 @@ struct MergeTimes {
     resolved: BTreeSet<String>,
 }
 
-/// Read the changed service files again and swap the registry they change in (plans/High-Level-Review.md HL-015). Each
+/// Read the changed service files again and swap the registry they change in (plans/archive/High-Level-Review.md HL-015). Each
 /// changed file's group is read again, the files of its path in every `service` directory (as a boot reads them, so a
 /// later component still overrides), and only the services those files define or defined are resolved again, with
 /// every service that implements or includes one of them, transitively; the others keep their resolved definitions.
@@ -1157,7 +1157,7 @@ impl Registry {
 
     /// [`Self::merge`], taking a file's root from `parsed` instead of reading it when it is there. `seeds` are names
     /// whose definitions changed or went (a reload's), resolved again with those the files define now and everything
-    /// that implements or includes one of them, transitively (plans/High-Level-Review.md HL-015); every other service
+    /// that implements or includes one of them, transitively (plans/archive/High-Level-Review.md HL-015); every other service
     /// resolved before keeps its definition.
     fn merge_parsed(
         &mut self,

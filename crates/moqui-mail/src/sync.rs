@@ -80,7 +80,7 @@ const LEASE_MILLIS: i64 = 15 * 60 * 1000;
 const FETCH_CHUNK: usize = 25;
 /// Bytes of message bodies in one FETCH, by the sizes the header fetch read (`RFC822.SIZE`): the IMAP client holds a
 /// whole response, so a batch is bounded by size as well as by count, and a larger message is fetched alone
-/// (plans/High-Level-Review.md HL-038).
+/// (plans/archive/High-Level-Review.md HL-038).
 const FETCH_BYTES: u64 = 8 * 1024 * 1024;
 /// The size counted for a message whose size the server did not give.
 const UNKNOWN_SIZE: u64 = 1024 * 1024;
@@ -922,7 +922,7 @@ fn instance_name() -> String {
 /// The session renews it by elapsed time, inside the change, folder and fetch loops ([`Lease::keep`]), so a long change
 /// phase or a long first folder does not outlive it. A renewal refused (the lock lapsed and another session took it, or
 /// it was released) ends the session before it writes again, and the release clears the lock only while this session
-/// holds it, so the session that took it over keeps it (plans/High-Level-Review.md HL-037).
+/// holds it, so the session that took it over keeps it (plans/archive/High-Level-Review.md HL-037).
 ///
 /// The row is read `FOR UPDATE` in each of these: an update of a row read writes back each field read, so without the
 /// row lock two syncs could both read the lock free and both take it, and a lock taken or released could write back
@@ -2239,7 +2239,7 @@ fn sync_folder(
     let mut first = folder.uid_next.is_none() || folder.uid_validity.is_none();
     // The rows kept, by UID: on a first sync all of them (one that stopped part way kept what it stored, which is not
     // stored again); after it only those the session needs, the new UIDs, the flags that changed and the UIDs that
-    // vanished, unless a flag scan or an expunge found by count needs them all (plans/High-Level-Review.md HL-038).
+    // vanished, unless a flag scan or an expunge found by count needs them all (plans/archive/High-Level-Review.md HL-038).
     let mut locals = if first {
         local_rows(session.facade, &folder.id)?
     } else {
@@ -2400,7 +2400,7 @@ fn sync_folder(
         usize::try_from(folder.total.unwrap_or(0)).unwrap_or(0)
     };
     progress.new_mail(wanted.len(), pending, kept);
-    // The store failure the folder row counts, from earlier sessions of this UIDVALIDITY (plans/High-Level-Review.md
+    // The store failure the folder row counts, from earlier sessions of this UIDVALIDITY (plans/archive/High-Level-Review.md
     // HL-038): kept in the row, so a restart or another node goes on counting.
     let known_failure = folder.store_failure.filter(|_| folder.uid_validity == Some(validity));
     // The lowest UID whose store failed this session and was not skipped, which the next session starts from, with

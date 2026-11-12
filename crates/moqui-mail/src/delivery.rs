@@ -772,7 +772,7 @@ fn deliver_one(
     // transaction-cache frame. When that fails, the message is stored alone and the rules run after it, as apart, so a
     // rule that fails never loses the message. A rule's forward is sent only once the frame commits
     // (deliver#DraftMessage in a transaction), so a frame that fails and rules run again send it once
-    // (plans/High-Level-Review.md HL-028).
+    // (plans/archive/High-Level-Review.md HL-028).
     let together = junk.is_none() && moqui_core::service::email_rule_count() == 0;
     let mut rules_ran = false;
     let id = if together {

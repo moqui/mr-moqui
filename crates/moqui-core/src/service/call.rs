@@ -593,7 +593,7 @@ fn sync_input(
     let mut finished = false;
     let outcome = tx.run(attribute, options.timeout.or(def.timeout), || {
         // A service that begins no transaction is still bounded by a `transaction-timeout` it declares, on any thread
-        // and for an async call too (plans/High-Level-Review.md HL-035); a job adds its own limit around the call.
+        // and for an async call too (plans/archive/High-Level-Review.md HL-035); a job adds its own limit around the call.
         let _deadline = crate::script::DeadlineGuard::new(tx.time_remaining().or(def.timeout));
         if let Some(run) = &mut operation {
             run.watch(&tx)?;

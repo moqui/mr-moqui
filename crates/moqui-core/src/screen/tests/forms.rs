@@ -1884,7 +1884,7 @@ fn a_form_list_reads_a_context_list_with_its_value_types() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// plans/High-Level-Review.md HL-015: a service reload drops only the screens whose forms looked up a service it
+/// plans/archive/High-Level-Review.md HL-015: a service reload drops only the screens whose forms looked up a service it
 /// resolved again. A screen with a form of the changed service is made again with its new parameters; one that uses
 /// no service is kept; one whose form took an implicit entity-auto name is made again when a service of that name is
 /// added, since the lookup that found none is kept too.

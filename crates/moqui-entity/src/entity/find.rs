@@ -229,7 +229,7 @@ impl EntityFind {
     /// [`Self::condition`] for one entry of a map such as the context (`condition(context)`, an `entity-find-one` with
     /// `auto-field-map`), which carries whatever the context holds: a find one with the whole primary key leaves such
     /// an equality out, as Java's `oneInternal` leaves out every field of its simple map. An equality set on its own
-    /// ([`Self::eq`], [`Self::condition`]) stays and filters the row (plans/High-Level-Review.md, lane C note on
+    /// ([`Self::eq`], [`Self::condition`]) stays and filters the row (plans/archive/High-Level-Review.md, lane C note on
     /// `one()`).
     pub fn condition_from_map(mut self, condition: Condition) -> Self {
         if let Some(name) = plain_equality_field(&condition) {
@@ -516,7 +516,7 @@ impl EntityFind {
         Ok(self.attach_l10n(list))
     }
 
-    /// The store fence of this find, taken before its query (plans/High-Level-Review.md HL-023); `None` when its result
+    /// The store fence of this find, taken before its query (plans/archive/High-Level-Review.md HL-023); `None` when its result
     /// is not stored in the shared cache: it bypasses the cache, reads a replica ([`Self::use_clone`]), or is not cached.
     fn store_fence(&self, bypass: bool, lookup: &FindLookup) -> Option<cache::StoreFence> {
         if bypass || (self.use_clone && self.facade.reads_clone(&self.entity_name)) {
@@ -721,7 +721,7 @@ impl EntityFind {
     /// A hold or a sim schema is merged in memory. The cursor stays closed, so an open stream is
     /// not asked to mix in rows that are not in the database yet. The cursor lives on the active
     /// transaction's enlisted connection: with no transaction in place the iterator begins one and
-    /// commits it when it closes (plans/High-Level-Review.md HL-003). Drop closes it. The iterator
+    /// commits it when it closes (plans/archive/High-Level-Review.md HL-003). Drop closes it. The iterator
     /// reads only in the transaction it opened in; once that one has ended, or while another is in
     /// place, it fails rather than read or close another transaction's cursor.
     ///

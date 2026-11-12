@@ -122,7 +122,7 @@ fn note_write(
 }
 
 /// [`note_write`] for the rows one statement wrote, by their keys: each key noted for replication, and one cluster
-/// invalidation carrying them all (plans/High-Level-Review.md HL-033).
+/// invalidation carrying them all (plans/archive/High-Level-Review.md HL-033).
 fn note_writes(
     facade: &crate::entity::EntityFacade,
     entity_name: &str,

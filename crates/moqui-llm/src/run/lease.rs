@@ -25,7 +25,7 @@
 //! Every claim but a renewal moves the run's `leaseGeneration` on, and the claimer writes at that generation
 //! ([`super::Holder`]): each write checks the owner and the generation under the run row's lock ([`super::held`]), so
 //! a node that lost the run without its keeper noticing (a renewal that failed past the lease) writes nothing more,
-//! even once it claims the run again (plans/High-Level-Review.md HL-042).
+//! even once it claims the run again (plans/archive/High-Level-Review.md HL-042).
 //!
 //! Expiry is each node's own clock against the stored `leaseExpireDate`. A node whose clock runs ahead of the holder's
 //! by more than the lease less one heartbeat (45 seconds by default) takes over a healthy run; the generation fence
@@ -45,7 +45,7 @@ use moqui_core::entity::EntityFacade;
 use moqui_core::transaction::TransactionAttribute;
 
 /// The most runs one [`sweep`] takes over, and the most expired pauses one [`expire_pauses`] ends: the oldest first, the
-/// rest on the next pass, so a backlog does not hold the scheduler thread (plans/High-Level-Review.md HL-020).
+/// rest on the next pass, so a backlog does not hold the scheduler thread (plans/archive/High-Level-Review.md HL-020).
 pub(crate) const SWEEP_MAX: i64 = 200;
 
 /// The lease of a run, from the conf's `lease-seconds` (60; at least 5).
@@ -66,7 +66,7 @@ pub fn claim(facade: &EntityFacade, run_id: &str, owner: &str, lease: i64) -> Re
 /// [`claim`], with the lease generation `owner` holds the run at now; `None` when another node holds it. A renewal
 /// (the lease is `owner`'s already, lapsed or not) keeps the generation; any other claim (a free run, one whose lease
 /// another node let lapse) moves it on by one, so the writes of an older holding are refused ([`super::held`],
-/// plans/High-Level-Review.md HL-042). The row is read for update and written in a transaction of its own.
+/// plans/archive/High-Level-Review.md HL-042). The row is read for update and written in a transaction of its own.
 ///
 /// # Errors
 ///

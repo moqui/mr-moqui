@@ -14,7 +14,7 @@
 
 //! The held writes of one transaction-cache frame (`cache` and `force-cache`), kept in flush order and indexed by
 //! entity and primary key, so a write and a find touch only the rows of their entity and key, and the stored row under
-//! a held update is read once per frame (plans/High-Level-Review.md HL-034).
+//! a held update is read once per frame (plans/archive/High-Level-Review.md HL-034).
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;

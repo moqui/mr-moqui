@@ -137,7 +137,7 @@ pub struct Generated {
     /// Held while a server-static template is made, so concurrent first requests make it once.
     static_build: Mutex<()>,
     /// The service names looked up while what is kept here was made, found or not ([`Self::recorded`]): a service reload
-    /// that changes one of them drops the definition (plans/High-Level-Review.md HL-015).
+    /// that changes one of them drops the definition (plans/archive/High-Level-Review.md HL-015).
     services: Mutex<std::collections::BTreeSet<String>>,
 }
 

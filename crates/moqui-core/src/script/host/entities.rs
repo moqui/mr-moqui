@@ -1194,7 +1194,7 @@ fn number_arg(call: &Call<'_>, index: usize) -> Option<f64> {
 /// `purge(maxSeconds, chunkSize)`: delete the rows the find matches, each chunk of rows by primary key in a transaction
 /// of its own, a failed chunk logged and passed over, and no chunk begun after `maxSeconds` (none: no limit). Returns
 /// how many rows the committed chunks deleted. For the cleanup jobs whose backlog may not fit one transaction
-/// (plans/High-Level-Review.md HL-033).
+/// (plans/archive/High-Level-Review.md HL-033).
 fn purge(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let deadline = number_arg(call, 0)
         .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)

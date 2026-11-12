@@ -1165,7 +1165,7 @@ fn a_session_that_fails_to_flush_does_not_stop_the_others() {
     }
 }
 
-/// plans/High-Level-Review.md HL-020: the scheduler's flush writes at most its bound of sessions, and the next one goes
+/// plans/archive/High-Level-Review.md HL-020: the scheduler's flush writes at most its bound of sessions, and the next one goes
 /// on after the last id it reached, round to the first ids, before writing any session again; a session that fails
 /// moves the cursor on too.
 #[test]

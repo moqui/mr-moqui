@@ -255,9 +255,18 @@ items) and say how apps plug into the framework in §1.5. The framework items th
 | A full `moqui test` run (all components, 1540 features) runs out of memory in QuickJS about 930 features in: mr-boss screen renders then fail with `out of memory` (about 63 features), though the same specs pass on their own. Something held per run grows: find it (contexts, compiled screens, cached finds) or give each spec file its own runtime | `./moq test-all`, 2026-10-25 |
 | Co-editing across servers has no test: `cluster::publish` giving a message its `message_id` (without one a peer refuses `collab-update` posts) is checked only by a unit test of the post. A two-server test of a co-edited document should edit on one and see it on the other | `notws/collab.rs`, `cluster/mod.rs` |
 | `example/test/GitHosting.spec.js` "a merge request waits for its review and check, then merges" fails about 1 run in 10: `merge#MergeRequest` right after `create#GitCommitStatus` for the head commit still says "checks not passed: ci/build". Look at how `latest_statuses` (`service/git_hosting.rs`) sees the new row, and whether the merge request's head and the branch head can differ there | `./moq test-all`, 2026-10-25 |
+| The opt-in acceptance scenarios the high-level review proposed and nobody wrote: sustained load; prolonged delivery failures; one of two members killed mid-job, timing how long until the job runs elsewhere; TURN and SIP connection floods; downloads, requests and agents saturating together; endpoint slots on two nodes; transitions calling AI tasks under load; a purge of millions of `ServiceJobRun` rows; 25 messages of 20 MiB through mail sync | [High-Level-Review, Verification follow-ups](archive/High-Level-Review.md#verification-follow-ups) |
+| Flaky under load (Nov 12, 2026): `telemetry::tests::live::kept_artifact_attributes_follow_an_attributes_override` ("made once" was 2) and moqui-git `server::hosting_tests::the_tree_refs_compare_and_merge_methods_through_services` ("git updates did not settle") each failed once in a `./moq test-framework` run while other worktrees built, and pass alone | [High-Level-Review](archive/High-Level-Review.md) |
 
 ## Framework internals
 
+- **Left from the high-level review** ([High-Level-Review](archive/High-Level-Review.md), archived): the opt-in gRPC
+  listener has admission and a TLS deadline but no total connection cap (the family of HL-027 and HL-031); TURN reads
+  its UDP sockets by polling on its main thread, though its TCP and TLS connections are now tasks (HL-031); a job run
+  whose lock is lost or overdue has its scripts interrupted, but Rust code it calls runs on (HL-026);
+  `service/jobs.rs` is about 1,750 lines without its tests, `LockPlan` the next seam to split out; an `entity-create`
+  of an existing primary key inside a tx-commit rule did not fail on the in-memory test driver (noticed while testing
+  HL-025, not looked into).
 - **Process-wide global state:** the notify bus and its origin id, the transaction deadline slots and lock tracking, the QZ signer, and `LAST_BOOTED`. One factory runs per process outside tests; `LAST_BOOTED` and the single deadline timer are process-level by design, and the notify bus and lock tracking have no factory handle at their call sites. From the [Code-Quality-Review](archive/Code-Quality-Review.md#not-done-or-left-as-noted).
 
 ## Java functionality review

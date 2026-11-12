@@ -38,7 +38,7 @@ use crate::tui::HostLink;
 const START_PATH: &str = "/apps";
 /// Frames the session may have waiting for the stream; past it the session's thread waits for the client.
 const FRAMES_WAITING: usize = 64;
-/// A write to the client that takes nothing for this long ends the session (`plans/High-Level-Review.md` HL-027).
+/// A write to the client that takes nothing for this long ends the session (`plans/archive/High-Level-Review.md` HL-027).
 const WRITE_STALL: Duration = Duration::from_secs(60);
 /// Log lines a session's pane holds while it is closed.
 const LOG_LINES: usize = 500;

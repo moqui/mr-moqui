@@ -22,13 +22,13 @@
 //!
 //! A pass finds which jobs may start before any query (dates, paused, a free slot, the cron's last occurrence), then
 //! reads the lock rows of all of them in one query; only a due job has its repeat count and run history read
-//! (plans/High-Level-Review.md HL-020).
+//! (plans/archive/High-Level-Review.md HL-020).
 //!
 //! A pass claims locks only for job workers that are idle, and a lock records the instance that
 //! holds it. A lock whose lease lapsed ([`super::job_lease`]: the running instance renews it apart
 //! from this thread), or whose instance is gone (not a live cluster member, or this instance with no
 //! run of this process holding it), is taken over before `expireLockTime`, and a worker checks that
-//! its run still holds the lock before it runs the service (`plans/High-Level-Review.md` HL-026).
+//! its run still holds the lock before it runs the service (`plans/archive/High-Level-Review.md` HL-026).
 //!
 //! A cron expression is read in the machine's time zone ([`job_time_zone`]), the zone the operating
 //! system reports. That is not the server zone `default_time_zone` names (UTC in MoquiDefaultConf).
@@ -135,7 +135,7 @@ pub(crate) struct JobRun {
     parameters: BTreeMap<String, Value>,
     timeout: Duration,
     /// The run's scripts end when it is out ([`crate::script::DeadlineGuard`]), whatever the service's transaction
-    /// attribute; `None` when the job says `noTimeLimit` (plans/High-Level-Review.md HL-035).
+    /// attribute; `None` when the job says `noTimeLimit` (plans/archive/High-Level-Review.md HL-035).
     script_limit: Option<Duration>,
     job_run_id: String,
     /// The lock's `lastRunTime` before this run, restored when the run fails.
@@ -253,7 +253,7 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
 
     let jobs = discover(&facade, slots)?;
     // First, with no query: the jobs that can run now, each scheduled one with its cron's last occurrence. A job whose
-    // schedule names nothing before now, or whose pattern does not parse, costs no query (plans/High-Level-Review.md
+    // schedule names nothing before now, or whose pattern does not parse, costs no query (plans/archive/High-Level-Review.md
     // HL-020).
     let mut candidates = Vec::new();
     for job in &jobs {
@@ -413,7 +413,7 @@ fn read_locks<'a>(
 }
 
 /// The jobs a pass looks at, in priority order: every scheduled job (one with a cron expression), and the queued calls
-/// the free slots can take, read a bounded number at a time (plans/High-Level-Review.md HL-026): a full queue can leave
+/// the free slots can take, read a bounded number at a time (plans/archive/High-Level-Review.md HL-026): a full queue can leave
 /// many `ASYNC_QUEUE_` rows, which a later pass reads when slots are free. Priority is lower first, a job with none after
 /// every job with one, then by name: the same on every database (an `ORDER BY` puts nulls first on some and last on
 /// others).

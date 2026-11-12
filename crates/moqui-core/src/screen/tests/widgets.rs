@@ -537,7 +537,7 @@ fn sri_methods_called_from_actions() {
         pairs,
         ["Y,Yes", "from context,from context", "a,Alpha", "b,Beta", "p,p", "q,q"]
     );
-    // plans/High-Level-Review.md HL-005: a key given again keeps the place it was first given and takes the last label
+    // plans/archive/High-Level-Review.md HL-005: a key given again keeps the place it was first given and takes the last label
     let duplicate: Vec<String> = match &options["duplicate"] {
         Value::List(items) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
         other => panic!("{other:?}"),

@@ -461,7 +461,7 @@ fn write_fixture(name: &str, body: &str) -> PathBuf {
     path
 }
 
-/// plans/High-Level-Review.md HL-015: an edit reads only its file and resolves again only its services, the services of
+/// plans/archive/High-Level-Review.md HL-015: an edit reads only its file and resolves again only its services, the services of
 /// other files that implement one of them (through an include alias too) and the include aliases of them; a changed
 /// interface reaches its implementer in another file, and a service of another file keeps its definition.
 #[test]
@@ -561,7 +561,7 @@ fn an_edit_resolves_again_only_its_services_their_implementers_and_include_alias
     assert!(super::find("test.lazy.D.run#Other").is_some());
 }
 
-/// plans/High-Level-Review.md HL-015: a reload takes the changed file's root the caller parsed to check it, and does not
+/// plans/archive/High-Level-Review.md HL-015: a reload takes the changed file's root the caller parsed to check it, and does not
 /// read that file again; the files loaded before are read once each, with no duplicate from the changed path.
 #[test]
 fn a_reload_takes_the_checked_root_of_a_changed_file_instead_of_reading_it_again() {

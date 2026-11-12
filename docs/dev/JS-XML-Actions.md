@@ -310,7 +310,7 @@ is its first child element only.
   that row in its own transaction: when the process stops before they run, the service queue is full, or their run
   fails, the scheduler runs them from the row a minute or more later (up to five attempts). So a `tx-commit` rule runs
   at least once, and a rule with an effect outside the database, such as sending an email, checks that it has not
-  already had it (plans/High-Level-Review.md HL-025).
+  already had it (plans/archive/High-Level-Review.md HL-025).
 - **A refusal needs `force-new`.** A `pre-service` rule that calls a service which adds an error stops the guarded
   service. The refusing service joins the guarded service's transaction and marks it rollback-only, so the user sees
   a second error, "Transaction marked for rollback ...", beside the refusal. Give the refusing service

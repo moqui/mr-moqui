@@ -45,7 +45,7 @@ const IDLE: Duration = Duration::from_secs(600);
 pub const SIGN_IN_WITHIN: Duration = Duration::from_secs(60);
 const TICK: Duration = Duration::from_secs(30);
 /// A write the client takes nothing of for this long ends the connection, so a blocked write does not hold up the
-/// session's idle and sign-in timeouts (`plans/High-Level-Review.md` HL-027).
+/// session's idle and sign-in timeouts (`plans/archive/High-Level-Review.md` HL-027).
 const WRITE_STALL: Duration = Duration::from_secs(60);
 
 /// `write` within [`WRITE_STALL`]: false when it failed or stalled.

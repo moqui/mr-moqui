@@ -24,7 +24,7 @@
 //! ring and the last sequence it sent; a stored event past the next one brings the missing ones from the database
 //! first, so a stream has no gap whatever the ring missed.
 //!
-//! Delivery is proportional to the streams interested in a run (plans/High-Level-Review.md HL-021): an event wakes
+//! Delivery is proportional to the streams interested in a run (plans/archive/High-Level-Review.md HL-021): an event wakes
 //! only its own run's waiters, each run having its own signal, which they wait on outside the hub's lock, and a waiter
 //! reads only the ring's suffix past its cursor, found by arithmetic since the ring's indices have no holes. A ring
 //! holds each event once behind an [`Arc`], so a read under the lock copies pointers, not payloads, however many
@@ -75,7 +75,7 @@ struct Ring {
     /// The stored sequences the ring holds.
     seqs: std::collections::BTreeSet<i64>,
     touched: Option<Instant>,
-    /// The wakeup of this run's waiters only (plans/High-Level-Review.md HL-021).
+    /// The wakeup of this run's waiters only (plans/archive/High-Level-Review.md HL-021).
     signal: Arc<Signal>,
 }
 

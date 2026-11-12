@@ -554,7 +554,7 @@ pub(crate) struct FlushBound {
 /// [`flush_dirty`] for the scheduler's pass: it writes at most `bound.sessions` sessions, or for at most `bound.time`,
 /// starting after the last id the previous bounded flush reached and going round to the first ids, so a pass with many
 /// dirty sessions does not hold the scheduler thread, and the sessions it leaves are written first by the next pass
-/// (plans/High-Level-Review.md HL-020). The host's flush at shutdown writes them all.
+/// (plans/archive/High-Level-Review.md HL-020). The host's flush at shutdown writes them all.
 ///
 /// # Errors
 ///
@@ -885,7 +885,7 @@ pub(crate) fn drop_live(factory: &ExecutionContextFactory, id: &str) {
 }
 
 /// Retire the live sessions whose `HttpSession` rows are gone: ended on another server, whose `session-end` this one
-/// may have missed in a cluster delivery gap (plans/High-Level-Review.md HL-018). Run when a peer's clear of every
+/// may have missed in a cluster delivery gap (plans/archive/High-Level-Review.md HL-018). Run when a peer's clear of every
 /// entity cache says it may have lost messages ([`crate::cluster::recover_missed`]). Only a session that was written
 /// or read is looked at (a new one has no row yet), with one `IN` query per [`RETIRE_CHUNK`] ids. Out: how many were
 /// retired.

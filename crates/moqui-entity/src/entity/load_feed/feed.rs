@@ -151,7 +151,7 @@ pub(crate) fn note_touch(
 }
 
 /// Whether the data feed keeps the values of a write of `entity_name` ([`note_touch`]), so a bulk write that would
-/// read only the primary key reads whole rows (plans/High-Level-Review.md HL-033).
+/// read only the primary key reads whole rows (plans/archive/High-Level-Review.md HL-033).
 pub(crate) fn feed_keeps_values(facade: &EntityFacade, entity_name: &str) -> bool {
     !facade.flags().disable_data_feed
         && entity_name != SKIP_FEED_ENTITY

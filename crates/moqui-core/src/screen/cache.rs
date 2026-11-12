@@ -709,7 +709,7 @@ impl ScreenFacade {
 
     /// Drop at once every cached definition whose generated code or forms looked up one of the services `names`
     /// (found or not, so a service defined since is seen), or a service whose name was an expression, with the
-    /// resolved paths and `//` searches that hold them: what a service reload changed (plans/High-Level-Review.md
+    /// resolved paths and `//` searches that hold them: what a service reload changed (plans/archive/High-Level-Review.md
     /// HL-015), where [`Self::clear`] dropped every screen. Answers the screen locations dropped.
     pub fn forget_services(&self, names: &[String]) -> Vec<String> {
         if names.is_empty() {

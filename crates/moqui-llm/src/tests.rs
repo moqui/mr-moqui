@@ -1213,7 +1213,7 @@ fn bare_call(facade: &EntityFacade, id: &str, user: &str, source: &str, start: i
 
 /// One check reads each scope's calls once with only their totals' fields: the totals are those of the whole rows, at
 /// the day's boundary in the server's time zone, with nulls as nothing, by source, and with the month's earlier days
-/// from `LlmUsageDaily` (plans/High-Level-Review.md HL-012).
+/// from `LlmUsageDaily` (plans/archive/High-Level-Review.md HL-012).
 #[test]
 fn quota_totals_keep_the_day_boundary_nulls_sources_and_month() {
     let facade = facade();
@@ -1290,7 +1290,7 @@ fn quota_totals_keep_the_day_boundary_nulls_sources_and_month() {
 }
 
 /// Concurrent admissions of one user whose quota has room for one call's reserve: one is admitted, and its
-/// reservation counts until it is dropped (plans/High-Level-Review.md HL-030).
+/// reservation counts until it is dropped (plans/archive/High-Level-Review.md HL-030).
 #[test]
 fn one_of_concurrent_admissions_takes_the_room_left() {
     let facade = facade();
@@ -1379,7 +1379,7 @@ fn an_expired_reservation_stops_counting() {
 }
 
 /// A quota check has the database sum each scope's calls and reservations: one row of totals a scope, and no call
-/// row is read (plans/High-Level-Review.md HL-012). So does an API client's daily limit at admission.
+/// row is read (plans/archive/High-Level-Review.md HL-012). So does an API client's daily limit at admission.
 #[test]
 fn a_quota_check_reads_one_summed_row_per_scope_and_no_call_rows() {
     let tape = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

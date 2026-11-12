@@ -1450,7 +1450,7 @@ fn resource_digests_archives_and_line_windows() {
     clear_context_stack();
 }
 
-/// plans/High-Level-Review.md HL-033: a bulk delete reads its rows a chunk at a time and still runs each row's delete
+/// plans/archive/High-Level-Review.md HL-033: a bulk delete reads its rows a chunk at a time and still runs each row's delete
 /// rule; a script's `purge` commits each chunk, and a chunk whose rule fails is rolled back and passed over.
 #[test]
 fn bulk_deletes_run_each_rows_rule_and_a_purge_passes_over_a_failed_chunk() {

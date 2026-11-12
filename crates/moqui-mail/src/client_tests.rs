@@ -1399,7 +1399,7 @@ fn drafts_send_now_scheduled_held_and_failed() {
 }
 
 /// A due send commits its claim before the SMTP session and records its result after it, each in its own transaction
-/// (plans/High-Level-Review.md HL-028): a session that outlasts the caller's transaction is sent once and recorded; one
+/// (plans/archive/High-Level-Review.md HL-028): a session that outlasts the caller's transaction is sent once and recorded; one
 /// past the session limit is uncertain, waits in the Outbox and holds back the rest of its account's run; one whose
 /// result cannot be recorded stays claimed, is never sent again and is shown as stopped once the claim is old.
 #[test]
@@ -2963,7 +2963,7 @@ fn the_automatic_reply_counts_its_own_domains_as_internal() {
 /// Automatic replies asked for in a caller's transaction that runs out while the server is slow: each reply is made,
 /// claimed and logged in a transaction of its own and sent by a service worker once that commits, so the caller's
 /// rollback takes none of them back, each goes once and the senders are not answered again
-/// (plans/High-Level-Review.md HL-028). A worker, since the inline executor runs no transaction deadline.
+/// (plans/archive/High-Level-Review.md HL-028). A worker, since the inline executor runs no transaction deadline.
 #[test]
 fn a_slow_automatic_reply_takes_none_of_the_others_back() {
     let _lock = moqui_core::user::session::cookie_property_lock();

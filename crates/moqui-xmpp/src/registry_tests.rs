@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The session registry's user index (plans/High-Level-Review.md HL-009).
+//! The session registry's user index (plans/archive/High-Level-Review.md HL-009).
 
 use super::*;
 

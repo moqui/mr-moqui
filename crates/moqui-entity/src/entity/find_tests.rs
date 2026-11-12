@@ -278,7 +278,7 @@ fn ignore_case_binds_upper_case_text_and_field_comparisons_reach_the_statement()
     assert_eq!(rendered.params, vec![Value::string("ALPHA")]);
 }
 
-/// plans/High-Level-Review.md HL-003: an iterator opened with no transaction in place begins one, which holds its
+/// plans/archive/High-Level-Review.md HL-003: an iterator opened with no transaction in place begins one, which holds its
 /// connection while it reads and commits when it closes.
 #[test]
 fn an_iterator_outside_a_transaction_reads_in_one_it_began() {

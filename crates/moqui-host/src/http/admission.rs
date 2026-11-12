@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! How an HTTP request reaches a request worker (plans/High-Level-Review.md HL-006): the screens, DAV and MCP share it.
+//! How an HTTP request reaches a request worker (plans/archive/High-Level-Review.md HL-006): the screens, DAV and MCP share it.
 //!
 //! - **Completion.** The job is queued with the pool's completion hook
 //!   ([`RequestPool::try_submit_then`](moqui_core::service::RequestPool::try_submit_then)), which finishes the

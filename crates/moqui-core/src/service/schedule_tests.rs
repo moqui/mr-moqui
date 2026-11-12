@@ -921,7 +921,7 @@ fn make_outbox_available(facade: &EntityFacade) {
         .unwrap();
 }
 
-/// plans/High-Level-Review.md HL-025: tx-commit rules that ran after their commit leave no outbox row: the row was
+/// plans/archive/High-Level-Review.md HL-025: tx-commit rules that ran after their commit leave no outbox row: the row was
 /// written in the committing transaction and the run deleted it in its own.
 #[test]
 fn tx_commit_rules_that_ran_leave_no_outbox_row() {
@@ -1210,7 +1210,7 @@ fn a_lock_held_by_a_gone_member_is_taken_over_before_it_expires() {
     });
 }
 
-/// plans/High-Level-Review.md HL-035: a job's `transactionTimeout` bounds its scripts though the service begins no
+/// plans/archive/High-Level-Review.md HL-035: a job's `transactionTimeout` bounds its scripts though the service begins no
 /// transaction: a looping script ends interrupted, and the job's lock is released, within seconds.
 #[test]
 fn a_looping_job_script_ends_at_the_jobs_timeout_and_releases_its_lock() {
@@ -1288,7 +1288,7 @@ fn a_job_says_no_time_limit_to_run_its_scripts_without_one() {
     assert_eq!(limit(&job(&[("transactionTimeout", "5"), ("noTimeLimit", "Y")])), None);
 }
 
-/// plans/High-Level-Review.md HL-026: a pass reads every scheduled job but only as many queued calls as it has free
+/// plans/archive/High-Level-Review.md HL-026: a pass reads every scheduled job but only as many queued calls as it has free
 /// slots, in priority order; a job with no priority comes after every job with one, on every database.
 #[test]
 fn a_pass_reads_only_the_queued_calls_its_free_slots_can_take() {
@@ -1352,7 +1352,7 @@ fn reads_of(tape: &Mutex<Vec<String>>, from: usize, table: &str) -> Vec<String> 
         .collect()
 }
 
-/// plans/High-Level-Review.md HL-020: a pass reads the lock rows of the jobs it may start in one query. A job that is
+/// plans/archive/High-Level-Review.md HL-020: a pass reads the lock rows of the jobs it may start in one query. A job that is
 /// not due (it ran after its schedule's last occurrence), one whose lock a live run holds, and one whose schedule names
 /// nothing before now cost no query of their own: no run history, no repeat count, no member liveness.
 #[test]
@@ -1415,7 +1415,7 @@ fn lease_millis_of(facade: &EntityFacade, job: &str) -> Option<i64> {
     }
 }
 
-/// plans/High-Level-Review.md HL-026: a lock whose lease lapsed is taken over though its holder is a live member, and
+/// plans/archive/High-Level-Review.md HL-026: a lock whose lease lapsed is taken over though its holder is a live member, and
 /// the run it named is ended as failed; a live member's lock whose lease has not lapsed is kept. The new run's claim
 /// gives it a lease, and its end clears it.
 #[test]
