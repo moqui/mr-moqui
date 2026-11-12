@@ -40,6 +40,35 @@
         }).join(" ");
     };
 
+    // A drag by any pointer, mouse, touch or pen (the floating windows' bars and grips, WebrootFloats.js; m-dialog's header).
+    // primary(event): a mouse's left button, any touch or pen contact. track(event, gesture, after): from a pointerdown, the
+    // pointer's moves until it is up, captured to the element it went down on (a synthetic event has no pointer to capture:
+    // its moves come to the element anyway): gesture.move(x, y) for each, then gesture.end(x, y), or gesture.cancel() when the
+    // pointer is lost; after(gesture) once it ended.
+    moqui.pointer = {
+        primary: (event) => event.pointerType !== "mouse" || event.button === 0,
+        track(event, gesture, after) {
+            const el = event.currentTarget;
+            const pointerId = event.pointerId;
+            try { el.setPointerCapture(pointerId); } catch (err) { /* not an active pointer */ }
+            const move = (e) => { if (e.pointerId === pointerId) gesture.move(e.clientX, e.clientY); };
+            const done = (e, cancel) => {
+                if (e.pointerId !== pointerId) return;
+                el.removeEventListener("pointermove", move);
+                el.removeEventListener("pointerup", up);
+                el.removeEventListener("pointercancel", lost);
+                try { el.releasePointerCapture(pointerId); } catch (err) { /* released */ }
+                if (cancel) gesture.cancel(); else gesture.end(e.clientX, e.clientY);
+                if (after && !cancel) after(gesture);
+            };
+            const up = (e) => done(e, false);
+            const lost = (e) => done(e, true);
+            el.addEventListener("pointermove", move);
+            el.addEventListener("pointerup", up);
+            el.addEventListener("pointercancel", lost);
+        }
+    };
+
     Object.assign(moqui, {
         // Quasar language packs by language, for the locale of the user. The page loads the pack that matches.
         quasarLangs: ["en-US", "de", "es", "fr", "it", "pt-BR", "ja", "zh-CN", "ru", "nl"],

@@ -4744,8 +4744,8 @@
               ], 46, ["aria-hidden", "aria-label", "id", "data-float-kind", "data-float-key", "onPointerdownCapture"]))
             }
         } },
-        "m-float-layer": { hash: "8454e9d1", make: function (Vue) {
-            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, normalizeStyle: _normalizeStyle, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode } = Vue
+        "m-float-layer": { hash: "f2a83dd6", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, toDisplayString: _toDisplayString, createCommentVNode: _createCommentVNode, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode } = Vue
 
             return function render(_ctx, _cache) {
               const _component_m_float = _resolveComponent("m-float")
@@ -4776,11 +4776,19 @@
                     (_ctx.s.snap)
                       ? (_openBlock(), _createElementBlock("div", {
                           key: 0,
-                          class: "m-float-snap",
+                          class: _normalizeClass(["m-float-snap", {'m-float-snap--home': _ctx.s.snap.zone === 'home'}]),
                           style: _normalizeStyle(_ctx.rectStyle(_ctx.s.snap.rect)),
                           "aria-hidden": "true",
-                          "data-float-snap": ""
-                        }, null, 4))
+                          "data-float-snap": "",
+                          "data-float-snap-zone": _ctx.s.snap.zone
+                        }, [
+                          (_ctx.s.snap.zone === 'home')
+                            ? (_openBlock(), _createElementBlock("span", {
+                                key: 0,
+                                class: "m-float-snap-label"
+                              }, _toDisplayString(_ctx.labels.dock), 1))
+                            : _createCommentVNode("", true)
+                        ], 14, ["data-float-snap-zone"]))
                       : _createCommentVNode("", true),
                     (_ctx.anyShown)
                       ? (_openBlock(), _createElementBlock("div", {

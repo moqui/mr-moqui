@@ -63,7 +63,8 @@ Gather terminals, Tile and Cascade.
 ## Floating terminals
 
 Float on a pane moves its session into a window of the shell's float layer ([Qvt-Client](Qvt-Client.md#floats)) that
-stays while you go to other screens and comes back after a reload. Dock puts it back in a pane; Close puts it back in
+stays while you go to other screens and comes back after a reload. Dock, or on the Terminal screen dragging the window
+onto its tab strip, puts it back in a pane; Close puts it back in
 the session list and ends nothing; End session and Pop out are on its title bar. Arrange › Gather terminals docks them
 all. Ctrl+\` is the quick terminal: the last floating terminal shown or hidden, else one floated, else a new one. The
 header's terminal button, while you have sessions, lists them, with a count of those that want you. Pop out opens the

@@ -178,6 +178,59 @@ test("snap: an edge takes its half and a corner its quarter, with the outline be
     await reset();
 });
 
+test("a drag to the window's home docks it at the drop, with a Dock outline of the home before; a kind with no home snaps there", async () => {
+    // a kind whose home is the right edge (as Assist's drawer and the tray), and one whose home is a strip (the Terminal's tabs)
+    let away = false;
+    floats.register("drawer", { title: "Drawer", defaultSize: { w: 300, h: 300 }, dock: (shown, key) => docked.push(["drawer", shown]),
+        home: () => (away ? null : { edge: "right", rect: { x: 820, y: 50, w: 380, h: 800 } }) });
+    floats.register("tabs", { title: "Tabs", defaultSize: { w: 300, h: 300 }, dock: (shown, key) => docked.push(["tabs", shown]),
+        home: () => ({ rect: { x: 100, y: 60, w: 500, h: 40 } }) });
+    const id = floats.open("drawer", "", { rect: { x: 300, y: 300, w: 300, h: 300 } });
+    await settle();
+    let bar = win(id).querySelector("[data-float-bar]");
+    pointer(bar, "pointerdown", 400, 310);
+    pointer(bar, "pointermove", 800, 400);
+    pointer(bar, "pointermove", 1195, 400);
+    await settle();
+    assert.deepEqual(floats.state.snap, { id, zone: "home", rect: { x: 820, y: 50, w: 380, h: 800 } });
+    assert.equal($("[data-float-snap]").dataset.floatSnapZone, "home");
+    assert.equal($("[data-float-snap]").textContent, "Dock", "the outline says what the drop does");
+    // back out of the edge before the drop: no dock
+    pointer(bar, "pointermove", 700, 400);
+    await settle();
+    assert.equal(floats.state.snap, null);
+    pointer(bar, "pointermove", 1195, 400);
+    pointer(bar, "pointerup", 1195, 400);
+    await settle();
+    assert.equal(floats.get(id), null, "the drop docked it");
+    assert.deepEqual(docked, [["drawer", true]], "docked shown, as the Dock button");
+    assert.equal(floats.saved.places["drawer|"].x, 300, "the place kept is the one before the drag");
+    // the corner still takes its quarter
+    const again = floats.open("drawer", "", { rect: { x: 300, y: 300, w: 300, h: 300 } });
+    await settle();
+    drag(win(again).querySelector("[data-float-bar]"), [400, 310], [1195, 60]);
+    assert.deepEqual(rect(floats.get(again)), { x: 600, y: 50, w: 600, h: 400 });
+    // with no home now (the kind says null) the right edge snaps to the half
+    away = true;
+    drag(win(again).querySelector("[data-float-bar]"), [700, 60], [1195, 400]);
+    assert.deepEqual(rect(floats.get(again)), { x: 600, y: 50, w: 600, h: 800 });
+    // a home with no edge: the pointer over its rect
+    const tabs = floats.open("tabs", "", { rect: { x: 300, y: 300, w: 300, h: 300 } });
+    await settle();
+    bar = win(tabs).querySelector("[data-float-bar]");
+    drag(bar, [400, 310], [400, 450]);
+    assert.ok(floats.get(tabs), "away from the strip it only moves");
+    drag(bar, [400, 460], [300, 80]);
+    assert.equal(floats.get(tabs), null);
+    assert.deepEqual(docked.slice(-1), [["tabs", true]]);
+    // a kind with no home snaps at the right edge, as before
+    const note = floats.open("note", "a", { rect: { x: 300, y: 300, w: 400, h: 300 } });
+    await settle();
+    drag(win(note).querySelector("[data-float-bar]"), [400, 310], [1195, 400]);
+    assert.deepEqual(rect(floats.get(note)), { x: 600, y: 50, w: 600, h: 800 });
+    await reset();
+});
+
 test("a double click maximizes and restores; the title bar's arrows move and Shift resizes", async () => {
     const id = floats.open("note", "a", { rect: { x: 300, y: 300, w: 400, h: 300 } });
     await settle();

@@ -154,7 +154,7 @@ color, so a `text-<color>` class picks it, not `color=`, whose `bg-*` class woul
 | `m-check`, `m-radio`, `m-file`, `m-field`, `m-text-find`, `m-range-find` | the other widgets |
 | `m-editable` | click to edit, `QPopupEdit`, `url`, `url-parameters`, `parameter-name`, `widget-type` (`textarea`, `text-line`, `select`, `date`, `date-time`), `load-url`, `options` (a select's `{value, label}` list, from the `option`, `list-options` and `entity-options` of the element; else what `load-url` answers: a list, or a map of key to label with `selected`, `moqui.editableOptions`), `value` (a select's current key; by default the option whose label is the text), `placeholder` (an empty text with `display-if-empty` shows it, so there is something to click). A select shows the chosen option's label after a save; a date edits in `QDate` (and `QTime`) as `yyyy-MM-dd` (`yyyy-MM-dd HH:mm`) |
 | `m-link` | a screen link: `href`, `load-id`, `confirmation`; an external `href` (another scheme or host, `moqui.isExternalLink`) is a plain anchor the browser follows. A `data-confirm` attribute on any button or link is asked first |
-| `m-container-box`, `m-box-body`, `m-container-dialog`, `m-dialog` | boxes and dialogs. `m-container-dialog` (`container-dialog`) registers with the root by its `id` while mounted (`addContainer`, taken back with `removeContainer` when unmounted), so a form's `background-hide-id` (`submit-hide-id`) and `$root.hideContainer(id)` close it; its `reload` and `load` do nothing (the content is the page's). `tooltip` (the `container-dialog` attribute) is a `q-tooltip` on its button, the slot button of a list cell too |
+| `m-container-box`, `m-box-body`, `m-container-dialog`, `m-dialog` | boxes and dialogs. A draggable `m-dialog` (the default) moves by its header with any pointer, mouse, touch or pen (`moqui.pointer`, MoquiLib.js), kept inside the window; not from a button in the header, and not while it fills a phone's screen. `m-container-dialog` (`container-dialog`) registers with the root by its `id` while mounted (`addContainer`, taken back with `removeContainer` when unmounted), so a form's `background-hide-id` (`submit-hide-id`) and `$root.hideContainer(id)` close it; its `reload` and `load` do nothing (the content is the page's). `tooltip` (the `container-dialog` attribute) is a `q-tooltip` on its button, the slot button of a list cell too |
 | `m-dynamic-container`, `m-dynamic-dialog` | a screen loaded into a container, or a dialog, with `load`, `reload` and `hide`, in the screen's best client mode (Loading a screen); each provides `mScreen` (the loaded screen's `url`, `path` and `parameters`) to the screen; the container's `shellRefresh()` calls the screen's own `shellRefresh()` when it has one, else reloads; the dialog's button takes `button-text`, `button-class`, `color` and `button-icon` (default `open_in_new`), as `m-container-dialog` does |
 | `m-tree-top`, `m-tree-item` | tree: `items` is the node list or its URL (`<screen>/actions/<tree>`, posted `treeNodeId`, `treeNodeName`, `treeOpenPath`). A node's `children` is a list when it came inline (on `open-path`), `true` to load from the URL when the node is opened, `false` for a leaf |
 | `m-subscreens-tabs` (also `m-subscreens-menu`), `m-subscreens-active`, `m-subscreens-panel` | the subscreen menu and the place of the active subscreen |
@@ -403,7 +403,8 @@ best client mode, so a `STRT_TRAY_*` value names a `.qvue` screen without the ex
 the strip; not below 600 px nor on a handheld screen) makes the current tab a float of kind `tray` (400 by 560, its label
 and count badge) and takes it out of the strip; each tab floats on its own, and the root's `trayFloating` and
 `trayDockedTabs` say which. The tab's body is held in a teleport, so its screen is the same instance (a chat's draft stays)
-and its scroll is put back. Dock puts it back and opens the tray on it; Close puts it back in the strip and leaves the tray
+and its scroll is put back. Dock, or dragging the float to the right edge (the tray panel's place, outlined Dock before
+the drop), puts it back and opens the tray on it; Close puts it back in the strip and leaves the tray
 as it was. The header's Today, Chat and Notifications buttons show, raise or hide a floated tab's window in place of the
 tray; with every tab floated the tray has nothing to open. A floated tab reloads as a docked one (`shellCounts`, its
 topics, `reloadTrayTab`); Esc still closes the tray and never a float; its links still open in the page. Which tabs float
@@ -436,14 +437,19 @@ shell, so its components are precompiled; its tests are `test/client/WebrootFloa
   right, Minimize all, and a kind's Gather) and a chip for each minimized window. The Arrange items are `moqui.keymap` actions
   `floatsTile`, `floatsCascade`, `floatsColumn` and `floatsMinimizeAll` with no keys; `KEYMAP` gives them some.
 - **A window** (`m-float`, `role="dialog"`, `aria-modal="false"`, labelled by its title): a title bar with the kind's icon or
-  status dot, the title, a count badge, then Minimize, Maximize, Dock and Close. The bar drags it (pointer capture); at an
-  edge it snaps to that half, near a corner to that quarter, with an outline before the drop; a double click maximizes and
+  status dot, the title, a count badge, then Minimize, Maximize, Dock and Close. The bar drags it (pointer capture, by
+  `moqui.pointer`); at an edge it snaps to that half, near a corner to that quarter, with an outline before the drop; dragged
+  to its kind's home it docks at the drop, with a dashed outline of the home labelled Dock before it (Assist and a tray tab:
+  the right edge, in place of the right half; a terminal: the Terminal screen's tab strip); a double click maximizes and
   restores; with the bar focused the arrow keys move it and Shift with them resizes it. Eight grips resize it, down to the
   kind's minimum. A press raises it; a click on the bar gives the content the keys. Esc is the content's, never the window's.
   The windows keep below the header (`#top`) and inside the viewport when it is resized. **Dock** puts the content back and
   shows it there; **Close** puts it back and does not show it: closing a float ends nothing.
 - **A kind** is what floats: `moqui.floats.register(kind, {title, icon, badge, dot, defaultSize: {w, h}, minSize: {w, h},
-  place: "right" | "center", dock(shown, key, float), inReach, focus(key, bodyEl), gatherLabel, actions})`. `actions`
+  place: "right" | "center", dock(shown, key, float), inReach, focus(key, bodyEl), gatherLabel, actions, home(key, float)})`.
+  `home` answers where the content docks, measured when a drag starts: `{rect: {x, y, w, h}, edge}` with an edge of the
+  area (`left`, `right`, `top`, `bottom`: a drag to that edge, outside the corners, docks in place of its snap) or none (a
+  drag over the rect docks), or null for no home now. `actions`
   (a list, or a function of the key) are buttons of the kind's own on the title bar before Minimize: `{id, icon, label,
   run(key, float)}` (a terminal's Pop out and End session). `title`, `icon`,
   `badge` and `dot` are values or functions of the key, read at each render. `open(kind, key, {title, rect, restore})`

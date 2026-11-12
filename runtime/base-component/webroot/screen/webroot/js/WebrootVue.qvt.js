@@ -1487,39 +1487,47 @@
             '</q-dialog>',
         methods: {
             onShow() {
-                if (this.draggable && this.$refs.dialogHeader) this.$refs.dialogHeader.$el.addEventListener("mousedown", this.onGrab);
+                const header = this.dragHeader();
+                if (header) {
+                    header.addEventListener("pointerdown", this.onGrab);
+                    header.classList.add("m-dialog-drag");
+                }
                 this.focusFirst();
                 this.$emit("onShow");
             },
             onHide() {
-                if (this.draggable) {
-                    root.document.removeEventListener("mousemove", this.onDrag);
-                    root.document.removeEventListener("mouseup", this.onLetGo);
-                    if (this.$refs.dialogHeader) this.$refs.dialogHeader.$el.removeEventListener("mousedown", this.onGrab);
+                const header = this.dragHeader();
+                if (header) {
+                    header.removeEventListener("pointerdown", this.onGrab);
+                    header.classList.remove("m-dialog-drag");
                 }
                 this.$emit("onHide");
             },
-            onDrag(e) {
-                const target = this.$refs.dialogCard.$el;
+            dragHeader() { return this.draggable && this.$refs.dialogHeader ? this.$refs.dialogHeader.$el : null; },
+            // The header drags the card by any pointer, mouse, touch or pen (moqui.pointer): from where it was by the pointer's
+            // way since the press, kept 10 px inside the window; a lost pointer puts it back. Not from a button in the header,
+            // and not while the dialog fills a phone's screen.
+            onGrab(event) {
+                const target = this.$refs.dialogCard && this.$refs.dialogCard.$el;
+                if (!target || !moqui.pointer.primary(event) || this.$q.screen.lt.sm) return;
+                if (event.target && event.target.closest && event.target.closest(".q-btn, button, a, input")) return;
+                event.preventDefault();
                 const styles = root.getComputedStyle(target);
-                let newLeft = (parseInt(styles.left, 10) || 0) + e.movementX;
-                let newTop = (parseInt(styles.top, 10) || 0) + e.movementY;
-                const halfW = root.innerWidth / 2;
-                const halfH = root.innerHeight / 2;
-                const elW = target.offsetWidth / 2;
-                const elH = target.offsetHeight / 2;
-                newLeft = Math.max(-(halfW - elW - 10), Math.min(halfW - elW - 10, newLeft));
-                newTop = Math.max(-(halfH - elH - 10), Math.min(halfH - elH - 10, newTop));
-                target.style.left = newLeft + "px";
-                target.style.top = newTop + "px";
-            },
-            onLetGo() {
-                root.document.removeEventListener("mousemove", this.onDrag);
-                root.document.removeEventListener("mouseup", this.onLetGo);
-            },
-            onGrab() {
-                root.document.addEventListener("mousemove", this.onDrag);
-                root.document.addEventListener("mouseup", this.onLetGo);
+                const left = parseInt(styles.left, 10) || 0;
+                const top = parseInt(styles.top, 10) || 0;
+                const startX = event.clientX, startY = event.clientY;
+                const place = (newLeft, newTop) => {
+                    const halfW = root.innerWidth / 2 - target.offsetWidth / 2 - 10;
+                    const halfH = root.innerHeight / 2 - target.offsetHeight / 2 - 10;
+                    target.style.left = Math.max(-halfW, Math.min(halfW, newLeft)) + "px";
+                    target.style.top = Math.max(-halfH, Math.min(halfH, newTop)) + "px";
+                };
+                const follow = (x, y) => place(left + x - startX, top + y - startY);
+                moqui.pointer.track(event, {
+                    move: follow,
+                    end: (x, y) => { if (Number.isFinite(x) && Number.isFinite(y)) follow(x, y); },
+                    cancel: () => place(left, top)
+                }, null);
             },
             // the .default-focus field, else the first visible field of a form in the dialog
             focusFirst() {
@@ -9860,7 +9868,16 @@
                     defaultSize: { w: 400, h: 560 }, minSize: { w: 280, h: 240 },
                     title: (key) => tabOf(key).label || key, icon: (key) => tabOf(key).icon,
                     badge: (key) => (this.countOf(key) ? this.countText(key) : ""),
-                    dock: (shown, key) => { if (shown) this.openTray(key); else this.saveTray(); } });
+                    dock: (shown, key) => { if (shown) this.openTray(key); else this.saveTray(); },
+                    // dragged to the right edge it docks: the tray panel's strip at the right of the canvas
+                    home: () => {
+                        const area = floats.state.area;
+                        const canvas = root.document && root.document.getElementById("m-canvas");
+                        const box = canvas ? canvas.getBoundingClientRect() : null;
+                        const right = box && box.width ? Math.min(box.right, area.x + area.w) : area.x + area.w;
+                        const w = Math.min(400, area.w);
+                        return { edge: "right", rect: { x: right - w, y: area.y, w, h: area.h } };
+                    } });
                 return floats;
             },
             reloadTrayTab(key) { if (key && this.trayLoaded[key] && this.shellTray) this.shellTray.reload(key); },

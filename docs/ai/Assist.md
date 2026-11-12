@@ -621,7 +621,8 @@ page, Close), the status line, "Following in another tab" with Follow here, the 
 (`#m-assist-undock`, beside Close; not below 600 px nor on a handheld screen) shuts the drawer and shows the body in a
 float of kind `assist`, 420 by 640 at the right to start. The body is one instance in both places: the teleport moves it,
 so a run, the draft and the panes stay, and the thread's scroll is put back after the move. The float's Dock puts it back
-and opens the drawer, its Close puts it back shut, and the body's own Close is the float's Close while floated. The header
+and opens the drawer (as does dragging the float to the right edge, where a dashed Dock outline shows the drawer's
+place before the drop), its Close puts it back shut, and the body's own Close is the float's Close while floated. The header
 button and Mod+J show and hide whichever form is current (`assist.shown()`, `openDrawer` shows a float too; a hidden float
 is still a float); the first Esc gives the keys to the page in both, the second closes the drawer or hides the float. The
 width handle and `ASSIST_WIDTH` are the drawer's. Shut, the drawer pushes nothing, so a canvas has the page's whole width.

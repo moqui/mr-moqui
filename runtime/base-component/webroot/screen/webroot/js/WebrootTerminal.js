@@ -564,6 +564,14 @@
                 terminal.showFloating(key, body);
                 return true;
             },
+            // on the Terminal screen, dropped on its tab strip it docks into a pane; elsewhere it has no home to drag to
+            home: () => {
+                const el = terminal.workspace && terminal.workspace.$el;
+                const strip = el && el.querySelector ? el.querySelector(".m-terminal-strip") : null;
+                if (!strip) return null;
+                const box = strip.getBoundingClientRect();
+                return { rect: { x: box.left, y: box.top, w: box.width, h: box.height } };
+            },
             dock: (shown, key) => {
                 delete state.floating[key];
                 if (state.lastFloat === key) state.lastFloat = "";

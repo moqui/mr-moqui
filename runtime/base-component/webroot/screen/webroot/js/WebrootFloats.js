@@ -88,7 +88,10 @@
         //   dock(shown, key, float): put the content back where it lives, shown there or closed; the window is gone by then;
         //   inReach: true when Assist may read the floated content (§10.7, D18), false or absent when it may not;
         //   focus(key, bodyEl): give the content the keys (the first focusable element of the body otherwise);
-        //   gatherLabel: an Arrange item that docks every window of the kind (§10.4's Gather).
+        //   gatherLabel: an Arrange item that docks every window of the kind (§10.4's Gather);
+        //   home(key, float): where the content docks, measured when a drag starts: {rect, edge}, or null for nowhere now. A
+        //     window dragged to that edge of the area (left, right, top or bottom; outside the corners), or with no edge onto
+        //     the rect, shows the rect as a Dock outline and docks at the drop, in place of that edge's snap (§15).
         // Registering again replaces the definition. A kind asks wasFloated(kind, key) and opens itself when it was.
         register(kind, def) {
             floats.load();
@@ -353,6 +356,23 @@
             const h = zone === "left" || zone === "right" ? area.h : halfH;
             return { x, y, w, h };
         },
+        // The kind's home for a window (def.home), or null: a rect with a size, and an edge of the area or none.
+        homeOf(f) {
+            const def = floats.kinds[f.kind];
+            if (!def || typeof def.home !== "function") return null;
+            let home = null;
+            try { home = def.home(f.key, f); } catch (err) { home = null; }
+            const rect = home && home.rect;
+            if (!rect || !num(rect.x) || !num(rect.y) || !(rect.w > 0) || !(rect.h > 0)) return null;
+            return { rect: rectOf(rect), edge: ["left", "right", "top", "bottom"].indexOf(home.edge) >= 0 ? home.edge : null };
+        },
+        // whether a drag at (x, y), in snap zone `zone`, is at the window's home
+        atHome(home, zone, x, y) {
+            if (!home) return false;
+            if (home.edge) return zone === home.edge;
+            const r = home.rect;
+            return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+        },
         // a window in a snap zone; its place before is kept, for a drag out of it and for Dock
         snapTo(id, zone, before) {
             const f = floats.get(id);
@@ -376,6 +396,8 @@
             if (!f) return gesture;
             const min = (floats.kinds[f.kind] || {}).minSize;
             let start = rectOf(f.maximized ? s.area : f);
+            // where the kind docks, measured once the drag has begun
+            let home;
             gesture.move = (x, y) => {
                 if (!gesture.moved && Math.abs(x - cx) < SLOP && Math.abs(y - cy) < SLOP) return;
                 if (!gesture.moved) {
@@ -393,13 +415,24 @@
                 const rect = floats.clampRect({ x: start.x + x - cx, y: start.y + y - cy, w: start.w, h: start.h }, s.area, min);
                 f.x = rect.x;
                 f.y = rect.y;
-                gesture.zone = floats.snapZone(x, y, s.area);
-                s.snap = gesture.zone ? { id, zone: gesture.zone, rect: floats.snapRect(gesture.zone, s.area) } : null;
+                if (home === undefined) home = floats.homeOf(f);
+                const zone = floats.snapZone(x, y, s.area);
+                if (floats.atHome(home, zone, x, y)) {
+                    gesture.zone = "home";
+                    s.snap = { id, zone: "home", rect: rectOf(home.rect) };
+                } else {
+                    gesture.zone = zone;
+                    s.snap = zone ? { id, zone, rect: floats.snapRect(zone, s.area) } : null;
+                }
             };
             gesture.end = (x, y) => {
                 if (num(x) && num(y)) gesture.move(x, y);
                 s.snap = null;
-                if (gesture.moved && gesture.zone) floats.snapTo(id, gesture.zone, start);
+                if (gesture.moved && gesture.zone === "home") {
+                    // its place before the drag is the one kept for the next time it floats
+                    Object.assign(f, floats.clampRect(start, s.area, min));
+                    floats.dock(id);
+                } else if (gesture.moved && gesture.zone) floats.snapTo(id, gesture.zone, start);
                 else floats.save();
                 return gesture;
             };
@@ -543,8 +576,9 @@
         Object.keys(floats.labels).forEach((key) => { if (shell["float_" + key]) out[key] = shell["float_" + key]; });
         return out;
     };
-    // a pointer's primary button: a mouse's left, any touch or pen contact
-    const primary = (event) => event.pointerType !== "mouse" || event.button === 0;
+    // the drag of a bar or a grip, by mouse, touch or pen (MoquiLib.js)
+    const primary = (event) => moqui.pointer.primary(event);
+    const track = (event, gesture, after) => moqui.pointer.track(event, gesture, after);
 
     // The layer: a fixed layer over the shell that draws the windows, the snap outline of a drag and the strip at its bottom
     // (the Arrange menu and the minimized windows as chips). It holds no content. It keeps the windows inside a resized
@@ -596,7 +630,8 @@
         template:
             '<div v-if="s.floats.length" class="m-float-layer" data-float-layer>' +
                 '<m-float v-for="f in s.floats" :key="f.id" :float="f"></m-float>' +
-                '<div v-if="s.snap" class="m-float-snap" :style="rectStyle(s.snap.rect)" aria-hidden="true" data-float-snap></div>' +
+                '<div v-if="s.snap" class="m-float-snap" :class="{\'m-float-snap--home\': s.snap.zone === \'home\'}" :style="rectStyle(s.snap.rect)" aria-hidden="true" data-float-snap :data-float-snap-zone="s.snap.zone">' +
+                    '<span v-if="s.snap.zone === \'home\'" class="m-float-snap-label">{{labels.dock}}</span></div>' +
                 '<div v-if="anyShown" class="m-float-strip row items-center no-wrap" role="toolbar" :aria-label="labels.windows">' +
                     '<q-btn flat round dense size="sm" icon="sym_o_view_quilt" id="m-float-arrange" class="m-float-strip-btn" :aria-label="labels.arrange">' +
                         '<q-tooltip>{{labels.arrange}}</q-tooltip>' +
@@ -651,34 +686,12 @@
             startMove(event) {
                 if (!primary(event) || (event.target && event.target.closest && event.target.closest(".q-btn, button, a, input"))) return;
                 const id = this.float.id;
-                this.track(event, floats.beginMove(id, event.clientX, event.clientY), (gesture) => { if (!gesture.moved) floats.focusContent(id); });
+                track(event, floats.beginMove(id, event.clientX, event.clientY), (gesture) => { if (!gesture.moved) floats.focusContent(id); });
             },
             startResize(edge, event) {
                 if (!primary(event)) return;
                 event.preventDefault();
-                this.track(event, floats.beginResize(this.float.id, edge, event.clientX, event.clientY), null);
-            },
-            // the pointer's moves until it is up, captured to the element it went down on (a synthetic event has no pointer to
-            // capture: its moves come to the element anyway)
-            track(event, gesture, after) {
-                const el = event.currentTarget;
-                const pointerId = event.pointerId;
-                try { el.setPointerCapture(pointerId); } catch (err) { /* not an active pointer */ }
-                const move = (e) => { if (e.pointerId === pointerId) gesture.move(e.clientX, e.clientY); };
-                const done = (e, cancel) => {
-                    if (e.pointerId !== pointerId) return;
-                    el.removeEventListener("pointermove", move);
-                    el.removeEventListener("pointerup", up);
-                    el.removeEventListener("pointercancel", lost);
-                    try { el.releasePointerCapture(pointerId); } catch (err) { /* released */ }
-                    if (cancel) gesture.cancel(); else gesture.end(e.clientX, e.clientY);
-                    if (after && !cancel) after(gesture);
-                };
-                const up = (e) => done(e, false);
-                const lost = (e) => done(e, true);
-                el.addEventListener("pointermove", move);
-                el.addEventListener("pointerup", up);
-                el.addEventListener("pointercancel", lost);
+                track(event, floats.beginResize(this.float.id, edge, event.clientX, event.clientY), null);
             }
         },
         mounted() { floats.bodyReady(this.float.id, true); },
