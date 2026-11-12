@@ -97,7 +97,8 @@ client.chat.completions.create(model='fast', messages=[{'role': 'user', 'content
 Before a call: the user's quota for the `gateway` scope (`LlmQuota`, else the conf's daily limits) and the client's
 daily tokens and cost (counted from its `LlmCall` rows), each with the most the call may use: its prompt estimated from
 its text by the model's calibration and its output limit (the request's, clamped, else the model's `max-output`), at
-the model's prices; over either is 429 `insufficient_quota` with `Retry-After` until the day or month ends. Then the
+the model's prices; over either is 429 `insufficient_quota` with `Retry-After` until the day or month ends. A token
+quota counts the prompt read from the provider's cache as a tenth of its tokens, as its price is, and the rest whole. Then the
 host's room for one more open call (below; 503 or 429 `too_many_open_calls`), and only then the requests per minute of
 the user's `LlmQuota` (the smallest of its rows) and of the client (429 `rate_limit_exceeded` with the seconds until a
 request of the last minute ages out) and the AT_LLM tarpit (`gateway:<alias>`, 120 a minute per user in the seed data),

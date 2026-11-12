@@ -50,6 +50,9 @@ pub(super) fn dispatch(args: &TestArgs, runtime: &Path, framework: &Path) -> Res
             ))
         }
     };
+    if matches!(mode, Mode::Live { .. }) {
+        carry_llm_settings(runtime);
+    }
     let mut components = discover(runtime)?;
     if !args.components.is_empty() {
         for name in &args.components {
@@ -255,6 +258,34 @@ fn file_safe(text: &str) -> String {
                 '-'
             }
         })
+        .collect()
+}
+
+/// A live run's model settings from the real runtime's `.env`: its `llm_*` entries (an endpoint's key, the model a conf
+/// property names), which the scratch runtime the tests boot on does not have. Nothing else of the file is read, so the
+/// runtime's other secrets stay out of the test database. A property or environment variable already set wins.
+fn carry_llm_settings(runtime: &Path) {
+    let Ok(text) = std::fs::read_to_string(runtime.join(".env")) else {
+        return;
+    };
+    let carried = llm_settings(&text);
+    let mut names = Vec::new();
+    for (name, value) in carried {
+        if moqui_lib::env::get_prop_or_env(&name).is_empty() {
+            moqui_lib::env::set_property(&name, value);
+            names.push(name);
+        }
+    }
+    if !names.is_empty() {
+        tracing::info!("The live model's settings from runtime/.env: {}", names.join(", "));
+    }
+}
+
+/// The `llm_*` entries of dotenv text with a value.
+pub(super) fn llm_settings(text: &str) -> Vec<(String, String)> {
+    moqui_lib::env::parse_dotenv(text)
+        .into_iter()
+        .filter(|(name, value)| name.starts_with("llm_") && !value.is_empty())
         .collect()
 }
 

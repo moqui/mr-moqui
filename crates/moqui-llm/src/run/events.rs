@@ -322,8 +322,11 @@ impl EventSink {
         let tx = facade.transactions_for(RUN_EVENT)?;
         let in_place = tx.in_transaction();
         let pending = std::mem::take(&mut self.pending);
-        let written = tx.run(TransactionAttribute::UseOrBegin, None, || {
-            write_events(&facade, &self.run_id, &self.holder, &pending)
+        // the engine's own bookkeeping, whoever's thread flushes: a request as its user (an answer, a turn) too
+        let written = super::quietly(|| {
+            tx.run(TransactionAttribute::UseOrBegin, None, || {
+                write_events(&facade, &self.run_id, &self.holder, &pending)
+            })
         });
         let stored = match written {
             Ok(stored) => stored,

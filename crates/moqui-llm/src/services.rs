@@ -831,7 +831,8 @@ fn check_quota(parameters: &Parameters, facade: &EntityFacade) -> Out {
         ("withinQuota", Value::Bool(status.is_within())),
         ("reason", opt(status.exceeded.as_ref())),
         ("period", Value::string(&status.limit.period)),
-        ("usedTokens", count(status.used.usage.total())),
+        // as the quota counts them: cache reads as a tenth
+        ("usedTokens", count(status.used.usage.quota_tokens())),
         ("usedCost", Value::Decimal(status.used.cost)),
         ("maxTokens", status.limit.max_tokens.map_or(Value::Null, count)),
         ("maxCost", status.limit.max_cost.map_or(Value::Null, Value::Decimal)),

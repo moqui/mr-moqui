@@ -243,6 +243,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <set field="group" from="found?.group || null"/>
                 <set field="canManage" from="!!found?.canManage"/>
                 <set field="manageReason" from="found?.manageReason || null"/>
+                <!-- a group that is neither a registered bundle nor a custom group is changed by the instance administrator, on
+                    this page under System: an app that shows the page links it there -->
+                <set field="openInSystem" from="found?.manageReasonCode == 'UNREGISTERED_BUNDLE' &amp;&amp; ec.resource.script('component://tools/template/AdminMount.js').state().mounted"/>
                 <set field="allMembers" from="found?.members || []"/>
                 <set field="scopedMembers" from="memberScopeIds ? allMembers.filter(row => memberScopeIds.includes(row.userId)) : allMembers"/>
                 <set field="outsideCount" from="memberScopeIds ? allMembers.filter(row => !memberScopeIds.includes(row.userId)).filter(row => row.active).length : 0"/>
@@ -328,6 +331,9 @@ along with this software (see the LICENSE.md file). If not, see
                         </container>
                     </container>
                     <label type="p" style="text-caption text-warning q-mt-sm q-mb-none" condition="!canManage &amp;&amp; manageReason" text="${manageReason}"/>
+                    <!-- System's own page of the group (a screen path, disabled for one who may not open System) -->
+                    <link url="//apps/system/Access/GroupDetail" text="Open in System" icon="sym_o_open_in_new" condition="openInSystem"
+                            parameter-map="{userGroupId:userGroupId, grantAction:'', grantBundleGroupId:'', grantItem:''}"/>
                 </container>
             </widgets>
         </section>

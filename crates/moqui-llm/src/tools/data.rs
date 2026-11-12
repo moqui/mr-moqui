@@ -141,6 +141,22 @@ impl AgentTool for Data {
     }
 }
 
+/// For a read that found no rows: when a `where` value is plain text (no `%`, comparison, list or range), that it was
+/// matched as the whole value, with how to write begins-with and contains. A model asked for what "starts with" a text
+/// writes the text alone and reads "no rows" as none there.
+fn whole_value_hint(filters: &serde_json::Map<String, Json>) -> Option<String> {
+    let (field, value) = filters.iter().find_map(|(field, value)| {
+        let text = value.as_str()?.trim();
+        let operator = ['%', '>', '<', '!'].iter().any(|mark| text.contains(*mark));
+        // an id matches whole by its nature: no rows for one is the answer, not a hint to search
+        let id = field.ends_with("Id") || field.ends_with("ID") || field == "id";
+        (!text.is_empty() && !operator && !id && !dates::is_date_name(field)).then_some((field, text))
+    })?;
+    Some(format!(
+        "a where value matches the whole field: {field} is exactly \"{value}\"; \"{value}%\" begins with it, \"%{value}%\" contains it"
+    ))
+}
+
 /// What a read asks for, besides where it reads.
 struct Read<'a> {
     filters: &'a serde_json::Map<String, Json>,
@@ -223,6 +239,7 @@ fn tests_of(filters: &serde_json::Map<String, Json>, now: &Zoned) -> (Vec<(Strin
     let mut tests = Vec::new();
     let mut resolved = BTreeMap::new();
     let week = jiff::civil::Weekday::Monday;
+    let mut spans: Vec<(String, String)> = Vec::new();
     let mut date = |field: &str, text: &str, end: bool| -> String {
         if !dates::is_date_name(field) {
             return text.to_string();
@@ -268,6 +285,14 @@ fn tests_of(filters: &serde_json::Map<String, Json>, now: &Zoned) -> (Vec<(Strin
                     .filter(|head| !head.is_empty() && !head.contains('%'))
                 {
                     Test::Begins(begins.to_string())
+                } else if let Some((from, thru)) = dates::is_date_name(field)
+                    .then(|| dates::range(text, now, week))
+                    .flatten()
+                {
+                    // a span with no comparison (`last 7 days`, a day, `last month`) is a range, not a value to equal
+                    spans.push((field.clone(), format!("{from} thru {thru}")));
+                    tests.push((field.clone(), Test::From(from)));
+                    Test::Thru(thru)
                 } else {
                     Test::Equals(date(field, text, false))
                 }
@@ -275,6 +300,7 @@ fn tests_of(filters: &serde_json::Map<String, Json>, now: &Zoned) -> (Vec<(Strin
         };
         tests.push((field.clone(), test));
     }
+    resolved.extend(spans);
     (tests, resolved)
 }
 
@@ -422,6 +448,9 @@ fn answer(rows: &Rows, read: &Read<'_>, after: &[String]) -> String {
         ));
         if rows.rows.is_empty() {
             lines.push("no rows".to_string());
+            if let Some(hint) = whole_value_hint(read.filters) {
+                lines.push(hint);
+            }
         } else {
             lines.push(format::table(&header, &body));
         }
@@ -1027,6 +1056,31 @@ mod tests {
             .unwrap(),
             "resolved: {thruDate: \"2026-09-30 23:59:59\"}"
         );
+    }
+
+    /// A date field given a span with no comparison reads it as a range: `last 7 days` until now, a bare day as that
+    /// day; the resolved line shows both ends.
+    #[test]
+    fn a_span_on_a_date_field_is_a_range() {
+        let now: Zoned = "2026-10-21T14:30:00[UTC]".parse().unwrap();
+        let filters = json!({"fromDate": "last 7 days", "thruDate": "2026-10-20", "statusId": "Open"});
+        let (tests, resolved) = tests_of(filters.as_object().unwrap(), &now);
+        let parameters = find_parameters(&tests);
+        let has = |key: &str, value: &str| parameters.iter().any(|(k, v)| k == key && v == value);
+        assert!(has("fromDate_from", "2026-10-14 14:30") && has("fromDate_thru", "2026-10-21 14:30"), "{parameters:?}");
+        assert!(has("thruDate_from", "2026-10-20 00:00") && has("thruDate_thru", "2026-10-20 23:59:59"), "{parameters:?}");
+        assert!(has("statusId", "Open"), "a value that is no date stays a value: {parameters:?}");
+        assert_eq!(resolved.get("fromDate").map(String::as_str), Some("2026-10-14 14:30 thru 2026-10-21 14:30"));
+    }
+
+    #[test]
+    fn a_plain_where_value_that_finds_nothing_says_it_is_whole() {
+        let filters = json!({"initialRequest": "/agent-eval-chart/"});
+        let hint = whole_value_hint(filters.as_object().unwrap()).unwrap();
+        assert!(hint.contains("\"/agent-eval-chart/%\" begins with it"), "{hint}");
+        for written in [json!({"userGroupId": "AGENT_EVAL_NONE"}), json!({"name": "acme%"}), json!({"orderDate": ">=2026-01-01"}), json!({"statusId": ["A", "B"]}), json!({"fromDate": "today"})] {
+            assert_eq!(whole_value_hint(written.as_object().unwrap()), None, "{written}");
+        }
     }
 
     #[test]

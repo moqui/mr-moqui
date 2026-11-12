@@ -84,6 +84,16 @@ impl Usage {
         self.input.saturating_add(self.output)
     }
 
+    /// The tokens a token quota counts: the prompt read from the provider's cache as a tenth (as its price is, about),
+    /// the rest of the prompt and the output whole. A conversation's prefix is read from the cache on every step, so
+    /// counting it whole would spend a day's quota on what costs little.
+    pub fn quota_tokens(&self) -> u64 {
+        let cached = self.cached_input.min(self.input);
+        (self.input - cached)
+            .saturating_add(cached.div_ceil(10))
+            .saturating_add(self.output)
+    }
+
     pub fn is_zero(&self) -> bool {
         *self == Usage::default()
     }
@@ -470,9 +480,10 @@ pub struct Totals {
 }
 
 impl Totals {
-    /// The tokens counted against a quota: those used and those reserved.
+    /// The tokens counted against a quota: those used (cache reads as a tenth, [`Usage::quota_tokens`]) and those
+    /// reserved.
     pub fn counted_tokens(&self) -> u64 {
-        self.usage.total().saturating_add(self.reserved.tokens)
+        self.usage.quota_tokens().saturating_add(self.reserved.tokens)
     }
 
     /// The cost counted against a quota: that of the calls made and that reserved.

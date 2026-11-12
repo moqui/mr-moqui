@@ -131,7 +131,7 @@ function groupRefusal(group, registry = bundles(), privileged = privilegedIds())
     if (!bundle && !isCustom(group) && !(privileged.has(groupId) && ec.user.isInGroup(groupId)))
         return {
             reasonCode: "UNREGISTERED_BUNDLE",
-            reason: groupId + " is not a registered bundle or a custom group; an instance administrator changes it in Tools"
+            reason: groupId + " is not a registered bundle or a custom group; an instance administrator changes it in System › Access › Groups"
         }
     return null
 }

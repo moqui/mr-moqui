@@ -716,7 +716,10 @@ moqui test tools --agents --llm-profile local-qwen --feature "approval" --db sna
 `--spec` picks agent spec files by name (without `.agent.js`), `--feature` tasks by name, and `--db` works as for the
 specs. A live profile is a model of the conf, such as the commented `local-qwen` example of `MoquiDefaultConf.xml` (Qwen
 in LM Studio at `http://127.0.0.1:1234`): copy it into the runtime's conf, or set the default endpoint's
-`llm_openai_url` and `llm_openai_model` and use `--llm-profile default`.
+`llm_openai_url` and `llm_openai_model` and use `--llm-profile default`. The dev conf has `claude-haiku` (Claude Haiku
+5.5 on the Claude API), live once `llm_anthropic_api_key` is set in `runtime/.env`: `--llm-profile claude-haiku`. The
+tests boot on a scratch runtime with no `.env`; a live run takes the `llm_*` entries of the real one (an endpoint's key)
+and nothing else of it.
 
 #### A task file
 
