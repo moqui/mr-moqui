@@ -62,6 +62,26 @@ have() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Run a shell command with stdout on a pseudo-terminal, so git will page. Prints the output.
+# Returns 127 when script cannot provide a terminal (GNU script, then the macOS one).
+run_on_tty() {
+    local probe
+    if ! have script; then
+        return 127
+    fi
+    probe=$(script -q -c 'tty' /dev/null 2>&1) || probe=
+    if printf '%s\n' "$probe" | grep -Eq '/dev/(pts|ttys|pty)/'; then
+        script -q -c "$1" /dev/null
+        return $?
+    fi
+    probe=$(script -q /dev/null tty 2>&1) || probe=
+    if printf '%s\n' "$probe" | grep -Eq '/dev/(pts|ttys|pty)/'; then
+        script -q /dev/null bash -c "$1"
+        return $?
+    fi
+    return 127
+}
+
 # ========== fixture ==========
 
 R=$FIX/root
@@ -634,7 +654,28 @@ EOF
     lacks "git-status -s hides clean repos" 'comp-b' -- "$M" git-status -s
     echo '<!-- new -->' >>"$FIX/src/comp-b/component.xml"
     (cd "$FIX/src/comp-b" && git commit -qam "second commit" && git push -q "$FIX/repos/comp-b.git" master)
-    check "git-pull lists new commits" 1 'second commit' -- "$M" git-pull
+    # The plain check captures a pipe, so git never pages. A pseudo-terminal would start GIT_PAGER.
+    # Export it: a prefix assignment on a function is not given to child processes in bash 3.2.
+    tty_status=0
+    GIT_PAGER='printf PAGED\n; exec cat'
+    export GIT_PAGER
+    tty_out=$(run_on_tty "$(printf '%q' "$M") git-pull" 2>&1) || tty_status=$?
+    unset GIT_PAGER
+    if [ "$tty_status" -eq 127 ]; then
+        skipped="$skipped git-pull-pager"
+        check "git-pull lists new commits" 1 'second commit' -- "$M" git-pull
+    else
+        if printf '%s\n' "$tty_out" | grep -Eq 'second commit'; then
+            ok
+        else
+            bad "git-pull lists new commits on a tty" "$tty_out"
+        fi
+        if printf '%s\n' "$tty_out" | grep -Eq 'PAGED'; then
+            bad "git-pull does not page" "$tty_out"
+        else
+            ok
+        fi
+    fi
     check "git-pull reports the repo without a remote" 1 'git pull failed in: \.$' -- "$M" git-pull
     check "complete git refs" 0 '^master$' -- "$M" __complete 3 git checkout ma
     check "complete git-checkout-all alias refs" 0 '^master$' -- "$M" __complete 2 gitCheckoutAll ma
