@@ -95,6 +95,7 @@ moqui_entity::hooks::submit! {
         defined_service_name: crate::service::define::defined_name,
         registration_failures: crate::service::define::registration_failures,
         cluster_note_write: note_write,
+        cluster_note_writes: note_writes,
         trace_statement,
         trace_transaction,
         artifact_name: || {
@@ -118,6 +119,20 @@ fn note_write(
 ) -> Result<(), crate::context::Error> {
     crate::edge::replica::note_write(facade, entity_name, pk_fields, values);
     crate::cluster::note_write(facade, entity_name, pk_fields, values)
+}
+
+/// [`note_write`] for the rows one statement wrote, by their keys: each key noted for replication, and one cluster
+/// invalidation carrying them all (plans/High-Level-Review.md HL-033).
+fn note_writes(
+    facade: &crate::entity::EntityFacade,
+    entity_name: &str,
+    pk_fields: &[String],
+    keys: &[std::sync::Arc<crate::entity::FieldMap>],
+) -> Result<(), crate::context::Error> {
+    for key in keys {
+        crate::edge::replica::note_write(facade, entity_name, pk_fields, key);
+    }
+    crate::cluster::note_writes(facade, entity_name, pk_fields, keys)
 }
 
 /// A statement's duration metric, and its span inside a trace: a scheduler poll or a data load outside any request or

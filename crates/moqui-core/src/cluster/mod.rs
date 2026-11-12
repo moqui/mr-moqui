@@ -242,8 +242,9 @@ fn whole_without_key(body: &mut serde_json::Value) {
     }
 }
 
-/// Add the key of `added` to the waiting invalidation `waiting`: it then lists its keys in `primaryKeys`. With no
-/// usable key, or past `cap` keys, it carries none and invalidates the whole entity; a whole one stays whole.
+/// Add the keys of `added` (its `primaryKey`, or each of its `primaryKeys`) to the waiting invalidation `waiting`: it
+/// then lists its keys in `primaryKeys`. With no usable key, or past `cap` keys, it carries none and invalidates the
+/// whole entity; a whole one stays whole.
 fn join_keys(waiting: &mut serde_json::Value, added: &serde_json::Value, cap: usize) {
     let Some(map) = waiting.as_object_mut() else {
         return;
@@ -255,14 +256,21 @@ fn join_keys(waiting: &mut serde_json::Value, added: &serde_json::Value, cap: us
     }) else {
         return;
     };
-    let Some(key) = added
-        .get("primaryKey")
-        .filter(|key| key.as_object().is_some_and(|key| !key.is_empty()))
-    else {
-        return;
+    let added_keys: Vec<&serde_json::Value> = match added.get("primaryKeys").and_then(serde_json::Value::as_array) {
+        Some(list) => list.iter().collect(),
+        None => added.get("primaryKey").into_iter().collect(),
     };
-    if !keys.contains(key) {
-        keys.push(key.clone());
+    let usable = |key: &&serde_json::Value| key.as_object().is_some_and(|key| !key.is_empty());
+    if added_keys.is_empty() || !added_keys.iter().all(usable) {
+        return;
+    }
+    for key in added_keys {
+        if keys.len() > cap {
+            break;
+        }
+        if !keys.contains(key) {
+            keys.push(key.clone());
+        }
     }
     if keys.len() <= cap {
         map.insert("primaryKeys".to_string(), serde_json::Value::Array(keys));
@@ -495,14 +503,17 @@ fn apply_invalidation(facade: &EntityFacade, body: &serde_json::Value) -> Result
         // With the written row's key, only the cached finds it may have changed go.
         _ => vec![body.get("primaryKey").and_then(key_of)],
     };
-    let mut first_error = None;
-    for key in &keys {
-        if let Err(err) = crate::entity::cache::clear_one_cache(facade, name, key.as_ref()) {
-            tracing::warn!("cluster invalidation of {name} failed for one key: {err}");
-            first_error.get_or_insert(Error::from(err));
-        }
-    }
-    first_error.map_or(Ok(()), Err)
+    // Several keys go in one sweep of the entity's caches (plans/High-Level-Review.md HL-002); a key that is not
+    // usable clears the entity whole, which covers the others.
+    let cleared = match keys.into_iter().collect::<Option<Vec<_>>>() {
+        Some(keys) if keys.len() > 1 => crate::entity::cache::clear_keys_cache(facade, name, &keys),
+        Some(keys) => crate::entity::cache::clear_one_cache(facade, name, keys.first()),
+        None => crate::entity::cache::clear_one_cache(facade, name, None),
+    };
+    cleared.map_err(|err| {
+        tracing::warn!("cluster invalidation of {name} failed: {err}");
+        Error::from(err)
+    })
 }
 
 /// Publish `message` on this process's bus, then queue it for the peers of the factory that started `facade`. A
@@ -577,6 +588,63 @@ pub(crate) fn note_write(
     pk_fields: &[String],
     values: &crate::entity::FieldMap,
 ) -> Result<(), Error> {
+    note_invalidation(facade, entity_name, || {
+        invalidation_body(entity_name, pk_fields, values)
+    })
+}
+
+/// [`note_write`] for the rows one statement wrote, by their keys (a bulk delete's chunk, plans/High-Level-Review.md
+/// HL-033): one invalidation that lists every key in `primaryKeys`, or past [`KEYS_PER_ENTITY`] keys none, which
+/// invalidates the whole entity, as a waiting invalidation joined past that many does.
+pub(crate) fn note_writes(
+    facade: &EntityFacade,
+    entity_name: &str,
+    pk_fields: &[String],
+    keys: &[Arc<crate::entity::FieldMap>],
+) -> Result<(), Error> {
+    if keys.is_empty() {
+        return Ok(());
+    }
+    note_invalidation(facade, entity_name, || {
+        keys_body(entity_name, pk_fields, keys, LIMITS.keys)
+    })
+}
+
+/// The invalidation body of the rows `keys`: each key in `primaryKeys`, or none (the whole entity) past `cap` keys or
+/// for a key with no usable field.
+fn keys_body(
+    entity_name: &str,
+    pk_fields: &[String],
+    keys: &[Arc<crate::entity::FieldMap>],
+    cap: usize,
+) -> serde_json::Value {
+    let whole = || serde_json::json!({ "entityName": entity_name });
+    let mut listed = Vec::with_capacity(keys.len().min(cap));
+    for key in keys {
+        let mut body = invalidation_body(entity_name, pk_fields, key);
+        let Some(key) = body
+            .get_mut("primaryKey")
+            .map(serde_json::Value::take)
+            .filter(|key| key.as_object().is_some_and(|key| !key.is_empty()))
+        else {
+            return whole();
+        };
+        if !listed.contains(&key) {
+            if listed.len() >= cap {
+                return whole();
+            }
+            listed.push(key);
+        }
+    }
+    serde_json::json!({ "entityName": entity_name, "primaryKeys": listed })
+}
+
+/// Publish the invalidation `body` gives, after commit when a transaction is open.
+fn note_invalidation(
+    facade: &EntityFacade,
+    entity_name: &str,
+    body: impl FnOnce() -> serde_json::Value,
+) -> Result<(), Error> {
     // No member caches what this entity's writes change (`cache="never"` and in no cacheable view): the peers are not
     // told (plans/High-Level-Review.md HL-017), though a local listener still is.
     let to_peers = is_linked(facade)
@@ -588,7 +656,7 @@ pub(crate) fn note_write(
     let message = TopicMessage {
         origin_id: notify::origin_id().to_string(),
         message_id: crate::entity::uuid_v4().map_err(Error::from)?,
-        body: invalidation_body(entity_name, pk_fields, values),
+        body: body(),
     };
     let tx = facade.transactions_for(entity_name).map_err(Error::from)?;
     if tx.in_transaction() {

@@ -152,6 +152,9 @@ pub struct EntityHooks {
     // observers
     /// Publish a write to the cluster's caches.
     pub cluster_note_write: fn(&EntityFacade, &str, &[String], &FieldMap) -> Result<(), Error>,
+    /// Publish the rows one statement wrote, by their primary keys, as one invalidation (a bulk delete's chunk,
+    /// plans/High-Level-Review.md HL-033).
+    pub cluster_note_writes: fn(&EntityFacade, &str, &[String], &[std::sync::Arc<FieldMap>]) -> Result<(), Error>,
     pub trace_statement: fn(&str) -> Option<Box<dyn StatementTrace>>,
     pub trace_transaction: fn() -> Option<Box<dyn TransactionTrace>>,
     /// The entity and artifact a statement runs for, for the query stats (`entity::query_stats`); only called while
@@ -224,6 +227,7 @@ impl EntityHooks {
         defined_service_name: |_| None,
         registration_failures: |_| Vec::new(),
         cluster_note_write: |_, _, _, _| Ok(()),
+        cluster_note_writes: |_, _, _, _| Ok(()),
         trace_statement: |_| None,
         trace_transaction: || None,
         artifact_name: StatementArtifact::default,

@@ -1153,6 +1153,62 @@ fn queued_invalidations_keep_every_key_and_widen_past_their_bounds() {
     assert!(queue.messages.is_empty() && queue.invalidations.is_empty() && queue.clear_all.is_none());
 }
 
+/// HL-033: a bulk delete's invalidation carries its chunk's keys in `primaryKeys`; it joins a waiting one with each
+/// of them, up to the cap, and one past the cap invalidates the entity whole.
+#[test]
+fn an_invalidation_of_several_keys_joins_with_each_key() {
+    let limits = super::Limits {
+        others: 1,
+        entities: 2,
+        keys: 4,
+    };
+    let several = |ids: &[&str]| TopicMessage {
+        origin_id: "peer".into(),
+        message_id: format!("m-{}", ids.join(",")),
+        body: serde_json::json!({
+            "entityName": "E1",
+            "primaryKeys": ids.iter().map(|id| serde_json::json!({ "enumId": id })).collect::<Vec<_>>(),
+        }),
+    };
+    let mut queue = super::Queue::default();
+    assert_eq!(
+        queue.push("entity-cache-invalidate", invalidation("E1", Some("A")), limits),
+        super::Queued::Taken
+    );
+    queue.push("entity-cache-invalidate", several(&["B", "A", "C"]), limits);
+    assert_eq!(
+        queue.messages[0].1.body["primaryKeys"],
+        serde_json::json!([{ "enumId": "A" }, { "enumId": "B" }, { "enumId": "C" }])
+    );
+    queue.push("entity-cache-invalidate", several(&["D", "E"]), limits);
+    let body = &queue.messages[0].1.body;
+    assert!(
+        body.get("primaryKeys").is_none() && body.get("primaryKey").is_none(),
+        "past the cap the entity goes whole: {body}"
+    );
+    // A first invalidation of several keys is queued as it is.
+    let mut queue = super::Queue::default();
+    queue.push("entity-cache-invalidate", several(&["A", "B"]), limits);
+    assert_eq!(
+        queue.messages[0].1.body["primaryKeys"],
+        serde_json::json!([{ "enumId": "A" }, { "enumId": "B" }])
+    );
+    // The body a chunk's deletes make: every key, or past the cap none.
+    let pk = ["enumId".to_string()];
+    let keys: Vec<Arc<crate::entity::FieldMap>> = ["A", "B", "A"]
+        .iter()
+        .map(|id| Arc::new(std::iter::once((Arc::from("enumId"), Value::string(*id))).collect()))
+        .collect();
+    assert_eq!(
+        super::keys_body("E1", &pk, &keys, 2),
+        serde_json::json!({ "entityName": "E1", "primaryKeys": [{ "enumId": "A" }, { "enumId": "B" }] })
+    );
+    assert_eq!(
+        super::keys_body("E1", &pk, &keys, 1),
+        serde_json::json!({ "entityName": "E1" })
+    );
+}
+
 /// The peer: a facade of its own, whose database the test changes directly, as a shared database is changed by the
 /// sending member, so only the invalidations it is sent keep its cache fresh.
 struct Remote {
