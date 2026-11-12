@@ -319,6 +319,15 @@ fn generated_secret_is_stable_and_unwritable_env_fails() {
     assert!(env_text.contains("phase2_probe_secret="));
     assert!(!env_text.contains("probe-secret-CHANGEME"));
     assert!(!env_text.contains("entity_ds_crypt_pass_old="));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(temp.path().join(".env"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
     assert_eq!(
         env_text
             .lines()
@@ -383,6 +392,31 @@ fn generated_secret_starts_its_own_line_in_env_without_final_newline() {
     }
     env::clear_dotenv();
     assert_eq!(repo_env_stamp(&root), before);
+}
+
+/// A generated secret is 32 random bytes in standard base64, never the same twice; `entity_ds_crypt_pass_old` keeps
+/// its sentinel. A `default-property` is secret by its flag, or by `pass`, `pw` or `key` in its name.
+#[test]
+fn generated_secrets_are_32_random_bytes_and_secret_names_are_known() {
+    use base64::Engine as _;
+    let first = super::factory::generate_secret().unwrap();
+    let second = super::factory::generate_secret().unwrap();
+    assert_ne!(first, second);
+    for value in [&first, &second] {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(value).unwrap();
+        assert_eq!(bytes.len(), 32);
+    }
+    assert!(super::factory::leave_sentinel("entity_ds_crypt_pass_old"));
+    assert!(!super::factory::leave_sentinel("entity_ds_crypt_pass"));
+    assert!(!super::factory::leave_sentinel("session_cookie_key"));
+
+    let secret = super::factory::property_is_secret;
+    assert!(secret("entity_ds_crypt_pass", None));
+    assert!(secret("session_cookie_key", None));
+    assert!(secret("smtp_pw", None));
+    assert!(secret("fcm_service_account", Some("true")));
+    assert!(!secret("webapp_http_port", None));
+    assert!(!secret("ssh_host_key", Some("false")));
 }
 
 fn write_probe_conf(runtime: &Path, name: &str, value: &str) {
