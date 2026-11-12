@@ -2,7 +2,7 @@
 
 > Archived 2026-11-12: L1 to L7 built (L1 to L6 on 2026-11-10, L7's WebSocket and SSH loads on 2026-11-12), the
 > generator's ceiling measured (§16) and the third run's slowdown of §11 found (the embedded database's 16MB of
-> shared buffers; the load test conf now gives it 256MB). The guides are
+> shared buffers; the code's default is now 128MB, and the load test conf gives it 256MB). The guides are
 > [Load-Runner](../../docs/tools/Load-Runner.md) and [JS-Test-Load](../../docs/dev/JS-Test-Load.md); what is still
 > open (browser users, a distributed runner, the target's own numbers, data feeders, CSS selectors, saved profiles,
 > a purge, an authorization override for in-process calls, the no-pdf stall of §11) is in
@@ -490,8 +490,9 @@ and a new session each iteration. The generator's CPU share was 0.2%.
       writeback came in bursts of up to 295 MB a second with processes blocked on I/O.
     - With `shared-buffers="256MB"` on the transactional datasource, the second to fourth pdf runs held at a p50 of
       684 to 700 ms and a p95 of 709 to 741 ms on a database six runs larger, and writes peaked at 18 MB a second.
-      `conf/MoquiLoadTestConf.xml` now sets it, and the guide says why. All the MR runs in the table above were on
-      16MB, so their tails are higher than the framework's.
+      `conf/MoquiLoadTestConf.xml` now sets it, and the guide says why; the code's default went from 16MB to 128MB,
+      Postgres's own. All the MR runs in the table above were on 16MB, so their tails are higher than the
+      framework's.
     - Without pdf the walk still has a tail on 256MB: ten users reserve the one product's asset rows (`asset ... FOR
       UPDATE`), so place order's p50 is 153 ms against 60 ms with the PDF steps spacing the users, and one stall of
       about a second a run, several requests at once, which the server log does not explain. Not looked into.

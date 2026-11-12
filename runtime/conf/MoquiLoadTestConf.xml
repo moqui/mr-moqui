@@ -22,9 +22,11 @@
 
     <entity-facade query-stats="true">
         <!-- add datasource elements here to configure databases -->
-        <!-- the embedded cluster's buffers: the code's 16MB suits a quiet instance, not a load. On 16MB the order to
-            cash walk slowed run after run as its data grew: each backend evicted dirty pages all the time, and their
-            writeback stalled every query for up to a second (plans/archive/LoadRunner.md section 11) -->
+        <!-- the embedded cluster's buffers, above the code's 128MB for a load's growing data: a size for the machine,
+            such as 512MB or 1GB on a large one. On the old default of 16MB the order to cash walk slowed run after run
+            as its data grew: each backend evicted dirty pages all the time, and their writeback stalled every query for
+            up to a second (plans/archive/LoadRunner.md section 11). The other sizes go here too: work-mem,
+            maintenance-work-mem, effective-cache-size (docs/tools/Database.md) -->
         <datasource group-name="transactional" shared-buffers="256MB"/>
     </entity-facade>
 </moqui-conf>

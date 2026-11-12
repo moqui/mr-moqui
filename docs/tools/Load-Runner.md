@@ -251,11 +251,11 @@ every other one is dropped. A run against another server has none: the target's 
   between requests (large regular expressions over each page) reaches the ceiling sooner; the generator block's
   `cpu` and `scriptShare` show it. Past it, run several `moqui test-load` processes; their results are not merged,
   and Compare shows them side by side.
-- **The embedded database's buffers.** The embedded Postgres has 16MB of shared buffers unless the conf says more,
-  which suits a quiet instance and not a load: on 16MB the order to cash walk slowed run after run as its data grew,
+- **The embedded database's buffers.** The embedded Postgres has 128MB of shared buffers unless the conf says
+  otherwise. It had 16MB until 2026-11-12, and on that the order to cash walk slowed run after run as its data grew,
   each backend evicting dirty pages all the time and their writeback stalling every query for up to a second.
-  `conf/MoquiLoadTestConf.xml` gives the transactional datasource `shared-buffers="256MB"`; a server measured on
-  another conf needs the same ([Database](Database.md)).
+  `conf/MoquiLoadTestConf.xml` gives the transactional datasource `shared-buffers="256MB"`; set more there, or on the
+  conf of a server measured, for a larger load ([Database](Database.md)).
 - **Capacity from another machine.** A run from Tools shares the server's CPUs and, for services, its process. That
   is fine for finding a knee or a regression, not for a capacity number. For capacity, copy the binary and the
   component's `test/load` directory (a checkout is simplest) to another machine, run `moqui test-load --server

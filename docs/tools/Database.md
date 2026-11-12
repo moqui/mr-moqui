@@ -406,7 +406,7 @@ cancel, table maintenance or entity sources.
   - `CREATE EXTENSION IF NOT EXISTS` runs after start, and a role that may not create it gets a warning;
   - it is ignored on MySQL, whose digests are in `performance_schema`.
 - **The embedded cluster's sizes** on the `transactional` datasource:
-  - `shared-buffers` (empty keeps the code's 16MB);
+  - `shared-buffers` (empty keeps the code's 128MB, Postgres's own default; `conf/MoquiLoadTestConf.xml` sets 256MB);
   - `work-mem`, `maintenance-work-mem` and `effective-cache-size` (empty keeps Postgres's defaults).
   - Each is a size such as `64MB`, and applies when this process starts the cluster. Database › Settings shows the
     conf value beside the running one.
